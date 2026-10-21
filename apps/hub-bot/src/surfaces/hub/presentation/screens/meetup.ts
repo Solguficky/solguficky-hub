@@ -193,7 +193,7 @@ export function meetupsScreen(
                   `v1:manage:new:${newMeetupToken}:s`,
                 ),
           ),
-        ).text(toArchive.name, toArchive.data),
+        ).text(marked(pictogram.history, toArchive.name), toArchive.data),
         page,
         (to) => `v1:nav:hub:${to}`,
       ),

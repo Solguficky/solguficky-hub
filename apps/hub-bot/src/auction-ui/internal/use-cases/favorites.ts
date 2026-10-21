@@ -81,6 +81,15 @@ export async function openFavorites(input: {
     throw new Error("favorites are not configured");
   }
   const { viewer } = input;
+  // Стадия аукциона нужна только тексту сводки: её отказ список не роняет.
+  const ended =
+    input.auctionId === undefined
+      ? Promise.resolve(false)
+      : input.auction.getAuction({ viewer, auctionId: input.auctionId }).then(
+          (auction) =>
+            auction?.stage === "finished" || auction?.stage === "cancelled",
+          () => false,
+        );
   const ids = await input.favorites.listFollowedLots(viewer);
   const found = await Promise.all(
     ids.map((lotId) => input.auction.findLot({ viewer, lotId })),
@@ -124,6 +133,7 @@ export async function openFavorites(input: {
         lots: lots.map((lot) => feedItemOf(lot, viewer)),
         ...withMine(mineOf(all, viewer)),
         total: all.length,
+        ...((await ended) ? { ended: true as const } : {}),
       },
     ],
     keyboard: [

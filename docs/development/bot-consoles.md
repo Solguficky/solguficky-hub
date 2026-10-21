@@ -215,7 +215,7 @@ sh $S carol@auction press ✔️ Да, включить автоставку
 
 ```bash
 sh $S slow meetups 1500              # запросы ботов к Meetups доходят на 1,5 с позже
-sh $S bob@hub press Архив            # tookMs ≈ 1500, в api — sendChatAction, затем ответ на нажатие и правка
+sh $S bob@hub press 🗂 Архив          # tookMs ≈ 1500, в api — sendChatAction, затем ответ на нажатие и правка
 sh $S slow auction 4000              # дольше дедлайна RPC: бот получает таймаут сам
 sh $S carol@auction press 🔄 Обновить   # tookMs ≈ 3000, кадр «Аукцион сейчас недоступен» с «Повторить» и «‹ Аукционы»
 sh $S slow auction 0                 # снять задержку
@@ -283,7 +283,7 @@ sh $L say /start
 
 ```bash
 sh $L say /start                         # допущенный /start открывает «Сходки»
-sh $L press Архив
+sh $L press 🗂 Архив
 sh $L press ‹ Сходки
 sh $L look                               # перечитать чат из Telegram, ничего не делая
 ```

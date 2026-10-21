@@ -118,6 +118,9 @@ export type LotStatusView =
       leaderId?: string;
       // Момент RFC 3339 в UTC. Нет — лот ведёт человек, а не время.
       deadline?: string;
+      // Сколько раз анти-снайп уже продлил дедлайн; ноль — реальное значение.
+      // Нет — адаптер его не назвал, и экран о продлении молчит.
+      extensionsUsed?: number;
       // Онлайн-торги принимают любую сумму от порога, живой финал — ровно
       // следующую цену (ADR-049): у карточки финала одна кнопка на неё.
       phase: TradingPhase;
@@ -189,7 +192,16 @@ export type LotView = {
   viewerProxyLimit?: Money;
   // Сет, в который входит лот (ADR-073). Нет — лот вне сета.
   lotSet?: LotSetView;
+  // Анти-снайп из условий торгов: ставка ближе `windowSeconds` к дедлайну
+  // продлевает его, пока продлений меньше `maxExtensions` (PER-631, №107).
+  // Нет — у лота нет условий торгов.
+  antiSnipe?: AntiSnipeView;
   status: LotStatusView;
+};
+
+export type AntiSnipeView = {
+  windowSeconds: number;
+  maxExtensions: number;
 };
 
 // Одна страница `ListAuctionLots`. Пустой `nextPageToken` — лента кончилась.

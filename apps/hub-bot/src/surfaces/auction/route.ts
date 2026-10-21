@@ -412,6 +412,7 @@ async function routeEntry(input: {
         viewer,
         exit,
         ...(local.choose === undefined ? {} : { choose: local.choose }),
+        ...(local.detached === true ? { detached: true } : {}),
       });
     }
     const listScreen = async (list: ListAction): Promise<RouteOutcome> => {
@@ -465,6 +466,8 @@ async function outbidSettings(input: {
   viewer: Viewer;
   exit: UnavailableExit;
   choose?: AuctionNotificationChange;
+  // Экран открыт из вести (№73 прогона 14 октября 2026 года).
+  detached?: true;
 }): Promise<RouteOutcome> {
   const { outbid } = input.ports;
   const identityId = input.viewer.identityId;
@@ -495,7 +498,11 @@ async function outbidSettings(input: {
     };
   }
   return {
-    screen: { kind: "notify", current },
+    screen: {
+      kind: "notify",
+      current,
+      ...(input.detached === true ? { detached: true } : {}),
+    },
     identityId,
     ...(input.choose === undefined
       ? {}

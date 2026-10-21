@@ -1,11 +1,15 @@
 import type {
+  BidExtension,
   BidOriginView,
   FeedItem,
   HistoryItem,
   LotStanding,
+  LotStatusView,
+  Money,
   OwnDisplayName,
 } from "./auction-ui/index.js";
 import { money } from "./core/format.js";
+import { localTime } from "./core/notifications/lot-notice.js";
 import { marked, pictogram } from "./core/pictograms.js";
 
 // Тексты участника аукциона, общие у обеих поверхностей (PER-595), как тексты
@@ -29,6 +33,95 @@ export const lotsLabel = marked(pictogram.auction, "Лоты");
 // (ADR-063): человек узнаёт об этом на экране принятой ставки.
 export const autoFollowNote =
   "Ставка сама добавляет лот в избранное. Лот, который ты оттуда убрал, она не вернёт.";
+
+/**
+ * Лот в онлайн-торгах без лидера (PER-631, №82): ставок ещё нет, и первая
+ * ставка — по порогу, а не «по шагу». После снятия участника, который никого
+ * не оставил лидером, лот выглядит так же, и первая ставка — та же.
+ */
+export function awaitsFirstBid(status: LotStatusView): boolean {
+  return (
+    status.kind === "trading" &&
+    status.phase === "online" &&
+    status.leaderId === undefined
+  );
+}
+
+/** Поле цены карточки лота в торгах: без ставок — «Стартовая цена» (№82). */
+export function tradingPriceLine(
+  status: Extract<LotStatusView, { kind: "trading" }>,
+): string {
+  return marked(
+    pictogram.price,
+    `${awaitsFirstBid(status) ? "Стартовая цена" : "Цена"}: ${money(status.currentPrice)}`,
+  );
+}
+
+/** Кнопка ставки по порогу: «Первая ставка (1 000 ₽)» или «По шагу (1 050 ₽)». */
+export function stepBidLabel(amount: Money, firstBid: boolean): string {
+  return `${firstBid ? "Первая ставка" : "По шагу"} (${money(amount)})`;
+}
+
+/**
+ * Свой лимит на карточке. Лимит ниже порога следующей ставки у не-лидера
+ * больше ничего не сделает (PER-631, №81): строка говорит, что он исчерпан.
+ */
+export function ownProxyLine(lot: {
+  viewerProxyLimit: Money;
+  nextPrice?: Money;
+  standing?: LotStanding;
+}): string {
+  const limit = lot.viewerProxyLimit;
+  const exhausted =
+    lot.standing !== "leader" &&
+    lot.nextPrice !== undefined &&
+    lot.nextPrice.currency === limit.currency &&
+    limit.minorUnits < lot.nextPrice.minorUnits;
+  return exhausted
+    ? `Автоставка до ${money(limit)} исчерпана — подними лимит`
+    : `Твоя автоставка: до ${money(limit)} (видишь только ты)`;
+}
+
+/**
+ * Строка анти-снайпа на экране принятой ставки (PER-631, №107): «Ставка в
+ * последние 2 минуты продлила торги до 11:03 (продление 3 из 3).» или, когда
+ * продления кончились, «Продлений больше не будет: торги закроются в 11:03.»
+ * Время — по часам сообщества; непрочитанный момент строку убирает.
+ */
+export function extensionLine(
+  extension: BidExtension,
+  timeZone: string,
+): string | undefined {
+  const at = localTime(extension.deadline, timeZone);
+  if (at === undefined) return undefined;
+  return extension.kind === "exhausted"
+    ? `Продлений больше не будет: торги закроются в ${at}.`
+    : `Ставка в ${lastWindow(extension.windowSeconds)} продлила торги до ${at} (продление ${extension.used} из ${extension.max}).`;
+}
+
+// Окно анти-снайпа словами: «последние 2 минуты», «последнюю минуту»; окно
+// не в целых минутах — секундами.
+function lastWindow(seconds: number): string {
+  const [count, forms] =
+    seconds % 60 === 0
+      ? [seconds / 60, ["минуту", "минуты", "минут"] as const]
+      : [seconds, ["секунду", "секунды", "секунд"] as const];
+  return count === 1
+    ? `последнюю ${forms[0]}`
+    : `последние ${count} ${countForm(count, forms)}`;
+}
+
+function countForm(
+  count: number,
+  [one, few, many]: readonly [string, string, string],
+): string {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
 
 /** Строка карточки проданного лота у покупателя: «✅ Твой лот». */
 export const ownLotLine = marked(pictogram.won, "Твой лот");
@@ -147,13 +240,25 @@ export function finalFeedLabel(
 /** Сводка ленты, пока аукцион не открыл торги (PER-618). */
 export const beforeTradingLine = "Торги ещё не начались. Лоты — кнопками ниже.";
 
-/** Абзацы сводки над «Избранным»: сколько лотов, затем свои — как у ленты. */
+/**
+ * Абзацы сводки над «Избранным»: сколько лотов, затем свои — как у ленты.
+ * У закончившегося аукциона лидировать уже не в чем: сводка говорит об итогах,
+ * без «пока» (прогон 14.10, №106).
+ */
 export function favoritesSummary(
   total: number,
   mine: readonly FeedItem[],
-  options: MineOptions,
+  options: MineOptions & { ended?: boolean },
 ): string[] {
   const count = `Лотов в избранном: ${total}.`;
+  if (options.ended === true) {
+    return mine.length === 0
+      ? [`${favoritesEndedLine} ${count} Итоги — кнопками ниже.`]
+      : [
+          `${favoritesEndedLine} ${count} Списком — что ты купил. Итоги всех — кнопками ниже.`,
+          mineLines(mine, options),
+        ];
+  }
   if (mine.length === 0) {
     return [
       `${count} Ты пока не лидируешь ни в одном из них. Все — кнопками ниже.`,
@@ -165,7 +270,18 @@ export function favoritesSummary(
   ];
 }
 
-/** Пустое избранное: как его пополнить. */
+const favoritesEndedLine = "Аукцион закончен.";
+
+/**
+ * Пустое избранное: как его пополнить. У закончившегося аукциона пополнять
+ * нечего — отметки уходят вместе с ним (ADR-063, дополнение 2026-10-12).
+ */
+export function favoritesEmptyText(ended?: boolean): string {
+  return ended === true
+    ? `${favoritesEndedLine} Избранное этого аукциона больше не хранится.`
+    : favoritesEmpty;
+}
+
 export const favoritesEmpty = `Лотов в избранном пока нет. Отметь лот кнопкой «${followLabel}» на его карточке или сделай ставку — она добавит лот сама.`;
 
 function mineLines(mine: readonly FeedItem[], options: MineOptions): string {
@@ -302,4 +418,15 @@ function originLabel(origin: BidOriginView): string {
       return _exhaustive;
     }
   }
+}
+
+/**
+ * Хвост подписи кнопки лота в ленте и избранном после названия (прогон 14.10,
+ * №83): цена, а у лидера ещё «ты лидер» — словом, без знака (решение
+ * владельца по прогону 14.10). Лидер видит себя и на кнопке, а не только в
+ * сводке над ней; название оболочка обрезает под хвост, чтобы отметка не ушла
+ * за предел подписи.
+ */
+export function lotButtonTail(item: FeedItem, price: string): string {
+  return item.standing === "leader" ? ` · ${price} · ты лидер` : ` · ${price}`;
 }

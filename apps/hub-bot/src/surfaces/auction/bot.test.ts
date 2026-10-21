@@ -726,7 +726,7 @@ describe("auction bot", () => {
               callback_data: feedButton,
             },
           ],
-          [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+          [{ text: "🗂 Прошедшие", callback_data: entryCallback("past") }],
           [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
         ],
       },
@@ -765,7 +765,7 @@ describe("auction bot", () => {
       text: expect.stringContaining("Активных аукционов сейчас нет."),
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+          [{ text: "🗂 Прошедшие", callback_data: entryCallback("past") }],
           [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
         ],
       },
@@ -1065,7 +1065,7 @@ describe("auction bot", () => {
                 text: "10 октября, сб · идут ставки · 3 лота",
               }),
             ],
-            [expect.objectContaining({ text: "Прошедшие" })],
+            [expect.objectContaining({ text: "🗂 Прошедшие" })],
             [expect.objectContaining({ text: "‹ Меню" })],
           ],
         },
@@ -2146,7 +2146,7 @@ describe("bid leaf delivery", () => {
         inline_keyboard: [
           [
             {
-              text: expect.stringMatching(/^✔️ Да, поставить 1\s300\s₽$/),
+              text: "✔️ Да, поставить",
               style: "danger",
               callback_data: expect.stringMatching(/^v1:auc:b:/),
             },
@@ -2632,6 +2632,27 @@ describe("auction notification settings", () => {
     });
   });
 
+  // Человек пришёл из вести, а не из «Настроек»: возврата в дерево у экрана
+  // нет, и выбор режима на нём вид держит (№73 прогона 14 октября 2026 года).
+  it("opens the settings from a notification without the way back to the settings", async () => {
+    const ports = withOutbid(stored("every"));
+    const { bot, calls } = makeBot(ports);
+    const labels = () =>
+      JSON.stringify(calls.at(-1)?.payload).match(/"text":"[^"]*"/g) ?? [];
+    await bot.handleUpdate(lotPress({ data: traceNotifyCallback() }));
+    expect(labels().some((label) => label.includes("‹"))).toBe(false);
+    const shown = calls.at(-1)?.payload as
+      | { reply_markup?: { inline_keyboard: { callback_data: string }[][] } }
+      | undefined;
+    const first = shown?.reply_markup?.inline_keyboard[0]?.[0]?.callback_data;
+    expect(first).toBe(
+      notifyCallback({ kind: "frequency", frequency: "5" }, true),
+    );
+    await bot.handleUpdate(lotPress({ data: first ?? "" }));
+    expect(ports.chosen).toEqual([{ kind: "frequency", frequency: "5" }]);
+    expect(labels().some((label) => label.includes("‹"))).toBe(false);
+  });
+
   // Участник сообщества настройки здесь не получает: его перебития приходят
   // в бот хаба (ADR-064), и Notifications не зовётся.
   it("sends a community member to the hub bot without touching Notifications", async () => {
@@ -2671,9 +2692,11 @@ describe("auction notification settings", () => {
 describe("happy hours", () => {
   const shown = (calls: Array<{ payload: unknown }>) =>
     JSON.stringify(calls.at(-1)?.payload).replace(/[  ]/g, " ");
+  // У лота есть лидер: ставка по порогу — «По шагу», а не первая (PER-631).
   const trading = {
     kind: "trading" as const,
     currentPrice: { minorUnits: 120_000, currency: "RUB" },
+    leaderId: "01929b7e-5c1d-7a3f-8e4b-0000000000ff",
     phase: "online" as const,
   };
   const rub = (rubles: number) => ({
@@ -2886,7 +2909,7 @@ describe("favorite lots", () => {
 
     const card = lastScreen(calls);
     expect(card.keyboard.map((row) => row.map((b) => b.text))).toEqual([
-      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      [expect.stringMatching(/^Первая ставка \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
       ["Ставки", "Добавить в избранное"],
       ["🔄 Обновить"],
@@ -3008,6 +3031,16 @@ describe("raffle among the participants", () => {
     ]);
 
     await bot.handleUpdate(press(buttonData(before, "Зарегистрироваться")));
+    // Принятая регистрация — свой экран исхода (прогон 14.10, №69).
+    const outcome = lastScreen(calls);
+    expect(outcome.text).toContain("<b>Ты в розыгрыше</b>");
+    expect(outcome.keyboard.flat().map((b) => b.text)).toEqual([
+      "Отменить регистрацию",
+      "‹ Розыгрыш",
+      "‹ Аукцион",
+    ]);
+
+    await bot.handleUpdate(press(buttonData(outcome, "‹ Розыгрыш")));
     const registered = lastScreen(calls);
     expect(registered.text).toContain("Ты зарегистрирован.");
     // Техника — за кнопкой (PER-618): экран участника о ней молчит.

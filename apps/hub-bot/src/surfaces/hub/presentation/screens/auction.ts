@@ -18,18 +18,23 @@ import {
   setMoreLine,
 } from "../../../../auction-set.js";
 import {
-  favoritesEmpty,
+  awaitsFirstBid,
+  favoritesEmptyText,
   favoritesSummary,
   feedSummary,
   finalFeedLabel,
   followLabel,
   historyLine,
   leaderLine,
+  lotButtonTail,
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
   ownLotLine,
+  ownProxyLine,
+  stepBidLabel,
   struckHistoryLine,
+  tradingPriceLine,
   unfollowLabel,
 } from "../../../../auction-standing.js";
 import type {
@@ -84,6 +89,7 @@ import {
   raffleNameChoiceScreen,
   raffleProofScreen,
   raffleQuestionScreen,
+  raffleRegisteredScreen,
   raffleScreen,
 } from "./auction-raffle.js";
 import { stageLine } from "./auction-stage.js";
@@ -220,7 +226,14 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
       case "confirm":
         return { screen: confirmScreen(block, view.body.keyboard, money) };
       case "accepted":
-        return { screen: acceptedScreen(block, view.body.keyboard, money) };
+        return {
+          screen: acceptedScreen(
+            block,
+            view.body.keyboard,
+            money,
+            view.timeZone,
+          ),
+        };
       case "question":
         return {
           screen: questionScreen(block, view.body.keyboard, money),
@@ -241,6 +254,10 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
       // Розыгрыш среди участников (ADR-066).
       case "raffle":
         return { screen: raffleScreen(block, view.body.keyboard, view) };
+      case "raffle-registered":
+        return {
+          screen: raffleRegisteredScreen(block, view.body.keyboard, view),
+        };
       case "raffle-proof":
         return { screen: raffleProofScreen(block, view.body.keyboard) };
       case "raffle-name-choice":
@@ -436,12 +453,15 @@ function rootScreen(
   const favorites = buttons.find(
     (button) => button.action === "root.favorites",
   );
-  if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData).row();
+  // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
+  // №66; пересматривает «Розыгрыш своим рядом» PER-669).
+  if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData);
+  if (raffle !== undefined) {
+    keyboard.text(raffleButtonLabel, raffle.callbackData);
+  }
+  nextRow(keyboard);
   if (predictions !== undefined) {
     keyboard.text(predictionButtonLabel, predictions.callbackData).row();
-  }
-  if (raffle !== undefined) {
-    keyboard.text(raffleButtonLabel, raffle.callbackData).row();
   }
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);
@@ -464,26 +484,31 @@ function rootScreen(
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  // Блоки, как у карточки сходки (прогон 14.10, №65): статус, пустая строка,
+  // поле «📅 Когда:» онлайн-торгов и строка финала под ним.
   const online =
     auction.opensAt === undefined
       ? undefined
       : auction.closesAt === undefined
-        ? `Онлайн-торги: с ${moment(auction.opensAt)}`
-        : `Онлайн-торги: с ${moment(auction.opensAt)} до ${moment(auction.closesAt)}`;
+        ? `Когда: онлайн-торги с ${moment(auction.opensAt)}`
+        : `Когда: онлайн-торги с ${moment(auction.opensAt)} до ${moment(auction.closesAt)}`;
+  const fields = [
+    ...(online === undefined
+      ? []
+      : [marked(pictogram.when, escapeHtml(online))]),
+    // Отменённый аукцион финала уже не проведёт (PER-606).
+    ...(auction.final && auction.stage !== "cancelled"
+      ? ["Финал: в зале"]
+      : []),
+  ];
   return {
     id: "auction-root",
     text: screenText(
       "Аукцион",
       [
-        `Статус: ${stageLine(auction)}`,
-        ...(online === undefined ? [] : [online]),
-        // Отменённый аукцион финала уже не проведёт (PER-606).
-        ...(auction.final && auction.stage !== "cancelled"
-          ? ["Финал: в зале"]
-          : []),
-      ]
-        .map(escapeHtml)
-        .join("\n"),
+        `Статус: <b>${escapeHtml(stageLine(auction))}</b>`,
+        ...(fields.length === 0 ? [] : ["", ...fields]),
+      ].join("\n"),
     ),
     keyboard: withNav(keyboard, view.rootParent),
     format: "HTML",
@@ -500,16 +525,17 @@ function feedLabel(
       const item = items.get(button.lotId);
       if (item === undefined) return untitled;
       const title = item.title ?? untitled;
-      const label =
-        (final === undefined ? null : finalFeedLabel(item, final, title)) ??
-        `${title} · ${priceLabel(item.status)}`;
+      const finalLabel =
+        final === undefined ? null : finalFeedLabel(item, final, title);
       // Отметка принадлежности к сету (ADR-073, п. 7): лот сета помечен в
       // подписи, а название сета карточка называет.
-      return buttonText(
-        item.setName === undefined
-          ? label
-          : `${label} · ${setMark(item.setName)}`,
-      );
+      const mark =
+        item.setName === undefined ? undefined : setMark(item.setName);
+      return finalLabel === null
+        ? lotButton(item, title, mark)
+        : buttonText(
+            mark === undefined ? finalLabel : `${finalLabel} · ${mark}`,
+          );
     }
     case "feed.prev":
       return "←";
@@ -595,7 +621,7 @@ function lotScreen(
     if (content.some(isPagerButton)) editRow(keyboard, view, lot);
     nextRow(keyboard);
     for (const button of content) {
-      keyboard.text(lotLabel(button), button.callbackData);
+      keyboard.text(lotLabel(button, lot), button.callbackData);
     }
   }
   if (back === undefined) {
@@ -720,7 +746,10 @@ function editRow(
   nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
 }
 
-function lotLabel(button: AuctionButton): string {
+function lotLabel(
+  button: AuctionButton,
+  lot: Extract<AuctionBlock, { kind: "lot" }>,
+): string {
   switch (button.action) {
     case "lot.refresh":
       return refreshLabel;
@@ -729,8 +758,9 @@ function lotLabel(button: AuctionButton): string {
     // Лоты сета — экран сета с карточки (ADR-073, п. 7).
     case "lot.set":
       return setLabel;
+    // Без ставок первая ставка — не «по шагу» (PER-631, №82).
     case "lot.bid-step":
-      return `По шагу (${money(button.amount)})`;
+      return stepBidLabel(button.amount, awaitsFirstBid(lot.status));
     case "lot.bid-final":
       return finalBidLabel(button.amount, money);
     case "lot.bid-custom":
@@ -960,13 +990,14 @@ function favoritesScreen(
     text: screenText(
       pagedTitle(favoritesLabel, { items: favorites.lots, ...favorites }),
       ...((favorites.total ?? favorites.lots.length) === 0
-        ? [favoritesEmpty]
+        ? [favoritesEmptyText(favorites.ended)]
         : favoritesSummary(
             favorites.total ?? favorites.lots.length,
             favorites.mine ?? [],
             {
               ...mineOptions,
               price: (item) => favoriteState(item.status, view),
+              ...(favorites.ended === true ? { ended: true } : {}),
             },
           )),
     ),
@@ -986,6 +1017,18 @@ function favoriteState(status: LotStatusView, view: AuctionView): string {
     : priceLabel(status);
 }
 
+// Кнопка лота ленты и избранного: название, обрезанное под хвост с ценой,
+// отметкой лидера (прогон 14.10, №83) и, в ленте, отметкой сета, в пределе
+// подписи.
+function lotButton(item: FeedItem, title: string, mark?: string): string {
+  const tail = `${lotButtonTail(item, priceLabel(item.status))}${
+    mark === undefined ? "" : ` · ${mark}`
+  }`;
+  return `${truncate(title, Math.max(1, BUTTON_LIMIT - tail.length))}${tail}`;
+}
+
+const BUTTON_LIMIT = 64;
+
 function favoritesLabelOf(
   button: AuctionButton,
   items: ReadonlyMap<string, FeedItem>,
@@ -995,7 +1038,7 @@ function favoritesLabelOf(
       const item = items.get(button.lotId);
       return item === undefined
         ? untitled
-        : buttonText(`${item.title ?? untitled} · ${priceLabel(item.status)}`);
+        : lotButton(item, item.title ?? untitled);
     }
     case "favorites.prev":
       return "←";
@@ -1176,11 +1219,15 @@ function statusGroups(
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
         ...(showsStep(block) ? stepLines(block, view) : []),
-        // Свой лимит смотрящего: чужих Auction не отдаёт.
+        // Свой лимит смотрящего: чужих Auction не отдаёт. Исчерпанный лимит
+        // так и назван (PER-631, №81).
         ...(block.viewerProxyLimit === undefined
           ? []
           : [
-              `Твоя автоставка: до ${money(block.viewerProxyLimit)} (видишь только ты)`,
+              ownProxyLine({
+                ...block,
+                viewerProxyLimit: block.viewerProxyLimit,
+              }),
             ]),
       ];
       return [
@@ -1190,7 +1237,8 @@ function statusGroups(
             : "Статус: идут торги",
         ],
         [
-          marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
+          // Без ставок — «Стартовая цена» (PER-631, №82).
+          tradingPriceLine(status),
           marked(
             pictogram.leader,
             leaderLine(status.leaderId, participantName, block.standing),

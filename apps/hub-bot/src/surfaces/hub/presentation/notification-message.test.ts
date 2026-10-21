@@ -266,9 +266,11 @@ describe("renderNotification", () => {
       currentPrice: { minorUnits: 150_000, currency: "RUB" },
     });
 
+    // Название жирным, после «перебили» (№71 прогона 14 октября 2026 года).
     expect(rendered.text).toBe(
-      "Твою ставку на «Кружка» перебили. Текущая цена — 1 500 ₽.",
+      "Твою ставку перебили: <b>Кружка</b>, цена 1 500 ₽.",
     );
+    expect(rendered.format).toBe("HTML");
     const button = rendered.keyboard?.inline_keyboard[0]?.[0];
     expect(button?.text).toBe("К лоту");
     expect(button).toMatchObject({
@@ -302,7 +304,7 @@ describe("renderNotification", () => {
       price: { minorUnits: 150_000, currency: "RUB" },
     });
     expect(rendered.text).toBe(
-      "Лот «Кружка» твой за 1 500 ₽. Как оплатить и забрать — напишет организатор аукциона.",
+      "Лот <b>Кружка</b> твой за 1 500 ₽. Как оплатить и забрать — напишет организатор аукциона.",
     );
     expect(rendered.keyboard?.inline_keyboard).toEqual([
       [expect.objectContaining({ text: "К лоту" })],

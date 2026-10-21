@@ -23,6 +23,7 @@ import type {
   AnswerRefusal,
   AuctionButton,
   AuctionScreenBody,
+  BidExtension,
   CommandResult,
   FinalBidOutcome,
   ProxyExample,
@@ -237,7 +238,13 @@ export async function commitCommand(
     lotId: intent.lotId,
     opId: intent.opId,
   };
-  const settled = { context, lot, intent, amount };
+  const settled = {
+    context,
+    lot,
+    intent,
+    amount,
+    autoFollowNote: await notFollowedYet(context, intent.lotId),
+  };
   return intent.command === "bid"
     ? settle(
         settled,
@@ -358,21 +365,21 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
       page: number;
     };
     amount: Money;
+    autoFollowNote: boolean;
   },
   outcome: CommandOutcome<Refusal>,
   refused: (refusal: Refusal) => CommandResult,
 ): Promise<AuctionScreenBody> {
   const { context, lot, intent, amount } = settled;
   switch (outcome.kind) {
-    case "accepted":
+    case "accepted": {
       if (intent.command === "proxy") markExplainerSeen(context);
-      return acceptedBody(
-        lot,
-        intent,
-        amount,
-        outcome.lotVersion,
-        context.favorites !== undefined,
-      );
+      const extension = await extensionAfter(context, lot, outcome.lotVersion);
+      return acceptedBody(lot, intent, amount, outcome.lotVersion, {
+        favorites: settled.autoFollowNote,
+        ...(extension === undefined ? {} : { extension }),
+      });
+    }
     case "unanswered":
       // Команда могла пройти: что вышло, покажет карточка за «К лоту» — она
       // читает лот заново.
@@ -397,15 +404,86 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   }
 }
 
+// Подсказку об избранном (ADR-063) экран показывает, только если лота там ещё
+// не было (PER-631, №108): иначе она повторялась бы на каждой ставке. Отметки
+// читаются до команды — после неё Notifications кладёт лот туда сам. Сбой
+// чтения подсказку оставляет: лишняя строка дешевле молчания о том, что
+// ставка меняет избранное.
+async function notFollowedYet(
+  context: CommandContext,
+  lotId: string,
+): Promise<boolean> {
+  if (context.favorites === undefined) return false;
+  try {
+    const followed = await context.favorites.listFollowedLots(context.viewer);
+    return !followed.includes(lotId);
+  } catch {
+    return true;
+  }
+}
+
+// Продление анти-снайпом после принятой команды (PER-631, №107). Продления
+// кончились до ставки — дедлайн уже не сдвинется, и перечитывать нечего.
+// Иначе лот перечитывается до версии из ответа: выросло число продлений —
+// ставка продлила торги. Часов в дереве нет, поэтому «ставка в окне» решает
+// не время, а счётчик продлений Auction. Сбой чтения строку убирает, а экран
+// принятой ставки не роняет: ставка уже принята.
+async function extensionAfter(
+  context: CommandContext,
+  before: LotView,
+  lotVersion: number,
+): Promise<BidExtension | undefined> {
+  const { status, antiSnipe } = before;
+  if (
+    status.kind !== "trading" ||
+    status.deadline === undefined ||
+    status.extensionsUsed === undefined ||
+    antiSnipe === undefined ||
+    antiSnipe.maxExtensions <= 0
+  ) {
+    return undefined;
+  }
+  if (status.extensionsUsed >= antiSnipe.maxExtensions) {
+    return { kind: "exhausted", deadline: status.deadline };
+  }
+  let after: LotView;
+  try {
+    after = await context.auction.getLot({
+      viewer: context.viewer,
+      lotId: before.lotId,
+      ...(lotVersion > 0 ? { atLeastVersion: lotVersion } : {}),
+    });
+  } catch {
+    return undefined;
+  }
+  const next = after.status;
+  if (
+    next.kind !== "trading" ||
+    next.deadline === undefined ||
+    next.extensionsUsed === undefined ||
+    next.extensionsUsed <= status.extensionsUsed
+  ) {
+    return undefined;
+  }
+  return {
+    kind: "extended",
+    deadline: next.deadline,
+    used: next.extensionsUsed,
+    max: antiSnipe.maxExtensions,
+    windowSeconds: antiSnipe.windowSeconds,
+  };
+}
+
 // Версия 0 — Auction её не назвал: кнопка прежняя, карточка читает один раз.
-// Выходов два (PER-595): к лоту и к ленте его аукциона. `favorites` — у бота
-// есть избранное, и экран говорит, что ставка кладёт лот туда сама (ADR-063).
+// Выходов два (PER-595): к лоту и к ленте его аукциона. `favorites` — лота
+// не было в избранном, и экран говорит, что ставка кладёт лот туда сама
+// (ADR-063); `extension` — что анти-снайп сделал с дедлайном.
 function acceptedBody(
   lot: LotView,
   intent: { command: AuctionCommand; lotId: string; page: number },
   amount: Money,
   lotVersion: number,
-  favorites: boolean,
+  notes: { favorites: boolean; extension?: BidExtension },
 ): AuctionScreenBody {
   return {
     blocks: [
@@ -416,7 +494,10 @@ function acceptedBody(
         auctionId: lot.auctionId,
         ...titled(lot),
         amount,
-        ...(favorites ? { favorites: true } : {}),
+        ...(notes.favorites ? { favorites: true } : {}),
+        ...(notes.extension === undefined
+          ? {}
+          : { extension: notes.extension }),
       },
     ],
     keyboard: [

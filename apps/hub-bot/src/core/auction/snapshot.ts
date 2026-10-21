@@ -42,6 +42,7 @@ export async function lotOrMissing(
 
 export function lotViewOf(snapshot: LotSnapshot): LotView {
   const step = snapshot.config?.stepPolicy?.policy;
+  const antiSnipe = snapshot.config?.antiSnipe;
   return {
     lotId: snapshot.id,
     auctionId: snapshot.auctionId,
@@ -79,6 +80,14 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
     ...(snapshot.lotSet === undefined
       ? {}
       : { lotSet: lotSetOf(snapshot.lotSet) }),
+    ...(antiSnipe === undefined
+      ? {}
+      : {
+          antiSnipe: {
+            windowSeconds: Number(antiSnipe.windowSeconds),
+            maxExtensions: antiSnipe.maxExtensions,
+          },
+        }),
     status: statusOf(snapshot.status),
   };
 }
@@ -119,6 +128,7 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
         ...(status.value.deadline === undefined
           ? {}
           : { deadline: status.value.deadline }),
+        extensionsUsed: status.value.extensionsUsed,
         phase: phaseOf(status.value.phase),
         // Ask не выше цены уже ничего не объявляет: следующую цену считает
         // шаг (П-01), и карточка о нём молчит.

@@ -361,7 +361,7 @@ describe("auction through both bots", () => {
     await admin.presses("✔️ Да, отменить аукцион");
     expect(plain(admin.sees())).toContain("Аукцион отменён");
     await guest.says("/auctions");
-    await guest.presses("Прошедшие");
+    await guest.presses("🗂 Прошедшие");
     // Список читает read model Auction: отмена доходит до неё не сразу.
     const cancelledRow = () =>
       guest.pressable().find((label) => label.includes("отменён"));
@@ -369,7 +369,7 @@ describe("auction through both bots", () => {
       if (cancelledRow() !== undefined) break;
       await new Promise((resolve) => setTimeout(resolve, 250));
       await guest.presses("‹ Аукционы");
-      await guest.presses("Прошедшие");
+      await guest.presses("🗂 Прошедшие");
     }
     expect(cancelledRow()).toBeDefined();
     await guest.presses(cancelledRow() ?? "");

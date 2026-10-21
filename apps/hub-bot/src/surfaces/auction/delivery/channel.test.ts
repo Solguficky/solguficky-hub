@@ -187,7 +187,7 @@ describe("auction delivery channel", () => {
     expect(message.ack).toHaveBeenCalledOnce();
     const [chatId, text, options] = sendMessage.mock.calls[0] ?? [];
     expect(chatId).toBe(42);
-    expect(text).toContain("«Кружка» перебили");
+    expect(text).toContain("перебили: <b>Кружка</b>");
     const button = options.reply_markup.inline_keyboard[0][0];
     expect(button.text).toBe("К лоту");
     expect(parseTraceCallback(button.callback_data)).toContain(":lot:");
@@ -222,7 +222,7 @@ describe("auction delivery channel", () => {
     const [, rivalText] = sendMessage.mock.calls[0] ?? [];
     const [, leaderText, leaderOptions] = sendMessage.mock.calls[1] ?? [];
     expect(rivalText).toContain("перебили");
-    expect(leaderText).toContain("Твоя автоставка на «Кружка»");
+    expect(leaderText).toContain("Твоя автоставка на <b>Кружка</b>");
     const button = leaderOptions.reply_markup.inline_keyboard[0][0];
     expect(button.text).toBe("К лоту");
     expect(parseTraceCallback(button.callback_data)).toContain(":lot:");

@@ -1544,6 +1544,44 @@ const acceptedBody = (
   ],
 });
 
+// Экран принятой ставки 1 300 ₽ с подсказкой избранного или строкой
+// анти-снайпа (PER-631).
+const acceptedWith = (
+  notes: Pick<
+    Extract<AuctionScreenBody["blocks"][number], { kind: "accepted" }>,
+    "favorites" | "extension"
+  >,
+): AuctionScreenBody => {
+  const body = acceptedBody("bid", 130000, 4);
+  const [accepted] = body.blocks;
+  if (accepted?.kind !== "accepted") throw new Error("no accepted block");
+  return { ...body, blocks: [{ ...accepted, ...notes }] };
+};
+
+// Отметки избранного читаются до команды (PER-631, №108).
+const FOLLOWED_CALL: PortCall = {
+  port: "favorites",
+  method: "listFollowedLots",
+  request: CONTRACT_VIEWER,
+};
+
+// Лот с анти-снайпом (PER-631, №107): окно две минуты, три продления, два
+// уже использованы.
+const SNIPED_TRADING = {
+  kind: "trading" as const,
+  currentPrice: rub(1200),
+  leaderId: LEADER_ID,
+  deadline: "2026-10-10T18:00:00Z",
+  extensionsUsed: 2,
+  phase: "online" as const,
+};
+
+const SNIPED_LOT: LotView = {
+  ...CONTRACT_LOT,
+  antiSnipe: { windowSeconds: 120, maxExtensions: 3 },
+  status: SNIPED_TRADING,
+};
+
 // Тот же лот, где лидирует смотрящий: ставить против себя ему нечего.
 const LOT_LED_BY_VIEWER: LotView = {
   ...CONTRACT_LOT,
@@ -2232,6 +2270,16 @@ const FAVORITE_ITEMS = [
   { lotId: SOLD_LOT.lotId, title: "Плакат", status: SOLD_LOT.status },
 ];
 
+// Сводка аукциона корня (PER-605); её же читает избранное из корня ради
+// стадии (прогон 14.10, №106).
+const CONTRACT_SUMMARY: AuctionSummaryView = {
+  auctionId: CONTRACT_AUCTION_ID,
+  stage: "prebidding",
+  opensAt: "2026-10-26T09:00:00Z",
+  closesAt: "2026-10-29T18:00:00Z",
+  final: true,
+};
+
 const FAVORITE_CASES: readonly AuctionContractCase[] = [
   {
     intent: "lot: in favorites",
@@ -2397,12 +2445,14 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
       keyboard: [openFavoriteRow(UNSOLD_LOT), openFavoriteRow(SOLD_LOT)],
     },
   },
-  // Список из корня аукциона: возврат — в него (PER-644).
+  // Список из корня аукциона: возврат — в него (PER-644). Стадию аукциона
+  // список читает ради текста сводки (прогон 14.10, №106).
   {
     intent: "favorites: from the root",
     callbackData: favoritesCallback(0, CONTRACT_AUCTION_ID),
     auction: { ...AUCTION, followed: [UNSOLD_LOT.lotId, SOLD_LOT.lotId] },
     auctionCalls: [
+      summaryCall(CONTRACT_AUCTION_ID),
       listFollowedCall,
       findLotCall(UNSOLD_LOT.lotId),
       findLotCall(SOLD_LOT.lotId),
@@ -2415,6 +2465,47 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
           pageCount: 1,
           lots: FAVORITE_ITEMS,
           total: 2,
+        },
+      ],
+      keyboard: [
+        openFavoriteRow(UNSOLD_LOT),
+        openFavoriteRow(SOLD_LOT),
+        [
+          {
+            action: "favorites.back",
+            callbackData: callback({
+              kind: "root",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
+          },
+        ],
+      ],
+    },
+  },
+  // Закончившийся аукцион: сводка говорит об итогах (прогон 14.10, №106).
+  {
+    intent: "favorites: from the root of a finished auction",
+    callbackData: favoritesCallback(0, CONTRACT_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: { ...CONTRACT_SUMMARY, stage: "finished" },
+      followed: [UNSOLD_LOT.lotId, SOLD_LOT.lotId],
+    },
+    auctionCalls: [
+      summaryCall(CONTRACT_AUCTION_ID),
+      listFollowedCall,
+      findLotCall(UNSOLD_LOT.lotId),
+      findLotCall(SOLD_LOT.lotId),
+    ],
+    body: {
+      blocks: [
+        {
+          kind: "favorites",
+          page: 0,
+          pageCount: 1,
+          lots: FAVORITE_ITEMS,
+          total: 2,
+          ended: true,
         },
       ],
       keyboard: [
@@ -2796,6 +2887,27 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
   };
 };
 
+// Принятая регистрация — свой экран исхода (прогон 14.10, №69): отмена,
+// затем «‹ Розыгрыш» и «‹ Аукцион».
+const registeredScreen = (raffle: RaffleView): AuctionScreenBody => ({
+  blocks: [
+    { kind: "raffle-registered", auctionId: CONTRACT_AUCTION_ID, raffle },
+  ],
+  keyboard: [
+    [
+      {
+        action: "raffle.cancel",
+        callbackData: callback({
+          kind: "raffle-cancel",
+          auctionId: CONTRACT_AUCTION_ID,
+        }),
+      },
+    ],
+    toRaffleRow,
+    toRootRow,
+  ],
+});
+
 const raffleProofCallback = callback({
   kind: "raffle-proof",
   auctionId: CONTRACT_AUCTION_ID,
@@ -2939,7 +3051,7 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     }),
     auction: { ...AUCTION, registrations: [accepted(REGISTERED_RAFFLE)] },
     auctionCalls: [raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0])],
-    body: raffleScreen(REGISTERED_RAFFLE),
+    body: registeredScreen(REGISTERED_RAFFLE),
   },
   // Ответа не было: один повтор тем же `op_id`, затем розыгрыш перечитан.
   {
@@ -3019,7 +3131,7 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
       raffleNameCall({ kind: "username", username: "owl_fan" }),
       raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
     ],
-    body: raffleScreen(REGISTERED_RAFFLE),
+    body: registeredScreen(REGISTERED_RAFFLE),
   },
   {
     intent: "raffle: ask alias",
@@ -3057,7 +3169,7 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
       raffleNameCall({ kind: "alias", alias: "Сова" }),
       raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
     ],
-    body: raffleScreen(REGISTERED_RAFFLE),
+    body: registeredScreen(REGISTERED_RAFFLE),
   },
   {
     intent: "raffle: alias taken",
@@ -3102,14 +3214,6 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
 // «Розыгрыш». Розыгрыш читается параллельно аукциону и стартует первым; его
 // отказ убирает кнопку, а аукцион, которого Auction не отдал, оставляет корень
 // без кнопок — кнопка устарела.
-const CONTRACT_SUMMARY: AuctionSummaryView = {
-  auctionId: CONTRACT_AUCTION_ID,
-  stage: "prebidding",
-  opensAt: "2026-10-26T09:00:00Z",
-  closesAt: "2026-10-29T18:00:00Z",
-  final: true,
-};
-
 const rootCallback = (auctionId: string) =>
   encodeAuctionCallback({ kind: "root", auctionId });
 
@@ -3158,10 +3262,10 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
           auction: CONTRACT_SUMMARY,
         },
       ],
+      // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).
       keyboard: [
-        rootLotsRow,
-        rootPredictionsRow(CONTRACT_AUCTION_ID),
         [
+          ...rootLotsRow,
           {
             action: "root.raffle",
             callbackData: encodeAuctionCallback({
@@ -3170,6 +3274,7 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
             }),
           },
         ],
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
       ],
     },
   },
@@ -3461,7 +3566,9 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       keyboard: settledKeyboard(LOT_WON_BY_VIEWER.lotId, 0),
     },
   },
-  // У бота с избранным экран принятой ставки говорит, что лот уже там.
+  // У бота с избранным экран принятой ставки говорит, что лот уже там, —
+  // если до ставки его там не было (PER-631, №108): отметки читаются до
+  // команды, после неё Notifications кладёт лот туда сам.
   {
     intent: "bid: accepted with favorites",
     callbackData: commitCallback("bid", 130000),
@@ -3470,20 +3577,106 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       followed: [],
       bids: [{ kind: "accepted", lotVersion: 4 }],
     },
+    auctionCalls: [LOT_CALL, FOLLOWED_CALL, bidCall(130000)],
+    body: acceptedWith({ favorites: true }),
+  },
+  // Повторная ставка на лот из избранного подсказку не показывает.
+  {
+    intent: "bid: accepted on a lot already in favorites",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      followed: [CONTRACT_LOT.lotId],
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+    },
+    auctionCalls: [LOT_CALL, FOLLOWED_CALL, bidCall(130000)],
+    body: acceptedBody("bid", 130000, 4),
+  },
+  // Отметки не прочитались: подсказка остаётся — ставка всё равно положит
+  // лот в избранное, и строка об этом дешевле молчания.
+  {
+    intent: "bid: accepted, favorites unavailable",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      followed: "unavailable",
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+    },
+    auctionCalls: [LOT_CALL, FOLLOWED_CALL, bidCall(130000)],
+    body: acceptedWith({ favorites: true }),
+  },
+  // Ставка в окне анти-снайпа продлила торги (PER-631, №107): лот
+  // перечитывается до версии из ответа, и экран называет новый дедлайн и
+  // номер продления.
+  {
+    intent: "bid: accepted, extended by anti-sniping",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      lots: [SNIPED_LOT],
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      after: [
+        {
+          ...SNIPED_LOT,
+          status: {
+            ...SNIPED_TRADING,
+            deadline: "2026-10-10T18:02:00Z",
+            extensionsUsed: 3,
+          },
+        },
+      ],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
+    body: acceptedWith({
+      extension: {
+        kind: "extended",
+        deadline: "2026-10-10T18:02:00Z",
+        used: 3,
+        max: 3,
+        windowSeconds: 120,
+      },
+    }),
+  },
+  // Ставка вдали от дедлайна его не сдвинула: строки нет.
+  {
+    intent: "bid: accepted, not extended",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      lots: [SNIPED_LOT],
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      after: [SNIPED_LOT],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
+    body: acceptedBody("bid", 130000, 4),
+  },
+  // Продления кончились до ставки: дедлайн уже не сдвинется, и лот не
+  // перечитывается.
+  {
+    intent: "bid: accepted, no extensions left",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      lots: [
+        {
+          ...SNIPED_LOT,
+          status: { ...SNIPED_TRADING, extensionsUsed: 3 },
+        },
+      ],
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+    },
     auctionCalls: [LOT_CALL, bidCall(130000)],
-    body: (() => {
-      const body = acceptedBody("bid", 130000, 4);
-      const [accepted] = body.blocks;
-      return {
-        ...body,
-        blocks: [
-          {
-            ...accepted,
-            favorites: true,
-          } as AuctionScreenBody["blocks"][number],
-        ],
-      };
-    })(),
+    body: acceptedWith({
+      extension: { kind: "exhausted", deadline: "2026-10-10T18:00:00Z" },
+    }),
   },
 ];
 

@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
+  AntiSnipeSchema,
   LotConfigSchema,
   LotPhase,
   type Money,
@@ -50,6 +51,7 @@ describe("lotViewOf", () => {
         currentPrice: { minorUnits: 120_000, currency: "RUB" },
         leaderId: "p-1",
         deadline: "2026-10-10T18:00:00Z",
+        extensionsUsed: 0,
         phase: "online",
       },
     ],
@@ -61,6 +63,7 @@ describe("lotViewOf", () => {
       {
         kind: "trading",
         currentPrice: { minorUnits: 10_000, currency: "RUB" },
+        extensionsUsed: 0,
         phase: "live",
       },
     ],
@@ -77,6 +80,7 @@ describe("lotViewOf", () => {
       {
         kind: "trading",
         currentPrice: { minorUnits: 10_000, currency: "RUB" },
+        extensionsUsed: 0,
         phase: "live",
         ask: { minorUnits: 15_000, currency: "RUB" },
       },
@@ -94,6 +98,7 @@ describe("lotViewOf", () => {
       {
         kind: "trading",
         currentPrice: { minorUnits: 15_000, currency: "RUB" },
+        extensionsUsed: 0,
         phase: "live",
       },
     ],
@@ -233,6 +238,34 @@ describe("lotViewOf", () => {
       until: "2026-10-11T15:00:00Z",
       step,
     });
+  });
+
+  // Экран принятой ставки называет продление анти-снайпом (PER-631, №107):
+  // условия и счётчик продлений доходят до дерева как есть.
+  it("reads the anti-sniping terms and the extensions used", () => {
+    const view = lotViewOf(
+      create(LotSnapshotSchema, {
+        ...base,
+        config: create(LotConfigSchema, {
+          antiSnipe: create(AntiSnipeSchema, {
+            windowSeconds: 120n,
+            extensionSeconds: 120n,
+            maxExtensions: 3,
+          }),
+        }),
+        status: {
+          case: "trading",
+          value: {
+            currentPrice: rub(1200n),
+            deadline: "2026-10-10T18:00:00Z",
+            extensionsUsed: 2,
+            phase: LotPhase.ONLINE,
+          },
+        },
+      }),
+    );
+    expect(view.antiSnipe).toEqual({ windowSeconds: 120, maxExtensions: 3 });
+    expect(view.status).toMatchObject({ kind: "trading", extensionsUsed: 2 });
   });
 
   it("refuses a window without a step", () => {

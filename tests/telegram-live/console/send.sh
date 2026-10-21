@@ -4,7 +4,7 @@
 # (ответ всё равно напечатан), 7 — пульт не слушает: он поднимается
 # `just telegram-live-console`.
 #
-#   sh tests/telegram-live/console/send.sh press Архив
+#   sh tests/telegram-live/console/send.sh press 🗂 Архив
 #   sh tests/telegram-live/console/send.sh        # справка и готовность
 set -eu
 

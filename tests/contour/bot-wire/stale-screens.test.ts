@@ -105,7 +105,7 @@ describe("кнопки на старых экранах", () => {
     expect(organizer.buttons()).not.toContain("Скрытые сходки");
 
     // Процесс жив: следующее нажатие обрабатывается как обычно.
-    await organizer.presses("Архив");
+    await organizer.presses("🗂 Архив");
     expect(organizer.buttons()).toContain("‹ Сходки");
   });
 });

@@ -486,9 +486,37 @@ describe("renderEntryScreen", () => {
     );
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\n💰 Цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
+        "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
         "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
         "Описание пока не добавлено.",
+    );
+  });
+
+  // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81):
+  // строка говорит, что он исчерпан. Лидеру тот же лимит — обычная строка.
+  it("names an exhausted own limit of a participant who does not lead", () => {
+    const course = (standing?: "leader") =>
+      plain(
+        lotScreen(
+          {
+            card: { title: "Кружка", description: "" },
+            nextPrice: rub(950),
+            status: {
+              kind: "trading",
+              currentPrice: rub(900),
+              leaderId: "p-2",
+              phase: "online",
+            },
+            viewerProxyLimit: rub(900),
+            ...(standing === undefined ? {} : { standing }),
+          },
+          plainCard,
+        ).text,
+      );
+    expect(course()).toContain("Автоставка до 900 ₽ исчерпана — подними лимит");
+    expect(course()).not.toContain("Твоя автоставка");
+    expect(course("leader")).toContain(
+      "Твоя автоставка: до 900 ₽ (видишь только ты)",
     );
   });
 
@@ -988,7 +1016,7 @@ describe("auction lists", () => {
     // Пустой список — не тупик (PER-592): «Прошедшие» внутри раздела и
     // возврат в меню.
     expect(screen.keyboard).toEqual([
-      [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+      [{ text: "🗂 Прошедшие", callback_data: entryCallback("past") }],
       [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
     ]);
   });
