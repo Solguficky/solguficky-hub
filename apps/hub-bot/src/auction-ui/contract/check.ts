@@ -363,6 +363,40 @@ const SCHEDULED_LOT: LotView = {
   status: { kind: "scheduled", startingPrice: rub(500) },
 };
 
+// Лоты сета (ADR-073, п. 7): сет назван, в нём два лота, и после итога
+// известен собравший. Сет приходит в снимке каждого своего лота.
+const SET_LOT_ID = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b44";
+const SET_OTHER_LOT_ID = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b45";
+const SET_NAME = "Лесные дары";
+
+const SET_LOT: LotView = {
+  lotId: SET_LOT_ID,
+  auctionId: CONTRACT_AUCTION_ID,
+  version: 3,
+  card: { title: "Кружка", description: "" },
+  proxyEnabled: false,
+  status: { kind: "scheduled", startingPrice: rub(500) },
+  lotSet: {
+    name: SET_NAME,
+    lotIds: [SET_LOT_ID, SET_OTHER_LOT_ID],
+    collectorName: "@owl",
+  },
+};
+
+const SET_OTHER_LOT: LotView = {
+  lotId: SET_OTHER_LOT_ID,
+  auctionId: CONTRACT_AUCTION_ID,
+  version: 2,
+  card: { title: "Плакат", description: "" },
+  proxyEnabled: false,
+  status: { kind: "unsold" },
+  lotSet: {
+    name: SET_NAME,
+    lotIds: [SET_LOT_ID, SET_OTHER_LOT_ID],
+    collectorName: "@owl",
+  },
+};
+
 // Десять записей хронологии лота в торгах двумя серверными страницами: две
 // страницы экрана по восемь строк. Время у пар записей одно — порядок задаёт
 // журнал, а прокси-ставка лидера стоит после ручной соперника той же команды.
@@ -412,7 +446,15 @@ const OPEN_PREDICTION_ROUNDS: readonly PredictionRoundView[] = [
 // Лента приходит двумя серверными страницами и не по цене: порядок, которого
 // ждут тела ниже, может дать только край.
 export const AUCTION: ContractAuction = {
-  lots: [CONTRACT_LOT, SOLD_LOT, UNSOLD_LOT, WITHDRAWN_LOT, SCHEDULED_LOT],
+  lots: [
+    CONTRACT_LOT,
+    SOLD_LOT,
+    UNSOLD_LOT,
+    WITHDRAWN_LOT,
+    SCHEDULED_LOT,
+    SET_LOT,
+    SET_OTHER_LOT,
+  ],
   pages: {
     "": {
       lots: [SOLD_LOT, CONTRACT_LOT, WITHDRAWN_LOT],
@@ -4345,7 +4387,106 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Сет лотов (ADR-073, п. 7): карточка лота сета называет сет и ведёт к его
+// экрану, экран перечисляет лоты сета и, после итога, собравшего.
+const SET_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "lot: the card of a lot of a set",
+    callbackData: lotCallback(SET_LOT_ID, 0),
+    auction: AUCTION,
+    auctionCalls: [getLotCall(SET_LOT_ID), ...CARD_CALLS],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: SET_LOT_ID,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 3,
+          card: { title: "Кружка", description: "" },
+          status: { kind: "scheduled", startingPrice: rub(500) },
+          set: {
+            name: SET_NAME,
+            lotIds: [SET_LOT_ID, SET_OTHER_LOT_ID],
+            collectorName: "@owl",
+          },
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.set",
+            callbackData: encodeAuctionCallback({
+              kind: "set",
+              lotId: SET_LOT_ID,
+              page: 0,
+            }),
+          },
+        ],
+        ...pagerRows(FEED_ORDER, SET_LOT_ID, refreshRow(SET_LOT_ID, 0)),
+        backRow(0),
+      ],
+    },
+  },
+  {
+    intent: "set: the screen of the set",
+    callbackData: encodeAuctionCallback({
+      kind: "set",
+      lotId: SET_LOT_ID,
+      page: 0,
+    }),
+    auction: AUCTION,
+    auctionCalls: [getLotCall(SET_LOT_ID), findLotCall(SET_OTHER_LOT_ID)],
+    body: {
+      blocks: [
+        {
+          kind: "set",
+          auctionId: CONTRACT_AUCTION_ID,
+          name: SET_NAME,
+          lots: [
+            {
+              lotId: SET_LOT_ID,
+              title: "Кружка",
+              status: { kind: "scheduled", startingPrice: rub(500) },
+              setName: SET_NAME,
+            },
+            {
+              lotId: SET_OTHER_LOT_ID,
+              title: "Плакат",
+              status: { kind: "unsold" },
+              setName: SET_NAME,
+            },
+          ],
+          collectorName: "@owl",
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "set.open-lot",
+            lotId: SET_LOT_ID,
+            callbackData: lotCallback(SET_LOT_ID, 0),
+          },
+        ],
+        [
+          {
+            action: "set.open-lot",
+            lotId: SET_OTHER_LOT_ID,
+            callbackData: lotCallback(SET_OTHER_LOT_ID, 0),
+          },
+        ],
+        [
+          {
+            action: "set.back",
+            callbackData: lotCallback(SET_LOT_ID, 0),
+          },
+        ],
+      ],
+    },
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
+  ...SET_CASES,
   ...ROOT_CASES,
   {
     intent: "feed",

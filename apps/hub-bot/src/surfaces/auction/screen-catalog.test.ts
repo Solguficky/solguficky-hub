@@ -427,7 +427,8 @@ const lot = (image: boolean): AuctionScreenBody => ({
 
 // Карточка с кнопкой избранного (PER-495): ставка по шагу, своя сумма с
 // автоставкой, «Ставки» с избранным, листание с «Обновить» и навигация —
-// пять рядов, предел карточки (PER-669).
+// пять рядов (PER-669); у лота сета к ним добавляется ряд «Лоты сета»
+// (PER-510).
 const withFollow = (following: boolean): AuctionScreenBody => {
   const body = lot(false);
   return {
@@ -445,6 +446,70 @@ const withFollow = (following: boolean): AuctionScreenBody => {
         : row,
     ),
   };
+};
+
+// Сет лотов (ADR-073, п. 7): карточка лота сета с кнопкой «Лоты сета» и
+// собравшим после итога, и экран сета — его лоты и тот же собравший.
+const setLot: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "lot",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      version: 3,
+      card: { title: "Банка солёных грибов", description: "" },
+      status: { kind: "trading", currentPrice: rub(500), phase: "online" },
+      set: {
+        name: "Лесные дары",
+        lotIds: ["lot-1", "lot-2"],
+        collectorName: "@jay",
+      },
+    },
+  ],
+  keyboard: [
+    [{ action: "lot.set", callbackData: "v1:auc:st:lot-1:1" }],
+    [{ action: "lot.back", callbackData: "v1:auc:feed:auc-1:1" }],
+  ],
+};
+
+const setScreen: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "set",
+      auctionId: "auc-1",
+      name: "Лесные дары",
+      lots: [
+        {
+          lotId: "lot-1",
+          title: "Банка солёных грибов",
+          status: { kind: "trading", currentPrice: rub(500), phase: "online" },
+        },
+        {
+          lotId: "lot-2",
+          title: "Плетёная корзина",
+          status: { kind: "sold", winnerId: "p-1", price: rub(700) },
+        },
+      ],
+      collectorName: "@jay",
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "set.open-lot",
+        lotId: "lot-1",
+        callbackData: "v1:auc:lot:lot-1:1",
+      },
+    ],
+    [
+      {
+        action: "set.open-lot",
+        lotId: "lot-2",
+        callbackData: "v1:auc:lot:lot-2:1",
+      },
+    ],
+    [{ action: "set.back", callbackData: "v1:auc:lot:lot-1:1" }],
+  ],
 };
 
 // Избранное: средняя страница с листанием — лот в торгах с дедлайном и
@@ -1019,6 +1084,9 @@ const shown: readonly {
   { screen: { kind: "auction", body: soldLot }, presentation: "plain" },
   { screen: { kind: "auction", body: history(true) } },
   { screen: { kind: "auction", body: history(false) } },
+  { screen: { kind: "auction", body: setLot } },
+  { screen: { kind: "auction", body: setScreen } },
+  { screen: { kind: "auction", body: setScreen }, presentation: "plain" },
   { screen: { kind: "auction", body: confirm("bid") } },
   { screen: { kind: "auction", body: confirm("proxy") } },
   { screen: { kind: "auction", body: accepted("bid", true) } },
@@ -1337,7 +1405,7 @@ describe("auction screens beyond the linter", () => {
   // строка на кнопку осталась у списков аукционов.
   it("lists every content button of a list as a line of the body", () => {
     const lists = rendered.filter((screen) =>
-      ["auctions", "past"].includes(screen.id),
+      ["auctions", "past", "set"].includes(screen.id),
     );
     expect(lists.length).toBeGreaterThan(0);
     // Среди видов есть непустые списки: на одних пустых проверка молчала бы.

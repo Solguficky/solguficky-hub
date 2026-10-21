@@ -19,6 +19,7 @@ import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
+import { openSet } from "./internal/use-cases/open-set.js";
 import {
   answerPredictionAlias,
   answerPredictionNumber,
@@ -111,6 +112,15 @@ export function dispatchAuctionIntent(input: {
         lotId: intent.lotId,
         page: intent.page,
         historyPage: intent.historyPage,
+      });
+    // Экран сета (ADR-073, п. 7): открывается с карточки лота сета.
+    case "set":
+      return openSet({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
       });
     case "confirm":
       return confirmCommand(context, intent);

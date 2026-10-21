@@ -5,6 +5,7 @@ import type {
   BidRefusal,
   DisplayNameRefusal,
   LotCardView,
+  LotSetView,
   LotStatusView,
   Money,
   OwnDisplayName,
@@ -38,6 +39,9 @@ export type FeedItem = {
   // отмечает.
   activeWindow?: StepWindowView;
   standing?: LotStanding;
+  // Сет, в который входит лот (ADR-073): строка ленты отмечает принадлежность
+  // к нему. Нет — лот вне сета.
+  setName?: string;
 };
 
 // Строка хронологии: ставка или снятие участника, как их показывает экран.
@@ -130,6 +134,23 @@ export type AuctionBlock =
       // как в онлайн-неделе (PER-472): карточка финала живая, и экран исхода
       // вытеснил бы её из чата вместе с кнопкой на новую цену (PER-336).
       finalBid?: FinalBidOutcome;
+      // Сет, в который входит лот (ADR-073, п. 7): карточка называет его и
+      // ведёт к его экрану. Нет — лот вне сета.
+      set?: LotSetView;
+    }
+  | {
+      // Экран сета (ADR-073, п. 7): лоты сета по порядку организатора и
+      // собравший его после итога. Открывается с карточки лота сета.
+      kind: "set";
+      auctionId: string;
+      // Название сета — как его назвал организатор.
+      name: string;
+      // Лоты сета. Тот, с которого открыт экран, — среди них.
+      lots: readonly FeedItem[];
+      // Лоты сета, которых экран не показал: предел страницы.
+      more?: number;
+      // Собравший сет по отображаемому имени. До итога сета его нет.
+      collectorName?: string;
     }
   | {
       // Свои избранные лоты по порядку отметки (PER-495): цена, дедлайн и
@@ -403,6 +424,8 @@ export type AuctionButton =
   | { action: "feed.open-lot"; lotId: string; callbackData: string }
   | { action: "favorites.open-lot"; lotId: string; callbackData: string }
   | { action: "prediction.select-lot"; lotId: string; callbackData: string }
+  // Лот сета на его экране: открывает карточку лота (ADR-073, п. 7).
+  | { action: "set.open-lot"; lotId: string; callbackData: string }
   // «По шагу» с порогом в подписи: сумма — та, что уедет в подтверждение.
   | { action: "lot.bid-step"; amount: Money; callbackData: string }
   // «Поставить N» карточки финала: сумма — следующая цена, она же ожидаемая
@@ -420,6 +443,10 @@ export type AuctionButton =
         | "lot.bid-custom"
         | "lot.proxy"
         | "lot.history"
+        // Лоты сета — экран сета с карточки лота сета (ADR-073, п. 7).
+        | "lot.set"
+        // Возврат с экрана сета — карточка лота, с которой он открыт.
+        | "set.back"
         // Листание лотов в карточке (PER-644): соседи в порядке ленты.
         | "lot.prev"
         | "lot.next"

@@ -27,6 +27,16 @@ import {
   registerLabel,
 } from "../../auction-raffle.js";
 import {
+  collectedLine,
+  type SetLotOptions,
+  setGroupLines,
+  setLabel,
+  setLotLabel,
+  setLotLine,
+  setMark,
+  setMoreLine,
+} from "../../auction-set.js";
+import {
   autoFollowNote,
   currentValueLine,
   favoritesEmpty,
@@ -804,7 +814,11 @@ function renderBody(
 ): RenderedScreen {
   const items = new Map<string, FeedItem>();
   for (const block of body.blocks) {
-    if (block.kind === "feed" || block.kind === "favorites") {
+    if (
+      block.kind === "feed" ||
+      block.kind === "favorites" ||
+      block.kind === "set"
+    ) {
       for (const item of block.lots) items.set(item.lotId, item);
     }
   }
@@ -837,6 +851,12 @@ function renderBody(
   );
   if (id === "favorites" && favorites !== undefined) {
     return { id, keyboard, ...renderFavorites(favorites, options) };
+  }
+  const set = body.blocks.find(
+    (block): block is SetBlock => block.kind === "set",
+  );
+  if (id === "set" && set !== undefined) {
+    return { id, keyboard, ...renderSet(set) };
   }
   const feed = body.blocks.find(
     (block): block is FeedBlock => block.kind === "feed",
@@ -883,6 +903,9 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         break;
       case "favorites":
         screen = "favorites";
+        break;
+      case "set":
+        screen = "set";
         break;
       case "follow-refused":
         return "follow-refused";
@@ -937,6 +960,7 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
 
 type LotBlock = Extract<AuctionBlock, { kind: "lot" }>;
 type RootBlock = Extract<AuctionBlock, { kind: "root" }>;
+type SetBlock = Extract<AuctionBlock, { kind: "set" }>;
 
 // Стадия корня аукциона: черновика этот бот не получает, но слово для него
 // есть — перевод полон по стадиям.
@@ -1440,6 +1464,46 @@ function favoriteState(status: LotStatusView, options: RenderOptions): string {
     : priceLabel(status);
 }
 
+// Экран сета (ADR-073, п. 7): лоты сета по порядку организатора и, после
+// итога, кто его собрал. Заголовок называет экран, а предмет — название сета —
+// стоит строкой ниже курсивом: экран-раздел предмета, как «Ставки» лота.
+function renderSet(block: SetBlock): Pick<RenderedScreen, "text" | "format"> {
+  return {
+    format: "html",
+    text: lotSectionText(
+      setLabel,
+      block.name,
+      block.lots.length === 0
+        ? "Лотов в сете пока нет."
+        : block.lots
+            .map((item) => bullet(setLotLine(item, setOptions)))
+            .join("\n"),
+      ...(block.more === undefined ? [] : [setMoreLine(block.more)]),
+      // Имя собравшего — текст участника: без экранирования Telegram отверг бы
+      // разметку.
+      ...(block.collectorName === undefined
+        ? []
+        : [escapeHtml(collectedLine(block.name, block.collectorName))]),
+    ),
+  };
+}
+
+// Название и цена лота сета — как у строки ленты: правила оболочки бота
+// аукциона.
+const setOptions: SetLotOptions = {
+  title: (item) => escapeHtml(oneLine(item.title ?? untitled)),
+  buttonTitle: (item) => escapeHtml(shorten(item.title ?? untitled)),
+  price: (item) => priceLabel(item.status),
+};
+
+// Сет, в который входит лот (ADR-073, п. 7): название сета и, после итога,
+// кто его собрал. До итога сета второй строки нет — собравшего Auction ещё не
+// знает.
+function setGroups(block: LotBlock): string[][] {
+  const lotSet = block.set;
+  return lotSet === undefined ? [] : [setGroupLines(lotSet)];
+}
+
 // Карточка лота (дизайн-код, «Карточка»): название, группа статуса, группа
 // цены, лидера и срока со знаками, группа хода торгов, описание или его
 // заглушка — группы через пустую строку, строки «ключ: значение» без точки. Rich-карточка размечается блоками: перенос строки в её
@@ -1458,6 +1522,7 @@ function renderCard(
     ...(block.finalBid === undefined
       ? []
       : [[finalBidLine(block.finalBid, money)]]),
+    ...setGroups(block),
   ];
   const rich = (options.presentation ?? "rich") === "rich";
   // Пустое описание — та же заглушка, что у карточки сходки хаба (дизайн-код,
@@ -1687,22 +1752,38 @@ function renderButton(
     callback_data: button.callbackData,
   });
   switch (button.action) {
-    case "feed.open-lot":
-    case "favorites.open-lot": {
+    case "feed.open-lot": {
       const item = items.get(button.lotId);
       if (item === undefined) return text(untitled);
       const title = shorten(item.title ?? untitled);
       // В ленте живого финала лот на торгах и лоты состава подписаны иначе
-      // (PER-639); избранное финала не знает.
-      const final =
-        button.action === "feed.open-lot"
-          ? blocks.find((block): block is FeedBlock => block.kind === "feed")
-              ?.final
-          : undefined;
-      return text(
+      // (PER-639).
+      const final = blocks.find(
+        (block): block is FeedBlock => block.kind === "feed",
+      )?.final;
+      const label =
         (final === undefined ? null : finalFeedLabel(item, final, title)) ??
-          `${title} · ${priceLabel(item.status)}`,
+        `${title} · ${priceLabel(item.status)}`;
+      // Отметка принадлежности к сету (ADR-073, п. 7): лот сета помечен в
+      // подписи ленты, а название сета карточка называет.
+      return text(
+        item.setName === undefined
+          ? label
+          : `${label} · ${setMark(item.setName)}`,
       );
+    }
+    // Избранное — свой список: отметки сета в нём нет (PER-510).
+    case "favorites.open-lot": {
+      const item = items.get(button.lotId);
+      if (item === undefined) return text(untitled);
+      const title = shorten(item.title ?? untitled);
+      return text(`${title} · ${priceLabel(item.status)}`);
+    }
+    // Лот сета на его экране: подпись как у кнопки ленты, без отметки сета.
+    case "set.open-lot": {
+      const item = items.get(button.lotId);
+      if (item === undefined) return text(untitled);
+      return text(setLotLabel(item, setOptions));
     }
     case "feed.prev":
       return text("←");
@@ -1714,6 +1795,11 @@ function renderButton(
       return text(refreshLabel);
     case "lot.history":
       return text("Ставки");
+    // Лоты сета — экран сета с карточки (ADR-073, п. 7).
+    case "lot.set":
+      return text(setLabel);
+    case "set.back":
+      return text("‹ Лот");
     case "lot.back":
       return text("‹ Лоты");
     case "history.prev":

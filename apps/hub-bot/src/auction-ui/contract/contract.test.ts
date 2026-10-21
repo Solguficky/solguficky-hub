@@ -176,6 +176,8 @@ describe("auction contract self-check", () => {
 
   it("checks every intent of the table", () => {
     expect(AUCTION_CONTRACT_CASES.map((c) => c.intent)).toEqual([
+      "lot: the card of a lot of a set",
+      "set: the screen of the set",
       "root: with a raffle",
       "root: raffle read refused",
       "root: with favorites",

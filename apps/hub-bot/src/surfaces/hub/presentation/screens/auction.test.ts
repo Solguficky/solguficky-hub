@@ -945,3 +945,175 @@ describe("live final in the hub shell", () => {
     expect(text).not.toContain("Ведущий объявил");
   });
 });
+
+// Сет лотов (ADR-073, п. 7): карточка лота сета называет сет и ведёт к его
+// экрану, после итога — строка собравшего; экран сета перечисляет лоты сета.
+describe("lot set in the hub shell", () => {
+  const setLot = (overrides: Partial<Extract<AuctionBlock, { kind: "lot" }>>) =>
+    lot({
+      card: { title: "Кружка", description: "" },
+      status: { kind: "unsold" },
+      ...overrides,
+    });
+
+  it("names the set on the card and opens its screen", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          setLot({
+            set: { name: "Лесные дары", lotIds: ["lot-1", "lot-2"] },
+          }),
+        ],
+        keyboard: [
+          [{ action: "lot.set", callbackData: "v1:auc:st:lot-1:0" }],
+          [{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toContain("Сет: «Лесные дары»");
+    // До итога сета собравшего нет (ADR-073, п. 4).
+    expect(plain(screen.text)).not.toContain("собрал");
+    const rows = screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => button.text),
+    );
+    expect(rows[0]).toEqual(["Лоты сета"]);
+  });
+
+  it("names the collector of the set after the outcome", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          setLot({
+            set: {
+              name: "Лесные дары",
+              lotIds: ["lot-1", "lot-2"],
+              collectorName: "@jay",
+            },
+          }),
+        ],
+        keyboard: [[{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }]],
+      },
+    });
+    expect(plain(screen.text)).toContain("Сет «Лесные дары» собрал @jay");
+  });
+
+  it("lists the lots of the set and returns to the lot", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "set",
+            auctionId: auctionId,
+            name: "Лесные дары",
+            lots: [
+              {
+                lotId: "lot-1",
+                title: "Кружка",
+                status: { kind: "unsold" },
+              },
+              {
+                lotId: "lot-2",
+                title: "Плакат",
+                status: { kind: "sold", winnerId: "p-1", price: rub(700) },
+              },
+            ],
+            collectorName: "@jay",
+          },
+        ],
+        keyboard: [
+          [
+            {
+              action: "set.open-lot",
+              lotId: "lot-1",
+              callbackData: "v1:auc:lot:lot-1:0",
+            },
+          ],
+          [
+            {
+              action: "set.open-lot",
+              lotId: "lot-2",
+              callbackData: "v1:auc:lot:lot-2:0",
+            },
+          ],
+          [{ action: "set.back", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toContain("<i>Лесные дары</i>");
+    expect(plain(screen.text)).toContain("• Кружка — не продан");
+    expect(plain(screen.text)).toContain("• Плакат — продан за 700 ₽");
+    const rows = screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => plain(button.text)),
+    );
+    expect(rows[0]).toEqual(["Кружка · не продан"]);
+    expect(rows[1]).toEqual(["Плакат · продан за 700 ₽"]);
+    expect(rows.at(-1)).toEqual(["‹ Лот"]);
+  });
+
+  // Экран показывает до восьми лотов, а остальные — строкой «И ещё N.»
+  // (дизайн-код, «Лоты сета»).
+  it("names the lots of the set the screen did not show", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "set",
+            auctionId: auctionId,
+            name: "Лесные дары",
+            lots: [
+              { lotId: "lot-1", title: "Кружка", status: { kind: "unsold" } },
+            ],
+            more: 2,
+          },
+        ],
+        keyboard: [
+          [
+            {
+              action: "set.open-lot",
+              lotId: "lot-1",
+              callbackData: "v1:auc:lot:lot-1:0",
+            },
+          ],
+          [{ action: "set.back", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toContain("И ещё 2.");
+  });
+
+  it("marks a lot of the set in the feed", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "feed",
+            auctionId: auctionId,
+            page: 0,
+            pageCount: 1,
+            lots: [
+              {
+                lotId: "a",
+                title: "Носки",
+                status: { kind: "scheduled", startingPrice: rub(500) },
+                setName: "Лесные дары",
+              },
+            ],
+          },
+        ],
+        keyboard: [
+          [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+          [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
+        ],
+      },
+    });
+    const rows = screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => plain(button.text)),
+    );
+    expect(rows[0]).toEqual(["Носки · старт 500 ₽ · Сет «Лесные дары»"]);
+  });
+});

@@ -61,6 +61,25 @@ const lots: LotView[] = Array.from({ length: 20 }, (_, n) => ({
   },
 }));
 
+// Лот сета (PER-510): сет назван, и в нём второй лот.
+const SET_LOT_ID = "01929b7e-5c1d-7a3f-8e4b-00000000f001";
+lots.push({
+  lotId: SET_LOT_ID,
+  auctionId,
+  version: 1,
+  card: { title: "Лот сета", description: "" },
+  proxyEnabled: true,
+  status: {
+    kind: "trading",
+    currentPrice: { minorUnits: 1000, currency: "RUB" },
+    phase: "online",
+  },
+  lotSet: {
+    name: "Лесные дары",
+    lotIds: [SET_LOT_ID, "01929b7e-5c1d-7a3f-8e4b-00000000f002"],
+  },
+});
+
 // Самый длинный Telegram id: адресат вопроса едет в его «Отмене».
 const user = {
   telegramUserId: Number.MAX_SAFE_INTEGER,
@@ -183,6 +202,14 @@ describe("auction screen body", () => {
     if (lot === undefined) throw new Error("no lots");
     const body = await bodyOf(
       encodeAuctionCallback({ kind: "lot", lotId: lot.lotId, page: 2 }),
+    );
+    expect(inspectBody(body.keyboard, rules)).toEqual([]);
+  });
+
+  // Экран сета (PER-510): ряд на каждый лот сета и возврат.
+  it("keeps the set screen within the body rules", async () => {
+    const body = await bodyOf(
+      encodeAuctionCallback({ kind: "set", lotId: SET_LOT_ID, page: 2 }),
     );
     expect(inspectBody(body.keyboard, rules)).toEqual([]);
   });
