@@ -321,7 +321,19 @@ object AuctionJournal {
    */
   def restoreEvent(stored: StoredAuctionEventBody): AuctionEvent =
     stored match {
-      case StoredAuctionEventBody("AuctionDrafted", Some(drafted), None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody(
+            "AuctionDrafted",
+            Some(drafted),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
         AuctionEvent.AuctionDrafted(MeetupId(drafted.meetupId), drafted.hidden.getOrElse(false))
       case StoredAuctionEventBody("AuctionPublished", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionPublished
@@ -331,7 +343,19 @@ object AuctionJournal {
         AuctionEvent.LotAdded(LotId(added.lotId))
       case StoredAuctionEventBody("LotRemoved", None, None, Some(removed), None, None, None, None, None, None, None) =>
         AuctionEvent.LotRemoved(LotId(removed.lotId))
-      case StoredAuctionEventBody("AuctionScheduled", None, None, None, Some(config), None, None, None, None, None, None) =>
+      case StoredAuctionEventBody(
+            "AuctionScheduled",
+            None,
+            None,
+            None,
+            Some(config),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
         AuctionEvent.AuctionScheduled(restoreConfig(config))
       case StoredAuctionEventBody("PrebiddingStarted", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.PrebiddingStarted
@@ -339,12 +363,47 @@ object AuctionJournal {
         AuctionEvent.AuctionDiscarded
       case StoredAuctionEventBody("AuctionCancelled", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionCancelled
-      case StoredAuctionEventBody("PrebiddingDeadlineReached", None, None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody(
+            "PrebiddingDeadlineReached",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
         AuctionEvent.PrebiddingDeadlineReached
-      case StoredAuctionEventBody("PrebiddingEnded", None, None, None, None, Some(ended), None, None, None, None, None) =>
+      case StoredAuctionEventBody(
+            "PrebiddingEnded",
+            None,
+            None,
+            None,
+            None,
+            Some(ended),
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
         AuctionEvent.PrebiddingEnded(ended.finished)
-      case StoredAuctionEventBody("FinalLineupFrozen", None, None, None, None, None, Some(lineup), None, None, None, None)
-          if lineup.order.nonEmpty && lineup.order.distinct.size == lineup.order.size =>
+      case StoredAuctionEventBody(
+            "FinalLineupFrozen",
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(lineup),
+            None,
+            None,
+            None,
+            None
+          ) if lineup.order.nonEmpty && lineup.order.distinct.size == lineup.order.size =>
         AuctionEvent.FinalLineupFrozen(lineup.order.map(LotId(_)))
       case StoredAuctionEventBody("FinalStarted", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.FinalStarted
@@ -379,8 +438,19 @@ object AuctionJournal {
       case StoredAuctionEventBody("AuctionFinished", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionFinished
       // Окно запуска прошло проверку команды против конфигурации; без неё журнал сверяет то, что выводится из окна.
-      case StoredAuctionEventBody("StepWindowLaunched", None, None, None, None, None, None, None, None, Some(window), None)
-          if window.from.isBefore(window.until) && window.lots.nonEmpty =>
+      case StoredAuctionEventBody(
+            "StepWindowLaunched",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(window),
+            None
+          ) if window.from.isBefore(window.until) && window.lots.nonEmpty =>
         AuctionEvent.StepWindowLaunched(restoreWindow(window))
       // Ориентировочное время финала: момент, названный администратором (ADR-040, дополнение 2026-10-19).
       case StoredAuctionEventBody("FinalTimeSet", None, None, None, None, None, None, None, None, None, Some(time)) =>

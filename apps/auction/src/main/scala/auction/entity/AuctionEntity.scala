@@ -1263,7 +1263,15 @@ object AuctionEntity {
             case Show(show, initiator, replyTo) =>
               answered(state.auction, Auction.decide(state.auction, show), show.opId, initiator, replyTo, clock, newId)
             case Announce(announce, initiator, replyTo) =>
-              answered(state.auction, Auction.decide(state.auction, announce), announce.opId, initiator, replyTo, clock, newId)
+              answered(
+                state.auction,
+                Auction.decide(state.auction, announce),
+                announce.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 
