@@ -562,7 +562,7 @@ function windowsLabel(count: number): string {
   return counted(count, ["окно", "окна", "окон"]);
 }
 
-function counted(
+export function counted(
   count: number,
   [one, few, many]: readonly [string, string, string],
 ): string {

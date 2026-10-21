@@ -765,6 +765,14 @@ export function createAuctionConsole(
         ...(statistics.growth === undefined
           ? {}
           : { growth: statistics.growth }),
+        leaderChanges: statistics.leaderChangeCount,
+        longestDuel: statistics.longestDuel,
+        // Пульт и сутки читаются порознь: ставка между чтениями не должна
+        // давать лоту отрицательное прошлое.
+        bidsBefore: Math.max(0, entry.bidCount - statistics.bidCount),
+        ...(entry.priceGrowth === undefined
+          ? {}
+          : { priceGrowth: entry.priceGrowth }),
       });
     }
     return {

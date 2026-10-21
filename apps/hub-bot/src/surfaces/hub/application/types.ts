@@ -430,12 +430,19 @@ export type ConsoleLot = ConsoleLotSnapshot & {
 
 // Лот в сводке дня (PER-492): агрегаты окна суток, которые отдал Auction, и
 // название из карточки пульта. Заголовка нет, когда у лота нет карточки.
+// `leaderChanges` и `longestDuel` — тоже окна (PER-511); `bidsBefore` — ставки
+// лота до окна, всего минус окно, и `priceGrowth` — рост от стартовой цены за
+// всё время: по ним сводка ищет «тёмную лошадку».
 export type DaySummaryLot = {
   lotId: string;
   title?: string;
   bidCount: number;
   maxPrice?: LotAmount;
   growth?: LotAmount;
+  leaderChanges: number;
+  longestDuel: number;
+  bidsBefore: number;
+  priceGrowth?: LotAmount;
 };
 
 export type ConsoleSortMetric = "bids" | "participants" | "growth";

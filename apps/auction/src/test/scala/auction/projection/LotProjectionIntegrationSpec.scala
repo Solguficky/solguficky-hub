@@ -110,7 +110,8 @@ final class LotProjectionIntegrationSpec
       priceGrowth: Option[Money],
       lastBidAt: Option[Instant],
       finalGrowth: Option[Money],
-      finalBidCount: Option[Long]
+      finalBidCount: Option[Long],
+      contest: LotContest = LotContest.none
   )
 
   private def withNode[A](database: DatabaseSettings, clock: Clock = Clock.systemUTC())(use: Node => A): A = {
@@ -292,7 +293,8 @@ final class LotProjectionIntegrationSpec
           view.priceGrowth,
           view.lastBidAt,
           view.finalGrowth,
-          view.finalBidCount
+          view.finalBidCount,
+          view.contest
         )
       )
 
@@ -453,6 +455,8 @@ final class LotProjectionIntegrationSpec
       bidders(database, busy) should not contain participant(9).value
       busyStatistics.lastBidAt shouldBe lastBid
       busyStatistics.priceGrowth.map(_.minorUnits).exists(_ > 0) shouldBe true
+      // Лидеры по журналу — 1, 2, 1, 2, а ставки лидера от лимитов третьего и четвёртого лидера не меняют (PER-511).
+      busyStatistics.contest shouldBe LotContest(leaderChanges = 3, longestDuel = 3)
       incremental.find(_.lotId == quiet) shouldBe
         Some(Statistics(quiet, 0L, 0L, Some(money(0)), None, None, None))
 

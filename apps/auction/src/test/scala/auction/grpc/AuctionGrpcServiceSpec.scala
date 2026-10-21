@@ -121,6 +121,7 @@ import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.HistoryRecord
 import auction.projection.LotSnapshotView
+import auction.projection.LotContest
 import auction.projection.LotStatisticsView
 import auction.projection.LotViews
 import auction.v1.auction.BidSource as BidSourceMessage
@@ -2266,7 +2267,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           else
             Future.successful(
               List(
-                LotStatisticsView(busy, trading(price = 450), Some(money(300)), 5, 3, Some(lastBid)),
+                LotStatisticsView(busy, trading(price = 450), Some(money(300)), 5, 3, Some(lastBid))
+                  .copy(contest = LotContest(4, 3)),
                 LotStatisticsView(quiet, trading(price = 300), Some(money(300)), 0, 1, None)
               )
             )
@@ -2286,6 +2288,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           (busy.toString, 5L, 3L, Some(LotValues.money(money(150))), Some(lastBid.toString)),
           (quiet.toString, 0L, 1L, Some(LotValues.money(money(0))), None)
         )
+      lots.map(lot => (lot.leaderChangeCount, lot.longestDuel)) shouldBe Seq((4L, 3L), (0L, 0L))
     }
 
     "refuses the statistics to a viewer whom the meetup does not confirm and reads no lot" in {

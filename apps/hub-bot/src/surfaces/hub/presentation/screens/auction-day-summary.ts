@@ -5,12 +5,13 @@ import type { CommunityDay } from "../../community-time.js";
 import { lotStartLink } from "../lot-deep-link.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { consoleViewData } from "../parse-callback.js";
-import { bidsLabel } from "./auction-console.js";
+import { bidsLabel, counted } from "./auction-console.js";
 import { bullet, escapeHtml, readableDay, screenText, withNav } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
-// Сводка дня торгов (PER-492): три метрики окна суток и текст, готовый к
-// пересылке в чат. Ссылка на лот — deep link бота аукциона `l_<токен>`:
+// Сводка дня торгов (PER-492): метрики окна суток и текст, готовый к
+// пересылке в чат. Нарративные метрики P-15 RFC-007 — самый оспариваемый лот по
+// сменам лидера, «тёмная лошадка» и «эпичная дуэль» — добавил PER-511. Ссылка на лот — deep link бота аукциона `l_<токен>`:
 // клавиатура при пересылке теряется, поэтому лот называется ссылкой в самом
 // тексте, а не кнопкой. В группу бот не пишет — текст публикует организатор
 // (R-4 RFC-007).
@@ -20,6 +21,12 @@ import type { ShownScreen } from "./show.js";
 // не пересчитывает суммы между лотами — так же, как сортировка пульта.
 
 const topLimit = 3;
+// «Тёмная лошадка» — лот, у которого до суток было не больше стольких ставок,
+// а за сутки ему ставили; из таких — с наибольшим ростом от стартовой цены.
+const darkHorseMaxBidsBefore = 3;
+// «Эпичная дуэль» — не меньше стольких смен лидера подряд между одними и теми
+// же двумя людьми: A, B, A, B, A.
+const duelMinChanges = 4;
 const titleLimit = 120;
 const untitled = "Лот без названия";
 
@@ -41,10 +48,24 @@ export function daySummaryScreen(view: DaySummaryScreenView): ShownScreen {
   const top = [...priced]
     .sort((left, right) => minor(right.maxPrice) - minor(left.maxPrice))
     .slice(0, topLimit);
-  const contested = biggest(traded, (lot) => lot.bidCount);
+  const contested = biggest(
+    traded.filter((lot) => lot.leaderChanges > 0),
+    (lot) => lot.leaderChanges,
+  );
   const growth = biggest(
     traded.filter((lot) => minor(lot.growth) > 0),
     (lot) => minor(lot.growth),
+  );
+  const darkHorse = biggest(
+    traded.filter(
+      (lot) =>
+        lot.bidsBefore <= darkHorseMaxBidsBefore && minor(lot.priceGrowth) > 0,
+    ),
+    (lot) => minor(lot.priceGrowth),
+  );
+  const duel = biggest(
+    traded.filter((lot) => lot.longestDuel >= duelMinChanges),
+    (lot) => lot.longestDuel,
   );
 
   const line = (lot: DaySummaryLot, tail: string): string => {
@@ -83,13 +104,40 @@ export function daySummaryScreen(view: DaySummaryScreenView): ShownScreen {
               "Спорнее всех:",
               contested === undefined
                 ? []
-                : [line(contested, bidsLabel(contested.bidCount))],
+                : [
+                    line(
+                      contested,
+                      leaderChangesLabel(contested.leaderChanges),
+                    ),
+                  ],
             ),
             section(
               "Больше всех выросла цена:",
               growth?.growth === undefined
                 ? []
                 : [line(growth, `+${money(growth.growth)}`)],
+            ),
+            section(
+              "Тёмная лошадка:",
+              darkHorse?.priceGrowth === undefined
+                ? []
+                : [
+                    line(
+                      darkHorse,
+                      `+${money(darkHorse.priceGrowth)} от старта, ${bidsLabel(darkHorse.bidsBefore)} до этого дня`,
+                    ),
+                  ],
+            ),
+            section(
+              "Эпичная дуэль:",
+              duel === undefined
+                ? []
+                : [
+                    line(
+                      duel,
+                      `${counted(duel.longestDuel, ["перебивание", "перебивания", "перебиваний"])} подряд вдвоём`,
+                    ),
+                  ],
             ),
           ]),
     ),
@@ -99,6 +147,11 @@ export function daySummaryScreen(view: DaySummaryScreenView): ShownScreen {
     }),
     format: "HTML",
   };
+}
+
+// «3 смены лидера» — тем же склонением, что число ставок пульта.
+function leaderChangesLabel(count: number): string {
+  return `${counted(count, ["смена", "смены", "смен"])} лидера`;
 }
 
 // Раздел сводки — имя строкой и строки под ним; пустой раздел выпадает, а не

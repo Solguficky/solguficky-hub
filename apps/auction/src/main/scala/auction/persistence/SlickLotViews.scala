@@ -11,6 +11,7 @@ import auction.projection.DayLotStatisticsView
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.HistoryRecord
+import auction.projection.LotContest
 import auction.projection.LotSetView
 import auction.projection.LotSnapshotView
 import auction.projection.LotStatisticsView
@@ -21,6 +22,7 @@ import org.apache.pekko.persistence.jdbc.db.SlickExtension
 import slick.jdbc.GetResult
 import slick.jdbc.JdbcBackend.Database
 import slick.jdbc.PostgresProfile.api.*
+import slick.jdbc.TransactionIsolation
 
 import java.sql.Timestamp
 import java.time.Instant
@@ -202,9 +204,46 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
       case _ => None
     }
 
+  // Запись хронологии вместе с её лотом: у строки снятия своего лота в `HistoryRecord` нет, а группировать надо.
+  private given GetResult[(UUID, HistoryRecord)] = GetResult { row =>
+    val lotId = UUID.fromString(row.nextString())
+    (lotId, summon[GetResult[HistoryRecord]](row))
+  }
+
+  /**
+   * Хронология каждого лота реестра — те же строки `lot_bid` и `lot_removal`, что у `history`, — по возрастанию номера
+   * события. Из неё ядро [[LotContest]] считает борьбу за лот (PER-511); лот без ставок в выдачу не попадает.
+   */
+  private def chronicles(auctionId: UUID): DBIO[Map[UUID, List[HistoryRecord]]] =
+    sql"""SELECT e.lot_id, e.* FROM (
+            SELECT b.lot_id::text, b.sequence, 'bid', b.bid_id::text, b.participant_id::text, b.minor_units,
+              b.currency, b.origin, b.source, b.removed, NULL, b.occurred_at
+            FROM auction_lot r JOIN lot_bid b ON b.lot_id = r.lot_id
+            WHERE r.auction_id = ${auctionId.toString}::uuid
+            UNION ALL
+            SELECT x.lot_id::text, x.sequence, 'removal', NULL, NULL, x.minor_units, x.currency,
+              NULL, NULL, false, x.leader_id::text, x.occurred_at
+            FROM auction_lot r JOIN lot_removal x ON x.lot_id = r.lot_id
+            WHERE r.auction_id = ${auctionId.toString}::uuid
+          ) e (lot_id, sequence, kind, bid_id, participant_id, minor_units, currency, origin, source, removed,
+               leader_id, occurred_at)
+          ORDER BY e.lot_id, e.sequence"""
+      .as[(UUID, HistoryRecord)]
+      .map(_.groupMap(_._1)(_._2).view.mapValues(_.toList).toMap)
+
+  // Агрегаты и хронология читаются одним снимком базы: иначе ставка между двумя запросами попала бы в одно и не попала
+  // в другое.
+  private def consistently[A](action: DBIO[A]): Future[A] =
+    database.run(action.transactionally.withTransactionIsolation(TransactionIsolation.RepeatableRead))
+
   def statistics(auctionId: UUID): Future[List[LotStatisticsView]] =
-    database.run(
-      sql"""SELECT v.lot_id::text, v.state::text, s.minor_units, s.currency, #$BidCountSql,
+    consistently(for {
+      lots <- statisticsAction(auctionId)
+      chronicle <- chronicles(auctionId)
+    } yield lots.map(lot => lot.copy(contest = LotContest.of(chronicle.getOrElse(lot.lotId, Nil)))))
+
+  private def statisticsAction(auctionId: UUID): DBIO[List[LotStatisticsView]] =
+    sql"""SELECT v.lot_id::text, v.state::text, s.minor_units, s.currency, #$BidCountSql,
                    (SELECT COUNT(*) FROM lot_participant p WHERE p.lot_id = v.lot_id AND NOT p.removed),
                    (SELECT b.occurred_at FROM lot_bid b WHERE b.lot_id = v.lot_id AND NOT b.removed
                       ORDER BY b.sequence DESC LIMIT 1),
@@ -218,7 +257,6 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
             LEFT JOIN auction_lineup l ON l.auction_id = r.auction_id AND l.lot_id = v.lot_id
             WHERE r.auction_id = ${auctionId.toString}::uuid
             ORDER BY r.lot_id""".as[LotStatisticsView].map(_.toList)
-    )
 
   private given GetResult[DayLotStatisticsView] = GetResult { row =>
     DayLotStatisticsView(
@@ -238,7 +276,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
   def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]] = {
     val windowFrom = Timestamp.from(from)
     val windowUntil = Timestamp.from(until)
-    database.run(
+    val lots =
       sql"""SELECT v.lot_id::text,
                    (SELECT COUNT(*) FROM lot_bid b
                       WHERE b.lot_id = v.lot_id AND NOT b.removed
@@ -267,7 +305,10 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
             LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
             WHERE r.auction_id = ${auctionId.toString}::uuid
             ORDER BY r.lot_id""".as[DayLotStatisticsView].map(_.toList)
-    )
+    consistently(for {
+      day <- lots
+      chronicle <- chronicles(auctionId)
+    } yield day.map(lot => lot.copy(contest = LotContest.of(chronicle.getOrElse(lot.lotId, Nil), Some((from, until))))))
   }
 
   // Та же защита, что у SlickLotCatalogStore: строка с пустым по типу названием — запись в обход сервиса.

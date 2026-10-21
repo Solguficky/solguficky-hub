@@ -1449,9 +1449,19 @@ function daySummaryResult(
         kind: "ok",
         lots: outcome.value.lots.map((lot) => {
           const bidCount = safeCount(lot.bidCount, "day summary bid count");
+          const leaderChangeCount = safeCount(
+            lot.leaderChangeCount,
+            "day summary leader change count",
+          );
+          const longestDuel = safeCount(
+            lot.longestDuel,
+            "day summary longest duel",
+          );
           return {
             lotId: lot.lotId,
             bidCount,
+            leaderChangeCount,
+            longestDuel,
             ...(lot.maxPrice === undefined
               ? {}
               : { maxPrice: moneyOf(lot.maxPrice) }),

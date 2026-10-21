@@ -2678,11 +2678,13 @@ describe("day summary", () => {
     lots: [
       {
         lotId,
-        bidCount: 4,
+        bidCount: 2,
         maxPrice: { minorUnits: 150_000, currency: "RUB" },
         growth: { minorUnits: 30_000, currency: "RUB" },
+        leaderChangeCount: 2,
+        longestDuel: 2,
       },
-      { lotId: second, bidCount: 0 },
+      { lotId: second, bidCount: 0, leaderChangeCount: 0, longestDuel: 0 },
     ],
   };
 
@@ -2703,11 +2705,22 @@ describe("day summary", () => {
           {
             lotId,
             title: "Кружка",
-            bidCount: 4,
+            bidCount: 2,
             maxPrice: { minorUnits: 150_000, currency: "RUB" },
             growth: { minorUnits: 30_000, currency: "RUB" },
+            leaderChanges: 2,
+            longestDuel: 2,
+            // Три ставки за всё время, из них две — за сутки.
+            bidsBefore: 1,
           },
-          { lotId: second, title: "Плакат", bidCount: 0 },
+          {
+            lotId: second,
+            title: "Плакат",
+            bidCount: 0,
+            leaderChanges: 0,
+            longestDuel: 0,
+            bidsBefore: 3,
+          },
         ],
       },
     );
@@ -2724,7 +2737,10 @@ describe("day summary", () => {
     const { run } = fake({
       read: { kind: "ok", console: view("prebidding", { lots }) },
       statistics,
-      day: { kind: "ok", lots: [{ lotId, bidCount: 2 }] },
+      day: {
+        kind: "ok",
+        lots: [{ lotId, bidCount: 2, leaderChangeCount: 0, longestDuel: 0 }],
+      },
     });
 
     const result = await run({ ...call, intent: "view-day-summary" });
