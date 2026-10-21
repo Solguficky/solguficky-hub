@@ -208,6 +208,8 @@ function noteText(
       return refusalText[note.reason];
     case "no-participants":
       return "Снимать некого. На лоте нет ставок.";
+    case "everyone-removed":
+      return "Снимать некого. Все участники лота уже сняты, их ставки зачёркнуты.";
     default: {
       const _exhaustive: never = note;
       return _exhaustive;

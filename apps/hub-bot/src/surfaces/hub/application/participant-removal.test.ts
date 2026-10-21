@@ -179,7 +179,7 @@ describe("participant removal", () => {
     expect((await auction.run(view)).kind).toBe("removal-people");
   });
 
-  it("says there is nobody to remove when every participant is removed", async () => {
+  it("says everyone is already removed when every participant is removed", async () => {
     const auction = fake({
       participants: {
         kind: "ok",
@@ -189,7 +189,33 @@ describe("participant removal", () => {
     expect(await auction.run(view)).toEqual({
       kind: "removal-outcome",
       lot: { lotId, auctionId, title: "Кружка" },
+      note: { kind: "everyone-removed" },
+    });
+  });
+
+  it("says there are no bids on a lot without participants", async () => {
+    const auction = fake({});
+    expect(await auction.run(view)).toMatchObject({
+      kind: "removal-outcome",
       note: { kind: "no-participants" },
+    });
+  });
+
+  it("leaves out the leader when the read did not catch up with the removal", async () => {
+    // Read model отстаёт: чтение отдаёт лот до снятия, где лидер — снятый.
+    const auction = fake({ after: online });
+    const result = await auction.run({
+      ...call,
+      intent: "remove-participant",
+      target,
+      version: 7,
+      opId: "op-1",
+    });
+    expect(result).toEqual({
+      kind: "removal-outcome",
+      lot: { lotId, auctionId, title: "Кружка" },
+      note: { kind: "removed", name: "@jay" },
+      lotVersion: 8,
     });
   });
 

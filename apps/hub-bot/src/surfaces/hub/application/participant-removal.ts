@@ -185,6 +185,16 @@ export function createParticipantRemoval(consoles: AuctionConsoles) {
       rpcMeta(request),
     );
     if (listed.kind !== "ok") return failed(listed);
+    if (
+      listed.participants.length > 0 &&
+      listed.participants.every((each) => each.removed)
+    ) {
+      return {
+        kind: "removal-outcome",
+        lot: lotOf(lot),
+        note: { kind: "everyone-removed" },
+      };
+    }
     const people: RemovalPerson[] = listed.participants
       .filter((each) => !each.removed)
       .map((each) => ({
@@ -279,9 +289,13 @@ export function createParticipantRemoval(consoles: AuctionConsoles) {
         return refusal(lot, removed);
     }
     // Лот после снятия — не старее номера из ответа: чтение отстаёт от
-    // команды. Чтение отказало — исход снятия важнее строки о лидере.
+    // команды. Чтение отказало или не догнало номер — исход снятия важнее
+    // строки о лидере: снимок до снятия назвал бы лидером снятого.
     const after = await lotRead(request, lot.lotId, removed.lotVersion);
-    const status = after.kind === "ok" ? after.lot.status : undefined;
+    const status =
+      after.kind === "ok" && after.lot.version >= removed.lotVersion
+        ? after.lot.status
+        : undefined;
     const leading =
       status?.kind === "trading" || status?.kind === "held"
         ? status
