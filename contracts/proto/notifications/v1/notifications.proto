@@ -174,6 +174,19 @@ message Notification {
     // the participant who was removed gets nothing. No category and no outbid
     // frequency governs it: the lead came back without a bid of the recipient.
     LotLeadRestored lot_lead_restored = 33;
+
+    // A new auction of a meetup became visible to participants: it was
+    // published, or its trading started while it was still hidden. One fact per
+    // person who holds the auction right, delivered by the bot of their circle;
+    // guests without that right get nothing. The auction announcement switch of
+    // the auction notification preferences turns it off; no general category
+    // governs it: the auction settings are self-sufficient.
+    AuctionPublished auction_published = 34;
+
+    // The online phase of an auction started: its trading is open. The same
+    // audience and the same switch as auction_published. One fact per auction
+    // and person: a repeated cause produces no second fact.
+    AuctionTradingOpened auction_trading_opened = 35;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -433,6 +446,45 @@ message CancelledAuctionPurchase {
 
   // The price the lot was sold at.
   auction.v1.Money price = 2;
+}
+
+// A new auction of a meetup, as the recipient sees it. The title of the meetup
+// names it: the auction itself has no title, and the channel renders the message
+// without calling Meetups.
+message AuctionPublished {
+  // Canonical lowercase UUIDv5 with hyphens: the auction of the meetup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The title of the meetup as the replica knew it when the fact was written.
+  // Empty when the replica knows the meetup by its id alone; the message then
+  // names no title, not an empty one.
+  string meetup_title = 3;
+
+  // The online phase of the auction: the week of the trading. Unset when the
+  // auction is published before it is scheduled; it is then absent, and the
+  // message names no dates.
+  auction.v1.OnlinePhase online_phase = 4;
+}
+
+// The online phase of an auction started: the trading is open. The deadline of
+// the week is closes_at of the phase; it is absent when the phase ends on a
+// command rather than by time.
+message AuctionTradingOpened {
+  // Canonical lowercase UUIDv5 with hyphens: the auction of the meetup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The title of the meetup as the replica knew it when the fact was written.
+  // Empty when the replica knows the meetup by its id alone.
+  string meetup_title = 3;
+
+  // The online phase of the auction that just started.
+  auction.v1.OnlinePhase online_phase = 4;
 }
 
 // The prediction results of an auction as the recipient sees them: the outcome
