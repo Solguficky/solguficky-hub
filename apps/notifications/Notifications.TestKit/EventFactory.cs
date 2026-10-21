@@ -524,10 +524,56 @@ public static class EventFactory
     }
 
     /// <summary>Аукцион сходки: UUIDv5, как его выводит Auction.</summary>
-    public static string AuctionOfMeetup()
+    public static string AuctionOfMeetup() => UuidV5();
+
+    /// <summary>Счёт продажи: UUIDv5, как его выводит Auction из ставки продажи.</summary>
+    public static string InvoiceOfSale() => UuidV5();
+
+    // UUIDv5: подменяется только знак версии, остальное — случайный UUID.
+    private static string UuidV5()
     {
         var random = Guid.NewGuid().ToString();
         return string.Concat(random.AsSpan(0, 14), "5", random.AsSpan(15));
+    }
+
+    /// <summary>
+    /// Факт счёта: <paramref name="issued" /> = true — счёт выставлен, иначе
+    /// подтверждена оплата. Срок оплаты по умолчанию — через семь суток после
+    /// коммита, как срок платформы.
+    /// </summary>
+    public static global::Auction.V1.InvoiceEvent Invoice(string invoiceId, string lotId, string? winner = null,
+        long version = 1, bool issued = true, long amount = 45600, string currency = "RUB",
+        string? dueAt = null, string? auction = null, string? occurredAt = null)
+    {
+        var message = new global::Auction.V1.InvoiceEvent
+        {
+            EventId = NewId(),
+            InvoiceId = invoiceId,
+            Version = version,
+            OccurredAt = occurredAt ?? Committed.AddMinutes(version).ToString("O"),
+            State = new global::Auction.V1.InvoiceState
+            {
+                Id = invoiceId,
+                AuctionId = auction ?? NewId(),
+                LotId = lotId,
+                WinnerId = winner ?? NewId(),
+                Amount = new global::Auction.V1.Money { MinorUnits = amount, Currency = currency },
+                PaymentDueAt = dueAt ?? Committed.AddDays(7).ToString("O"),
+            },
+        };
+
+        if (issued)
+        {
+            message.State.AwaitingPayment = new global::Auction.V1.InvoiceState.Types.AwaitingPayment();
+            message.InvoiceIssued = new global::Auction.V1.InvoiceIssued();
+        }
+        else
+        {
+            message.State.Paid = new global::Auction.V1.InvoiceState.Types.Paid();
+            message.InvoicePaid = new global::Auction.V1.InvoicePaid();
+        }
+
+        return message;
     }
 
     /// <summary>Состав финала заморожен: лоты в порядке финала.</summary>

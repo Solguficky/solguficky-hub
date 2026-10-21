@@ -15,6 +15,7 @@ public enum AuctionOutcome
     AuctionCancelled, AuctionEnded,
     FinalLotNext, LeadRestored,
     Announcement, AnnouncementWithdrawn,
+    InvoiceReplicated, InvoiceStale,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -629,6 +630,37 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.PredictionResultsAnnounced,
             new Dictionary<string, int> { [AuctionFacts.PredictionResultsType] = created });
+    }
+
+    /// <summary>
+    /// Факт счёта: реплика счёта и ключ события одной транзакцией. Поводов
+    /// факт не даёт: из реплики живут задания напоминания о неоплаченном счёте
+    /// (PER-330), а адресный факт пишет грин в момент срабатывания задания.
+    /// </summary>
+    /// <remarks>
+    /// Порядок доставки не обещан, и факты счёта идут разными subject'ами:
+    /// <c>invoice_paid</c> может прийти раньше <c>invoice_issued</c>. Реплика
+    /// держит версию и не откатывается поздним фактом, поэтому задания,
+    /// заведённые после оплаты, не воскресают.
+    /// </remarks>
+    public async Task<AuctionApplication> Apply(AuctionInvoice invoice, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, invoice.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        // Поздний факт счёта не откатывает реплику: версия растёт, и снимок
+        // оплаченного счёта переживает позднее выставление. Такой факт
+        // рапортуется отдельно — снимок не записан.
+        var recorded = await InvoiceReplicaStore.Apply(work, invoice.Snapshot, now, cancellationToken);
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(
+            recorded ? AuctionOutcome.InvoiceReplicated : AuctionOutcome.InvoiceStale,
+            new Dictionary<string, int>());
     }
 
     /// <summary>Люди, чьи окна сводки наступили, для прохода.</summary>

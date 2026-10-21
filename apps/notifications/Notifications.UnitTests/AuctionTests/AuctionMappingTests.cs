@@ -105,10 +105,16 @@ public class AuctionMappingTests
     [Theory]
     [InlineData("events.auction.auction_scheduled")]
     [InlineData("events.auction.lot_added")]
-    [InlineData("events.auction.invoice_issued")]
     [InlineData("events.auction.future_occasion")]
     public void When_NotLotSubject_Expect_NotParsedAsLotEvent(string subject) =>
         AuctionMapping.Decode(subject, new byte[] { 0xff }).ShouldBeOfType<AuctionDecoded.Ignored>();
+
+    [Fact]
+    public void When_InvoiceSubjectCarriesBrokenProtobuf_Expect_Poison() =>
+        // Факт счёта разбирается отдельным сообщением (InvoiceEvent), поэтому
+        // мусор в subject'е счёта — яд, а не «не наш subject».
+        AuctionMapping.Decode(AuctionFeed.InvoiceIssuedSubject, new byte[] { 0xff })
+            .ShouldBeOfType<AuctionDecoded.Poison>();
 
     [Theory]
     [InlineData("events.auction.lot_unsold")]

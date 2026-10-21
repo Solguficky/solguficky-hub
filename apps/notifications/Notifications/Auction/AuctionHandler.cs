@@ -62,6 +62,9 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionDecoded.Predictions { Value: var settlement } => (new EventRef(settlement.EventId, null,
                     settlement.AuctionId, settlement.Version, settlement.OccurredAt),
                 () => store.Apply(settlement, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.Invoice { Value: var invoice } => (new EventRef(invoice.EventId, invoice.Snapshot.LotId,
+                    invoice.Snapshot.AuctionId, invoice.Snapshot.Version, invoice.Snapshot.OccurredAt),
+                () => store.Apply(invoice, clock.GetUtcNow(), stoppingToken)),
             _ => throw new ArgumentOutOfRangeException(nameof(message)),
         };
         AuctionApplication application;
@@ -95,10 +98,11 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
         // Факт лота двигает реплику, а её последнее слово решает задание
         // напоминания о дедлайне (PER-496). Ставка дедлайна не меняет, поэтому
         // на неё грин не зовётся: иначе горячий путь ставок платил бы за
-        // напоминание, от ставки не зависящее. Грин читает реплику после
-        // коммита, а упавший вызов возвращает сообщение в поток — повтор доводит
-        // задание до реплики.
-        if (source.LotId is { } lotId && decoded is not AuctionDecoded.Bid)
+        // напоминание, от ставки не зависящее. Факт счёта лот называет, но его
+        // задания живут на счёте, а не на лоте, и грин лота тут ни при чём.
+        // Грин читает реплику после коммита, а упавший вызов возвращает
+        // сообщение в поток — повтор доводит задание до реплики.
+        if (source.LotId is { } lotId && decoded is not AuctionDecoded.Bid && decoded is not AuctionDecoded.Invoice)
         {
             try
             {
@@ -140,6 +144,31 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             }
         }
 
+        // Факт счёта ведёт реплику счёта, а её последнее слово решает задания
+        // напоминания о неоплаченном счёте (PER-330). Выставленный счёт
+        // заводит два задания, оплаченный — снимает несработавшие. Грин читает
+        // реплику после коммита, а упавший вызов возвращает сообщение в поток:
+        // повтор доводит задания до реплики.
+        if (decoded is AuctionDecoded.Invoice { Value: var invoiceFact })
+        {
+            try
+            {
+                await grains.GetGrain<IInvoiceNotificationGrain>(invoiceFact.Snapshot.InvoiceId.ToString())
+                    .ApplyReplica();
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                await message.Retry(stoppingToken);
+                Record(message, started, source, "invoice_reminder_failed", 0, "dependency_unavailable",
+                    "invoice reminder schedule failed; message returned to the stream", ex);
+                return;
+            }
+        }
+
         await message.Accept(stoppingToken);
         Record(message, started, source, application.Outcome switch
         {
@@ -163,6 +192,8 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.LeadRestored => "lead_restored",
             AuctionOutcome.Announcement => "announcement",
             AuctionOutcome.AnnouncementWithdrawn => "announcement_withdrawn",
+            AuctionOutcome.InvoiceReplicated => "invoice_replicated",
+            AuctionOutcome.InvoiceStale => "invoice_stale",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }

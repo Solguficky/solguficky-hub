@@ -27,6 +27,19 @@ public static class AuctionFeed
     /// </summary>
     public const string ParticipantRemovedSubject = "events.auction.participant_removed";
 
+    /// <summary>
+    /// Счёт выставлен по продаже (PER-308, PER-330): единственный факт, по
+    /// которому заводятся два напоминания о неоплаченном счёте. Сообщение —
+    /// <c>InvoiceEvent</c>.
+    /// </summary>
+    public const string InvoiceIssuedSubject = "events.auction.invoice_issued";
+
+    /// <summary>
+    /// Организатор подтвердил оплату (PER-308, PER-330): по этому факту
+    /// снимаются несработавшие напоминания о счёте.
+    /// </summary>
+    public const string InvoicePaidSubject = "events.auction.invoice_paid";
+
     public static readonly EventFeed Feed = new(Source, "AUCTION_EVENTS", "notifications-auction-events");
 
     /// <summary>
@@ -54,8 +67,9 @@ public static class AuctionFeed
     /// <summary>
     /// Subjects фактов лота и ветка, которую каждый обязан нести. Имя subject'а
     /// — <c>events.auction.</c> плюс имя ветки (integration.md, «Auction NATS»);
-    /// всё вне этой таблицы и таблицы аукциона — остальные факты аукциона и
-    /// счёта, их этот модуль не разбирает.
+    /// всё вне этой таблицы и таблицы аукциона — остальные факты аукциона,
+    /// их этот модуль не разбирает. Факты счёта разбирает отдельная таблица
+    /// ниже: у счёта своё сообщение на шине.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, LotEvent.OccasionOneofCase> LotSubjects =
         new Dictionary<string, LotEvent.OccasionOneofCase>(StringComparer.Ordinal)
@@ -73,5 +87,20 @@ public static class AuctionFeed
             ["events.auction.lot_resumed"] = LotEvent.OccasionOneofCase.LotResumed,
             [ParticipantRemovedSubject] = LotEvent.OccasionOneofCase.ParticipantRemoved,
             ["events.auction.step_window_added"] = LotEvent.OccasionOneofCase.StepWindowAdded,
+        };
+
+    /// <summary>
+    /// Subjects фактов счёта и ветка, которую каждый обязан нести. Счёт —
+    /// единственный агрегат, у которого своё сообщение на шине
+    /// (<c>InvoiceEvent</c>), и этот модуль его разбирает: из снимка живут
+    /// задания напоминания о неоплаченном счёте (PER-330). Выдача счёта
+    /// модулю не нужна: она идёт после оплаты, а напоминаний к тому времени не
+    /// остаётся.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, InvoiceEvent.OccasionOneofCase> InvoiceSubjects =
+        new Dictionary<string, InvoiceEvent.OccasionOneofCase>(StringComparer.Ordinal)
+        {
+            [InvoiceIssuedSubject] = InvoiceEvent.OccasionOneofCase.InvoiceIssued,
+            [InvoicePaidSubject] = InvoiceEvent.OccasionOneofCase.InvoicePaid,
         };
 }

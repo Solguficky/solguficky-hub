@@ -187,6 +187,17 @@ message Notification {
     // audience and the same switch as auction_published. One fact per auction
     // and person: a repeated cause produces no second fact.
     AuctionTradingOpened auction_trading_opened = 35;
+
+    // The invoice of a sold lot is not paid yet. One fact per invoice and
+    // recipient: the winner of the sale, named by the invoice fact. It fires
+    // about twelve hours after the invoice was raised. No category governs it:
+    // the invoice is the winner's own business.
+    InvoiceReminder invoice_reminder = 36;
+
+    // The payment deadline of an unpaid invoice is a day away. It is a second
+    // moment of the same reminder, so it is a type of its own: the two moments
+    // must not collide on the cause key.
+    InvoiceDueReminder invoice_due_reminder = 37;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -353,6 +364,41 @@ message LotReminder {
 message LotDeadlineClose {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 1;
+}
+
+// The invoice of a sold lot is not paid yet. The fact carries what the channel
+// cannot read itself: the amount and the payment deadline are values of the
+// invoice, not of a read model. The lot title is not part of the trading
+// domain; the channel reads it by lot_id, as for the other lot types.
+message InvoiceReminder {
+  // Canonical lowercase UUIDv5 with hyphens: the invoice of the sale.
+  string invoice_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the sold lot.
+  string lot_id = 2;
+
+  // The amount to pay: the price of the sale. It never changes.
+  auction.v1.Money amount = 3;
+
+  // RFC 3339 instant in UTC: the payment is due by this moment.
+  string payment_due_at = 4;
+}
+
+// The payment deadline of an unpaid invoice is a day away. The body is the
+// body of the first reminder: the invoice, the lot, the amount and the
+// deadline are the same values.
+message InvoiceDueReminder {
+  // Canonical lowercase UUIDv5 with hyphens: the invoice of the sale.
+  string invoice_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the sold lot.
+  string lot_id = 2;
+
+  // The amount to pay: the price of the sale. It never changes.
+  auction.v1.Money amount = 3;
+
+  // RFC 3339 instant in UTC: the payment is due by this moment.
+  string payment_due_at = 4;
 }
 
 // A window of reduced bid step started on the followed lots of the recipient.

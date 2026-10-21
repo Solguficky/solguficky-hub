@@ -84,6 +84,7 @@ public class MigrationsTests
             "lot_lead_restored",
             "outbid_digest_leader_nullable",
             "auction_announcement",
+            "invoice_reminder",
         ]);
 
         var main = names.IndexOf("orleans_main");
