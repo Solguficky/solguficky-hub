@@ -55,13 +55,19 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
   }
 
   /** Ставка лота: сумма в минорных единицах и момент. Номер события — порядок вставки. */
-  private def bid(connection: java.sql.Connection, lotId: UUID, minorUnits: Long, at: Instant): Unit = {
+  private def bid(
+      connection: java.sql.Connection,
+      lotId: UUID,
+      minorUnits: Long,
+      at: Instant,
+      by: UUID = UUID.randomUUID()
+  ): Unit = {
     connection
       .createStatement()
       .executeUpdate(
         s"""INSERT INTO lot_bid (lot_id, sequence, bid_id, participant_id, minor_units, currency, origin, source,
                                  occurred_at)
-            SELECT '$lotId', COALESCE(MAX(sequence), 0) + 1, '${UUID.randomUUID()}', '${UUID.randomUUID()}',
+            SELECT '$lotId', COALESCE(MAX(sequence), 0) + 1, '${UUID.randomUUID()}', '$by',
                    $minorUnits, 'RUB', 'Manual', 'Bot', '${at.toString}'::timestamptz
             FROM lot_bid WHERE lot_id = '$lotId'"""
       )
@@ -176,6 +182,30 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
         val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue.head
         single.priceBefore shouldBe Some(Money(500, CurrencyCode("RUB")))
         single.growth shouldBe Some(Money(0, CurrencyCode("RUB")))
+      }
+    }
+
+    // PER-511: смены лидера и дуэль окна; лидер к открытию окна — автор последней ставки до него.
+    "counts the leader changes and the longest duel inside the window from the chronology of the lot" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val (a, b, c) = (UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        bid(connection, id, 100, before, a)
+        bid(connection, id, 200, before.plusSeconds(60), b)
+        bid(connection, id, 300, windowFrom.plusSeconds(60), a)
+        bid(connection, id, 400, windowFrom.plusSeconds(120), b)
+        bid(connection, id, 500, windowFrom.plusSeconds(180), a)
+        bid(connection, id, 600, windowFrom.plusSeconds(240), c)
+        bid(connection, id, 700, pastWindow, a)
+        id
+      }
+      withViews(database) { views =>
+        val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue
+        single.map(each => (each.lotId, each.contest)) shouldBe List(
+          (lotId, auction.projection.LotContest(leaderChanges = 4, longestDuel = 3))
+        )
       }
     }
 

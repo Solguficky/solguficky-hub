@@ -41,6 +41,8 @@ final case class LotSnapshotView(
  * `finalBidCount` — принятые ставки лота состава после его возврата в торги: строки `lot_bid` с номером события больше
  * `LotResumed`. Состав — заморозка `FinalLineupFrozen` (`auction_lineup`), а не признак удержания: удержанный лот,
  * проданный или снятый до заморозки, в состав не входит. У лота вне состава обеих метрик нет — `None`, а не ноль.
+ *
+ * `contest` — смены лидера и самая длинная дуэль за всю жизнь лота (PER-511), по его хронологии ядром [[LotContest]].
  */
 final case class LotStatisticsView(
     lotId: UUID,
@@ -50,7 +52,8 @@ final case class LotStatisticsView(
     participantCount: Long,
     lastBidAt: Option[Instant],
     heldPrice: Option[Money] = None,
-    finalBidCount: Option[Long] = None
+    finalBidCount: Option[Long] = None,
+    contest: LotContest = LotContest.none
 ) {
 
   /**
@@ -96,13 +99,15 @@ final case class LotStatisticsView(
  * была его цена к открытию окна. Число ставок и максимум считаются по строкам `lot_bid` окна без ставок снятых
  * участников, `priceBefore` — цена последней до окна ставки или снятия участника (PER-658), с которой лот пошёл дальше,
  * а без них — стартовая цена `LotOpened`. Полей участников здесь нет намеренно: сводка дня зовёт лот по цене и
- * оспоренности, а не по людям.
+ * оспоренности, а не по людям. `contest` — смены лидера и самая длинная дуэль внутри окна (PER-511): лидер к открытию
+ * окна берётся из хронологии до него.
  */
 final case class DayLotStatisticsView(
     lotId: UUID,
     bidCount: Long,
     maxPrice: Option[Money],
-    priceBefore: Option[Money]
+    priceBefore: Option[Money],
+    contest: LotContest = LotContest.none
 ) {
 
   /**

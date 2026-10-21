@@ -408,6 +408,9 @@ function fakeAuction(
           lotId: each.lot.lotId,
           bidCount: each.bidCount,
           uniqueParticipantCount: each.uniqueParticipantCount,
+          ...(each.priceGrowth === undefined
+            ? {}
+            : { priceGrowth: each.priceGrowth }),
         })),
       };
     },
@@ -3749,12 +3752,16 @@ describe("day summary screen", () => {
           bidCount: 4,
           maxPrice: rub(180_000),
           growth: rub(60_000),
+          leaderChangeCount: 2,
+          longestDuel: 2,
         },
         {
           lotId: mugId,
           bidCount: 7,
           maxPrice: rub(50_000),
           growth: rub(10_000),
+          leaderChangeCount: 5,
+          longestDuel: 3,
         },
       ],
     });
@@ -3775,7 +3782,9 @@ describe("day summary screen", () => {
     expect(screen).toContain(
       `https://t.me/${auctionBot}?start=l_${uuidToToken(mugId)}`,
     );
-    // Оба лота — в сводке: дороже всех Ваза, оспореннее всех Кружка.
+    // Оба лота — в сводке: дороже всех Ваза, оспореннее всех Кружка — по
+    // сменам лидера, а не по числу ставок (PER-511).
+    expect(screen).toContain("5 смен лидера");
     expect(screen).toContain("Ваза");
     expect(screen).toContain("Кружка");
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
@@ -3788,13 +3797,81 @@ describe("day summary screen", () => {
     ]);
   });
 
+  // PER-511: «тёмная лошадка» — среди лотов, у которых до суток было не больше
+  // трёх ставок, «эпичная дуэль» — от четырёх перебиваний подряд вдвоём.
+  it("names the dark horse among the lots with few bids before the day and the epic duel", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [
+        { ...vase, bidCount: 4, priceGrowth: rub(90_000) },
+        { ...mug, bidCount: 20, priceGrowth: rub(200_000) },
+      ],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 3,
+          maxPrice: rub(210_000),
+          leaderChangeCount: 2,
+          longestDuel: 2,
+        },
+        {
+          lotId: mugId,
+          bidCount: 3,
+          maxPrice: rub(250_000),
+          leaderChangeCount: 5,
+          longestDuel: 5,
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
+    await bot.init();
+
+    await bot.handleUpdate(press(summaryData));
+
+    const lines = plain(last(calls)).split("\n");
+    const lineUnder = (heading: string): string =>
+      lines[lines.indexOf(heading) + 1] ?? "";
+    // Кружка выросла больше, но до этого дня у неё было 17 ставок.
+    expect(lineUnder("Тёмная лошадка:")).toContain("Ваза");
+    expect(lineUnder("Тёмная лошадка:")).toContain("1 ставка до этого дня");
+    expect(lineUnder("Эпичная дуэль:")).toContain("Кружка");
+    expect(lineUnder("Эпичная дуэль:")).toContain(
+      "5 перебиваний подряд вдвоём",
+    );
+  });
+
+  it("leaves the dark horse and the duel out below their thresholds", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [{ ...vase, bidCount: 7, priceGrowth: rub(90_000) }],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 3,
+          maxPrice: rub(210_000),
+          leaderChangeCount: 3,
+          longestDuel: 3,
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
+    await bot.init();
+
+    await bot.handleUpdate(press(summaryData));
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("Спорнее всех:");
+    expect(screen).not.toContain("Тёмная лошадка:");
+    expect(screen).not.toContain("Эпичная дуэль:");
+  });
+
   it("says a day without bids had none instead of an empty screen", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       lots: [vase, mug],
       day: [
-        { lotId: vaseId, bidCount: 0 },
-        { lotId: mugId, bidCount: 0 },
+        { lotId: vaseId, bidCount: 0, leaderChangeCount: 0, longestDuel: 0 },
+        { lotId: mugId, bidCount: 0, leaderChangeCount: 0, longestDuel: 0 },
       ],
     });
     const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
@@ -3812,7 +3889,15 @@ describe("day summary screen", () => {
     const auction = fakeAuction({
       status: "prebidding",
       lots: [vase],
-      day: [{ lotId: vaseId, bidCount: 1, maxPrice: rub(120_000) }],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 1,
+          maxPrice: rub(120_000),
+          leaderChangeCount: 0,
+          longestDuel: 0,
+        },
+      ],
     });
     const { bot, calls } = harness("admin", auction);
     await bot.init();

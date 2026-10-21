@@ -201,11 +201,14 @@ export type LotStatisticsReadResult =
 // Сводка дня торгов (PER-492): агрегаты лота за окно, которое называет бот.
 // Лот без ставок в окне приходит с нулём и без цены, а не пропускается, —
 // «ставок не было» бот читает по всему реестру, а не по отсутствию строк.
+// Смены лидера и самая длинная дуэль — тоже окна (PER-511).
 export type DayLotStatistics = {
   lotId: string;
   bidCount: number;
   maxPrice?: Money;
   growth?: Money;
+  leaderChangeCount: number;
+  longestDuel: number;
 };
 
 /** Окно сводки дня: аукцион и границы суток, которые называет бот (PER-492). */
