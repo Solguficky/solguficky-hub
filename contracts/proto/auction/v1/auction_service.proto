@@ -494,7 +494,9 @@ message LotSnapshot {
 
   // The collectible set the lot belongs to. Unset when the lot is in no set, and
   // when its set has fewer than two lots: such a set is not shown to participants.
-  LotSetMembership lot_set = 19;
+  // Number 19 is not used: auction.v1.LotState carries the windows of the lot
+  // under it.
+  LotSetMembership lot_set = 20;
 }
 
 // A collectible set of lots of one auction and its outcome.
