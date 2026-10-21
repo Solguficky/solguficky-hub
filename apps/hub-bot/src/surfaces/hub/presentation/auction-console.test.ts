@@ -31,6 +31,8 @@ import type {
   AuctionConsoleView,
   ConsoleAuctionStatus,
   ConsoleLot,
+  Invoice,
+  InvoiceMark,
   LotSet,
 } from "../application/types.js";
 import type {
@@ -65,6 +67,9 @@ const auctionToken = uuidToToken(auctionId);
 const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 const vaseId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
 const mugId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+// Счета проданных лотов (PER-321): UUIDv5 от ставки продажи.
+const vaseInvoiceId = "5b0d3c1e-8a2f-5c4d-9e6f-1a2b3c4d5e6f";
+const mugInvoiceId = "5b0d3c1e-8a2f-5c4d-9e6f-1a2b3c4d5e70";
 const timeZone = "Europe/Moscow";
 const today = () => ({ year: 2026, month: 10, day: 6 });
 // Часы бота в тестах: 6 октября 2026 года, 12:00 по Москве.
@@ -146,6 +151,10 @@ const forgedAuctionPresses = {
   "console-removal": `v1:ac:e:${uuidToToken(vaseId)}`,
   "console-removal-pick": `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(identityId)}`,
   "console-removal-confirm": `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:3`,
+  "console-invoices": `v1:ac:iv:${auctionToken}`,
+  "console-invoice": `v1:ac:ic:${auctionToken}:${uuidToToken(vaseInvoiceId)}`,
+  "console-invoice-mark": `v1:ac:ip:${auctionToken}:${uuidToToken(vaseInvoiceId)}:p`,
+  "console-invoice-mark-confirm": `v1:ac:iy:${auctionToken}:${uuidToToken(vaseInvoiceId)}:p`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -255,6 +264,8 @@ function fakeAuction(
     participants?: readonly { participantId: string; name: string }[];
     // Сеты лотов (PER-509): сеты аукциона до теста.
     lotSets?: readonly LotSet[];
+    // Счета (PER-321): счета проданных лотов до теста.
+    invoices?: readonly Invoice[];
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -279,6 +290,10 @@ function fakeAuction(
     removed: Set<string>;
     // Сеты лотов (PER-509) в порядке идентификатора, как их отдаёт Auction.
     lotSets: LotSet[];
+    // Счета (PER-321): статус меняют только отметки.
+    invoices: Invoice[];
+    // Переходы счетов: повтор отметки, как в Auction, перехода не пишет.
+    transitions: { invoiceId: string; mark: InvoiceMark }[];
   } = {
     status: options.status ?? "draft",
     hidden: options.hidden ?? false,
@@ -294,6 +309,8 @@ function fakeAuction(
     closures: new Map(),
     removed: new Set(),
     lotSets: [...(options.lotSets ?? [])],
+    invoices: [...(options.invoices ?? [])],
+    transitions: [],
   };
   // Сеты как в Auction (ADR-073): меняются до открытия недели, лот — в одном
   // сете и только из реестра, тот же идентификатор заменяет сет целиком.
@@ -858,6 +875,41 @@ function fakeAuction(
         },
       });
       return { kind: "ok" as const, lotVersion: version };
+    },
+    async listAuctionInvoices() {
+      commands.push({ method: "listAuctionInvoices", args: auctionId });
+      if (options.refuse === true) return { kind: "not-administrator" };
+      return { kind: "ok" as const, invoices: state.invoices };
+    },
+    // Счёт решает отметку, как в Auction: выдача — только после оплаты,
+    // повтор уже стоящей отметки принимается без перехода.
+    async markInvoice(
+      _person: unknown,
+      mark: { invoiceId: string; mark: InvoiceMark; opId: string },
+    ) {
+      commands.push({ method: "markInvoice", args: mark });
+      const found = state.invoices.find(
+        (each) => each.invoiceId === mark.invoiceId,
+      );
+      if (found === undefined) return { kind: "invoice-not-found" as const };
+      const next =
+        mark.mark === "paid"
+          ? found.status === "awaiting-payment"
+            ? "paid"
+            : undefined
+          : found.status === "awaiting-payment"
+            ? "not-paid"
+            : found.status === "paid"
+              ? "handed-over"
+              : undefined;
+      if (next === "not-paid") return { kind: "invoice-not-paid" as const };
+      if (next !== undefined) {
+        state.transitions.push({ invoiceId: found.invoiceId, mark: mark.mark });
+        state.invoices = state.invoices.map((each) =>
+          each === found ? { ...each, status: next } : each,
+        );
+      }
+      return { kind: "ok" as const };
     },
     currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
@@ -2646,6 +2698,9 @@ describe("final selection", () => {
       ["Ставки", "Люди", "Рост"],
       ["Время финала"],
       ["Сводка дня", "Отменить аукцион"],
+      // Удержанный лот в перерыве продаётся ведущим, и с перерыва у
+      // аукциона есть счета (PER-321).
+      ["Счета"],
       ["‹ Аукцион"],
     ]);
   });
@@ -5322,5 +5377,196 @@ describe("participant removal from the bids of a lot", () => {
         `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(jayId)}:${(36 ** 8 - 1).toString(36)}`,
       ),
     ).toBeLessThanOrEqual(64);
+  });
+});
+
+// Счета проданных лотов (PER-321): ряд «Счета» пульта, сводка с итогом и
+// просрочкой, счёт, подтверждение отметки и её исход. Право решает Auction;
+// повтор отметки второго перехода не пишет.
+describe("invoices of the auction console", () => {
+  const jayId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+  const owlId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402";
+  const sold = (lotId: string, title: string, price: number): ConsoleLot => ({
+    lot: {
+      ...trading(lotId, title, price),
+      status: { kind: "sold", winnerId: jayId, price: rub(price) },
+    },
+    bidCount: 2,
+    uniqueParticipantCount: 2,
+    markedForFinal: false,
+    overdue: false,
+  });
+  const bill = (
+    invoiceId: string,
+    lotId: string,
+    winnerId: string,
+    price: number,
+    status: Invoice["status"],
+    paymentDueAt: string,
+  ): Invoice => ({
+    invoiceId,
+    auctionId,
+    lotId,
+    winnerId,
+    amount: rub(price),
+    paymentDueAt,
+    fulfillment: "pickup",
+    status,
+  });
+  // Аукцион закончен: Ваза ждёт оплаты, и срок прошёл; Кружка оплачена.
+  const finished = (vaseStatus: Invoice["status"] = "awaiting-payment") =>
+    fakeAuction({
+      status: "finished",
+      lots: [sold(vaseId, "Ваза", 150_000), sold(mugId, "Кружка", 50_000)],
+      names: { [jayId]: "@jay", [owlId]: "@owl" },
+      invoices: [
+        bill(
+          vaseInvoiceId,
+          vaseId,
+          jayId,
+          150_000,
+          vaseStatus,
+          "2026-10-05T09:00:00Z",
+        ),
+        bill(
+          mugInvoiceId,
+          mugId,
+          owlId,
+          50_000,
+          "paid",
+          "2026-10-05T09:00:00Z",
+        ),
+      ],
+    });
+  const invoicesData = `v1:ac:iv:${auctionToken}`;
+  const vaseInvoiceData = `v1:ac:ic:${auctionToken}:${uuidToToken(vaseInvoiceId)}`;
+  const pressFresh = async (
+    auction: ReturnType<typeof fakeAuction>,
+    calls: RecordedCall[],
+    data: string,
+    holder: "admin" | "member" = "admin",
+  ) => {
+    const { bot } = harness(holder, auction, calls);
+    await bot.init();
+    await bot.handleUpdate(press(data));
+    return last(calls);
+  };
+
+  it("offers the invoices on the console once the lots are sold", async () => {
+    const calls: RecordedCall[] = [];
+    const console = await pressFresh(finished(), calls, consoleData);
+    expect(dataOf(console, "Счета")).toBe(invoicesData);
+
+    const trading: RecordedCall[] = [];
+    const before = await pressFresh(
+      fakeAuction({ status: "prebidding", week: { ...week, final: false } }),
+      trading,
+      consoleData,
+    );
+    expect(labels(before).flat()).not.toContain("Счета");
+  });
+
+  it("sums what is collected and expected and puts the overdue invoice first", async () => {
+    const calls: RecordedCall[] = [];
+    const summary = plain(await pressFresh(finished(), calls, invoicesData));
+    expect(summary).toContain("Собрано: 500 ₽.");
+    expect(summary).toContain("Ожидается: 1 500 ₽.");
+    expect(summary).toContain("Просрочено: 1 счёт.");
+    expect(summary.indexOf("Ваза — @jay")).toBeLessThan(
+      summary.indexOf("Кружка — @owl"),
+    );
+    expect(summary).toContain("Ваза — @jay, 1 500 ₽: просрочен");
+    expect(summary).toContain(
+      "Кружка — @owl, 500 ₽: оплачен, ждёт выдачи, самовывоз.",
+    );
+    expect(labels(last(calls))).toEqual([
+      ["Ваза · @jay"],
+      ["Кружка · @owl"],
+      ["‹ Пульт"],
+    ]);
+  });
+
+  it("marks the payment through the confirmation and shows it in the summary", async () => {
+    const auction = finished();
+    const calls: RecordedCall[] = [];
+    const invoice = await pressFresh(auction, calls, vaseInvoiceData);
+    expect(plain(invoice)).toContain("Статус: просрочен");
+    expect(labels(invoice)).toEqual([["Отметить оплату"], ["‹ Счета"]]);
+
+    const confirm = await pressFresh(
+      auction,
+      calls,
+      dataOf(invoice, "Отметить оплату"),
+    );
+    expect(plain(confirm)).toContain("Отметить оплату?");
+    expect(auction.sent("markInvoice")).toEqual([]);
+
+    const outcome = await pressFresh(
+      auction,
+      calls,
+      dataOf(confirm, "✔️ Да, отметить"),
+    );
+    expect(plain(outcome)).toContain("Оплата отмечена");
+    expect(labels(outcome)).toEqual([["‹ Счёт"]]);
+    expect(auction.state.transitions).toEqual([
+      { invoiceId: vaseInvoiceId, mark: "paid" },
+    ]);
+
+    const summary = plain(await pressFresh(auction, calls, invoicesData));
+    expect(summary).toContain("Собрано: 2 000 ₽.");
+    expect(summary).toContain("Ожидается: ничего.");
+    expect(summary).not.toContain("Просрочено");
+  });
+
+  // Ключ отметки рождается на нажатие, поэтому второе «Да» тоже доходит до
+  // Auction — и тот, как сервис, принимает его без второго перехода.
+  it("records no second transition when the same yes is pressed twice", async () => {
+    const auction = finished();
+    const calls: RecordedCall[] = [];
+    const yes = `v1:ac:iy:${auctionToken}:${uuidToToken(vaseInvoiceId)}:p`;
+    await pressFresh(auction, calls, yes);
+    const again = await pressFresh(auction, calls, yes);
+    expect(plain(again)).toContain("Оплата уже отмечена");
+    expect(auction.state.transitions).toEqual([
+      { invoiceId: vaseInvoiceId, mark: "paid" },
+    ]);
+  });
+
+  it("hands over a paid lot and offers nothing after it", async () => {
+    const auction = finished("paid");
+    const calls: RecordedCall[] = [];
+    const invoice = await pressFresh(auction, calls, vaseInvoiceData);
+    const confirm = await pressFresh(
+      auction,
+      calls,
+      dataOf(invoice, "Отметить выдачу"),
+    );
+    await pressFresh(auction, calls, dataOf(confirm, "✔️ Да, отметить"));
+    expect(auction.state.transitions).toEqual([
+      { invoiceId: vaseInvoiceId, mark: "handed-over" },
+    ]);
+    const closed = await pressFresh(auction, calls, vaseInvoiceData);
+    expect(plain(closed)).toContain("Статус: выдан.");
+    expect(labels(closed)).toEqual([["‹ Счета"]]);
+  });
+
+  it("does not hand over an unpaid lot from a stale button", async () => {
+    const auction = finished();
+    const calls: RecordedCall[] = [];
+    const outcome = await pressFresh(
+      auction,
+      calls,
+      `v1:ac:ip:${auctionToken}:${uuidToToken(vaseInvoiceId)}:h`,
+    );
+    expect(plain(outcome)).toContain("Выдать пока нельзя");
+    expect(auction.sent("markInvoice")).toEqual([]);
+  });
+
+  it("refuses the invoices that Auction does not grant", async () => {
+    const auction = fakeAuction({ status: "finished", refuse: true });
+    const calls: RecordedCall[] = [];
+    const refused = await pressFresh(auction, calls, invoicesData);
+    expect(refused.text).toContain("Это действие тебе недоступно.");
+    expect(auction.sent("getAuctionConsole")).toEqual([]);
   });
 });

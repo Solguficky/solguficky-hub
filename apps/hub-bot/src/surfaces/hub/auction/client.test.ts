@@ -8,6 +8,7 @@ import {
 } from "../../../../gen/auction/v1/auction_events_pb.js";
 import {
   BidSource,
+  FulfillmentMethod,
   LotSaleSchema,
 } from "../../../../gen/auction/v1/auction_pb.js";
 import {
@@ -111,6 +112,9 @@ function adapter(rpc: {
   launchStepWindow?: Call;
   previewParticipantRemoval?: Call;
   removeParticipant?: Call;
+  listAuctionInvoices?: Call;
+  markInvoicePaid?: Call;
+  markInvoiceHandedOver?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -158,6 +162,9 @@ function adapter(rpc: {
     previewParticipantRemoval: (rpc.previewParticipantRemoval ??
       notUsed) as never,
     removeParticipant: (rpc.removeParticipant ?? notUsed) as never,
+    listAuctionInvoices: (rpc.listAuctionInvoices ?? notUsed) as never,
+    markInvoicePaid: (rpc.markInvoicePaid ?? notUsed) as never,
+    markInvoiceHandedOver: (rpc.markInvoiceHandedOver ?? notUsed) as never,
   });
 }
 
@@ -2242,5 +2249,155 @@ describe("participant removal adapter", () => {
       }),
     ).resolves.toMatchObject({ kind: "timeout" });
     expect(removeParticipant).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Счета аукциона (PER-321): сводка организатора и отметки; отказы — значения,
+// а выдача и оплата — разные методы Auction.
+describe("auction invoices adapter", () => {
+  const invoiceId = "5b0d3c1e-8a2f-5c4d-9e6f-1a2b3c4d5e6f";
+  const snapshot = (status: "awaitingPayment" | "paid" | "handedOver") => ({
+    id: invoiceId,
+    auctionId,
+    lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c",
+    winnerId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+    amount: { minorUnits: 150_000n, currency: "RUB" },
+    paymentDueAt: "2026-10-30T12:00:00Z",
+    fulfillment: FulfillmentMethod.PICKUP,
+    status: { case: status, value: {} },
+  });
+
+  it("reads every invoice of the auction with its status and method", async () => {
+    const sent: unknown[] = [];
+    const invoices = adapter({
+      listAuctionInvoices: async (request) => {
+        sent.push(request);
+        return {
+          outcome: {
+            case: "invoices",
+            value: {
+              invoices: [
+                snapshot("awaitingPayment"),
+                { ...snapshot("handedOver"), fulfillment: 7 },
+              ],
+            },
+          },
+        };
+      },
+    });
+    await expect(
+      invoices.listAuctionInvoices(admin, auctionId),
+    ).resolves.toEqual({
+      kind: "ok",
+      invoices: [
+        expect.objectContaining({
+          invoiceId,
+          amount: { minorUnits: 150_000, currency: "RUB" },
+          paymentDueAt: "2026-10-30T12:00:00Z",
+          fulfillment: "pickup",
+          status: "awaiting-payment",
+        }),
+        // Способ новее схемы — как невыбранный.
+        expect.objectContaining({
+          fulfillment: "unspecified",
+          status: "handed-over",
+        }),
+      ],
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, auctionId }),
+    ]);
+  });
+
+  it("reads the refusals of the invoices as values and a missing auction as such", async () => {
+    const refused = (reason: string) =>
+      adapter({
+        listAuctionInvoices: async () => ({
+          outcome: {
+            case: "refused",
+            value: { reason: { case: reason, value: {} } },
+          },
+        }),
+      }).listAuctionInvoices(admin, auctionId);
+    await expect(refused("notMeetupAdministrator")).resolves.toEqual({
+      kind: "not-administrator",
+    });
+    await expect(refused("meetupNotFound")).resolves.toEqual({
+      kind: "meetup-not-found",
+    });
+    await expect(
+      adapter({
+        listAuctionInvoices: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).listAuctionInvoices(admin, auctionId),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+
+  it("refuses an invoice without an amount or a readable due moment as a defect of the neighbour", async () => {
+    const { amount: _, ...withoutAmount } = snapshot("paid");
+    const read = (invoice: unknown) =>
+      adapter({
+        listAuctionInvoices: async () => ({
+          outcome: { case: "invoices", value: { invoices: [invoice] } },
+        }),
+      }).listAuctionInvoices(admin, auctionId);
+    await expect(read(withoutAmount)).resolves.toMatchObject({
+      kind: "invalid",
+    });
+    await expect(
+      read({ ...snapshot("paid"), paymentDueAt: "" }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("marks the payment and the handover by their own methods", async () => {
+    const paid: unknown[] = [];
+    const handedOver: unknown[] = [];
+    const marks = adapter({
+      markInvoicePaid: async (request) => {
+        paid.push(request);
+        return { outcome: { case: "accepted", value: {} } };
+      },
+      markInvoiceHandedOver: async (request) => {
+        handedOver.push(request);
+        return {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "invoiceNotPaid", value: {} } },
+          },
+        };
+      },
+    });
+    await expect(
+      marks.markInvoice(admin, { invoiceId, mark: "paid", opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      marks.markInvoice(admin, { invoiceId, mark: "handed-over", opId }),
+    ).resolves.toEqual({ kind: "invoice-not-paid" });
+    expect(paid).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, invoiceId, opId }),
+    ]);
+    expect(handedOver).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, invoiceId, opId }),
+    ]);
+  });
+
+  it("reads a missing invoice and an unanswered mark without a repeat", async () => {
+    await expect(
+      adapter({
+        markInvoicePaid: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).markInvoice(admin, { invoiceId, mark: "paid", opId }),
+    ).resolves.toEqual({ kind: "invoice-not-found" });
+    const markInvoicePaid = vi.fn(() =>
+      Promise.reject(new ConnectError("deadline", Code.DeadlineExceeded)),
+    );
+    await expect(
+      adapter({ markInvoicePaid }).markInvoice(admin, {
+        invoiceId,
+        mark: "paid",
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "timeout" });
+    expect(markInvoicePaid).toHaveBeenCalledTimes(1);
   });
 });

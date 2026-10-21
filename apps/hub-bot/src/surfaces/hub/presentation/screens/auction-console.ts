@@ -49,6 +49,7 @@ import {
   consoleFinalData,
   consoleFinalTimeData,
   consoleFinalTimeRemoveData,
+  consoleInvoicesData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -75,6 +76,7 @@ import {
   defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
+import { invoicesLabel } from "./auction-invoices.js";
 import { auctionCancelConsequence } from "./auction-stage.js";
 import {
   buttonText,
@@ -483,6 +485,17 @@ function inFinal(console: AuctionConsoleView): boolean {
   return console.status === "lineup-frozen" || console.status === "final";
 }
 
+// Пульт финала — экран ведущего, и счета там не показываются: к ним
+// возвращаются в перерыве и после конца аукциона.
+function invoicesShown(console: AuctionConsoleView): boolean {
+  return (
+    console.status === "settling" ||
+    console.status === "break" ||
+    console.status === "finished" ||
+    console.status === "cancelled"
+  );
+}
+
 // Финал идёт, а ведущий ещё не открыл ни одного лота: активного нет, и ни
 // один лот состава не торговался в финале. Лот, выбывший до своей очереди,
 // открытием не считается.
@@ -880,6 +893,12 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       removeLabel("Удалить аукцион"),
       consoleDiscardData(auction),
     );
+  }
+  // Счета (PER-321): лоты продаются с общего дедлайна онлайн-недели, и с него
+  // же у аукциона появляются счета. Отменённый аукцион их сохраняет: проданный
+  // лот остаётся проданным.
+  if (invoicesShown(console)) {
+    nextRow(keyboard).text(invoicesLabel, consoleInvoicesData(auction));
   }
   if (console.status === "break" && heldLots(console).length > 0) {
     nextRow(keyboard).text(

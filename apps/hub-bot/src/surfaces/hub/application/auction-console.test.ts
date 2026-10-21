@@ -207,6 +207,12 @@ function fake(answers: {
     removeParticipant: async () => {
       throw new Error("participant removal not used by the console");
     },
+    listAuctionInvoices: async () => {
+      throw new Error("invoices not used by the console");
+    },
+    markInvoice: async () => {
+      throw new Error("invoices not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };

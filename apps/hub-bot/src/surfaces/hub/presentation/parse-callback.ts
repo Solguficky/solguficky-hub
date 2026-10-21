@@ -8,6 +8,7 @@ import type {
   CloseQuote,
   ConsoleSort,
   FormField,
+  InvoiceMark,
   LaunchDraft,
   LineupPick,
   LotSetRef,
@@ -399,6 +400,22 @@ type PlainAction =
   | { kind: "console-windows"; auction: string }
   // Сводка дня торгов (PER-492): текст за сутки со ссылками на лоты.
   | { kind: "console-day-summary"; auction: string }
+  // Счета аукциона (PER-321): сводка со страницей, счёт, подтверждение отметки
+  // и «Да». Отметка — `p` оплата, `h` выдача; ключ рождается на нажатие «Да».
+  | { kind: "console-invoices"; auction: string; page: number }
+  | { kind: "console-invoice"; auction: string; invoice: string }
+  | {
+      kind: "console-invoice-mark";
+      auction: string;
+      invoice: string;
+      mark: InvoiceMark;
+    }
+  | {
+      kind: "console-invoice-mark-confirm";
+      auction: string;
+      invoice: string;
+      mark: InvoiceMark;
+    }
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -866,6 +883,42 @@ export function consoleWindowsData(auction: string): string {
 /** «Сводка дня»: текст за сутки со ссылками на лоты в боте аукциона (PER-492). */
 export function consoleDaySummaryData(auction: string): string {
   return `v1:ac:ds:${auction}`;
+}
+
+/** «Счета» (PER-321): сводка счетов аукциона; первая страница — без номера. */
+export function consoleInvoicesData(auction: string, page = 0): string {
+  return page === 0 ? `v1:ac:iv:${auction}` : `v1:ac:iv:${auction}:${page}`;
+}
+
+/** Счёт: аукцион и счёт токенами, 54 байта. */
+export function consoleInvoiceData(auction: string, invoice: string): string {
+  return `v1:ac:ic:${auction}:${invoice}`;
+}
+
+const invoiceMarkCode: Record<InvoiceMark, string> = {
+  paid: "p",
+  "handed-over": "h",
+};
+const InvoiceMarkSchema = z
+  .enum(["p", "h"])
+  .transform((code): InvoiceMark => (code === "p" ? "paid" : "handed-over"));
+
+/** Отметка оплаты или выдачи — к подтверждению. */
+export function consoleInvoiceMarkData(
+  auction: string,
+  invoice: string,
+  mark: InvoiceMark,
+): string {
+  return `v1:ac:ip:${auction}:${invoice}:${invoiceMarkCode[mark]}`;
+}
+
+/** «Да» отметки: 56 байт; ключ команды рождается на нажатие. */
+export function consoleInvoiceMarkConfirmData(
+  auction: string,
+  invoice: string,
+  mark: InvoiceMark,
+): string {
+  return `v1:ac:iy:${auction}:${invoice}:${invoiceMarkCode[mark]}`;
 }
 
 /** Окно на странице лотов `page`; первая страница — без номера. */
@@ -1705,6 +1758,38 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-day-summary", auction: auction.data }
         : { kind: "malformed" };
+    case "iv": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-invoices", auction: auction.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    case "ic": {
+      const invoice = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && invoice.success
+        ? {
+            kind: "console-invoice",
+            auction: auction.data,
+            invoice: invoice.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "ip":
+    case "iy": {
+      const invoice = TokenSchema.safeParse(parts[4]);
+      const mark = InvoiceMarkSchema.safeParse(parts[5]);
+      if (parts.length !== 6 || !invoice.success || !mark.success) {
+        return { kind: "malformed" };
+      }
+      const target = {
+        auction: auction.data,
+        invoice: invoice.data,
+        mark: mark.data,
+      };
+      return parts[2] === "ip"
+        ? { kind: "console-invoice-mark", ...target }
+        : { kind: "console-invoice-mark-confirm", ...target };
+    }
     // Третья часть здесь — лот, а не аукцион: токен у них одной формы.
     case "e": {
       const page = PageSchema.safeParse(parts[4] ?? "0");

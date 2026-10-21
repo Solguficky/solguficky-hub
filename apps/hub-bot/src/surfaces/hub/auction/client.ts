@@ -7,9 +7,13 @@ import {
 } from "@connectrpc/connect-node";
 import {
   BidSource,
+  FulfillmentMethod,
   type StepPolicySchema,
 } from "../../../../gen/auction/v1/auction_pb.js";
-import type { AuctionSnapshot } from "../../../../gen/auction/v1/auction_service_pb.js";
+import type {
+  AuctionSnapshot,
+  InvoiceSnapshot,
+} from "../../../../gen/auction/v1/auction_service_pb.js";
 import {
   AuctionListing,
   AuctionService,
@@ -59,7 +63,12 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
-import type { Person, RemovalRefusal } from "../application/types.js";
+import type {
+  FulfillmentMethod as FulfillmentView,
+  Invoice,
+  Person,
+  RemovalRefusal,
+} from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
   type AddLotResult,
@@ -81,6 +90,8 @@ import {
   type FinalTimeResult,
   type FloorBidResult,
   type FreezeFinalLineupResult,
+  type InvoiceMarkResult,
+  type InvoicesReadResult,
   type LaunchStepWindowResult,
   type LotAdministration,
   type LotCardResult,
@@ -149,6 +160,9 @@ type AuctionRpc = Pick<
   | "closeLot"
   | "previewParticipantRemoval"
   | "removeParticipant"
+  | "listAuctionInvoices"
+  | "markInvoicePaid"
+  | "markInvoiceHandedOver"
 >;
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
@@ -979,6 +993,37 @@ export function createAuctionAdapter(
         return removeParticipantResult(response.outcome);
       } catch (cause) {
         return toFailure(cause);
+      }
+    },
+    async listAuctionInvoices(person, auctionId, meta) {
+      try {
+        const response = await rpc.listAuctionInvoices(
+          { viewer: wireViewer(viewerOf(person)), auctionId },
+          options(meta),
+        );
+        return invoicesResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Повтора нет: ключ рождается на нажатие «Да», а повтор того же «Да»
+    // Auction примет без второго перехода.
+    async markInvoice(person, mark, meta) {
+      const request = {
+        viewer: wireViewer(viewerOf(person)),
+        invoiceId: mark.invoiceId,
+        opId: mark.opId,
+      };
+      try {
+        const outcome =
+          mark.mark === "paid"
+            ? (await rpc.markInvoicePaid(request, options(meta))).outcome
+            : (await rpc.markInvoiceHandedOver(request, options(meta))).outcome;
+        return invoiceMarkResult(outcome);
+      } catch (cause) {
+        return cause instanceof ConnectError && cause.code === Code.NotFound
+          ? { kind: "invoice-not-found" }
+          : toFailure(cause);
       }
     },
     screenPorts(meta): AuctionScreenPorts {
@@ -2325,6 +2370,119 @@ function removeParticipantResult(
       return removalRefusal(outcome.value.reason, "remove participant");
     case undefined:
       return defect("remove participant response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function invoicesResult(
+  outcome: Awaited<ReturnType<AuctionRpc["listAuctionInvoices"]>>["outcome"],
+): InvoicesReadResult {
+  switch (outcome.case) {
+    case "invoices": {
+      const invoices: Invoice[] = [];
+      for (const snapshot of outcome.value.invoices) {
+        const invoice = invoiceOf(snapshot);
+        if (invoice === undefined) {
+          return defect(
+            "auction invoice without an amount, a status or a due moment",
+          );
+        }
+        invoices.push(invoice);
+      }
+      return { kind: "ok", invoices };
+    }
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case undefined:
+          return defect("auction invoices refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("auction invoices response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Счёт без суммы, статуса или разборчивого срока оплаты — дефект соседа:
+// `undefined`, и чтение целиком отказывает, а не показывает счёт без денег и
+// не роняет экран на сроке.
+function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
+  if (snapshot.amount === undefined) return undefined;
+  if (Number.isNaN(Date.parse(snapshot.paymentDueAt))) return undefined;
+  const status =
+    snapshot.status.case === "awaitingPayment"
+      ? "awaiting-payment"
+      : snapshot.status.case === "paid"
+        ? "paid"
+        : snapshot.status.case === "handedOver"
+          ? "handed-over"
+          : undefined;
+  if (status === undefined) return undefined;
+  return {
+    invoiceId: snapshot.id,
+    auctionId: snapshot.auctionId,
+    lotId: snapshot.lotId,
+    winnerId: snapshot.winnerId,
+    amount: moneyOf(snapshot.amount),
+    paymentDueAt: snapshot.paymentDueAt,
+    fulfillment: fulfillmentOf(snapshot.fulfillment),
+    status,
+  };
+}
+
+// Способ новее схемы бот не знает и показывает как невыбранный: счёт важнее
+// подписи способа.
+function fulfillmentOf(method: FulfillmentMethod): FulfillmentView {
+  switch (method) {
+    case FulfillmentMethod.PICKUP:
+      return "pickup";
+    case FulfillmentMethod.DELIVERY:
+      return "delivery";
+    case FulfillmentMethod.DIGITAL:
+      return "digital";
+    default:
+      return "unspecified";
+  }
+}
+
+type InvoiceMarkOutcome =
+  | Awaited<ReturnType<AuctionRpc["markInvoicePaid"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["markInvoiceHandedOver"]>>["outcome"];
+
+function invoiceMarkResult(outcome: InvoiceMarkOutcome): InvoiceMarkResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "invoiceNotPaid":
+          return { kind: "invoice-not-paid" };
+        case undefined:
+          return defect("invoice mark refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("invoice mark response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
