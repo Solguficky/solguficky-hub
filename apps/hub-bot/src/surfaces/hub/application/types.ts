@@ -1254,13 +1254,19 @@ export type ExecuteResult =
       mustExceed?: LotAmount;
     }
   // Лот финала закрыт: продан покупателю за цену либо закрыт без продажи.
-  // Имени покупателя нет, когда Auction его не назвал.
+  // Имени покупателя нет, когда Auction его не назвал; `buyerUsername` —
+  // настоящий аккаунт для организатора (PER-648), когда ему его отдал Identity.
   | {
       kind: "final-lot-closed";
       auctionId: string;
       title?: string;
       closure:
-        | { kind: "sold"; price: LotAmount; buyerName?: string }
+        | {
+            kind: "sold";
+            price: LotAmount;
+            buyerName?: string;
+            buyerUsername?: string;
+          }
         | { kind: "unsold" };
       // Закрыт последний лот состава — аукцион завершён (PER-639): сколько
       // лотов аукциона продано и за сколько всего, с этим закрытием.
@@ -1276,6 +1282,9 @@ export type ExecuteResult =
       title?: string;
       price?: LotAmount;
       leaderName?: string;
+      // Настоящий аккаунт лидера для организатора (PER-648); участнику
+      // Identity его не отдаёт, и поле остаётся пустым.
+      leaderUsername?: string;
       // Подтверждение задано заново: цена или лидер изменились после
       // прежнего, и закрывать по нему бот не стал.
       changed?: true;

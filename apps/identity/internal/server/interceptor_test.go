@@ -619,28 +619,52 @@ func TestUnaryLoggingNamesProfileOfRightCheckFromRequest(t *testing.T) {
 	}
 }
 
-func TestUnaryLoggingNamesOrganizerWithoutUsername(t *testing.T) {
+// Оба метода читают ник по запросу и называют в записи человека, а не ник.
+func TestUnaryLoggingNamesUsernameReaders(t *testing.T) {
 	t.Parallel()
 
-	const username = "organizer_handle"
-	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/ResolveOrganizerUsername"}
-	logs := &capture{}
-	_, _ = unaryLogging(slog.New(logs))(t.Context(),
-		&identityv1.ResolveOrganizerUsernameRequest{IdentityId: resolvedIdentityID}, info,
-		func(context.Context, any) (any, error) {
-			return &identityv1.ResolveOrganizerUsernameResponse{TelegramUsername: new(username)}, nil
-		})
+	const username = "handle"
+	for name, method := range map[string]struct {
+		full string
+		req  any
+		resp func() any
+	}{
+		"organizer": {
+			full: "/identity.v1.IdentityService/ResolveOrganizerUsername",
+			req:  &identityv1.ResolveOrganizerUsernameRequest{IdentityId: resolvedIdentityID},
+			resp: func() any {
+				return &identityv1.ResolveOrganizerUsernameResponse{TelegramUsername: new(username)}
+			},
+		},
+		"participant": {
+			full: "/identity.v1.IdentityService/ResolveParticipantUsername",
+			req:  &identityv1.ResolveParticipantUsernameRequest{IdentityId: resolvedIdentityID},
+			resp: func() any {
+				return &identityv1.ResolveParticipantUsernameResponse{TelegramUsername: new(username)}
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			logs := &capture{}
+			info := &grpc.UnaryServerInfo{FullMethod: method.full}
+			_, _ = unaryLogging(slog.New(logs))(t.Context(), method.req, info,
+				func(context.Context, any) (any, error) {
+					return method.resp(), nil
+				})
 
-	rec := logs.sole(t)
-	if got := attrValue(t, rec, "identity_id").String(); got != resolvedIdentityID {
-		t.Fatalf("identity_id: got %q want %q", got, resolvedIdentityID)
+			rec := logs.sole(t)
+			if got := attrValue(t, rec, "identity_id").String(); got != resolvedIdentityID {
+				t.Fatalf("identity_id: got %q want %q", got, resolvedIdentityID)
+			}
+			rec.Attrs(func(a slog.Attr) bool {
+				if strings.Contains(a.Value.String(), username) {
+					t.Fatalf("attribute %q carries the username: %q", a.Key, a.Value.String())
+				}
+				return true
+			})
+		})
 	}
-	rec.Attrs(func(a slog.Attr) bool {
-		if strings.Contains(a.Value.String(), username) {
-			t.Fatalf("attribute %q carries the username: %q", a.Key, a.Value.String())
-		}
-		return true
-	})
 }
 
 func TestUnaryLoggingRecordsUseCaseWhenPresent(t *testing.T) {

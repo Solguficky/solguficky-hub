@@ -2,7 +2,7 @@ import type {
   AuctionSummaryView,
   RaffleView,
 } from "../../../auction-ui/index.js";
-import { rpcMeta } from "../../../core/rpc-metadata.js";
+import { type RpcMetadata, rpcMeta } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoles,
   AuctionFailure,
@@ -13,6 +13,7 @@ import type {
   ScheduleAuctionResult,
 } from "../auction/port.js";
 import { communityDay, communityInstant } from "../community-time.js";
+import type { ParticipantUsernameResolver } from "../identity/port.js";
 import { lotCurrency, parseRubles } from "./lot-form.js";
 import type {
   AuctionConsoleRequest,
@@ -28,6 +29,7 @@ import type {
   LaunchDraft,
   LineupPick,
   LotAmount,
+  Person,
   RaffleAskError,
   RafflePrizeAskError,
   StepWindow,
@@ -579,6 +581,9 @@ export function createAuctionConsole(
   timeZone: string,
   // Часы бота: по ним решается, прошёл ли конец недели. Тест их подменяет.
   now: () => Date = () => new Date(),
+  // Настоящий аккаунт названного человека (PER-648). Порт необязателен: без
+  // Identity пульт показывает псевдоним, как раньше.
+  usernames?: ParticipantUsernameResolver,
 ) {
   type Read =
     | { kind: "ok"; console: AuctionConsoleView }
@@ -1710,6 +1715,33 @@ export function createAuctionConsole(
     }
   }
 
+  // Настоящий аккаунт лидера или покупателя (PER-648). Identity отвечает
+  // только держателю права вести аукцион; отказ, недоступность, отсутствие
+  // ника и человека без имени на экране оставляют текст прежним. Имя, которое
+  // уже является ником, тоже спрашивается: снимок ника в аукционе заморожен,
+  // а организатору нужен свежий аккаунт.
+  async function participantAccount(
+    request: RpcMetadata & { identity: Person },
+    identityId: string | undefined,
+    shownName: string | undefined,
+  ): Promise<string | undefined> {
+    if (
+      usernames === undefined ||
+      identityId === undefined ||
+      shownName === undefined
+    ) {
+      return undefined;
+    }
+    const result = await usernames.resolveParticipantUsername(
+      { identityId: request.identity.identityId },
+      identityId,
+      rpcMeta(request),
+    );
+    return result.kind === "resolved" && result.telegramUsername !== ""
+      ? result.telegramUsername
+      : undefined;
+  }
+
   // «Продать»: подтверждение называет лот, цену и лидера, а без ставок —
   // закрытие без продажи. Ключ закрытия рождён краем и уедет в «Да».
   async function prepareClose(
@@ -1726,6 +1758,11 @@ export function createAuctionConsole(
       console.trading?.lotId === entry.lot.lotId
         ? console.trading.leaderName
         : undefined;
+    const leaderUsername = await participantAccount(
+      request,
+      status.leaderId,
+      leaderName,
+    );
     return {
       kind: "final-close-confirm",
       auctionId: request.auctionId,
@@ -1734,6 +1771,7 @@ export function createAuctionConsole(
       ...titled(entry),
       ...(status.leaderId === undefined ? {} : { price: status.currentPrice }),
       ...(leaderName === undefined ? {} : { leaderName }),
+      ...(leaderUsername === undefined ? {} : { leaderUsername }),
     };
   }
 
@@ -1765,12 +1803,18 @@ export function createAuctionConsole(
     );
     const buyerName =
       names.kind === "ok" ? names.names[closed.winnerId] : undefined;
+    const buyerUsername = await participantAccount(
+      request,
+      closed.winnerId,
+      buyerName,
+    );
     return {
       ...outcome,
       closure: {
         kind: "sold",
         price: closed.price,
         ...(buyerName === undefined ? {} : { buyerName }),
+        ...(buyerUsername === undefined ? {} : { buyerUsername }),
       },
     };
   }

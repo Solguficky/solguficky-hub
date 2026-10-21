@@ -123,6 +123,7 @@ import {
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
+  type ParticipantUsernameResolver,
   type ReconsiderResult,
   type RecordRight,
   type RefusedApplication,
@@ -430,6 +431,7 @@ export type BotRuntime = {
     Partial<RightRecordAdministrator> &
     Partial<AdministratorManager> &
     Partial<OrganizerResolver> &
+    Partial<ParticipantUsernameResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
   tracing: Tracing;
@@ -6252,6 +6254,35 @@ function feedAuctionOf(body: AuctionScreenBody): string | undefined {
   return feed?.auctionId;
 }
 
+// Настоящий аккаунт победителя проданного лота (PER-648). Identity отдаёт его
+// только держателю права вести аукцион, и остальным вызов не делается: экран
+// всё равно остался бы с псевдонимом. Имя, которое уже является ником, тоже
+// спрашивается: снимок ника в аукционе заморожен и может разойтись с
+// Telegram, а организатору нужен свежий аккаунт. Отказ, недоступность и
+// проданного лота без имени — поля нет, карточка показывает то, что дал
+// Auction.
+async function soldWinnerUsername(
+  runtime: BotRuntime,
+  viewer: Viewer,
+  body: AuctionScreenBody,
+): Promise<string | undefined> {
+  const resolve = runtime.identity.resolveParticipantUsername;
+  if (resolve === undefined || !canRunAuctions(viewer)) return undefined;
+  const lot = body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "lot" }> =>
+      block.kind === "lot",
+  );
+  const winnerId =
+    lot?.status.kind === "sold" ? lot.status.winnerId : undefined;
+  if (winnerId === undefined || lot?.participantName === undefined) {
+    return undefined;
+  }
+  const result = await resolve({ identityId: viewer.identityId }, winnerId);
+  return result.kind === "resolved" && result.telegramUsername !== ""
+    ? result.telegramUsername
+    : undefined;
+}
+
 // «Добавить лот» в ленте — пока онлайн-неделя не открыта (PER-468). Статус
 // аукциона лента пакета не несёт, его знает пульт, поэтому для ленты
 // администратора бот читает пульт тем же бюджетом действия. Отказ и
@@ -8353,6 +8384,11 @@ async function handleAuctionCallback(
     feedAuctionId === undefined
       ? undefined
       : await auctionAcceptsLots(ctx, runtime, person, feedAuctionId);
+  const winnerUsername = await soldWinnerUsername(
+    runtime,
+    viewerOf(person),
+    result.body,
+  );
   const view: AuctionView = {
     body: result.body,
     rootParent: rootParentOf(ctx, result.body, entry),
@@ -8364,6 +8400,7 @@ async function handleAuctionCallback(
     // же, что «Включить аукцион» (ADR-070, RFC-016).
     canManage,
     ...(canAddLots === undefined ? {} : { canAddLots }),
+    ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
   const shown = auctionScreen(view);
   if (shown.asks === true) {
@@ -8624,6 +8661,11 @@ async function editLiveLotCard(
   },
 ): Promise<LiveEditOutcome> {
   const { card, runtime } = input;
+  const winnerUsername = await soldWinnerUsername(
+    runtime,
+    card.viewer,
+    input.body,
+  );
   const view: AuctionView = {
     body: input.body,
     rootParent: toMeetups,
@@ -8631,6 +8673,7 @@ async function editLiveLotCard(
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
     canManage: canRunAuctions(card.viewer),
+    ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
   const shown = auctionScreen(view);
   const key = shown.image;
