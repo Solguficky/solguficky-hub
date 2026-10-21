@@ -71,6 +71,10 @@ export type AuctionIntent =
   | { kind: "root"; auctionId: string }
   | { kind: "feed"; auctionId: string; page: number }
   | { kind: "lot"; lotId: string; page: number; atLeastVersion?: number }
+  // Экран сета (ADR-073, п. 7): открывается с карточки лота сета, поэтому
+  // несёт его — сет читается из снимка лота. `page` — страница ленты, с
+  // которой открыли карточку: ею возвращается и карточка лота сета.
+  | { kind: "set"; lotId: string; page: number }
   | { kind: "history"; lotId: string; page: number; historyPage: number }
   | {
       kind: "confirm";
@@ -373,6 +377,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
           ? []
           : [versionArgument(intent.atLeastVersion)]),
       ].join(":");
+    case "set":
+      return `${prefix}:st:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
     case "history":
       return `${prefix}:hist:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}:${pageArgument(intent.historyPage)}`;
     case "confirm":
@@ -513,6 +519,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
     }
     case "fo":
       return { ok: true, intent: { kind: "follow", lotId: id, page } };
+    case "st":
+      return { ok: true, intent: { kind: "set", lotId: id, page } };
     case "uf":
       return { ok: true, intent: { kind: "unfollow", lotId: id, page } };
     case "xe":

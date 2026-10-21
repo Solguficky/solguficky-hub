@@ -12,6 +12,9 @@ import {
   WithdrawnReason,
 } from "../../../gen/auction/v1/auction_pb.js";
 import {
+  DisplayNameKind,
+  DisplayNameSchema,
+  LotSetMembershipSchema,
   LotSnapshotSchema,
   LotStepWindowSchema,
 } from "../../../gen/auction/v1/auction_service_pb.js";
@@ -245,6 +248,44 @@ describe("lotViewOf", () => {
       },
     });
     expect(() => lotViewOf(snapshot)).toThrow("without an amount");
+  });
+
+  // Сет лота (ADR-073, п. 7): название, состав по порядку организатора и
+  // собравший по отображаемому имени. До итога сета имени нет.
+  it("reads the set of the lot and the collector after the outcome", () => {
+    const set = create(LotSetMembershipSchema, {
+      lotSetId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1",
+      name: "Лесные дары",
+      lotIds: ["lot-1", "lot-2"],
+    });
+    const before = create(LotSnapshotSchema, {
+      ...base,
+      lotSet: set,
+      status: { case: "unsold", value: UnsoldReason.NO_BIDS },
+    });
+    expect(lotViewOf(before).lotSet).toEqual({
+      name: "Лесные дары",
+      lotIds: ["lot-1", "lot-2"],
+    });
+    const after = create(LotSnapshotSchema, {
+      ...base,
+      lotSet: create(LotSetMembershipSchema, {
+        lotSetId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1",
+        name: "Лесные дары",
+        lotIds: ["lot-1", "lot-2"],
+        collectorId: "p-1",
+        collectorName: create(DisplayNameSchema, {
+          text: "@owl",
+          kind: DisplayNameKind.TELEGRAM_USERNAME,
+        }),
+      }),
+      status: { case: "unsold", value: UnsoldReason.NO_BIDS },
+    });
+    expect(lotViewOf(after).lotSet).toEqual({
+      name: "Лесные дары",
+      lotIds: ["lot-1", "lot-2"],
+      collectorName: "@owl",
+    });
   });
 
   it("refuses a snapshot without status", () => {

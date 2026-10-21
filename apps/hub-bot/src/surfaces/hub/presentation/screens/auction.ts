@@ -8,6 +8,16 @@ import {
 import { predictionButtonLabel } from "../../../../auction-prediction.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
+  collectedLine,
+  type SetLotOptions,
+  setGroupLines,
+  setLabel,
+  setLotLabel,
+  setLotLine,
+  setMark,
+  setMoreLine,
+} from "../../../../auction-set.js";
+import {
   favoritesEmpty,
   favoritesSummary,
   feedSummary,
@@ -311,6 +321,11 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
   if (favorites !== undefined) {
     return { screen: favoritesScreen(view, favorites) };
   }
+  const set = view.body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "set" }> =>
+      block.kind === "set",
+  );
+  if (set !== undefined) return { screen: setScreen(view, set) };
   const feed = view.body.blocks.find(
     (block): block is Extract<AuctionBlock, { kind: "feed" }> =>
       block.kind === "feed",
@@ -479,9 +494,15 @@ function feedLabel(
       const item = items.get(button.lotId);
       if (item === undefined) return untitled;
       const title = item.title ?? untitled;
-      return buttonText(
+      const label =
         (final === undefined ? null : finalFeedLabel(item, final, title)) ??
-          `${title} · ${priceLabel(item.status)}`,
+        `${title} · ${priceLabel(item.status)}`;
+      // Отметка принадлежности к сету (ADR-073, п. 7): лот сета помечен в
+      // подписи, а название сета карточка называет.
+      return buttonText(
+        item.setName === undefined
+          ? label
+          : `${label} · ${setMark(item.setName)}`,
       );
     }
     case "feed.prev":
@@ -533,6 +554,9 @@ function feedLabel(
     case "root.lots":
     case "root.predictions":
     case "root.raffle":
+    case "lot.set":
+    case "set.open-lot":
+    case "set.back":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -588,6 +612,7 @@ function lotScreen(
     ...(lot.finalBid === undefined
       ? []
       : [[finalBidLine(lot.finalBid, money)]]),
+    ...setGroups(lot),
   ];
   const mark = preview === undefined ? [] : [lotPreviewMark];
   const rich = view.presentation === "rich";
@@ -695,6 +720,9 @@ function lotLabel(button: AuctionButton): string {
       return refreshLabel;
     case "lot.history":
       return "Ставки";
+    // Лоты сета — экран сета с карточки (ADR-073, п. 7).
+    case "lot.set":
+      return setLabel;
     case "lot.bid-step":
       return `По шагу (${money(button.amount)})`;
     case "lot.bid-final":
@@ -719,6 +747,8 @@ function lotLabel(button: AuctionButton): string {
     case "feed.prev":
     case "feed.next":
     case "lot.back":
+    case "set.open-lot":
+    case "set.back":
     case "history.prev":
     case "history.next":
     case "history.back":
@@ -750,6 +780,139 @@ function lotLabel(button: AuctionButton): string {
     case "root.predictions":
     case "root.raffle":
       throw new Error(`action ${button.action} in a lot body`);
+    default: {
+      const _exhaustive: never = button;
+      return _exhaustive;
+    }
+  }
+}
+
+// Сет, в который входит лот (ADR-073, п. 7): название сета и, после итога,
+// кто его собрал. До итога сета второй строки нет — собравшего Auction ещё не
+// знает.
+function setGroups(block: Extract<AuctionBlock, { kind: "lot" }>): string[][] {
+  const lotSet = block.set;
+  return lotSet === undefined ? [] : [setGroupLines(lotSet)];
+}
+
+// Экран сета (ADR-073, п. 7): лоты сета по порядку организатора и, после
+// итога, кто его собрал. Заголовок называет экран, а предмет — название
+// сета — стоит строкой ниже курсивом (дизайн-код, «Формат»): экран-раздел
+// предмета, как «Ставки» лота.
+function setScreen(
+  view: AuctionView,
+  set: Extract<AuctionBlock, { kind: "set" }>,
+): ShownScreen {
+  const items = new Map<string, FeedItem>(
+    set.lots.map((item) => [item.lotId, item]),
+  );
+  const keyboard = new InlineKeyboard();
+  let back: Parent | undefined;
+  for (const row of view.body.keyboard) {
+    const content = row.filter((button) => {
+      if (button.action !== "set.back") return true;
+      back = { name: "Лот", data: button.callbackData };
+      return false;
+    });
+    if (content.length === 0) continue;
+    nextRow(keyboard);
+    for (const button of content) {
+      keyboard.text(setLotLabelOf(button, items), button.callbackData);
+    }
+  }
+  if (back === undefined) {
+    throw new Error("set body without a way back to the lot");
+  }
+  return {
+    id: "set",
+    text: submenuText(
+      setLabel,
+      oneLine(truncate(set.name, titleLimit)),
+      set.lots.map((item) => bullet(setLotLine(item, setOptions))).join("\n"),
+      ...(set.more === undefined ? [] : [setMoreLine(set.more)]),
+      // Имя собравшего — текст участника: без экранирования Telegram отверг бы
+      // разметку.
+      ...(set.collectorName === undefined
+        ? []
+        : [escapeHtml(collectedLine(set.name, set.collectorName))]),
+    ),
+    keyboard: withNav(keyboard, back),
+    format: "HTML",
+  };
+}
+
+// Название и цена лота сета — как у строки ленты: правила оболочки хаба.
+const setOptions: SetLotOptions = {
+  title: (item) =>
+    escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit)),
+  buttonTitle: (item) =>
+    escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit)),
+  price: (item) => priceLabel(item.status),
+};
+
+// Подпись кнопки лота сета: название и цена, как у кнопки ленты.
+function setLotLabelOf(
+  button: AuctionButton,
+  items: ReadonlyMap<string, FeedItem>,
+): string {
+  switch (button.action) {
+    case "set.open-lot": {
+      const item = items.get(button.lotId);
+      return item === undefined
+        ? untitled
+        : buttonText(setLotLabel(item, setOptions));
+    }
+    case "lot.set":
+    case "feed.open-lot":
+    case "favorites.open-lot":
+    case "prediction.select-lot":
+    case "lot.bid-step":
+    case "lot.bid-final":
+    case "lot.bid-custom":
+    case "lot.proxy":
+    case "lot.refresh":
+    case "lot.history":
+    case "lot.back":
+    case "lot.prev":
+    case "lot.next":
+    case "lot.follow":
+    case "lot.unfollow":
+    case "feed.prev":
+    case "feed.next":
+    case "feed.back":
+    case "favorites.prev":
+    case "favorites.next":
+    case "favorites.back":
+    case "history.prev":
+    case "history.next":
+    case "history.back":
+    case "confirm.yes":
+    case "confirm.no":
+    case "question.cancel":
+    case "question.explain":
+    case "name.username":
+    case "name.alias":
+    case "name.back":
+    case "accepted.lot":
+    case "accepted.feed":
+    case "result.lot":
+    case "answer.retry":
+    case "name.return":
+    case "root.favorites":
+    case "prediction.edit":
+    case "prediction.clear":
+    case "prediction.switch-round":
+    case "prediction.back":
+    case "raffle.register":
+    case "raffle.cancel":
+    case "raffle.proof":
+    case "raffle.back":
+    case "raffle.return":
+    case "root.lots":
+    case "root.predictions":
+    case "root.raffle":
+    case "set.back":
+      throw new Error(`action ${button.action} in a set body`);
     default: {
       const _exhaustive: never = button;
       return _exhaustive;
@@ -958,6 +1121,9 @@ function historyLabel(button: AuctionButton): string {
     case "root.lots":
     case "root.predictions":
     case "root.raffle":
+    case "lot.set":
+    case "set.open-lot":
+    case "set.back":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;

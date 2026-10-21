@@ -166,6 +166,9 @@ function fakeAuction(
     // Аукцион скрыт от участников (PER-673): Auction отдал признак держателю
     // `run_auctions`.
     hidden?: true;
+    // Второй лот сета (ADR-073): карточка ведёт к экрану сета, а тот — к
+    // остальным его лотам.
+    otherLot?: LotView;
   } = {},
 ) {
   const shownLot = options.lot ?? lot;
@@ -187,6 +190,16 @@ function fakeAuction(
     nextPageToken: "",
   }));
   const getLot = vi.fn(async () => shownLot);
+  // Лот сета ищется отдельно: второй лот набора виден по своему идентификатору
+  // (ADR-073), а прочие лоты остаются прежними.
+  const findLot = vi.fn(async (request: { lotId: string }) =>
+    request.lotId === shownLot.lotId
+      ? shownLot
+      : options.otherLot !== undefined &&
+          request.lotId === options.otherLot.lotId
+        ? options.otherLot
+        : shownLot,
+  );
   // Снимок аукциона — один у корня (PER-605) и у строки аукциона на карточке
   // сходки (PER-594).
   const summaryOf = (id: string) => ({
@@ -225,7 +238,7 @@ function fakeAuction(
       return {
         auction: {
           getLot,
-          findLot: getLot,
+          findLot: findLot,
           listAuctionLots,
           // Ставка соперника и ответ прокси лидера одной командой: момент один.
           listLotHistory: async () => ({
@@ -763,6 +776,52 @@ describe("auction root and the way back", () => {
     expect(labels(card).at(-1)).toEqual(["‹ Лоты"]);
     await bot.handleUpdate(press(data(card, "‹ Лоты") ?? ""));
     expect(data(lastScreen(calls), "‹ Аукцион")).toBe(rootData);
+  });
+
+  // Сет лотов (ADR-073, п. 7): карточка лота сета ведёт к экрану сета, тот
+  // перечисляет лоты сета и возвращает карточку.
+  it("opens the screen of the set from the card of its lot", async () => {
+    const otherLotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+    const otherLot: LotView = {
+      lotId: otherLotId,
+      auctionId,
+      version: 1,
+      card: { title: "Плакат", description: "" },
+      proxyEnabled: false,
+      status: { kind: "unsold" },
+    };
+    const setLot: LotView = {
+      ...lot,
+      lotSet: {
+        name: "Лесные дары",
+        lotIds: [lotId, otherLotId],
+        collectorName: "@owl",
+      },
+    };
+    const auction = fakeAuction({
+      existing: true,
+      lot: setLot,
+      otherLot,
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    const card = lastScreen(calls);
+    expect(card.text).toContain("Сет: «Лесные дары»");
+    expect(card.text).toContain("Сет «Лесные дары» собрал @owl");
+    expect(labels(card)).toContainEqual(["Лоты сета"]);
+
+    await bot.handleUpdate(press(data(card, "Лоты сета") ?? ""));
+    const set = lastScreen(calls);
+    expect(set.text).toContain("<i>Лесные дары</i>");
+    // Intl разделяет разряды неразрывным пробелом — тест читает его обычным.
+    const setText = (set.text ?? "").replace(/\s/g, " ");
+    expect(setText).toContain("• Кружка с совой — старт 500 ₽");
+    expect(setText).toContain("• Плакат — не продан");
+    expect(labels(set).at(-1)).toEqual(["‹ Лот"]);
   });
 
   it("gives the administrator the console in the root and keeps adding lots in the list", async () => {

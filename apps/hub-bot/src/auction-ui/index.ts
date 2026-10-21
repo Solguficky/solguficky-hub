@@ -65,6 +65,7 @@ export type {
   LotImage,
   LotImagePort,
   LotPage,
+  LotSetView,
   LotStatusView,
   LotView,
   Money,
