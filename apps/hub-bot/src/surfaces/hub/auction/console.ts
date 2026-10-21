@@ -3,6 +3,7 @@ import type {
   AuctionConsole,
   AuctionSnapshot,
   ConsoleLot as WireConsoleLot,
+  ConsoleLotSet as WireConsoleLotSet,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
 import { finalLineupOf } from "../../../core/auction/auction.js";
 import { lotViewOf, moneyOf } from "../../../core/auction/snapshot.js";
@@ -11,6 +12,7 @@ import type {
   AuctionWeek,
   ConsoleAuctionStatus,
   ConsoleLotSnapshot,
+  LotSet,
   StepWindow,
 } from "../application/types.js";
 
@@ -38,7 +40,16 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     // пульт показывает их рядом с объявленными.
     launchedWindows: console.launchedStepWindows.map(windowOf),
     lots: console.lots.map(consoleLotOf),
+    lotSets: console.lotSets.map(lotSetOf),
   };
+}
+
+// Сет лотов (ADR-073, PER-509). Название у сета непустое всегда: Auction
+// пустого не принимает.
+function lotSetOf(set: WireConsoleLotSet): LotSet {
+  if (set.lotSetId === "") throw new Error("lot set without id");
+  if (set.name.trim() === "") throw new Error("lot set without name");
+  return { lotSetId: set.lotSetId, name: set.name, lotIds: [...set.lotIds] };
 }
 
 function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {

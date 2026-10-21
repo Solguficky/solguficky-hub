@@ -81,6 +81,7 @@ function view(
     hidden: false,
     lots: [],
     launchedWindows: [],
+    lotSets: [],
     ...extra,
   };
 }
@@ -152,6 +153,12 @@ function fake(answers: {
     hideAuction: async (_person, hide) => {
       visibility.push({ published: false, opId: hide.opId });
       return answers.visibility ?? { kind: "ok" };
+    },
+    saveLotSet: async () => {
+      throw new Error("not used");
+    },
+    deleteLotSet: async () => {
+      throw new Error("not used");
     },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },

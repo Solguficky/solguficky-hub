@@ -32,6 +32,8 @@ import auction.aggregate.FreezeFinalLineupRejected
 import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.LotEnding
+import auction.aggregate.LotSetId
+import auction.aggregate.LotSetName
 import auction.aggregate.MeetupId
 import auction.aggregate.ParticipantRemovalRejected
 import auction.aggregate.PreviewLotParticipantRemoval
@@ -521,6 +523,32 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)) :: added ++ List(
         AuctionEnvelope(next, LotFixtures.op(next), AuctionEvent.AuctionScheduled(AuctionFixtures.config())),
         AuctionEnvelope(next + 1, LotFixtures.op(next + 1), AuctionEvent.PrebiddingStarted)
+      )
+    )
+    new Auctions {
+      override def get(auctionId: AuctionId) = Future.successful(running)
+    }
+  }
+
+  /** Запланированный аукцион сходки с сетами (ADR-073, PER-509): пульт показывает их все, и неполные. */
+  private def consoleWithSets(registry: List[UUID], sets: List[(UUID, String, List[UUID])]): Auctions = {
+    val meetup = MeetupId(UUID.fromString(meetupId))
+    val added = registry.zipWithIndex.map { (lot, index) =>
+      AuctionEnvelope(index + 2L, LotFixtures.op(index + 2), AuctionEvent.LotAdded(LotId(lot)))
+    }
+    val defined = sets.zipWithIndex.map { case ((set, name, lots), index) =>
+      val seq = registry.size + 2L + index
+      AuctionEnvelope(
+        seq,
+        LotFixtures.op(seq.toInt),
+        AuctionEvent.LotSetDefined(LotSetId(set), LotSetName(name).toOption.get, lots.map(LotId(_)))
+      )
+    }
+    val next = registry.size + sets.size + 2
+    val running = Auction.replay(
+      Auction.initial,
+      AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)) :: added ++ defined ++ List(
+        AuctionEnvelope(next, LotFixtures.op(next), AuctionEvent.AuctionScheduled(AuctionFixtures.config()))
       )
     )
     new Auctions {
@@ -1628,6 +1656,36 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       console.launchedStepWindows.map(window => (window.from, window.until, window.step.get.minorUnits)) shouldBe
         Seq((deadline.plusSeconds(600).toString, deadline.plusSeconds(3600).toString, 50L))
       console.launchedStepWindows.flatMap(_.lotIds) shouldBe Seq(first.toString)
+    }
+
+    "shows the administrator every set of the auction in the order of its id, the incomplete and the empty one too" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val (first, second, third, fourth) = (new UUID(7L, 1L), new UUID(7L, 2L), new UUID(7L, 3L), new UUID(7L, 4L))
+      val (mugs, single, empty) = (new UUID(9L, 1L), new UUID(9L, 2L), new UUID(9L, 3L))
+      // Сеты — из агрегата, а не из read model: реестр пульта здесь пуст.
+      val registry = new Views {
+        override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) = Future.successful(Nil)
+      }
+      val meetups: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      val console = service(
+        Unreachable,
+        views = registry,
+        auctions = AuctionCommands(
+          consoleWithSets(
+            List(first, second, third, fourth),
+            // Порядок определения — не порядок пульта: пульт сортирует по идентификатору сета.
+            List((empty, "Пустой", Nil), (mugs, "Кружки", List(third, first, second)), (single, "Один", List(fourth)))
+          ),
+          Unreachable,
+          meetups
+        )
+      ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString)).futureValue.getConsole
+
+      console.lotSets.map(set => (set.lotSetId, set.name, set.lotIds)) shouldBe Seq(
+        (mugs.toString, "Кружки", Seq(third.toString, first.toString, second.toString)),
+        (single.toString, "Один", Seq(fourth.toString)),
+        (empty.toString, "Пустой", Seq.empty)
+      )
     }
 
     "refuses the console to a viewer whom the meetup does not confirm and reads no lot" in {

@@ -10,6 +10,7 @@ import type {
   FormField,
   LaunchDraft,
   LineupPick,
+  LotSetRef,
   LotStepMode,
   LotTextField,
   WindowRef,
@@ -408,6 +409,21 @@ type PlainAction =
       selected: boolean;
     }
   | { kind: "console-window-remove"; auction: string; window: WindowRef }
+  // Сеты лотов (PER-509): список, вопрос о названии нового сета, сет на
+  // странице лотов, лот в сете и вне его, подтверждение удаления и «Да». Сет
+  // кнопка называет номером и отпечатком, как окно.
+  | { kind: "console-sets"; auction: string }
+  | { kind: "console-set-ask"; auction: string }
+  | { kind: "console-set"; auction: string; set: LotSetRef; page: number }
+  | {
+      kind: "console-set-lot";
+      auction: string;
+      set: LotSetRef;
+      lot: string;
+      selected: boolean;
+    }
+  | { kind: "console-set-delete"; auction: string; set: LotSetRef }
+  | { kind: "console-set-delete-confirm"; auction: string; set: LotSetRef }
   // Запуск окна сниженного шага по ходу торгов (PER-615): начать запуск,
   // переключить лот запускаемого окна, запустить и листать лоты. Черновик
   // едет в кнопке — состояния у пульта нет.
@@ -660,6 +676,9 @@ export type QuestionStep =
   // Запуск окна по ходу торгов (PER-615): аукцион, а сроки недели и окна
   // ответ читает у Auction заново.
   | { kind: "console-launch"; auction: string }
+  // Название нового сета лотов (PER-509): аукцион, а сеты ответ читает у
+  // Auction заново.
+  | { kind: "console-set"; auction: string }
   // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
   | { kind: "final-ask"; auction: string; position: number }
   // «Другой человек…» «Ставок зала» (PER-565): аукцион, а людей и цену ответ
@@ -882,6 +901,52 @@ export function consoleWindowRemoveData(
   window: WindowRef,
 ): string {
   return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
+}
+
+/** «🛠 Сеты» корня аукциона: сеты лотов (PER-509). */
+export function consoleSetsData(auction: string): string {
+  return `v1:ac:t:${auction}`;
+}
+
+/** «Новый сет»: вопрос о названии. */
+export function consoleSetAskData(auction: string): string {
+  return `v1:ac:ta:${auction}`;
+}
+
+/** Сет на странице лотов `page`; первая страница — без номера. */
+export function consoleSetData(
+  auction: string,
+  set: LotSetRef,
+  page = 0,
+): string {
+  const base = `v1:ac:tw:${auction}:${set.index}:${set.print}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/**
+ * Лот в сете (`ts`) и вне его (`td`): целевое состояние, а не переворот. Как у
+ * лота окна, 63 байта при двузначном номере сета.
+ */
+export function consoleSetLotData(mark: {
+  auction: string;
+  set: LotSetRef;
+  lot: string;
+  selected: boolean;
+}): string {
+  return `v1:ac:${mark.selected ? "ts" : "td"}:${mark.auction}:${mark.set.index}:${mark.set.print}:${mark.lot}`;
+}
+
+/** «Удалить сет»: подтверждение, а не команда. */
+export function consoleSetDeleteData(auction: string, set: LotSetRef): string {
+  return `v1:ac:tx:${auction}:${set.index}:${set.print}`;
+}
+
+/** «Да» удаления сета: ключ команды рождается на нажатие. */
+export function consoleSetDeleteConfirmData(
+  auction: string,
+  set: LotSetRef,
+): string {
+  return `v1:ac:ty:${auction}:${set.index}:${set.print}`;
 }
 
 /** «Запустить окно»: вопрос о начале, конце и шаге (PER-615). */
@@ -1121,6 +1186,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
       return `v1:q:al:${step.auction}`;
+    case "console-set":
+      return `v1:q:as:${step.auction}`;
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
     case "floor-search":
@@ -1583,7 +1650,11 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // (PER-504): `v1:ac:h:<аукцион>`, `v1:ac:ha:<аукцион>`,
 // `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
 // `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
-// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Розыгрыш (PER-593):
+// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Сеты лотов (PER-509):
+// `v1:ac:t:<аукцион>`, `v1:ac:ta:<аукцион>`,
+// `v1:ac:tw:<аукцион>:<сет>:<отпечаток>[:<страница>]`,
+// `v1:ac:<ts|td>:<аукцион>:<сет>:<отпечаток>:<лот>` и
+// `v1:ac:<tx|ty>:<аукцион>:<сет>:<отпечаток>`. Розыгрыш (PER-593):
 // `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. Видимость (PER-673):
 // `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
@@ -1699,6 +1770,53 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "hx":
       return parts.length === 6 && window !== undefined
         ? { kind: "console-window-remove", auction: auction.data, window }
+        : { kind: "malformed" };
+    // Сеты лотов (PER-509): номер и отпечаток сета стоят там же, где у окна.
+    case "t":
+      return parts.length === 4
+        ? { kind: "console-sets", auction: auction.data }
+        : { kind: "malformed" };
+    case "ta":
+      return parts.length === 4
+        ? { kind: "console-set-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "tw": {
+      const page = PageSchema.safeParse(parts[6] ?? "0");
+      return (parts.length === 6 || parts.length === 7) &&
+        window !== undefined &&
+        page.success
+        ? {
+            kind: "console-set",
+            auction: auction.data,
+            set: window,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "ts":
+    case "td": {
+      const lot = TokenSchema.safeParse(parts[6]);
+      return parts.length === 7 && window !== undefined && lot.success
+        ? {
+            kind: "console-set-lot",
+            auction: auction.data,
+            set: window,
+            lot: lot.data,
+            selected: parts[2] === "ts",
+          }
+        : { kind: "malformed" };
+    }
+    case "tx":
+    case "ty":
+      return parts.length === 6 && window !== undefined
+        ? {
+            kind:
+              parts[2] === "tx"
+                ? "console-set-delete"
+                : "console-set-delete-confirm",
+            auction: auction.data,
+            set: window,
+          }
         : { kind: "malformed" };
     case "hl":
       return parts.length === 4
@@ -1977,6 +2095,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "floor-search", auction: token.data };
       case "al":
         return { kind: "console-launch", auction: token.data };
+      case "as":
+        return { kind: "console-set", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":

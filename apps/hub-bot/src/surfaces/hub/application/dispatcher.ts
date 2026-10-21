@@ -12,6 +12,7 @@ import { createAuctionConsole } from "./auction-console.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createFloorBids } from "./floor-bids.js";
 import { createLotForm } from "./lot-form.js";
+import { createLotSets } from "./lot-sets.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
@@ -64,6 +65,10 @@ export function createDispatcher(
     consoles === undefined
       ? undefined
       : createParticipantRemoval(consoles.auctions);
+  // Сеты лотов (PER-509) — тот же порт: команды сета пускает право вести
+  // аукцион.
+  const lotSets =
+    consoles === undefined ? undefined : createLotSets(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -315,6 +320,16 @@ export function createDispatcher(
           return participantRemoval === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : participantRemoval(request);
+        case "view-lot-sets":
+        case "ask-lot-set":
+        case "add-lot-set":
+        case "view-lot-set":
+        case "set-lot-set-lot":
+        case "prepare-lot-set-delete":
+        case "delete-lot-set":
+          return lotSets === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : lotSets(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

@@ -316,7 +316,8 @@ export type ExecuteRequest =
   | LotFormRequest
   | AuctionConsoleRequest
   | FloorBidsRequest
-  | ParticipantRemovalRequest;
+  | ParticipantRemovalRequest
+  | LotSetsRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -478,7 +479,16 @@ export type AuctionConsoleSnapshot = {
   // заморожена. Пульт показывает их рядом с объявленными.
   launchedWindows: readonly StepWindow[];
   lots: readonly ConsoleLotSnapshot[];
+  // Сеты лотов аукциона (ADR-073, PER-509) в порядке идентификатора — все, и
+  // неполные: снимок лота сет меньше чем из двух лотов не показывает, а
+  // организатор собирает его постепенно. Сеты читаются с агрегатом и могут
+  // назвать лот, которого `lots` ещё не отдаёт.
+  lotSets: readonly LotSet[];
 };
+
+// Сет лотов: название и лоты в порядке организатора. Неполный — меньше двух
+// лотов: участнику он не показывается и собранным не бывает (ADR-073, п. 1).
+export type LotSet = { lotSetId: string; name: string; lotIds: string[] };
 
 // Ставка текущего лота финала на пульте ведущего: сумма и имя, которое ставит
 // Auction. Имени нет, когда Auction его не назвал.
@@ -907,6 +917,55 @@ export type FloorBidsRequest =
       opId: string;
     });
 
+// Сеты лотов аукциона (ADR-073, PER-509): список, сет с лотами реестра,
+// вопрос о названии нового сета и команды. Состояния нет: сет кнопка называет
+// номером и отпечатком, и каждая команда читает пульт заново, а Auction
+// заменяет состав сета целиком.
+export type LotSetRef = { index: number; print: string };
+export type LotSetsRequest =
+  | (AuctionConsoleCall & { intent: "view-lot-sets" })
+  | (AuctionConsoleCall & { intent: "ask-lot-set" })
+  // Название приходит строкой, как его написал человек; `lotSetId` рождает
+  // край, как ключ команды.
+  | (AuctionConsoleCall & {
+      intent: "add-lot-set";
+      value: string;
+      lotSetId: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "view-lot-set";
+      set: LotSetRef;
+      page: number;
+    })
+  // Кнопка несёт целевое состояние лота в сете, а не переворот.
+  | (AuctionConsoleCall & {
+      intent: "set-lot-set-lot";
+      set: LotSetRef;
+      lotId: string;
+      selected: boolean;
+      opId: string;
+    })
+  | (AuctionConsoleCall & { intent: "prepare-lot-set-delete"; set: LotSetRef })
+  | (AuctionConsoleCall & {
+      intent: "delete-lot-set";
+      set: LotSetRef;
+      opId: string;
+    });
+
+// Исход команды над сетами: экран исхода с возвратом к «Сетам». `name` —
+// название сета, о котором исход.
+export type LotSetNote =
+  | { kind: "deleted"; name: string }
+  | { kind: "already-deleted" }
+  // Сет по кнопке не найден: его удалили или номера сдвинулись.
+  | { kind: "changed" }
+  // Онлайн-торги открыты: сеты заморожены вместе с реестром (ADR-073, п. 2).
+  | { kind: "frozen" }
+  | { kind: "limit" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "lot-in-another-set"; name?: string };
+
 // Снятие участника с лота администратором (ADR-072, PER-659): участники лота,
 // предпросмотр и снятие. Состояния нет: лот, человек и номер лота
 // предпросмотра едут в кнопке, а ключ команды рождается на нажатие «Да».
@@ -1305,6 +1364,25 @@ export type ExecuteResult =
       note: RemovalNote;
       // Номер лота из ответа на снятие: «‹ Лот» дочитывает карточку до него.
       lotVersion?: number;
+    }
+  // Сеты лотов (PER-509): список либо исход команды над ними.
+  | { kind: "lot-sets"; console: AuctionConsoleSnapshot; note?: LotSetNote }
+  // Сет и лоты реестра с отметкой «в сете»: страница списка либо лот, чью
+  // страницу показать. `toggled` — принят переключатель лота.
+  | {
+      kind: "lot-set";
+      console: AuctionConsoleSnapshot;
+      index: number;
+      at: { page: number } | { lotId: string };
+      toggled?: { selected: boolean };
+    }
+  // Вопрос о названии нового сета: первый либо тот же заново.
+  | { kind: "lot-set-ask"; auctionId: string; error?: "name-empty" }
+  // Подтверждение удаления сета; ключ команды рождается на «Да».
+  | {
+      kind: "lot-set-delete-confirm";
+      console: AuctionConsoleSnapshot;
+      index: number;
     }
   // «Счастливые часы» (PER-504): список окон либо исход команды над ними.
   | {

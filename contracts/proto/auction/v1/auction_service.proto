@@ -1982,6 +1982,26 @@ message AuctionConsole {
   // order they were launched. The windows of the configuration are in
   // auction.config.step_windows. Empty is a real value: no window was launched.
   repeated AuctionStepWindow launched_step_windows = 3;
+
+  // Every collectible set of the auction, in the order of lot_set_id. Incomplete
+  // sets of fewer than two lots and empty sets are here too, unlike in
+  // LotSnapshot.lot_set. The sets are read with the auction and may name a lot
+  // that lots does not list yet. Empty is a real value: the auction has no set.
+  repeated ConsoleLotSet lot_sets = 4;
+}
+
+// A collectible set of lots as the administrator of the auction defined it. The
+// outcome is deliberately absent: it is in LotSnapshot.lot_set of its lots.
+message ConsoleLotSet {
+  // Canonical lowercase UUIDv7 with hyphens: the id the organizer gave the set.
+  string lot_set_id = 1;
+
+  // The name of the set as the organizer typed it. Never empty.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots of the set in the
+  // order of the organizer. Empty is a real value: a set not yet filled.
+  repeated string lot_ids = 3;
 }
 
 message ConsoleLot {
