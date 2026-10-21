@@ -428,6 +428,9 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             : [];
         await FavoriteStore.Forget(work, lotIds, cancellationToken);
         await AuctionEndStore.CancelReminders(work, lotIds, cancellationToken);
+        // Окна лотов кончились вместе с аукционом: задание начала окна не
+        // сработает после его конца, а сработавшее остаётся историей.
+        await StepWindowTaskStore.CancelForAuction(work, closed.AuctionId, cancellationToken);
         // Удалённый до торгов круга анонса не имеет: ставок и удержаний у него не
         // было, а круг по тому же auction_id — уже нового рождения, чья ставка
         // могла обогнать запоздавшее удаление.

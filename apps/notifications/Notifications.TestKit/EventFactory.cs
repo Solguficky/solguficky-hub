@@ -356,7 +356,8 @@ public static class EventFactory
     /// <c>lot_resumed</c>. Дедлайн и лидер — как в снимке.
     /// </summary>
     public static global::Auction.V1.LotEvent Trading(string lotId, string occasion, long version = 2,
-        string? deadline = null, string? leader = null)
+        string? deadline = null, string? leader = null, string? auction = null,
+        params (string From, string Until, long Step)[] windows)
     {
         var message = Closed(lotId, version);
         message.State.Config = Config();
@@ -365,11 +366,21 @@ public static class EventFactory
             CurrentPrice = new global::Auction.V1.Money { MinorUnits = 10000, Currency = "RUB" },
             Phase = global::Auction.V1.LotPhase.Online,
         };
+        if (auction is not null) message.State.AuctionId = auction;
         if (deadline is not null) message.State.Trading.Deadline = deadline;
         if (leader is not null)
         {
             message.State.Trading.LeaderId = leader;
             message.State.Trading.LeadingBidId = NewId();
+        }
+        foreach (var window in windows)
+        {
+            message.State.StepWindows.Add(new global::Auction.V1.StepWindow
+            {
+                From = window.From,
+                Until = window.Until,
+                Step = new global::Auction.V1.Money { MinorUnits = window.Step, Currency = "RUB" },
+            });
         }
         switch (occasion)
         {
@@ -377,6 +388,7 @@ public static class EventFactory
             case "ask_advanced": message.AskAdvanced = new global::Auction.V1.AskAdvanced(); break;
             case "deadline_extended": message.DeadlineExtended = new global::Auction.V1.DeadlineExtended(); break;
             case "lot_resumed": message.LotResumed = new global::Auction.V1.LotResumed(); break;
+            case "step_window_added": message.StepWindowAdded = new global::Auction.V1.StepWindowAdded(); break;
             default: throw new ArgumentOutOfRangeException(nameof(occasion));
         }
         return message;
@@ -436,9 +448,10 @@ public static class EventFactory
         return message;
     }
 
-    public static global::Auction.V1.LotEvent Unsold(string lotId, long version = 7)
+    public static global::Auction.V1.LotEvent Unsold(string lotId, long version = 7, string? auction = null)
     {
         var message = Closed(lotId, version);
+        if (auction is not null) message.State.AuctionId = auction;
         message.State.Config = Config();
         message.State.Unsold = global::Auction.V1.UnsoldReason.NoBids;
         message.LotUnsold = new global::Auction.V1.LotUnsold();
