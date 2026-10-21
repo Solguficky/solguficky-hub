@@ -115,6 +115,27 @@ describe("lot sets use cases", () => {
     });
   });
 
+  it("refuses a delete confirmed after the online week opened before Auction", async () => {
+    let deleted = 0;
+    const frozen = createLotSets({
+      getAuctionConsole: async () => ({
+        kind: "ok",
+        console: {
+          ...snapshot([{ lotSetId: mugsId, name: "Кружки", lotIds: [] }]),
+          status: "prebidding",
+        },
+      }),
+      deleteLotSet: async () => {
+        deleted += 1;
+        return { kind: "ok" };
+      },
+    } as Partial<AuctionConsoles> as AuctionConsoles);
+    await expect(
+      frozen({ ...call, intent: "delete-lot-set", set: mugs, opId: "op" }),
+    ).resolves.toMatchObject({ kind: "lot-sets", note: { kind: "frozen" } });
+    expect(deleted).toBe(0);
+  });
+
   it("refuses a new set beyond the limit before the question", async () => {
     const many = Array.from({ length: 10 }, (_, index) => ({
       lotSetId: `0199a000-0000-7000-8000-${String(index).padStart(12, "0")}`,

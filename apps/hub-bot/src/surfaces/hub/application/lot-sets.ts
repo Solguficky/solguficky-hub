@@ -302,6 +302,8 @@ export function createLotSets(consoles: AuctionConsoles) {
     const { console } = current;
     const set = lotSetAt(console, request.set);
     if (set === undefined) return noted(console, { kind: "changed" });
+    // «Да» могло висеть в чате с тех пор, как неделю открыли.
+    if (!acceptsLots(console.status)) return noted(console, { kind: "frozen" });
     const deleted = await consoles.deleteLotSet(
       request.identity,
       {
