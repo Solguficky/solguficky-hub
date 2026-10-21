@@ -39,6 +39,7 @@ import {
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
   SelectForFinalResponseSchema,
+  SetFinalTimeResponseSchema,
   StartFinalResponseSchema,
   StartNextLotResponseSchema,
   StartPrebiddingResponseSchema,
@@ -89,6 +90,7 @@ function adapter(rpc: {
   listAuctionLots?: Call;
   publishAuction?: Call;
   hideAuction?: Call;
+  setFinalTime?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
   freezeFinalLineup?: Call;
@@ -139,6 +141,7 @@ function adapter(rpc: {
     cancelAuction: (rpc.cancelAuction ?? notUsed) as never,
     publishAuction: (rpc.publishAuction ?? notUsed) as never,
     hideAuction: (rpc.hideAuction ?? notUsed) as never,
+    setFinalTime: (rpc.setFinalTime ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
     freezeFinalLineup: (rpc.freezeFinalLineup ?? notUsed) as never,
@@ -1349,6 +1352,59 @@ describe("auction console adapter", () => {
     await expect(odd.hideAuction(admin, { auctionId, opId })).resolves.toEqual({
       kind: "auction-not-found",
     });
+  });
+
+  // Ориентировочное время финала (PER-663): принятие и именованные отказы.
+  it("reads every refusal of the final time as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      setFinalTime: async (request: unknown) => {
+        sent.push(request);
+        return create(SetFinalTimeResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.setFinalTime(admin, {
+        auctionId,
+        opId,
+        finalAt: "2026-10-31T16:00:00Z",
+      }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      { auctionId, opId, finalAt: "2026-10-31T16:00:00Z" },
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+      ["finalAlreadyStarted", "final-already-started"],
+      ["auctionAlreadyFinished", "auction-already-finished"],
+      ["auctionAlreadyCancelled", "auction-already-cancelled"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      const refused = adapter({
+        setFinalTime: async () =>
+          create(SetFinalTimeResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+      });
+      await expect(
+        refused.setFinalTime(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    const odd = adapter({
+      setFinalTime: async () => create(SetFinalTimeResponseSchema, {}),
+    });
+    await expect(
+      odd.setFinalTime(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
   });
 });
 
