@@ -61,5 +61,6 @@ public static class AuctionFeed
             ["events.auction.lot_withdrawn"] = LotEvent.OccasionOneofCase.LotWithdrawn,
             ["events.auction.lot_held_for_final"] = LotEvent.OccasionOneofCase.LotHeldForFinal,
             ["events.auction.lot_resumed"] = LotEvent.OccasionOneofCase.LotResumed,
+            ["events.auction.step_window_added"] = LotEvent.OccasionOneofCase.StepWindowAdded,
         };
 }

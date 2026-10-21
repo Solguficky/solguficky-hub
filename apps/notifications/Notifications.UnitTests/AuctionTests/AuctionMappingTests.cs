@@ -403,6 +403,65 @@ public class AuctionMappingTests
         AuctionMapping.Decode(AuctionFeed.BidPlacedSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Poison>();
     }
 
+    [Fact]
+    public void When_StepWindowAdded_Expect_WindowsInSnapshot()
+    {
+        var auction = EventFactory.AuctionOfMeetup();
+        var message = EventFactory.Trading(EventFactory.NewId(), "step_window_added", version: 3, auction: auction,
+            windows: [("2026-10-12T19:00:00Z", "2026-10-12T19:30:00Z", 50L)]);
+
+        var fact = AuctionMapping
+            .Decode("events.auction.step_window_added", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>()
+            .Value;
+
+        var window = fact.Snapshot.Windows.ShouldHaveSingleItem();
+        window.From.ShouldBe(new DateTimeOffset(2026, 10, 12, 19, 0, 0, TimeSpan.Zero));
+        window.Until.ShouldBe(new DateTimeOffset(2026, 10, 12, 19, 30, 0, TimeSpan.Zero));
+        window.Step.MinorUnits.ShouldBe(50);
+        window.Step.Currency.ShouldBe("RUB");
+    }
+
+    [Fact]
+    public void When_LotHasNoWindows_Expect_EmptyWindowList()
+    {
+        var message = EventFactory.Trading(EventFactory.NewId(), "lot_opened");
+
+        var fact = AuctionMapping
+            .Decode("events.auction.lot_opened", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>()
+            .Value;
+
+        fact.Snapshot.Windows.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("from")]
+    [InlineData("until")]
+    [InlineData("non_utc")]
+    [InlineData("order")]
+    [InlineData("step")]
+    [InlineData("currency")]
+    public void When_StepWindowInvalid_Expect_Poison(string field)
+    {
+        var message = EventFactory.Trading(EventFactory.NewId(), "step_window_added", version: 3,
+            windows: [("2026-10-12T19:00:00Z", "2026-10-12T19:30:00Z", 50L)]);
+        var window = message.State.StepWindows[0];
+        switch (field)
+        {
+            case "from": window.From = "not-a-moment"; break;
+            case "until": window.Until = ""; break;
+            case "non_utc": window.From = "2026-10-12T19:00:00+03:00"; break;
+            case "order": window.Until = window.From; break;
+            case "step": window.Step = null; break;
+            case "currency": window.Step.Currency = "rub"; break;
+            default: throw new ArgumentOutOfRangeException(nameof(field));
+        }
+
+        AuctionMapping.Decode("events.auction.step_window_added", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Poison>();
+    }
+
     internal static AuctionBid Decode(LotEvent message) =>
         AuctionMapping.Decode(AuctionFeed.BidPlacedSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Bid>().Value;
 

@@ -12,17 +12,27 @@ namespace Notifications.Auction;
 public enum LotStatus { Draft, Scheduled, Trading, Held, Sold, Unsold, Withdrawn }
 
 /// <summary>
-/// Снимок лота, который нужен избранному: аукцион, дедлайн, лидер и положение.
-/// Дедлайна нет у лота без торгов, у лота, который ведёт человек, и у
-/// удержанного для финала; лидера нет до первой ставки. У проданного лидер —
-/// победитель, и только у него есть цена продажи: её называет извещение об
-/// отмене аукциона (PER-604).
+/// Снимок лота, который нужен избранному: аукцион, дедлайн, лидер, положение и
+/// окна сниженного шага. Дедлайна нет у лота без торгов, у лота, который ведёт
+/// человек, и у удержанного для финала; лидера нет до первой ставки. У
+/// проданного лидер — победитель, и только у него есть цена продажи: её
+/// называет извещение об отмене аукциона (PER-604). Окна не зависят от часов
+/// читающего и приходят данными — их пишут и объявленное окно в
+/// <c>lot_opened</c>, и запущенное в <c>step_window_added</c> (ADR-047,
+/// дополнение 2026-10-12).
 /// </summary>
 public sealed record LotSnapshot(Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt, LotStatus Status,
-    DateTimeOffset? Deadline, Guid? Leader, Money? SalePrice = null)
+    DateTimeOffset? Deadline, Guid? Leader, IReadOnlyList<LotStepWindow> Windows, Money? SalePrice = null)
 {
     public bool Terminal => Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn;
 }
+
+/// <summary>
+/// Окно сниженного шага, как его записал лот: полуинтервал <c>[From, Until)</c>
+/// и шаг, действующий внутри. Сверка пересечений и валюта — дело Auction: сюда
+/// окно приходит уже принятым лотом.
+/// </summary>
+public sealed record LotStepWindow(DateTimeOffset From, DateTimeOffset Until, Money Step);
 
 /// <summary>
 /// Лидер и цена лота на момент удержания для финала: из них собирается анонс
@@ -504,12 +514,20 @@ public static class AuctionMapping
     private static LotSnapshot? Snapshot(LotState state, Guid lotId, Guid auctionId, long version,
         DateTimeOffset occurredAt)
     {
+        // Окна — данные факта, а не вывод из часов читающего, и кривое окно
+        // отравляет снимок так же, как кривой дедлайн: реплика не должна
+        // записать окно, по которому потом развернётся сообщение о начале.
+        if (!Windows(state, out var windows))
+        {
+            return null;
+        }
+
         switch (state.StatusCase)
         {
             case LotState.StatusOneofCase.Draft:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Draft, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Draft, null, null, windows);
             case LotState.StatusOneofCase.Scheduled:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Scheduled, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Scheduled, null, null, windows);
             case LotState.StatusOneofCase.Trading:
             {
                 var trading = state.Trading;
@@ -520,24 +538,50 @@ public static class AuctionMapping
                     deadline = parsed;
                 }
                 return Leader(trading.HasLeaderId, trading.LeaderId, out var leader)
-                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Trading, deadline, leader)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Trading, deadline, leader, windows)
                     : null;
             }
             case LotState.StatusOneofCase.Held:
                 return Leader(state.Held.HasLeaderId, state.Held.LeaderId, out var held)
-                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Held, null, held)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Held, null, held, windows)
                     : null;
             case LotState.StatusOneofCase.Sold:
                 return Id(state.Sold.WinnerId, out var winner) && state.Sold.Price is { } sale && Price(sale)
-                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Sold, null, winner, sale.Clone())
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Sold, null, winner, windows,
+                        sale.Clone())
                     : null;
             case LotState.StatusOneofCase.Unsold:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Unsold, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Unsold, null, null, windows);
             case LotState.StatusOneofCase.Withdrawn:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Withdrawn, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Withdrawn, null, null, windows);
             default:
                 return null;
         }
+    }
+
+    // Окна в том виде, в каком их записал лот: с началами и концами в UTC и
+    // шагом в валюте лота. Пустой список — нормальное значение лота без окон.
+    private static bool Windows(LotState state, out IReadOnlyList<LotStepWindow> windows)
+    {
+        windows = [];
+        if (state.StepWindows.Count == 0)
+        {
+            return true;
+        }
+
+        var parsed = new List<LotStepWindow>(state.StepWindows.Count);
+        foreach (var window in state.StepWindows)
+        {
+            if (!Instant(window.From, out var from) || !Instant(window.Until, out var until) ||
+                until <= from || window.Step is not { } step || !Price(step))
+            {
+                return false;
+            }
+            parsed.Add(new LotStepWindow(from, until, step.Clone()));
+        }
+
+        windows = parsed;
+        return true;
     }
 
     private static bool Leader(bool present, string value, out Guid? leader)

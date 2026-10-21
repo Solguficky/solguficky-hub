@@ -43,6 +43,12 @@ public static class NotificationFacts
     public const string LotDeadlineCloseType = "lot_deadline_close";
 
     /// <summary>
+    /// Начало окна сниженного шага на лоте избранного (ADR-047, дополнение
+    /// 2026-10-12). Категории у повода нет: выключить — снять отметку.
+    /// </summary>
+    public const string StepWindowStartedType = "step_window_started";
+
+    /// <summary>
     /// Тип факта по виду напоминания лота: у вида свой тип, иначе два момента
     /// напоминания совпали бы на одном ключе повода.
     /// </summary>
@@ -297,6 +303,54 @@ public static class NotificationFacts
             now,
             notAfter);
         notification.LotDeadlineClose = new V1.LotDeadlineClose { LotId = lotId.ToString() };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Начало окна сниженного шага одному следящему: все его лоты этого окна,
+    /// каждый со своим шагом и концом (ADR-047, дополнение 2026-10-12).
+    /// </summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="auctionId">Аукцион, к которому относится окно.</param>
+    /// <param name="startsAt">Начало окна: одно у всех лотов одного запуска.</param>
+    /// <param name="lots">
+    /// Лоты получателя, у которых окно начинается в <paramref name="startsAt" />.
+    /// Список не пуст: без него факта нет.
+    /// </param>
+    /// <param name="notAfter">
+    /// Конец последнего из названных окон: сообщение о начале окна, ушедшее
+    /// после его конца, уже шум, и релей снимет его по сроку.
+    /// </param>
+    public static Notification StepWindowStarted(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid auctionId,
+        DateTimeOffset startsAt,
+        IReadOnlyList<StepWindowNoticeLot> lots,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        var body = new V1.StepWindowStarted
+        {
+            AuctionId = auctionId.ToString(),
+            StartsAt = Instant(startsAt),
+        };
+        body.Lots.AddRange(lots.Select(lot => new V1.StepWindowLot
+        {
+            LotId = lot.LotId.ToString(),
+            Until = Instant(lot.Until),
+            Step = lot.Step.Clone(),
+        }));
+        notification.StepWindowStarted = body;
 
         return notification;
     }
