@@ -68,6 +68,7 @@ import {
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
+  type AuctionVisibilityResult,
   type CancelAuctionResult,
   type CloseLotResult,
   type ConsoleReadResult,
@@ -128,6 +129,8 @@ type AuctionRpc = Pick<
   | "startPrebidding"
   | "discardAuction"
   | "cancelAuction"
+  | "publishAuction"
+  | "hideAuction"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -588,6 +591,28 @@ export function createAuctionAdapter(
           options(meta),
         );
         return cancelAuctionResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async publishAuction(person, publish, meta) {
+      try {
+        const response = await rpc.publishAuction(
+          { viewer: wireViewer(viewerOf(person)), ...publish },
+          options(meta),
+        );
+        return visibilityResult(response.outcome, "publish");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async hideAuction(person, hide, meta) {
+      try {
+        const response = await rpc.hideAuction(
+          { viewer: wireViewer(viewerOf(person)), ...hide },
+          options(meta),
+        );
+        return visibilityResult(response.outcome, "hide");
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1586,6 +1611,41 @@ function cancelAuctionResult(
       }
     case undefined:
       return defect("cancel auction response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы публикации и снятия одной формы (PER-673): общий
+// `AuctionVisibilityRefusal`, принятие без полей.
+function visibilityResult(
+  outcome: Awaited<ReturnType<AuctionRpc["publishAuction"]>>["outcome"],
+  command: "publish" | "hide",
+): AuctionVisibilityResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "auctionAlreadyStarted":
+          return { kind: "already-started" };
+        case undefined:
+          return defect(`${command} auction refusal without a reason`);
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect(`${command} auction response without an outcome`);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

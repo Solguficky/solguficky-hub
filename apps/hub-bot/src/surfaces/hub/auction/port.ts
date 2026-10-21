@@ -281,6 +281,17 @@ export type CancelAuctionResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// Публикация и снятие с публикации (ADR-047, дополнение 2026-10-20, PER-673):
+// ответ видимости не несёт, её показывает перечитанный снимок `hidden`.
+export type AuctionVisibilityResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "already-started" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 export type FinalistRefusal =
   | "not-in-prebidding"
   | "lot-not-in-auction"
@@ -536,6 +547,19 @@ export type AuctionConsoles = {
     cancel: { auctionId: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<CancelAuctionResult>;
+  // Видимость до торгов (PER-673): аукцион рождается скрытым от участников.
+  // Повтор того же `opId` Auction принимает; после открытия онлайн-торгов —
+  // `already-started`.
+  publishAuction(
+    person: Person,
+    publish: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<AuctionVisibilityResult>;
+  hideAuction(
+    person: Person,
+    hide: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<AuctionVisibilityResult>;
   selectForFinal(
     person: Person,
     mark: FinalistMark,

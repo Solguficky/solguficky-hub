@@ -26,12 +26,14 @@ import {
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
   GetRaffleResponseSchema,
+  HideAuctionResponseSchema,
   ListAuctionLotsResponseSchema,
   ListAuctionNamesResponseSchema,
   ListAuctionsResponseSchema,
   ListLotHistoryResponseSchema,
   LotSnapshotSchema,
   PlaceBidResponseSchema,
+  PublishAuctionResponseSchema,
   RaffleSchema,
   RaffleStatus,
   ScheduleAuctionResponseSchema,
@@ -85,6 +87,8 @@ function adapter(rpc: {
   discardAuction?: Call;
   cancelAuction?: Call;
   listAuctionLots?: Call;
+  publishAuction?: Call;
+  hideAuction?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
   freezeFinalLineup?: Call;
@@ -131,6 +135,8 @@ function adapter(rpc: {
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
     discardAuction: (rpc.discardAuction ?? notUsed) as never,
     cancelAuction: (rpc.cancelAuction ?? notUsed) as never,
+    publishAuction: (rpc.publishAuction ?? notUsed) as never,
+    hideAuction: (rpc.hideAuction ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
     freezeFinalLineup: (rpc.freezeFinalLineup ?? notUsed) as never,
@@ -867,6 +873,7 @@ describe("auction console adapter", () => {
       console: {
         auctionId,
         status: "prebidding",
+        hidden: false,
         week: {
           opensAt: week.opensAt,
           closesAt: week.closesAt,
@@ -1267,6 +1274,76 @@ describe("auction console adapter", () => {
     await expect(
       missing.discardAuction(admin, { auctionId, opId }),
     ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+
+  it("reads every visibility refusal as an answer, for both commands", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      publishAuction: async (request: unknown) => {
+        sent.push(request);
+        return create(PublishAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+      hideAuction: async (request: unknown) => {
+        sent.push(request);
+        return create(HideAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.publishAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      accepted.hideAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      { auctionId, opId },
+      { auctionId, opId },
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+      ["auctionAlreadyStarted", "already-started"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      const refused = adapter({
+        publishAuction: async () =>
+          create(PublishAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+        hideAuction: async () =>
+          create(HideAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+      });
+      await expect(
+        refused.publishAuction(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+      await expect(
+        refused.hideAuction(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    const odd = adapter({
+      publishAuction: async () => create(PublishAuctionResponseSchema, {}),
+      hideAuction: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    await expect(
+      odd.publishAuction(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(odd.hideAuction(admin, { auctionId, opId })).resolves.toEqual({
+      kind: "auction-not-found",
+    });
   });
 });
 

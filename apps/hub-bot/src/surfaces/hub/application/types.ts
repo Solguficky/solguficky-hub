@@ -456,6 +456,10 @@ export type FinalLineup = {
 export type AuctionConsoleSnapshot = {
   auctionId: string;
   status: ConsoleAuctionStatus;
+  // Аукцион скрыт от участников (ADR-047, дополнение 2026-10-20): Auction
+  // отдаёт признак только держателю `run_auctions` и снимает его открытием
+  // онлайн-торгов.
+  hidden: boolean;
   week?: AuctionWeek;
   lineup?: FinalLineup;
   // Запущенные по ходу торгов окна сниженного шага (PER-615) в порядке
@@ -540,6 +544,11 @@ export type ConsoleNote =
   // Скрытая сходка закрывает открытие онлайн-недели (ADR-047, дополнение
   // 2026-10-12): исход — пульт по перечитанному снимку с возвратом в него.
   | "meetup-hidden"
+  // Видимость (PER-673): опубликован, снят с публикации либо неделя уже
+  // открыта и видимость больше не меняется.
+  | "published"
+  | "unpublished"
+  | "visibility-too-late"
   // Финал ведущего (PER-337): принятые команды и отказы Auction.
   | "final-started"
   | "lineup-not-frozen"
@@ -714,6 +723,12 @@ export type AuctionConsoleRequest =
       opId: string;
     })
   | (AuctionConsoleCall & { intent: "start-auction-week"; opId: string })
+  // Видимость до торгов (PER-673): кнопка несёт целевое состояние.
+  | (AuctionConsoleCall & {
+      intent: "set-auction-visibility";
+      published: boolean;
+      opId: string;
+    })
   // Подтверждение удаления, пока неделя не открыта; ключ уедет в «Да».
   | (AuctionConsoleCall & { intent: "prepare-auction-discard"; opId: string })
   | (AuctionConsoleCall & { intent: "discard-auction"; opId: string })

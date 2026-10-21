@@ -22,6 +22,7 @@ import {
   consoleRaffleRemoveData,
   consoleStartFinalData,
   consoleViewData,
+  consoleVisibilityData,
   consoleWeekData,
   consoleWindowAskData,
   consoleWindowData,
@@ -1398,6 +1399,14 @@ describe("auction console callbacks", () => {
         consoleFinalData(auction, true),
         { kind: "console-final", auction, final: true },
       ],
+      [
+        consoleVisibilityData(auction, true),
+        { kind: "console-visibility", auction, published: true },
+      ],
+      [
+        consoleVisibilityData(auction, false),
+        { kind: "console-visibility", auction, published: false },
+      ],
       [consoleOpenData(auction), { kind: "console-open", auction }],
       [
         consoleConfirmData(auction, op),
@@ -1568,6 +1577,8 @@ describe("auction console callbacks", () => {
       `v1:ac:rx:${auction}:1`,
       `v1:ac:f:${auction}`,
       `v1:ac:f:${auction}:2`,
+      `v1:ac:p:${auction}`,
+      `v1:ac:p:${auction}:2`,
       `v1:ac:o:${auction}:1`,
       `v1:ac:y:${auction}`,
       `v1:ac:y:${auction}:short`,

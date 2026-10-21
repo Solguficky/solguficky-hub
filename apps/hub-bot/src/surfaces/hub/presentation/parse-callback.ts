@@ -369,6 +369,8 @@ type PlainAction =
   | { kind: "console-raffle-prize"; auction: string }
   | { kind: "console-raffle-prize-remove"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
+  // Видимость до торгов (PER-673): кнопка несёт целевое состояние.
+  | { kind: "console-visibility"; auction: string; published: boolean }
   | { kind: "console-open"; auction: string }
   // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
   // и повторное нажатие несёт тот же.
@@ -750,6 +752,14 @@ export function consoleRafflePrizeRemoveData(auction: string): string {
 /** Переключатель финала с целевым состоянием. */
 export function consoleFinalData(auction: string, final: boolean): string {
   return `v1:ac:f:${auction}:${final ? "1" : "0"}`;
+}
+
+/** «Опубликовать» и «Снять с публикации» с целевым состоянием (PER-673). */
+export function consoleVisibilityData(
+  auction: string,
+  published: boolean,
+): string {
+  return `v1:ac:p:${auction}:${published ? "1" : "0"}`;
 }
 
 /** «Открыть онлайн-неделю»: подтверждение, а не команда. */
@@ -1514,7 +1524,8 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
 // `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
 // `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Розыгрыш (PER-593):
-// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. «Ставки зала» (PER-565):
+// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. Видимость (PER-673):
+// `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
@@ -1674,6 +1685,16 @@ function parseConsole(parts: readonly string[]): CallbackAction {
             kind: "console-final",
             auction: auction.data,
             final: final.data === "1",
+          }
+        : { kind: "malformed" };
+    }
+    case "p": {
+      const published = TargetStateSchema.safeParse(parts[4]);
+      return parts.length === 5 && published.success
+        ? {
+            kind: "console-visibility",
+            auction: auction.data,
+            published: published.data === "1",
           }
         : { kind: "malformed" };
     }

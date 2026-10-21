@@ -428,6 +428,13 @@ describe("cardScreen", () => {
       );
     });
 
+    // Скрытый аукцион (PER-673) отдают только держателю `run_auctions`.
+    it("names an auction hidden from participants", () => {
+      expect(
+        withAuction({ auctionId, stage: "draft", final: false, hidden: true }),
+      ).toContain("\n\n🔨 Аукцион: готовится, скрыт от участников\n\n");
+    });
+
     it("names a finished auction by its stage", () => {
       expect(
         withAuction({ auctionId, stage: "finished", final: false }),

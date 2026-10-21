@@ -8,6 +8,7 @@ import type {
   ActiveAuctionsResult,
   AdvanceAskResult,
   AuctionConsoles,
+  AuctionVisibilityResult,
   AuctionWeekConfig,
   CancelAuctionResult,
   CloseLotResult,
@@ -72,7 +73,14 @@ function view(
   status: AuctionConsoleView["status"],
   extra: Partial<AuctionConsoleView> = {},
 ): AuctionConsoleView {
-  return { auctionId, status, lots: [], launchedWindows: [], ...extra };
+  return {
+    auctionId,
+    status,
+    hidden: false,
+    lots: [],
+    launchedWindows: [],
+    ...extra,
+  };
 }
 
 function fake(answers: {
@@ -86,6 +94,7 @@ function fake(answers: {
   mark?: FinalistResult;
   discard?: DiscardAuctionResult;
   cancel?: CancelAuctionResult;
+  visibility?: AuctionVisibilityResult;
   freeze?: FreezeFinalLineupResult;
   startFinal?: StartFinalResult;
   nextLot?: StartNextLotResult;
@@ -108,6 +117,7 @@ function fake(answers: {
   const freezes: (readonly string[])[] = [];
   const windows: { auctionId: string; from: string; until: string }[] = [];
   const launched: LaunchStepWindowCommand[] = [];
+  const visibility: { published: boolean; opId: string }[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -131,6 +141,14 @@ function fake(answers: {
     startPrebidding: async () => answers.start ?? { kind: "ok" },
     discardAuction: async () => answers.discard ?? { kind: "ok" },
     cancelAuction: async () => answers.cancel ?? { kind: "ok" },
+    publishAuction: async (_person, publish) => {
+      visibility.push({ published: true, opId: publish.opId });
+      return answers.visibility ?? { kind: "ok" };
+    },
+    hideAuction: async (_person, hide) => {
+      visibility.push({ published: false, opId: hide.opId });
+      return answers.visibility ?? { kind: "ok" };
+    },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
     freezeFinalLineup: async (_person, freeze) => {
@@ -193,6 +211,7 @@ function fake(answers: {
     freezes,
     windows,
     launched,
+    visibility,
   };
 }
 
@@ -902,6 +921,103 @@ describe("auction discard", () => {
     });
     await expect(
       missing.run({ ...call, intent: "discard-auction", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "auction-not-found",
+    });
+  });
+});
+
+describe("auction visibility", () => {
+  const call = { identity: admin, auctionId };
+
+  it("publishes and hides by the target of the button", async () => {
+    const hidden = {
+      kind: "ok",
+      console: view("draft", { hidden: true }),
+    } as const;
+    const publish = fake({ read: hidden, statistics: noLotStatistics });
+    const hide = fake({ statistics: noLotStatistics });
+
+    await expect(
+      publish.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: true,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "published",
+    });
+    expect(publish.visibility).toEqual([{ published: true, opId }]);
+    await expect(
+      hide.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "unpublished",
+    });
+    expect(hide.visibility).toEqual([{ published: false, opId }]);
+  });
+
+  it("names a week that opened in between", async () => {
+    const { run } = fake({
+      visibility: { kind: "already-started" },
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "visibility-too-late",
+    });
+  });
+
+  it("refuses a cancelled meetup with its own text, not as a failure", async () => {
+    const { run } = fake({ visibility: { kind: "meetup-cancelled" } });
+
+    await expect(
+      run({ ...call, intent: "set-auction-visibility", published: true, opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "meetup-cancelled",
+    });
+  });
+
+  it("refuses a person Auction does not take for the administrator, and a missing auction", async () => {
+    const forbidden = fake({ visibility: { kind: "not-administrator" } });
+    const missing = fake({ visibility: { kind: "auction-not-found" } });
+
+    await expect(
+      forbidden.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: true,
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
+    await expect(
+      missing.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
     ).resolves.toEqual({
       kind: "auction-console-refused",
       reason: "auction-not-found",

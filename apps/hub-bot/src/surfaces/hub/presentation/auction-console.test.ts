@@ -34,6 +34,7 @@ import type {
 import type {
   AuctionConsoles,
   AuctionScreens,
+  AuctionVisibilityResult,
   AuctionWeekConfig,
   ConsoleReadResult,
   DayLotStatistics,
@@ -99,6 +100,7 @@ const forgedAuctionPresses = {
   "console-raffle-prize": `v1:ac:rp:${auctionToken}`,
   "console-raffle-prize-remove": `v1:ac:rz:${auctionToken}`,
   "console-final": `v1:ac:f:${auctionToken}:1`,
+  "console-visibility": `v1:ac:p:${auctionToken}:1`,
   "console-open": `v1:ac:o:${auctionToken}`,
   "console-confirm": `v1:ac:y:${auctionToken}:${uuidToToken(mugId)}`,
   "console-discard": `v1:ac:x:${auctionToken}`,
@@ -223,6 +225,10 @@ function fakeAuction(
     launchedWindows?: AuctionConsoleView["launchedWindows"];
     // Отказ запуска (PER-615): Auction не принял окно — пульт показывает текст.
     launch?: LaunchStepWindowResult;
+    // Видимость до торгов (PER-673): аукцион скрыт, и отказ Auction вместо
+    // принятия публикации или снятия.
+    hidden?: boolean;
+    visibility?: AuctionVisibilityResult;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -232,6 +238,7 @@ function fakeAuction(
     lots: ConsoleLot[];
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает.
     launchedWindows?: AuctionConsoleView["launchedWindows"];
+    hidden: boolean;
     startedBy?: string;
     discarded?: true;
     cancelledBy?: string;
@@ -242,6 +249,7 @@ function fakeAuction(
     closures: Map<string, LotClosure>;
   } = {
     status: options.status ?? "draft",
+    hidden: options.hidden ?? false,
     ...(options.week === undefined ? {} : { week: options.week }),
     ...(options.launchedWindows === undefined
       ? {}
@@ -260,6 +268,15 @@ function fakeAuction(
     );
   };
   const commands: Command[] = [];
+  // Видимость как в Auction: только до открытия недели, повтор пишет ещё раз.
+  const visibility = (hidden: boolean): AuctionVisibilityResult => {
+    if (options.visibility !== undefined) return options.visibility;
+    if (state.status !== "draft" && state.status !== "scheduled") {
+      return { kind: "already-started" };
+    }
+    state.hidden = hidden;
+    return { kind: "ok" };
+  };
   // Окно, которое бот назвал суточному чтению (PER-492): день сообщества и
   // часы бота, а не то, что придумал бы Auction.
   const windows: { auctionId: string; from: string; until: string }[] = [];
@@ -309,6 +326,7 @@ function fakeAuction(
         console: {
           auctionId,
           status: state.status,
+          hidden: state.hidden,
           ...(state.week === undefined ? {} : { week: state.week }),
           ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
           launchedWindows: state.launchedWindows ?? [],
@@ -417,6 +435,14 @@ function fakeAuction(
       return state.startedBy === start.opId
         ? { kind: "ok" }
         : { kind: "not-scheduled" };
+    },
+    async publishAuction(_person, publish) {
+      commands.push({ method: "publishAuction", args: publish });
+      return visibility(false);
+    },
+    async hideAuction(_person, hide) {
+      commands.push({ method: "hideAuction", args: hide });
+      return visibility(true);
     },
     async discardAuction(_person, discard) {
       commands.push({ method: "discardAuction", args: discard });
@@ -1328,6 +1354,7 @@ describe("week of the auction", () => {
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
       ["Сводка дня"],
+      ["Снять с публикации"],
       ["🗑 Удалить аукцион"],
       ["‹ Аукцион"],
     ]);
@@ -1393,6 +1420,7 @@ describe("week of the auction", () => {
       ["Счастливые часы", "Сводка дня"],
       ["Розыгрыш"],
       ["Открыть онлайн-неделю"],
+      ["Снять с публикации"],
       ["🗑 Удалить аукцион"],
       ["‹ Аукцион"],
     ]);
@@ -2240,6 +2268,86 @@ describe("final selection", () => {
       ["Сводка дня", "Отменить аукцион"],
       ["‹ Аукцион"],
     ]);
+  });
+});
+
+describe("auction visibility", () => {
+  it("publishes a hidden auction and hides it again from the console", async () => {
+    const auction = fakeAuction({ hidden: true, lots: [priced] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain(
+      "Скрыт от участников: они его не видят, пока не опубликуешь.",
+    );
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Опубликовать")));
+    expect(auction.state.hidden).toBe(false);
+    expect(last(calls).text).toBe(
+      "<b>Аукцион опубликован</b>\n\nУчастники видят его и лоты.",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("Виден участникам.");
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Снять с публикации")));
+    expect(auction.state.hidden).toBe(true);
+    expect(last(calls).text).toBe(
+      "<b>Аукцион снят с публикации</b>\n\nУчастники его не видят.",
+    );
+    const [published, hidden] = [
+      ...auction.sent("publishAuction"),
+      ...auction.sent("hideAuction"),
+    ];
+    expect(published?.args).toMatchObject({ auctionId });
+    expect(hidden?.args).toMatchObject({ auctionId });
+  });
+
+  it("offers neither button once the week is open and names it for an old button", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(JSON.stringify(last(calls))).not.toContain("Опубликовать");
+    expect(JSON.stringify(last(calls))).not.toContain("Снять с публикации");
+    expect(plain(last(calls))).not.toContain("Виден участникам.");
+
+    await bot.handleUpdate(press(`v1:ac:p:${auctionToken}:0`));
+    expect(last(calls).text).toBe(
+      "<b>Онлайн-неделя уже открыта</b>\n\nАукцион виден участникам, снять его нельзя.",
+    );
+  });
+
+  it("answers a cancelled meetup with text, not a failure", async () => {
+    const auction = fakeAuction({
+      hidden: true,
+      visibility: { kind: "meetup-cancelled" },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:p:${auctionToken}:1`));
+    expect(auction.sent("publishAuction")).toHaveLength(1);
+    expect(plain(last(calls))).toContain(
+      "Сходку отменили. Управлять её аукционом больше нельзя.",
+    );
+  });
+
+  it("answers Auction not taking the person for the administrator with text, not a failure", async () => {
+    const auction = fakeAuction({
+      hidden: true,
+      visibility: { kind: "not-administrator" },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:p:${auctionToken}:1`));
+    expect(auction.sent("publishAuction")).toHaveLength(1);
+    expect(last(calls).text).toContain("Это действие тебе недоступно.");
   });
 });
 
