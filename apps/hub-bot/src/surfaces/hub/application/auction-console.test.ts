@@ -28,6 +28,7 @@ import type {
   StartNextLotResult,
   StartPrebiddingResult,
 } from "../auction/port.js";
+import type { ParticipantUsernameResult } from "../identity/port.js";
 import {
   createAuctionConsole,
   lineupPrint,
@@ -92,6 +93,9 @@ function fake(answers: {
   close?: CloseLotResult;
   bids?: FinalBidsResult;
   names?: DisplayNamesResult;
+  // Настоящий аккаунт участника (PER-648), по идентификатору. Нет записи —
+  // Identity отказал, как участнику, открывшему карточку.
+  accounts?: Readonly<Record<string, ParticipantUsernameResult>>;
   raffle?: ConsoleRaffleResult;
   active?: ActiveAuctionsResult;
   launch?: LaunchStepWindowResult;
@@ -100,6 +104,7 @@ function fake(answers: {
   const reads = { raffle: 0, active: 0 };
   const asks: Money[] = [];
   const closes: FinalLotCommand[] = [];
+  const accountsAsked: string[] = [];
   const freezes: (readonly string[])[] = [];
   const windows: { auctionId: string; from: string; until: string }[] = [];
   const launched: LaunchStepWindowCommand[] = [];
@@ -174,11 +179,17 @@ function fake(answers: {
     },
   };
   return {
-    run: createAuctionConsole(port, zone, () => answers.at ?? now),
+    run: createAuctionConsole(port, zone, () => answers.at ?? now, {
+      async resolveParticipantUsername(_viewer, identityId) {
+        accountsAsked.push(identityId);
+        return answers.accounts?.[identityId] ?? { kind: "denied" };
+      },
+    }),
     reads,
     scheduled,
     asks,
     closes,
+    accountsAsked,
     freezes,
     windows,
     launched,
@@ -1320,6 +1331,110 @@ describe("final of the auctioneer", () => {
       title: "Картина",
       closure: { kind: "sold", price: rub(1_000) },
     });
+  });
+
+  it("names the account of the leader and of the buyer beside their pseudonyms", async () => {
+    const account = {
+      [leaderId]: {
+        kind: "resolved" as const,
+        telegramUsername: "batman",
+      },
+    };
+    const confirmation = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен*" } },
+      accounts: account,
+    });
+    const sold = running(final([live(leaderId), held], lotId), {
+      close: {
+        kind: "ok",
+        closure: { kind: "sold", winnerId: leaderId, price: rub(1_000) },
+      },
+      names: { kind: "ok", names: { [leaderId]: "Бэтмен*" } },
+      accounts: account,
+    });
+
+    await expect(
+      confirmation.run({
+        ...call,
+        intent: "prepare-final-close",
+        position: 0,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      leaderName: "Бэтмен*",
+      leaderUsername: "batman",
+    });
+    await expect(
+      sold.run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: sale,
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({
+      closure: { buyerName: "Бэтмен*", buyerUsername: "batman" },
+    });
+  });
+
+  it("leaves the account out when Identity refuses it", async () => {
+    const { run } = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен*" } },
+      accounts: { [leaderId]: { kind: "denied" } },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).toMatchObject({ leaderName: "Бэтмен*" });
+    expect(result).not.toHaveProperty("leaderUsername");
+  });
+
+  // Снимок ника в аукционе заморожен, и организатору нужен свежий аккаунт:
+  // имя, которое уже является ником, спрашивается так же (PER-648).
+  it("asks for the account even when the shown name already is one", async () => {
+    const { run, accountsAsked } = running(
+      final([live(leaderId), held], lotId),
+      {
+        bids: { kind: "ok", bids: [], names: { [leaderId]: "@old" } },
+        accounts: {
+          [leaderId]: { kind: "resolved", telegramUsername: "new" },
+        },
+      },
+    );
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).toMatchObject({
+      leaderName: "@old",
+      leaderUsername: "new",
+    });
+    expect(accountsAsked).toEqual([leaderId]);
+  });
+
+  it("leaves the account out when the screen names nobody", async () => {
+    const { run, accountsAsked } = running(final([live(), held], lotId), {
+      accounts: {
+        [leaderId]: { kind: "resolved", telegramUsername: "batman" },
+      },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).not.toHaveProperty("leaderUsername");
+    expect(accountsAsked).toEqual([]);
   });
 
   it("closes a lot without bids without a sale", async () => {

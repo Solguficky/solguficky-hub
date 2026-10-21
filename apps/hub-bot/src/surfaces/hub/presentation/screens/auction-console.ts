@@ -87,6 +87,7 @@ import {
   screenText,
   toAuctionRoot,
   toggleLabel,
+  withAccount,
   withNav,
   withPager,
 } from "./kit.js";
@@ -1088,6 +1089,7 @@ export function closeConfirmScreen(confirm: {
   title?: string | undefined;
   price?: LotAmount | undefined;
   leaderName?: string | undefined;
+  leaderUsername?: string | undefined;
   changed?: true | undefined;
 }): ShownScreen {
   const auction = uuidToToken(confirm.auctionId);
@@ -1095,7 +1097,7 @@ export function closeConfirmScreen(confirm: {
   const buyer =
     confirm.leaderName === undefined
       ? ""
-      : `, покупатель — ${confirm.leaderName}`;
+      : `, покупатель — ${withAccount(confirm.leaderName, confirm.leaderUsername)}`;
   return {
     id: "final-close-confirm",
     text: screenText(
@@ -1138,14 +1140,19 @@ export function closedScreen(closed: {
   auctionId: string;
   title?: string | undefined;
   closure:
-    | { kind: "sold"; price: LotAmount; buyerName?: string | undefined }
+    | {
+        kind: "sold";
+        price: LotAmount;
+        buyerName?: string | undefined;
+        buyerUsername?: string | undefined;
+      }
     | { kind: "unsold" };
   finished?: { soldLots: number; total: LotAmount } | undefined;
 }): ShownScreen {
   const { closure, finished } = closed;
   const buyer =
     closure.kind === "sold" && closure.buyerName !== undefined
-      ? `, покупатель — ${closure.buyerName}`
+      ? `, покупатель — ${withAccount(closure.buyerName, closure.buyerUsername)}`
       : "";
   const toConsole = consoleViewData(uuidToToken(closed.auctionId));
   // Последний лот состава завершает аукцион (PER-639): исход говорит об этом

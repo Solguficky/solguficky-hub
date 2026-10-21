@@ -5,6 +5,7 @@ import type {
   LotAdministration,
   MeetupAuctions,
 } from "../auction/port.js";
+import type { ParticipantUsernameResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createAuctionConsole } from "./auction-console.js";
@@ -36,6 +37,9 @@ export function createDispatcher(
     timeZone: string;
     // Часы бота; тест их подменяет.
     now?: () => Date;
+    // Настоящий аккаунт победителя для пульта (PER-648): его отдаёт Identity
+    // по праву ведущего.
+    usernames?: ParticipantUsernameResolver;
   },
   releaseNotes?: ReleaseNotes,
 ): Dispatcher {
@@ -47,6 +51,7 @@ export function createDispatcher(
           consoles.auctions,
           consoles.timeZone,
           consoles.now,
+          consoles.usernames,
         );
   // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
   // пускает право вести аукцион.
