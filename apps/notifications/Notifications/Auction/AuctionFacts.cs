@@ -40,6 +40,16 @@ public static class AuctionFacts
     public const string AuctionCancelledType = "auction_cancelled";
 
     /// <summary>
+    /// Весть «Новый аукцион» (PER-646). Повод — факт публикации аукциона.
+    /// </summary>
+    public const string PublishedType = "auction_published";
+
+    /// <summary>
+    /// Весть «Торги открыты» (PER-646). Повод — факт открытия онлайн-недели.
+    /// </summary>
+    public const string TradingOpenedType = "auction_trading_opened";
+
+    /// <summary>
     /// Адресаты отмены аукциона (ADR-047, дополнение 2026-10-12, «Факт
     /// отмены»): каждый, у кого была строка избранного на лоте аукциона, и
     /// покупатель проданного — по одному разу, со своими покупками. Покупатель
@@ -84,6 +94,53 @@ public static class AuctionFacts
             NotAfter = notAfter.ToUniversalTime().ToString("O"),
             Cause = new Cause { AuctionEventId = cancellationEventId.ToString() },
             AuctionCancelled = body,
+        };
+    }
+
+    /// <summary>
+    /// Весть о новом аукционе или об открытии торгов одному держателю права
+    /// <c>place_bids</c> (PER-646). Название сходки приходит из реплики: канал
+    /// рисует весть без звонков, а у аукциона своего названия нет. Неделя есть
+    /// только у запланированного аукциона: у черновика она отсутствует, а не
+    /// пуста.
+    /// </summary>
+    public static Notification Announcement(Guid notificationId, Guid recipientId,
+        AuctionAnnouncement announcement, string type, string meetupTitle, DateTimeOffset now, DateTimeOffset notAfter)
+    {
+        var cause = new Cause { AuctionEventId = announcement.EventId.ToString() };
+        if (type == PublishedType)
+        {
+            return new Notification
+            {
+                NotificationId = notificationId.ToString(),
+                RecipientId = recipientId.ToString(),
+                CreatedAt = now.ToUniversalTime().ToString("O"),
+                NotAfter = notAfter.ToUniversalTime().ToString("O"),
+                Cause = cause,
+                AuctionPublished = new AuctionPublished
+                {
+                    AuctionId = announcement.AuctionId.ToString(),
+                    MeetupId = announcement.MeetupId.ToString(),
+                    MeetupTitle = meetupTitle,
+                    OnlinePhase = announcement.OnlinePhase?.Clone(),
+                },
+            };
+        }
+
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = recipientId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = cause,
+            AuctionTradingOpened = new AuctionTradingOpened
+            {
+                AuctionId = announcement.AuctionId.ToString(),
+                MeetupId = announcement.MeetupId.ToString(),
+                MeetupTitle = meetupTitle,
+                OnlinePhase = announcement.OnlinePhase?.Clone(),
+            },
         };
     }
 

@@ -278,6 +278,43 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Вести о новом аукционе и об открытии торгов (PER-646) гостю доставляет
+  // бот аукциона; участнику те же ветки приходят в боте хаба.
+  it("decodes a published auction and the opening of its trading", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    expect(
+      decodeNotification(
+        fact({
+          case: "auctionPublished",
+          value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "new-auction", auctionId, meetupTitle: "Пятничная" },
+      },
+    });
+    expect(
+      decodeNotification(
+        fact({
+          case: "auctionTradingOpened",
+          value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "trading-opened",
+          auctionId,
+          meetupTitle: "Пятничная",
+        },
+      },
+    });
+  });
+
   // Извещение об отмене аукциона (PER-606) гостю доставляет бот аукциона.
   it("decodes a cancelled auction with the purchases of the recipient", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";

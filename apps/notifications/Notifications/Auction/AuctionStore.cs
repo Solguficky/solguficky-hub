@@ -14,6 +14,7 @@ public enum AuctionOutcome
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
     AuctionCancelled, AuctionEnded,
     FinalLotNext, LeadRestored,
+    Announcement, AnnouncementWithdrawn,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -526,6 +527,44 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.AuctionCancelled,
             new Dictionary<string, int> { [AuctionFacts.AuctionCancelledType] = created });
+    }
+
+    /// <summary>
+    /// Видимость аукциона и открытие торгов (PER-646): публикация и открытие
+    /// дают весть держателям права ставок, снятие — снимает неотправленную весть
+    /// о публикации, потому что человек пошёл бы к аукциону, которого не видит.
+    /// Настройка уведомлений аукциона читается той же транзакцией, что ключ
+    /// события. Повтор отсекает ключ события, а после его чистки — уникальность
+    /// (тип, повод, получатель).
+    /// </summary>
+    public async Task<AuctionApplication> Apply(AuctionAnnouncement announcement, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, announcement.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        if (announcement.Occasion == AnnouncementOccasion.Hidden)
+        {
+            var withdrawn = await NotificationStore.WithdrawOnAuctionHidden(work, announcement.MeetupId, now,
+                cancellationToken);
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AnnouncementWithdrawn,
+                new Dictionary<string, int> { [AuctionFacts.PublishedType] = withdrawn });
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var created = await NotificationStore.AddAuctionAnnouncement(work, announcement, now, notAfter,
+            cancellationToken);
+        var type = announcement.Occasion == AnnouncementOccasion.TradingOpened
+            ? AuctionFacts.TradingOpenedType
+            : AuctionFacts.PublishedType;
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.Announcement,
+            new Dictionary<string, int> { [type] = created.Created });
     }
 
     /// <summary>

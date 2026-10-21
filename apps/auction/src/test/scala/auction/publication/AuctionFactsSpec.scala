@@ -175,5 +175,28 @@ final class AuctionFactsSpec extends AnyWordSpec with Matchers {
       state.lotIds shouldBe List(lot, other).map(_.value).sorted.map(_.toString)
       state.config shouldBe defined
     }
+
+    // Видимость — факт аукциона, а не подпись: по нему Notifications сообщает о новом аукционе и снимает
+    // неотправленную весть (ADR-047, дополнение 2026-10-20; PER-646).
+    "publish the visibility as its own fact and carry the flag in every snapshot" in {
+      val visible = journal.take(2) ++ List(
+        AuctionEvent.AuctionPublished,
+        AuctionEvent.AuctionHidden,
+        AuctionEvent.AuctionPublished
+      ).zipWithIndex.map((event, index) => (index + 3).toLong -> stored(event, index + 3))
+      val published = facts(visible)
+      published.map(_.map(_.subject)) shouldBe List(
+        "auction_drafted",
+        "lot_added",
+        "auction_published",
+        "auction_hidden",
+        "auction_published"
+      ).map(name => Some(LotFacts.SubjectPrefix + name))
+      val bodies = published.map(message)
+      // Рождение скрыто, публикация снимает признак, снятие возвращает его.
+      bodies.map(_.getState.hidden) shouldBe List(true, true, false, true, false)
+      bodies(2).getState.status.isDraft shouldBe true
+      bodies(3).getState.status.isDraft shouldBe true
+    }
   }
 }

@@ -173,6 +173,8 @@ export function auctionNotificationsChangeData(
       return `v1:notify:final:${change.enabled ? "1" : "0"}`;
     case "live":
       return `v1:notify:live:${change.enabled ? "1" : "0"}`;
+    case "announcements":
+      return `v1:notify:news:${change.enabled ? "1" : "0"}`;
   }
 }
 
