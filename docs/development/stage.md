@@ -42,7 +42,7 @@ Stage — хаб с аукционом и три бота в namespace `test` k3
 - **NetworkPolicy** ops-каркаса разрешают поду с меткой `app.kubernetes.io/component: cloudflared` выход на порт 7844 по TCP и UDP к адресам Cloudflare `region1.v2.argotunnel.com` и `region2.v2.argotunnel.com` и DNS к `kube-dns`. Порт 443 туннелю не нужен: обновлений образ не проверяет. Auction разрешён вход на порт 8080 от того же пода, на 8081 туннелю ходить незачем. Адреса Cloudflare — [Tunnel with firewall](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/tunnel-with-firewall/).
 - **Квота.** Под туннеля просит 10m и 32Mi, лимит 200m и 128Mi; лимит памяти ложится в квоту namespace.
 
-Проверка после включения: страница `/screen/<auction_id>` открывается по публичному адресу, `curl -i https://<хост>/health` отвечает 404 от самого туннеля, а снаружи хоста по-прежнему открыт только SSH.
+Готовность пода туннеля связи с Cloudflare не означает: пробы смотрят только порт метрик, чтобы выкладка не ждала чужую сеть. Связь видна в логе пода (`Registered tunnel connection`). Проверка после включения: страница `/screen/<auction_id>` открывается по публичному адресу, `curl -i https://<хост>/health` отвечает 404 от самого туннеля, а снаружи хоста по-прежнему открыт только SSH.
 
 ## Автовыкладка
 

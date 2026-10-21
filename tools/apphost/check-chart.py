@@ -19,7 +19,8 @@ workload is checked against the rules of the production chart:
 - the tunnel passes only the hall screen routes: its mounted ingress rules are,
   character for character, the screen prefix to Auction's rendered `http`
   Service port and 404 for everything else, the pod rolls when they change,
-  and its token never travels as `--token` in the pod spec;
+  and its token never appears in the pod spec, as `--token` or as an inline
+  TUNNEL_TOKEN: it comes from the Secret through envFrom;
 - every image comes from values as `@sha256:<64 hex>`, not a tag;
 - the auction and support bots run the hub bot's image, character for
   character: one package serves every surface (ADR-064, item 18; ADR-068,
@@ -30,10 +31,12 @@ workload is checked against the rules of the production chart:
   the service reads them through envFrom, and without the checksums a values
   change or a rollback would not roll the pod;
 - every service has liveness and readiness probes of its form: gRPC ones for
-  the gRPC services; for Auction and the tunnel an HTTP readiness path and TCP
-  startup and liveness, because Auction's readiness path answers 503 while the
-  database is down and a liveness on it would restart the pod in a loop, and
-  the tunnel reconnects to Cloudflare by itself. The three bots have no
+  the gRPC services; for Auction an HTTP readiness path and TCP startup and
+  liveness, because its readiness path answers 503 while the database is down
+  and a liveness on it would restart the pod in a loop; for the tunnel TCP
+  only, because its `/ready` answers 200 only while Cloudflare is reachable,
+  and a readiness on it would hold `helm --wait` of the whole release hostage
+  to that network, while no Service routes to the tunnel. The three bots have no
   health endpoint and are the named exceptions;
 - every secret in the chart's own values.yaml is empty: secrets are parameters
   without values, and the ops repository supplies them per environment;
@@ -78,7 +81,8 @@ WITHOUT_PROBES = {"hub-bot", "auction-bot", "support-bot"}
 SHARED_IMAGES = {"auction-bot": "hub-bot", "support-bot": "hub-bot"}
 GRPC_PROBES = {"livenessProbe": "grpc", "readinessProbe": "grpc"}
 HTTP_READINESS = {"startupProbe": "tcpSocket", "livenessProbe": "tcpSocket", "readinessProbe": "httpGet"}
-PROBES = {"auction": HTTP_READINESS, "cloudflared": HTTP_READINESS}
+TCP_ONLY = {"startupProbe": "tcpSocket", "livenessProbe": "tcpSocket", "readinessProbe": "tcpSocket"}
+PROBES = {"auction": HTTP_READINESS, "cloudflared": TCP_ONLY}
 PROBE_ACTIONS = ("grpc", "httpGet", "tcpSocket", "exec")
 WORKLOAD_KINDS = {"Deployment", "StatefulSet", "DaemonSet", "ReplicaSet", "Job", "CronJob", "Pod"}
 
@@ -185,8 +189,8 @@ def check_tunnel(text: str, rules: str | None, origin: str | None) -> list[str]:
         errors.append(f"{TUNNEL}: pod template has no checksum/ingress annotation, a rules change would not roll the pod")
     if TUNNEL_RULES not in REFERENCE.findall(text):
         errors.append(f"{TUNNEL}: pod does not mount the {TUNNEL_RULES} ConfigMap")
-    if "--token" in text:
-        errors.append(f"{TUNNEL}: the token must come from TUNNEL_TOKEN in the Secret, not --token in the pod spec")
+    if "--token" in text or "TUNNEL_TOKEN" in text:
+        errors.append(f"{TUNNEL}: the token must come from TUNNEL_TOKEN in the Secret through envFrom, not the pod spec")
     if rules is None:
         errors.append(f"{TUNNEL}: chart renders no {TUNNEL_RULES} ConfigMap with config.yml")
     elif origin is None:

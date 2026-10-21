@@ -21,27 +21,28 @@ internal static class CloudflaredSetup
     private const string Digest = "072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c";
     private const long ImageUser = 65532;
 
-    // Порт метрик cloudflared: `/ready` отвечает 200, пока есть соединение с
-    // Cloudflare. Service у туннеля нет, порт нужен только пробам.
+    // Порт метрик cloudflared. Service у туннеля нет, порт нужен только пробам.
     private const int MetricsPort = 2000;
     private const string MetricsAddress = "0.0.0.0:2000";
-    private const string ReadyPath = "/ready";
 
     private const string ConfigMount = "/etc/cloudflared";
 
     /// <summary>Имя ConfigMap с правилами — оно же имя файла шаблона в чарте.</summary>
     public const string IngressConfigMap = "cloudflared-ingress";
 
-    // Startup и liveness — TCP на порт метрик, readiness — `/ready`: потерю
-    // соединения cloudflared переживает сам переподключением, и рестарт пода
-    // на ней ничего бы не дал.
+    // Все пробы — TCP на порт метрик, а не `/ready`, который отвечает 200 только
+    // при живом соединении с Cloudflare. Трафик к поду через Service не идёт,
+    // поэтому readiness ничего не маршрутизирует, а на `/ready` она держала бы
+    // `helm --wait` всего релиза, пока лежит сеть Cloudflare или не применена
+    // NetworkPolicy. Потерю соединения cloudflared переживает сам
+    // переподключением, и рестарт пода на ней ничего бы не дал.
     private static readonly ClusterWorkload Cluster = new(
         RunAsUser: ImageUser,
         CpuRequest: "10m",
         MemoryRequest: "32Mi",
         CpuLimit: "200m",
         MemoryLimit: "128Mi",
-        Probe: new HttpProbe(MetricsPort, ReadyPath),
+        Probe: new TcpProbe(MetricsPort),
         Switched: true);
 
     /// <summary>

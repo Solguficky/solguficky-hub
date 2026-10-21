@@ -114,7 +114,9 @@ public class CloudflaredTests
         var publish = ProfileResolver.PublishProfile(configuration).ShouldNotBeNull();
 
         var owners = configuration.GetSection("Topology:Profiles").GetChildren()
-            .Where(profile => profile.GetSection("Services").GetChildren().Any(service => service.Value == R.Cloudflared))
+            // Без учёта регистра — как граф сравнивает имена узлов.
+            .Where(profile => profile.GetSection("Services").GetChildren()
+                .Any(service => string.Equals(service.Value, R.Cloudflared, StringComparison.OrdinalIgnoreCase)))
             .Select(profile => profile.Key);
 
         owners.ShouldBe([publish.Name]);

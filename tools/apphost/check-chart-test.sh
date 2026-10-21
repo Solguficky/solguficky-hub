@@ -161,8 +161,7 @@ spec:
               port: 2000
           name: "cloudflared"
           readinessProbe:
-            httpGet:
-              path: "/ready"
+            tcpSocket:
               port: 2000
           startupProbe:
             tcpSocket:
@@ -295,6 +294,14 @@ assert_fails "rules reaching a Service the chart does not render" "cloudflared: 
 work=$(tree tunnel-token-argument)
 sed -i 's|            - "run"|            - "run"\n            - "--token"|' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
 assert_fails "the token in the pod spec" "cloudflared: the token must come from TUNNEL_TOKEN" "$work"
+
+work=$(tree tunnel-token-inline)
+sed -i 's|          args:|          env:\n            - name: "TUNNEL_TOKEN"\n              value: "leaked"\n          args:|' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "the token inline in the pod env" "cloudflared: the token must come from TUNNEL_TOKEN" "$work"
+
+work=$(tree tunnel-readiness-on-cloudflare)
+sed -i '/readinessProbe:/{n;s/tcpSocket:/httpGet:/}' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "a tunnel readiness that waits for Cloudflare" "cloudflared: readinessProbe must be tcpSocket, got httpGet" "$work"
 
 work=$(tree tunnel-no-ingress-checksum)
 sed -i '/checksum\/ingress:/d' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"

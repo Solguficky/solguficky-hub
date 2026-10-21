@@ -44,6 +44,14 @@ internal sealed record GrpcProbe(int Port, string ReadinessService) : WorkloadPr
 /// </summary>
 internal sealed record HttpProbe(int Port, string ReadinessPath) : WorkloadProbe;
 
+/// <summary>
+/// Все три пробы — TCP-подключение к порту. Для workload'а, чья готовность
+/// зависит от внешней сети и которому никто не шлёт трафик через Service: проба
+/// на внешней связи держала бы <c>helm --wait</c> всего релиза заложником этой
+/// сети (туннель, ADR-071).
+/// </summary>
+internal sealed record TcpProbe(int Port) : WorkloadProbe;
+
 internal static class ClusterWorkloadExtensions
 {
     public static IResourceBuilder<T> AsClusterWorkload<T>(this IResourceBuilder<T> resource, ClusterWorkload shape)
@@ -127,6 +135,11 @@ internal static class ClusterWorkloadExtensions
                         container.StartupProbe = Timed(new() { TcpSocket = new() { Port = http.Port } }, periodSeconds: 5, failureThreshold: 60);
                         container.LivenessProbe = Timed(new() { TcpSocket = new() { Port = http.Port } });
                         container.ReadinessProbe = Timed(new() { HttpGet = new() { Port = http.Port, Path = http.ReadinessPath } });
+                        break;
+                    case TcpProbe tcp:
+                        container.StartupProbe = Timed(new() { TcpSocket = new() { Port = tcp.Port } }, periodSeconds: 5, failureThreshold: 60);
+                        container.LivenessProbe = Timed(new() { TcpSocket = new() { Port = tcp.Port } });
+                        container.ReadinessProbe = Timed(new() { TcpSocket = new() { Port = tcp.Port } });
                         break;
                 }
             }
