@@ -216,4 +216,28 @@ public class AuctionParticipantRemovalTests
         line.CurrentPrice.MinorUnits.ShouldBe(9000);
         line.RecipientLeads.ShouldBeTrue();
     }
+
+    // Лот без ведущего: строка окна тогда не говорит «лот за тобой» никому, а
+    // цену ведёт ту же, с которой лот идёт дальше.
+    [Fact]
+    public async Task When_RemovalLeavesLotWithoutLeader_Expect_LineCarriesPriceAndNoLead()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        var lot = EventFactory.NewId();
+        var person = EventFactory.NewId();
+        var rival = EventFactory.NewId();
+        await SetOutbid(db, person, OutbidFrequency.AtMostEvery5Minutes);
+
+        await store.Apply(Decode(PricedBid(lot, person, rival, version: 3, minorUnits: 10000)),
+            EventFactory.Committed, Cancellation);
+        await store.Apply(DecodeRemoval(EventFactory.ParticipantRemoved(lot, rival, leader: null, price: 9000,
+            version: 4)), EventFactory.Committed, Cancellation);
+        (await CloseDueWindows(store, EventFactory.Committed.AddMinutes(5))).ShouldBe(1);
+
+        var line = (await StoredDigests(db)).ShouldHaveSingleItem().LotActivityDigest.Lines.ShouldHaveSingleItem();
+        line.CurrentPrice.MinorUnits.ShouldBe(9000);
+        line.RecipientLeads.ShouldBeFalse();
+    }
 }
