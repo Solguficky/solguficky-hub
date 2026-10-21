@@ -2141,6 +2141,25 @@ describe("the final time of the auction", () => {
     );
   });
 
+  it("offers to take the announcement back after the final is switched off", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: false },
+      finalAt: "2026-10-31T16:00:00Z",
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain("Финал: нет.");
+    expect(plain(last(calls))).toContain(
+      "Время финала: 31 октября, сб, 19:00.",
+    );
+    // Выключенный финал оставляет время у аукциона, и убрать его больше
+    // нечем: ряд несёт только снятие.
+    expect(labels(last(calls)).flat()).toContain("🗑 Убрать время финала");
+    expect(labels(last(calls)).flat()).not.toContain("Время финала");
+  });
+
   it("offers no button once the lineup is frozen", async () => {
     const auction = fakeAuction({
       status: "lineup-frozen",

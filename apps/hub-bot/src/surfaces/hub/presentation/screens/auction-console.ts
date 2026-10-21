@@ -385,17 +385,25 @@ function finalTimeLines(
   return ["Время финала: не выставлено."];
 }
 
-// Время финала меняется, пока финал впереди. Кнопка стоит только в пульте
-// администратора: в замороженном составе и в финале рисуется пульт ведущего
-// (PER-337), и там её нет.
-function finalTimeEditable(console: AuctionConsoleView): boolean {
+// Время финала меняется, пока финал впереди. Кнопка «Время финала» стоит
+// только у аукциона с финалом: анонсировать нечего. А снятие — пока анонс на
+// месте: выключенный финал оставляет время у аукциона, и убрать его больше
+// нечем (PER-663).
+function finalTimeAhead(console: AuctionConsoleView): boolean {
   return (
-    console.week?.final === true &&
     console.status !== "lineup-frozen" &&
     console.status !== "final" &&
     console.status !== "finished" &&
     console.status !== "cancelled"
   );
+}
+
+function finalTimeEditable(console: AuctionConsoleView): boolean {
+  return console.week?.final === true && finalTimeAhead(console);
+}
+
+function finalTimeRemovable(console: AuctionConsoleView): boolean {
+  return console.finalAt !== undefined && finalTimeAhead(console);
 }
 
 function statusLines(view: ConsoleScreenView): string[] {
@@ -810,9 +818,13 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   // онлайн-торгах и перерыве, где переключателя финала нет, — сразу после
   // строк настройки. Снятие стоит в том же ряду: два «🗑» в один ряд не
   // встают, а пульт упирается в потолок рядов.
-  if (finalTimeEditable(console)) {
-    nextRow(keyboard).text("Время финала", consoleFinalTimeData(auction));
-    if (console.finalAt !== undefined) {
+  const finalTimeSet = finalTimeEditable(console);
+  if (finalTimeSet || finalTimeRemovable(console)) {
+    nextRow(keyboard);
+    if (finalTimeSet) {
+      keyboard.text("Время финала", consoleFinalTimeData(auction));
+    }
+    if (finalTimeRemovable(console)) {
       keyboard.text(
         removeLabel("Убрать время финала"),
         consoleFinalTimeRemoveData(auction),
