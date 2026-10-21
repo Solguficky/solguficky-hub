@@ -194,6 +194,7 @@ import {
   type CommunityPlace,
   consoleAskData,
   consoleFinalTimeData,
+  consoleInvoiceMarkData,
   consoleRaffleData,
   consoleRafflePrizeData,
   consoleSetAskData,
@@ -282,6 +283,13 @@ import {
 } from "./screens/auction-console.js";
 import { daySummaryScreen } from "./screens/auction-day-summary.js";
 import { auctionFaqScreen } from "./screens/auction-faq.js";
+import {
+  invoiceMarkConfirmScreen,
+  invoiceMarkOutcomeScreen,
+  invoiceMissingScreen,
+  invoiceScreen,
+  invoicesScreen,
+} from "./screens/auction-invoices.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -2534,6 +2542,19 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleRemovalCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Счета аукциона (PER-321): ряд «Счета» пульта видит только держатель
+    // права вести аукцион, подделанная кнопка получает отказ до Auction.
+    if (
+      action.kind === "console-invoices" ||
+      action.kind === "console-invoice" ||
+      action.kind === "console-invoice-mark" ||
+      action.kind === "console-invoice-mark-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleInvoicesCallback(ctx, runtime, questions, person, action)
         : await refuseConsole(ctx, person);
       return;
     }
@@ -8400,6 +8421,97 @@ async function handleRemovalCallback(
   }
 }
 
+// Счета аукциона (PER-321). Сюда доходит только держатель права вести
+// аукцион; право на чтение и отметку решает Auction. Своего состояния нет:
+// аукцион и счёт едут в кнопке, а ключ отметки рождается на нажатие «Да».
+async function handleInvoicesCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-invoices"
+        | "console-invoice"
+        | "console-invoice-mark"
+        | "console-invoice-mark-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const call = {
+    identity: person,
+    ...rpcCall(ctx, useCase),
+    auctionId: tokenToUuid(action.auction),
+  };
+  // «Повторить» после сбоя на «Да» ведёт к подтверждению, а не к отметке:
+  // отметка, ответ на которую потерялся, могла пройти.
+  const retry =
+    action.kind === "console-invoice-mark-confirm"
+      ? consoleInvoiceMarkData(action.auction, action.invoice, action.mark)
+      : ctx.callbackQuery?.data;
+  const result = await runtime.dispatcher.execute(
+    action.kind === "console-invoices"
+      ? { ...call, intent: "view-auction-invoices", page: action.page }
+      : action.kind === "console-invoice"
+        ? {
+            ...call,
+            intent: "view-auction-invoice",
+            invoiceId: tokenToUuid(action.invoice),
+          }
+        : action.kind === "console-invoice-mark"
+          ? {
+              ...call,
+              intent: "prepare-invoice-mark",
+              invoiceId: tokenToUuid(action.invoice),
+              mark: action.mark,
+            }
+          : {
+              ...call,
+              intent: "mark-invoice",
+              invoiceId: tokenToUuid(action.invoice),
+              mark: action.mark,
+              opId: createUuidV7(),
+            },
+  );
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  const clock = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: communityToday(ctx),
+  };
+  switch (result.kind) {
+    case "auction-invoices":
+      await showScreen(ctx, invoicesScreen({ ...result, ...clock }));
+      return handled("auction invoices sent");
+    case "auction-invoice":
+      await showScreen(ctx, invoiceScreen({ ...result, ...clock }));
+      return handled("auction invoice sent");
+    case "invoice-mark-confirm":
+      await showScreen(ctx, invoiceMarkConfirmScreen(result));
+      return handled(`invoice ${result.mark} confirmation sent`);
+    case "invoice-mark-outcome":
+      await showScreen(ctx, invoiceMarkOutcomeScreen(result));
+      return handled(`invoice ${result.mark}: ${result.note}`);
+    case "invoice-missing":
+      await showScreen(ctx, invoiceMissingScreen(result.auctionId));
+      return handled("invoice not found");
+    default:
+      return renderConsoleResult(ctx, runtime, result, {
+        person,
+        questions,
+        retry,
+      });
+  }
+}
+
 // «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
 // права вести аукцион; право на чтение и ставку решает Auction. Своего
 // состояния нет: лот, человек и цена едут в кнопке, а ключ ставки рождается
@@ -10777,6 +10889,10 @@ function callbackUseCase(
     | "console-removal-confirm"
     | "console-windows"
     | "console-day-summary"
+    | "console-invoices"
+    | "console-invoice"
+    | "console-invoice-mark"
+    | "console-invoice-mark-confirm"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
@@ -10962,6 +11078,10 @@ function callbackUseCase(
     case "console-removal-confirm":
     case "console-windows":
     case "console-day-summary":
+    case "console-invoices":
+    case "console-invoice":
+    case "console-invoice-mark":
+    case "console-invoice-mark-confirm":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":

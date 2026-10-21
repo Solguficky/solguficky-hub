@@ -9,6 +9,7 @@ import type { ParticipantUsernameResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createAuctionConsole } from "./auction-console.js";
+import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createFloorBids } from "./floor-bids.js";
 import { createLotForm } from "./lot-form.js";
@@ -69,6 +70,12 @@ export function createDispatcher(
   // аукцион.
   const lotSets =
     consoles === undefined ? undefined : createLotSets(consoles.auctions);
+  // Счета аукциона (PER-321) — тот же порт: сводку и отметки пускает право
+  // вести аукцион.
+  const auctionInvoices =
+    consoles === undefined
+      ? undefined
+      : createAuctionInvoices(consoles.auctions, consoles.now);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -330,6 +337,13 @@ export function createDispatcher(
           return lotSets === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotSets(request);
+        case "view-auction-invoices":
+        case "view-auction-invoice":
+        case "prepare-invoice-mark":
+        case "mark-invoice":
+          return auctionInvoices === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : auctionInvoices(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

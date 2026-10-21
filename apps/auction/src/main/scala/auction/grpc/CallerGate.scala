@@ -64,11 +64,11 @@ object MethodAccess {
     "GetMyPredictions" -> bots,
     "GetPredictionResults" -> bots,
     "SettlePredictionResultsManually" -> Set(Caller.HubBot),
-    "MarkInvoicePaid" -> Set(Caller.AuctionBot),
-    "MarkInvoiceHandedOver" -> Set(Caller.AuctionBot),
+    "MarkInvoicePaid" -> Set(Caller.HubBot),
+    "MarkInvoiceHandedOver" -> Set(Caller.HubBot),
     "ChooseFulfillment" -> Set(Caller.AuctionBot),
     "ListMyInvoices" -> Set(Caller.AuctionBot),
-    "ListAuctionInvoices" -> Set(Caller.AuctionBot)
+    "ListAuctionInvoices" -> Set(Caller.HubBot)
   )
 
   /** Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого. */

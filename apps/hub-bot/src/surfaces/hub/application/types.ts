@@ -317,7 +317,8 @@ export type ExecuteRequest =
   | AuctionConsoleRequest
   | FloorBidsRequest
   | ParticipantRemovalRequest
-  | LotSetsRequest;
+  | LotSetsRequest
+  | AuctionInvoicesRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -1034,6 +1035,73 @@ export type RemovalConfirm = {
   changed?: true;
 };
 
+// Счета проданных лотов в пульте организатора (PER-321): сводка, счёт,
+// подтверждение отметки и её исход. Статусы и переходы — у счёта в Auction
+// (PER-338), бот их не повторяет: просрочку и итоги он считает из полного
+// списка, как велит integration.md, «Счета».
+export type InvoiceStatus = "awaiting-payment" | "paid" | "handed-over";
+
+// `unspecified` — победитель способ ещё не выбрал; это значение, а не пропуск.
+export type FulfillmentMethod =
+  | "unspecified"
+  | "pickup"
+  | "delivery"
+  | "digital";
+
+// Счёт, как его отдаёт Auction.
+export type Invoice = {
+  invoiceId: string;
+  auctionId: string;
+  lotId: string;
+  winnerId: string;
+  amount: LotAmount;
+  // RFC 3339 в UTC: оплатить до этого мига.
+  paymentDueAt: string;
+  fulfillment: FulfillmentMethod;
+  status: InvoiceStatus;
+};
+
+// Строка сводки: счёт с названием лота и именем победителя. Названия нет у
+// лота без карточки, имени — если чтение имён отказало.
+export type InvoiceRow = Invoice & {
+  title?: string;
+  winnerName?: string;
+  // Ждёт оплаты после срока; просрочка — не статус (integration.md, «Счета»).
+  overdue: boolean;
+};
+
+// Отметка, которую ставит организатор: оплата либо выдача.
+export type InvoiceMark = "paid" | "handed-over";
+
+// Итог по валютам: суммы разных валют не складываются.
+export type InvoiceTotals = {
+  collected: readonly LotAmount[];
+  expected: readonly LotAmount[];
+};
+
+export type InvoiceMarkNote =
+  | "marked"
+  // Оплата или выдача уже отмечены: второго перехода нет, Auction принял
+  // повтор молча, а бот это называет.
+  | "already-marked"
+  // Выдача неоплаченного счёта: Auction её не принимает.
+  | "not-paid";
+
+export type AuctionInvoicesRequest =
+  | (AuctionConsoleCall & { intent: "view-auction-invoices"; page: number })
+  | (AuctionConsoleCall & { intent: "view-auction-invoice"; invoiceId: string })
+  | (AuctionConsoleCall & {
+      intent: "prepare-invoice-mark";
+      invoiceId: string;
+      mark: InvoiceMark;
+    })
+  | (AuctionConsoleCall & {
+      intent: "mark-invoice";
+      invoiceId: string;
+      mark: InvoiceMark;
+      opId: string;
+    });
+
 // Человек зала — тот, кто выбрал имя в этом аукционе (ADR-070 п. 3).
 export type FloorPerson = { participantId: string; name: string };
 
@@ -1366,6 +1434,25 @@ export type ExecuteResult =
       lotVersion?: number;
     }
   // Сеты лотов (PER-509): список либо исход команды над ними.
+  // Счета аукциона (PER-321): сводка со страницей, счёт, подтверждение
+  // отметки и её исход. Строки сводки уже упорядочены: просроченные первыми.
+  | {
+      kind: "auction-invoices";
+      auctionId: string;
+      invoices: readonly InvoiceRow[];
+      totals: InvoiceTotals;
+      page: number;
+    }
+  | { kind: "auction-invoice"; invoice: InvoiceRow }
+  | { kind: "invoice-mark-confirm"; invoice: InvoiceRow; mark: InvoiceMark }
+  | {
+      kind: "invoice-mark-outcome";
+      invoice: InvoiceRow;
+      mark: InvoiceMark;
+      note: InvoiceMarkNote;
+    }
+  // Счёта по кнопке в аукционе нет: кнопка подделана или от другого аукциона.
+  | { kind: "invoice-missing"; auctionId: string }
   | { kind: "lot-sets"; console: AuctionConsoleSnapshot; note?: LotSetNote }
   // Сет и лоты реестра с отметкой «в сете»: страница списка либо лот, чью
   // страницу показать. `toggled` — принят переключатель лота.

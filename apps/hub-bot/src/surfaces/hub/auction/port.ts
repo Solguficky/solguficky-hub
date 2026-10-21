@@ -11,6 +11,8 @@ import type {
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoleSnapshot,
+  Invoice,
+  InvoiceMark,
   Person,
   RemovalRefusal,
   StepWindow,
@@ -579,6 +581,26 @@ export type RemoveParticipantResult =
   | RemovalAuthority
   | AuctionFailure;
 
+// Счета аукциона (PER-321): право — то же, что у пульта, Auction спрашивает
+// его у Meetups. `auction-not-found` у чтения — аукциона нет, кнопка устарела.
+export type InvoicesReadResult =
+  | { kind: "ok"; invoices: readonly Invoice[] }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Отметка уже отмеченного счёта — `ok`: второго перехода Auction не пишет.
+// `invoice-not-found` — счёта нет, в том числе у тестового аукциона без
+// сходки; `invoice-not-paid` — выдача раньше оплаты.
+export type InvoiceMarkResult =
+  | { kind: "ok" }
+  | { kind: "invoice-not-paid" }
+  | { kind: "invoice-not-found" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | AuctionFailure;
+
 // Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
 // розыгрыша нет.
 export type ConsoleRaffleResult =
@@ -786,6 +808,18 @@ export type AuctionConsoles = {
     removal: RemovalTarget & { expectedVersion: number; opId: string },
     meta?: RpcMetadata,
   ): Promise<RemoveParticipantResult>;
+  // Счета проданных лотов (PER-321): сводка организатора и отметки оплаты и
+  // выдачи. Ключ отметки рождает край на нажатие «Да».
+  listAuctionInvoices(
+    person: Person,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<InvoicesReadResult>;
+  markInvoice(
+    person: Person,
+    mark: { invoiceId: string; mark: InvoiceMark; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<InvoiceMarkResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

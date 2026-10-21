@@ -380,11 +380,11 @@ Identity публикует события о регистрации, смене
 | `AuctionService.GetMyPredictions` | то же | то же | Auction |
 | `AuctionService.GetPredictionResults` | то же | Hub Bot и Auction Bot (экраны — [PER-568](https://linear.app/anticnvm/issue/per-568)): итоги прогнозов — значение номинации, имена угадавших и свой результат ([ADR-067](../decisions/ADR-067-auction-predictions-two-rounds.md), [PER-490](https://linear.app/anticnvm/issue/per-490)) | Auction |
 | `AuctionService.SettlePredictionResultsManually` | то же | Только Hub Bot: ручная отметка итогов администратором сходки, подсчёт подавляется ([ADR-067](../decisions/ADR-067-auction-predictions-two-rounds.md), п. 8; [PER-490](https://linear.app/anticnvm/issue/per-490)) | Auction |
-| `AuctionService.MarkInvoicePaid` | то же | Auction Bot: пульт организатора ([PER-321](https://linear.app/anticnvm/issue/per-321)) | Auction |
+| `AuctionService.MarkInvoicePaid` | то же | Только Hub Bot: счета в пульте аукциона организатора, как остальной пульт ([ADR-064](../decisions/ADR-064-two-bots-by-audience-circle-and-rights.md), п. 11; [PER-321](https://linear.app/anticnvm/issue/per-321)) | Auction |
 | `AuctionService.MarkInvoiceHandedOver` | то же | то же | Auction |
 | `AuctionService.ChooseFulfillment` | то же | Auction Bot: счёт победителя ([PER-322](https://linear.app/anticnvm/issue/per-322)) | Auction |
 | `AuctionService.ListMyInvoices` | то же | то же | Auction |
-| `AuctionService.ListAuctionInvoices` | то же | Auction Bot: сводка организатора (PER-321) | Auction |
+| `AuctionService.ListAuctionInvoices` | то же | Только Hub Bot: сводка счетов в пульте аукциона (PER-321) | Auction |
 
 **Общий FAQ (PER-294).** Обе операции реализованы и несут только `viewer`: состояние принадлежит самому смотрящему, произвольного участника запросить нельзя. Форма проверяется так же, как у команд торгов; отсутствие права `PLACE_BIDS` даёт `PERMISSION_DENIED` до хранилища. Auction хранит отдельную строку `auction_faq_acknowledgement` с единственным ключом `participant_id`, без аукциона, времени, истории просмотров и событий шины. `GetFaqAcknowledgement` отвечает `acknowledged=false`, если строки нет. `AcknowledgeFaq` идемпотентно создаёт строку и отвечает `true` только после успешной записи; таймаут безопасно повторить. Отметка общая для всех аукционов, не является согласием, допуском или доказательством прочтения. Допуск по-прежнему принадлежит Identity; бот перепроверяет его на каждом действии. Выбор владельца в PER-294 расширил срез на эти RPC и отдельную таблицу состояния.
 
