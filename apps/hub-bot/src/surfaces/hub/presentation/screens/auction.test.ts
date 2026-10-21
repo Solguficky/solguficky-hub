@@ -133,6 +133,37 @@ describe("lot card in the hub shell", () => {
     );
   });
 
+  // Организатор видит настоящий аккаунт победителя рядом с псевдонимом
+  // (PER-648), а участнику поле не задаётся, и остаётся псевдоним.
+  it("adds the real account of the sold winner next to the pseudonym", () => {
+    const { screen } = auctionScreen({
+      ...view([
+        lot({
+          card: { title: "Кружка", description: "Роспись." },
+          status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+          participantName: "Сыч*",
+        }),
+      ]),
+      winnerUsername: "owl",
+    });
+    expect(plain(screen.text)).toContain("👤 Победитель: Сыч* (@owl)");
+  });
+
+  it("does not repeat the account when the winner is shown by it", () => {
+    const { screen } = auctionScreen({
+      ...view([
+        lot({
+          card: { title: "Кружка", description: "Роспись." },
+          status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+          participantName: "@owl",
+        }),
+      ]),
+      winnerUsername: "owl",
+    });
+    expect(plain(screen.text)).toContain("👤 Победитель: @owl");
+    expect(plain(screen.text)).not.toContain("@owl (@owl)");
+  });
+
   // Чужой год называется в дате (дизайн-код, «Формат»).
   it("names the year of a deadline outside the current year", () => {
     const { screen } = auctionScreen(

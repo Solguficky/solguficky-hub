@@ -99,7 +99,28 @@ export const hubSurface: SurfaceDefinition = ({
     logger.info("AUCTION_GRPC_URL is not set: meetup auctions are off");
   }
   // Клиент Auction один в трёх ролях диспетчера: оболочка сходки, форма
-  // лота и пульт аукциона администратора.
+  // лота и пульт аукциона администратора. Identity создаётся до диспетчера:
+  // пульт спрашивает у него настоящий аккаунт победителя (PER-648).
+  const identity = createIdentityClient(config.identityUrl, {
+    communityTimeZone,
+    tracing,
+    serviceToken,
+    // Настоящий аккаунт победителя гасит экран, и карточка остаётся с
+    // псевдонимом (PER-648); warn делает деградацию видимой.
+    onParticipantUsernameRefused: (failure) =>
+      logger.warn("participant username unavailable", {
+        ...(failure.requestId === undefined
+          ? {}
+          : { request_id: failure.requestId }),
+        error_category:
+          failure.code === undefined ? "dependency_unavailable" : "invariant",
+        error:
+          failure.code ??
+          (failure.cause instanceof Error
+            ? failure.cause.message
+            : String(failure.cause)),
+      }),
+  });
   const dispatcher = createDispatcher(
     meetups,
     notifications,
@@ -108,7 +129,11 @@ export const hubSurface: SurfaceDefinition = ({
     auction,
     auction === undefined
       ? undefined
-      : { auctions: auction, timeZone: communityTimeZone },
+      : {
+          auctions: auction,
+          timeZone: communityTimeZone,
+          usernames: identity,
+        },
     releaseNotes,
   );
   const releaseReport = startReleaseNotesReport({
@@ -122,11 +147,6 @@ export const hubSurface: SurfaceDefinition = ({
         cause: "cause" in reported ? reported.cause : new Error(reported.kind),
       };
     },
-  });
-  const identity = createIdentityClient(config.identityUrl, {
-    communityTimeZone,
-    tracing,
-    serviceToken,
   });
   // Карточки финала (PER-336): поток аукциона и темп правок живут столько же,
   // сколько процесс, и гасятся до клиентов.

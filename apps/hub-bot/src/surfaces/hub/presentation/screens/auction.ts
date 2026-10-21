@@ -92,6 +92,7 @@ import {
   screenText,
   submenuText,
   toAuctionRoot,
+  withAccount,
   withNav,
 } from "./kit.js";
 import { removalLabel } from "./participant-removal.js";
@@ -140,6 +141,12 @@ export type AuctionView = {
    * после вопроса.
    */
   canAddLots?: boolean;
+  /**
+   * Настоящий аккаунт победителя проданного лота (PER-648). Его отдаёт
+   * Identity и только организатору: остальным имя остаётся псевдонимом, и
+   * поле не задано. Нет поля — карточка показывает то, что дал Auction.
+   */
+  winnerUsername?: string;
   /**
    * Предпросмотр лота глазами участника (PER-512): возврат с карточки. Тело
    * приходит из `previewLot` без кнопок; карточка рисуется той же вёрсткой,
@@ -1052,7 +1059,7 @@ function statusGroups(
             pictogram.leader,
             participantName === undefined
               ? "Победитель: определён"
-              : `Победитель: ${participantName}`,
+              : `Победитель: ${withAccount(participantName, view.winnerUsername)}`,
           ),
         ],
       ];
