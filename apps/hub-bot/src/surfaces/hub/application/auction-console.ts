@@ -25,6 +25,7 @@ import type {
   ConsoleNote,
   DaySummaryLot,
   ExecuteResult,
+  FinalTimeAskError,
   FinalTrading,
   LaunchDraft,
   LineupPick,
@@ -164,6 +165,39 @@ export function parseRaffle(
 export type RafflePrizeResult =
   | { kind: "ok"; prize: string }
   | { kind: "rejected"; error: RafflePrizeAskError };
+
+export type FinalTimeResult =
+  | { kind: "ok"; finalAt: string }
+  | { kind: "rejected"; error: FinalTimeAskError };
+
+const finalTimePattern = new RegExp(`^${momentPattern}$`);
+
+/**
+ * Ориентировочное время финала (PER-663) в виде `ДД.ММ.ГГГГ ЧЧ:ММ` по времени
+ * сообщества — тот же формат ввода, что у сроков недели и момента розыгрыша.
+ * Даты, которой нет в календаре, и времени, которого нет в поясе, нет и в
+ * ответе: подменять их соседними бот не вправе. Прошедший момент — не анонс:
+ * время выставляют заранее, а не задним числом.
+ */
+export function parseFinalTime(
+  raw: string,
+  timeZone: string,
+  now: Date,
+): FinalTimeResult {
+  const match = finalTimePattern.exec(raw.trim());
+  if (match === null) return { kind: "rejected", error: "final-time-format" };
+  const local = calendarMoment(match.slice(1).map(Number));
+  if (local === undefined)
+    return { kind: "rejected", error: "final-time-format" };
+  const finalAt = communityInstant(local, timeZone);
+  if (finalAt === undefined) {
+    return { kind: "rejected", error: "final-time-moment" };
+  }
+  if (Date.parse(finalAt) <= now.getTime()) {
+    return { kind: "rejected", error: "final-time-past" };
+  }
+  return { kind: "ok", finalAt };
+}
 
 /** Предел приза в знаках — тот же, что у `AuctionConfig.MaxRafflePrize`. */
 export const rafflePrizeLimit = 200;
@@ -555,6 +589,31 @@ function soldLots(console: AuctionConsoleView): number {
 // Сроки, финал и окна меняются, пока онлайн-неделя не открыта.
 function editable(console: AuctionConsoleView): boolean {
   return acceptsLots(console.status);
+}
+
+// Ориентировочное время финала (PER-663) меняется, пока финал впереди:
+// после старта финала анонс кончился, а завершённый и отменённый аукцион
+// времени не имеют (ADR-040, дополнение 2026-10-19). Замороженный состав —
+// ещё впереди: Auction такой момент принимает.
+function finalTimeRefusal(
+  console: AuctionConsoleView,
+): ConsoleNote | undefined {
+  switch (console.status) {
+    case "final":
+      return "final-already-started";
+    case "finished":
+      return "auction-already-finished";
+    case "cancelled":
+      return "auction-already-cancelled";
+    default:
+      return undefined;
+  }
+}
+
+// Пульт без выставленного времени: снятый момент из снимка уходит.
+function withoutFinalTime(console: AuctionConsoleView): AuctionConsoleView {
+  const { finalAt: _finalAt, ...rest } = console;
+  return rest;
 }
 
 /** Окно по кнопке: номер и отпечаток совпали с прочитанной конфигурацией. */
@@ -2138,6 +2197,125 @@ export function createAuctionConsole(
       : windowsRefused(request, scheduled);
   }
 
+  // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
+  // торгов. Выставляется и меняется, пока финал впереди, и снимается той же
+  // командой без момента (ADR-040, дополнение 2026-10-19).
+  const finalTimeAsked = (auctionId: string, finalAt: string | undefined) => ({
+    kind: "auction-final-time-ask" as const,
+    auctionId,
+    ...(finalAt === undefined ? {} : { finalAt }),
+  });
+
+  async function askFinalTime(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "ask-auction-final-time" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const tooLate = finalTimeRefusal(console);
+    if (tooLate !== undefined) {
+      return { kind: "auction-console", console, note: tooLate };
+    }
+    return finalTimeAsked(request.auctionId, console.finalAt);
+  }
+
+  async function setFinalTime(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-auction-final-time" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const tooLate = finalTimeRefusal(console);
+    if (tooLate !== undefined) {
+      return { kind: "auction-console", console, note: tooLate };
+    }
+    const asked = finalTimeAsked(request.auctionId, console.finalAt);
+    const parsed = parseFinalTime(request.value, timeZone, now());
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    const changed = await consoles.setFinalTime(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        finalAt: parsed.finalAt,
+      },
+      rpcMeta(request),
+    );
+    switch (changed.kind) {
+      case "ok":
+        // Чтение пульта отстаёт от команды, поэтому принятый момент
+        // накладывается на прочитанное, как это делает розыгрыш.
+        return after(request, "final-time-saved", (each) => ({
+          ...each,
+          finalAt: parsed.finalAt,
+        }));
+      case "final-already-started":
+        return after(request, "final-already-started");
+      case "auction-already-finished":
+        return after(request, "auction-already-finished");
+      case "auction-already-cancelled":
+        return after(request, "auction-already-cancelled");
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(changed);
+    }
+  }
+
+  async function removeFinalTime(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "remove-auction-final-time" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const tooLate = finalTimeRefusal(console);
+    if (tooLate !== undefined) {
+      return { kind: "auction-console", console, note: tooLate };
+    }
+    if (console.finalAt === undefined) {
+      // Времени уже нет — команды нет, а ответ тот же: кнопка могла устареть.
+      return after(request, "final-time-removed", withoutFinalTime);
+    }
+    const changed = await consoles.setFinalTime(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    switch (changed.kind) {
+      case "ok":
+        return after(request, "final-time-removed", withoutFinalTime);
+      case "final-already-started":
+        return after(request, "final-already-started");
+      case "auction-already-finished":
+        return after(request, "auction-already-finished");
+      case "auction-already-cancelled":
+        return after(request, "auction-already-cancelled");
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(changed);
+    }
+  }
+
   // Приз розыгрыша (PER-649) живёт рядом с моментом: без розыгрыша приза нет,
   // поэтому вопрос задаётся, только когда момент уже задан.
   const prizeAsked = (week: ScheduledWeek, auctionId: string) => ({
@@ -2740,6 +2918,12 @@ export function createAuctionConsole(
         return setFinal(request);
       case "set-auction-visibility":
         return setVisibility(request);
+      case "ask-auction-final-time":
+        return askFinalTime(request);
+      case "set-auction-final-time":
+        return setFinalTime(request);
+      case "remove-auction-final-time":
+        return removeFinalTime(request);
       case "start-auction-week":
         return startWeek(request);
       case "mark-auction-finalist":

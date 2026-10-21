@@ -89,6 +89,7 @@ import type {
   ExecuteRequest,
   ExecuteResult,
   FinalAskError,
+  FinalTimeAskError,
   FormField,
   LotAmount,
   LotAskError,
@@ -192,6 +193,7 @@ import {
   type CardCursor,
   type CommunityPlace,
   consoleAskData,
+  consoleFinalTimeData,
   consoleRaffleData,
   consoleRafflePrizeData,
   consoleViewData,
@@ -256,6 +258,8 @@ import {
   discardConfirmScreen,
   finalAskErrorText,
   finalAskText,
+  finalTimeAskErrorText,
+  finalTimeQuestionText,
   finalToast,
   launchQuestionText,
   launchScreen,
@@ -730,6 +734,14 @@ type PendingConsolePrize = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос об ориентировочном времени финала на пульте (PER-663). Шаг — аукцион —
+// лежит в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleFinalTime = {
+  kind: "console-final-time";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
@@ -778,6 +790,7 @@ type HubPendingInput =
   | PendingConsoleWeek
   | PendingConsoleRaffle
   | PendingConsolePrize
+  | PendingConsoleFinalTime
   | PendingConsoleWindow
   | PendingConsoleLaunch
   | PendingFinalAsk
@@ -1460,6 +1473,7 @@ async function handleMessage(
       (pending?.kind === "console-week" ||
         pending?.kind === "console-raffle" ||
         pending?.kind === "console-raffle-prize" ||
+        pending?.kind === "console-final-time" ||
         pending?.kind === "console-window" ||
         pending?.kind === "console-launch") &&
       ctx.message?.text !== undefined
@@ -1475,9 +1489,11 @@ async function handleMessage(
                 ? "foreign auction raffle answer ignored"
                 : pending.kind === "console-raffle-prize"
                   ? "foreign raffle prize answer ignored"
-                  : pending.kind === "console-window"
-                    ? "foreign step window answer ignored"
-                    : "foreign step window launch answer ignored",
+                  : pending.kind === "console-final-time"
+                    ? "foreign final time answer ignored"
+                    : pending.kind === "console-window"
+                      ? "foreign step window answer ignored"
+                      : "foreign step window launch answer ignored",
           result: "ok",
           use_case: useCase,
         };
@@ -1519,9 +1535,11 @@ async function handleMessage(
               ? "set-auction-raffle"
               : pending.kind === "console-raffle-prize"
                 ? "set-auction-raffle-prize"
-                : pending.kind === "console-window"
-                  ? "add-step-window"
-                  : "add-step-window-launch",
+                : pending.kind === "console-final-time"
+                  ? "set-auction-final-time"
+                  : pending.kind === "console-window"
+                    ? "add-step-window"
+                    : "add-step-window-launch",
         auctionId: pending.auctionId,
         value: ctx.message.text,
         opId: createUuidV7(),
@@ -1536,6 +1554,7 @@ async function handleMessage(
         result.kind !== "auction-week-ask" &&
         result.kind !== "auction-raffle-ask" &&
         result.kind !== "auction-raffle-prize-ask" &&
+        result.kind !== "auction-final-time-ask" &&
         result.kind !== "step-window-ask" &&
         result.kind !== "step-window-launch-ask"
       ) {
@@ -1982,6 +2001,7 @@ async function handleMessage(
         pending.kind === "console-week" ||
         pending.kind === "console-raffle" ||
         pending.kind === "console-raffle-prize" ||
+        pending.kind === "console-final-time" ||
         pending.kind === "console-window" ||
         pending.kind === "console-launch" ||
         pending.kind === "final-ask" ||
@@ -1999,6 +2019,7 @@ async function handleMessage(
             : pending.kind === "console-week" ||
                 pending.kind === "console-raffle" ||
                 pending.kind === "console-raffle-prize" ||
+                pending.kind === "console-final-time" ||
                 pending.kind === "console-window" ||
                 pending.kind === "console-launch" ||
                 pending.kind === "final-ask" ||
@@ -2399,6 +2420,8 @@ async function handleCallback(
       action.kind === "console-raffle-remove" ||
       action.kind === "console-raffle-prize" ||
       action.kind === "console-raffle-prize-remove" ||
+      action.kind === "console-final-time" ||
+      action.kind === "console-final-time-remove" ||
       action.kind === "console-final" ||
       action.kind === "console-visibility" ||
       action.kind === "console-open" ||
@@ -7102,6 +7125,8 @@ async function handleConsoleCallback(
         | "console-raffle-prize"
         | "console-raffle-prize-remove"
         | "console-final"
+        | "console-final-time"
+        | "console-final-time-remove"
         | "console-visibility"
         | "console-open"
         | "console-confirm"
@@ -7204,6 +7229,24 @@ async function handleConsoleCallback(
           ...call,
           intent: "set-auction-final",
           final: action.final,
+          opId: createUuidV7(),
+        }),
+      );
+    // Ориентировочное время финала (PER-663): вопрос спрашивает момент, а
+    // снятие идёт без вопроса — ключ рождается на нажатие, потому что
+    // выставление и снятие под одним ключом — разные события Auction.
+    case "console-final-time":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-final-time",
+        }),
+      );
+    case "console-final-time-remove":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-auction-final-time",
           opId: createUuidV7(),
         }),
       );
@@ -7625,6 +7668,19 @@ async function renderConsoleResult(
           ? "raffle prize requested"
           : "raffle prize asked again",
       );
+    case "auction-final-time-ask":
+      await askConsoleFinalTime(ctx, context.questions, {
+        auctionId: result.auctionId,
+        timeZone,
+        finalAt: result.finalAt,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "auction final time requested"
+          : "auction final time asked again",
+      );
     case "auction-day-summary":
       await showScreen(
         ctx,
@@ -7867,6 +7923,43 @@ function askConsoleRaffle(
     questions,
     pending,
     raffleQuestionText(ask.timeZone, ask.week),
+    ask.replaces,
+  );
+}
+
+// Вопрос об ориентировочном времени финала (PER-663): момент в формате ввода
+// хаба, текущее время — в подсказке.
+function askConsoleFinalTime(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    timeZone: string;
+    finalAt?: string | undefined;
+    error?: FinalTimeAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-final-time",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      finalTimeAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    finalTimeQuestionText(ask.timeZone, ask.finalAt),
     ask.replaces,
   );
 }
@@ -9685,6 +9778,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle-prize",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-final-time":
+      return {
+        kind: "console-final-time",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-window":
       return {
         kind: "console-window",
@@ -9863,6 +9961,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-final-time":
+      return {
+        kind: "console-final-time",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "console-window":
       return {
         kind: "console-window",
@@ -9953,9 +10058,10 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-final-time":
     case "final-ask":
-      // Вопросы о сроках, о розыгрыше, о призе и о цене заданы с пульта
-      // аукциона.
+      // Вопросы о сроках, о розыгрыше, о призе, о времени финала и о цене
+      // заданы с пульта аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -10130,6 +10236,8 @@ function reopenData(step: QuestionStep): string {
       return consoleRaffleData(step.auction);
     case "console-raffle-prize":
       return consoleRafflePrizeData(step.auction);
+    case "console-final-time":
+      return consoleFinalTimeData(step.auction);
     case "console-window":
       return consoleWindowAskData(step.auction);
     case "console-launch":
@@ -10183,6 +10291,7 @@ function answerParent(step: QuestionStep): Parent {
     case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-final-time":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
     case "console-window":
@@ -10434,6 +10543,8 @@ function callbackUseCase(
     | "console-raffle-prize"
     | "console-raffle-prize-remove"
     | "console-final"
+    | "console-final-time"
+    | "console-final-time-remove"
     | "console-visibility"
     | "console-open"
     | "console-confirm"
@@ -10646,6 +10757,8 @@ function callbackUseCase(
     case "console-window-launch-lot":
     case "console-window-launch-go":
     case "console-window-launch-page":
+    case "console-final-time":
+    case "console-final-time-remove":
       return "manage_auction";
     case "home":
     case "apply":

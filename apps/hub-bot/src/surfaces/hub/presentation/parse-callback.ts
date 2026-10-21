@@ -369,6 +369,10 @@ type PlainAction =
   | { kind: "console-raffle-prize"; auction: string }
   | { kind: "console-raffle-prize-remove"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
+  // Ориентировочное время финала (PER-663): вопрос о моменте и снятие
+  // анонса.
+  | { kind: "console-final-time"; auction: string }
+  | { kind: "console-final-time-remove"; auction: string }
   // Видимость до торгов (PER-673): кнопка несёт целевое состояние.
   | { kind: "console-visibility"; auction: string; published: boolean }
   | { kind: "console-open"; auction: string }
@@ -644,6 +648,9 @@ export type QuestionStep =
   // Момент розыгрыша (PER-593): аукцион, а сроки и текущий момент ответ
   // читает у Auction заново.
   | { kind: "console-raffle"; auction: string }
+  // Ориентировочное время финала (PER-663): аукцион, а текущее время ответ
+  // читает у Auction заново.
+  | { kind: "console-final-time"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
@@ -761,6 +768,16 @@ export function consoleRafflePrizeData(auction: string): string {
 /** «Убрать приз»: розыгрыш остаётся, победитель получит весть без приза. */
 export function consoleRafflePrizeRemoveData(auction: string): string {
   return `v1:ac:rz:${auction}`;
+}
+
+/** «Время финала»: вопрос об ориентировочном времени финала (PER-663). */
+export function consoleFinalTimeData(auction: string): string {
+  return `v1:ac:ft:${auction}`;
+}
+
+/** «Убрать время финала»: анонс трансляции снимается без подтверждения. */
+export function consoleFinalTimeRemoveData(auction: string): string {
+  return `v1:ac:fx:${auction}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1098,6 +1115,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ar:${step.auction}`;
     case "console-raffle-prize":
       return `v1:q:ap:${step.auction}`;
+    case "console-final-time":
+      return `v1:q:ft:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
@@ -1748,6 +1767,16 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-raffle-prize-remove", auction: auction.data }
         : { kind: "malformed" };
+    // Ориентировочное время финала (PER-663): вопрос о моменте `ft` и его
+    // снятие `fx`.
+    case "ft":
+      return parts.length === 4
+        ? { kind: "console-final-time", auction: auction.data }
+        : { kind: "malformed" };
+    case "fx":
+      return parts.length === 4
+        ? { kind: "console-final-time-remove", auction: auction.data }
+        : { kind: "malformed" };
     case "f": {
       const final = TargetStateSchema.safeParse(parts[4]);
       return parts.length === 5 && final.success
@@ -1940,6 +1969,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-raffle", auction: token.data };
       case "ap":
         return { kind: "console-raffle-prize", auction: token.data };
+      case "ft":
+        return { kind: "console-final-time", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":
