@@ -2052,7 +2052,7 @@ message AuctionSnapshot {
   // RFC 3339 instant in UTC: when the final is estimated to start. It is an
   // announcement of the broadcast, not a trading condition: it opens and closes
   // nothing (ADR-040, addition 2026-10-19). Unset when the administrator has
-  // not set it, and after the final has started.
+  // not set it.
   optional string final_at = 6;
 
   // Where the auction is. Exactly one is set.
