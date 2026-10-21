@@ -772,6 +772,7 @@ describe("bid sheet screens", () => {
       lotId: "lot-1",
       auctionId: "auc-1",
       title: "Кружка",
+      status: { kind: "unsold" },
       page: 0,
       pageCount: 1,
       entries: [
@@ -787,6 +788,61 @@ describe("bid sheet screens", () => {
     });
     expect(plain(screen.text)).toBe(
       "<b>Ставки</b>\n<i>Кружка</i>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+    );
+  });
+
+  it("strikes the bids of a removed participant and shows the removal as its own line", () => {
+    const screen = body({
+      kind: "history",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка",
+      status: { kind: "unsold" },
+      page: 0,
+      pageCount: 1,
+      entries: [
+        {
+          kind: "bid",
+          sequence: 1,
+          occurredAt: "2025-10-03T16:04:00Z",
+          amount: rub(500),
+          origin: { kind: "manual", source: "bot" },
+          participantName: "@jay",
+          removed: true,
+        },
+        {
+          kind: "bid",
+          sequence: 2,
+          occurredAt: "2025-10-03T16:05:00Z",
+          amount: rub(450),
+          origin: { kind: "proxy" },
+          participantName: "@owl",
+        },
+        {
+          kind: "removal",
+          sequence: 3,
+          occurredAt: "2025-10-03T16:06:00Z",
+          price: rub(400),
+          leaderName: "@owl",
+        },
+        {
+          kind: "removal",
+          sequence: 4,
+          occurredAt: "2025-10-03T16:07:00Z",
+          price: rub(300),
+        },
+      ],
+    });
+    expect(plain(screen.text)).toBe(
+      [
+        "<b>Ставки</b>",
+        "<i>Кружка</i>",
+        "",
+        "• <s>3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную</s>",
+        "• 3 октября 2025, пт, 19:05 · @owl · 450 ₽ · авто",
+        "• 3 октября 2025, пт, 19:06 · участник снят · цена 400 ₽ · ведёт @owl",
+        "• 3 октября 2025, пт, 19:07 · участник снят · цена 300 ₽",
+      ].join("\n"),
     );
   });
 });

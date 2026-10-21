@@ -216,6 +216,16 @@ describe("decodeNotification", () => {
         value: { lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0" },
       },
     ],
+    [
+      "lotLeadRestored",
+      {
+        case: "lotLeadRestored",
+        value: {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          currentPrice: { minorUnits: 150_000n, currency: "RUB" },
+        },
+      },
+    ],
   ] as const)(
     "decodes the auction branch %s for the hub recipient",
     (name, type) => {
@@ -239,6 +249,7 @@ describe("decodeNotification", () => {
               lotProxyRaised: "lot-proxy-raised",
               lotPurchased: "lot-purchased",
               lotReminder: "lot-reminder",
+              lotLeadRestored: "lot-lead-restored",
             }[name],
           },
         },

@@ -45,6 +45,8 @@ import type {
   OrganizerResolver,
   OrganizerUsernameResult,
   ApplicationOutcome as Outcome,
+  ParticipantUsernameResolver,
+  ParticipantUsernameResult,
   ReconsiderResult,
   RecordRight,
   RefusedApplication,
@@ -84,6 +86,10 @@ export type OrganizerRpc = Pick<
   Client<typeof IdentityService>,
   "resolveOrganizerUsername"
 >;
+export type ParticipantUsernameRpc = Pick<
+  Client<typeof IdentityService>,
+  "resolveParticipantUsername"
+>;
 type IdentityAdminRpc = Pick<
   Client<typeof IdentityService>,
   | "listCommunityMembers"
@@ -119,6 +125,7 @@ export type IdentityClient = IdentityResolver &
   AccessRequester &
   TelegramRecipientResolver &
   OrganizerResolver &
+  ParticipantUsernameResolver &
   CommunityAdministrator &
   ApplicationAdministrator &
   SourceChannelAdministrator &
@@ -135,7 +142,18 @@ export function createIdentityClient(
     tracing,
     serviceToken,
     timeoutMs = identityRpcTimeoutMs,
-  }: RpcClientOptions & { communityTimeZone: string },
+    // Отказ чтения настоящего аккаунта участника гасит экран, и карточка
+    // остаётся с псевдонимом; запись на warn делает деградацию видимой, как у
+    // чтения имён Auction.
+    onParticipantUsernameRefused,
+  }: RpcClientOptions & {
+    communityTimeZone: string;
+    onParticipantUsernameRefused?: (failure: {
+      code?: string;
+      requestId?: string;
+      cause: unknown;
+    }) => void;
+  },
 ): IdentityClient & PlaceBidsReader {
   const sessionManager = new Http2SessionManager(baseUrl);
   const transport = createGrpcTransport({
@@ -158,6 +176,11 @@ export function createIdentityClient(
   const administrators = createAdministratorManager(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
+  const participants = createParticipantUsernameResolver(
+    client,
+    timeoutMs,
+    onParticipantUsernameRefused,
+  );
   return {
     resolve: (input, meta) => resolver.resolve(input, meta),
     requestAccess: (input, meta) => requester.requestAccess(input, meta),
@@ -165,6 +188,8 @@ export function createIdentityClient(
       recipients.resolveTelegramUserId(identityId, meta),
     resolveOrganizerUsername: (viewer, identityId, meta) =>
       organizers.resolveOrganizerUsername(viewer, identityId, meta),
+    resolveParticipantUsername: (viewer, identityId, meta) =>
+      participants.resolveParticipantUsername(viewer, identityId, meta),
     ...createPlaceBidsReader(client, timeoutMs),
     ...administrator,
     ...applications,
@@ -964,6 +989,59 @@ export function createOrganizerResolver(
 
 function classifyOrganizerFailure(cause: unknown): OrganizerUsernameResult {
   if (cause instanceof ConnectError) {
+    if (cause.code === Code.NotFound) return { kind: "not-found" };
+    if (permanentCodes.has(cause.code)) {
+      return { kind: "rejected", code: Code[cause.code], cause };
+    }
+  }
+  return { kind: "unavailable", cause };
+}
+
+// Отказ `PERMISSION_DENIED` — не сбой, а ответ участнику, который открыл
+// карточку проданного лота: настоящий аккаунт победителя видит только
+// организатор. Поэтому он отдельным исходом, а не `rejected`.
+export function createParticipantUsernameResolver(
+  rpc: ParticipantUsernameRpc,
+  timeoutMs = identityRpcTimeoutMs,
+  onRefused?: (failure: {
+    code?: string;
+    requestId?: string;
+    cause: unknown;
+  }) => void,
+): ParticipantUsernameResolver {
+  return {
+    async resolveParticipantUsername(viewer, identityId, meta) {
+      try {
+        const response = await rpc.resolveParticipantUsername(
+          {
+            actor: { identityId: viewer.identityId },
+            identityId,
+          },
+          { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+        );
+        return response.telegramUsername === undefined
+          ? { kind: "resolved" }
+          : { kind: "resolved", telegramUsername: response.telegramUsername };
+      } catch (cause) {
+        const failure = classifyParticipantFailure(cause);
+        if (failure.kind === "unavailable" || failure.kind === "rejected") {
+          onRefused?.({
+            ...(failure.kind === "rejected" ? { code: failure.code } : {}),
+            ...(meta?.requestId === undefined
+              ? {}
+              : { requestId: meta.requestId }),
+            cause: failure.cause,
+          });
+        }
+        return failure;
+      }
+    },
+  };
+}
+
+function classifyParticipantFailure(cause: unknown): ParticipantUsernameResult {
+  if (cause instanceof ConnectError) {
+    if (cause.code === Code.PermissionDenied) return { kind: "denied" };
     if (cause.code === Code.NotFound) return { kind: "not-found" };
     if (permanentCodes.has(cause.code)) {
       return { kind: "rejected", code: Code[cause.code], cause };

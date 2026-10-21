@@ -90,6 +90,41 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         ORDER BY follower.identity_id;
         """;
 
+    // Следящие за лотами окна начала сниженного шага (ADR-047, дополнение
+    // 2026-10-12): лот ещё в торгах, отметка живая, человек не заблокирован.
+    // Лидер здесь, в отличие от напоминания о дедлайне, остаётся: снижение шага
+    // касается его ставки так же, как чужих, и ADR называет исключением только
+    // заблокированного. Окна читаются из реплики строкой: сверка «окно этого
+    // начала ещё идёт» — решение кода, а не запроса.
+    private const string StepWindowAudienceSql = """
+        SELECT follower.identity_id AS IdentityId,
+               CASE WHEN person.circle = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface,
+               replica.lot_id AS LotId,
+               replica.step_windows AS Windows
+        FROM lot_favorite AS follower
+        JOIN identity_replica AS person ON person.identity_id = follower.identity_id
+        JOIN lot_replica AS replica ON replica.lot_id = follower.lot_id
+        WHERE replica.auction_id = @AuctionId
+            AND replica.status = 'trading'
+            AND follower.removed_at IS NULL
+            AND NOT person.blocked
+        ORDER BY follower.identity_id, replica.lot_id;
+        """;
+
+    // Срок годности у каждого человека свой: он кончается вместе с его
+    // последним окном, а не с чужим. Поэтому вставка несёт not_after массивом,
+    // в отличие от InsertSql с одним значением на пачку.
+    private const string StepWindowInsertSql = """
+        INSERT INTO notification (
+            notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
+            not_after, applicant_id, access_circle, application_version, delivery_surface)
+        SELECT id, recipient, @Type, @CauseKind, @CauseId, NULL, payload, NULL, @Now, not_after,
+            NULL, NULL, NULL, delivery_surface
+        FROM unnest(@Ids, @Recipients, @Payloads, @DeliverySurfaces, @NotAfters)
+            AS fact (id, recipient, payload, delivery_surface, not_after)
+        ON CONFLICT DO NOTHING;
+        """;
+
     // Реплика уже обновлена этой же транзакцией, поэтому здесь её последнее
     // слово о сходке. Запоздавшая первая публикация — например, вернувшаяся
     // после Nak, когда снятие или отмена уже применились, — не должна
@@ -752,6 +787,98 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             cancellationToken);
     }
 
+    /// <summary>
+    /// Разворачивает начало окна сниженного шага на следящих за его лотами и
+    /// пишет факты в транзакции <paramref name="work" /> — той же, что переводит
+    /// задание в «сработало» (ADR-047, дополнение 2026-10-12).
+    /// </summary>
+    /// <remarks>
+    /// Сверка на момент срабатывания, а не на момент факта: окно могло уже
+    /// кончиться, лот — выйти из торгов, а аукцион — кончиться. Человек
+    /// получает одно сообщение со всеми своими лотами окна; ключ повода —
+    /// задание, поэтому повтор срабатывания и поздний факт лота второго не
+    /// дают.
+    /// </remarks>
+    internal static async Task<FactCount> AddStepWindowStart(
+        UnitOfWork work,
+        LiveStepWindowTask task,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        // Аукцион мог кончиться между выборкой задания и его захватом: реплик
+        // его лотов уже нет, а задание всё равно переходит в «сработало», чтобы
+        // не срабатывать вечно.
+        if (await AuctionEndStore.Read(work, task.AuctionId, cancellationToken) is not null)
+        {
+            return FactCount.None;
+        }
+
+        var rows = await work.Query<StepWindowAudienceRow>(
+            StepWindowAudienceSql,
+            new { task.AuctionId },
+            cancellationToken);
+
+        var people = new Dictionary<Guid, StepWindowAudience>();
+        foreach (var row in rows)
+        {
+            // Начало окна сравнивается по значению: и задание, и реплика
+            // хранят момент с точностью базы.
+            if (LotReplicaStore.WindowsOf(row.Windows).FirstOrDefault(window =>
+                    window.From == task.StartsAt && StepWindowPlan.Running(window, now)) is not { } window)
+            {
+                continue;
+            }
+
+            if (!people.TryGetValue(row.IdentityId, out var person))
+            {
+                person = new StepWindowAudience(row.IdentityId, row.DeliverySurface);
+                people.Add(row.IdentityId, person);
+            }
+
+            person.Lots.Add(new StepWindowNoticeLot(row.LotId, window.Until, window.Step));
+        }
+
+        if (people.Count == 0)
+        {
+            return FactCount.None;
+        }
+
+        var selected = people.Values.OrderBy(person => person.IdentityId).ToArray();
+        var ids = selected.Select(_ => Guid.CreateVersion7(now)).ToArray();
+        var notAfters = selected
+            .Select(person => person.Lots.Max(lot => lot.Until).UtcDateTime)
+            .ToArray();
+        var payloads = selected
+            .Select((person, index) => NotificationFacts.StepWindowStarted(
+                ids[index],
+                person.IdentityId,
+                task.TaskId,
+                task.AuctionId,
+                task.StartsAt,
+                person.Lots.OrderBy(lot => lot.LotId).ToArray(),
+                now,
+                notAfters[index]).ToByteArray())
+            .ToArray();
+
+        var created = await work.Execute(
+            StepWindowInsertSql,
+            new
+            {
+                Type = NotificationFacts.StepWindowStartedType,
+                CauseKind = NotificationFacts.ReminderTaskCause,
+                CauseId = task.TaskId.ToString(),
+                Now = now.UtcDateTime,
+                Ids = ids,
+                Recipients = selected.Select(person => person.IdentityId).ToArray(),
+                Payloads = payloads,
+                DeliverySurfaces = selected.Select(person => person.DeliverySurface).ToArray(),
+                NotAfters = notAfters,
+            },
+            cancellationToken);
+
+        return new FactCount(created, 0);
+    }
+
     // Дедлайн, о котором ещё можно напомнить (ADR-063, п.3): у лота в конечном
     // положении, удержанного для финала, без дедлайна или с прошедшим — нет.
     private static DateTimeOffset? RemindableDeadline(LotReplica? replica, DateTimeOffset now) =>
@@ -1284,6 +1411,28 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         public bool Enabled { get; init; }
 
         public string DeliverySurface { get; init; } = NotificationSubjects.Hub;
+    }
+
+    /// <summary>Следящий за лотом окна: его круг доставки и его лоты этого окна.</summary>
+    private sealed class StepWindowAudience(Guid identityId, string deliverySurface)
+    {
+        public Guid IdentityId { get; } = identityId;
+
+        public string DeliverySurface { get; } = deliverySurface;
+
+        public List<StepWindowNoticeLot> Lots { get; } = [];
+    }
+
+    private sealed class StepWindowAudienceRow
+    {
+        public Guid IdentityId { get; init; }
+
+        public string DeliverySurface { get; init; } = NotificationSubjects.Hub;
+
+        public Guid LotId { get; init; }
+
+        /// <summary>Окна лота строкой реплики: их разбирает <see cref="LotReplicaStore.WindowsOf" />.</summary>
+        public string? Windows { get; init; }
     }
 
     private sealed record CircleTransition(string PreviousCircle, string CurrentCircle);

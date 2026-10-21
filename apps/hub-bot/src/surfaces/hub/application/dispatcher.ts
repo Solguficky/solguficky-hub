@@ -5,6 +5,7 @@ import type {
   LotAdministration,
   MeetupAuctions,
 } from "../auction/port.js";
+import type { ParticipantUsernameResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createAuctionConsole } from "./auction-console.js";
@@ -15,6 +16,7 @@ import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
+import { createParticipantRemoval } from "./participant-removal.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
@@ -36,6 +38,9 @@ export function createDispatcher(
     timeZone: string;
     // Часы бота; тест их подменяет.
     now?: () => Date;
+    // Настоящий аккаунт победителя для пульта (PER-648): его отдаёт Identity
+    // по праву ведущего.
+    usernames?: ParticipantUsernameResolver;
   },
   releaseNotes?: ReleaseNotes,
 ): Dispatcher {
@@ -47,11 +52,18 @@ export function createDispatcher(
           consoles.auctions,
           consoles.timeZone,
           consoles.now,
+          consoles.usernames,
         );
   // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
   // пускает право вести аукцион.
   const floorBids =
     consoles === undefined ? undefined : createFloorBids(consoles.auctions);
+  // Снятие участника с лота (PER-659) — тот же порт: команды администратора
+  // пускает право вести аукцион.
+  const participantRemoval =
+    consoles === undefined
+      ? undefined
+      : createParticipantRemoval(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -258,6 +270,7 @@ export function createDispatcher(
         case "set-auction-raffle-prize":
         case "remove-auction-raffle-prize":
         case "set-auction-final":
+        case "set-auction-visibility":
         case "start-auction-week":
         case "mark-auction-finalist":
         case "prepare-auction-discard":
@@ -293,6 +306,12 @@ export function createDispatcher(
           return floorBids === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : floorBids(request);
+        case "view-lot-removal":
+        case "prepare-participant-removal":
+        case "remove-participant":
+          return participantRemoval === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : participantRemoval(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

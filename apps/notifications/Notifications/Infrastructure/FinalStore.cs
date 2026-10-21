@@ -29,6 +29,14 @@ public static class FinalStore
         ON CONFLICT DO NOTHING;
         """;
 
+    // Снятие участника меняет лидера и цену удержанного лота: состав финала и
+    // весть «твой лот следующий» читают их отсюда, и без этой правки они
+    // достались бы снятому (ADR-072, PER-672).
+    private const string UpdateHoldSql = """
+        UPDATE lot_hold SET leader_id = @Leader, price_minor_units = @MinorUnits, price_currency = @Currency
+        WHERE lot_id = @LotId;
+        """;
+
     private const string BiddersSql = """
         SELECT bidder_id FROM auction_bidder WHERE auction_id = @AuctionId ORDER BY bidder_id;
         """;
@@ -108,6 +116,17 @@ public static class FinalStore
         return rows.ToDictionary(row => row.LotId, row => new HeldLot(row.LotId, row.Leader,
             new global::Auction.V1.Money { MinorUnits = row.MinorUnits, Currency = row.Currency }));
     }
+
+    /// <summary>
+    /// Удержание лота по снимку после снятия участника: лидер и цена меняются,
+    /// а новое удержание лот ещё не видел — оно пришло раньше снятия.
+    /// </summary>
+    public static Task<int> UpdateHold(UnitOfWork work, Guid lotId, Guid? leader, global::Auction.V1.Money price,
+        CancellationToken cancellationToken) =>
+        work.Execute(UpdateHoldSql, new
+        {
+            LotId = lotId, Leader = leader, MinorUnits = price.MinorUnits, price.Currency,
+        }, cancellationToken);
 
     /// <summary>Выключатель анонса финала (PER-539); <c>null</c> — человек его не трогал.</summary>
     public static async Task<bool?> ReadAnnouncements(UnitOfWork work, Guid identityId,

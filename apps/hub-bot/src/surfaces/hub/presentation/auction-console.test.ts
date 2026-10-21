@@ -9,6 +9,7 @@ import {
   type AccessRight,
   type AuctionSummaryView,
   encodeAuctionCallback,
+  type LotHistoryEntryView,
   type LotView,
   type Money,
   type RaffleView,
@@ -34,6 +35,7 @@ import type {
 import type {
   AuctionConsoles,
   AuctionScreens,
+  AuctionVisibilityResult,
   AuctionWeekConfig,
   ConsoleReadResult,
   DayLotStatistics,
@@ -43,6 +45,7 @@ import type {
   LotAdministration,
   LotClosure,
   MeetupAuctions,
+  RemovalTarget,
 } from "../auction/port.js";
 import type { IdentityResolver } from "../identity/port.js";
 import { createAuctionParents } from "./auction-parents.js";
@@ -99,6 +102,7 @@ const forgedAuctionPresses = {
   "console-raffle-prize": `v1:ac:rp:${auctionToken}`,
   "console-raffle-prize-remove": `v1:ac:rz:${auctionToken}`,
   "console-final": `v1:ac:f:${auctionToken}:1`,
+  "console-visibility": `v1:ac:p:${auctionToken}:1`,
   "console-open": `v1:ac:o:${auctionToken}`,
   "console-confirm": `v1:ac:y:${auctionToken}:${uuidToToken(mugId)}`,
   "console-discard": `v1:ac:x:${auctionToken}`,
@@ -128,6 +132,9 @@ const forgedAuctionPresses = {
   "console-floor-leader": `v1:ac:bl:${auctionToken}`,
   "console-floor-pick": `v1:ac:bp:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:1hc`,
   "console-floor-confirm": `v1:ac:by:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:1hc`,
+  "console-removal": `v1:ac:e:${uuidToToken(vaseId)}`,
+  "console-removal-pick": `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(identityId)}`,
+  "console-removal-confirm": `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:3`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -223,6 +230,14 @@ function fakeAuction(
     launchedWindows?: AuctionConsoleView["launchedWindows"];
     // Отказ запуска (PER-615): Auction не принял окно — пульт показывает текст.
     launch?: LaunchStepWindowResult;
+    // Видимость до торгов (PER-673): аукцион скрыт, и отказ Auction вместо
+    // принятия публикации или снятия.
+    hidden?: boolean;
+    visibility?: AuctionVisibilityResult;
+    // Снятие участника (PER-659): участники лотов по первой ставке. Снятие
+    // переигрывает лот упрощённо: ведёт последний неснятый, цена — на шаг
+    // ниже, но не выше прежней.
+    participants?: readonly { participantId: string; name: string }[];
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -232,6 +247,7 @@ function fakeAuction(
     lots: ConsoleLot[];
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает.
     launchedWindows?: AuctionConsoleView["launchedWindows"];
+    hidden: boolean;
     startedBy?: string;
     discarded?: true;
     cancelledBy?: string;
@@ -240,8 +256,11 @@ function fakeAuction(
     frozenBy?: string;
     // Закрытия по ключу: повтор ключа получает исходный ответ, как в сервисе.
     closures: Map<string, LotClosure>;
+    // Снятые с лотов участники (PER-659).
+    removed: Set<string>;
   } = {
     status: options.status ?? "draft",
+    hidden: options.hidden ?? false,
     ...(options.week === undefined ? {} : { week: options.week }),
     ...(options.launchedWindows === undefined
       ? {}
@@ -251,6 +270,7 @@ function fakeAuction(
       ? {}
       : { lineup: { order: options.lineup } }),
     closures: new Map(),
+    removed: new Set(),
   };
   const lotOf = (lotId: string) =>
     state.lots.find((each) => each.lot.lotId === lotId);
@@ -260,6 +280,15 @@ function fakeAuction(
     );
   };
   const commands: Command[] = [];
+  // Видимость как в Auction: только до открытия недели, повтор пишет ещё раз.
+  const visibility = (hidden: boolean): AuctionVisibilityResult => {
+    if (options.visibility !== undefined) return options.visibility;
+    if (state.status !== "draft" && state.status !== "scheduled") {
+      return { kind: "already-started" };
+    }
+    state.hidden = hidden;
+    return { kind: "ok" };
+  };
   // Окно, которое бот назвал суточному чтению (PER-492): день сообщества и
   // часы бота, а не то, что придумал бы Auction.
   const windows: { auctionId: string; from: string; until: string }[] = [];
@@ -289,6 +318,50 @@ function fakeAuction(
       );
       return { kind: "ok" };
     };
+  const decideRemoval = (target: RemovalTarget) => {
+    const found = lotOf(target.lotId);
+    const status = found?.lot.status;
+    if (found === undefined || status === undefined) {
+      return {
+        kind: "refused" as const,
+        reason: "lot-not-in-auction" as const,
+      };
+    }
+    if (status.kind === "trading" && status.phase === "live") {
+      return {
+        kind: "refused" as const,
+        reason: "not-in-online-phase" as const,
+      };
+    }
+    if (status.kind !== "trading" && status.kind !== "held") {
+      return { kind: "refused" as const, reason: "lot-not-open" as const };
+    }
+    const known = (options.participants ?? []).some(
+      (each) => each.participantId === target.participantId,
+    );
+    if (!known) {
+      return {
+        kind: "refused" as const,
+        reason: "not-a-lot-participant" as const,
+      };
+    }
+    if (state.removed.has(target.participantId)) {
+      return { kind: "refused" as const, reason: "already-removed" as const };
+    }
+    const leaderId = (options.participants ?? [])
+      .filter(
+        (each) =>
+          each.participantId !== target.participantId &&
+          !state.removed.has(each.participantId),
+      )
+      .at(-1)?.participantId;
+    return {
+      kind: "ok" as const,
+      lot: found.lot,
+      leaderId,
+      price: rub(Math.max(0, status.currentPrice.minorUnits - 10_000)),
+    };
+  };
   const port: MeetupAuctions &
     AuctionScreens &
     LotAdministration &
@@ -309,6 +382,7 @@ function fakeAuction(
         console: {
           auctionId,
           status: state.status,
+          hidden: state.hidden,
           ...(state.week === undefined ? {} : { week: state.week }),
           ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
           launchedWindows: state.launchedWindows ?? [],
@@ -417,6 +491,14 @@ function fakeAuction(
       return state.startedBy === start.opId
         ? { kind: "ok" }
         : { kind: "not-scheduled" };
+    },
+    async publishAuction(_person, publish) {
+      commands.push({ method: "publishAuction", args: publish });
+      return visibility(false);
+    },
+    async hideAuction(_person, hide) {
+      commands.push({ method: "hideAuction", args: hide });
+      return visibility(true);
     },
     async discardAuction(_person, discard) {
       commands.push({ method: "discardAuction", args: discard });
@@ -628,19 +710,111 @@ function fakeAuction(
       });
       return { kind: "accepted" as const, lotVersion: version };
     },
+    async lotParticipants(
+      _person: unknown,
+      read: { auctionId: string; lotId: string },
+    ) {
+      commands.push({ method: "lotParticipants", args: read });
+      return {
+        kind: "ok" as const,
+        participants: (options.participants ?? []).map((each) => ({
+          ...each,
+          removed: state.removed.has(each.participantId),
+        })),
+      };
+    },
+    // Лот решает снятие так же, как сервис: сначала фаза и участник, номер
+    // лота — последней проверкой (ADR-072, дополнение 2026-10-21).
+    async previewParticipantRemoval(_person: unknown, target: RemovalTarget) {
+      commands.push({ method: "previewParticipantRemoval", args: target });
+      const decided = decideRemoval(target);
+      return decided.kind === "ok"
+        ? {
+            kind: "ok" as const,
+            preview: {
+              price: decided.price,
+              ...(decided.leaderId === undefined
+                ? {}
+                : { leaderId: decided.leaderId }),
+              version: decided.lot.version,
+            },
+          }
+        : decided;
+    },
+    async removeParticipant(
+      _person: unknown,
+      removal: RemovalTarget & { expectedVersion: number; opId: string },
+    ) {
+      commands.push({ method: "removeParticipant", args: removal });
+      const decided = decideRemoval(removal);
+      if (decided.kind !== "ok") return decided;
+      if (decided.lot.version !== removal.expectedVersion) {
+        return { kind: "lot-changed" as const };
+      }
+      const status = decided.lot.status;
+      if (status.kind !== "trading" && status.kind !== "held") {
+        throw new Error("decided removal from a closed lot");
+      }
+      state.removed.add(removal.participantId);
+      const version = decided.lot.version + 1;
+      const { leaderId: _, ...rest } = status;
+      replaceLot(removal.lotId, {
+        ...decided.lot,
+        version,
+        status: {
+          ...rest,
+          currentPrice: decided.price,
+          ...(decided.leaderId === undefined
+            ? {}
+            : { leaderId: decided.leaderId }),
+        },
+      });
+      return { kind: "ok" as const, lotVersion: version };
+    },
     currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
       return {
         auction: {
           findLot: async () => undefined,
-          getLot: notUsed,
+          getLot: async (request: { lotId: string }) => {
+            const found = lotOf(request.lotId);
+            if (found === undefined) throw new Error("lot not in the fake");
+            return found.lot;
+          },
           listAuctionLots: async () => ({
             lots: state.lots.map((each) => each.lot),
             nextPageToken: "",
           }),
-          listLotHistory: notUsed,
+          // Хронология снятия (PER-659): по ставке на участника, снятые — с
+          // пометкой.
+          listLotHistory: async () => ({
+            entries: (options.participants ?? []).map(
+              (each, index): LotHistoryEntryView => ({
+                kind: "bid",
+                sequence: index + 1,
+                occurredAt: "2026-10-06T08:00:00Z",
+                bidId: `bid-${index}`,
+                participantId: each.participantId,
+                amount: rub(10_000 * (index + 1)),
+                origin: { kind: "proxy" },
+                ...(state.removed.has(each.participantId)
+                  ? { removed: true as const }
+                  : {}),
+              }),
+            ),
+            nextPageToken: "",
+          }),
           getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
-          getDisplayNames: async () => ({}),
+          getDisplayNames: async (request: {
+            participantIds: readonly string[];
+          }) =>
+            Object.fromEntries(
+              (options.participants ?? [])
+                .filter((each) =>
+                  request.participantIds.includes(each.participantId),
+                )
+                .map((each) => [each.participantId, each.name]),
+            ),
           placeBid: notUsed,
           setProxyLimit: notUsed,
           chooseDisplayName: notUsed,
@@ -1326,7 +1500,7 @@ describe("week of the auction", () => {
     expect(plain(last(calls))).toContain("Сроки недели не заданы.");
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сроки недели"],
+      ["Сроки недели", "Снять с публикации"],
       ["Сводка дня"],
       ["🗑 Удалить аукцион"],
       ["‹ Аукцион"],
@@ -1388,7 +1562,7 @@ describe("week of the auction", () => {
     );
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сроки недели"],
+      ["Сроки недели", "Снять с публикации"],
       ["Вкл · Финал в зале"],
       ["Счастливые часы", "Сводка дня"],
       ["Розыгрыш"],
@@ -2240,6 +2414,115 @@ describe("final selection", () => {
       ["Сводка дня", "Отменить аукцион"],
       ["‹ Аукцион"],
     ]);
+  });
+});
+
+describe("auction visibility", () => {
+  it("publishes a hidden auction and hides it again from the console", async () => {
+    const auction = fakeAuction({ hidden: true, lots: [priced] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain(
+      "Скрыт от участников: они его не видят, пока не опубликуешь.",
+    );
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Опубликовать")));
+    expect(auction.state.hidden).toBe(false);
+    expect(last(calls).text).toBe(
+      "<b>Аукцион опубликован</b>\n\nУчастники видят его и лоты.",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("Виден участникам.");
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Снять с публикации")));
+    expect(auction.state.hidden).toBe(true);
+    expect(last(calls).text).toBe(
+      "<b>Аукцион снят с публикации</b>\n\nУчастники его не видят.",
+    );
+    const [published, hidden] = [
+      ...auction.sent("publishAuction"),
+      ...auction.sent("hideAuction"),
+    ];
+    expect(published?.args).toMatchObject({ auctionId });
+    expect(hidden?.args).toMatchObject({ auctionId });
+  });
+
+  it("keeps the fullest console before the week within twelve rows", async () => {
+    const lots = Array.from({ length: 9 }, (_, index) => ({
+      ...priced,
+      lot: {
+        ...priced.lot,
+        lotId: `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b${index.toString(16).padStart(2, "0")}`,
+      },
+    }));
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: {
+        ...week,
+        final: true,
+        raffleClosesAt: "2026-10-22T15:00:00Z",
+        rafflePrize: "Кружка",
+      },
+      lots,
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    expect(labels(last(calls))[1]).toEqual([
+      "Сроки недели",
+      "Снять с публикации",
+    ]);
+    expect(labels(last(calls)).length).toBeLessThanOrEqual(12);
+  });
+
+  it("offers neither button once the week is open and names it for an old button", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(JSON.stringify(last(calls))).not.toContain("Опубликовать");
+    expect(JSON.stringify(last(calls))).not.toContain("Снять с публикации");
+    expect(plain(last(calls))).not.toContain("Виден участникам.");
+
+    await bot.handleUpdate(press(`v1:ac:p:${auctionToken}:0`));
+    expect(last(calls).text).toBe(
+      "<b>Онлайн-неделя уже открыта</b>\n\nАукцион виден участникам, снять его нельзя.",
+    );
+  });
+
+  it("answers a cancelled meetup with text, not a failure", async () => {
+    const auction = fakeAuction({
+      hidden: true,
+      visibility: { kind: "meetup-cancelled" },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:p:${auctionToken}:1`));
+    expect(auction.sent("publishAuction")).toHaveLength(1);
+    expect(plain(last(calls))).toContain(
+      "Сходку отменили. Управлять её аукционом больше нельзя.",
+    );
+  });
+
+  it("answers Auction not taking the person for the administrator with text, not a failure", async () => {
+    const auction = fakeAuction({
+      hidden: true,
+      visibility: { kind: "not-administrator" },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:p:${auctionToken}:1`));
+    expect(auction.sent("publishAuction")).toHaveLength(1);
+    expect(last(calls).text).toContain("Это действие тебе недоступно.");
   });
 });
 
@@ -4283,5 +4566,208 @@ describe("floor bids of the assistant", () => {
         minorUnits,
       });
     });
+  });
+});
+
+// Снятие участника с лота (PER-659, ADR-072): ряд «Снять участника» на
+// «Ставках» лота, выбор человека, подтверждение с предпросмотром и снятие.
+// Бот пересоздаётся между нажатиями: лот, человек и номер лота едут в кнопке.
+describe("participant removal from the bids of a lot", () => {
+  const jayId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+  const owlId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402";
+  const participants = [
+    { participantId: owlId, name: "@owl" },
+    { participantId: jayId, name: "@jay" },
+  ];
+  const entry = (lot: LotView): ConsoleLot => ({
+    lot,
+    bidCount: 2,
+    uniqueParticipantCount: 2,
+    markedForFinal: false,
+    overdue: false,
+  });
+  // Онлайн-торги: Ваза за 1 500 ₽, лидер — @jay, версия лота 3.
+  const online = (status?: LotView["status"]) =>
+    fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: false },
+      names: { [jayId]: "@jay", [owlId]: "@owl" },
+      lots: [
+        entry({
+          ...trading(vaseId, "Ваза", 150_000),
+          ...(status === undefined
+            ? {
+                status: {
+                  kind: "trading" as const,
+                  currentPrice: rub(150_000),
+                  leaderId: jayId,
+                  phase: "online" as const,
+                },
+              }
+            : { status }),
+        }),
+      ],
+      participants,
+    });
+  const bidsData = encodeAuctionCallback({
+    kind: "history",
+    lotId: vaseId,
+    page: 0,
+    historyPage: 0,
+  });
+  const removalData = `v1:ac:e:${uuidToToken(vaseId)}`;
+  // Каждое нажатие — новым ботом над тем же Auction и той же историей чата.
+  const pressFresh = async (
+    auction: ReturnType<typeof online>,
+    calls: RecordedCall[],
+    data: string,
+    holder: "admin" | "member" = "admin",
+  ) => {
+    const { bot } = harness(holder, auction, calls);
+    await bot.init();
+    await bot.handleUpdate(press(data));
+    return last(calls);
+  };
+
+  it("offers the removal on the bids of a trading lot to the auction administrator only", async () => {
+    const auction = online();
+    const admin: RecordedCall[] = [];
+    const shownToAdmin = await pressFresh(auction, admin, bidsData);
+    expect(labels(shownToAdmin)).toEqual([["Снять участника"], ["‹ Лот"]]);
+    expect(dataOf(shownToAdmin, "Снять участника")).toBe(removalData);
+
+    const member: RecordedCall[] = [];
+    const shownToMember = await pressFresh(auction, member, bidsData, "member");
+    expect(labels(shownToMember)).toEqual([["‹ Лот"]]);
+  });
+
+  it("keeps the removal off the bids of a lot it cannot leave", async () => {
+    const auction = online({ kind: "sold", winnerId: jayId, price: rub(1) });
+    const calls: RecordedCall[] = [];
+    const screen = await pressFresh(auction, calls, bidsData);
+    expect(labels(screen).flat()).not.toContain("Снять участника");
+  });
+
+  it("removes a participant through the preview and shows the lot after it", async () => {
+    const auction = online();
+    const calls: RecordedCall[] = [];
+    const people = await pressFresh(auction, calls, removalData);
+    expect(plain(people)).toContain("Снять участника");
+    expect(labels(people)).toEqual([["@owl", "@jay"], ["‹ Ставки"]]);
+
+    const confirm = await pressFresh(auction, calls, dataOf(people, "@jay"));
+    expect(plain(confirm)).toContain("Снять @jay с лота?");
+    expect(plain(confirm)).toContain("Лидер: @owl.");
+    expect(spaced(plain(confirm))).toContain("Цена: 1 400 ₽.");
+    expect(auction.sent("removeParticipant")).toEqual([]);
+
+    const outcome = await pressFresh(
+      auction,
+      calls,
+      dataOf(confirm, "✔️ Да, снять"),
+    );
+    expect(plain(outcome)).toContain("Участник снят: @jay");
+    expect(spaced(plain(outcome))).toContain("Лидер: @owl. Цена: 1 400 ₽.");
+    expect(labels(outcome)).toEqual([["‹ Лот"]]);
+    expect(auction.sent("removeParticipant")).toMatchObject([
+      {
+        args: {
+          auctionId,
+          lotId: vaseId,
+          participantId: jayId,
+          expectedVersion: 3,
+        },
+      },
+    ]);
+  });
+
+  it("changes nothing when the administrator says no", async () => {
+    const auction = online();
+    const calls: RecordedCall[] = [];
+    const confirm = await pressFresh(
+      auction,
+      calls,
+      `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
+    );
+    const back = await pressFresh(auction, calls, dataOf(confirm, "✖️ Нет"));
+    expect(labels(back)).toEqual([["@owl", "@jay"], ["‹ Ставки"]]);
+    expect(auction.sent("removeParticipant")).toEqual([]);
+    expect(auction.state.removed.size).toBe(0);
+  });
+
+  it("does not remove twice when the same yes is pressed again", async () => {
+    const auction = online();
+    const calls: RecordedCall[] = [];
+    const confirm = await pressFresh(
+      auction,
+      calls,
+      `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
+    );
+    const yes = dataOf(confirm, "✔️ Да, снять");
+    await pressFresh(auction, calls, yes);
+    const version = auction.state.lots[0]?.lot.version;
+    const again = await pressFresh(auction, calls, yes);
+    expect(plain(again)).toContain("Участник уже снят");
+    expect(auction.state.lots[0]?.lot.version).toBe(version);
+    expect(auction.sent("removeParticipant")).toHaveLength(2);
+  });
+
+  it("asks again with the new preview when the lot changed under the confirmation", async () => {
+    const auction = online();
+    const calls: RecordedCall[] = [];
+    const confirm = await pressFresh(
+      auction,
+      calls,
+      `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
+    );
+    // Ставка, пока подтверждение было открыто: цена и номер лота выросли.
+    auction.state.lots = auction.state.lots.map((each) => ({
+      ...each,
+      lot: {
+        ...each.lot,
+        version: 4,
+        status: {
+          kind: "trading",
+          currentPrice: rub(160_000),
+          leaderId: jayId,
+          phase: "online",
+        },
+      },
+    }));
+    const again = await pressFresh(
+      auction,
+      calls,
+      dataOf(confirm, "✔️ Да, снять"),
+    );
+    expect(plain(again)).toContain(
+      "Лот изменился, пока было открыто подтверждение. Проверь заново.",
+    );
+    expect(spaced(plain(again))).toContain("Цена: 1 500 ₽.");
+    expect(dataOf(again, "✔️ Да, снять")).toBe(
+      `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(jayId)}:4`,
+    );
+    expect(auction.state.removed.size).toBe(0);
+  });
+
+  it("names the phase when the lot is already in the live final", async () => {
+    const auction = online({
+      kind: "trading",
+      currentPrice: rub(150_000),
+      leaderId: jayId,
+      phase: "live",
+    });
+    const calls: RecordedCall[] = [];
+    const screen = await pressFresh(auction, calls, removalData);
+    expect(plain(screen)).toContain("Снять нельзя");
+    expect(plain(screen)).toContain("ошибку ставки там исправляет ведущий");
+    expect(auction.sent("lotParticipants")).toEqual([]);
+  });
+
+  it("fits the yes of the removal into 64 bytes at the largest lot version", () => {
+    expect(
+      Buffer.byteLength(
+        `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(jayId)}:${(36 ** 8 - 1).toString(36)}`,
+      ),
+    ).toBeLessThanOrEqual(64);
   });
 });

@@ -38,6 +38,9 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
                 (Func<Task<AuctionApplication>>)(() => store.Apply(bid, clock.GetUtcNow(), stoppingToken))),
             AuctionDecoded.Sale { Value: var sale } => (new EventRef(sale.EventId, sale.LotId, null, sale.Version, sale.OccurredAt),
                 () => store.Apply(sale, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.Removal { Value: var removal } => (new EventRef(removal.EventId, removal.Snapshot.LotId,
+                    null, removal.Snapshot.Version, removal.Snapshot.OccurredAt),
+                () => store.Apply(removal, clock.GetUtcNow(), stoppingToken)),
             AuctionDecoded.Lot { Value: var fact } => (new EventRef(fact.EventId, fact.Snapshot.LotId, null,
                     fact.Snapshot.Version, fact.Snapshot.OccurredAt),
                 () => store.Apply(fact, clock.GetUtcNow(), stoppingToken)),
@@ -108,6 +111,30 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
                 Record(message, started, source, "reminder_failed", 0, "dependency_unavailable", "lot reminder schedule failed; message returned to the stream", ex);
                 return;
             }
+
+            // Окна сниженного шага заводят задание начала окна (PER-614): оно
+            // живёт на пару «аукцион и момент начала», поэтому его грин — на
+            // аукцион, а не на лот. Снимок без окон задания не заводит, и
+            // звать грин нечего.
+            if (decoded is AuctionDecoded.Lot { Value.Snapshot.Windows.Count: > 0 } windowed)
+            {
+                try
+                {
+                    await grains
+                        .GetGrain<IStepWindowNotificationGrain>(windowed.Value.Snapshot.AuctionId)
+                        .ApplyLot(windowed.Value.Snapshot.LotId);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    await message.Retry(stoppingToken);
+                    Record(message, started, source, "step_window_failed", 0, "dependency_unavailable", "step window task schedule failed; message returned to the stream", ex);
+                    return;
+                }
+            }
         }
 
         await message.Accept(stoppingToken);
@@ -130,6 +157,7 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.AuctionCancelled => "auction_cancelled",
             AuctionOutcome.AuctionEnded => "auction_ended",
             AuctionOutcome.FinalLotNext => "final_lot_next",
+            AuctionOutcome.LeadRestored => "lead_restored",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }

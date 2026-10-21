@@ -133,6 +133,37 @@ describe("lot card in the hub shell", () => {
     );
   });
 
+  // Организатор видит настоящий аккаунт победителя рядом с псевдонимом
+  // (PER-648), а участнику поле не задаётся, и остаётся псевдоним.
+  it("adds the real account of the sold winner next to the pseudonym", () => {
+    const { screen } = auctionScreen({
+      ...view([
+        lot({
+          card: { title: "Кружка", description: "Роспись." },
+          status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+          participantName: "Сыч*",
+        }),
+      ]),
+      winnerUsername: "owl",
+    });
+    expect(plain(screen.text)).toContain("👤 Победитель: Сыч* (@owl)");
+  });
+
+  it("does not repeat the account when the winner is shown by it", () => {
+    const { screen } = auctionScreen({
+      ...view([
+        lot({
+          card: { title: "Кружка", description: "Роспись." },
+          status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+          participantName: "@owl",
+        }),
+      ]),
+      winnerUsername: "owl",
+    });
+    expect(plain(screen.text)).toContain("👤 Победитель: @owl");
+    expect(plain(screen.text)).not.toContain("@owl (@owl)");
+  });
+
   // Чужой год называется в дате (дизайн-код, «Формат»).
   it("names the year of a deadline outside the current year", () => {
     const { screen } = auctionScreen(
@@ -301,6 +332,7 @@ describe("feed and history in the hub shell", () => {
             lotId: "lot-1",
             auctionId: auctionId,
             title: "Кружка",
+            status: { kind: "unsold" },
             page: 0,
             pageCount: 1,
             entries: [
@@ -322,6 +354,73 @@ describe("feed and history in the hub shell", () => {
     });
     expect(plain(screen.text)).toBe(
       "<b>Ставки</b>\n<i>Кружка</i>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+    );
+  });
+});
+
+describe("history with removals in the hub shell", () => {
+  it("strikes the bids of a removed participant and shows the removal as its own line", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "history",
+            lotId: "lot-1",
+            auctionId: auctionId,
+            title: "Кружка",
+            status: { kind: "unsold" },
+            page: 0,
+            pageCount: 1,
+            entries: [
+              {
+                kind: "bid",
+                sequence: 1,
+                occurredAt: "2025-10-03T16:04:00Z",
+                amount: rub(500),
+                origin: { kind: "manual", source: "bot" },
+                participantName: "@jay",
+                removed: true,
+              },
+              {
+                kind: "bid",
+                sequence: 2,
+                occurredAt: "2025-10-03T16:05:00Z",
+                amount: rub(450),
+                origin: { kind: "proxy" },
+                participantName: "@owl",
+              },
+              {
+                kind: "removal",
+                sequence: 3,
+                occurredAt: "2025-10-03T16:06:00Z",
+                price: rub(400),
+                leaderName: "@owl",
+              },
+              {
+                kind: "removal",
+                sequence: 4,
+                occurredAt: "2025-10-03T16:07:00Z",
+                price: rub(300),
+              },
+            ],
+          },
+        ],
+        keyboard: [
+          [{ action: "history.back", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toBe(
+      [
+        "<b>Ставки</b>",
+        "<i>Кружка</i>",
+        "",
+        "• <s>3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную</s>",
+        "• 3 октября 2025, пт, 19:05 · @owl · 450 ₽ · авто",
+        "• 3 октября 2025, пт, 19:06 · участник снят · цена 400 ₽ · ведёт @owl",
+        "• 3 октября 2025, пт, 19:07 · участник снят · цена 300 ₽",
+      ].join("\n"),
     );
   });
 });

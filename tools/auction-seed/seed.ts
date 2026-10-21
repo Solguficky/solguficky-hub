@@ -1,5 +1,6 @@
 import type { Person } from "../../apps/hub-bot/src/surfaces/hub/application/types.js";
 import type {
+  AuctionConsoles,
   LotAdministration,
   MeetupAuctions,
 } from "../../apps/hub-bot/src/surfaces/hub/auction/port.js";
@@ -16,6 +17,8 @@ import type { Catalog } from "./catalog.js";
 // Identity разрешает по Telegram id: Auction и Meetups решают право сами, и
 // путь в обход их проверок здесь не строится. Сроки недели, «Счастливые часы»,
 // розыгрыш и открытие недели — пульт администратора, их команда не задаёт.
+// Аукцион рождается скрытым от участников (ADR-047, дополнение 2026-10-20), и
+// последний шаг его публикует (PER-673): прогон stage показывает лоты.
 
 export type SeedPorts = {
   identity: IdentityResolver;
@@ -27,7 +30,8 @@ export type SeedPorts = {
     Pick<
       LotAdministration,
       "createLotCard" | "editLotCard" | "addLot" | "scheduleLot"
-    >;
+    > &
+    Pick<AuctionConsoles, "publishAuction">;
   newId: () => string;
   log: (line: string) => void;
 };
@@ -159,6 +163,15 @@ export async function seedAuction(
       `лот ${number}/${catalog.lots.length} заведён: «${lot.title}» ${lotId}`,
     );
   }
+
+  const published = await auctions.publishAuction(person, {
+    auctionId,
+    opId: newId(),
+  });
+  if (published.kind !== "ok") {
+    throw new SeedError("публикация аукциона", describe(published));
+  }
+  log(`аукцион ${auctionId} опубликован`);
 
   return { meetupId: meetup.id, auctionId, lots: seeded };
 }

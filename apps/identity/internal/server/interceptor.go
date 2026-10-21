@@ -301,8 +301,9 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 // запросе, а ответ несёт Telegram user id, которому в логе не место; запрос
 // читается и на отказе, чтобы NOT_FOUND и FAILED_PRECONDITION связывались с
 // профилем. CheckAccessRight читается так же: его отказ NOT_FOUND должен
-// называть профиль, а ответ несёт только вердикт. ResolveOrganizerUsername
-// называет автора по запросу: его ответ несёт ник, которому в логе не место.
+// называть профиль, а ответ несёт только вердикт. ResolveOrganizerUsername и
+// ResolveParticipantUsername называют человека по запросу: их ответ несёт ник,
+// которому в логе не место.
 // Строка из запроса — ввод вызывающего, поэтому в запись идёт только
 // каноническая форма UUID: произвольный текст границу не проходит.
 func loggedIdentityID(req, resp any) string {
@@ -316,6 +317,8 @@ func loggedIdentityID(req, resp any) string {
 	case *identityv1.CheckAccessRightRequest:
 		raw = lookup.GetIdentityId()
 	case *identityv1.ResolveOrganizerUsernameRequest:
+		raw = lookup.GetIdentityId()
+	case *identityv1.ResolveParticipantUsernameRequest:
 		raw = lookup.GetIdentityId()
 	default:
 		return ""

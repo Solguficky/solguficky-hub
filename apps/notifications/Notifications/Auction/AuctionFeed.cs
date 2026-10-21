@@ -20,6 +20,13 @@ public static class AuctionFeed
     /// итогов на шине, сообщение — <c>PredictionResultsEvent</c>.
     /// </summary>
     public const string PredictionResultsSettledSubject = "events.auction.prediction_results_settled";
+
+    /// <summary>
+    /// Снятие участника с лота администратором сходки (ADR-072, PER-672): снимок
+    /// — лот после снятия, повод — прежний лидер. Кого сняли, факт не несёт.
+    /// </summary>
+    public const string ParticipantRemovedSubject = "events.auction.participant_removed";
+
     public static readonly EventFeed Feed = new(Source, "AUCTION_EVENTS", "notifications-auction-events");
 
     /// <summary>
@@ -61,5 +68,7 @@ public static class AuctionFeed
             ["events.auction.lot_withdrawn"] = LotEvent.OccasionOneofCase.LotWithdrawn,
             ["events.auction.lot_held_for_final"] = LotEvent.OccasionOneofCase.LotHeldForFinal,
             ["events.auction.lot_resumed"] = LotEvent.OccasionOneofCase.LotResumed,
+            [ParticipantRemovedSubject] = LotEvent.OccasionOneofCase.ParticipantRemoved,
+            ["events.auction.step_window_added"] = LotEvent.OccasionOneofCase.StepWindowAdded,
         };
 }

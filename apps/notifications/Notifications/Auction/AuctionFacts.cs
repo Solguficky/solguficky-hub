@@ -11,6 +11,13 @@ public static class AuctionFacts
     public const string ProxyRaisedType = "lot_proxy_raised";
     public const string CauseKind = "auction_lot_event";
 
+    /// <summary>
+    /// Ведение лота вернулось: администратор снял участника, который его вёл
+    /// (ADR-072, п. 5, PER-672). Настройка перебитий его не гасит — ставки
+    /// получатель не делал.
+    /// </summary>
+    public const string LeadRestoredType = "lot_lead_restored";
+
     public const string DigestType = "lot_activity_digest";
     public const string DigestCauseKind = "outbid_digest";
 
@@ -283,5 +290,25 @@ public static class AuctionFacts
         NotAfter = notAfter.ToUniversalTime().ToString("O"),
         Cause = new Cause { AuctionLotEventId = sale.EventId.ToString() },
         LotPurchased = new LotPurchased { LotId = sale.LotId.ToString(), Price = sale.Price.Clone() },
+    };
+
+    /// <summary>
+    /// Снятие вернуло ведение новому лидеру (PER-672). Адресат — он и только он:
+    /// снятому не пишут, а кого сняли, факт и не несёт.
+    /// </summary>
+    public static Notification LeadRestored(Guid notificationId, AuctionRemoval removal, DateTimeOffset now,
+        DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = (removal.RestoredRecipient ??
+                       throw new ArgumentException("removal did not restore the lead", nameof(removal))).ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionLotEventId = removal.EventId.ToString() },
+        LotLeadRestored = new LotLeadRestored
+        {
+            LotId = removal.Snapshot.LotId.ToString(),
+            CurrentPrice = removal.Price.Clone(),
+        },
     };
 }

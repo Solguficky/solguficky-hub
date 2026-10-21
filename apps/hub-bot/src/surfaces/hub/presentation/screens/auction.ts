@@ -13,20 +13,20 @@ import {
   feedSummary,
   finalFeedLabel,
   followLabel,
+  historyLine,
   leaderLine,
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
   ownLotLine,
+  struckHistoryLine,
   unfollowLabel,
 } from "../../../../auction-standing.js";
 import type {
   AuctionBlock,
   AuctionButton,
   AuctionScreenBody,
-  BidOriginView,
   FeedItem,
-  HistoryItem,
   LotStatusView,
 } from "../../../../auction-ui/index.js";
 import { money, truncate } from "../../../../core/format.js";
@@ -46,6 +46,7 @@ import {
   floorData,
   lotFormData,
   lotNewData,
+  removalData,
 } from "../parse-callback.js";
 import {
   acceptedScreen,
@@ -74,7 +75,7 @@ import {
   raffleQuestionScreen,
   raffleScreen,
 } from "./auction-raffle.js";
-import { stageWords } from "./auction-stage.js";
+import { stageLine } from "./auction-stage.js";
 import { toSettingsAuction } from "./extensions.js";
 import {
   type AuctionEntry,
@@ -91,8 +92,10 @@ import {
   screenText,
   submenuText,
   toAuctionRoot,
+  withAccount,
   withNav,
 } from "./kit.js";
+import { removalLabel } from "./participant-removal.js";
 import type { ScreenPhoto, ShownScreen } from "./show.js";
 
 // Цена и обрезка — общие у двух ботов (`src/core/format.ts`); имена
@@ -138,6 +141,12 @@ export type AuctionView = {
    * после вопроса.
    */
   canAddLots?: boolean;
+  /**
+   * Настоящий аккаунт победителя проданного лота (PER-648). Его отдаёт
+   * Identity и только организатору: остальным имя остаётся псевдонимом, и
+   * поле не задано. Нет поля — карточка показывает то, что дал Auction.
+   */
+  winnerUsername?: string;
   /**
    * Предпросмотр лота глазами участника (PER-512): возврат с карточки. Тело
    * приходит из `previewLot` без кнопок; карточка рисуется той же вёрсткой,
@@ -445,7 +454,7 @@ function rootScreen(
     text: screenText(
       "Аукцион",
       [
-        `Статус: ${stageWords[auction.stage]}`,
+        `Статус: ${stageLine(auction)}`,
         ...(online === undefined ? [] : [online]),
         // Отменённый аукцион финала уже не проведёт (PER-606).
         ...(auction.final && auction.stage !== "cancelled"
@@ -656,6 +665,15 @@ function isPagerButton(button: AuctionButton): boolean {
   );
 }
 
+// С лота снимают участника в онлайн-торгах и с удержанного лота (ADR-072,
+// п. 4); решение по статусу — для ряда, команду решает Auction.
+function removable(status: LotStatusView): boolean {
+  return (
+    (status.kind === "trading" && status.phase === "online") ||
+    status.kind === "held"
+  );
+}
+
 // Вход в форму лота ставится один раз: над листанием или, если его нет, над
 // возвратом. Повторный вызов ряд не добавляет.
 function editRow(
@@ -843,6 +861,16 @@ function historyScreen(
   if (back === undefined) {
     throw new Error("history body without a way back to the lot");
   }
+  // Снятие участника (PER-659, ADR-072): ряд оболочки над возвратом, как
+  // «Изменить лот» на карточке, — держателю права вести аукцион и только у
+  // лота, с которого снимают: онлайн-торги или удержание. Заморозку
+  // состава лот не знает — её отказ приходит от Auction.
+  if (view.canManage === true && removable(history.status)) {
+    nextRow(keyboard).text(
+      removalLabel,
+      removalData(uuidToToken(history.lotId)),
+    );
+  }
   return {
     id: "bids",
     text: submenuText(
@@ -855,7 +883,22 @@ function historyScreen(
       history.entries.length === 0
         ? "Ставок пока нет."
         : history.entries
-            .map((entry) => bullet(escapeHtml(historyLine(entry, view))))
+            .map((entry) =>
+              bullet(
+                struckHistoryLine(
+                  entry,
+                  escapeHtml(
+                    historyLine(
+                      entry,
+                      readableMoment(
+                        communityLocalTime(entry.occurredAt, view.timeZone),
+                        view.today,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
             .join("\n"),
     ),
     keyboard: withNav(keyboard, back),
@@ -918,33 +961,6 @@ function historyLabel(button: AuctionButton): string {
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;
-      return _exhaustive;
-    }
-  }
-}
-
-// Строка ставки: когда, кто, сколько и как. Имени нет — Auction его не отдал,
-// идентификатор человеку не показывается; лимита прокси нет и в теле.
-function historyLine(entry: HistoryItem, view: AuctionView): string {
-  return [
-    readableMoment(
-      communityLocalTime(entry.occurredAt, view.timeZone),
-      view.today,
-    ),
-    ...(entry.participantName === undefined ? [] : [entry.participantName]),
-    money(entry.amount),
-    originLabel(entry.origin),
-  ].join(" · ");
-}
-
-function originLabel(origin: BidOriginView): string {
-  switch (origin.kind) {
-    case "proxy":
-      return "авто";
-    case "manual":
-      return origin.source === "floor" ? "в зале" : "вручную";
-    default: {
-      const _exhaustive: never = origin;
       return _exhaustive;
     }
   }
@@ -1043,7 +1059,7 @@ function statusGroups(
             pictogram.leader,
             participantName === undefined
               ? "Победитель: определён"
-              : `Победитель: ${participantName}`,
+              : `Победитель: ${withAccount(participantName, view.winnerUsername)}`,
           ),
         ],
       ];

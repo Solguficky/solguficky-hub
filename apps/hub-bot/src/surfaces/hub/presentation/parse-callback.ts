@@ -369,6 +369,8 @@ type PlainAction =
   | { kind: "console-raffle-prize"; auction: string }
   | { kind: "console-raffle-prize-remove"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
+  // Видимость до торгов (PER-673): кнопка несёт целевое состояние.
+  | { kind: "console-visibility"; auction: string; published: boolean }
   | { kind: "console-open"; auction: string }
   // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
   // и повторное нажатие несёт тот же.
@@ -456,6 +458,19 @@ type PlainAction =
       minorUnits: number;
     }
   | { kind: "console-floor-leader"; auction: string }
+  // Снятие участника с лота (PER-659): кого снять, подтверждение и «Да».
+  // Кнопки называют лот, а не аукцион, как у «Ставок зала»: лот, человек и
+  // номер лота рядом с аукционом в 64 байта не помещаются. «Да» несёт номер
+  // лота, на котором решён предпросмотр, а ключ команды рождается на
+  // нажатие.
+  | { kind: "console-removal"; lot: string; page: number }
+  | { kind: "console-removal-pick"; lot: string; person: string }
+  | {
+      kind: "console-removal-confirm";
+      lot: string;
+      person: string;
+      version: number;
+    }
   // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
   | { kind: "manage-confirm-publish"; token: string; version: number }
@@ -752,6 +767,14 @@ export function consoleFinalData(auction: string, final: boolean): string {
   return `v1:ac:f:${auction}:${final ? "1" : "0"}`;
 }
 
+/** «Опубликовать» и «Снять с публикации» с целевым состоянием (PER-673). */
+export function consoleVisibilityData(
+  auction: string,
+  published: boolean,
+): string {
+  return `v1:ac:p:${auction}:${published ? "1" : "0"}`;
+}
+
 /** «Открыть онлайн-неделю»: подтверждение, а не команда. */
 export function consoleOpenData(auction: string): string {
   return `v1:ac:o:${auction}`;
@@ -966,6 +989,33 @@ export function floorSearchData(auction: string): string {
 export function floorLeaderData(auction: string): string {
   return `v1:ac:bl:${auction}`;
 }
+
+/** Снятие участника (PER-659): кого снять с лота. */
+export function removalData(lot: string, page = 0): string {
+  return page === 0 ? `v1:ac:e:${lot}` : `v1:ac:e:${lot}:${page}`;
+}
+
+/** Человек — к предпросмотру и подтверждению. */
+export function removalPickData(lot: string, person: string): string {
+  return `v1:ac:ep:${lot}:${person}`;
+}
+
+/**
+ * «Да» снятия: номер лота предпросмотра по основанию 36. Восемь знаков — до
+ * двух триллионов событий лота, и строка занимает до 64 байт.
+ */
+export function removalConfirmData(
+  lot: string,
+  person: string,
+  version: number,
+): string {
+  return `v1:ac:ey:${lot}:${person}:${version.toString(36)}`;
+}
+
+const LotVersionSchema = z
+  .string()
+  .regex(/^[1-9a-z][0-9a-z]{0,7}$/)
+  .transform((raw) => Number.parseInt(raw, 36));
 
 /**
  * Кнопка человека зала и «Да» подтверждения: лот, человек и цена в минорных
@@ -1514,7 +1564,8 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
 // `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
 // `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Розыгрыш (PER-593):
-// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. «Ставки зала» (PER-565):
+// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. Видимость (PER-673):
+// `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
@@ -1562,6 +1613,35 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-day-summary", auction: auction.data }
         : { kind: "malformed" };
+    // Третья часть здесь — лот, а не аукцион: токен у них одной формы.
+    case "e": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-removal", lot: auction.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    case "ep": {
+      const person = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && person.success
+        ? {
+            kind: "console-removal-pick",
+            lot: auction.data,
+            person: person.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "ey": {
+      const person = TokenSchema.safeParse(parts[4]);
+      const version = LotVersionSchema.safeParse(parts[5]);
+      return parts.length === 6 && person.success && version.success
+        ? {
+            kind: "console-removal-confirm",
+            lot: auction.data,
+            person: person.data,
+            version: version.data,
+          }
+        : { kind: "malformed" };
+    }
     case "h":
       return parts.length === 4
         ? { kind: "console-windows", auction: auction.data }
@@ -1674,6 +1754,16 @@ function parseConsole(parts: readonly string[]): CallbackAction {
             kind: "console-final",
             auction: auction.data,
             final: final.data === "1",
+          }
+        : { kind: "malformed" };
+    }
+    case "p": {
+      const published = TargetStateSchema.safeParse(parts[4]);
+      return parts.length === 5 && published.success
+        ? {
+            kind: "console-visibility",
+            auction: auction.data,
+            published: published.data === "1",
           }
         : { kind: "malformed" };
     }

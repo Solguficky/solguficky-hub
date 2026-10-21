@@ -12,17 +12,27 @@ namespace Notifications.Auction;
 public enum LotStatus { Draft, Scheduled, Trading, Held, Sold, Unsold, Withdrawn }
 
 /// <summary>
-/// Снимок лота, который нужен избранному: аукцион, дедлайн, лидер и положение.
-/// Дедлайна нет у лота без торгов, у лота, который ведёт человек, и у
-/// удержанного для финала; лидера нет до первой ставки. У проданного лидер —
-/// победитель, и только у него есть цена продажи: её называет извещение об
-/// отмене аукциона (PER-604).
+/// Снимок лота, который нужен избранному: аукцион, дедлайн, лидер, положение и
+/// окна сниженного шага. Дедлайна нет у лота без торгов, у лота, который ведёт
+/// человек, и у удержанного для финала; лидера нет до первой ставки. У
+/// проданного лидер — победитель, и только у него есть цена продажи: её
+/// называет извещение об отмене аукциона (PER-604). Окна не зависят от часов
+/// читающего и приходят данными — их пишут и объявленное окно в
+/// <c>lot_opened</c>, и запущенное в <c>step_window_added</c> (ADR-047,
+/// дополнение 2026-10-12).
 /// </summary>
 public sealed record LotSnapshot(Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt, LotStatus Status,
-    DateTimeOffset? Deadline, Guid? Leader, Money? SalePrice = null)
+    DateTimeOffset? Deadline, Guid? Leader, IReadOnlyList<LotStepWindow> Windows, Money? SalePrice = null)
 {
     public bool Terminal => Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn;
 }
+
+/// <summary>
+/// Окно сниженного шага, как его записал лот: полуинтервал <c>[From, Until)</c>
+/// и шаг, действующий внутри. Сверка пересечений и валюта — дело Auction: сюда
+/// окно приходит уже принятым лотом.
+/// </summary>
+public sealed record LotStepWindow(DateTimeOffset From, DateTimeOffset Until, Money Step);
 
 /// <summary>
 /// Лидер и цена лота на момент удержания для финала: из них собирается анонс
@@ -57,6 +67,22 @@ public sealed record AuctionBid(Guid EventId, Guid LotId, Guid AuctionId, long V
 /// <summary>Проверенная продажа: победитель и цена из state.sold; снимок — как у ставки.</summary>
 public sealed record AuctionSale(Guid EventId, Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
     Guid Winner, Money Price, LotSnapshot? Snapshot);
+
+/// <summary>
+/// Проверенное снятие участника с лота (ADR-072, PER-672): снимок — лот после
+/// снятия, цена — та, с которой лот идёт дальше. Кого сняли, факт не несёт,
+/// поэтому и записи о снятом здесь нет: прежний лидер нужен только для того,
+/// чтобы отличить смену лидерства от снятия того, кто лот не вёл.
+/// </summary>
+public sealed record AuctionRemoval(Guid EventId, LotSnapshot Snapshot, Guid? PreviousLeader, Money Price)
+{
+    /// <summary>
+    /// Новый лидер, которому сообщают, что ведение вернулось: снятие без смены
+    /// лидера и снятие единственного участника получателя не дают.
+    /// </summary>
+    public Guid? RestoredRecipient =>
+        PreviousLeader is { } previous && previous != Snapshot.Leader ? Snapshot.Leader : null;
+}
 
 /// <summary>Повод финала аукциона: заморозка состава или старт.</summary>
 public enum FinalOccasion { LineupFrozen, Started }
@@ -125,6 +151,7 @@ public abstract record AuctionDecoded
 {
     public sealed record Bid(AuctionBid Value) : AuctionDecoded;
     public sealed record Sale(AuctionSale Value) : AuctionDecoded;
+    public sealed record Removal(AuctionRemoval Value) : AuctionDecoded;
     public sealed record Lot(AuctionLotFact Value) : AuctionDecoded;
     public sealed record Final(AuctionFinal Value) : AuctionDecoded;
     public sealed record FinalLotActivated(AuctionFinalLotActivated Value) : AuctionDecoded;
@@ -200,6 +227,7 @@ public static class AuctionMapping
         {
             LotEvent.OccasionOneofCase.BidPlaced => DecodeBid(message, eventId, lotId, occurredAt, snapshot),
             LotEvent.OccasionOneofCase.LotSold => DecodeSale(message, eventId, lotId, occurredAt, snapshot),
+            LotEvent.OccasionOneofCase.ParticipantRemoved => DecodeRemoval(message, eventId, snapshot),
             _ when snapshot is null => new AuctionDecoded.Poison("state status, deadline or leader is invalid"),
             _ when state.StatusCase == LotState.StatusOneofCase.Held => DecodeHold(state, eventId, snapshot),
             _ => new AuctionDecoded.Lot(new AuctionLotFact(eventId, snapshot)),
@@ -504,12 +532,20 @@ public static class AuctionMapping
     private static LotSnapshot? Snapshot(LotState state, Guid lotId, Guid auctionId, long version,
         DateTimeOffset occurredAt)
     {
+        // Окна — данные факта, а не вывод из часов читающего, и кривое окно
+        // отравляет снимок так же, как кривой дедлайн: реплика не должна
+        // записать окно, по которому потом развернётся сообщение о начале.
+        if (!Windows(state, out var windows))
+        {
+            return null;
+        }
+
         switch (state.StatusCase)
         {
             case LotState.StatusOneofCase.Draft:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Draft, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Draft, null, null, windows);
             case LotState.StatusOneofCase.Scheduled:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Scheduled, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Scheduled, null, null, windows);
             case LotState.StatusOneofCase.Trading:
             {
                 var trading = state.Trading;
@@ -520,24 +556,50 @@ public static class AuctionMapping
                     deadline = parsed;
                 }
                 return Leader(trading.HasLeaderId, trading.LeaderId, out var leader)
-                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Trading, deadline, leader)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Trading, deadline, leader, windows)
                     : null;
             }
             case LotState.StatusOneofCase.Held:
                 return Leader(state.Held.HasLeaderId, state.Held.LeaderId, out var held)
-                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Held, null, held)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Held, null, held, windows)
                     : null;
             case LotState.StatusOneofCase.Sold:
                 return Id(state.Sold.WinnerId, out var winner) && state.Sold.Price is { } sale && Price(sale)
-                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Sold, null, winner, sale.Clone())
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Sold, null, winner, windows,
+                        sale.Clone())
                     : null;
             case LotState.StatusOneofCase.Unsold:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Unsold, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Unsold, null, null, windows);
             case LotState.StatusOneofCase.Withdrawn:
-                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Withdrawn, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Withdrawn, null, null, windows);
             default:
                 return null;
         }
+    }
+
+    // Окна в том виде, в каком их записал лот: с началами и концами в UTC и
+    // шагом в валюте лота. Пустой список — нормальное значение лота без окон.
+    private static bool Windows(LotState state, out IReadOnlyList<LotStepWindow> windows)
+    {
+        windows = [];
+        if (state.StepWindows.Count == 0)
+        {
+            return true;
+        }
+
+        var parsed = new List<LotStepWindow>(state.StepWindows.Count);
+        foreach (var window in state.StepWindows)
+        {
+            if (!Instant(window.From, out var from) || !Instant(window.Until, out var until) ||
+                until <= from || window.Step is not { } step || !Price(step))
+            {
+                return false;
+            }
+            parsed.Add(new LotStepWindow(from, until, step.Clone()));
+        }
+
+        windows = parsed;
+        return true;
     }
 
     private static bool Leader(bool present, string value, out Guid? leader)
@@ -610,6 +672,41 @@ public static class AuctionMapping
         }
         return new AuctionDecoded.Sale(new AuctionSale(eventId, lotId, Guid.Parse(state.AuctionId), message.Version,
             occurredAt, winner, price.Clone(), snapshot));
+    }
+
+    // Снятие участника (ADR-072, PER-672). Снимок обязателен: он называет нового
+    // лидера и пишет реплику, без него повода нет. Цена у каждого положения
+    // своя — у торгующегося это цена торгов, у удержанного цена удержания, — а
+    // прочие положения снятие не принимает, и такой факт дефект издателя.
+    private static AuctionDecoded DecodeRemoval(LotEvent message, Guid eventId, LotSnapshot? snapshot)
+    {
+        if (snapshot is null || message.State is not { } state)
+        {
+            return new AuctionDecoded.Poison("state status, deadline or leader is invalid");
+        }
+
+        Money? price = snapshot.Status switch
+        {
+            LotStatus.Trading when state.Trading is { } trading => trading.CurrentPrice,
+            LotStatus.Held when state.Held is { } held => held.CurrentPrice,
+            _ => null,
+        };
+        if (price is not { } current || !Price(current) ||
+            state.Config is { } config && config.Currency != current.Currency)
+        {
+            return new AuctionDecoded.Poison("participant_removed lot is not trading or held, or its price is invalid");
+        }
+
+        Guid? previous = null;
+        if (message.ParticipantRemoved.HasPreviousLeaderId)
+        {
+            if (!Id(message.ParticipantRemoved.PreviousLeaderId, out var previousId))
+            {
+                return new AuctionDecoded.Poison("previous_leader_id is not a canonical UUIDv7");
+            }
+            previous = previousId;
+        }
+        return new AuctionDecoded.Removal(new AuctionRemoval(eventId, snapshot, previous, current.Clone()));
     }
 
     // RFC 3339 точность не ограничивает, а Auction пишет Instant.toString:

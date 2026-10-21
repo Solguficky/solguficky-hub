@@ -279,6 +279,7 @@ function toContent(message: Notification): NotificationContent | undefined {
     }
     case "lotOutbid":
     case "lotProxyRaised":
+    case "lotLeadRestored":
     case "lotPurchased":
     case "lotActivityDigest":
     case "lotReminder":

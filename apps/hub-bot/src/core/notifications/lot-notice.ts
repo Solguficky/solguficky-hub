@@ -35,6 +35,11 @@ export type LotNotice =
   // Автоставка получателя ответила чужой команде и подняла цену; он лидер
   // (PER-473).
   | { kind: "lot-proxy-raised"; lotId: string; currentPrice: NoticeMoney }
+  // Ведение лота вернулось: администратор снял участника, который его вёл
+  // (ADR-072, п. 5, PER-672). Кто снял и почему, сообщение не называет — этого
+  // нет и в факте; настройка перебитий его не гасит, потому что ставку
+  // получатель не делал.
+  | { kind: "lot-lead-restored"; lotId: string; currentPrice: NoticeMoney }
   | { kind: "lot-purchased"; lotId: string; price: NoticeMoney }
   // Сводка окна частоты (PER-596): минимум одна строка, по строке на лот и вид.
   | { kind: "lot-activity-digest"; lines: readonly LotActivityLine[] }
@@ -50,6 +55,7 @@ export type LotNotice =
 const lotNoticeKinds: ReadonlySet<string> = new Set<LotNotice["kind"]>([
   "lot-outbid",
   "lot-proxy-raised",
+  "lot-lead-restored",
   "lot-purchased",
   "lot-activity-digest",
   "lot-reminder",
@@ -70,6 +76,7 @@ type LotBranch = Extract<
     case:
       | "lotOutbid"
       | "lotProxyRaised"
+      | "lotLeadRestored"
       | "lotPurchased"
       | "lotActivityDigest"
       | "lotReminder"
@@ -102,6 +109,13 @@ export function lotNoticeOf(type: LotBranch): LotNotice | undefined {
       return lotId === undefined || price === undefined
         ? undefined
         : { kind: "lot-purchased", lotId, price };
+    }
+    case "lotLeadRestored": {
+      const lotId = canonical(type.value.lotId);
+      const currentPrice = toMoney(type.value.currentPrice);
+      return lotId === undefined || currentPrice === undefined
+        ? undefined
+        : { kind: "lot-lead-restored", lotId, currentPrice };
     }
     case "lotActivityDigest": {
       // Сводка без строк контракт запрещает: окно без событий её не рождает.
@@ -449,7 +463,8 @@ export function renderLotNotice(
       notice.kind !== "lot-purchased" &&
       notice.kind !== "lot-reminder" &&
       notice.kind !== "lot-deadline-close" &&
-      notice.kind !== "lot-final-next"
+      notice.kind !== "lot-final-next" &&
+      notice.kind !== "lot-lead-restored"
         ? [lotButton, frequency]
         : [lotButton],
     ],
@@ -467,6 +482,10 @@ function singleText(
       return `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
     case "lot-proxy-raised":
       return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${money(notice.currentPrice)}: лидируешь ты.${deadlineText(info, timeZone)}`;
+    case "lot-lead-restored":
+      // Ведение вернулось без ставки получателя: снятие участника — не его
+      // действие, и объяснять ему чужое решение бот не берётся.
+      return `Ты снова ведёшь ${lot ?? "лот"}. Текущая цена — ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
     case "lot-purchased":
       // Оплаты и получения в продукте нет: их ведёт организатор аукциона, и
       // сообщение говорит только это (решение владельца 13 октября 2026 года).

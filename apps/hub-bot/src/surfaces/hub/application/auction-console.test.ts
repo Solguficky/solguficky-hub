@@ -8,6 +8,7 @@ import type {
   ActiveAuctionsResult,
   AdvanceAskResult,
   AuctionConsoles,
+  AuctionVisibilityResult,
   AuctionWeekConfig,
   CancelAuctionResult,
   CloseLotResult,
@@ -28,6 +29,7 @@ import type {
   StartNextLotResult,
   StartPrebiddingResult,
 } from "../auction/port.js";
+import type { ParticipantUsernameResult } from "../identity/port.js";
 import {
   createAuctionConsole,
   lineupPrint,
@@ -71,7 +73,14 @@ function view(
   status: AuctionConsoleView["status"],
   extra: Partial<AuctionConsoleView> = {},
 ): AuctionConsoleView {
-  return { auctionId, status, lots: [], launchedWindows: [], ...extra };
+  return {
+    auctionId,
+    status,
+    hidden: false,
+    lots: [],
+    launchedWindows: [],
+    ...extra,
+  };
 }
 
 function fake(answers: {
@@ -85,6 +94,7 @@ function fake(answers: {
   mark?: FinalistResult;
   discard?: DiscardAuctionResult;
   cancel?: CancelAuctionResult;
+  visibility?: AuctionVisibilityResult;
   freeze?: FreezeFinalLineupResult;
   startFinal?: StartFinalResult;
   nextLot?: StartNextLotResult;
@@ -92,6 +102,9 @@ function fake(answers: {
   close?: CloseLotResult;
   bids?: FinalBidsResult;
   names?: DisplayNamesResult;
+  // Настоящий аккаунт участника (PER-648), по идентификатору. Нет записи —
+  // Identity отказал, как участнику, открывшему карточку.
+  accounts?: Readonly<Record<string, ParticipantUsernameResult>>;
   raffle?: ConsoleRaffleResult;
   active?: ActiveAuctionsResult;
   launch?: LaunchStepWindowResult;
@@ -100,9 +113,11 @@ function fake(answers: {
   const reads = { raffle: 0, active: 0 };
   const asks: Money[] = [];
   const closes: FinalLotCommand[] = [];
+  const accountsAsked: string[] = [];
   const freezes: (readonly string[])[] = [];
   const windows: { auctionId: string; from: string; until: string }[] = [];
   const launched: LaunchStepWindowCommand[] = [];
+  const visibility: { published: boolean; opId: string }[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -126,6 +141,14 @@ function fake(answers: {
     startPrebidding: async () => answers.start ?? { kind: "ok" },
     discardAuction: async () => answers.discard ?? { kind: "ok" },
     cancelAuction: async () => answers.cancel ?? { kind: "ok" },
+    publishAuction: async (_person, publish) => {
+      visibility.push({ published: true, opId: publish.opId });
+      return answers.visibility ?? { kind: "ok" };
+    },
+    hideAuction: async (_person, hide) => {
+      visibility.push({ published: false, opId: hide.opId });
+      return answers.visibility ?? { kind: "ok" };
+    },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
     freezeFinalLineup: async (_person, freeze) => {
@@ -154,6 +177,15 @@ function fake(answers: {
     floorLot: async () => {
       throw new Error("lot read not used by the console");
     },
+    lotParticipants: async () => {
+      throw new Error("participant removal not used by the console");
+    },
+    previewParticipantRemoval: async () => {
+      throw new Error("participant removal not used by the console");
+    },
+    removeParticipant: async () => {
+      throw new Error("participant removal not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };
@@ -174,14 +206,21 @@ function fake(answers: {
     },
   };
   return {
-    run: createAuctionConsole(port, zone, () => answers.at ?? now),
+    run: createAuctionConsole(port, zone, () => answers.at ?? now, {
+      async resolveParticipantUsername(_viewer, identityId) {
+        accountsAsked.push(identityId);
+        return answers.accounts?.[identityId] ?? { kind: "denied" };
+      },
+    }),
     reads,
     scheduled,
     asks,
     closes,
+    accountsAsked,
     freezes,
     windows,
     launched,
+    visibility,
   };
 }
 
@@ -898,6 +937,111 @@ describe("auction discard", () => {
   });
 });
 
+describe("auction visibility", () => {
+  const call = { identity: admin, auctionId };
+
+  it("publishes a hidden auction by the target of the button", async () => {
+    const hidden = {
+      kind: "ok",
+      console: view("draft", { hidden: true }),
+    } as const;
+    const publish = fake({ read: hidden, statistics: noLotStatistics });
+
+    await expect(
+      publish.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: true,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "published",
+    });
+    expect(publish.visibility).toEqual([{ published: true, opId }]);
+  });
+
+  it("hides a visible auction by the target of the button", async () => {
+    const hide = fake({ statistics: noLotStatistics });
+
+    await expect(
+      hide.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "unpublished",
+    });
+    expect(hide.visibility).toEqual([{ published: false, opId }]);
+  });
+
+  it("names a week that opened in between", async () => {
+    const { run } = fake({
+      visibility: { kind: "already-started" },
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "visibility-too-late",
+    });
+  });
+
+  it("refuses a cancelled meetup with its own text, not as a failure", async () => {
+    const { run } = fake({ visibility: { kind: "meetup-cancelled" } });
+
+    await expect(
+      run({ ...call, intent: "set-auction-visibility", published: true, opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "meetup-cancelled",
+    });
+  });
+
+  it("refuses a person Auction does not take for the administrator", async () => {
+    const forbidden = fake({ visibility: { kind: "not-administrator" } });
+
+    await expect(
+      forbidden.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: true,
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
+  });
+
+  it("refuses a missing auction", async () => {
+    const missing = fake({ visibility: { kind: "auction-not-found" } });
+
+    await expect(
+      missing.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "auction-not-found",
+    });
+  });
+});
+
 describe("final of the auctioneer", () => {
   const call = { identity: admin, auctionId };
   const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3e";
@@ -1320,6 +1464,110 @@ describe("final of the auctioneer", () => {
       title: "Картина",
       closure: { kind: "sold", price: rub(1_000) },
     });
+  });
+
+  it("names the account of the leader and of the buyer beside their pseudonyms", async () => {
+    const account = {
+      [leaderId]: {
+        kind: "resolved" as const,
+        telegramUsername: "batman",
+      },
+    };
+    const confirmation = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен*" } },
+      accounts: account,
+    });
+    const sold = running(final([live(leaderId), held], lotId), {
+      close: {
+        kind: "ok",
+        closure: { kind: "sold", winnerId: leaderId, price: rub(1_000) },
+      },
+      names: { kind: "ok", names: { [leaderId]: "Бэтмен*" } },
+      accounts: account,
+    });
+
+    await expect(
+      confirmation.run({
+        ...call,
+        intent: "prepare-final-close",
+        position: 0,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      leaderName: "Бэтмен*",
+      leaderUsername: "batman",
+    });
+    await expect(
+      sold.run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: sale,
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({
+      closure: { buyerName: "Бэтмен*", buyerUsername: "batman" },
+    });
+  });
+
+  it("leaves the account out when Identity refuses it", async () => {
+    const { run } = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен*" } },
+      accounts: { [leaderId]: { kind: "denied" } },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).toMatchObject({ leaderName: "Бэтмен*" });
+    expect(result).not.toHaveProperty("leaderUsername");
+  });
+
+  // Снимок ника в аукционе заморожен, и организатору нужен свежий аккаунт:
+  // имя, которое уже является ником, спрашивается так же (PER-648).
+  it("asks for the account even when the shown name already is one", async () => {
+    const { run, accountsAsked } = running(
+      final([live(leaderId), held], lotId),
+      {
+        bids: { kind: "ok", bids: [], names: { [leaderId]: "@old" } },
+        accounts: {
+          [leaderId]: { kind: "resolved", telegramUsername: "new" },
+        },
+      },
+    );
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).toMatchObject({
+      leaderName: "@old",
+      leaderUsername: "new",
+    });
+    expect(accountsAsked).toEqual([leaderId]);
+  });
+
+  it("leaves the account out when the screen names nobody", async () => {
+    const { run, accountsAsked } = running(final([live(), held], lotId), {
+      accounts: {
+        [leaderId]: { kind: "resolved", telegramUsername: "batman" },
+      },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).not.toHaveProperty("leaderUsername");
+    expect(accountsAsked).toEqual([]);
   });
 
   it("closes a lot without bids without a sale", async () => {

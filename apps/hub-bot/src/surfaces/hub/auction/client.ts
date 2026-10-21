@@ -59,7 +59,7 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
-import type { Person } from "../application/types.js";
+import type { Person, RemovalRefusal } from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
   type AddLotResult,
@@ -68,6 +68,7 @@ import {
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
+  type AuctionVisibilityResult,
   type CancelAuctionResult,
   type CloseLotResult,
   type ConsoleReadResult,
@@ -81,9 +82,12 @@ import {
   type LaunchStepWindowResult,
   type LotAdministration,
   type LotCardResult,
+  type LotParticipant,
   type LotStatisticsReadResult,
   type LotStepPolicyInput,
   type MeetupAuctions,
+  type RemovalPreviewResult,
+  type RemoveParticipantResult,
   type ScheduleAuctionResult,
   type ScheduleLotResult,
   type StartFinalResult,
@@ -128,6 +132,8 @@ type AuctionRpc = Pick<
   | "startPrebidding"
   | "discardAuction"
   | "cancelAuction"
+  | "publishAuction"
+  | "hideAuction"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -135,6 +141,8 @@ type AuctionRpc = Pick<
   | "startNextLot"
   | "advanceAsk"
   | "closeLot"
+  | "previewParticipantRemoval"
+  | "removeParticipant"
 >;
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
@@ -592,6 +600,28 @@ export function createAuctionAdapter(
         return auctionMissing(cause) ?? toFailure(cause);
       }
     },
+    async publishAuction(person, publish, meta) {
+      try {
+        const response = await rpc.publishAuction(
+          { viewer: wireViewer(viewerOf(person)), ...publish },
+          options(meta),
+        );
+        return visibilityResult(response.outcome, "publish");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async hideAuction(person, hide, meta) {
+      try {
+        const response = await rpc.hideAuction(
+          { viewer: wireViewer(viewerOf(person)), ...hide },
+          options(meta),
+        );
+        return visibilityResult(response.outcome, "hide");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
     async selectForFinal(person, mark, meta) {
       try {
         const response = await rpc.selectForFinal(
@@ -724,10 +754,13 @@ export function createAuctionAdapter(
           );
           bids = [
             ...bids,
-            ...history.entries.map((entry) => ({
-              amount: entry.amount,
-              participantId: entry.participantId,
-            })),
+            // Снятый с лота (ADR-072) на нём больше не ставит: его ставки и
+            // запись снятия в последние ставки не идут.
+            ...history.entries.flatMap((entry) =>
+              entry.kind === "bid" && entry.removed !== true
+                ? [{ amount: entry.amount, participantId: entry.participantId }]
+                : [],
+            ),
           ].slice(-read.limit);
           pageToken = history.nextPageToken;
           if (pageToken === "") break;
@@ -819,6 +852,87 @@ export function createAuctionAdapter(
         if (cause instanceof ConnectError && cause.code === Code.NotFound) {
           return { kind: "not-found" };
         }
+        return toFailure(cause);
+      }
+    },
+    // Участники лота для снятия (PER-659): хронология целиком, порядок —
+    // первой ставки. Недочитанная хронология дала бы неполный список, а
+    // человек, которого нет в списке, снять не может, — это отказ, а не
+    // экран. Имена — одним вызовом; их отказ роняет экран: кнопка без имени
+    // назвала бы человека идентификатором.
+    async lotParticipants(person, read, meta) {
+      const viewer = wireViewer(viewerOf(person));
+      const participants = new Map<string, LotParticipant>();
+      try {
+        let pageToken = "";
+        for (let page = 0; page < historyPageLimit; page += 1) {
+          const history = historyPageOf(
+            await rpc.listLotHistory(
+              { viewer, lotId: read.lotId, pageToken },
+              options(meta),
+            ),
+          );
+          for (const entry of history.entries) {
+            if (entry.kind !== "bid") continue;
+            const known = participants.get(entry.participantId);
+            participants.set(entry.participantId, {
+              participantId: entry.participantId,
+              removed: known?.removed === true || entry.removed === true,
+            });
+          }
+          pageToken = history.nextPageToken;
+          if (pageToken === "") break;
+        }
+        if (pageToken !== "") {
+          return defect(`lot history longer than ${historyPageLimit} pages`);
+        }
+      } catch (cause) {
+        return toFailure(cause);
+      }
+      const ids = [...participants.keys()];
+      if (ids.length === 0) return { kind: "ok", participants: [] };
+      try {
+        const response = await rpc.getDisplayNames(
+          { viewer, auctionId: read.auctionId, participantIds: ids },
+          options(meta),
+        );
+        return {
+          kind: "ok",
+          participants: [...participants.values()].map((each) => {
+            const name = response.names[each.participantId]?.text;
+            return name === undefined || name === "" ? each : { ...each, name };
+          }),
+        };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async previewParticipantRemoval(person, target, meta) {
+      try {
+        const response = await rpc.previewParticipantRemoval(
+          { viewer: wireViewer(viewerOf(person)), ...target },
+          options(meta),
+        );
+        return removalPreviewResult(response.outcome);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async removeParticipant(person, removal, meta) {
+      try {
+        const response = await rpc.removeParticipant(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: removal.auctionId,
+            lotId: removal.lotId,
+            participantId: removal.participantId,
+            expectedVersion: BigInt(removal.expectedVersion),
+            opId: removal.opId,
+          },
+          options(meta),
+        );
+        return removeParticipantResult(response.outcome);
+      } catch (cause) {
         return toFailure(cause);
       }
     },
@@ -1593,6 +1707,41 @@ function cancelAuctionResult(
   }
 }
 
+// Ответы публикации и снятия одной формы (PER-673): общий
+// `AuctionVisibilityRefusal`, принятие без полей.
+function visibilityResult(
+  outcome: Awaited<ReturnType<AuctionRpc["publishAuction"]>>["outcome"],
+  command: "publish" | "hide",
+): AuctionVisibilityResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "auctionAlreadyStarted":
+          return { kind: "already-started" };
+        case undefined:
+          return defect(`${command} auction refusal without a reason`);
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect(`${command} auction response without an outcome`);
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
 function discardAuctionResult(
   outcome: Awaited<ReturnType<AuctionRpc["discardAuction"]>>["outcome"],
 ): DiscardAuctionResult {
@@ -1896,6 +2045,112 @@ function closeLotResult(
     }
     case undefined:
       return defect("close lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Отказ снятия участника (ADR-072). Право и сходку пульт называет общими
+// кадрами; `lot-changed` предпросмотр не отдаёт — у него это дефект соседа.
+type RemovalReason = Extract<
+  Awaited<ReturnType<AuctionRpc["removeParticipant"]>>["outcome"],
+  { case: "refused" }
+>["value"]["reason"];
+
+function removalRefusal(
+  reason: RemovalReason,
+  command: string,
+): Exclude<RemoveParticipantResult, { kind: "ok" }> {
+  const refused = (reason: RemovalRefusal) => ({
+    kind: "refused" as const,
+    reason,
+  });
+  switch (reason.case) {
+    case "notMeetupAdministrator":
+      return { kind: "not-administrator" };
+    case "meetupNotFound":
+      return { kind: "meetup-not-found" };
+    case "meetupCancelled":
+      return { kind: "meetup-cancelled" };
+    case "lotNotInAuction":
+      return refused("lot-not-in-auction");
+    case "notInPrebidding":
+      return refused("not-in-prebidding");
+    case "lineupFrozen":
+      return refused("lineup-frozen");
+    case "lotNotOpen":
+      return refused("lot-not-open");
+    case "notInOnlinePhase":
+      return refused("not-in-online-phase");
+    case "deadlinePassed":
+      return refused("deadline-passed");
+    case "notALotParticipant":
+      return refused("not-a-lot-participant");
+    case "participantAlreadyRemoved":
+      return refused("already-removed");
+    case "lotChanged":
+      return { kind: "lot-changed" };
+    case undefined:
+      return defect(`${command} refusal without a reason`);
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+function removalPreviewResult(
+  outcome: Awaited<
+    ReturnType<AuctionRpc["previewParticipantRemoval"]>
+  >["outcome"],
+): RemovalPreviewResult {
+  switch (outcome.case) {
+    case "preview": {
+      const preview = outcome.value;
+      if (preview.price === undefined || preview.version < 1n) {
+        return defect("removal preview without a price or version");
+      }
+      return {
+        kind: "ok",
+        preview: {
+          price: moneyOf(preview.price),
+          version: Number(preview.version),
+          ...(preview.leaderId === undefined
+            ? {}
+            : { leaderId: preview.leaderId }),
+          ...(preview.extendedDeadline === undefined
+            ? {}
+            : { extendedDeadline: preview.extendedDeadline }),
+        },
+      };
+    }
+    case "refused": {
+      const refused = removalRefusal(outcome.value.reason, "removal preview");
+      return refused.kind === "lot-changed"
+        ? defect("removal preview refused with lot changed")
+        : refused;
+    }
+    case undefined:
+      return defect("removal preview response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function removeParticipantResult(
+  outcome: Awaited<ReturnType<AuctionRpc["removeParticipant"]>>["outcome"],
+): RemoveParticipantResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", lotVersion: Number(outcome.value.lotVersion) };
+    case "refused":
+      return removalRefusal(outcome.value.reason, "remove participant");
+    case undefined:
+      return defect("remove participant response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
