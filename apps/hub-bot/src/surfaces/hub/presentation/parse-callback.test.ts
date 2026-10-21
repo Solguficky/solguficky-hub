@@ -12,6 +12,8 @@ import {
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
+  consoleFinalTimeData,
+  consoleFinalTimeRemoveData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -1395,6 +1397,11 @@ describe("auction console callbacks", () => {
         consoleFinalData(auction, false),
         { kind: "console-final", auction, final: false },
       ],
+      [consoleFinalTimeData(auction), { kind: "console-final-time", auction }],
+      [
+        consoleFinalTimeRemoveData(auction),
+        { kind: "console-final-time-remove", auction },
+      ],
       [
         consoleFinalData(auction, true),
         { kind: "console-final", auction, final: true },
@@ -1550,6 +1557,15 @@ describe("auction console callbacks", () => {
     const askedBy = 9007199254740991;
     const step: QuestionStep = { kind: "console-raffle", auction };
     const asked = `v1:q:ar:${auction}:${askedBy}`;
+    expect(questionData(step, askedBy)).toBe(asked);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+  });
+
+  it("carries the auction of the final time question in its cancel button", () => {
+    const askedBy = 9007199254740991;
+    const step: QuestionStep = { kind: "console-final-time", auction };
+    const asked = `v1:q:ft:${auction}:${askedBy}`;
     expect(questionData(step, askedBy)).toBe(asked);
     expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
     expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });

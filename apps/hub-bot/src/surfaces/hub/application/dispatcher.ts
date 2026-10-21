@@ -271,6 +271,9 @@ export function createDispatcher(
         case "remove-auction-raffle-prize":
         case "set-auction-final":
         case "set-auction-visibility":
+        case "ask-auction-final-time":
+        case "set-auction-final-time":
+        case "remove-auction-final-time":
         case "start-auction-week":
         case "mark-auction-finalist":
         case "prepare-auction-discard":
