@@ -545,10 +545,11 @@ final class AuctionCommands(
       opId: OpId,
       person: ParticipantId
   ): Future[Either[PaymentInstructionsRefusal, Unit]] = {
-    // Выставить и снять — разные события: снятие под `op_id` выставления — чужая команда.
+    // Выставить и снять — разные события: снятие под `op_id` выставления — чужая команда. Другой текст под тем же
+    // `op_id` — тоже чужая команда: тихое «принято» сообщило бы о тексте, которого в журнале нет.
     def ours(envelope: AuctionEnvelope): Boolean =
       envelope.event match {
-        case AuctionEvent.PaymentInstructionsSet(_) => text.isDefined
+        case AuctionEvent.PaymentInstructionsSet(recorded) => text.contains(recorded)
         case AuctionEvent.PaymentInstructionsCleared => text.isEmpty
         case _ => false
       }
