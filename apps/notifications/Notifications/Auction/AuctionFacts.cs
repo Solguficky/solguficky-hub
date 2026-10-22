@@ -34,6 +34,9 @@ public static class AuctionFacts
     public const string RaffleResultType = "raffle_result";
     public const string RaffleCauseKind = "auction_raffle_event";
 
+    /// <summary>Собранный сет: одно сообщение самому собравшему (PER-687).</summary>
+    public const string LotSetCollectedType = "lot_set_collected";
+
     public const string PredictionResultsType = "prediction_results";
     public const string PredictionResultsCauseKind = "auction_prediction_results_event";
 
@@ -214,6 +217,34 @@ public static class AuctionFacts
             NotAfter = notAfter.ToUniversalTime().ToString("O"),
             Cause = new Cause { AuctionRaffleEventId = draw.EventId.ToString() },
             RaffleResult = body,
+        };
+    }
+
+    /// <summary>
+    /// Итог сета одному собравшему. Состав лотов не несём: канал открывает
+    /// существующий экран сета с первого лота по порядку организатора.
+    /// </summary>
+    public static Notification LotSetCollected(Guid notificationId, CollectedLotSet set, DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        if (set.LotIds.Count < 2)
+        {
+            throw new ArgumentException("a collected lot set must contain at least two lots", nameof(set));
+        }
+
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = set.CollectorId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = new Cause { AuctionEventId = set.EventId.ToString() },
+            LotSetCollected = new global::Notifications.V1.LotSetCollected
+            {
+                SetName = set.Name,
+                LotCount = (uint)set.LotIds.Count,
+                LotId = set.LotIds[0].ToString(),
+            },
         };
     }
 

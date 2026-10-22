@@ -7,6 +7,7 @@ import {
 } from "../../../../gen/identity/v1/access_pb.js";
 import {
   LotActivityKind,
+  LotSetCollectedSchema,
   NotificationSchema,
   StepWindowStartedSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
@@ -273,6 +274,32 @@ describe("decodeNotification", () => {
           ticket: 7,
           winningTicket: 7,
           ticketCount: 12,
+        },
+      },
+    });
+  });
+
+  // Гостю сообщение о собранном сете доставляет бот аукциона.
+  it("decodes a collected lot set with its screen anchor", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "lotSetCollected",
+          value: create(LotSetCollectedSchema, {
+            setName: "Сервиз",
+            lotCount: 3,
+            lotId,
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-set-collected",
+          setName: "Сервиз",
+          lotCount: 3,
+          lotId,
         },
       },
     });

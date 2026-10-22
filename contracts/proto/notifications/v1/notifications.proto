@@ -198,6 +198,12 @@ message Notification {
     // moment of the same reminder, so it is a type of its own: the two moments
     // must not collide on the cause key.
     InvoiceDueReminder invoice_due_reminder = 37;
+
+    // The collectible set of lots was collected by the recipient: every lot of
+    // the set was sold to them. One fact per collected set, addressed to the
+    // collector alone and delivered by the bot of their circle. No category
+    // governs it: one message per set.
+    LotSetCollected lot_set_collected = 38;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -797,4 +803,21 @@ message CircleChanged {
 
   // The circle the person has after the event.
   identity.v1.Circle current_circle = 2;
+}
+
+// The collectible set of lots was collected by the recipient: every lot of the
+// set was sold to them (ADR-073, p. 7). The set is named and counted; the titles
+// of the lots are not carried: they are catalog attributes outside the trading
+// domain, and the channel reads them from the set screen its button opens.
+message LotSetCollected {
+  // The name of the set as the organizer typed it.
+  string set_name = 1;
+
+  // How many lots the set has. At least two: a set of fewer lots is incomplete,
+  // and an incomplete set is never collected.
+  uint32 lot_count = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the lot of the set the set screen
+  // opens from. The set is read from the snapshot of a lot of it.
+  string lot_id = 3;
 }

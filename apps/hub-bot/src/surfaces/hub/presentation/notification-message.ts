@@ -14,6 +14,7 @@ import type {
   LotNotice,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
+import { renderLotSetNotice } from "../../../core/notifications/lot-set-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
 import type { StepWindowNotice } from "../../../core/notifications/step-window-notice.js";
 import {
@@ -199,6 +200,22 @@ export function renderNotification(
           `v1:${encodeAuctionCallback({ kind: "raffle", auctionId: view.button.auctionId }).slice(3)}`,
         ),
       ),
+    };
+  }
+  if (content.kind === "lot-set-collected") {
+    // Собранный сет (PER-687): имя сета — текст организатора. Экранируем всё
+    // тело в HTML-режиме; кнопка следа открывает существующий экран сета новым
+    // сообщением, не изменяя весть.
+    const view = renderLotSetNotice(content);
+    return {
+      text: escapeHtml(view.text),
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "set", lotId: view.button.lotId, page: 0 }).slice(3)}`,
+        ),
+      ),
+      format: "HTML",
     };
   }
   if (content.kind === "auction-cancelled") {

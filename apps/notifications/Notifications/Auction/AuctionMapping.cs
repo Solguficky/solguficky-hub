@@ -111,6 +111,13 @@ public sealed record RaffleDraw(Guid EventId, Guid AuctionId, long Version, Date
     IReadOnlyList<Guid> Tickets, int WinningTicket, string? Prize = null);
 
 /// <summary>
+/// Проверенный итог сета (ADR-073, п. 7; PER-687): название сета, его состав
+/// по порядку организатора и собравший — тот, кому проданы все лоты сета.
+/// </summary>
+public sealed record CollectedLotSet(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
+    string Name, IReadOnlyList<Guid> LotIds, Guid CollectorId);
+
+/// <summary>
 /// Итог номинации: лоты, делившие первое место, или число — ровно одно из
 /// двух, — сколько угадали и имена угадавших. Стёртого имени нет, а в числе
 /// угадавших он остаётся.
@@ -192,6 +199,7 @@ public abstract record AuctionDecoded
     public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
     public sealed record Announcement(AuctionAnnouncement Value) : AuctionDecoded;
     public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
+    public sealed record LotSet(CollectedLotSet Value) : AuctionDecoded;
     public sealed record Predictions(PredictionSettlement Value) : AuctionDecoded;
     public sealed record Invoice(AuctionInvoice Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
@@ -217,6 +225,10 @@ public static class AuctionMapping
         if (subject == AuctionFeed.RaffleDrawnSubject)
         {
             return DecodeRaffle(payload);
+        }
+        if (subject == AuctionFeed.LotSetCollectedSubject)
+        {
+            return DecodeLotSetCollected(payload);
         }
         if (subject == AuctionFeed.PredictionResultsSettledSubject)
         {
@@ -569,6 +581,61 @@ public static class AuctionMapping
     // победитель получил бы «Приз:» без приза.
     private static string? Prize(RaffleState state) =>
         state.HasRafflePrize && !string.IsNullOrWhiteSpace(state.RafflePrize) ? state.RafflePrize : null;
+
+    // Сет не является статусом аукциона: его итог не меняет снимок AuctionState,
+    // поэтому эта ветка отдельно от DecodeAuction. Для сообщения нужны только
+    // имя, число и первый лот для экрана сета; снимок проверяется лишь на то,
+    // что он принадлежит конверту, но его статус не сопоставляется с поводом.
+    private static AuctionDecoded DecodeLotSetCollected(ReadOnlyMemory<byte> payload)
+    {
+        AuctionEvent message;
+        try
+        {
+            message = AuctionEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            return new AuctionDecoded.Poison("not an auction.v1.AuctionEvent");
+        }
+
+        if (!Id(message.EventId, out var eventId) || !AuctionId(message.AuctionId) || message.Version < 1)
+        {
+            return new AuctionDecoded.Poison("event_id, auction_id or version is invalid");
+        }
+        if (!Instant(message.OccurredAt, out var occurredAt))
+        {
+            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
+        }
+        if (message.OccasionCase != AuctionEvent.OccasionOneofCase.LotSetCollected)
+        {
+            return new AuctionDecoded.Poison($"{AuctionFeed.LotSetCollectedSubject} subject does not match occasion");
+        }
+        if (message.State is not { } state || state.Id != message.AuctionId)
+        {
+            return new AuctionDecoded.Poison("state does not identify the auction");
+        }
+
+        var set = message.LotSetCollected;
+        if (!Id(set.LotSetId, out _) || !Id(set.CollectorId, out var collectorId) ||
+            string.IsNullOrWhiteSpace(set.Name) || set.LotIds.Count < 2)
+        {
+            return new AuctionDecoded.Poison("lot set id, name, collector or lot count is invalid");
+        }
+
+        var lotIds = new List<Guid>(set.LotIds.Count);
+        var seen = new HashSet<Guid>();
+        foreach (var value in set.LotIds)
+        {
+            if (!Id(value, out var lotId) || !seen.Add(lotId))
+            {
+                return new AuctionDecoded.Poison("lot set lot id is invalid or repeated");
+            }
+            lotIds.Add(lotId);
+        }
+
+        return new AuctionDecoded.LotSet(new CollectedLotSet(eventId, Guid.Parse(message.AuctionId), message.Version,
+            occurredAt, set.Name, lotIds, collectorId));
+    }
 
     // Факт итогов один на аукцион, и яд теряет его для всех сразу, поэтому
     // ядом остаётся только то, что исказило бы сообщение, — номинация без

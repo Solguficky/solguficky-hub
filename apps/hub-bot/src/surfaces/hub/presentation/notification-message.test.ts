@@ -232,6 +232,53 @@ describe("renderNotification", () => {
     ]);
   });
 
+  // Собранный сет (PER-687): имя организатора безопасно экранируется, а след
+  // открывает существующий экран состава новым сообщением.
+  it("names and counts the collected set with one traced button", () => {
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: "<Сервиз & чашки>",
+      lotCount: 3,
+      lotId,
+    });
+
+    expect(message.text).toBe(
+      "Ты собрал сет «&lt;Сервиз &amp; чашки&gt;»: в нём 3 лота.",
+    );
+    expect(message.format).toBe("HTML");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К сету",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "set", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  it("passes the screen linter with organizer text escaped as HTML", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: "<Сервиз & чашки>",
+      lotCount: 3,
+      lotId,
+    });
+
+    await sender.send({ telegramUserId: 42n, message });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
+  });
+
   // Извещение об отмене аукциона (PER-606): покупателю — строка о покупке,
   // кнопка следа — корень аукциона новым сообщением.
   it("tells about a cancelled auction with a traced button to its root", () => {
