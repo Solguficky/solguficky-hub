@@ -252,8 +252,8 @@ describe("renderNotification", () => {
     ]);
   });
 
-  // Собранный сет (PER-687): имя организатора безопасно экранируется, а след
-  // открывает существующий экран состава новым сообщением.
+  // Собранный сет (PER-687): весть простым текстом, имя организатора — как
+  // есть, а след открывает существующий экран состава новым сообщением.
   it("names and counts the collected set with one traced button", () => {
     const message = renderNotification({
       kind: "lot-set-collected",
@@ -263,9 +263,9 @@ describe("renderNotification", () => {
     });
 
     expect(message.text).toBe(
-      "Ты собрал сет «&lt;Сервиз &amp; чашки&gt;»: в нём 3 лота.",
+      "Ты собрал сет «<Сервиз & чашки>»: в нём 3 лота.",
     );
-    expect(message.format).toBe("HTML");
+    expect(message.format).toBeUndefined();
     expect(message.keyboard?.inline_keyboard).toEqual([
       [
         {
@@ -276,7 +276,7 @@ describe("renderNotification", () => {
     ]);
   });
 
-  it("passes the screen linter with organizer text escaped as HTML", async () => {
+  it("passes the screen linter with organizer text in plain text", async () => {
     const sent: unknown[] = [];
     const sender = createNotificationSender({
       sendMessage: vi.fn(async (chat: number, text: string, extra) => {
@@ -300,7 +300,7 @@ describe("renderNotification", () => {
     ).toEqual([]);
   });
 
-  it("keeps an escaped long set name within Telegram's text limit", () => {
+  it("keeps a long set name within Telegram's text limit", () => {
     const message = renderNotification({
       kind: "lot-set-collected",
       setName: '"'.repeat(1_000),

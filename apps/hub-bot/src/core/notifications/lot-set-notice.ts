@@ -1,5 +1,6 @@
 import type { LotSetCollected } from "../../../gen/notifications/v1/notifications_pb.js";
 import { lotWord, truncate } from "../format.js";
+import { canonical } from "./lot-notice.js";
 
 // Итог коллекционного сета (ADR-073, п. 7; PER-687): участнику его доставляет
 // бот хаба, гостю — бот аукциона. Получатель уже назван фактом, поэтому права,
@@ -14,42 +15,20 @@ export type LotSetNotice = {
   lotId: string;
 };
 
-const CANONICAL_UUID_V7 =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-// Match Auction's LotSetName blank rule (Character.isWhitespace or isSpaceChar).
-// String.trim() is broader: it treats U+FEFF as whitespace, which Auction does not.
-const UNICODE_SEPARATOR = /^\p{Z}$/u;
-
-function isBlankSetName(value: string): boolean {
-  return value.split("").every((character) => {
-    const code = character.charCodeAt(0);
-    return (
-      UNICODE_SEPARATOR.test(character) ||
-      (code >= 0x09 && code <= 0x0d) ||
-      (code >= 0x1c && code <= 0x1f)
-    );
-  });
-}
-
 // Факт — ввод соседа: имя, число и lot id — всё, что нужно сообщению и его
-// кнопке. Пустой сет не бывает собранным, а неверный lot id не откроет экран.
+// кнопке. Пустой сет не бывает собранным, а неканонический lot id уронил бы
+// кодировщик кнопки. Пустое имя сета отсеивает Notifications при разборе
+// факта Auction тем же правилом, что Auction, и здесь оно не повторяется.
 export function lotSetNoticeOf(
   value: LotSetCollected,
 ): LotSetNotice | undefined {
-  if (
-    isBlankSetName(value.setName) ||
-    !Number.isInteger(value.lotCount) ||
-    value.lotCount < 2 ||
-    value.lotCount > 0xffff_ffff ||
-    !CANONICAL_UUID_V7.test(value.lotId)
-  ) {
-    return undefined;
-  }
+  const lotId = canonical(value.lotId);
+  if (value.lotCount < 2 || lotId === undefined) return undefined;
   return {
     kind: "lot-set-collected",
     setName: value.setName,
     lotCount: value.lotCount,
-    lotId: value.lotId,
+    lotId,
   };
 }
 
@@ -57,8 +36,8 @@ export type LotSetNoticeButton = { lotId: string; text: string };
 export type LotSetNoticeView = { text: string; button: LotSetNoticeButton };
 
 const toLotSetLabel = "К сету";
-// A 600-unit name stays within Telegram's 4096-unit text limit after Hub HTML
-// escaping, even if every character expands to `&quot;`.
+// Имя сета пишет организатор: длинное обрезается, чтобы весть осталась одной
+// фразой и с запасом укладывалась в предел текста Telegram.
 const maxSetNameLength = 600;
 
 // Одна фраза на «ты», без заголовка и шапки (дизайн-код, «Уведомления

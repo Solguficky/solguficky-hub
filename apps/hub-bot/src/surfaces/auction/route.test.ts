@@ -711,21 +711,34 @@ describe("routeAuctionCallback", () => {
     });
   });
 
-  it("treats a missing set anchor as outdated instead of offering a futile retry", async () => {
-    const p = ports(identity({ rights: GUEST }));
-    vi.mocked(p.auction.getLot).mockRejectedValueOnce(
-      new ConnectError("not found", Code.NotFound),
-    );
+  // Лот, которого Auction больше не отдаёт, повтором не откроется: карточка,
+  // хронология и экран сета получают кадр устаревшего экрана, как в хабе.
+  it.each([
+    ["a lot card", lotButton],
+    ["a set screen", setButton],
+    [
+      "a bid history",
+      encodeAuctionCallback({
+        kind: "history",
+        lotId,
+        page: 0,
+        historyPage: 0,
+      }),
+    ],
+  ])(
+    "treats a missing lot behind %s as outdated instead of offering a futile retry",
+    async (_name, data) => {
+      const p = ports(identity({ rights: GUEST }));
+      vi.mocked(p.auction.getLot).mockRejectedValue(
+        new ConnectError("not found", Code.NotFound),
+      );
 
-    const outcome = await routeAuctionCallback({
-      ports: p,
-      user,
-      data: setButton,
-    });
+      const outcome = await routeAuctionCallback({ ports: p, user, data });
 
-    expect(outcome.screen).toEqual({ kind: "outdated" });
-    expect(outcome.failure).toBeUndefined();
-  });
+      expect(outcome.screen).toEqual({ kind: "outdated" });
+      expect(outcome.failure).toBeUndefined();
+    },
+  );
 
   // Критерий PER-306: недоступный Auction — именованный экран, а не пустая
   // лента.

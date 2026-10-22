@@ -222,31 +222,24 @@ public static class AuctionFacts
 
     /// <summary>
     /// Итог сета одному собравшему. Состав лотов не несём: канал открывает
-    /// существующий экран сета с первого лота по порядку организатора.
+    /// существующий экран сета с первого лота по порядку организатора. Сет
+    /// меньше двух лотов сюда не доходит: его отравляет разбор факта.
     /// </summary>
     public static Notification LotSetCollected(Guid notificationId, CollectedLotSet set, DateTimeOffset now,
-        DateTimeOffset notAfter)
+        DateTimeOffset notAfter) => new()
     {
-        if (set.LotIds.Count < 2)
+        NotificationId = notificationId.ToString(),
+        RecipientId = set.CollectorId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionEventId = set.EventId.ToString() },
+        LotSetCollected = new global::Notifications.V1.LotSetCollected
         {
-            throw new ArgumentException("a collected lot set must contain at least two lots", nameof(set));
-        }
-
-        return new Notification
-        {
-            NotificationId = notificationId.ToString(),
-            RecipientId = set.CollectorId.ToString(),
-            CreatedAt = now.ToUniversalTime().ToString("O"),
-            NotAfter = notAfter.ToUniversalTime().ToString("O"),
-            Cause = new Cause { AuctionEventId = set.EventId.ToString() },
-            LotSetCollected = new global::Notifications.V1.LotSetCollected
-            {
-                SetName = set.Name,
-                LotCount = (uint)set.LotIds.Count,
-                LotId = set.LotIds[0].ToString(),
-            },
-        };
-    }
+            SetName = set.Name,
+            LotCount = (uint)set.LotIds.Count,
+            LotId = set.LotIds[0].ToString(),
+        },
+    };
 
     /// <summary>
     /// Анонс состава одному человеку: весь состав с ценами удержания и те его

@@ -452,16 +452,24 @@ async function routeEntry(input: {
       }),
     );
   } catch (cause) {
-    // Экран сета начинается с якорного GetLot. Если лот исчез или стал
-    // невидимым, это устаревшая кнопка, а не временный отказ Auction: повтор
-    // неизменённого callback не сможет открыть уже недоступный якорь.
+    // Карточка, хронология, избранное и экран сета начинаются с GetLot. Лот,
+    // который исчез или стал невидимым, — устаревшая кнопка, а не временный
+    // отказ Auction: повтор того же callback его не откроет. Список намерений
+    // тот же, что у хаба (bot.ts).
     if (
       cause instanceof ConnectError &&
       cause.code === Code.NotFound &&
       input.action.kind === "callback"
     ) {
       const parsed = parseAuctionCallback(input.action.data);
-      if (parsed.ok && parsed.intent.kind === "set") {
+      if (
+        parsed.ok &&
+        (parsed.intent.kind === "lot" ||
+          parsed.intent.kind === "set" ||
+          parsed.intent.kind === "history" ||
+          parsed.intent.kind === "follow" ||
+          parsed.intent.kind === "unfollow")
+      ) {
         return { screen: { kind: "outdated" }, identityId };
       }
     }

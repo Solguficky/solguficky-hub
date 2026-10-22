@@ -22,30 +22,8 @@ describe("lotSetNoticeOf", () => {
     });
   });
 
-  it("matches Auction blank-name handling for U+FEFF", () => {
-    expect(lotSetNoticeOf(lotSetCollected(3, "\uFEFF"))).toMatchObject({
-      setName: "\uFEFF",
-    });
-  });
-
-  it("matches Auction blank-name handling for U+0085", () => {
-    expect(lotSetNoticeOf(lotSetCollected(3, "\u0085"))).toMatchObject({
-      setName: "\u0085",
-    });
-  });
-
   it.each([
-    ["an empty set name", lotSetCollected(3, "  ")],
-    [
-      "a set name made of Java whitespace controls",
-      lotSetCollected(3, "\u001c"),
-    ],
     ["a set with fewer than two lots", lotSetCollected(1)],
-    ["a non-integer lot count", lotSetCollected(2.5)],
-    [
-      "a lot id that is not UUIDv7",
-      lotSetCollected(3, "Сервиз", "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b"),
-    ],
     [
       "a non-canonical lot id",
       lotSetCollected(3, "Сервиз", lotId.toUpperCase()),

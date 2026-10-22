@@ -44,6 +44,7 @@ import {
   type LotSetNotice,
   lotSetNoticeOf,
 } from "../../../core/notifications/lot-set-notice.js";
+import {
   type PredictionResultsNotice,
   predictionResultsNoticeOf,
 } from "../../../core/notifications/prediction-results-notice.js";

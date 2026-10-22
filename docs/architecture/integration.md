@@ -782,7 +782,7 @@ Subject называет повод, сообщение на всех повод
 |---|---|---|---|
 | `notifications-meetups-events` | `MEETUPS_EVENTS` | `events.meetups.>` | Notifications, реплика сходок |
 | `notifications-identity-events` | `IDENTITY_EVENTS` | `events.identity.>` | Notifications, реплика доступа |
-| `notifications-auction-events` | `AUCTION_EVENTS` | `events.auction.>` | Notifications, отдельный модуль поводов Auction: `bid_placed`, `lot_sold`, `participant_removed` ([PER-672](https://linear.app/anticnvm/issue/per-672)) и `lot_set_collected` ([PER-687]); реплика лота избранного по всем фактам лота и задания напоминаний по фактам, меняющим дедлайн и положение лота ([PER-496](https://linear.app/anticnvm/issue/per-496)) |
+| `notifications-auction-events` | `AUCTION_EVENTS` | `events.auction.>` | Notifications, отдельный модуль поводов Auction: `bid_placed`, `lot_sold`, `participant_removed` ([PER-672](https://linear.app/anticnvm/issue/per-672)) и `lot_set_collected` ([PER-687](https://linear.app/anticnvm/issue/per-687)); реплика лота избранного по всем фактам лота и задания напоминаний по фактам, меняющим дедлайн и положение лота ([PER-496](https://linear.app/anticnvm/issue/per-496)) |
 | `auction-meetups-events` | `MEETUPS_EVENTS` | `events.meetups.meetup_cancelled` | Auction, наследование отмены сходки ([PER-602](https://linear.app/anticnvm/issue/per-602)): остальные поводы Meetups ему не адресованы |
 | `nats-tester-auction-events` | `AUCTION_EVENTS` | `events.auction.>` | `tools/nats-tester`, ручная проверка |
 | `hub-bot-notifications-events` | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | Hub Bot, канал доставки уведомлений |

@@ -219,19 +219,18 @@ export function renderNotification(
     };
   }
   if (content.kind === "lot-set-collected") {
-    // Собранный сет (PER-687): имя сета — текст организатора. Экранируем всё
-    // тело в HTML-режиме; кнопка следа открывает существующий экран сета новым
-    // сообщением, не изменяя весть.
+    // Собранный сет (PER-687): весть простым текстом, как итог розыгрыша, так
+    // что имя сета от организатора экранировать не нужно; кнопка следа
+    // открывает существующий экран сета новым сообщением, не изменяя весть.
     const view = renderLotSetNotice(content);
     return {
-      text: escapeHtml(view.text),
+      text: view.text,
       keyboard: new InlineKeyboard().text(
         view.button.text,
         traceCallback(
           `v1:${encodeAuctionCallback({ kind: "set", lotId: view.button.lotId, page: 0 }).slice(3)}`,
         ),
       ),
-      format: "HTML",
     };
   }
   if (content.kind === "auction-cancelled") {
