@@ -14,6 +14,7 @@ import type {
   LotNotice,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
+import { renderPredictionResultsNotice } from "../../../core/notifications/prediction-results-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
 import type { StepWindowNotice } from "../../../core/notifications/step-window-notice.js";
 import {
@@ -185,6 +186,21 @@ export function renderNotification(
           ? "Аукцион теперь в боте аукциона."
           : `Аукцион теперь в боте аукциона: https://t.me/${auctionBotUsername}`,
       keyboard: undefined,
+    };
+  }
+  if (content.kind === "prediction-results") {
+    const view = renderPredictionResultsNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({
+            kind: "prediction-results",
+            auctionId: view.button.auctionId,
+          }).slice(3)}`,
+        ),
+      ),
     };
   }
   if (content.kind === "raffle-result") {

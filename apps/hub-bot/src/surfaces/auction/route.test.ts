@@ -125,6 +125,9 @@ function ports(
         throw new Error("not used");
       }),
       getMyPredictions: vi.fn(async () => []),
+      getPredictionResults: vi.fn(async () => {
+        throw new Error("not used");
+      }),
       submitPrediction: vi.fn(async () => {
         throw new Error("not used");
       }),

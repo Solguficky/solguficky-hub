@@ -108,6 +108,9 @@ function surfaceFor(
         async getMyPredictions() {
           return [];
         },
+        async getPredictionResults() {
+          throw new Error("not used");
+        },
         async submitPrediction() {
           throw new Error("not used");
         },

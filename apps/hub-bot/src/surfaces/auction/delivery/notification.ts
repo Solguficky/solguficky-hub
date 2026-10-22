@@ -30,6 +30,7 @@ import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
+import type { PredictionResultsNotice } from "../../../core/notifications/prediction-results-notice.js";
 import {
   type RaffleNotice,
   raffleNoticeOf,
@@ -50,6 +51,7 @@ export type AuctionNotificationContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота хаба.
   | RaffleNotice
+  | PredictionResultsNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота хаба.
   | AuctionCancelledNotice
   // Начало окна «Счастливых часов» на отмеченных лотах (PER-616) — то же,

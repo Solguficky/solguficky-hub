@@ -40,6 +40,7 @@ import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
+import type { PredictionResultsNotice } from "../../../core/notifications/prediction-results-notice.js";
 import {
   type RaffleNotice,
   raffleNoticeOf,
@@ -135,6 +136,7 @@ export type RenderableContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
   | RaffleNotice
+  | PredictionResultsNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота
   // аукциона.
   | AuctionCancelledNotice

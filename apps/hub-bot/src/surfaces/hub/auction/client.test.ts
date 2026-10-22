@@ -137,6 +137,7 @@ function adapter(rpc: {
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
     getMyPredictions: notUsed,
+    getPredictionResults: notUsed,
     submitPrediction: notUsed,
     getLotImage: notUsed,
     getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,

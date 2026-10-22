@@ -31,6 +31,10 @@ import {
   renderLotNotice,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type PredictionResultsNotice,
+  renderPredictionResultsNotice,
+} from "../../../core/notifications/prediction-results-notice.js";
+import {
   type RaffleNotice,
   renderRaffleNotice,
 } from "../../../core/notifications/raffle-notice.js";
@@ -80,6 +84,13 @@ export function traceRaffleCallback(auctionId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "raffle", auctionId })}`;
 }
 
+export function tracePredictionResultsCallback(auctionId: string): string {
+  return `${tracePrefix}${encodeAuctionCallback({
+    kind: "prediction-results",
+    auctionId,
+  })}`;
+}
+
 // «К аукциону» под извещением об отмене (PER-606) — корень аукциона дерева
 // тем же путём, что кнопка аукциона в списке.
 export function traceRootCallback(auctionId: string): string {
@@ -119,6 +130,7 @@ export function parseTraceCallback(data: string): string | undefined {
   return parsed.ok &&
     (parsed.intent.kind === "lot" ||
       parsed.intent.kind === "raffle" ||
+      parsed.intent.kind === "prediction-results" ||
       parsed.intent.kind === "feed" ||
       parsed.intent.kind === "root")
     ? inner
@@ -166,7 +178,10 @@ export function createRenderMessage(
     }
     // Итог розыгрыша (PER-620) права не спрашивает: жеребьёвка уже прошла, и
     // о ней знать нужно и тому, у кого право сняли после (raffle-notice.ts).
-    if (content.kind === "raffle-result") {
+    if (
+      content.kind === "raffle-result" ||
+      content.kind === "prediction-results"
+    ) {
       return { kind: "ready", message: renderNotification(content) };
     }
     // Отмена аукциона (PER-606) права не спрашивает: торги уже оборвались, а
@@ -220,6 +235,9 @@ export function renderNotification(
   // больше нечего.
   if (content.kind === "circle-promoted") {
     return { text: "Тебя приняли в сообщество." };
+  }
+  if (content.kind === "prediction-results") {
+    return predictionResultsMessage(content);
   }
   if (content.kind === "raffle-result") return raffleMessage(content);
   if (content.kind === "auction-cancelled") return cancelledMessage(content);
@@ -290,6 +308,23 @@ function announcementMessage(
             notice.kind === "new-auction"
               ? traceRootCallback(view.button.auctionId)
               : traceFeedCallback(view.button.auctionId),
+        },
+      ],
+    ],
+  };
+}
+
+function predictionResultsMessage(
+  notice: PredictionResultsNotice,
+): NotificationMessage {
+  const view = renderPredictionResultsNotice(notice);
+  return {
+    text: view.text,
+    rows: [
+      [
+        {
+          text: view.button.text,
+          callback_data: tracePredictionResultsCallback(view.button.auctionId),
         },
       ],
     ],
