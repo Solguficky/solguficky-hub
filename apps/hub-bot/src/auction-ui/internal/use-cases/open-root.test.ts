@@ -41,6 +41,7 @@ function auctionOf(
       throw new Error("not used");
     },
     getMyPredictions: predictions,
+    getPredictionResults: notUsed,
     submitPrediction: notUsed,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
@@ -68,6 +69,38 @@ const predictionsRow = (round: PredictionRoundView["round"]) => [
 
 // Вход в прогнозы стоит в корне аукциона своим рядом под лотами (PER-489):
 // лента после PER-644 — только список лотов.
+describe("root prediction results entry", () => {
+  it("offers results only after the auction is finished", async () => {
+    const running = await rootWith([
+      { round: "catalog", status: "closed", answers: [] },
+      { round: "final", status: "not-open", answers: [] },
+    ]);
+    const actions = running.keyboard.flat().map((button) => button.action);
+    expect(actions).not.toContain("root.prediction-results");
+
+    const finished = await openRoot({
+      auction: {
+        ...auctionOf(async () => [
+          { round: "catalog", status: "closed", answers: [] },
+          { round: "final", status: "not-open", answers: [] },
+        ]),
+        getAuction: async () => ({ ...SUMMARY, stage: "finished" }),
+      },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+    });
+    expect(finished.keyboard[1]).toEqual([
+      {
+        action: "root.prediction-results",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-results",
+          auctionId: AUCTION_ID,
+        }),
+      },
+    ]);
+  });
+});
+
 describe("root predictions entry", () => {
   it("offers predictions under the lots while a round is open", async () => {
     const body = await rootWith([

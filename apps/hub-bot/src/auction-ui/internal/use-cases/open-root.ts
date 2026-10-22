@@ -92,6 +92,19 @@ export async function openRoot(input: {
               },
             ],
           ]),
+      ...(auction.stage === "finished"
+        ? [
+            [
+              {
+                action: "root.prediction-results" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "prediction-results",
+                  auctionId: input.auctionId,
+                }),
+              },
+            ],
+          ]
+        : []),
       // Счета победителя (PER-322): вход есть, пока у смотрящего есть счета
       // аукциона; отказ чтения убирает кнопку, как у розыгрыша.
       ...(invoices

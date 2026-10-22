@@ -45,6 +45,11 @@ export function bidOutcomeOf(
             kind: "bid-below-minimum",
             minRequired: priced(reason.value.minRequired),
           });
+        case "bidAboveMaximum":
+          return refused({
+            kind: "bid-above-maximum",
+            next: fifth(priced(reason.value.maximum)),
+          });
         case "bidNotAtNextPrice":
           return refused({
             kind: "bid-not-at-next-price",
@@ -197,6 +202,13 @@ function displayNameRefusalOf(
 
 function refused<Refusal>(refusal: Refusal): CommandOutcome<Refusal> {
   return { kind: "refused", refusal };
+}
+
+function fifth(maximum: Money): Money {
+  if (maximum.minorUnits % 5 !== 0) {
+    throw new Error("bid ceiling is not five times a next price");
+  }
+  return { minorUnits: maximum.minorUnits / 5, currency: maximum.currency };
 }
 
 function priced(money: WireMoney | undefined): Money {

@@ -460,6 +460,7 @@ enum PlaceBidRejected {
   case BidderIsLeader(currentPrice: Money)
   case BidNotAtNextPrice(expected: Money)
   case BidBelowMinimum(minRequired: Money)
+  case BidAboveMaximum(maximum: Money)
   case ParticipantRemovedFromLot
 }
 

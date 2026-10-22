@@ -25,6 +25,7 @@ import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
 import { openSet } from "./internal/use-cases/open-set.js";
+import { openPredictionResults } from "./internal/use-cases/prediction-results.js";
 import {
   answerPredictionAlias,
   answerPredictionNumber,
@@ -168,6 +169,8 @@ export function dispatchAuctionIntent(input: {
           ? {}
           : { auctionId: intent.auctionId }),
       });
+    case "prediction-results":
+      return openPredictionResults(context, intent.auctionId);
     case "raffle":
       return openRaffle(context, intent.auctionId);
     case "raffle-register":

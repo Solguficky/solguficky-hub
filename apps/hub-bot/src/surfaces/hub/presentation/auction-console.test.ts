@@ -1024,6 +1024,9 @@ function fakeAuction(
             throw new Error("not used");
           },
           getMyPredictions: async () => [],
+          getPredictionResults: async () => {
+            throw new Error("not used");
+          },
           submitPrediction: notUsed,
         },
         operations: { newOperationId: () => "unused" },

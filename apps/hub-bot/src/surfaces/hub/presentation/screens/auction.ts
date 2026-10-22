@@ -6,6 +6,7 @@ import {
   showsStep,
 } from "../../../../auction-final.js";
 import { predictionButtonLabel } from "../../../../auction-prediction.js";
+import { predictionResultsButtonLabel } from "../../../../auction-prediction-results.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   collectedLine,
@@ -77,6 +78,7 @@ import {
   oneLine,
   questionScreen,
 } from "./auction-bid.js";
+import { predictionResultsScreen } from "./auction-prediction-results.js";
 import {
   predictionAliasQuestionScreen,
   predictionAnswerRefusedScreen,
@@ -258,6 +260,8 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
       case "follow-refused":
         return { screen: followRefusedScreen(block, view.body.keyboard) };
       // Розыгрыш среди участников (ADR-066).
+      case "prediction-results":
+        return { screen: predictionResultsScreen(block) };
       case "raffle":
         return { screen: raffleScreen(block, view.body.keyboard, view) };
       case "raffle-registered":
@@ -462,6 +466,9 @@ function rootScreen(
   const predictions = buttons.find(
     (button) => button.action === "root.predictions",
   );
+  const predictionResults = buttons.find(
+    (button) => button.action === "root.prediction-results",
+  );
   const raffle = buttons.find((button) => button.action === "root.raffle");
   const favorites = buttons.find(
     (button) => button.action === "root.favorites",
@@ -476,6 +483,11 @@ function rootScreen(
   nextRow(keyboard);
   if (predictions !== undefined) {
     keyboard.text(predictionButtonLabel, predictions.callbackData).row();
+  }
+  if (predictionResults !== undefined) {
+    keyboard
+      .text(predictionResultsButtonLabel, predictionResults.callbackData)
+      .row();
   }
   // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
   if (invoices !== undefined) {
@@ -603,6 +615,8 @@ function feedLabel(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
+    case "root.prediction-results":
+    case "prediction-results.back":
     case "root.raffle":
     case "lot.set":
     case "set.open-lot":
@@ -838,6 +852,8 @@ function lotLabel(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
+    case "root.prediction-results":
+    case "prediction-results.back":
     case "root.raffle":
     case "root.invoices":
     case "invoices.open":
@@ -976,6 +992,8 @@ function setLotLabelOf(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
+    case "root.prediction-results":
+    case "prediction-results.back":
     case "root.raffle":
     case "set.back":
     case "root.invoices":
@@ -1207,6 +1225,8 @@ function historyLabel(button: AuctionButton): string {
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
+    case "root.prediction-results":
+    case "prediction-results.back":
     case "root.raffle":
     case "lot.set":
     case "set.open-lot":

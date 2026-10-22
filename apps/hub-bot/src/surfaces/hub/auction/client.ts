@@ -39,6 +39,7 @@ import {
   myInvoicesOf,
   wireFulfillment,
 } from "../../../core/auction/invoices.js";
+import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
   predictionOutcomeOf,
@@ -144,6 +145,7 @@ type AuctionRpc = Pick<
   | "listMyInvoices"
   | "chooseFulfillment"
   | "getMyPredictions"
+  | "getPredictionResults"
   | "submitPrediction"
   | "getLotImage"
   | "getAuctionConsole"
@@ -1273,6 +1275,16 @@ export function createAuctionAdapter(
               options(meta),
             );
             return myPredictionsOf(response);
+          },
+          async getPredictionResults(request) {
+            const response = await rpc.getPredictionResults(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return predictionResultsOf(response);
           },
           submitPrediction(request) {
             return unansweredOn(async () =>
@@ -2571,9 +2583,9 @@ function invoiceMarkResult(outcome: InvoiceMarkOutcome): InvoiceMarkResult {
   }
 }
 
-// Исходы ставки зала (PER-565, ADR-070 п. 5). Ниже минимума и чужая валюта в
-// живом финале не случаются: сумма — следующая цена лота в его валюте, и такой
-// отказ — дефект соседа.
+// Исходы ставки зала (PER-565, ADR-070 п. 5). Ниже минимума, выше потолка
+// онлайн-недели и чужая валюта в живом финале не случаются: сумма — следующая
+// цена лота в его валюте, и такой отказ — дефект соседа.
 function floorBidResult(
   outcome: Awaited<ReturnType<AuctionRpc["placeBid"]>>["outcome"],
 ): FloorBidResult {
@@ -2608,6 +2620,7 @@ function floorBidResult(
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
         case "bidBelowMinimum":
+        case "bidAboveMaximum":
         case "currencyMismatch":
           return defect(`floor bid refused as ${reason.case}`);
         case undefined:

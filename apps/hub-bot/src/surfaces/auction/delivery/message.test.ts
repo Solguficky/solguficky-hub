@@ -15,6 +15,7 @@ import {
   traceInvoiceCallback,
   traceLotCallback,
   traceNotifyCallback,
+  tracePredictionResultsCallback,
   traceRaffleCallback,
   traceRootCallback,
 } from "./message.js";
@@ -353,6 +354,17 @@ describe("parseTraceCallback", () => {
   });
 
   // «К розыгрышу» под итогом розыгрыша (PER-620) — тоже след.
+  it("carries a prediction results button inside a trace", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const inner = parseTraceCallback(tracePredictionResultsCallback(auctionId));
+    expect(inner).toBeDefined();
+    const parsed = parseAuctionCallback(inner ?? "");
+    expect(parsed.ok && parsed.intent).toEqual({
+      kind: "prediction-results",
+      auctionId,
+    });
+  });
+
   it("carries a raffle button inside a trace", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
     const inner = parseTraceCallback(traceRaffleCallback(auctionId));
@@ -402,6 +414,26 @@ function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
 
 // Итог розыгрыша (PER-620): весть без права и без чтений, с кнопкой следа на
 // экран итога.
+describe("prediction results notice", () => {
+  const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+
+  it("tells the guest the results are ready", () => {
+    const message = renderNotification({
+      kind: "prediction-results",
+      auctionId,
+    });
+    expect(message.text).toBe("Итоги твоих прогнозов подведены.");
+    expect(message.rows).toEqual([
+      [
+        {
+          text: "К итогам",
+          callback_data: tracePredictionResultsCallback(auctionId),
+        },
+      ],
+    ]);
+  });
+});
+
 describe("raffle result", () => {
   const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
   const result = (

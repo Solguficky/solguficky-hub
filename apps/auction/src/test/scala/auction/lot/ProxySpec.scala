@@ -74,6 +74,16 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
         Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(200)))
     }
 
+    "accept a limit many times the current price" in {
+      val lot = trading(price = 5000, leader = Some(participant(9)))
+
+      Lot.decide(lot, setProxyLimit(who = 1, max = 600000, opN = 1), 1, proxyBid(1), calm) match {
+        case Right(Decision.Accepted(set: LotEvent.ProxyLimitSet, _)) =>
+          set shouldBe LotEvent.ProxyLimitSet(participant(1), money(600000))
+        case other => fail(s"limit was not accepted: $other")
+      }
+    }
+
     "accept a limit equal to the current price of a lot with a leader without a bid" in {
       val lot = trading(price = 150, leader = Some(participant(9)))
       val (result, journal) = Journal.of(lot).limit(setProxyLimit(who = 1, max = 150, opN = 1))

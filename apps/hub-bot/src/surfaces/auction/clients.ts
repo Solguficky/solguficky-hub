@@ -39,6 +39,7 @@ import {
   myInvoicesOf,
   wireFulfillment,
 } from "../../core/auction/invoices.js";
+import { predictionResultsOf } from "../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
   predictionOutcomeOf,
@@ -114,6 +115,7 @@ export type AuctionRpc = Pick<
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "getMyPredictions"
+  | "getPredictionResults"
   | "submitPrediction"
   | "getLotImage"
   | "listAuctions"
@@ -450,6 +452,16 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return myPredictionsOf(response);
+        },
+        async getPredictionResults(request) {
+          const response = await auction.getPredictionResults(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return predictionResultsOf(response);
         },
         submitPrediction(request) {
           return unansweredOn(async () =>

@@ -15,6 +15,11 @@ import {
   predictionTitle,
 } from "../../auction-prediction.js";
 import {
+  predictionResultsButtonLabel,
+  predictionResultsParagraphs,
+  predictionResultsTitle,
+} from "../../auction-prediction-results.js";
+import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
@@ -946,6 +951,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "answer-refused":
       case "raffle-answer-refused":
         return "answer-refused";
+      case "prediction-results":
+        return "prediction-results";
       case "raffle":
         return "raffle";
       case "raffle-registered":
@@ -1120,6 +1127,14 @@ function renderLeaf(
           text: screenText(invoiceMissingTitle, ...invoiceMissingParagraphs()),
         };
       // Розыгрыш среди участников (ADR-066): тексты общие с хабом.
+      case "prediction-results":
+        return {
+          format: "html",
+          text: screenText(
+            predictionResultsTitle,
+            ...predictionResultsParagraphs(block, { money }),
+          ),
+        };
       case "raffle":
         return {
           format: "html",
@@ -1449,6 +1464,11 @@ export function resultOutcome(result: CommandResult): Outcome {
       return {
         title: "Ставка ниже порога",
         detail: `Сейчас можно от ${money(refusal.minRequired)}.`,
+      };
+    case "bid-above-maximum":
+      return {
+        title: "Ставка выше потолка",
+        detail: `Максимум сейчас — 5 × ${money(refusal.next)}.`,
       };
     case "bid-not-at-next-price":
       return {
@@ -1877,6 +1897,10 @@ function renderButton(
       return text("→");
     case "root.predictions":
       return text(predictionButtonLabel);
+    case "root.prediction-results":
+      return text(predictionResultsButtonLabel);
+    case "prediction-results.back":
+      return text("‹ Аукцион");
     case "lot.refresh":
       return text(refreshLabel);
     case "lot.history":

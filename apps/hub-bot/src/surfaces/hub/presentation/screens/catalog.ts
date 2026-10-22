@@ -287,6 +287,13 @@ export const screenCatalog = {
   },
   // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
   // корня аукциона и возврат туда же (PER-644).
+  "prediction-results": {
+    class: "screen",
+    nav: "tree",
+    title: "Итоги прогнозов",
+    parent: "auction-root",
+    backName: "Итоги",
+  },
   predictions: {
     class: "screen",
     nav: "tree",

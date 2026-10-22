@@ -160,6 +160,9 @@ message PlaceBidRefusal {
 
     // The participant was removed from this lot; for a floor bid, the participant it names.
     ParticipantRemovedFromLot participant_removed_from_lot = 11;
+
+    // Online manual bids only: the amount is above the lot's ceiling.
+    BidAboveMaximum bid_above_maximum = 12;
   }
 }
 
@@ -249,6 +252,12 @@ message LotOnHold {
 message BidBelowMinimum {
   // The lowest amount the lot accepts now.
   Money min_required = 1;
+}
+
+// The manual online bid is above the highest amount the lot accepts now.
+message BidAboveMaximum {
+  // The highest amount the lot accepts for this bid.
+  Money maximum = 1;
 }
 
 // Live final only: a bid is accepted exactly at the next price.

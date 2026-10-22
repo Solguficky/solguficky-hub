@@ -425,6 +425,29 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Итоги прогнозов (PER-568) участнику доставляет бот хаба.
+  it("decodes prediction results as the thin notice", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type: { case: "predictionResults", value: { auctionId } },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "prediction-results", auctionId },
+      },
+    });
+  });
+
   // Извещение об отмене аукциона (PER-606) участнику доставляет бот хаба.
   it("decodes a cancelled auction with the purchases of the recipient", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
