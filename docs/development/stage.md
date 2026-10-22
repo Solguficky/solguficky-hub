@@ -18,7 +18,7 @@ Stage — хаб с аукционом и три бота в namespace `stage` k
 
 Выкладка — одна и та же: её запускает таймер на хосте после нового коммита в ops-репозитории или человек командой `bin/stage deploy`.
 
-Прод в namespace `prod` выкладывается тем же скриптом из своего каталога `envs/prod/` и своим файлом секретов, но только руками — `bin/prod deploy`: таймер катит один stage, а прод получает digest'ы, которые прошли stage ([PER-676](https://linear.app/anticnvm/issue/per-676), дополнение ADR-055 от 2026-10-20). Промоушн и откат прода — [PER-384](https://linear.app/anticnvm/issue/per-384). Команды и раскладка — README ops-репозитория, раздел «Prod».
+Прод в namespace `prod` выкладывается тем же скриптом из своего каталога `envs/prod/` и своим файлом секретов, но только руками — `bin/prod deploy`: таймер катит один stage ([PER-676](https://linear.app/anticnvm/issue/per-676)). Прод собирается не со stage, а из `main`: мерж pull request'а `develop → main` публикует изменённые образы и чарт теми же workflow, и CI пишет их digest'ы и версию в `envs/prod/`. Digest прода — своя сборка того же кода, а не digest, прошедший stage (дополнение ADR-055 от 2026-10-22, [PER-384](https://linear.app/anticnvm/issue/per-384)). Выпуск, выкладка и откат прода — runbook README ops-репозитория, раздел «Prod».
 
 Тома PostgreSQL и NATS — `local-path` на LV `/srv/state` хоста: они переживают рестарт пода и хоста.
 
@@ -52,7 +52,7 @@ Stage — хаб с аукционом и три бота в namespace `stage` k
 
 1. `stage-sync.yml` в 03:07 по Москве (`7 0 * * *` UTC) переносит ветку `stage` на `develop` fast-forward'ом. Push идёт deploy key'ем `STAGE_SYNC_KEY` из environment `stage-sync`, допущенного только для `main`: push под `GITHUB_TOKEN` не запустил бы публикации. Если в `stage` есть коммит, которого нет в `develop`, джоба красная, а ветка остаётся как была.
 2. CI публикует изменённые этим переносом образы и чарт в GHCR (`image-*.yml`, `chart-publish.yml` на push в `stage`, по своим фильтрам путей).
-3. Джоба `stage` того же workflow (`stage-bump.yml`) коммитит digest в `envs/stage/values.yaml` или версию чарта в `envs/stage/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для ветки `stage`.
+3. Джоба `ops` того же workflow (`ops-bump.yml`) коммитит digest в `envs/stage/values.yaml` или версию чарта в `envs/stage/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для ветки `stage`.
 4. Таймер `solguficky-stage-autodeploy` на хосте раз в две минуты тянет клон ops-репозитория своим read-only deploy key и выкатывает новый коммит.
 
 Образ у трёх ботов один — `hub-bot`, и ключ digest'а в `values.yaml` у них один: `parameters.hub_bot.hub_bot_image`. Новый digest перекатывает все три бота, а откатить образ одного бота отдельно нельзя. Ключ `parameters.auction_bot.auction_bot_image` новый чарт не читает, а CI его больше не двигает ([PER-538](https://linear.app/anticnvm/issue/per-538)). Из `values.yaml` он не удаляется: его читают версии чарта до PER-538. Откат `release.yaml` на такую версию ставит бот аукциона на последний записанный туда digest. Без ключа старый чарт взял бы свою заглушку `auction-bot:latest`, и выкладка отказала бы на проверке digest.
@@ -93,7 +93,7 @@ bin/stage resume                  # вернуть; следующий тик в
 | то же сразу, не дожидаясь таймера | `bin/stage deploy` | ручная выкладка из `release.yaml` и `values.yaml` |
 | вернуть образ на прежний digest | правка `envs/stage/values.yaml` коммитом в `main` ops | таймер выкатит этот коммит |
 
-Ручной запуск с другой ветки на stage не попадёт: публикация идёт только на ветке `stage`, и environment `stage` отдаёт секрет только ей. Чарт ветки ставится руками — раздел «Ручная выкладка».
+Ручной запуск с другой ветки на stage не попадёт: публикация для stage идёт только на ветке `stage`, и environment `stage` отдаёт секрет только ей. Запуск на `main` публикует для прода: та же джоба пишет в `envs/prod/` ключом environment `prod`, допущенного только для `main`. Чарт ветки ставится руками — раздел «Ручная выкладка».
 
 ## Ручная выкладка
 
