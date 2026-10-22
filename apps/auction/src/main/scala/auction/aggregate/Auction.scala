@@ -136,6 +136,13 @@ final case class CancelAuction(opId: OpId)
 final case class SetFinalTime(at: Option[Instant], opId: OpId)
 
 /**
+ * Как оплатить и получить лоты (PER-322): свободный текст администратора для победителей. Не условие торгов, поэтому
+ * живёт вне конфигурации и меняется в любом состоянии аукциона — счета переживают и конец, и отмену. `text` пусто —
+ * текст снимается.
+ */
+final case class SetPaymentInstructions(text: Option[PaymentInstructions], opId: OpId)
+
+/**
  * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, без входа сверх `op_id` и без отказов.
  * Удалить аукцион, отменить его или ничего не делать, решает агрегат по своему состоянию, а не потребитель: состояние,
  * прочитанное заранее, успевает устареть. `op_id` — UUIDv5 от `event_id` факта ([[Auction.meetupCancellationOf]]).
@@ -278,6 +285,8 @@ enum AuctionEvent {
   case StepWindowLaunched(window: StepWindowConfig)
   case FinalTimeSet(at: Instant)
   case FinalTimeCleared
+  case PaymentInstructionsSet(text: PaymentInstructions)
+  case PaymentInstructionsCleared
   case LotSetDefined(set: LotSetId, name: LotSetName, lots: List[LotId])
   case LotSetDeleted(set: LotSetId)
   case LotSetSettled(set: LotSetId, settlement: LotSetSettlement)
@@ -341,6 +350,11 @@ enum FinalTimeRejected {
   case FinalAlreadyStarted
   case AuctionAlreadyFinished
   case AuctionAlreadyCancelled
+}
+
+/** Отказ `SetPaymentInstructions`: аукциона нет. Состояние не отказывает — счета переживают и конец, и отмену. */
+enum PaymentInstructionsRejected {
+  case AuctionNotFound
 }
 
 /** Отказы `StartPrebidding`: аукциона нет либо он не в `Scheduled` — не запланирован или уже открыт. */
@@ -536,7 +550,8 @@ enum Inspection {
  * аукцион скрыт от участников (ADR-047, дополнение 2026-10-20); бывает только в `Draft` и `Scheduled`. `finalAt` —
  * ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов; без неё аукцион
  * показывает «скоро». `sets` — коллекционные сеты (ADR-073): меняются там же, где реестр, лоты сета — всегда лоты
- * реестра, и лот не больше чем в одном сете; после старта торгов меняется только итог сета.
+ * реестра, и лот не больше чем в одном сете; после старта торгов меняется только итог сета. `paymentInstructions` —
+ * текст администратора «как оплатить и получить» (PER-322): не условие торгов, меняется в любом состоянии.
  */
 final case class Auction(
     state: AuctionState,
@@ -546,7 +561,8 @@ final case class Auction(
     launched: List[LaunchedWindow] = Nil,
     hidden: Boolean = false,
     finalAt: Option[Instant] = None,
-    sets: Map[LotSetId, LotSet] = Map.empty
+    sets: Map[LotSetId, LotSet] = Map.empty,
+    paymentInstructions: Option[PaymentInstructions] = None
 )
 
 object Auction {
@@ -841,6 +857,28 @@ object Auction {
             val event = command.at match {
               case Some(at) => AuctionEvent.FinalTimeSet(at)
               case None => AuctionEvent.FinalTimeCleared
+            }
+            Right(AuctionDecision.Accepted(event))
+        }
+    }
+
+  /**
+   * Текст «как оплатить и получить» (PER-322): выставить, изменить или снять в любом состоянии рождённого аукциона. Тот
+   * же текст пишет событие ещё раз, как `LotAdded`: ответ без события повтором не защищён.
+   */
+  def decide(
+      auction: Auction,
+      command: SetPaymentInstructions
+  ): Either[PaymentInstructionsRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(PaymentInstructionsRejected.AuctionNotFound)
+          case _ =>
+            val event = command.text match {
+              case Some(text) => AuctionEvent.PaymentInstructionsSet(text)
+              case None => AuctionEvent.PaymentInstructionsCleared
             }
             Right(AuctionDecision.Accepted(event))
         }
@@ -1313,6 +1351,11 @@ object Auction {
       // дополнение 2026-10-19).
       case (state, AuctionEvent.FinalTimeSet(at)) if state.finalTimeAhead => auction.copy(finalAt = Some(at))
       case (state, AuctionEvent.FinalTimeCleared) if state.finalTimeAhead => auction.copy(finalAt = None)
+      // Текст оплаты — не условие торгов: состояние от него не меняется, а живёт он в любом рождённом аукционе.
+      case (state, AuctionEvent.PaymentInstructionsSet(text)) if state != AuctionState.Initial =>
+        auction.copy(paymentInstructions = Some(text))
+      case (state, AuctionEvent.PaymentInstructionsCleared) if state != AuctionState.Initial =>
+        auction.copy(paymentInstructions = None)
       case (current, AuctionEvent.AuctionCancelled) =>
         current match {
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |

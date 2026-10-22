@@ -250,6 +250,13 @@ object AuctionEntity {
       replyTo: ActorRef[Either[FinalTimeRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. Ответ — после записи. */
+  final case class Instruct(
+      command: SetPaymentInstructions,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[PaymentInstructionsRejected, AuctionAnswer]]
+  ) extends Command
+
   /**
    * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, инициатор — планировщик. Что делать,
    * решает агрегат: удаление идёт путём `Discard`, отмена — путём `Cancel`, под тем же `op_id`, поэтому прогнозы, лоты,
@@ -1367,6 +1374,16 @@ object AuctionEntity {
                 state.auction,
                 Auction.decide(state.auction, announce),
                 announce.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
+            case Instruct(instruct, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, instruct),
+                instruct.opId,
                 initiator,
                 replyTo,
                 clock,

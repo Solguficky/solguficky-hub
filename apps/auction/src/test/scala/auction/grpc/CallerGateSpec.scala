@@ -55,16 +55,17 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
         GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
     }
 
-    "admits only the hub bot on the organizer's invoices and only the auction bot on the winner's" in {
-      List("MarkInvoicePaid", "MarkInvoiceHandedOver", "ListAuctionInvoices").foreach { method =>
-        CallerGate.decide(table, Some(method), Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
-        CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe
-          GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
+    // Счета победителя открыты обоим ботам (PER-322): выигрывает и участник сообщества, а он ставит в боте хаба.
+    "admits only the hub bot on the organizer's invoices and both bots on the winner's" in {
+      List("MarkInvoicePaid", "MarkInvoiceHandedOver", "ListAuctionInvoices", "SetPaymentInstructions").foreach {
+        method =>
+          CallerGate.decide(table, Some(method), Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
+          CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe
+            GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
       }
       List("ChooseFulfillment", "ListMyInvoices").foreach { method =>
         CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)
-        CallerGate.decide(table, Some(method), Some("Bearer hub")) shouldBe
-          GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.HubBot))
+        CallerGate.decide(table, Some(method), Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
       }
     }
 

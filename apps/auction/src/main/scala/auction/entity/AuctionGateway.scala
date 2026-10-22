@@ -79,6 +79,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[FinalTimeRejected, AuctionAnswer]]
 
+  /** Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. */
+  def setPaymentInstructions(
+      auctionId: AuctionId,
+      command: SetPaymentInstructions,
+      initiator: Initiator
+  ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]]
+
   /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
   def cancel(
       auctionId: AuctionId,
@@ -244,6 +251,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[FinalTimeRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Announce(command, initiator, _))
+
+      def setPaymentInstructions(
+          auctionId: AuctionId,
+          command: SetPaymentInstructions,
+          initiator: Initiator
+      ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Instruct(command, initiator, _))
 
       def cancel(
           auctionId: AuctionId,

@@ -78,6 +78,7 @@
     "finalTime": null,
     "lotSetDefined": null,
     "lotSetDeleted": null,
-    "lotSetSettled": null
+    "lotSetSettled": null,
+    "paymentInstructions": null
   }
 }

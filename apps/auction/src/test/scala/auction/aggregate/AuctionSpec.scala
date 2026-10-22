@@ -844,4 +844,67 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.FinalTimeSet(finalAt))))
     }
   }
+
+  // PER-322: текст «как оплатить и получить» — не условие торгов, живёт в любом рождённом аукционе.
+  "payment instructions" should {
+
+    val text = PaymentInstructions.parse("Перевод на карту до срока").get
+
+    "sets, changes and clears the text before the trading" in {
+      val set = Auction.decide(scheduled, SetPaymentInstructions(Some(text), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsSet(text)))
+      val withText = applied(scheduled, set.toOption.get, 10, 10)
+      withText.paymentInstructions shouldBe Some(text)
+      withText.state shouldBe scheduled.state
+
+      val cleared = Auction.decide(withText, SetPaymentInstructions(None, op(11)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsCleared))
+      applied(withText, cleared.toOption.get, 11, 11).paymentInstructions shouldBe None
+    }
+
+    "sets the text after the end and after the cancellation of the auction: invoices outlive both" in {
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      List(started, inFinal, finished, cancelled).foreach { auction =>
+        val decided = Auction.decide(auction, SetPaymentInstructions(Some(text), op(10)))
+        decided shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsSet(text)))
+        applied(auction, decided.toOption.get, 10, 10).paymentInstructions shouldBe Some(text)
+      }
+    }
+
+    "refuses the text of an auction that does not exist" in {
+      Auction.decide(Auction.initial, SetPaymentInstructions(Some(text), op(10))) shouldBe
+        Left(PaymentInstructionsRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val set =
+        applied(scheduled, Auction.decide(scheduled, SetPaymentInstructions(Some(text), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetPaymentInstructions(None, op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.PaymentInstructionsSet(text))))
+    }
+
+    "forgets the text when the auction is discarded before the trading" in {
+      val withText = scheduled.copy(paymentInstructions = Some(text))
+      Auction.apply(withText, AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded)).paymentInstructions shouldBe
+        None
+    }
+  }
+
+  "payment instructions text" should {
+
+    "keeps line breaks and strips the edges" in {
+      PaymentInstructions.parse("  Карта\nСамовывоз  ").map(_.value) shouldBe Some("Карта\nСамовывоз")
+    }
+
+    "refuses a blank text and a text over the limit, counting characters rather than UTF-16 units" in {
+      PaymentInstructions.parse(" \n ") shouldBe None
+      PaymentInstructions.parse("я" * PaymentInstructions.MaxLength).map(_.value.length) shouldBe
+        Some(PaymentInstructions.MaxLength)
+      PaymentInstructions.parse("я" * (PaymentInstructions.MaxLength + 1)) shouldBe None
+      // Эмодзи вне BMP — две единицы UTF-16, но один знак.
+      PaymentInstructions.parse("😀" * PaymentInstructions.MaxLength) shouldBe defined
+    }
+  }
 }

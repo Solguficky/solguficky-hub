@@ -1,6 +1,7 @@
 package auction.grpc
 
 import auction.aggregate.Denial
+import auction.aggregate.PaymentInstructions
 import auction.contract.InvoiceValues
 import auction.invoice.FulfillmentMethod
 import auction.invoice.InvoiceId
@@ -169,11 +170,17 @@ object InvoiceMapping {
       .map(reason => wire.ListAuctionInvoicesResponse().withRefused(wire.ListAuctionInvoicesRefusal(reason)))
   }
 
-  def mine(invoices: List[InvoiceView]): wire.ListMyInvoicesResponse =
-    wire.ListMyInvoicesResponse(invoices.map(InvoiceValues.snapshot))
+  /** Счета и текст оплаты аукциона: текст читается в момент вызова, поэтому правка доходит и до прежних счетов. */
+  def mine(invoices: List[InvoiceView], instructions: Option[PaymentInstructions]): wire.ListMyInvoicesResponse =
+    wire.ListMyInvoicesResponse(invoices.map(InvoiceValues.snapshot), instructions.map(_.value))
 
-  def ofAuction(invoices: List[InvoiceView]): wire.ListAuctionInvoicesResponse =
-    wire.ListAuctionInvoicesResponse().withInvoices(wire.AuctionInvoices(invoices.map(InvoiceValues.snapshot)))
+  def ofAuction(
+      invoices: List[InvoiceView],
+      instructions: Option[PaymentInstructions]
+  ): wire.ListAuctionInvoicesResponse =
+    wire
+      .ListAuctionInvoicesResponse()
+      .withInvoices(wire.AuctionInvoices(invoices.map(InvoiceValues.snapshot), instructions.map(_.value)))
 
   /** Два отказа права, общие у трёх методов: остальное — статусы или дефект ворот. */
   private enum Authority {

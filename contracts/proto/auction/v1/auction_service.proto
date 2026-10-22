@@ -81,6 +81,7 @@ service AuctionService {
   rpc ChooseFulfillment(ChooseFulfillmentRequest) returns (ChooseFulfillmentResponse);
   rpc ListMyInvoices(ListMyInvoicesRequest) returns (ListMyInvoicesResponse);
   rpc ListAuctionInvoices(ListAuctionInvoicesRequest) returns (ListAuctionInvoicesResponse);
+  rpc SetPaymentInstructions(SetPaymentInstructionsRequest) returns (SetPaymentInstructionsResponse);
 }
 
 message Viewer {
@@ -2736,6 +2737,13 @@ message ListMyInvoicesResponse {
   // sale, and a lot is sold to at most one bid at a time - and a total is summed
   // from the whole of it. Empty when the viewer won nothing.
   repeated InvoiceSnapshot invoices = 1;
+
+  // How to pay and how to receive the lots, as the administrator wrote it for
+  // the whole auction: free text, read at the moment of the call, so an edit
+  // reaches invoices raised before it. Unset when the administrator has not
+  // written it. The text is not payee details in a structure: see
+  // SetPaymentInstructionsRequest.
+  optional string payment_instructions = 2;
 }
 
 message ListAuctionInvoicesRequest {
@@ -2758,6 +2766,9 @@ message AuctionInvoices {
   // Every invoice of the auction, in no meaningful order. There are no pages, for
   // the reason ListMyInvoicesResponse gives. Empty when no lot is sold.
   repeated InvoiceSnapshot invoices = 1;
+
+  // The text winners read: see ListMyInvoicesResponse.payment_instructions.
+  optional string payment_instructions = 2;
 }
 
 message ListAuctionInvoicesRefusal {
@@ -2800,5 +2811,46 @@ message InvoiceSnapshot {
     InvoiceState.AwaitingPayment awaiting_payment = 10;
     InvoiceState.Paid paid = 11;
     InvoiceState.HandedOver handed_over = 12;
+  }
+}
+
+// How to pay and how to receive the lots of an auction: free text the
+// administrator writes for every winner of the auction. Money does not pass
+// through the platform, and the text is not payee details in a structure: the
+// platform neither reads nor checks it.
+message SetPaymentInstructionsRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // The text as the winners read it, line breaks kept. Unset takes the text
+  // back. Set but blank, or longer than 1000 characters, is INVALID_ARGUMENT.
+  // The text may be set and changed in every state of the auction, after its
+  // end and after its cancellation too: invoices outlive both.
+  optional string text = 4;
+}
+
+message SetPaymentInstructionsResponse {
+  // Exactly one is set.
+  oneof outcome {
+    PaymentInstructionsAccepted accepted = 1;
+    PaymentInstructionsRefusal refused = 2;
+  }
+}
+
+// Carries nothing: ListMyInvoicesResponse.payment_instructions tells the text.
+message PaymentInstructionsAccepted {}
+
+message PaymentInstructionsRefusal {
+  // Exactly one is set. There is no MeetupCancelled: the sold lots of a
+  // cancelled meetup still await payment.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
   }
 }

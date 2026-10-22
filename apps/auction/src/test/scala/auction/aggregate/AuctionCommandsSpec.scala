@@ -107,6 +107,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(finalTimeAnswer)
     }
 
+    var instructionsAnswer: Either[PaymentInstructionsRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setPaymentInstructions(auctionId: AuctionId, command: SetPaymentInstructions, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(instructionsAnswer)
+    }
+
     var cancelAnswer: Either[CancelAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) = {

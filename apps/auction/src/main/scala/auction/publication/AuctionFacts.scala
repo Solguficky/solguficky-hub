@@ -103,6 +103,8 @@ object AuctionFacts {
       // Ориентировочное время финала — подпись для экрана зала и бота хаба, а не повод для шины (ADR-040, дополнение
       // 2026-10-19).
       case AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared => None
+      // Текст оплаты подписчика на шине не имеет: победитель читает его вместе со счетами (PER-322).
+      case AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared => None
       // Определение сета — рабочий выбор организатора до торгов, как отметка финалиста: фактом он не публикуется.
       case AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) => None
       // Несобранный сет никому не сообщается (ADR-073, пп. 5–6): факта у него нет.

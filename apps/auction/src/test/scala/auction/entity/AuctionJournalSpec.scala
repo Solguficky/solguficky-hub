@@ -37,6 +37,9 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
   private val drafted = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup))
 
+  private val instructions =
+    PaymentInstructions.parse("Перевод на карту организатора до срока.\nСамовывоз — на сходке.").get
+
   /** Рождение, записанное до признака видимости: строка без него читается видимым аукционом. */
   private val draftedVisible = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup, hidden = false))
   private val added = AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot))
@@ -190,6 +193,29 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       val without = AuctionJournal.storeAuction(cleared, sequence = 6)
       without.finalAt shouldBe None
       AuctionJournal.restoreAuction(without) shouldBe cleared
+    }
+
+    "keeps the stored form of the payment instructions and reads it back" in {
+      keepsGolden("payment-instructions-set", stored(AuctionEvent.PaymentInstructionsSet(instructions), 7))
+      keepsGolden("payment-instructions-cleared", stored(AuctionEvent.PaymentInstructionsCleared, 8))
+    }
+
+    "keeps the payment instructions in the snapshot and reads them back" in {
+      val withText =
+        Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.PaymentInstructionsSet(instructions)))
+      val stored = AuctionJournal.storeAuction(withText, sequence = 5)
+      stored.paymentInstructions shouldBe Some(instructions.value)
+      AuctionJournal.restoreAuction(stored) shouldBe withText
+      val cleared = Auction.apply(withText, AuctionEnvelope(6, op(6), AuctionEvent.PaymentInstructionsCleared))
+      val without = AuctionJournal.storeAuction(cleared, sequence = 6)
+      without.paymentInstructions shouldBe None
+      AuctionJournal.restoreAuction(without) shouldBe cleared
+    }
+
+    // Строка, записанная до текста оплаты (PER-322): аукцион без текста.
+    "reads a snapshot written before the payment instructions as an auction without them" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).paymentInstructions shouldBe None
     }
 
     // Строка, записанная до поля времени: аукцион без ориентировочного времени финала (ADR-040, дополнение 2026-10-19).

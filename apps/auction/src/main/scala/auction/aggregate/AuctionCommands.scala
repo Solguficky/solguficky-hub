@@ -127,6 +127,15 @@ enum FinalTimeRefusal {
   case OpIdTaken
 }
 
+/**
+ * Отказ текста оплаты (PER-322): проверка до агрегата. `OpIdTaken` — под этим `op_id` записана другая команда: у
+ * выставления и снятия, как у времени финала, тихое «принято» на чужой повтор оставило бы не тот текст.
+ */
+enum PaymentInstructionsRefusal {
+  case Denied(denial: Denial)
+  case OpIdTaken
+}
+
 /** Отказ `CancelAuction`: проверка до агрегата или решение агрегата. */
 enum CancellationRefusal {
   case Denied(denial: Denial)
@@ -527,6 +536,42 @@ final class AuctionCommands(
     }
 
   /**
+   * Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. Порядок тот же, что у времени финала, а
+   * ворот по сходке нет, как у отметок счёта: проданный лот ждёт оплаты и у отменённой сходки.
+   */
+  def setPaymentInstructions(
+      auctionId: AuctionId,
+      text: Option[PaymentInstructions],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[PaymentInstructionsRefusal, Unit]] = {
+    // Выставить и снять — разные события: снятие под `op_id` выставления — чужая команда.
+    def ours(envelope: AuctionEnvelope): Boolean =
+      envelope.event match {
+        case AuctionEvent.PaymentInstructionsSet(_) => text.isDefined
+        case AuctionEvent.PaymentInstructionsCleared => text.isEmpty
+        case _ => false
+      }
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        Future.successful(Either.cond(ours(original), (), PaymentInstructionsRefusal.OpIdTaken))
+      case Inspection.Absent => Future.successful(Left(PaymentInstructionsRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.Unconditional, PaymentInstructionsRefusal.Denied(_)) {
+          auctions
+            .setPaymentInstructions(auctionId, SetPaymentInstructions(text, opId), Initiator.Operator(person))
+            .map {
+              case Left(PaymentInstructionsRejected.AuctionNotFound) =>
+                Left(PaymentInstructionsRefusal.Denied(Denial.AuctionNotFound))
+              case Right(AuctionAnswer.Written(original)) =>
+                Either.cond(ours(original), (), PaymentInstructionsRefusal.OpIdTaken)
+              case Right(AuctionAnswer.Unchanged) => Right(())
+            }
+        }
+    }
+  }
+
+  /**
    * Отмена аукциона после старта торгов (ADR-047, дополнение 2026-10-12). Порядок тот же, что у остальных команд. Как у
    * открытия, мимо Meetups в entity идёт только повтор самой отмены: он события не пишет, но доснимает лоты, не
    * ответившие в прошлый раз; `op_id` другой команды до entity не доходит.
@@ -890,6 +935,7 @@ final class AuctionCommands(
           AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) | AuctionEvent.FinalLotCompleted(_) |
           AuctionEvent.AuctionFinished | AuctionEvent.StepWindowLaunched(_) | AuctionEvent.AuctionPublished |
           AuctionEvent.AuctionHidden | AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared |
+          AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared |
           AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) | AuctionEvent.LotSetSettled(_, _) =>
         false
     }

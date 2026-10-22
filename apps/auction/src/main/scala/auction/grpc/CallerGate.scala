@@ -66,9 +66,10 @@ object MethodAccess {
     "SettlePredictionResultsManually" -> Set(Caller.HubBot),
     "MarkInvoicePaid" -> Set(Caller.HubBot),
     "MarkInvoiceHandedOver" -> Set(Caller.HubBot),
-    "ChooseFulfillment" -> Set(Caller.AuctionBot),
-    "ListMyInvoices" -> Set(Caller.AuctionBot),
-    "ListAuctionInvoices" -> Set(Caller.HubBot)
+    "ChooseFulfillment" -> bots,
+    "ListMyInvoices" -> bots,
+    "ListAuctionInvoices" -> Set(Caller.HubBot),
+    "SetPaymentInstructions" -> Set(Caller.HubBot)
   )
 
   /** Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого. */

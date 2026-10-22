@@ -7,6 +7,7 @@ import auction.aggregate.LaunchStepWindow
 import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
+import auction.aggregate.PaymentInstructions
 import auction.aggregate.PreviewLotParticipantRemoval
 import auction.aggregate.RemoveLotParticipant
 import auction.aggregate.StepWindowConfig
@@ -80,6 +81,7 @@ import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.SetFinalTimeRequest
+import auction.v1.auction_service.SetPaymentInstructionsRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
@@ -187,6 +189,14 @@ final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
  * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): `at` пусто — время снимается.
  */
 final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opId: OpId, acting: Acting)
+
+/** Текст «как оплатить и получить» (PER-322): `text` пусто — текст снимается. */
+final case class PaymentInstructionsCommand(
+    auctionId: AuctionId,
+    text: Option[PaymentInstructions],
+    opId: OpId,
+    acting: Acting
+)
 
 /**
  * Заморозка состава финала: `order` — лоты в порядке выхода, как их прислал пульт. Дубли и пустой список — не форма
@@ -603,6 +613,20 @@ object RequestMapping {
       opId <- uuidV7("op_id", request.opId)
       at <- request.finalAt.fold[Either[FormError, Option[Instant]]](Right(None))(instant("final_at", _).map(Some(_)))
     } yield FinalTimeCommand(auction, at, OpId(opId), acting)
+
+  /**
+   * Текст «как оплатить и получить» (PER-322). Пустое поле — снятие текста; поле, пустое после обрезки краёв или
+   * длиннее предела, — не форма запроса, а `INVALID_ARGUMENT`: снятие называет отсутствие поля, а не пустая строка.
+   */
+  def setPaymentInstructions(request: SetPaymentInstructionsRequest): Either[FormError, PaymentInstructionsCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      text <- request.text.fold[Either[FormError, Option[PaymentInstructions]]](Right(None))(raw =>
+        PaymentInstructions.parse(raw).map(Some(_)).toRight(FormError("text"))
+      )
+    } yield PaymentInstructionsCommand(auction, text, OpId(opId), acting)
 
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {
