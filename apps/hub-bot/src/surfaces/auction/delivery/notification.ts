@@ -35,6 +35,10 @@ import {
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type LotSetNotice,
+  lotSetNoticeOf,
+} from "../../../core/notifications/lot-set-notice.js";
+import {
   type PredictionResultsNotice,
   predictionResultsNoticeOf,
 } from "../../../core/notifications/prediction-results-notice.js";
@@ -61,6 +65,8 @@ export type AuctionNotificationContent =
   // Напоминания о неоплаченном счёте (PER-330) с кнопкой на счёт (PER-322) —
   // те же, что у бота хаба.
   | InvoiceNotice
+  // Собранный сет (PER-687) — тот же, что у бота хаба.
+  | LotSetNotice
   | PredictionResultsNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота хаба.
   | AuctionCancelledNotice
@@ -123,6 +129,8 @@ function toContent(
       return invoiceNoticeOf("invoice-reminder", type.value);
     case "invoiceDueReminder":
       return invoiceNoticeOf("invoice-due-reminder", type.value);
+    case "lotSetCollected":
+      return lotSetNoticeOf(type.value);
     // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
     // факт несёт, разбор их не читает: они остаются на экране.
     case "predictionResults":

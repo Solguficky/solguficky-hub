@@ -40,6 +40,13 @@ public static class AuctionFeed
     /// </summary>
     public const string InvoicePaidSubject = "events.auction.invoice_paid";
 
+    /// <summary>
+    /// Итог сета лотов (ADR-073, PER-687): единственный факт журнала аукциона
+    /// о собранном сете, сообщение — <c>LotSetCollected</c>. Повод живёт в ветке
+    /// <c>occasion</c> события аукциона, а не в отдельном сообщении.
+    /// </summary>
+    public const string LotSetCollectedSubject = "events.auction.lot_set_collected";
+
     public static readonly EventFeed Feed = new(Source, "AUCTION_EVENTS", "notifications-auction-events");
 
     /// <summary>

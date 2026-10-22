@@ -53,6 +53,7 @@ const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const lotData = encodeAuctionCallback({ kind: "lot", lotId, page: 0 });
+const setData = encodeAuctionCallback({ kind: "set", lotId, page: 0 });
 
 function meetup(materials = 0): MeetupSnapshot {
   return {
@@ -1215,6 +1216,9 @@ describe("review findings", () => {
 
     await bot.handleUpdate(press(lotData));
     expect(lastScreen(calls).text).toContain("Лот не найден");
+    await bot.handleUpdate(press(setData));
+    expect(lastScreen(calls).text).toContain("Лот не найден");
+    expect(data(lastScreen(calls), "Повторить")).toBeUndefined();
     await bot.handleUpdate(press(feedData));
     expect(lastScreen(calls).text).not.toContain("Лот не найден");
     expect(data(lastScreen(calls), "Повторить")).toBe(feedData);

@@ -37,6 +37,10 @@ import {
   renderLotNotice,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type LotSetNotice,
+  renderLotSetNotice,
+} from "../../../core/notifications/lot-set-notice.js";
+import {
   type PredictionResultsNotice,
   renderPredictionResultsNotice,
 } from "../../../core/notifications/prediction-results-notice.js";
@@ -96,6 +100,12 @@ export function traceInvoiceCallback(lotId: string, invoiceId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "invoice", lotId, invoiceId })}`;
 }
 
+// «К сету» под извещением о собранном наборе (PER-687) — экран сета из
+// аукционного дерева тем же путём, что кнопка на карточке лота.
+export function traceSetCallback(lotId: string): string {
+  return `${tracePrefix}${encodeAuctionCallback({ kind: "set", lotId, page: 0 })}`;
+}
+
 export function tracePredictionResultsCallback(auctionId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({
     kind: "prediction-results",
@@ -141,6 +151,7 @@ export function parseTraceCallback(data: string): string | undefined {
   const parsed = parseAuctionCallback(inner);
   return parsed.ok &&
     (parsed.intent.kind === "lot" ||
+      parsed.intent.kind === "set" ||
       parsed.intent.kind === "raffle" ||
       parsed.intent.kind === "invoice" ||
       parsed.intent.kind === "prediction-results" ||
@@ -210,6 +221,11 @@ export function createRenderMessage(
     ) {
       return { kind: "ready", message: renderNotification(content) };
     }
+    // Итог сета (PER-687) права не спрашивает: собравший уже назван фактом,
+    // а знать о награде нужно и после снятия права на торги.
+    if (content.kind === "lot-set-collected") {
+      return { kind: "ready", message: renderNotification(content) };
+    }
     // Отмена аукциона (PER-606) права не спрашивает: торги уже оборвались, а
     // покупателю нужно знать, что купленное осталось за ним
     // (auction-cancelled-notice.ts).
@@ -269,6 +285,7 @@ export function renderNotification(
   if (isInvoiceNotice(content)) {
     return invoiceMessage(renderInvoiceNotice(content, { timeZone }));
   }
+  if (content.kind === "lot-set-collected") return lotSetMessage(content);
   if (content.kind === "auction-cancelled") return cancelledMessage(content);
   // Начало окна «Счастливых часов» (PER-616) — ряд на каждый лот окна, след
   // лота этой поверхности.
@@ -387,6 +404,21 @@ function raffleMessage(notice: RaffleNotice): NotificationMessage {
         {
           text: view.button.text,
           callback_data: traceRaffleCallback(view.button.auctionId),
+        },
+      ],
+    ],
+  };
+}
+
+function lotSetMessage(notice: LotSetNotice): NotificationMessage {
+  const view = renderLotSetNotice(notice);
+  return {
+    text: view.text,
+    rows: [
+      [
+        {
+          text: view.button.text,
+          callback_data: traceSetCallback(view.button.lotId),
         },
       ],
     ],

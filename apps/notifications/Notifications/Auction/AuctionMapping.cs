@@ -111,6 +111,13 @@ public sealed record RaffleDraw(Guid EventId, Guid AuctionId, long Version, Date
     IReadOnlyList<Guid> Tickets, int WinningTicket, string? Prize = null);
 
 /// <summary>
+/// Проверенный итог сета (ADR-073, п. 7; PER-687): название сета, его состав
+/// по порядку организатора и собравший — тот, кому проданы все лоты сета.
+/// </summary>
+public sealed record CollectedLotSet(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
+    string Name, IReadOnlyList<Guid> LotIds, Guid CollectorId);
+
+/// <summary>
 /// Итог номинации: лоты, делившие первое место, или число — ровно одно из
 /// двух, — сколько угадали и имена угадавших. Стёртого имени нет, а в числе
 /// угадавших он остаётся.
@@ -192,6 +199,7 @@ public abstract record AuctionDecoded
     public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
     public sealed record Announcement(AuctionAnnouncement Value) : AuctionDecoded;
     public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
+    public sealed record LotSet(CollectedLotSet Value) : AuctionDecoded;
     public sealed record Predictions(PredictionSettlement Value) : AuctionDecoded;
     public sealed record Invoice(AuctionInvoice Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
@@ -207,6 +215,9 @@ public abstract record AuctionDecoded
 /// </summary>
 public static class AuctionMapping
 {
+    private sealed record AuctionEventEnvelope(AuctionEvent Message, AuctionState State, Guid EventId, Guid AuctionId,
+        DateTimeOffset OccurredAt);
+
     public static AuctionDecoded Decode(string subject, ReadOnlyMemory<byte> payload)
     {
         // В доменном стриме есть LotEvent, AuctionEvent, InvoiceEvent,
@@ -217,6 +228,10 @@ public static class AuctionMapping
         if (subject == AuctionFeed.RaffleDrawnSubject)
         {
             return DecodeRaffle(payload);
+        }
+        if (subject == AuctionFeed.LotSetCollectedSubject)
+        {
+            return DecodeLotSetCollected(payload);
         }
         if (subject == AuctionFeed.PredictionResultsSettledSubject)
         {
@@ -361,33 +376,9 @@ public static class AuctionMapping
     private static AuctionDecoded DecodeAuction(string subject, AuctionEvent.OccasionOneofCase occasion,
         ReadOnlyMemory<byte> payload)
     {
-        AuctionEvent message;
-        try
-        {
-            message = AuctionEvent.Parser.ParseFrom(payload.Span);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            return new AuctionDecoded.Poison("not an auction.v1.AuctionEvent");
-        }
-
-        if (!Id(message.EventId, out var eventId) || !AuctionId(message.AuctionId) || message.Version < 1)
-        {
-            return new AuctionDecoded.Poison("event_id, auction_id or version is invalid");
-        }
-        if (!Instant(message.OccurredAt, out var occurredAt))
-        {
-            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
-        }
-        if (message.OccasionCase != occasion)
-        {
-            return new AuctionDecoded.Poison($"{subject} subject does not match occasion");
-        }
-        if (message.State is not { } state || state.Id != message.AuctionId)
-        {
-            return new AuctionDecoded.Poison("state does not identify the auction");
-        }
-        var auctionId = Guid.Parse(message.AuctionId);
+        var envelope = DecodeAuctionEnvelope(subject, occasion, payload, out var reason);
+        if (envelope is null) return new AuctionDecoded.Poison(reason);
+        var (message, state, eventId, auctionId, occurredAt) = envelope;
 
         // Каталог без удержанных лотов кончает аукцион тем же prebidding_ended:
         // какой из двух исходов случился, говорит снимок, а не имя факта.
@@ -569,6 +560,81 @@ public static class AuctionMapping
     // победитель получил бы «Приз:» без приза.
     private static string? Prize(RaffleState state) =>
         state.HasRafflePrize && !string.IsNullOrWhiteSpace(state.RafflePrize) ? state.RafflePrize : null;
+
+    // Сет не является статусом аукциона: его итог не меняет снимок AuctionState,
+    // поэтому эта ветка отдельно от DecodeAuction. Для сообщения нужны только
+    // имя, число и первый лот для экрана сета; снимок проверяется лишь на то,
+    // что он принадлежит конверту, но его статус не сопоставляется с поводом.
+    private static AuctionDecoded DecodeLotSetCollected(ReadOnlyMemory<byte> payload)
+    {
+        var envelope = DecodeAuctionEnvelope(AuctionFeed.LotSetCollectedSubject,
+            AuctionEvent.OccasionOneofCase.LotSetCollected, payload, out var reason);
+        if (envelope is null) return new AuctionDecoded.Poison(reason);
+        var (message, _, eventId, auctionId, occurredAt) = envelope;
+
+        var set = message.LotSetCollected;
+        if (!Id(set.LotSetId, out _) || !Id(set.CollectorId, out var collectorId) ||
+            IsBlankLotSetName(set.Name) || set.LotIds.Count < 2)
+        {
+            return new AuctionDecoded.Poison("lot set id, name, collector or lot count is invalid");
+        }
+
+        var lotIds = new List<Guid>(set.LotIds.Count);
+        var seen = new HashSet<Guid>();
+        foreach (var value in set.LotIds)
+        {
+            if (!Id(value, out var lotId) || !seen.Add(lotId))
+            {
+                return new AuctionDecoded.Poison("lot set lot id is invalid or repeated");
+            }
+            lotIds.Add(lotId);
+        }
+
+        return new AuctionDecoded.LotSet(new CollectedLotSet(eventId, auctionId, message.Version, occurredAt,
+            set.Name, lotIds, collectorId));
+    }
+
+    // Общая часть двух AuctionEvent-путей: парсинг конверта, occasion и
+    // принадлежность снимка аукциону. Статус снимка проверяет только
+    // DecodeAuction: у собранного сета он не меняется.
+    private static AuctionEventEnvelope? DecodeAuctionEnvelope(string subject,
+        AuctionEvent.OccasionOneofCase occasion, ReadOnlyMemory<byte> payload, out string reason)
+    {
+        AuctionEvent message;
+        try
+        {
+            message = AuctionEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            reason = "not an auction.v1.AuctionEvent";
+            return null;
+        }
+
+        if (!Id(message.EventId, out var eventId) || !AuctionId(message.AuctionId) || message.Version < 1)
+        {
+            reason = "event_id, auction_id or version is invalid";
+            return null;
+        }
+        if (!Instant(message.OccurredAt, out var occurredAt))
+        {
+            reason = "occurred_at is not an RFC 3339 UTC instant";
+            return null;
+        }
+        if (message.OccasionCase != occasion)
+        {
+            reason = $"{subject} subject does not match occasion";
+            return null;
+        }
+        if (message.State is not { } state || state.Id != message.AuctionId)
+        {
+            reason = "state does not identify the auction";
+            return null;
+        }
+
+        reason = string.Empty;
+        return new AuctionEventEnvelope(message, state, eventId, Guid.Parse(message.AuctionId), occurredAt);
+    }
 
     // Факт итогов один на аукцион, и яд теряет его для всех сразу, поэтому
     // ядом остаётся только то, что исказило бы сообщение, — номинация без
@@ -863,6 +929,20 @@ public static class AuctionMapping
 
     private static bool Price(Money price) =>
         price.MinorUnits >= 0 && price.Currency.Length == 3 && price.Currency.All(character => character is >= 'A' and <= 'Z');
+
+    // Match Character.isWhitespace || Character.isSpaceChar in Auction's
+    // LotSetName. .NET's IsNullOrWhiteSpace also treats U+0085 as blank, but
+    // Java does not.
+    private static bool IsBlankLotSetName(string value) =>
+        value.All(character =>
+        {
+            var category = char.GetUnicodeCategory(character);
+            var separator = category is UnicodeCategory.SpaceSeparator or
+                UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
+            var control = character >= '\u0009' && character <= '\u000d' ||
+                character >= '\u001c' && character <= '\u001f';
+            return separator || control;
+        });
 
     private static bool Id(string value, out Guid id) =>
         Guid.TryParseExact(value, "D", out id) && value == id.ToString() &&

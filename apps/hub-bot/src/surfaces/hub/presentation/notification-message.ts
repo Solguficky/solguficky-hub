@@ -18,6 +18,7 @@ import type {
   LotNotice,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
+import { renderLotSetNotice } from "../../../core/notifications/lot-set-notice.js";
 import { renderPredictionResultsNotice } from "../../../core/notifications/prediction-results-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
 import type { StepWindowNotice } from "../../../core/notifications/step-window-notice.js";
@@ -239,6 +240,21 @@ export function renderNotification(
         button.text,
         traceCallback(
           `v1:${encodeAuctionCallback({ kind: "invoice", lotId: button.lotId, invoiceId: button.invoiceId }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "lot-set-collected") {
+    // Собранный сет (PER-687): весть простым текстом, как итог розыгрыша, так
+    // что имя сета от организатора экранировать не нужно; кнопка следа
+    // открывает существующий экран сета новым сообщением, не изменяя весть.
+    const view = renderLotSetNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "set", lotId: view.button.lotId, page: 0 }).slice(3)}`,
         ),
       ),
     };

@@ -48,7 +48,8 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - name: Helm из justfile
         run: sh tools/apphost/install-helm.sh >> "$GITHUB_PATH"
       # Тот же рецепт, что на PR: чарт, который не прошёл бы проверку, не публикуется.

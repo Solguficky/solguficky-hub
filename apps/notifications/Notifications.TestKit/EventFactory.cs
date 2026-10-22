@@ -701,6 +701,21 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>Собранный сет: название и упорядоченный состав в поводе.</summary>
+    public static global::Auction.V1.AuctionEvent LotSetCollected(string auction, string meetup, string collector,
+        string name, params string[] lotIds)
+    {
+        var message = AuctionFact(auction, meetup, 31);
+        message.LotSetCollected = new global::Auction.V1.LotSetCollected
+        {
+            LotSetId = NewId(),
+            Name = name,
+            CollectorId = collector,
+        };
+        message.LotSetCollected.LotIds.AddRange(lotIds);
+        return message;
+    }
+
     /// <summary>
     /// Жеребьёвка розыгрыша аукциона (PER-620): владельцы билетов в порядке
     /// билетов и номер выигравшего, с единицы.

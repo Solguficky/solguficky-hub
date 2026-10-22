@@ -39,7 +39,11 @@ PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad
 # вызывают, скрипт читает значения тем же grep-разбором строки, что и CI, —
 # поэтому закреплён и сам just. Мажор Node тот же, что у setup-node в CI;
 # версии .NET, Go и JDK скрипт берёт из global.json, go.mod и .java-version.
+# Джобы CI ставят just tools/env/install-just.sh из релиза и сверяют архив
+# x86_64-unknown-linux-musl с суммой: сторонний setup-just искал релиз через
+# API и ронял джобы, когда поиск возвращался пустым.
 JUST_VERSION := "1.58.0"
+JUST_SHA256 := "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d"
 LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
@@ -572,12 +576,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 916. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 928. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "622"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "294"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "630"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "298"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

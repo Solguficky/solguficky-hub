@@ -13,7 +13,7 @@ public enum AuctionOutcome
     Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
     AuctionCancelled, AuctionEnded,
-    FinalLotNext, LeadRestored,
+    FinalLotNext, LeadRestored, LotSetCollected,
     Announcement, AnnouncementWithdrawn,
     InvoiceReplicated, InvoiceStale,
 }
@@ -597,6 +597,30 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.RaffleAnnounced,
             new Dictionary<string, int> { [AuctionFacts.RaffleResultType] = created });
+    }
+
+    /// <summary>
+    /// Собранный сет даёт ровно один адресный факт собравшему. Настройки и
+    /// категории его не фильтруют; повтор держат ключ события и ключ причины.
+    /// </summary>
+    public async Task<AuctionApplication> Apply(CollectedLotSet set, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, set.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var notification = AuctionFacts.LotSetCollected(Guid.CreateVersion7(now), set, now, notAfter);
+        var created = await NotificationStore.AddAddressed(work, notification, AuctionFacts.LotSetCollectedType,
+            AuctionFacts.AuctionCauseKind, set.EventId.ToString(), now, notAfter, cancellationToken,
+            await NotificationStore.DeliverySurface(work, set.CollectorId, cancellationToken));
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.LotSetCollected,
+            new Dictionary<string, int> { [AuctionFacts.LotSetCollectedType] = created });
     }
 
     /// <summary>
