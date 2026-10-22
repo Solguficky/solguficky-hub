@@ -17,6 +17,7 @@ import {
   tracePredictionResultsCallback,
   traceRaffleCallback,
   traceRootCallback,
+  traceSetCallback,
 } from "./message.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
@@ -372,6 +373,13 @@ describe("parseTraceCallback", () => {
     expect(parsed.ok && parsed.intent).toEqual({ kind: "raffle", auctionId });
   });
 
+  it("carries a set button inside a trace", () => {
+    const inner = parseTraceCallback(traceSetCallback(lotId));
+    expect(inner).toBeDefined();
+    const parsed = parseAuctionCallback(inner ?? "");
+    expect(parsed.ok && parsed.intent).toEqual({ kind: "set", lotId, page: 0 });
+  });
+
   // «К аукциону» под извещением об отмене (PER-606) — тоже след.
   it("carries a root button inside a trace", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
@@ -459,6 +467,35 @@ describe("raffle result", () => {
     const source = reads();
     const render = createRenderMessage(source, () => {});
     await expect(render(result(3), { recipientId })).resolves.toMatchObject({
+      kind: "ready",
+    });
+    expect(source.holdsPlaceBids).not.toHaveBeenCalled();
+    expect(source.lotInfo).not.toHaveBeenCalled();
+  });
+});
+
+// Итог сета (PER-687): без проверки права и без чтения Auction на доставке.
+describe("notification renderer", () => {
+  const set: AuctionNotificationContent = {
+    kind: "lot-set-collected",
+    setName: "Сервиз",
+    lotCount: 3,
+    lotId,
+  };
+
+  it("tells the collector the set name and lot count with its button", () => {
+    expect(renderNotification(set)).toEqual({
+      text: "Ты собрал сет «Сервиз»: в нём 3 лота.",
+      rows: [[{ text: "К сету", callback_data: traceSetCallback(lotId) }]],
+    });
+    expect(Buffer.byteLength(traceSetCallback(lotId))).toBeLessThanOrEqual(64);
+  });
+
+  it("asks Identity nothing and reads no lots", async () => {
+    const source = reads();
+    const render = createRenderMessage(source, () => {});
+
+    await expect(render(set, { recipientId })).resolves.toMatchObject({
       kind: "ready",
     });
     expect(source.holdsPlaceBids).not.toHaveBeenCalled();

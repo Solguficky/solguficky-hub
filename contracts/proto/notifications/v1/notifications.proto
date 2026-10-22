@@ -198,6 +198,9 @@ message Notification {
     // moment of the same reminder, so it is a type of its own: the two moments
     // must not collide on the cause key.
     InvoiceDueReminder invoice_due_reminder = 37;
+
+    // The recipient collected the set: every lot in it was sold to them.
+    LotSetCollected lot_set_collected = 38;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -797,4 +800,19 @@ message CircleChanged {
 
   // The circle the person has after the event.
   identity.v1.Circle current_circle = 2;
+}
+
+// The set was collected: every lot was sold to the same participant. The name
+// and lot count are carried; lot titles are omitted because they are catalog
+// attributes outside the trading event.
+message LotSetCollected {
+  // The name of the set as the organizer typed it.
+  string set_name = 1;
+
+  // How many lots are in the set.
+  uint32 lot_count = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the first lot in organizer order,
+  // which is a member of the collected set.
+  string lot_id = 3;
 }

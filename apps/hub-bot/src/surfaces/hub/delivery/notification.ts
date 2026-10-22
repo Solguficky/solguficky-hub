@@ -41,6 +41,10 @@ import {
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type LotSetNotice,
+  lotSetNoticeOf,
+} from "../../../core/notifications/lot-set-notice.js";
+import {
   type PredictionResultsNotice,
   predictionResultsNoticeOf,
 } from "../../../core/notifications/prediction-results-notice.js";
@@ -149,6 +153,9 @@ export type RenderableContent =
   // Вести о новом аукционе и об открытии торгов (PER-646) — те же, что у бота
   // аукциона.
   | AuctionAnnouncementNotice
+  // Собранный сет (PER-687): одно сообщение собравшему, состав по следу на
+  // существующий экран сета.
+  | LotSetNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
@@ -311,6 +318,8 @@ function toContent(message: Notification): NotificationContent | undefined {
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "lotSetCollected":
+      return lotSetNoticeOf(type.value);
     // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
     // факт несёт, разбор их не читает: они остаются на экране.
     case "predictionResults":

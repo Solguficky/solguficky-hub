@@ -17,6 +17,7 @@ import {
   CircleChangedSchema,
   CommunityAnnouncementSchema,
   LotActivityKind,
+  LotSetCollectedSchema,
   MeetupAspect,
   type MeetupCard,
   MeetupPublishedSchema,
@@ -422,6 +423,35 @@ describe("decodeNotification", () => {
       expect(
         raffle({ auctionId, ticket: 13, winningTicket: 7, ticketCount: 12 }),
       ).toMatchObject({ kind: "malformed" });
+    });
+  });
+
+  // Собранный сет (PER-687) доставляется ботом круга получателя.
+  it("decodes a collected set with its screen anchor", () => {
+    const anchor = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "lotSetCollected",
+            value: create(LotSetCollectedSchema, {
+              setName: "Сервиз",
+              lotCount: 3,
+              lotId: anchor,
+            }),
+          };
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-set-collected",
+          setName: "Сервиз",
+          lotCount: 3,
+          lotId: anchor,
+        },
+      },
     });
   });
 

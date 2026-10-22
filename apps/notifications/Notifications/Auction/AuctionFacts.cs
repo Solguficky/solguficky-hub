@@ -34,6 +34,9 @@ public static class AuctionFacts
     public const string RaffleResultType = "raffle_result";
     public const string RaffleCauseKind = "auction_raffle_event";
 
+    /// <summary>Собранный сет: одно сообщение самому собравшему (PER-687).</summary>
+    public const string LotSetCollectedType = "lot_set_collected";
+
     public const string PredictionResultsType = "prediction_results";
     public const string PredictionResultsCauseKind = "auction_prediction_results_event";
 
@@ -216,6 +219,27 @@ public static class AuctionFacts
             RaffleResult = body,
         };
     }
+
+    /// <summary>
+    /// Итог сета одному собравшему. Состав лотов не несём: канал открывает
+    /// существующий экран сета с первого лота по порядку организатора. Сет
+    /// меньше двух лотов сюда не доходит: его отравляет разбор факта.
+    /// </summary>
+    public static Notification LotSetCollected(Guid notificationId, CollectedLotSet set, DateTimeOffset now,
+        DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = set.CollectorId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionEventId = set.EventId.ToString() },
+        LotSetCollected = new global::Notifications.V1.LotSetCollected
+        {
+            SetName = set.Name,
+            LotCount = (uint)set.LotIds.Count,
+            LotId = set.LotIds[0].ToString(),
+        },
+    };
 
     /// <summary>
     /// Анонс состава одному человеку: весь состав с ценами удержания и те его

@@ -31,6 +31,10 @@ import {
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type LotSetNotice,
+  lotSetNoticeOf,
+} from "../../../core/notifications/lot-set-notice.js";
+import {
   type PredictionResultsNotice,
   predictionResultsNoticeOf,
 } from "../../../core/notifications/prediction-results-notice.js";
@@ -54,6 +58,8 @@ export type AuctionNotificationContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота хаба.
   | RaffleNotice
+  // Собранный сет (PER-687) — тот же, что у бота хаба.
+  | LotSetNotice
   | PredictionResultsNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота хаба.
   | AuctionCancelledNotice
@@ -112,6 +118,8 @@ function toContent(
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "lotSetCollected":
+      return lotSetNoticeOf(type.value);
     // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
     // факт несёт, разбор их не читает: они остаются на экране.
     case "predictionResults":

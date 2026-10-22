@@ -27,3 +27,13 @@ export function truncate(text: string, limit: number): string {
   }
   return `${kept}…`;
 }
+
+/** Russian word for a lot count in nominative case. */
+export function lotWord(count: number): string {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (tens >= 11 && tens <= 14) return "лотов";
+  if (ones === 1) return "лот";
+  if (ones >= 2 && ones <= 4) return "лота";
+  return "лотов";
+}

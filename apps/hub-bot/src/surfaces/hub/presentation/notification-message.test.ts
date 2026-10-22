@@ -252,6 +252,65 @@ describe("renderNotification", () => {
     ]);
   });
 
+  // Собранный сет (PER-687): весть простым текстом, имя организатора — как
+  // есть, а след открывает существующий экран состава новым сообщением.
+  it("names and counts the collected set with one traced button", () => {
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: "<Сервиз & чашки>",
+      lotCount: 3,
+      lotId,
+    });
+
+    expect(message.text).toBe(
+      "Ты собрал сет «<Сервиз & чашки>»: в нём 3 лота.",
+    );
+    expect(message.format).toBeUndefined();
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К сету",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "set", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  it("passes the screen linter with organizer text in plain text", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: {
+        kind: "lot-set-collected",
+        setName: "<Сервиз & чашки>",
+        lotCount: 3,
+        lotId,
+      },
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
+  });
+
+  it("keeps a long set name within Telegram's text limit", () => {
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: '"'.repeat(1_000),
+      lotCount: 3,
+      lotId,
+    });
+
+    expect(message.text.length).toBeLessThanOrEqual(telegramTextLimit);
+  });
+
   // Извещение об отмене аукциона (PER-606): покупателю — строка о покупке,
   // кнопка следа — корень аукциона новым сообщением.
   it("tells about a cancelled auction with a traced button to its root", () => {
