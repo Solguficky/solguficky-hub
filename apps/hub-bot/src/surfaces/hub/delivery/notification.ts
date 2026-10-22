@@ -44,6 +44,9 @@ import {
   type LotSetNotice,
   lotSetNoticeOf,
 } from "../../../core/notifications/lot-set-notice.js";
+  type PredictionResultsNotice,
+  predictionResultsNoticeOf,
+} from "../../../core/notifications/prediction-results-notice.js";
 import {
   type RaffleNotice,
   raffleNoticeOf,
@@ -139,6 +142,7 @@ export type RenderableContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
   | RaffleNotice
+  | PredictionResultsNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота
   // аукциона.
   | AuctionCancelledNotice
@@ -315,6 +319,10 @@ function toContent(message: Notification): NotificationContent | undefined {
       return raffleNoticeOf(type.value);
     case "lotSetCollected":
       return lotSetNoticeOf(type.value);
+    // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
+    // факт несёт, разбор их не читает: они остаются на экране.
+    case "predictionResults":
+      return predictionResultsNoticeOf(type.value);
     case "auctionCancelled":
       return auctionCancelledNoticeOf(type.value);
     // Начало окна «Счастливых часов» (PER-616): ветка своя, разбор общий —

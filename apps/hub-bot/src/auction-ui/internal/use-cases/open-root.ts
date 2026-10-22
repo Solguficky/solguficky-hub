@@ -86,6 +86,19 @@ export async function openRoot(input: {
               },
             ],
           ]),
+      ...(auction.stage === "finished"
+        ? [
+            [
+              {
+                action: "root.prediction-results" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "prediction-results",
+                  auctionId: input.auctionId,
+                }),
+              },
+            ],
+          ]
+        : []),
       // Вход в избранное — только отсюда (PER-644): не из «Настроек» и не из
       // меню бота. Список общий на все аукционы, аукцион в кнопке — возврат.
       ...(input.favorites === undefined

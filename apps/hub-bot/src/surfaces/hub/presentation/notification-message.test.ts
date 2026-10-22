@@ -200,6 +200,26 @@ describe("renderNotification", () => {
 
   // Итог розыгрыша (PER-620): победителю своя фраза, остальным — номер
   // выигравшего билета и свой; кнопка следа ведёт на экран итога.
+  it("tells a community member that prediction results are ready", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const message = renderNotification({
+      kind: "prediction-results",
+      auctionId,
+    });
+    expect(message.text).toBe("Итоги твоих прогнозов подведены.");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К итогам",
+          callback_data: `v1:t:${encodeAuctionCallback({
+            kind: "prediction-results",
+            auctionId,
+          }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
   it("tells the winner and the others the raffle result with a traced button", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
     const result = (ticket: number, prize?: string) =>

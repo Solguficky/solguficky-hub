@@ -988,6 +988,9 @@ function fakeAuction(
           registerForRaffle: notUsed,
           cancelRaffleRegistration: notUsed,
           getMyPredictions: async () => [],
+          getPredictionResults: async () => {
+            throw new Error("not used");
+          },
           submitPrediction: notUsed,
         },
         operations: { newOperationId: () => "unused" },

@@ -63,6 +63,9 @@ const port = (overrides: Partial<AuctionPort> = {}): AuctionPort => ({
     throw new Error("not used");
   },
   getMyPredictions: async () => [],
+  getPredictionResults: async () => {
+    throw new Error("not used");
+  },
   submitPrediction: async () => {
     throw new Error("not used");
   },

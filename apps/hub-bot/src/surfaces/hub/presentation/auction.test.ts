@@ -161,6 +161,7 @@ function fakeAuction(
     nameless?: { aliasRefusal?: "alias-taken" };
     // Идущий аукцион сообщества (PER-595, PER-669); по умолчанию — нет его.
     current?: () => MeetupAuctionResult | Promise<MeetupAuctionResult>;
+    stage?: "scheduled" | "finished";
     // Отображаемые имена участников: карточка проданного лота называет
     // победителя.
     names?: Readonly<Record<string, string>>;
@@ -205,7 +206,7 @@ function fakeAuction(
   // сходки (PER-594).
   const summaryOf = (id: string) => ({
     auctionId: id,
-    stage: "scheduled" as const,
+    stage: options.stage ?? ("scheduled" as const),
     opensAt: "2026-10-26T09:00:00Z",
     closesAt: "2026-10-29T18:00:00Z",
     final: true,
@@ -296,6 +297,7 @@ function fakeAuction(
             throw new Error("not used");
           },
           getMyPredictions: async () => [],
+          getPredictionResults: async () => ({ kind: "after-final" as const }),
           submitPrediction: async () => {
             throw new Error("not used");
           },
@@ -728,6 +730,21 @@ describe("enabling the auction", () => {
 });
 
 describe("auction root and the way back", () => {
+  it("opens prediction results from a finished auction", async () => {
+    const auction = fakeAuction({ existing: true, stage: "finished" });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(labels(root)).toContainEqual(["Итоги"]);
+    await bot.handleUpdate(press(data(root, "Итоги") ?? ""));
+    expect(lastScreen(calls).text).toContain("Итоги после финала.");
+  });
+
   it("names an auction hidden from participants in its status", async () => {
     const auction = fakeAuction({ existing: true, hidden: true });
     const { bot, calls } = harness("admin", auction, {

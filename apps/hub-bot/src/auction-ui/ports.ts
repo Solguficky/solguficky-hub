@@ -385,7 +385,35 @@ export interface AuctionPort {
     answers: readonly PredictionAnswer[];
     opId: string;
   }): Promise<PredictionOutcome>;
+  // Итоги прогнозов (PER-568). Четыре исхода чтения Auction.
+  getPredictionResults(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<PredictionResultsView>;
 }
+
+export type PredictionOwnResult =
+  | { kind: "guessed" }
+  | { kind: "missed"; deviation?: number };
+
+export type PredictionNominationResult = {
+  nomination: PredictionNomination;
+  value:
+    | { kind: "lots"; lotIds: readonly string[] }
+    | { kind: "number"; value: number };
+  winnerNames: readonly string[];
+  winnerCount: number;
+  mine?: PredictionOwnResult;
+};
+
+export type PredictionResultsView =
+  | { kind: "after-final" }
+  | { kind: "by-hand" }
+  | { kind: "cancelled" }
+  | {
+      kind: "counted";
+      nominations: readonly PredictionNominationResult[];
+    };
 
 export type PredictionAnswer =
   | {
@@ -501,6 +529,7 @@ export type BidRefusal =
   | { kind: "lot-not-open" }
   | { kind: "lot-on-hold"; currentPrice: Money }
   | { kind: "bid-below-minimum"; minRequired: Money }
+  | { kind: "bid-above-maximum"; next: Money }
   | { kind: "bid-not-at-next-price"; expected: Money }
   | { kind: "bidder-is-leader"; currentPrice: Money }
   | { kind: "currency-mismatch" }

@@ -305,6 +305,30 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Итоги прогнозов (PER-568) гостю доставляет бот аукциона. Списки номинаций
+  // факт несёт, весть их не разбирает.
+  it("decodes prediction results as the thin notice", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({ case: "predictionResults", value: { auctionId } }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "prediction-results", auctionId },
+      },
+    });
+  });
+
+  it("rejects prediction results without a canonical auction id", () => {
+    expect(
+      decodeNotification(
+        fact({ case: "predictionResults", value: { auctionId: "not-a-uuid" } }),
+      ),
+    ).toMatchObject({ kind: "malformed" });
+  });
+
   // Вести о новом аукционе и об открытии торгов (PER-646) гостю доставляет
   // бот аукциона; участнику те же ветки приходят в боте хаба.
   it("decodes a published auction and the opening of its trading", () => {
