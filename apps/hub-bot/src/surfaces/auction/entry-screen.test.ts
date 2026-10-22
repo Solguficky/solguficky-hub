@@ -556,6 +556,36 @@ describe("renderEntryScreen", () => {
     ]);
   });
 
+  it("names five times the next price when a bid is above the ceiling", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "result",
+              result: {
+                command: "bid",
+                kind: "refused",
+                refusal: { kind: "bid-above-maximum", next: rub(5100) },
+              },
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
+            },
+          ],
+          keyboard: [
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toBe(
+      "<b>Ставка выше потолка</b>\n\n<b>Кружка</b>\n\nМаксимум сейчас — 5 × 5 100 ₽.",
+    );
+  });
+
   // Чужой год называется в дате (дизайн-код, «Формат»).
   it("names the year of a deadline outside the current year", () => {
     const text = plain(

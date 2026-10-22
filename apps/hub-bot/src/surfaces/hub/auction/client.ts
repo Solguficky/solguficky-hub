@@ -2502,9 +2502,9 @@ function invoiceMarkResult(outcome: InvoiceMarkOutcome): InvoiceMarkResult {
   }
 }
 
-// Исходы ставки зала (PER-565, ADR-070 п. 5). Ниже минимума и чужая валюта в
-// живом финале не случаются: сумма — следующая цена лота в его валюте, и такой
-// отказ — дефект соседа.
+// Исходы ставки зала (PER-565, ADR-070 п. 5). Ниже минимума, выше потолка
+// онлайн-недели и чужая валюта в живом финале не случаются: сумма — следующая
+// цена лота в его валюте, и такой отказ — дефект соседа.
 function floorBidResult(
   outcome: Awaited<ReturnType<AuctionRpc["placeBid"]>>["outcome"],
 ): FloorBidResult {
@@ -2539,6 +2539,7 @@ function floorBidResult(
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
         case "bidBelowMinimum":
+        case "bidAboveMaximum":
         case "currencyMismatch":
           return defect(`floor bid refused as ${reason.case}`);
         case undefined:

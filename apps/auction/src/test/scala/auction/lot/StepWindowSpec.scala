@@ -57,6 +57,16 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
       )
     }
 
+    "keep the online ceiling at five times the regular next price inside the window and outside it" in {
+      val inside = windowed()
+
+      placedAmount(bidAt(inside, 101, "13:00")) shouldBe Some(money(101))
+      placedAmount(bidAt(inside, 540, "13:00")) shouldBe Some(money(540))
+      bidAt(inside, 551, "13:00") shouldBe Left(PlaceBidRejected.BidAboveMaximum(money(550)))
+      bidAt(inside, 551, "11:00") shouldBe Left(PlaceBidRejected.BidAboveMaximum(money(550)))
+      placedAmount(bidAt(inside, 550, "11:00")) shouldBe Some(money(550))
+    }
+
     "never raise the step above the regular one of the tier the price has reached (Т-61)" in {
       val policy = tiered(0L -> 1L, 200L -> 20L)
       val window = stepWindow("12:00", "14:00", step = 5)

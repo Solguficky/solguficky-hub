@@ -529,6 +529,7 @@ export type BidRefusal =
   | { kind: "lot-not-open" }
   | { kind: "lot-on-hold"; currentPrice: Money }
   | { kind: "bid-below-minimum"; minRequired: Money }
+  | { kind: "bid-above-maximum"; next: Money }
   | { kind: "bid-not-at-next-price"; expected: Money }
   | { kind: "bidder-is-leader"; currentPrice: Money }
   | { kind: "currency-mismatch" }

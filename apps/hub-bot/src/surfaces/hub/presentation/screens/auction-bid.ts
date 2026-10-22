@@ -435,6 +435,11 @@ function resultOutcome(
         title: "Ставка ниже порога",
         detail: `Сейчас можно от ${money(refusal.minRequired)}.`,
       };
+    case "bid-above-maximum":
+      return {
+        title: "Ставка выше потолка",
+        detail: `Максимум сейчас — 5 × ${money(refusal.next)}.`,
+      };
     case "bid-not-at-next-price":
       return {
         title: "Ставка не по цене финала",

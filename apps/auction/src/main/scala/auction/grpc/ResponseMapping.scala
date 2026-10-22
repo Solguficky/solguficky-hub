@@ -269,6 +269,8 @@ object ResponseMapping {
         wire.PlaceBidRefusal.Reason.BidNotAtNextPrice(wire.BidNotAtNextPrice(Some(money(expected))))
       case PlaceBidRejected.BidBelowMinimum(minRequired) =>
         wire.PlaceBidRefusal.Reason.BidBelowMinimum(wire.BidBelowMinimum(Some(money(minRequired))))
+      case PlaceBidRejected.BidAboveMaximum(maximum) =>
+        wire.PlaceBidRefusal.Reason.BidAboveMaximum(wire.BidAboveMaximum(Some(money(maximum))))
       case PlaceBidRejected.ParticipantRemovedFromLot =>
         wire.PlaceBidRefusal.Reason.ParticipantRemovedFromLot(wire.ParticipantRemovedFromLot())
       case PlaceBidRejected.LotNotFound | PlaceBidRejected.OpIdTaken =>
