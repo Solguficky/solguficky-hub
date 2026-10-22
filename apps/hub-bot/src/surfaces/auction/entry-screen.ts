@@ -15,6 +15,11 @@ import {
   predictionTitle,
 } from "../../auction-prediction.js";
 import {
+  predictionResultsButtonLabel,
+  predictionResultsParagraphs,
+  predictionResultsTitle,
+} from "../../auction-prediction-results.js";
+import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
@@ -934,6 +939,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "answer-refused":
       case "raffle-answer-refused":
         return "answer-refused";
+      case "prediction-results":
+        return "prediction-results";
       case "raffle":
         return "raffle";
       case "raffle-registered":
@@ -1073,6 +1080,14 @@ function renderLeaf(
           ),
         };
       // Розыгрыш среди участников (ADR-066): тексты общие с хабом.
+      case "prediction-results":
+        return {
+          format: "html",
+          text: screenText(
+            predictionResultsTitle,
+            ...predictionResultsParagraphs(block, { money }),
+          ),
+        };
       case "raffle":
         return {
           format: "html",
@@ -1830,6 +1845,10 @@ function renderButton(
       return text("→");
     case "root.predictions":
       return text(predictionButtonLabel);
+    case "root.prediction-results":
+      return text(predictionResultsButtonLabel);
+    case "prediction-results.back":
+      return text("‹ Аукцион");
     case "lot.refresh":
       return text(refreshLabel);
     case "lot.history":

@@ -895,6 +895,34 @@ const raffleRegisteredBody = (
   ],
 });
 
+const predictionResultsAuctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+
+const predictionResultsBody = (
+  results: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "prediction-results" }
+  >["results"],
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "prediction-results",
+      auctionId: predictionResultsAuctionId,
+      results,
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "prediction-results.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: predictionResultsAuctionId,
+        }),
+      },
+    ],
+  ],
+});
+
 const raffleNameChoice: AuctionScreenBody = {
   blocks: [
     { kind: "raffle-name-choice", auctionId: "auc-1", username: "owl_fan" },
@@ -1137,6 +1165,29 @@ const shown: readonly {
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleBody(raffle) },
   })),
+  {
+    screen: {
+      kind: "auction" as const,
+      body: predictionResultsBody({ kind: "after-final" }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: predictionResultsBody({
+        kind: "counted",
+        nominations: [
+          {
+            nomination: "catalog-total-sales",
+            value: { kind: "number", value: 3_000_000 },
+            winnerNames: ["Сова*"],
+            winnerCount: 1,
+            mine: { kind: "missed", deviation: 10_000 },
+          },
+        ],
+      }),
+    },
+  },
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleProofBody(raffle) },
   })),

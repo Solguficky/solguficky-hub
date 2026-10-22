@@ -25,6 +25,7 @@ import type {
   OwnDisplayName,
   PredictionAnswer,
   PredictionOutcome,
+  PredictionResultsView,
   PredictionRoundStatus,
   PredictionRoundView,
   ProxyLimitRefusal,
@@ -141,6 +142,11 @@ export type PortCall =
     }
   | {
       port: "auction";
+      method: "getPredictionResults";
+      request: Parameters<AuctionMethods["getPredictionResults"]>[0];
+    }
+  | {
+      port: "auction";
       method: "submitPrediction";
       request: Parameters<AuctionMethods["submitPrediction"]>[0];
     }
@@ -202,6 +208,7 @@ export type ContractAuction = {
   predictions?: readonly PredictionRoundView[];
   // Ответы отправки прогноза по порядку вызовов.
   predictionSubmissions?: readonly PredictionOutcome[];
+  predictionResults?: PredictionResultsView;
 };
 
 export type AuctionContractCase = {
@@ -4728,9 +4735,165 @@ const SET_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+const FINISHED_SUMMARY: AuctionSummaryView = {
+  ...CONTRACT_SUMMARY,
+  stage: "finished",
+};
+
+const resultsCallback = () =>
+  encodeAuctionCallback({
+    kind: "prediction-results",
+    auctionId: CONTRACT_AUCTION_ID,
+  });
+
+const resultsReadCall = (): PortCall => ({
+  port: "auction",
+  method: "getPredictionResults",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+});
+
+const resultsBackRow = [
+  {
+    action: "prediction-results.back" as const,
+    callbackData: callback({ kind: "root", auctionId: CONTRACT_AUCTION_ID }),
+  },
+];
+
+const resultsBody = (
+  results: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "prediction-results" }
+  >["results"],
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "prediction-results",
+      auctionId: CONTRACT_AUCTION_ID,
+      results,
+    },
+  ],
+  keyboard: [resultsBackRow],
+});
+
+const PREDICTION_RESULTS_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "root: finished auction offers prediction results",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, summary: FINISHED_SUMMARY },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: FINISHED_SUMMARY,
+        },
+      ],
+      keyboard: [
+        rootLotsRow,
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        [
+          {
+            action: "root.prediction-results",
+            callbackData: resultsCallback(),
+          },
+        ],
+      ],
+    },
+  },
+  {
+    intent: "prediction results: after the final",
+    callbackData: resultsCallback(),
+    auction: {
+      ...AUCTION,
+      summary: FINISHED_SUMMARY,
+      predictionResults: { kind: "after-final" },
+    },
+    auctionCalls: [resultsReadCall()],
+    body: resultsBody({ kind: "after-final" }),
+  },
+  {
+    intent: "prediction results: counted",
+    callbackData: resultsCallback(),
+    auction: {
+      ...AUCTION,
+      summary: FINISHED_SUMMARY,
+      predictionResults: {
+        kind: "counted",
+        nominations: [
+          {
+            nomination: "catalog-most-expensive-lot",
+            value: {
+              kind: "lots",
+              lotIds: [CONTRACT_LOT.lotId, SOLD_LOT.lotId],
+            },
+            winnerNames: ["Сова*"],
+            winnerCount: 1,
+            mine: { kind: "guessed" },
+          },
+          {
+            nomination: "catalog-total-sales",
+            value: { kind: "number", value: 3_000_000 },
+            winnerNames: [],
+            winnerCount: 2,
+            mine: { kind: "missed", deviation: 10_000 },
+          },
+        ],
+      },
+    },
+    auctionCalls: [
+      resultsReadCall(),
+      findLotCall(CONTRACT_LOT.lotId),
+      findLotCall(SOLD_LOT.lotId),
+    ],
+    body: resultsBody({
+      kind: "counted",
+      nominations: [
+        {
+          nomination: "catalog-most-expensive-lot",
+          value: { kind: "lots", titles: ["Кружка с совой", "Плакат"] },
+          winnerNames: ["Сова*"],
+          winnerCount: 1,
+          mine: { kind: "guessed" },
+        },
+        {
+          nomination: "catalog-total-sales",
+          value: { kind: "number", value: 3_000_000 },
+          winnerNames: [],
+          winnerCount: 2,
+          mine: { kind: "missed", deviation: 10_000 },
+        },
+      ],
+    }),
+  },
+  {
+    intent: "prediction results: by hand",
+    callbackData: resultsCallback(),
+    auction: {
+      ...AUCTION,
+      summary: FINISHED_SUMMARY,
+      predictionResults: { kind: "by-hand" },
+    },
+    auctionCalls: [resultsReadCall()],
+    body: resultsBody({ kind: "by-hand" }),
+  },
+  {
+    intent: "prediction results: cancelled",
+    callbackData: resultsCallback(),
+    auction: {
+      ...AUCTION,
+      summary: FINISHED_SUMMARY,
+      predictionResults: { kind: "cancelled" },
+    },
+    auctionCalls: [resultsReadCall()],
+    body: resultsBody({ kind: "cancelled" }),
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...SET_CASES,
   ...ROOT_CASES,
+  ...PREDICTION_RESULTS_CASES,
   {
     intent: "feed",
     callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
@@ -5303,6 +5466,17 @@ export function spyPorts(
           throw new Error("predictions are not expected");
         }
         return predictionRounds;
+      },
+      async getPredictionResults(request) {
+        calls.push({
+          port: "auction",
+          method: "getPredictionResults",
+          request,
+        });
+        if (snapshot.predictionResults === undefined) {
+          throw new Error("prediction results are not expected");
+        }
+        return snapshot.predictionResults;
       },
       async submitPrediction(request) {
         calls.push({ port: "auction", method: "submitPrediction", request });

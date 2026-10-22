@@ -34,6 +34,7 @@ import {
 } from "../../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
+import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
   predictionOutcomeOf,
@@ -136,6 +137,7 @@ type AuctionRpc = Pick<
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "getMyPredictions"
+  | "getPredictionResults"
   | "submitPrediction"
   | "getLotImage"
   | "getAuctionConsole"
@@ -1225,6 +1227,16 @@ export function createAuctionAdapter(
               options(meta),
             );
             return myPredictionsOf(response);
+          },
+          async getPredictionResults(request) {
+            const response = await rpc.getPredictionResults(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return predictionResultsOf(response);
           },
           submitPrediction(request) {
             return unansweredOn(async () =>

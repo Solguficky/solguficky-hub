@@ -10,6 +10,7 @@ import type {
   Money,
   OwnDisplayName,
   PredictionAnswer,
+  PredictionOwnResult,
   PredictionRoundStatus,
   ProxyLimitRefusal,
   RaffleView,
@@ -20,6 +21,16 @@ import type {
   PredictionNomination,
   PredictionRound,
 } from "./prediction-spec.js";
+
+export type PredictionResultsLine = {
+  nomination: PredictionNomination;
+  value:
+    | { kind: "lots"; titles: readonly string[] }
+    | { kind: "number"; value: number };
+  winnerNames: readonly string[];
+  winnerCount: number;
+  mine?: PredictionOwnResult;
+};
 
 // Каноническое тело аукционного экрана (ADR-044, «Один аукцион, две оболочки»).
 // Одинаково в обоих ботах: приложение оборачивает его в свою оболочку —
@@ -271,6 +282,18 @@ export type AuctionBlock =
       entries: readonly HistoryItem[];
     }
   | {
+      kind: "prediction-results";
+      auctionId: string;
+      results:
+        | { kind: "after-final" }
+        | { kind: "by-hand" }
+        | { kind: "cancelled" }
+        | {
+            kind: "counted";
+            nominations: readonly PredictionResultsLine[];
+          };
+    }
+  | {
       // Розыгрыш среди участников (ADR-066, п. 11): что показать, решает
       // статус. Нет `raffle` — у аукциона розыгрыша нет: кнопка устарела.
       kind: "raffle";
@@ -465,6 +488,7 @@ export type AuctionButton =
       action: // Корень аукциона: лоты, розыгрыш и избранное.
         | "root.lots"
         | "root.predictions"
+        | "root.prediction-results"
         | "root.raffle"
         | "root.favorites"
         | "feed.prev"
@@ -514,6 +538,7 @@ export type AuctionButton =
         | "raffle.proof"
         | "raffle.back"
         | "raffle.return"
+        | "prediction-results.back"
         // Имя из настроек: возврат на экран имени с исхода.
         | "name.return";
       callbackData: string;

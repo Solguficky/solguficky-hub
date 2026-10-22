@@ -274,6 +274,7 @@ function portsWith(
         throw new Error("not used");
       },
       getMyPredictions: async () => [],
+      getPredictionResults: async () => ({ kind: "after-final" as const }),
       submitPrediction: async () => {
         throw new Error("not used");
       },
@@ -795,6 +796,9 @@ describe("auction bot", () => {
         ]),
       },
     });
+    const results = buttonData(lastScreen(calls), "Итоги");
+    await bot.handleUpdate(lotPress({ data: results }));
+    expect(lastScreen(calls).text).toContain("Итоги после финала.");
   });
 
   // Отменённый аукцион (PER-606; ADR-047, дополнение 2026-10-12) — прошедший,
