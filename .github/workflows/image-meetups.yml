@@ -45,10 +45,14 @@ jobs:
 
   publish:
     if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/stage' || github.ref == 'refs/heads/main') }}
-    # Публикации по очереди: тег sha-<коммит> одного прогона не должен
-    # перевесить другой, пока первый читает digest и аттестует его.
+    # Публикации одной ветки по очереди: тег sha-<коммит> одного прогона не
+    # должен перевесить другой, пока первый читает digest и аттестует его.
+    # Группа своя у каждой ветки: в общей группе ожидающий прогон отменяется
+    # следующим, и push в stage молча снял бы публикацию прода. Мерж в main —
+    # merge-коммит, поэтому тег sha-<коммит> у веток не совпадает; совпадёт —
+    # проверка attestation по ветке покраснеет, а не пропустит чужой образ.
     concurrency:
-      group: image-meetups-publish
+      group: image-meetups-publish-${{ github.ref_name }}
       cancel-in-progress: false
     permissions:
       contents: read
