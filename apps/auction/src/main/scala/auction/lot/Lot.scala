@@ -614,8 +614,11 @@ object Lot {
       case None => saturatedPlus(trading.currentPrice, baseStep(trading, trading.currentPrice))
     }
 
-  /** Пять баз, насыщенные на край `Long`: произведение, которое в него не входит, не бросает исключение. */
-  private def onlineMaximum(trading: TradingState): Money = {
+  /**
+   * Пять баз, насыщенные на край `Long`. Произведение, которое в него не входит, не бросает исключение. Если пять баз
+   * ниже следующей цены — так бывает при отрицательной базе, — потолок равен ей, а не этой пятёрке (PER-660).
+   */
+  private def onlineMaximum(trading: TradingState, required: Money): Money = {
     val reference = ceilingReference(trading)
     val units = reference.minorUnits
     val scale = OnlineBidCeiling.toLong
@@ -623,7 +626,8 @@ object Lot {
       if (units > 0 && units > Long.MaxValue / scale) Long.MaxValue
       else if (units < 0 && units < Long.MinValue / scale) Long.MinValue
       else units * scale
-    reference.copy(minorUnits = scaled)
+    val ceiling = reference.copy(minorUnits = scaled)
+    if (ceiling < required) required else ceiling
   }
 
   /**
@@ -649,7 +653,7 @@ object Lot {
       Left(PlaceBidRejected.BidNotAtNextPrice(required))
     else if (command.amount < required) Left(PlaceBidRejected.BidBelowMinimum(required))
     else {
-      val maximum = if (trading.phase == Phase.Online) Some(onlineMaximum(trading)) else None
+      val maximum = if (trading.phase == Phase.Online) Some(onlineMaximum(trading, required)) else None
       maximum.filter(command.amount > _) match {
         case Some(ceiling) => Left(PlaceBidRejected.BidAboveMaximum(ceiling))
         case None =>

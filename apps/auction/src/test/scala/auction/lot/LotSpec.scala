@@ -348,6 +348,15 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         .map(_.amount) shouldBe Some(money(Long.MaxValue))
     }
 
+    "keep the online ceiling at the next price when five times a negative reference is below it" in {
+      val lot = trading(price = -100)
+
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = -100, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(-100))
+      Lot.decide(lot, placeBid(who = 1, amount = -99, opN = 2), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidAboveMaximum(money(-100)))
+    }
+
     "reject a live bid above the next price and name that price (Т-40)" in {
       val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live, leader = Some(participant(9)))
 
