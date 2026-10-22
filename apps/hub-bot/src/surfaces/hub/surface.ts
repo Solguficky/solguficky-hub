@@ -14,6 +14,10 @@ import {
   isFinalNotice,
 } from "../../core/notifications/final-notice.js";
 import {
+  createInvoiceNoticeRender,
+  isInvoiceNotice,
+} from "../../core/notifications/invoice-notice.js";
+import {
   createLotNoticeRender,
   isLotNotice,
   type LotNoticeReads,
@@ -267,6 +271,13 @@ export const hubSurface: SurfaceDefinition = ({
     onTitleMissing: logMissingTitle(logger),
     timeZone: communityTimeZone,
   });
+  // Напоминание о счёте (PER-322) — тот же общий рендер, что у бота аукциона:
+  // права не спрашивает, название лота — подсказка.
+  const renderInvoice = createInvoiceNoticeRender({
+    reads: noticeReads,
+    onTitleMissing: logMissingTitle(logger),
+    timeZone: communityTimeZone,
+  });
   // Оповещение о заявке несёт её тело (PER-634): карточку бот читает при
   // доставке из очереди правами получателя, тем же вызовом, что экран заявки.
   const renderAccessRequest = createAccessRequestRender({
@@ -335,6 +346,18 @@ export const hubSurface: SurfaceDefinition = ({
                 }
                 if (content.kind === "access-requested") {
                   return renderAccessRequest(content, context);
+                }
+                if (isInvoiceNotice(content)) {
+                  const rendered = await renderInvoice(content, context);
+                  return rendered.kind === "ready"
+                    ? {
+                        kind: "ready",
+                        message: {
+                          kind: "invoice-notice" as const,
+                          view: rendered.message,
+                        },
+                      }
+                    : rendered;
                 }
                 if (
                   !isLotNotice(content) &&

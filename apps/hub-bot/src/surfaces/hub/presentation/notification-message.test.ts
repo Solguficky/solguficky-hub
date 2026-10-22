@@ -304,7 +304,7 @@ describe("renderNotification", () => {
       price: { minorUnits: 150_000, currency: "RUB" },
     });
     expect(rendered.text).toBe(
-      "Лот <b>Кружка</b> твой за 1 500 ₽. Как оплатить и забрать — напишет организатор аукциона.",
+      "Лот <b>Кружка</b> твой за 1 500 ₽. Счёт и как оплатить — в «Моих счетах» аукциона.",
     );
     expect(rendered.keyboard?.inline_keyboard).toEqual([
       [expect.objectContaining({ text: "К лоту" })],
