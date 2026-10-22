@@ -30,7 +30,10 @@ import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
-import type { PredictionResultsNotice } from "../../../core/notifications/prediction-results-notice.js";
+import {
+  type PredictionResultsNotice,
+  predictionResultsNoticeOf,
+} from "../../../core/notifications/prediction-results-notice.js";
 import {
   type RaffleNotice,
   raffleNoticeOf,
@@ -109,6 +112,10 @@ function toContent(
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
+    // факт несёт, разбор их не читает: они остаются на экране.
+    case "predictionResults":
+      return predictionResultsNoticeOf(type.value);
     case "auctionCancelled":
       return auctionCancelledNoticeOf(type.value);
     // Начало окна «Счастливых часов» (PER-616): ветка своя, разбор общий —
