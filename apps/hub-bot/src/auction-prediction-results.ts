@@ -69,6 +69,11 @@ function winnersText(names: readonly string[], winnerCount: number): string {
     .map((name) => name.trim())
     .filter((name) => name !== "")
     .map((name) => escapeHtml(name));
+  // Имя стирается, число угадавших остаётся (auction_events.proto). Список
+  // короче числа — не единственный угадавший, а оставшиеся имена и полное число.
+  if (shown.length > 0 && shown.length < winnerCount) {
+    return `Угадали ${winnerCount}: ${shown.join(", ")}.`;
+  }
   if (shown.length > 0) return `Угадали: ${shown.join(", ")}.`;
   if (winnerCount > 0) return `Угадали: ${winnerCount}.`;
   return "Никто не угадал.";
