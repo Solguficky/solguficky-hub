@@ -11,7 +11,7 @@ public class LotSetCollectedTests
     private const string Subject = AuctionFeed.LotSetCollectedSubject;
 
     [Fact]
-    public void When_LotSetCollected_Expect_NameCollectorAndLotsInOrganizerOrder()
+    public void Decode_ValidLotSetCollected_MapsNameCollectorAndOrganizerOrder()
     {
         var auction = EventFactory.AuctionOfMeetup();
         var meetup = EventFactory.NewId();
@@ -31,7 +31,7 @@ public class LotSetCollectedTests
     }
 
     [Fact]
-    public void When_FactBuilt_Expect_OneRecipientSetCountAndFirstLotAnchor()
+    public void LotSetCollected_ValidSet_BuildsOneRecipientFactWithFirstLotAnchor()
     {
         var collector = EventFactory.NewId();
         var lots = new[] { EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId() };
@@ -51,7 +51,7 @@ public class LotSetCollectedTests
     }
 
     [Fact]
-    public void When_AuctionSnapshotHasNoMatchingStatus_Expect_LotSetStillDecoded()
+    public void Decode_LotSetWithNoAuctionStatus_DecodesItsOccasion()
     {
         var message = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
             EventFactory.NewId(), "Сервиз", EventFactory.NewId(), EventFactory.NewId());
@@ -62,7 +62,31 @@ public class LotSetCollectedTests
     }
 
     [Fact]
-    public void When_OccasionOrSnapshotAuctionDoesNotMatch_Expect_Poison()
+    public void Decode_SetNameWithFormatCharacter_PreservesNonWhitespaceName()
+    {
+        var message = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
+            EventFactory.NewId(), "\uFEFF", EventFactory.NewId(), EventFactory.NewId());
+
+        var set = AuctionMapping.Decode(Subject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.LotSet>().Value;
+
+        set.Name.ShouldBe("\uFEFF");
+    }
+
+    [Fact]
+    public void Decode_SetNameWithNextLineCharacter_PreservesNonWhitespaceName()
+    {
+        var message = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
+            EventFactory.NewId(), "\u0085", EventFactory.NewId(), EventFactory.NewId());
+
+        var set = AuctionMapping.Decode(Subject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.LotSet>().Value;
+
+        set.Name.ShouldBe("\u0085");
+    }
+
+    [Fact]
+    public void Decode_MismatchedOccasionOrAuction_PoisonsFact()
     {
         var wrongOccasion = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
             EventFactory.NewId(), "Сервиз", EventFactory.NewId(), EventFactory.NewId());
@@ -76,7 +100,7 @@ public class LotSetCollectedTests
     }
 
     [Fact]
-    public void When_SetHasInvalidOrRepeatedIdentifiers_Expect_Poison()
+    public void Decode_InvalidOrRepeatedSetIdentifiers_PoisonsFact()
     {
         var collectorInvalid = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
             "not-a-uuid", "Сервиз", EventFactory.NewId(), EventFactory.NewId());
@@ -90,16 +114,21 @@ public class LotSetCollectedTests
             EventFactory.NewId(), "Сервиз", lotRepeatedId, lotRepeatedId);
         var nameBlank = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
             EventFactory.NewId(), "  ", EventFactory.NewId(), EventFactory.NewId());
+        var nameControlBlank = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
+            EventFactory.NewId(), "\u001c", EventFactory.NewId(), EventFactory.NewId());
         var oneLot = EventFactory.LotSetCollected(EventFactory.AuctionOfMeetup(), EventFactory.NewId(),
             EventFactory.NewId(), "Сервиз", EventFactory.NewId());
 
-        foreach (var message in new[] { collectorInvalid, setIdInvalid, lotInvalid, lotsRepeated, nameBlank, oneLot })
+        foreach (var message in new[]
+                 {
+                     collectorInvalid, setIdInvalid, lotInvalid, lotsRepeated, nameBlank, nameControlBlank, oneLot,
+                 })
         {
             AuctionMapping.Decode(Subject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Poison>();
         }
     }
 
     [Fact]
-    public void When_PayloadBroken_Expect_Poison() =>
+    public void Decode_BrokenPayload_PoisonsFact() =>
         AuctionMapping.Decode(Subject, new byte[] { 0xff }).ShouldBeOfType<AuctionDecoded.Poison>();
 }

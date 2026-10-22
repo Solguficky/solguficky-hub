@@ -266,17 +266,29 @@ describe("renderNotification", () => {
       setMyCommands: vi.fn(),
       deleteMyCommands: vi.fn(),
     } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: {
+        kind: "lot-set-collected",
+        setName: "<Сервиз & чашки>",
+        lotCount: 3,
+        lotId,
+      },
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
+  });
+
+  it("keeps an escaped long set name within Telegram's text limit", () => {
     const message = renderNotification({
       kind: "lot-set-collected",
-      setName: "<Сервиз & чашки>",
+      setName: '"'.repeat(1_000),
       lotCount: 3,
       lotId,
     });
 
-    await sender.send({ telegramUserId: 42n, message });
-    expect(
-      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
-    ).toEqual([]);
+    expect(message.text.length).toBeLessThanOrEqual(telegramTextLimit);
   });
 
   // Извещение об отмене аукциона (PER-606): покупателю — строка о покупке,

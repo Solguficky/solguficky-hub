@@ -452,6 +452,19 @@ async function routeEntry(input: {
       }),
     );
   } catch (cause) {
+    // Экран сета начинается с якорного GetLot. Если лот исчез или стал
+    // невидимым, это устаревшая кнопка, а не временный отказ Auction: повтор
+    // неизменённого callback не сможет открыть уже недоступный якорь.
+    if (
+      cause instanceof ConnectError &&
+      cause.code === Code.NotFound &&
+      input.action.kind === "callback"
+    ) {
+      const parsed = parseAuctionCallback(input.action.data);
+      if (parsed.ok && parsed.intent.kind === "set") {
+        return { screen: { kind: "outdated" }, identityId };
+      }
+    }
     return { screen: unavailable, identityId, failure: classify(cause) };
   }
 }

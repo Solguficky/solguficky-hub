@@ -215,6 +215,9 @@ public abstract record AuctionDecoded
 /// </summary>
 public static class AuctionMapping
 {
+    private sealed record AuctionEventEnvelope(AuctionEvent Message, AuctionState State, Guid EventId, Guid AuctionId,
+        DateTimeOffset OccurredAt);
+
     public static AuctionDecoded Decode(string subject, ReadOnlyMemory<byte> payload)
     {
         // В доменном стриме есть LotEvent, AuctionEvent, InvoiceEvent,
@@ -373,33 +376,9 @@ public static class AuctionMapping
     private static AuctionDecoded DecodeAuction(string subject, AuctionEvent.OccasionOneofCase occasion,
         ReadOnlyMemory<byte> payload)
     {
-        AuctionEvent message;
-        try
-        {
-            message = AuctionEvent.Parser.ParseFrom(payload.Span);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            return new AuctionDecoded.Poison("not an auction.v1.AuctionEvent");
-        }
-
-        if (!Id(message.EventId, out var eventId) || !AuctionId(message.AuctionId) || message.Version < 1)
-        {
-            return new AuctionDecoded.Poison("event_id, auction_id or version is invalid");
-        }
-        if (!Instant(message.OccurredAt, out var occurredAt))
-        {
-            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
-        }
-        if (message.OccasionCase != occasion)
-        {
-            return new AuctionDecoded.Poison($"{subject} subject does not match occasion");
-        }
-        if (message.State is not { } state || state.Id != message.AuctionId)
-        {
-            return new AuctionDecoded.Poison("state does not identify the auction");
-        }
-        var auctionId = Guid.Parse(message.AuctionId);
+        var envelope = DecodeAuctionEnvelope(subject, occasion, payload, out var reason);
+        if (envelope is null) return new AuctionDecoded.Poison(reason);
+        var (message, state, eventId, auctionId, occurredAt) = envelope;
 
         // Каталог без удержанных лотов кончает аукцион тем же prebidding_ended:
         // какой из двух исходов случился, говорит снимок, а не имя факта.
@@ -588,36 +567,14 @@ public static class AuctionMapping
     // что он принадлежит конверту, но его статус не сопоставляется с поводом.
     private static AuctionDecoded DecodeLotSetCollected(ReadOnlyMemory<byte> payload)
     {
-        AuctionEvent message;
-        try
-        {
-            message = AuctionEvent.Parser.ParseFrom(payload.Span);
-        }
-        catch (InvalidProtocolBufferException)
-        {
-            return new AuctionDecoded.Poison("not an auction.v1.AuctionEvent");
-        }
-
-        if (!Id(message.EventId, out var eventId) || !AuctionId(message.AuctionId) || message.Version < 1)
-        {
-            return new AuctionDecoded.Poison("event_id, auction_id or version is invalid");
-        }
-        if (!Instant(message.OccurredAt, out var occurredAt))
-        {
-            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
-        }
-        if (message.OccasionCase != AuctionEvent.OccasionOneofCase.LotSetCollected)
-        {
-            return new AuctionDecoded.Poison($"{AuctionFeed.LotSetCollectedSubject} subject does not match occasion");
-        }
-        if (message.State is not { } state || state.Id != message.AuctionId)
-        {
-            return new AuctionDecoded.Poison("state does not identify the auction");
-        }
+        var envelope = DecodeAuctionEnvelope(AuctionFeed.LotSetCollectedSubject,
+            AuctionEvent.OccasionOneofCase.LotSetCollected, payload, out var reason);
+        if (envelope is null) return new AuctionDecoded.Poison(reason);
+        var (message, _, eventId, auctionId, occurredAt) = envelope;
 
         var set = message.LotSetCollected;
         if (!Id(set.LotSetId, out _) || !Id(set.CollectorId, out var collectorId) ||
-            string.IsNullOrWhiteSpace(set.Name) || set.LotIds.Count < 2)
+            IsBlankLotSetName(set.Name) || set.LotIds.Count < 2)
         {
             return new AuctionDecoded.Poison("lot set id, name, collector or lot count is invalid");
         }
@@ -633,8 +590,50 @@ public static class AuctionMapping
             lotIds.Add(lotId);
         }
 
-        return new AuctionDecoded.LotSet(new CollectedLotSet(eventId, Guid.Parse(message.AuctionId), message.Version,
-            occurredAt, set.Name, lotIds, collectorId));
+        return new AuctionDecoded.LotSet(new CollectedLotSet(eventId, auctionId, message.Version, occurredAt,
+            set.Name, lotIds, collectorId));
+    }
+
+    // Общая часть двух AuctionEvent-путей: парсинг конверта, occasion и
+    // принадлежность снимка аукциону. Статус снимка проверяет только
+    // DecodeAuction: у собранного сета он не меняется.
+    private static AuctionEventEnvelope? DecodeAuctionEnvelope(string subject,
+        AuctionEvent.OccasionOneofCase occasion, ReadOnlyMemory<byte> payload, out string reason)
+    {
+        AuctionEvent message;
+        try
+        {
+            message = AuctionEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            reason = "not an auction.v1.AuctionEvent";
+            return null;
+        }
+
+        if (!Id(message.EventId, out var eventId) || !AuctionId(message.AuctionId) || message.Version < 1)
+        {
+            reason = "event_id, auction_id or version is invalid";
+            return null;
+        }
+        if (!Instant(message.OccurredAt, out var occurredAt))
+        {
+            reason = "occurred_at is not an RFC 3339 UTC instant";
+            return null;
+        }
+        if (message.OccasionCase != occasion)
+        {
+            reason = $"{subject} subject does not match occasion";
+            return null;
+        }
+        if (message.State is not { } state || state.Id != message.AuctionId)
+        {
+            reason = "state does not identify the auction";
+            return null;
+        }
+
+        reason = string.Empty;
+        return new AuctionEventEnvelope(message, state, eventId, Guid.Parse(message.AuctionId), occurredAt);
     }
 
     // Факт итогов один на аукцион, и яд теряет его для всех сразу, поэтому
@@ -930,6 +929,20 @@ public static class AuctionMapping
 
     private static bool Price(Money price) =>
         price.MinorUnits >= 0 && price.Currency.Length == 3 && price.Currency.All(character => character is >= 'A' and <= 'Z');
+
+    // Match Character.isWhitespace || Character.isSpaceChar in Auction's
+    // LotSetName. .NET's IsNullOrWhiteSpace also treats U+0085 as blank, but
+    // Java does not.
+    private static bool IsBlankLotSetName(string value) =>
+        value.All(character =>
+        {
+            var category = char.GetUnicodeCategory(character);
+            var separator = category is UnicodeCategory.SpaceSeparator or
+                UnicodeCategory.LineSeparator or UnicodeCategory.ParagraphSeparator;
+            var control = character >= '\u0009' && character <= '\u000d' ||
+                character >= '\u001c' && character <= '\u001f';
+            return separator || control;
+        });
 
     private static bool Id(string value, out Guid id) =>
         Guid.TryParseExact(value, "D", out id) && value == id.ToString() &&

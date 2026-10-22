@@ -10,7 +10,7 @@ using static Notifications.IntegrationTests.Infrastructure.FactFixtures;
 
 namespace Notifications.IntegrationTests.Scenarios;
 
-/// <summary>Собранный сет проходит через JetStream, PostgreSQL и outbox (PER-687).</summary>
+/// <summary>Факт собранного сета проходит через JetStream, PostgreSQL и outbox (PER-687).</summary>
 public class LotSetCollectedTests
 {
     [Fact]

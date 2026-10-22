@@ -1,5 +1,5 @@
 import type { AuctionCancelled } from "../../../gen/notifications/v1/notifications_pb.js";
-import { money } from "../format.js";
+import { lotWord, money } from "../format.js";
 import { type NoticeMoney, toMoney } from "./lot-notice.js";
 
 // Извещение об отмене аукциона после старта торгов (ADR-047, дополнение
@@ -84,13 +84,4 @@ function purchaseLine(purchases: readonly NoticeMoney[]): string[] {
   return [
     `Твои покупки — ${count} на ${money({ minorUnits: total, currency: first.currency })} — остаются за тобой.`,
   ];
-}
-
-function lotWord(count: number): string {
-  const tens = count % 100;
-  const ones = count % 10;
-  if (tens >= 11 && tens <= 14) return "лотов";
-  if (ones === 1) return "лот";
-  if (ones >= 2 && ones <= 4) return "лота";
-  return "лотов";
 }

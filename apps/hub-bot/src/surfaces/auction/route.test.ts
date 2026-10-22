@@ -148,6 +148,7 @@ function ports(
 }
 
 const lotButton = encodeAuctionCallback({ kind: "lot", lotId, page: 0 });
+const setButton = encodeAuctionCallback({ kind: "set", lotId, page: 0 });
 const feedButton = encodeAuctionCallback({
   kind: "feed",
   auctionId,
@@ -705,6 +706,22 @@ describe("routeAuctionCallback", () => {
       category: "dependency_unavailable",
       grpcCode: "Unimplemented",
     });
+  });
+
+  it("treats a missing set anchor as outdated instead of offering a futile retry", async () => {
+    const p = ports(identity({ rights: GUEST }));
+    vi.mocked(p.auction.getLot).mockRejectedValueOnce(
+      new ConnectError("not found", Code.NotFound),
+    );
+
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: setButton,
+    });
+
+    expect(outcome.screen).toEqual({ kind: "outdated" });
+    expect(outcome.failure).toBeUndefined();
   });
 
   // Критерий PER-306: недоступный Auction — именованный экран, а не пустая

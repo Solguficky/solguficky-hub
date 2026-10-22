@@ -443,7 +443,7 @@ describe("raffle result", () => {
 });
 
 // Итог сета (PER-687): без проверки права и без чтения Auction на доставке.
-describe("collected lot set", () => {
+describe("notification renderer", () => {
   const set: AuctionNotificationContent = {
     kind: "lot-set-collected",
     setName: "Сервиз",

@@ -13,5 +13,5 @@ ALTER TABLE notification ADD CONSTRAINT notification_type_known CHECK (type IN (
     'prediction_results', 'release_summary', 'auction_cancelled',
     'lot_deadline_close', 'auction_final_lot_next', 'step_window_started',
     'lot_lead_restored', 'auction_published', 'auction_trading_opened',
-    'lot_set_collected'
+    'invoice_reminder', 'invoice_due_reminder', 'lot_set_collected'
 ));
