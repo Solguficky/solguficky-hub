@@ -326,6 +326,28 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
+    "accept a live bid at the next price when five times that price does not fit in a long" in {
+      val price = Long.MaxValue / 5 + 1
+      val next = price + 10
+      val lot = trading(price = price, phase = Phase.Live, leader = Some(participant(9)))
+
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = next, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(next))
+      Lot.decide(lot, placeBid(who = 1, amount = Long.MaxValue, opN = 2), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidNotAtNextPrice(money(next)))
+    }
+
+    "accept an online bid when five times the next price does not fit in a long" in {
+      val price = Long.MaxValue / 5 + 1
+      val next = price + 10
+      val lot = trading(price = price, leader = Some(participant(9)))
+
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = next, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(next))
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = Long.MaxValue, opN = 2), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(Long.MaxValue))
+    }
+
     "reject a live bid above the next price and name that price (Т-40)" in {
       val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live, leader = Some(participant(9)))
 

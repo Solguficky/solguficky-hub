@@ -611,8 +611,20 @@ object Lot {
     trading.ask.filter(_ > trading.currentPrice) match {
       case Some(ask) => ask
       case None if opening(trading) => trading.currentPrice
-      case None => trading.currentPrice.plus(baseStep(trading, trading.currentPrice))
+      case None => saturatedPlus(trading.currentPrice, baseStep(trading, trading.currentPrice))
     }
+
+  /** Пять баз, насыщенные на край `Long`: произведение, которое в него не входит, не бросает исключение. */
+  private def onlineMaximum(trading: TradingState): Money = {
+    val reference = ceilingReference(trading)
+    val units = reference.minorUnits
+    val scale = OnlineBidCeiling.toLong
+    val scaled =
+      if (units > 0 && units > Long.MaxValue / scale) Long.MaxValue
+      else if (units < 0 && units < Long.MinValue / scale) Long.MinValue
+      else units * scale
+    reference.copy(minorUnits = scaled)
+  }
 
   /**
    * Порядок проверок повторяет RFC-011: валюта, лидерство, затем порог. В `Live` сумма — ожидаемая цена, и проверка
@@ -630,25 +642,28 @@ object Lot {
       now: Instant
   ): Either[PlaceBidRejected, LotEvent.BidPlaced] = {
     val required = minRequired(trading, now)
-    val maximum = ceilingReference(trading).times(OnlineBidCeiling)
     if (command.source == BidSource.Floor && trading.phase != Phase.Live) Left(PlaceBidRejected.LotNotOpen)
     else if (command.amount.currency != trading.config.currency) Left(PlaceBidRejected.CurrencyMismatch)
     else if (trading.leader.contains(command.participant)) Left(PlaceBidRejected.BidderIsLeader(trading.currentPrice))
     else if (trading.phase == Phase.Live && command.amount != required)
       Left(PlaceBidRejected.BidNotAtNextPrice(required))
     else if (command.amount < required) Left(PlaceBidRejected.BidBelowMinimum(required))
-    else if (trading.phase == Phase.Online && command.amount > maximum)
-      Left(PlaceBidRejected.BidAboveMaximum(maximum))
-    else
-      Right(
-        LotEvent.BidPlaced(
-          bidId = bidId,
-          participant = command.participant,
-          amount = command.amount,
-          previousLeader = trading.leader,
-          origin = BidOrigin.Manual(command.source)
-        )
-      )
+    else {
+      val maximum = if (trading.phase == Phase.Online) Some(onlineMaximum(trading)) else None
+      maximum.filter(command.amount > _) match {
+        case Some(ceiling) => Left(PlaceBidRejected.BidAboveMaximum(ceiling))
+        case None =>
+          Right(
+            LotEvent.BidPlaced(
+              bidId = bidId,
+              participant = command.participant,
+              amount = command.amount,
+              previousLeader = trading.leader,
+              origin = BidOrigin.Manual(command.source)
+            )
+          )
+      }
+    }
   }
 
   /** Проверки лимита, общие для торгов и удержания; лидер ставить лимит вправе (О-3). */
