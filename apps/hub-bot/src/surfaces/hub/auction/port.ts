@@ -583,8 +583,10 @@ export type RemoveParticipantResult =
 
 // Счета аукциона (PER-321): право — то же, что у пульта, Auction спрашивает
 // его у Meetups. `auction-not-found` у чтения — аукциона нет, кнопка устарела.
+// `paymentInstructions` — текст «Как оплатить и получить» аукциона, как его
+// читают победители; нет — администратор его ещё не задал.
 export type InvoicesReadResult =
-  | { kind: "ok"; invoices: readonly Invoice[] }
+  | { kind: "ok"; invoices: readonly Invoice[]; paymentInstructions?: string }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
   | { kind: "auction-not-found" }
@@ -599,6 +601,16 @@ export type InvoiceMarkResult =
   | { kind: "invoice-not-found" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | AuctionFailure;
+
+// Текст «Как оплатить и получить» (PER-322): задать, изменить и снять одной
+// командой. Ворот по сходке нет — счета переживают отмену, — поэтому отказов
+// только два.
+export type PaymentInstructionsResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "auction-not-found" }
   | AuctionFailure;
 
 // Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
@@ -820,6 +832,13 @@ export type AuctionConsoles = {
     mark: { invoiceId: string; mark: InvoiceMark; opId: string },
     meta?: RpcMetadata,
   ): Promise<InvoiceMarkResult>;
+  // Текст «Как оплатить и получить» (PER-322): свободный текст победителям
+  // всего аукциона. Текст без — снять. Повтор того же `opId` Auction принимает.
+  setPaymentInstructions(
+    person: Person,
+    command: { auctionId: string; opId: string; text?: string },
+    meta?: RpcMetadata,
+  ): Promise<PaymentInstructionsResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

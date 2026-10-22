@@ -49,6 +49,7 @@ import type {
   LotAdministration,
   LotClosure,
   MeetupAuctions,
+  PaymentInstructionsResult,
   RemovalTarget,
   SaveLotSetResult,
 } from "../auction/port.js";
@@ -155,6 +156,8 @@ const forgedAuctionPresses = {
   "console-invoice": `v1:ac:ic:${auctionToken}:${uuidToToken(vaseInvoiceId)}`,
   "console-invoice-mark": `v1:ac:ip:${auctionToken}:${uuidToToken(vaseInvoiceId)}:p`,
   "console-invoice-mark-confirm": `v1:ac:iy:${auctionToken}:${uuidToToken(vaseInvoiceId)}:p`,
+  "console-payment-text": `v1:ac:it:${auctionToken}`,
+  "console-payment-text-remove": `v1:ac:ix:${auctionToken}`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -266,6 +269,10 @@ function fakeAuction(
     lotSets?: readonly LotSet[];
     // Счета (PER-321): счета проданных лотов до теста.
     invoices?: readonly Invoice[];
+    // Текст «Как оплатить и получить» (PER-322) до теста и отказ Auction
+    // вместо принятия команды над ним.
+    paymentText?: string;
+    paymentTextRefusal?: PaymentInstructionsResult;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -294,6 +301,8 @@ function fakeAuction(
     invoices: Invoice[];
     // Переходы счетов: повтор отметки, как в Auction, перехода не пишет.
     transitions: { invoiceId: string; mark: InvoiceMark }[];
+    // Текст «Как оплатить и получить» (PER-322).
+    paymentText?: string;
   } = {
     status: options.status ?? "draft",
     hidden: options.hidden ?? false,
@@ -311,6 +320,9 @@ function fakeAuction(
     lotSets: [...(options.lotSets ?? [])],
     invoices: [...(options.invoices ?? [])],
     transitions: [],
+    ...(options.paymentText === undefined
+      ? {}
+      : { paymentText: options.paymentText }),
   };
   // Сеты как в Auction (ADR-073): меняются до открытия недели, лот — в одном
   // сете и только из реестра, тот же идентификатор заменяет сет целиком.
@@ -879,7 +891,27 @@ function fakeAuction(
     async listAuctionInvoices() {
       commands.push({ method: "listAuctionInvoices", args: auctionId });
       if (options.refuse === true) return { kind: "not-administrator" };
-      return { kind: "ok" as const, invoices: state.invoices };
+      return {
+        kind: "ok" as const,
+        invoices: state.invoices,
+        ...(state.paymentText === undefined
+          ? {}
+          : { paymentInstructions: state.paymentText }),
+      };
+    },
+    // Текст оплаты (PER-322): Auction хранит его как есть; текст без —
+    // снятие.
+    async setPaymentInstructions(
+      _person: unknown,
+      command: { auctionId: string; opId: string; text?: string },
+    ) {
+      commands.push({ method: "setPaymentInstructions", args: command });
+      if (options.paymentTextRefusal !== undefined) {
+        return options.paymentTextRefusal;
+      }
+      if (command.text === undefined) delete state.paymentText;
+      else state.paymentText = command.text;
+      return { kind: "ok" as const };
     },
     // Счёт решает отметку, как в Auction: выдача — только после оплаты,
     // повтор уже стоящей отметки принимается без перехода.
@@ -5486,6 +5518,7 @@ describe("invoices of the auction console", () => {
     expect(labels(last(calls))).toEqual([
       ["Ваза · @jay"],
       ["Кружка · @owl"],
+      ["Текст оплаты"],
       ["‹ Пульт"],
     ]);
   });
@@ -5564,6 +5597,152 @@ describe("invoices of the auction console", () => {
     );
     expect(plain(outcome)).toContain("Выдать пока нельзя");
     expect(auction.sent("markInvoice")).toEqual([]);
+  });
+
+  // Текст «Как оплатить и получить» (PER-322): задаётся вопросом на
+  // «Счетах», ответ принимается и после рестарта, снимается кнопкой.
+  it("asks the payment text, keeps the question over a restart and shows the text", async () => {
+    const auction = finished();
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(invoicesData));
+    expect(plain(last(calls))).toContain(
+      "Текста «Как оплатить и получить» ещё нет.",
+    );
+    expect(dataOf(last(calls), "Текст оплаты")).toBe(
+      `v1:ac:it:${auctionToken}`,
+    );
+    expect(labels(last(calls)).flat()).not.toContain("Убрать текст оплаты");
+
+    await next((history) => press(dataOf(last(history), "Текст оплаты")));
+    const asked = question(calls).payload;
+    expect(asked.reply_markup?.force_reply).toBe(true);
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:ai:${auctionToken}:42`);
+    expect(asked.text).toContain("Как победителям оплатить лоты");
+
+    // Пустой ответ бот отклоняет сам, без команды.
+    await next((history) => answer(history, { text: "  \n " }));
+    expect(last(calls).text).toBe(
+      "<b>Пустой текст победителям ничего не скажет: напиши, как оплатить и получить лот</b>",
+    );
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Счета"]]);
+    expect(auction.sent("setPaymentInstructions")).toEqual([]);
+
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    await next((history) =>
+      answer(history, {
+        text: " Перевод на карту 2200 0000 0000 0000 до пятницы.\nЗабрать <в зале> после финала. ",
+      }),
+    );
+    expect(auction.sent("setPaymentInstructions")).toEqual([
+      {
+        method: "setPaymentInstructions",
+        args: {
+          auctionId,
+          opId: expect.any(String),
+          text: "Перевод на карту 2200 0000 0000 0000 до пятницы.\nЗабрать <в зале> после финала.",
+        },
+      },
+    ]);
+    expect(last(calls).text).toBe(
+      "<b>Текст оплаты сохранён</b>\n\nПобедители видят его в своих счетах.",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Счета"]]);
+
+    await next((history) => press(dataOf(last(history), "‹ Счета")));
+    const summary = last(calls).text ?? "";
+    expect(summary).toContain(
+      "<b>Как оплатить и получить</b>\nПеревод на карту 2200 0000 0000 0000 до пятницы.\nЗабрать &lt;в зале&gt; после финала.",
+    );
+    expect(labels(last(calls))).toEqual([
+      ["Ваза · @jay"],
+      ["Кружка · @owl"],
+      ["Текст оплаты"],
+      ["Убрать текст оплаты"],
+      ["‹ Пульт"],
+    ]);
+  });
+
+  it("asks again a text longer than a thousand characters", async () => {
+    const auction = finished();
+    const calls: RecordedCall[] = [];
+    await pressFresh(auction, calls, `v1:ac:it:${auctionToken}`);
+    const { bot } = harness("admin", auction, calls);
+    await bot.init();
+    await bot.handleUpdate(answer(calls, { text: "я".repeat(1_001) }));
+    expect(plain(last(calls))).toContain("Текст длиннее 1000 знаков");
+    expect(auction.sent("setPaymentInstructions")).toEqual([]);
+  });
+
+  it("takes the payment text back without a confirmation", async () => {
+    const auction = fakeAuction({
+      status: "finished",
+      paymentText: "Перевод на карту.",
+    });
+    const calls: RecordedCall[] = [];
+    const summary = await pressFresh(auction, calls, invoicesData);
+    expect(plain(summary)).toContain(
+      "Как оплатить и получить\nПеревод на карту.",
+    );
+    const outcome = await pressFresh(
+      auction,
+      calls,
+      dataOf(summary, "Убрать текст оплаты"),
+    );
+    expect(auction.sent("setPaymentInstructions")).toEqual([
+      {
+        method: "setPaymentInstructions",
+        args: { auctionId, opId: expect.any(String) },
+      },
+    ]);
+    expect(outcome.text).toBe(
+      "<b>Текст оплаты убран</b>\n\nПобедители его больше не видят.",
+    );
+    const after = await pressFresh(auction, calls, invoicesData);
+    expect(plain(after)).toContain("Текста «Как оплатить и получить» ещё нет.");
+    expect(labels(after).flat()).not.toContain("Убрать текст оплаты");
+  });
+
+  it("ignores an answer to the payment question from someone else", async () => {
+    const auction = finished();
+    const calls: RecordedCall[] = [];
+    await pressFresh(auction, calls, `v1:ac:it:${auctionToken}`);
+    const before = calls.length;
+    const { bot } = harness("admin", auction, calls);
+    await bot.init();
+    await bot.handleUpdate(answer(calls, { text: "Перевод на карту." }, 77));
+    expect(shown(calls.slice(before))).toEqual([]);
+    expect(auction.sent("setPaymentInstructions")).toEqual([]);
+  });
+
+  it("refuses a payment answer of someone without the right before Auction", async () => {
+    const auction = finished();
+    const calls: RecordedCall[] = [];
+    await pressFresh(auction, calls, `v1:ac:it:${auctionToken}`);
+    const { bot } = harness("member", auction, calls);
+    await bot.init();
+    await bot.handleUpdate(answer(calls, { text: "Перевод на карту." }));
+    expect(last(calls).text).toContain("Это действие тебе недоступно.");
+    expect(auction.sent("setPaymentInstructions")).toEqual([]);
+  });
+
+  it("shows the refusal of Auction to a non-administrator of the meetup", async () => {
+    const auction = fakeAuction({
+      status: "finished",
+      paymentTextRefusal: { kind: "not-administrator" },
+    });
+    const calls: RecordedCall[] = [];
+    await pressFresh(auction, calls, `v1:ac:it:${auctionToken}`);
+    const { bot } = harness("admin", auction, calls);
+    await bot.init();
+    await bot.handleUpdate(answer(calls, { text: "Перевод на карту." }));
+    expect(auction.sent("setPaymentInstructions")).toHaveLength(1);
+    expect(last(calls).text).toContain("Это действие тебе недоступно.");
   });
 
   it("refuses the invoices that Auction does not grant", async () => {

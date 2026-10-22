@@ -98,6 +98,7 @@ import type {
   MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
+  PaymentTextAskError,
   Person,
   PublishMomentRetry,
   RaffleAskError,
@@ -195,6 +196,8 @@ import {
   consoleAskData,
   consoleFinalTimeData,
   consoleInvoiceMarkData,
+  consoleInvoicesData,
+  consolePaymentTextData,
   consoleRaffleData,
   consoleRafflePrizeData,
   consoleSetAskData,
@@ -288,7 +291,10 @@ import {
   invoiceMarkOutcomeScreen,
   invoiceMissingScreen,
   invoiceScreen,
+  invoicesLabel,
   invoicesScreen,
+  paymentTextAskErrorText,
+  paymentTextPrompt,
 } from "./screens/auction-invoices.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
@@ -761,6 +767,14 @@ type PendingConsoleFinalTime = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о тексте «Как оплатить и получить» на «Счетах» (PER-322). Шаг —
+// аукцион — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePaymentText = {
+  kind: "console-payment-text";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
@@ -818,6 +832,7 @@ type HubPendingInput =
   | PendingConsoleRaffle
   | PendingConsolePrize
   | PendingConsoleFinalTime
+  | PendingConsolePaymentText
   | PendingConsoleWindow
   | PendingConsoleLaunch
   | PendingConsoleSet
@@ -843,6 +858,10 @@ const consoleQuestionIntents = {
   "console-final-time": {
     intent: "set-auction-final-time",
     foreign: "foreign final time answer ignored",
+  },
+  "console-payment-text": {
+    intent: "set-auction-payment-text",
+    foreign: "foreign payment text answer ignored",
   },
   "console-window": {
     intent: "add-step-window",
@@ -1600,7 +1619,10 @@ async function handleMessage(
             { ...answer, intent: "add-lot-set", lotSetId: createUuidV7() }
           : { ...answer, intent: consoleQuestionIntents[pending.kind].intent },
       );
-      outcome = await renderConsoleResult(ctx, runtime, result, {
+      // Текст оплаты (PER-322) отвечает сводкой счетов, а не пультом.
+      outcome = await (pending.kind === "console-payment-text"
+        ? renderInvoicesResult
+        : renderConsoleResult)(ctx, runtime, result, {
         person: identity.person,
         questions,
         replyId,
@@ -1610,6 +1632,7 @@ async function handleMessage(
         result.kind !== "auction-raffle-ask" &&
         result.kind !== "auction-raffle-prize-ask" &&
         result.kind !== "auction-final-time-ask" &&
+        result.kind !== "payment-text-ask" &&
         result.kind !== "step-window-ask" &&
         result.kind !== "step-window-launch-ask" &&
         result.kind !== "lot-set-ask"
@@ -2058,6 +2081,7 @@ async function handleMessage(
         pending.kind === "console-raffle" ||
         pending.kind === "console-raffle-prize" ||
         pending.kind === "console-final-time" ||
+        pending.kind === "console-payment-text" ||
         pending.kind === "console-window" ||
         pending.kind === "console-launch" ||
         pending.kind === "console-set" ||
@@ -2077,6 +2101,7 @@ async function handleMessage(
                 pending.kind === "console-raffle" ||
                 pending.kind === "console-raffle-prize" ||
                 pending.kind === "console-final-time" ||
+                pending.kind === "console-payment-text" ||
                 pending.kind === "console-window" ||
                 pending.kind === "console-launch" ||
                 pending.kind === "console-set" ||
@@ -2551,7 +2576,9 @@ async function handleCallback(
       action.kind === "console-invoices" ||
       action.kind === "console-invoice" ||
       action.kind === "console-invoice-mark" ||
-      action.kind === "console-invoice-mark-confirm"
+      action.kind === "console-invoice-mark-confirm" ||
+      action.kind === "console-payment-text" ||
+      action.kind === "console-payment-text-remove"
     ) {
       outcome = canRunAuctions(person)
         ? await handleInvoicesCallback(ctx, runtime, questions, person, action)
@@ -8436,7 +8463,9 @@ async function handleInvoicesCallback(
         | "console-invoices"
         | "console-invoice"
         | "console-invoice-mark"
-        | "console-invoice-mark-confirm";
+        | "console-invoice-mark-confirm"
+        | "console-payment-text"
+        | "console-payment-text-remove";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -8452,36 +8481,74 @@ async function handleInvoicesCallback(
     action.kind === "console-invoice-mark-confirm"
       ? consoleInvoiceMarkData(action.auction, action.invoice, action.mark)
       : ctx.callbackQuery?.data;
-  const result = await runtime.dispatcher.execute(
-    action.kind === "console-invoices"
-      ? { ...call, intent: "view-auction-invoices", page: action.page }
-      : action.kind === "console-invoice"
-        ? {
-            ...call,
-            intent: "view-auction-invoice",
-            invoiceId: tokenToUuid(action.invoice),
-          }
-        : action.kind === "console-invoice-mark"
-          ? {
-              ...call,
-              intent: "prepare-invoice-mark",
-              invoiceId: tokenToUuid(action.invoice),
-              mark: action.mark,
-            }
-          : {
-              ...call,
-              intent: "mark-invoice",
-              invoiceId: tokenToUuid(action.invoice),
-              mark: action.mark,
-              opId: createUuidV7(),
-            },
-  );
+  const request = (): ExecuteRequest => {
+    switch (action.kind) {
+      case "console-invoices":
+        return { ...call, intent: "view-auction-invoices", page: action.page };
+      case "console-invoice":
+        return {
+          ...call,
+          intent: "view-auction-invoice",
+          invoiceId: tokenToUuid(action.invoice),
+        };
+      case "console-invoice-mark":
+        return {
+          ...call,
+          intent: "prepare-invoice-mark",
+          invoiceId: tokenToUuid(action.invoice),
+          mark: action.mark,
+        };
+      case "console-invoice-mark-confirm":
+        return {
+          ...call,
+          intent: "mark-invoice",
+          invoiceId: tokenToUuid(action.invoice),
+          mark: action.mark,
+          opId: createUuidV7(),
+        };
+      // Текст оплаты (PER-322): вопрос спрашивает текст, а снятие идёт без
+      // вопроса — ключ рождается на нажатие.
+      case "console-payment-text":
+        return { ...call, intent: "ask-auction-payment-text" };
+      case "console-payment-text-remove":
+        return {
+          ...call,
+          intent: "remove-auction-payment-text",
+          opId: createUuidV7(),
+        };
+      default: {
+        const _exhaustive: never = action;
+        return _exhaustive;
+      }
+    }
+  };
+  const result = await runtime.dispatcher.execute(request());
+  return renderInvoicesResult(ctx, runtime, result, {
+    person,
+    questions,
+    retry,
+  });
+}
+
+// Экраны счетов (PER-321) и вопрос о тексте оплаты (PER-322); остальное —
+// исходы пульта: отказы и сбои рисуются, как у его команд.
+async function renderInvoicesResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
   const handled = (message: string): BoundaryOutcome => ({
     level: "info",
     message,
     result: "ok",
-    use_case: useCase,
-    identity_id: person.identityId,
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
   });
   const clock = {
     timeZone: runtime.communityTimeZone ?? "UTC",
@@ -8490,7 +8557,11 @@ async function handleInvoicesCallback(
   switch (result.kind) {
     case "auction-invoices":
       await showScreen(ctx, invoicesScreen({ ...result, ...clock }));
-      return handled("auction invoices sent");
+      return handled(
+        result.note === undefined
+          ? "auction invoices sent"
+          : `auction invoices sent: ${result.note}`,
+      );
     case "auction-invoice":
       await showScreen(ctx, invoiceScreen({ ...result, ...clock }));
       return handled("auction invoice sent");
@@ -8503,13 +8574,49 @@ async function handleInvoicesCallback(
     case "invoice-missing":
       await showScreen(ctx, invoiceMissingScreen(result.auctionId));
       return handled("invoice not found");
-    default:
-      return renderConsoleResult(ctx, runtime, result, {
-        person,
-        questions,
-        retry,
+    case "payment-text-ask":
+      await askConsolePaymentText(ctx, context.questions, {
+        auctionId: result.auctionId,
+        error: result.error,
+        replaces: context.replyId,
       });
+      return handled(
+        result.error === undefined
+          ? "payment text requested"
+          : "payment text asked again",
+      );
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
   }
+}
+
+// Вопрос о тексте «Как оплатить и получить» (PER-322): свободный текст в
+// несколько строк; текущий текст — на экране «Счета» над вопросом.
+function askConsolePaymentText(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    error?: PaymentTextAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-payment-text",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      paymentTextAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(ctx, questions, pending, paymentTextPrompt, ask.replaces);
 }
 
 // «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
@@ -10083,6 +10190,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-final-time",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-payment-text":
+      return {
+        kind: "console-payment-text",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-window":
       return {
         kind: "console-window",
@@ -10273,6 +10385,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-payment-text":
+      return {
+        kind: "console-payment-text",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "console-window":
       return {
         kind: "console-window",
@@ -10391,6 +10510,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-set":
       // Вопрос о названии сета задан с «Сетов».
       return { kind: "console-sets", auction: step.auction };
+    case "console-payment-text":
+      // Вопрос о тексте оплаты задан со «Счетов».
+      return { kind: "console-invoices", auction: step.auction, page: 0 };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10553,6 +10675,8 @@ function reopenData(step: QuestionStep): string {
       return consoleRafflePrizeData(step.auction);
     case "console-final-time":
       return consoleFinalTimeData(step.auction);
+    case "console-payment-text":
+      return consolePaymentTextData(step.auction);
     case "console-window":
       return consoleWindowAskData(step.auction);
     case "console-launch":
@@ -10625,6 +10749,11 @@ function answerParent(step: QuestionStep): Parent {
       };
     case "console-set":
       return { name: "Сеты", data: consoleSetsData(step.auction) };
+    case "console-payment-text":
+      return {
+        name: invoicesLabel,
+        data: consoleInvoicesData(step.auction),
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10893,6 +11022,8 @@ function callbackUseCase(
     | "console-invoice"
     | "console-invoice-mark"
     | "console-invoice-mark-confirm"
+    | "console-payment-text"
+    | "console-payment-text-remove"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
@@ -11082,6 +11213,8 @@ function callbackUseCase(
     case "console-invoice":
     case "console-invoice-mark":
     case "console-invoice-mark-confirm":
+    case "console-payment-text":
+    case "console-payment-text-remove":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":

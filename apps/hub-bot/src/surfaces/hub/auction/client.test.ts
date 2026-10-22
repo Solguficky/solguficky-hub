@@ -115,6 +115,7 @@ function adapter(rpc: {
   listAuctionInvoices?: Call;
   markInvoicePaid?: Call;
   markInvoiceHandedOver?: Call;
+  setPaymentInstructions?: Call;
   listMyInvoices?: Call;
   chooseFulfillment?: Call;
 }) {
@@ -167,6 +168,7 @@ function adapter(rpc: {
     listAuctionInvoices: (rpc.listAuctionInvoices ?? notUsed) as never,
     markInvoicePaid: (rpc.markInvoicePaid ?? notUsed) as never,
     markInvoiceHandedOver: (rpc.markInvoiceHandedOver ?? notUsed) as never,
+    setPaymentInstructions: (rpc.setPaymentInstructions ?? notUsed) as never,
     listMyInvoices: (rpc.listMyInvoices ?? notUsed) as never,
     chooseFulfillment: (rpc.chooseFulfillment ?? notUsed) as never,
   });
@@ -2383,6 +2385,95 @@ describe("auction invoices adapter", () => {
     expect(handedOver).toEqual([
       expect.objectContaining({ viewer: wireAdmin, invoiceId, opId }),
     ]);
+  });
+
+  // Текст «Как оплатить и получить» (PER-322): чтение сводки несёт текст,
+  // команда задаёт и снимает его, отказы — значения ответа.
+  it("reads the payment text with the invoices", async () => {
+    await expect(
+      adapter({
+        listAuctionInvoices: async () => ({
+          outcome: {
+            case: "invoices",
+            value: { invoices: [], paymentInstructions: "Перевод на карту." },
+          },
+        }),
+      }).listAuctionInvoices(admin, auctionId),
+    ).resolves.toEqual({
+      kind: "ok",
+      invoices: [],
+      paymentInstructions: "Перевод на карту.",
+    });
+  });
+
+  it("sets and takes back the payment text and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      setPaymentInstructions: async (request: unknown) => {
+        sent.push(request);
+        return { outcome: { case: "accepted", value: {} } };
+      },
+    });
+    await expect(
+      accepted.setPaymentInstructions(admin, {
+        auctionId,
+        opId,
+        text: "Перевод на карту.\nЗабрать в зале.",
+      }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      accepted.setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        opId,
+        text: "Перевод на карту.\nЗабрать в зале.",
+      }),
+      expect.not.objectContaining({ text: expect.anything() }),
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      await expect(
+        adapter({
+          setPaymentInstructions: async () => ({
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+        }).setPaymentInstructions(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    await expect(
+      adapter({
+        setPaymentInstructions: async () => ({ outcome: { case: undefined } }),
+      }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        setPaymentInstructions: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    await expect(
+      adapter({
+        setPaymentInstructions: () =>
+          Promise.reject(new ConnectError("blank", Code.InvalidArgument)),
+      }).setPaymentInstructions(admin, { auctionId, opId, text: " " }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        setPaymentInstructions: () =>
+          Promise.reject(new ConnectError("meetups", Code.Unavailable)),
+      }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
   });
 
   it("reads a missing invoice and an unanswered mark without a repeat", async () => {

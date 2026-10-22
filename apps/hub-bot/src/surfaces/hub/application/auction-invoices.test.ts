@@ -6,10 +6,12 @@ import type {
   DisplayNamesResult,
   InvoiceMarkResult,
   InvoicesReadResult,
+  PaymentInstructionsResult,
 } from "../auction/port.js";
 import {
   createAuctionInvoices,
   isOverdue,
+  parsePaymentText,
   totalsOf,
 } from "./auction-invoices.js";
 import type { Invoice, LotAmount, Person } from "./types.js";
@@ -70,6 +72,7 @@ function fake(answers: {
   console?: ConsoleReadResult;
   names?: DisplayNamesResult;
   mark?: InvoiceMarkResult;
+  text?: PaymentInstructionsResult;
 }) {
   const calls: { method: string; args: unknown }[] = [];
   const port = {
@@ -113,6 +116,10 @@ function fake(answers: {
     markInvoice: async (_person, mark) => {
       calls.push({ method: "markInvoice", args: mark });
       return answers.mark ?? { kind: "ok" };
+    },
+    setPaymentInstructions: async (_person, command) => {
+      calls.push({ method: "setPaymentInstructions", args: command });
+      return answers.text ?? { kind: "ok" };
     },
   } satisfies Partial<AuctionConsoles>;
   return {
@@ -333,5 +340,155 @@ describe("auction invoices", () => {
         opId: "op-1",
       }),
     ).resolves.toMatchObject({ note: "not-paid" });
+  });
+});
+
+describe("parsePaymentText", () => {
+  it("trims the edges and keeps the line breaks inside", () => {
+    expect(
+      parsePaymentText("  \n Перевод на карту.\nЗабрать в зале.\n "),
+    ).toEqual({
+      kind: "ok",
+      text: "Перевод на карту.\nЗабрать в зале.",
+    });
+  });
+
+  it("refuses an empty text", () => {
+    expect(parsePaymentText(" \n\t ")).toEqual({
+      kind: "rejected",
+      error: "payment-text-empty",
+    });
+  });
+
+  it("counts the length in code points, not in UTF-16 units", () => {
+    // Эмодзи — две единицы UTF-16, но один знак: тысяча эмодзи помещается.
+    expect(parsePaymentText("🎁".repeat(1_000))).toMatchObject({ kind: "ok" });
+    expect(parsePaymentText("я".repeat(1_001))).toEqual({
+      kind: "rejected",
+      error: "payment-text-too-long",
+    });
+  });
+});
+
+describe("payment text of the auction", () => {
+  it("carries the current text in the summary", async () => {
+    const { run } = fake({
+      invoices: {
+        kind: "ok",
+        invoices: [],
+        paymentInstructions: "Перевод на карту.",
+      },
+    });
+    await expect(
+      run({ ...call, intent: "view-auction-invoices", page: 0 }),
+    ).resolves.toMatchObject({
+      kind: "auction-invoices",
+      paymentInstructions: "Перевод на карту.",
+    });
+  });
+
+  it("asks the text only after the invoices are read", async () => {
+    const { run } = fake({ invoices: { kind: "not-administrator" } });
+    await expect(
+      run({ ...call, intent: "ask-auction-payment-text" }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
+    const allowed = fake({});
+    await expect(
+      allowed.run({ ...call, intent: "ask-auction-payment-text" }),
+    ).resolves.toEqual({ kind: "payment-text-ask", auctionId });
+  });
+
+  it("sends the trimmed text and returns the summary with the outcome", async () => {
+    const { run, sent } = fake({});
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-payment-text",
+        value: "  Перевод на карту.\nЗабрать в зале. ",
+        opId: "op-1",
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-invoices",
+      note: "payment-text-saved",
+      paymentInstructions: "Перевод на карту.\nЗабрать в зале.",
+      page: 0,
+    });
+    expect(sent("setPaymentInstructions")).toEqual([
+      {
+        method: "setPaymentInstructions",
+        args: {
+          auctionId,
+          opId: "op-1",
+          text: "Перевод на карту.\nЗабрать в зале.",
+        },
+      },
+    ]);
+  });
+
+  it("asks again on an empty answer without a command", async () => {
+    const { run, sent } = fake({});
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-payment-text",
+        value: "   ",
+        opId: "op-1",
+      }),
+    ).resolves.toEqual({
+      kind: "payment-text-ask",
+      auctionId,
+      error: "payment-text-empty",
+    });
+    expect(sent("setPaymentInstructions")).toEqual([]);
+  });
+
+  it("shows the refusal of a non-administrator as the console refusal", async () => {
+    const { run } = fake({ text: { kind: "not-administrator" } });
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-payment-text",
+        value: "Перевод на карту.",
+        opId: "op-1",
+      }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
+  });
+
+  it("takes the text back without a text in the command", async () => {
+    const { run, sent } = fake({
+      invoices: {
+        kind: "ok",
+        invoices: [],
+        paymentInstructions: "Перевод на карту.",
+      },
+    });
+    const result = await run({
+      ...call,
+      intent: "remove-auction-payment-text",
+      opId: "op-2",
+    });
+    expect(result).toMatchObject({
+      kind: "auction-invoices",
+      note: "payment-text-removed",
+    });
+    // Снятый текст не возвращается из чтения, которое отстало от команды.
+    expect(result).not.toHaveProperty("paymentInstructions");
+    expect(sent("setPaymentInstructions")).toEqual([
+      { method: "setPaymentInstructions", args: { auctionId, opId: "op-2" } },
+    ]);
+  });
+
+  it("does not send a removal when there is no text", async () => {
+    const { run, sent } = fake({});
+    await expect(
+      run({ ...call, intent: "remove-auction-payment-text", opId: "op-2" }),
+    ).resolves.toMatchObject({ note: "payment-text-removed" });
+    expect(sent("setPaymentInstructions")).toEqual([]);
   });
 });

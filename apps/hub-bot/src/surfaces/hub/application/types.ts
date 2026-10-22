@@ -1100,7 +1100,27 @@ export type AuctionInvoicesRequest =
       invoiceId: string;
       mark: InvoiceMark;
       opId: string;
+    })
+  // Текст «Как оплатить и получить» (PER-322): вопрос, ответ на него и снятие.
+  | (AuctionConsoleCall & { intent: "ask-auction-payment-text" })
+  | (AuctionConsoleCall & {
+      intent: "set-auction-payment-text";
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "remove-auction-payment-text";
+      opId: string;
     });
+
+// Непринятый ответ о тексте оплаты (PER-322): пустой после обрезки краёв или
+// длиннее предела Auction.
+export type PaymentTextAskError =
+  | "payment-text-empty"
+  | "payment-text-too-long";
+
+// Исход команды над текстом оплаты — строка над сводкой счетов.
+export type PaymentTextNote = "payment-text-saved" | "payment-text-removed";
 
 // Человек зала — тот, кто выбрал имя в этом аукционе (ADR-070 п. 3).
 export type FloorPerson = { participantId: string; name: string };
@@ -1436,13 +1456,19 @@ export type ExecuteResult =
   // Сеты лотов (PER-509): список либо исход команды над ними.
   // Счета аукциона (PER-321): сводка со страницей, счёт, подтверждение
   // отметки и её исход. Строки сводки уже упорядочены: просроченные первыми.
+  // `paymentInstructions` — текст «Как оплатить и получить», `note` — исход
+  // команды над ним (PER-322).
   | {
       kind: "auction-invoices";
       auctionId: string;
       invoices: readonly InvoiceRow[];
       totals: InvoiceTotals;
       page: number;
+      paymentInstructions?: string;
+      note?: PaymentTextNote;
     }
+  // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
+  | { kind: "payment-text-ask"; auctionId: string; error?: PaymentTextAskError }
   | { kind: "auction-invoice"; invoice: InvoiceRow }
   | { kind: "invoice-mark-confirm"; invoice: InvoiceRow; mark: InvoiceMark }
   | {

@@ -416,6 +416,9 @@ type PlainAction =
       invoice: string;
       mark: InvoiceMark;
     }
+  // Текст «Как оплатить и получить» на «Счетах» (PER-322): вопрос и снятие.
+  | { kind: "console-payment-text"; auction: string }
+  | { kind: "console-payment-text-remove"; auction: string }
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -685,6 +688,9 @@ export type QuestionStep =
   // Ориентировочное время финала (PER-663): аукцион, а текущее время ответ
   // читает у Auction заново.
   | { kind: "console-final-time"; auction: string }
+  // Текст «Как оплатить и получить» (PER-322): аукцион; ответ заменяет текст
+  // целиком, и читать ему нечего.
+  | { kind: "console-payment-text"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
@@ -815,6 +821,16 @@ export function consoleFinalTimeData(auction: string): string {
 /** «Убрать время финала»: анонс трансляции снимается без подтверждения. */
 export function consoleFinalTimeRemoveData(auction: string): string {
   return `v1:ac:fx:${auction}`;
+}
+
+/** «Текст оплаты»: вопрос о тексте «Как оплатить и получить» (PER-322). */
+export function consolePaymentTextData(auction: string): string {
+  return `v1:ac:it:${auction}`;
+}
+
+/** «Убрать текст оплаты»: текст снимается без подтверждения. */
+export function consolePaymentTextRemoveData(auction: string): string {
+  return `v1:ac:ix:${auction}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1236,6 +1252,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ap:${step.auction}`;
     case "console-final-time":
       return `v1:q:ft:${step.auction}`;
+    case "console-payment-text":
+      return `v1:q:ai:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
@@ -1774,6 +1792,15 @@ function parseConsole(parts: readonly string[]): CallbackAction {
           }
         : { kind: "malformed" };
     }
+    // Текст «Как оплатить и получить» (PER-322): вопрос `it` и снятие `ix`.
+    case "it":
+      return parts.length === 4
+        ? { kind: "console-payment-text", auction: auction.data }
+        : { kind: "malformed" };
+    case "ix":
+      return parts.length === 4
+        ? { kind: "console-payment-text-remove", auction: auction.data }
+        : { kind: "malformed" };
     case "ip":
     case "iy": {
       const invoice = TokenSchema.safeParse(parts[4]);
@@ -2175,6 +2202,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-raffle-prize", auction: token.data };
       case "ft":
         return { kind: "console-final-time", auction: token.data };
+      case "ai":
+        return { kind: "console-payment-text", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":
