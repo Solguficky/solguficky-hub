@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { FulfillmentMethod } from "./ports.js";
 import {
   type PredictionNomination,
   type PredictionRound,
@@ -193,7 +194,20 @@ export type AuctionIntent =
   | { kind: "name"; auctionId: string }
   | { kind: "name-username"; auctionId: string }
   | { kind: "name-ask-alias"; auctionId: string }
-  | { kind: "name-question"; auctionId: string; addressee: number };
+  | { kind: "name-question"; auctionId: string; addressee: number }
+  // Счета победителя (PER-322): список аукциона из его корня, счёт и выбор
+  // способа получения. Счёт несёт свой лот: по нему экран находит аукцион и
+  // название, а кнопку счёта в напоминании строит канал, который аукциона не
+  // знает. `op_id` выбора рождается на нажатии: выбор — замена, и повтор того
+  // же способа ничего не портит.
+  | { kind: "invoices"; auctionId: string }
+  | { kind: "invoice"; lotId: string; invoiceId: string }
+  | {
+      kind: "fulfillment";
+      lotId: string;
+      invoiceId: string;
+      method: FulfillmentMethod;
+    };
 
 // Действия с одним токеном аукциона и шаг вопроса с адресатом — у розыгрыша и
 // у имени из настроек.
@@ -208,9 +222,25 @@ const AUCTION_ACTION = {
   name: "nm",
   "name-username": "nn",
   "name-ask-alias": "na",
+  invoices: "iv",
 } as const;
 
 type AuctionActionKind = keyof typeof AUCTION_ACTION;
+
+// Способ получения одной буквой: у способа одно написание, как у токена.
+const FULFILLMENT_CODE: Record<FulfillmentMethod, string> = {
+  pickup: "p",
+  delivery: "d",
+  digital: "g",
+};
+
+function fulfillmentOf(
+  code: string | undefined,
+): FulfillmentMethod | undefined {
+  return (Object.keys(FULFILLMENT_CODE) as FulfillmentMethod[]).find(
+    (method) => FULFILLMENT_CODE[method] === code,
+  );
+}
 
 const AUCTION_QUESTION = {
   rq: "raffle-question",
@@ -435,7 +465,12 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
     case "name":
     case "name-username":
     case "name-ask-alias":
+    case "invoices":
       return `${prefix}:${AUCTION_ACTION[intent.kind]}:${uuidToToken(intent.auctionId)}`;
+    case "invoice":
+      return `${prefix}:ia:${uuidToToken(intent.lotId)}:${uuidToToken(intent.invoiceId)}`;
+    case "fulfillment":
+      return `${prefix}:im:${uuidToToken(intent.lotId)}:${uuidToToken(intent.invoiceId)}:${FULFILLMENT_CODE[intent.method]}`;
     case "raffle-question":
       return `${prefix}:rq:${uuidToToken(intent.auctionId)}:${addresseeArgument(intent.addressee)}`;
     case "prediction":
@@ -488,6 +523,7 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (command !== undefined) return command;
   if (action === "fav") return favoritesAction(args);
   if (action === "rt") return rootAction(args);
+  if (action === "ia" || action === "im") return invoiceAction(action, args);
   const prediction = predictionAction(action, args);
   if (prediction !== undefined) return prediction;
   const byAuction = auctionAction(action, args);
@@ -660,6 +696,29 @@ function auctionAction(
   return addressee === undefined || question === undefined
     ? refuse("malformed")
     : accept({ kind: question, auctionId, addressee });
+}
+
+// Счёт победителя: токены лота и счёта и, у выбора способа, его буква.
+function invoiceAction(
+  action: "ia" | "im",
+  args: readonly string[],
+): ParsedAuctionCallback {
+  const [lotToken, invoiceToken, rawMethod, ...rest] = args;
+  const lotId = lotToken === undefined ? undefined : tokenToUuid(lotToken);
+  const invoiceId =
+    invoiceToken === undefined ? undefined : tokenToUuid(invoiceToken);
+  if (lotId === undefined || invoiceId === undefined || rest.length !== 0) {
+    return refuse("malformed");
+  }
+  if (action === "ia") {
+    return rawMethod === undefined
+      ? accept({ kind: "invoice", lotId, invoiceId })
+      : refuse("malformed");
+  }
+  const method = fulfillmentOf(rawMethod);
+  return method === undefined
+    ? refuse("malformed")
+    : accept({ kind: "fulfillment", lotId, invoiceId, method });
 }
 
 // Корень аукциона: ровно один токен аукциона.

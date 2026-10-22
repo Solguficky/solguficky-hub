@@ -4,6 +4,7 @@ import type {
   BidOriginView,
   BidRefusal,
   DisplayNameRefusal,
+  FulfillmentMethod,
   LotCardView,
   LotSetView,
   LotStatusView,
@@ -16,6 +17,7 @@ import type {
   RaffleView,
   StepTierView,
   StepWindowView,
+  WinnerInvoiceView,
 } from "./ports.js";
 import type {
   PredictionNomination,
@@ -301,6 +303,31 @@ export type AuctionBlock =
       raffle?: RaffleView;
     }
   | {
+      // Счета победителя в аукционе (PER-322): строка на счёт и сумма по
+      // валютам, ниже — текст организатора «как оплатить и получить».
+      // Пустой список — смотрящий ничего не выиграл: кнопка устарела.
+      kind: "invoices";
+      auctionId: string;
+      invoices: readonly InvoiceItem[];
+      paymentInstructions?: string;
+    }
+  | {
+      // Счёт победителя (PER-322): лот, сумма, статус, срок оплаты, способ
+      // получения и текст организатора. `notice` — исход выбора способа, с
+      // которого экран открыт.
+      kind: "invoice";
+      auctionId: string;
+      invoice: InvoiceItem;
+      paymentInstructions?: string;
+      notice?: "fulfillment-chosen" | "fulfillment-frozen";
+    }
+  | {
+      // Счёта по кнопке нет: лот или счёт Auction не отдал. `auctionId` —
+      // аукцион, если лот прочитался: туда ведёт возврат к счетам.
+      kind: "invoice-missing";
+      auctionId?: string;
+    }
+  | {
       // Регистрация в розыгрыше принята (прогон 14.10, №69): свой экран
       // исхода, а не тот же экран розыгрыша. Розыгрыш — каким он стал после
       // регистрации; нет — Auction его не вернул.
@@ -471,6 +498,9 @@ export type AnswerRefusal =
   | "too-large"
   | DisplayNameRefusal;
 
+// Счёт с названием лота: название — подсказка, его чтение могло отказать.
+export type InvoiceItem = WinnerInvoiceView & { title?: string };
+
 // Действие кнопки. Подпись выбирает рендерер по нему же, поэтому поля с
 // текстом у кнопки нет; лот кнопки ленты рендерер находит в блоке по `lotId`.
 export type AuctionButton =
@@ -479,6 +509,14 @@ export type AuctionButton =
   | { action: "prediction.select-lot"; lotId: string; callbackData: string }
   // Лот сета на его экране: открывает карточку лота (ADR-073, п. 7).
   | { action: "set.open-lot"; lotId: string; callbackData: string }
+  // Счёт в списке счетов: подпись — название лота из блока (PER-322).
+  | { action: "invoices.open"; invoiceId: string; callbackData: string }
+  // Способ получения на экране счёта: подпись — способ, выбранный отмечен.
+  | {
+      action: "invoice.fulfillment";
+      method: FulfillmentMethod;
+      callbackData: string;
+    }
   // «По шагу» с порогом в подписи: сумма — та, что уедет в подтверждение.
   | { action: "lot.bid-step"; amount: Money; callbackData: string }
   // «Поставить N» карточки финала: сумма — следующая цена, она же ожидаемая
@@ -491,6 +529,13 @@ export type AuctionButton =
         | "root.prediction-results"
         | "root.raffle"
         | "root.favorites"
+        // Счета победителя (PER-322): вход из корня, возврат из списка в
+        // корень и со счёта — в список.
+        | "root.invoices"
+        | "invoices.back"
+        | "invoice.back"
+        // Лот счёта не прочитался: та же кнопка заново.
+        | "invoice.retry"
         | "feed.prev"
         | "feed.next"
         | "lot.refresh"

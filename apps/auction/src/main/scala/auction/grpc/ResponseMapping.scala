@@ -22,6 +22,7 @@ import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.LotSetRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.ParticipantRemovalRefusal
+import auction.aggregate.PaymentInstructionsRefusal
 import auction.aggregate.RemovalRefusal
 import auction.aggregate.SchedulingRefusal
 import auction.aggregate.VisibilityRefusal
@@ -650,6 +651,34 @@ object ResponseMapping {
             FinalTimeRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
           ) =>
         throw new IllegalStateException(s"auction final time answered $denial")
+    }
+  }
+
+  /**
+   * Текст «как оплатить и получить» (PER-322): ворот по сходке нет, поэтому отказов значением два — право и сходка.
+   */
+  def setPaymentInstructions(
+      outcome: Either[PaymentInstructionsRefusal, Unit]
+  ): Either[Status, wire.SetPaymentInstructionsResponse] = {
+    import wire.PaymentInstructionsRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.SetPaymentInstructionsResponse().withRefused(wire.PaymentInstructionsRefusal(reason)))
+    outcome match {
+      case Right(()) =>
+        Right(wire.SetPaymentInstructionsResponse().withAccepted(wire.PaymentInstructionsAccepted()))
+      case Left(PaymentInstructionsRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(PaymentInstructionsRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(PaymentInstructionsRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(PaymentInstructionsRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(PaymentInstructionsRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            PaymentInstructionsRefusal.Denied(
+              denial @ (Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
+        throw new IllegalStateException(s"auction payment instructions answered $denial")
     }
   }
 

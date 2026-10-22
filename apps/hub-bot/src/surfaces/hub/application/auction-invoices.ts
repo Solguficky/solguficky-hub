@@ -1,5 +1,9 @@
 import { rpcMeta } from "../../../core/rpc-metadata.js";
-import type { AuctionConsoles, AuctionFailure } from "../auction/port.js";
+import type {
+  AuctionConsoles,
+  AuctionFailure,
+  PaymentInstructionsResult,
+} from "../auction/port.js";
 import type {
   AuctionInvoicesRequest,
   ExecuteResult,
@@ -8,6 +12,8 @@ import type {
   InvoiceRow,
   InvoiceTotals,
   LotAmount,
+  PaymentTextAskError,
+  PaymentTextNote,
 } from "./types.js";
 
 // Счета проданных лотов в пульте организатора (PER-321; integration.md,
@@ -34,6 +40,28 @@ const auctionNotFound: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "auction-not-found",
 };
+
+/** Предел текста оплаты в знаках Unicode — тот же, что у Auction (PER-322). */
+export const paymentTextLimit = 1000;
+
+export type PaymentTextParseResult =
+  | { kind: "ok"; text: string }
+  | { kind: "rejected"; error: PaymentTextAskError };
+
+/**
+ * Текст «Как оплатить и получить» (PER-322) — свободный и многострочный:
+ * края обрезаются, переводы строк внутри остаются, как их прочтут победители.
+ * Длина — в кодовых точках, как её считает Auction, а не в единицах UTF-16:
+ * эмодзи — один знак.
+ */
+export function parsePaymentText(raw: string): PaymentTextParseResult {
+  const text = raw.trim();
+  if (text === "") return { kind: "rejected", error: "payment-text-empty" };
+  if ([...text].length > paymentTextLimit) {
+    return { kind: "rejected", error: "payment-text-too-long" };
+  }
+  return { kind: "ok", text };
+}
 
 /** Просрочен — ждёт оплаты после срока; оплаченный не просрочен никогда. */
 export function isOverdue(invoice: Invoice, now: Date): boolean {
@@ -86,12 +114,21 @@ function marked(invoice: Invoice, mark: InvoiceMark): boolean {
     : invoice.status === "handed-over";
 }
 
+// Исход команды над текстом оплаты: строка исхода и текст после неё —
+// `null`, когда текст снят.
+type PaymentTextAfter = { note: PaymentTextNote; text: string | null };
+
 export function createAuctionInvoices(
   consoles: AuctionConsoles,
   now: () => Date = () => new Date(),
 ) {
   type Read =
-    | { kind: "ok"; rows: readonly InvoiceRow[]; invoices: readonly Invoice[] }
+    | {
+        kind: "ok";
+        rows: readonly InvoiceRow[];
+        invoices: readonly Invoice[];
+        paymentInstructions: string | undefined;
+      }
     | { kind: "refused"; result: ExecuteResult };
 
   // Счета решают право и существование аукциона; названия лотов и имена
@@ -116,8 +153,9 @@ export function createAuctionInvoices(
       default:
         return { kind: "refused", result: failed(found) };
     }
+    const { paymentInstructions } = found;
     if (found.invoices.length === 0) {
-      return { kind: "ok", rows: [], invoices: [] };
+      return { kind: "ok", rows: [], invoices: [], paymentInstructions };
     }
     // Имена — по победителям, а не списком имён аукциона: тот сужен правом
     // ставить сейчас, и победитель, потерявший право после покупки, остался
@@ -158,7 +196,7 @@ export function createAuctionInvoices(
         };
       })
       .sort(compareRows);
-    return { kind: "ok", rows, invoices: found.invoices };
+    return { kind: "ok", rows, invoices: found.invoices, paymentInstructions };
   }
 
   type Found =
@@ -227,20 +265,141 @@ export function createAuctionInvoices(
     return outcome({ ...before.invoice, status, overdue: false }, "marked");
   }
 
+  // Сводка с текстом оплаты и исходом команды над ним. Принятый текст
+  // ложится поверх прочитанного, `null` — снятый.
+  async function summary(
+    request: AuctionInvoicesRequest,
+    page: number,
+    after?: PaymentTextAfter,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const text =
+      after === undefined
+        ? current.paymentInstructions
+        : (after.text ?? undefined);
+    return {
+      kind: "auction-invoices",
+      auctionId: request.auctionId,
+      invoices: current.rows,
+      totals: totalsOf(current.invoices),
+      page,
+      ...(text === undefined ? {} : { paymentInstructions: text }),
+      ...(after === undefined ? {} : { note: after.note }),
+    };
+  }
+
+  // Право на текст решает Auction у Meetups, как у счетов: вопрос задаётся и
+  // снятие идёт, только когда чтение счетов прошло.
+  async function allowed(
+    request: AuctionInvoicesRequest,
+  ): Promise<
+    | { kind: "ok"; paymentInstructions: string | undefined }
+    | { kind: "refused"; result: ExecuteResult }
+  > {
+    const found = await consoles.listAuctionInvoices(
+      request.identity,
+      request.auctionId,
+      rpcMeta(request),
+    );
+    switch (found.kind) {
+      case "ok":
+        return { kind: "ok", paymentInstructions: found.paymentInstructions };
+      case "not-administrator":
+      case "meetup-not-found":
+        return { kind: "refused", result: notAdministrator };
+      case "auction-not-found":
+        return { kind: "refused", result: auctionNotFound };
+      default:
+        return { kind: "refused", result: failed(found) };
+    }
+  }
+
+  // Ответ команды над текстом: принятие — сводка с исходом, отказ по правам —
+  // кадр отказа, как у остальных команд пульта.
+  async function paymentTextOutcome(
+    request: AuctionInvoicesRequest,
+    changed: PaymentInstructionsResult,
+    after: PaymentTextAfter,
+  ): Promise<ExecuteResult> {
+    switch (changed.kind) {
+      case "ok":
+        return summary(request, 0, after);
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(changed);
+    }
+  }
+
+  async function setPaymentText(
+    request: Extract<
+      AuctionInvoicesRequest,
+      { intent: "set-auction-payment-text" }
+    >,
+  ): Promise<ExecuteResult> {
+    // Разбор до Auction: непринятый ответ — тот же вопрос с причиной, и
+    // команды нет.
+    const parsed = parsePaymentText(request.value);
+    if (parsed.kind === "rejected") {
+      return {
+        kind: "payment-text-ask",
+        auctionId: request.auctionId,
+        error: parsed.error,
+      };
+    }
+    const changed = await consoles.setPaymentInstructions(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId, text: parsed.text },
+      rpcMeta(request),
+    );
+    return paymentTextOutcome(request, changed, {
+      note: "payment-text-saved",
+      text: parsed.text,
+    });
+  }
+
+  async function removePaymentText(
+    request: Extract<
+      AuctionInvoicesRequest,
+      { intent: "remove-auction-payment-text" }
+    >,
+  ): Promise<ExecuteResult> {
+    const before = await allowed(request);
+    if (before.kind === "refused") return before.result;
+    const removed: PaymentTextAfter = {
+      note: "payment-text-removed",
+      text: null,
+    };
+    // Текста уже нет — команды нет, а ответ тот же: кнопка могла устареть.
+    if (before.paymentInstructions === undefined) {
+      return summary(request, 0, removed);
+    }
+    const changed = await consoles.setPaymentInstructions(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    return paymentTextOutcome(request, changed, removed);
+  }
+
   return async (request: AuctionInvoicesRequest): Promise<ExecuteResult> => {
     switch (request.intent) {
-      case "view-auction-invoices": {
-        const current = await read(request);
-        return current.kind === "refused"
-          ? current.result
-          : {
-              kind: "auction-invoices",
-              auctionId: request.auctionId,
-              invoices: current.rows,
-              totals: totalsOf(current.invoices),
-              page: request.page,
-            };
+      case "view-auction-invoices":
+        return summary(request, request.page);
+      case "ask-auction-payment-text": {
+        const before = await allowed(request);
+        return before.kind === "refused"
+          ? before.result
+          : { kind: "payment-text-ask", auctionId: request.auctionId };
       }
+      case "set-auction-payment-text":
+        return setPaymentText(request);
+      case "remove-auction-payment-text":
+        return removePaymentText(request);
       case "view-auction-invoice": {
         const found = await invoiceRead(request);
         return found.kind === "refused"

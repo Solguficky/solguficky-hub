@@ -385,12 +385,57 @@ export interface AuctionPort {
     answers: readonly PredictionAnswer[];
     opId: string;
   }): Promise<PredictionOutcome>;
+  // Счета смотрящего в аукционе и текст организатора «как оплатить и
+  // получить» (PER-322). Пустой список — смотрящий ничего не выиграл; чужих
+  // счетов Auction не отдаёт. Отказы метод бросает.
+  listMyInvoices(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<MyInvoicesView>;
+  // Способ получения своего счёта (P-54): выбор заменяет прежний до выдачи.
+  chooseFulfillment(request: {
+    viewer: Viewer;
+    invoiceId: string;
+    method: FulfillmentMethod;
+    opId: string;
+  }): Promise<FulfillmentOutcome>;
   // Итоги прогнозов (PER-568). Четыре исхода чтения Auction.
   getPredictionResults(request: {
     viewer: Viewer;
     auctionId: string;
   }): Promise<PredictionResultsView>;
 }
+
+// Счёт проданного лота глазами победителя (PER-322; integration.md,
+// «Счета»). Деньги идут мимо продукта: оплату отмечает организатор, и статус
+// меняется только его отметкой.
+export type FulfillmentMethod = "pickup" | "delivery" | "digital";
+
+export type InvoiceStatus = "awaiting-payment" | "paid" | "handed-over";
+
+export type WinnerInvoiceView = {
+  invoiceId: string;
+  lotId: string;
+  amount: Money;
+  // Момент RFC 3339 в UTC. Просрочка — не статус: счёт ждёт оплаты после него.
+  paymentDueAt: string;
+  // Нет — победитель способ ещё не выбрал.
+  fulfillment?: FulfillmentMethod;
+  status: InvoiceStatus;
+};
+
+export type MyInvoicesView = {
+  invoices: readonly WinnerInvoiceView[];
+  // Свободный текст администратора; нет — он его не написал.
+  paymentInstructions?: string;
+};
+
+// `not-found` — счёта нет или он чужой: Auction их не различает.
+export type FulfillmentOutcome =
+  | { kind: "accepted" }
+  | { kind: "refused"; refusal: "fulfillment-frozen" }
+  | { kind: "not-found" }
+  | { kind: "unanswered" };
 
 export type PredictionOwnResult =
   | { kind: "guessed" }

@@ -22,6 +22,8 @@ import auction.aggregate.AuctionCommands
 import auction.aggregate.AuctionFixtures
 import auction.aggregate.DeleteLotSet
 import auction.aggregate.SaveLotSet
+import auction.aggregate.SetPaymentInstructions
+import auction.aggregate.PaymentInstructions
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.Standings
@@ -354,6 +356,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def changeVisibility(auctionId: AuctionId, command: ChangeVisibility, initiator: Initiator) =
       fail("the auction was reached")
     def setFinalTime(auctionId: AuctionId, command: SetFinalTime, initiator: Initiator) =
+      fail("the auction was reached")
+    def setPaymentInstructions(auctionId: AuctionId, command: SetPaymentInstructions, initiator: Initiator) =
       fail("the auction was reached")
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) =
       fail("the auction was reached")
@@ -1095,6 +1099,56 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .getRefused
         .reason
         .isNotMeetupAdministrator shouldBe true
+    }
+
+    // PER-322: текст «как оплатить и получить» — команда администратора без ворот по сходке.
+    "sets the payment instructions by the administrator of a cancelled meetup and clears them without a text" in {
+      val seen = scala.collection.mutable.ListBuffer.empty[SetPaymentInstructions]
+      val gateway = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(meetup, registryOpen = false))
+        override def setPaymentInstructions(
+            auctionId: AuctionId,
+            command: SetPaymentInstructions,
+            initiator: Initiator
+        ) = {
+          seen += command
+          Future.successful(Right(AuctionAnswer.Unchanged))
+        }
+      }
+      val cancelledMeetup: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.cancelled))
+      val auction = service(Unreachable, auctions = AuctionCommands(gateway, Unreachable, cancelledMeetup))
+      auction
+        .setPaymentInstructions(wire.SetPaymentInstructionsRequest(Some(viewer), id.toString, op, Some(" Карта ")))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      auction
+        .setPaymentInstructions(wire.SetPaymentInstructionsRequest(Some(viewer), id.toString, op, None))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      seen.map(_.text.map(_.value)).toList shouldBe List(Some("Карта"), None)
+      val denied: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(Unreachable, auctions = AuctionCommands(gateway, Unreachable, denied))
+        .setPaymentInstructions(wire.SetPaymentInstructionsRequest(Some(viewer), id.toString, op, Some("Карта")))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      seen.size shouldBe 2
+    }
+
+    "refuses a blank and an overlong payment text before meetups or the auction" in {
+      val auction = service(Unreachable)
+      statusOf(
+        auction.setPaymentInstructions(wire.SetPaymentInstructionsRequest(Some(viewer), id.toString, op, Some("  ")))
+      ) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(
+        auction.setPaymentInstructions(
+          wire.SetPaymentInstructionsRequest(Some(viewer), id.toString, op, Some("я" * 1001))
+        )
+      ) shouldBe Status.Code.INVALID_ARGUMENT
     }
   }
 
@@ -2578,6 +2632,31 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       read.flatMap(_.amount) shouldBe List(LotValues.money(invoiceTerms.amount))
       read.map(_.status.isPaid) shouldBe List(true)
       read.map(_.fulfillment) shouldBe List(FulfillmentMethodMessage.FULFILLMENT_METHOD_PICKUP)
+    }
+
+    // PER-322: текст читается из строки аукциона при каждом вызове, а у аукциона без строки его нет.
+    "reads the payment instructions of the auction along with the invoices of the viewer" in {
+      val text = PaymentInstructions.parse("Карта до срока").get
+      val views = new InvoiceViews {
+        def mine(auction: AuctionId, winner: ParticipantId) = Future.successful(Nil)
+        def ofAuction(auction: AuctionId) = fail("the summary was read")
+      }
+      def auctionRow(row: Option[Auction]) = new AuctionViews {
+        def byId(auctionId: UUID) = Future.successful(row.map(AuctionSnapshotView(auctionId, _)))
+        def byMeetup(meetup: MeetupId) = fail("the auction was read by meetup")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("the auctions were listed")
+      }
+      def read(row: Option[Auction]) =
+        service(Unreachable, auctionViews = auctionRow(row), invoiceViews = views)
+          .listMyInvoices(wire.ListMyInvoicesRequest(Some(viewer), meetupAuctionId))
+          .futureValue
+          .paymentInstructions
+      val withText = Auction(AuctionState.Draft, Some(MeetupId(UUID.fromString(meetupId))), Set.empty, Map.empty)
+        .copy(paymentInstructions = Some(text))
+      read(Some(withText)) shouldBe Some("Карта до срока")
+      read(Some(withText.copy(paymentInstructions = None))) shouldBe None
+      read(None) shouldBe None
     }
 
     "refuses the summary of invoices to a viewer whom the meetup does not confirm and reads no invoice" in {

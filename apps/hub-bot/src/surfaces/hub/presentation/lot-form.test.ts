@@ -203,6 +203,10 @@ function fakeAuction(
           cancelRaffleRegistration: async () => {
             throw new Error("not used");
           },
+          listMyInvoices: async () => ({ invoices: [] }),
+          chooseFulfillment: async () => {
+            throw new Error("not used");
+          },
           getMyPredictions: async () => [],
           getPredictionResults: async () => {
             throw new Error("not used");

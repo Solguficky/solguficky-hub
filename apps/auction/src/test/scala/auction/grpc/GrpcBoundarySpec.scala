@@ -131,6 +131,7 @@ final class GrpcBoundarySpec
     def chooseFulfillment(in: wire.ChooseFulfillmentRequest) = unused
     def listMyInvoices(in: wire.ListMyInvoicesRequest) = unused
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest) = unused
+    def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest) = unused
   }
 
   private lazy val binding =

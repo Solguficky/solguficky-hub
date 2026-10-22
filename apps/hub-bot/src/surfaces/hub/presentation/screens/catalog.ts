@@ -661,6 +661,28 @@ export const screenCatalog = {
     title: "Как проверить честность",
     parent: "raffle",
   },
+  // Счета победителя (PER-322): тело аукционного дерева, общее с ботом
+  // аукциона. Вход — «Мои счета» в корне аукциона, пока у смотрящего есть
+  // счета; счёт — лист списка с выбором способа получения, заголовок называет
+  // лот, и линтер сверяет его по началу.
+  "my-invoices": {
+    class: "screen",
+    nav: "tree",
+    title: "Мои счета",
+    parent: "auction-root",
+    backName: "Счета",
+  },
+  "my-invoice": {
+    class: "screen",
+    nav: "tree",
+    title: "Счёт",
+    parent: "my-invoices",
+  },
+  "my-invoice-missing": {
+    class: "screen",
+    nav: "exit",
+    title: "Счёт не найден",
+  },
   "notify-meetup": {
     class: "screen",
     nav: "tree",

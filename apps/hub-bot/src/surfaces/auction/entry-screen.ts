@@ -85,6 +85,18 @@ import {
   parseAuctionCallback,
   predictionSpec,
 } from "../../auction-ui/index.js";
+import {
+  fulfillmentLabel,
+  invoiceLabel,
+  invoiceMissingParagraphs,
+  invoiceMissingTitle,
+  invoiceParagraphs,
+  invoicesBackLabel,
+  invoicesButtonLabel,
+  invoicesParagraphs,
+  invoicesTitle,
+  invoiceTitle,
+} from "../../auction-winner-invoices.js";
 import type { Presentation } from "../../core/config.js";
 import {
   admittersLine,
@@ -947,6 +959,13 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "raffle-registered";
       case "raffle-proof":
         return "raffle-proof";
+      // Счета победителя (PER-322).
+      case "invoices":
+        return "invoices";
+      case "invoice":
+        return "invoice";
+      case "invoice-missing":
+        return "invoice-missing";
       case "raffle-name-choice":
         return "raffle-name-choice";
       case "raffle-question":
@@ -1078,6 +1097,34 @@ function renderLeaf(
             "Имя в аукционе",
             raffleNameChoiceText(block.username),
           ),
+        };
+      // Счета победителя (PER-322): тексты общие с хабом.
+      case "invoices":
+        return {
+          format: "html",
+          text: screenText(
+            invoicesTitle,
+            ...invoicesParagraphs(block, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+            }),
+          ),
+        };
+      case "invoice":
+        return {
+          format: "html",
+          text: screenText(
+            invoiceTitle(block),
+            ...invoiceParagraphs(block, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+            }),
+          ),
+        };
+      case "invoice-missing":
+        return {
+          format: "html",
+          text: screenText(invoiceMissingTitle, ...invoiceMissingParagraphs()),
         };
       // Розыгрыш среди участников (ADR-066): тексты общие с хабом.
       case "prediction-results":
@@ -1940,6 +1987,32 @@ function renderButton(
       return text(raffleButtonLabel);
     case "root.favorites":
       return text(favoritesTitle);
+    case "root.invoices":
+      return text(invoicesButtonLabel);
+    case "invoices.open": {
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "invoices" }> =>
+          each.kind === "invoices",
+      );
+      return text(
+        invoiceLabel(
+          block?.invoices.find((item) => item.invoiceId === button.invoiceId),
+        ),
+      );
+    }
+    case "invoice.fulfillment": {
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "invoice" }> =>
+          each.kind === "invoice",
+      );
+      return text(fulfillmentLabel(button.method, block?.invoice.fulfillment));
+    }
+    case "invoices.back":
+      return text(`‹ ${rootTitle}`);
+    case "invoice.back":
+      return text(invoicesBackLabel);
+    case "invoice.retry":
+      return text("Повторить");
     case "raffle.register":
       return text(registerLabel);
     case "raffle.cancel":

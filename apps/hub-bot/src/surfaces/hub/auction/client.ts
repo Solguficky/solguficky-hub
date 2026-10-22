@@ -34,6 +34,11 @@ import {
 } from "../../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
+import {
+  fulfillmentOutcomeOn,
+  myInvoicesOf,
+  wireFulfillment,
+} from "../../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
@@ -100,6 +105,7 @@ import {
   type LotStatisticsReadResult,
   type LotStepPolicyInput,
   type MeetupAuctions,
+  type PaymentInstructionsResult,
   type RemovalPreviewResult,
   type RemoveParticipantResult,
   type SaveLotSetResult,
@@ -136,6 +142,8 @@ type AuctionRpc = Pick<
   | "getRaffle"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
+  | "listMyInvoices"
+  | "chooseFulfillment"
   | "getMyPredictions"
   | "getPredictionResults"
   | "submitPrediction"
@@ -165,6 +173,7 @@ type AuctionRpc = Pick<
   | "listAuctionInvoices"
   | "markInvoicePaid"
   | "markInvoiceHandedOver"
+  | "setPaymentInstructions"
 >;
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
@@ -1028,6 +1037,19 @@ export function createAuctionAdapter(
           : toFailure(cause);
       }
     },
+    // Текст «Как оплатить и получить» (PER-322). Текст без — снятие, и
+    // Auction отвечает тем же приёмом.
+    async setPaymentInstructions(person, command, meta) {
+      try {
+        const response = await rpc.setPaymentInstructions(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return paymentInstructionsResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
     screenPorts(meta): AuctionScreenPorts {
       return {
         auction: {
@@ -1189,6 +1211,32 @@ export function createAuctionAdapter(
               onRaffleRefused?.(cause, meta);
               throw cause;
             }
+          },
+          // Счета победителя (PER-322): чтение бросает отказ, выбор способа —
+          // исход с `not-found` и `unanswered`, как команды участника.
+          async listMyInvoices(request) {
+            return myInvoicesOf(
+              await rpc.listMyInvoices(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                },
+                options(meta),
+              ),
+            );
+          },
+          chooseFulfillment(request) {
+            return fulfillmentOutcomeOn(() =>
+              rpc.chooseFulfillment(
+                {
+                  viewer: wireViewer(request.viewer),
+                  invoiceId: request.invoiceId,
+                  method: wireFulfillment(request.method),
+                  opId: request.opId,
+                },
+                options(meta),
+              ),
+            );
           },
           registerForRaffle(request) {
             return unansweredOn(async () =>
@@ -2404,7 +2452,10 @@ function invoicesResult(
         }
         invoices.push(invoice);
       }
-      return { kind: "ok", invoices };
+      const text = outcome.value.paymentInstructions;
+      return text === undefined
+        ? { kind: "ok", invoices }
+        : { kind: "ok", invoices, paymentInstructions: text };
     }
     case "refused":
       switch (outcome.value.reason.case) {
@@ -2467,6 +2518,36 @@ function fulfillmentOf(method: FulfillmentMethod): FulfillmentView {
       return "digital";
     default:
       return "unspecified";
+  }
+}
+
+// Ответы текста «Как оплатить и получить» (PER-322): именованный отказ
+// Auction — значение ответа, а не сбой вызова.
+function paymentInstructionsResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setPaymentInstructions"]>>["outcome"],
+): PaymentInstructionsResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case undefined:
+          return defect("payment instructions refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("payment instructions response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
   }
 }
 

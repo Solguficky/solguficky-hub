@@ -59,7 +59,10 @@ export type {
   FavoritesPort,
   FinalLineupView,
   FollowOutcome,
+  FulfillmentMethod,
+  FulfillmentOutcome,
   IdentityPort,
+  InvoiceStatus,
   LotCardView,
   LotHistoryEntryView,
   LotHistoryPage,
@@ -70,6 +73,7 @@ export type {
   LotStatusView,
   LotView,
   Money,
+  MyInvoicesView,
   OperationIdPort,
   OwnDisplayName,
   Prediction,
@@ -96,6 +100,7 @@ export type {
   TelegramUser,
   TradingPhase,
   Viewer,
+  WinnerInvoiceView,
 } from "./ports.js";
 export type {
   PredictionAnswerKind,
@@ -123,6 +128,7 @@ export type {
   FeedItem,
   FinalBidOutcome,
   HistoryItem,
+  InvoiceItem,
   LotStanding,
   ProxyExample,
 } from "./screen.js";

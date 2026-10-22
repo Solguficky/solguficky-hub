@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { money, truncate } from "../../../../core/format.js";
+import { paymentTextLimit } from "../../application/auction-invoices.js";
 import type {
   FulfillmentMethod,
   InvoiceMark,
@@ -7,6 +8,8 @@ import type {
   InvoiceRow,
   InvoiceTotals,
   LotAmount,
+  PaymentTextAskError,
+  PaymentTextNote,
 } from "../../application/types.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -15,6 +18,8 @@ import {
   consoleInvoiceMarkConfirmData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
+  consolePaymentTextData,
+  consolePaymentTextRemoveData,
   consoleViewData,
 } from "../parse-callback.js";
 import {
@@ -108,10 +113,33 @@ function toInvoice(invoice: InvoiceRow): Parent {
   };
 }
 
+// Текст «Как оплатить и получить» (PER-322): один свободный текст на весь
+// аукцион, который победители читают в своих счетах. Деньги мимо бота, поэтому
+// реквизиты — просто слова организатора, без проверки и без формы.
+export const paymentTextLabel = "Текст оплаты";
+export const paymentTextRemoveLabel = "Убрать текст оплаты";
+const paymentTextHeading = "<b>Как оплатить и получить</b>";
+const noPaymentText =
+  "Текста «Как оплатить и получить» ещё нет. Победители не видят, как оплатить и забрать лот.";
+
+function paymentTextParagraph(text: string | undefined): string {
+  return text === undefined
+    ? escapeHtml(noPaymentText)
+    : `${paymentTextHeading}\n${escapeHtml(text)}`;
+}
+
+const paymentTextNoteText: Record<PaymentTextNote, string> = {
+  "payment-text-saved":
+    "Текст оплаты сохранён. Победители видят его в своих счетах.",
+  "payment-text-removed": "Текст оплаты убран. Победители его больше не видят.",
+};
+
 /**
- * Сводка: итог собранного и ожидаемого, число просроченных и строка на счёт —
- * лот, победитель, сумма, статус и способ получения. Просроченные первыми:
- * порядок даёт юзкейс. Кнопка на строку открывает счёт с отметкой.
+ * Сводка: итог собранного и ожидаемого, число просроченных, строка на счёт —
+ * лот, победитель, сумма, статус и способ получения, — и текст «Как оплатить
+ * и получить». Просроченные первыми: порядок даёт юзкейс. Кнопка на строку
+ * открывает счёт с отметкой. Исход команды над текстом — свой экран с
+ * возвратом к сводке.
  */
 export function invoicesScreen(
   view: {
@@ -119,8 +147,18 @@ export function invoicesScreen(
     invoices: readonly InvoiceRow[];
     totals: InvoiceTotals;
     page: number;
+    paymentInstructions?: string | undefined;
+    note?: PaymentTextNote | undefined;
   } & Clock,
 ): ShownScreen {
+  if (view.note !== undefined) {
+    return {
+      id: "outcome",
+      text: outcomeText(paymentTextNoteText[view.note]),
+      keyboard: withNav(new InlineKeyboard(), toInvoices(view.auctionId)),
+      format: "HTML",
+    };
+  }
   const auction = uuidToToken(view.auctionId);
   const page = paginate(view.invoices, view.page);
   const keyboard = new InlineKeyboard();
@@ -131,6 +169,13 @@ export function invoicesScreen(
     );
   }
   withPager(keyboard, page, (at) => consoleInvoicesData(auction, at));
+  nextRow(keyboard).text(paymentTextLabel, consolePaymentTextData(auction));
+  if (view.paymentInstructions !== undefined) {
+    nextRow(keyboard).text(
+      paymentTextRemoveLabel,
+      consolePaymentTextRemoveData(auction),
+    );
+  }
   const overdue = view.invoices.filter((invoice) => invoice.overdue).length;
   return {
     id: "invoices",
@@ -160,6 +205,7 @@ export function invoicesScreen(
           ),
         )
         .join("\n"),
+      paymentTextParagraph(view.paymentInstructions),
     ),
     keyboard: withNav(keyboard, {
       name: "Пульт",
@@ -304,3 +350,16 @@ export function invoiceMissingScreen(auctionId: string): ShownScreen {
     format: "HTML",
   };
 }
+
+/** Причина отказа ответу о тексте оплаты (PER-322). */
+export const paymentTextAskErrorText: Record<PaymentTextAskError, string> = {
+  "payment-text-empty":
+    "Пустой текст победителям ничего не скажет: напиши, как оплатить и получить лот.",
+  "payment-text-too-long": `Текст длиннее ${paymentTextLimit} знаков. Сократи его: победители читают его в счёте.`,
+};
+
+/**
+ * Вопрос о тексте «Как оплатить и получить»: ответ заменяет текст целиком,
+ * переводы строк остаются.
+ */
+export const paymentTextPrompt = `Как победителям оплатить лоты и получить их? Напиши одним сообщением: куда переводить, к какому сроку, где и когда забрать. Можно в несколько строк, не длиннее ${paymentTextLimit} знаков. Ответ заменит текст целиком, и его увидят все победители аукциона в своих счетах.`;

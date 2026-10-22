@@ -161,6 +161,12 @@ const surface: AuctionSurface = {
       async cancelRaffleRegistration() {
         throw new Error("not used");
       },
+      async listMyInvoices() {
+        return { invoices: [] };
+      },
+      async chooseFulfillment() {
+        throw new Error("not used");
+      },
       async getMyPredictions() {
         return [];
       },

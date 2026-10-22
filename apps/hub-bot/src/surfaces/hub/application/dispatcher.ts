@@ -341,6 +341,9 @@ export function createDispatcher(
         case "view-auction-invoice":
         case "prepare-invoice-mark":
         case "mark-invoice":
+        case "ask-auction-payment-text":
+        case "set-auction-payment-text":
+        case "remove-auction-payment-text":
           return auctionInvoices === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionInvoices(request);

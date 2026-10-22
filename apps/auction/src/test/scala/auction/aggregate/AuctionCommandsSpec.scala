@@ -107,6 +107,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(finalTimeAnswer)
     }
 
+    var instructionsAnswer: Either[PaymentInstructionsRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setPaymentInstructions(auctionId: AuctionId, command: SetPaymentInstructions, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(instructionsAnswer)
+    }
+
     var cancelAnswer: Either[CancelAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) = {
@@ -990,6 +997,31 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
       set.commands shouldBe empty
       cleared.commands shouldBe empty
+    }
+
+    // PER-322: текст оплаты — повтор своего текста принимается, другой текст под тем же `op_id` — чужая команда.
+    "answers the payment text repeated under its op_id and refuses another text under it" in {
+      val text = PaymentInstructions.parse("Карта").get
+      val repeated = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.PaymentInstructionsSet(text))))
+      AuctionCommands(repeated, noLots, granted)
+        .setPaymentInstructions(auctionOfMeetup, Some(text), op(7), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(repeated, noLots, granted)
+        .setPaymentInstructions(auctionOfMeetup, PaymentInstructions.parse("Наличными"), op(7), person)
+        .futureValue shouldBe Left(PaymentInstructionsRefusal.OpIdTaken)
+      AuctionCommands(repeated, noLots, granted)
+        .setPaymentInstructions(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(PaymentInstructionsRefusal.OpIdTaken)
+      repeated.commands shouldBe empty
+    }
+
+    "hands the payment text to the auction of a cancelled meetup" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val text = PaymentInstructions.parse("Карта").get
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.cancelled)))
+        .setPaymentInstructions(auctionOfMeetup, Some(text), op(7), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SetPaymentInstructions(Some(text), op(7)))
     }
 
     "refuses a foreign command that took the op_id of the time" in {

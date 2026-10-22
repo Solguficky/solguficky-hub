@@ -37,6 +37,10 @@ import {
   finalNoticeOf,
 } from "../../../core/notifications/final-notice.js";
 import {
+  type InvoiceNotice,
+  invoiceNoticeOf,
+} from "../../../core/notifications/invoice-notice.js";
+import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
@@ -143,6 +147,9 @@ export type RenderableContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
   | RaffleNotice
+  // Напоминания о неоплаченном счёте (PER-330) с кнопкой на счёт (PER-322) —
+  // те же, что у бота аукциона.
+  | InvoiceNotice
   | PredictionResultsNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота
   // аукциона.
@@ -318,6 +325,10 @@ function toContent(message: Notification): NotificationContent | undefined {
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "invoiceReminder":
+      return invoiceNoticeOf("invoice-reminder", type.value);
+    case "invoiceDueReminder":
+      return invoiceNoticeOf("invoice-due-reminder", type.value);
     case "lotSetCollected":
       return lotSetNoticeOf(type.value);
     // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций

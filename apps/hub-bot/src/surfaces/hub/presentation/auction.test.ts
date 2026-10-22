@@ -13,6 +13,7 @@ import {
   encodeAuctionCallback,
   type FavoritesPort,
   type LotView,
+  type MyInvoicesView,
   type RaffleView,
 } from "../../../auction-ui/index.js";
 import type {
@@ -171,8 +172,13 @@ function fakeAuction(
     // Второй лот сета (ADR-073): карточка ведёт к экрану сета, а тот — к
     // остальным его лотам.
     otherLot?: LotView;
+    // Счета смотрящего (PER-322): выбор способа меняет счёт.
+    invoices?: MyInvoicesView;
   } = {},
 ) {
+  const invoices: { current: MyInvoicesView } = {
+    current: options.invoices ?? { invoices: [] },
+  };
   const shownLot = options.lot ?? lot;
   const raffle: { current: RaffleView | undefined } = {
     current: options.raffle,
@@ -295,6 +301,18 @@ function fakeAuction(
           },
           cancelRaffleRegistration: async () => {
             throw new Error("not used");
+          },
+          listMyInvoices: async () => invoices.current,
+          chooseFulfillment: async (request) => {
+            invoices.current = {
+              ...invoices.current,
+              invoices: invoices.current.invoices.map((invoice) =>
+                invoice.invoiceId === request.invoiceId
+                  ? { ...invoice, fulfillment: request.method }
+                  : invoice,
+              ),
+            };
+            return { kind: "accepted" as const };
           },
           getMyPredictions: async () => [],
           getPredictionResults: async () => ({ kind: "after-final" as const }),
@@ -1645,6 +1663,84 @@ describe("raffle among the participants", () => {
     const screen = lastScreen(calls);
     expect(screen.text).toContain("Розыгрыш не проводится");
     expect(labels(screen)).toEqual([["‹ Аукцион"]]);
+  });
+});
+
+// Счета победителя (PER-322): «Мои счета» в корне, список с суммой и текстом
+// организатора, счёт и выбор способа получения — экраны проходят линтер хаба.
+describe("winner invoices in the hub", () => {
+  const invoiceId = "5b1f3c2e-8d4a-5e6f-9a0b-1c2d3e4f5a6b";
+  const mine: MyInvoicesView = {
+    invoices: [
+      {
+        invoiceId,
+        lotId,
+        amount: { minorUnits: 300_000, currency: "RUB" },
+        paymentDueAt: "2026-10-31T18:00:00Z",
+        status: "awaiting-payment",
+      },
+    ],
+    paymentInstructions: "Перевод на карту <организатора>.",
+  };
+
+  it("opens the invoices from the root, then an invoice, and chooses delivery", async () => {
+    const auction = fakeAuction({ existing: true, invoices: mine });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls)).flat()).toContain("Мои счета");
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "invoices", auctionId })),
+    );
+    const list = lastScreen(calls);
+    expect(list.text).toMatch(/^<b>Мои счета<\/b>/);
+    expect(list.text).toContain("Кружка с совой — 3");
+    expect(list.text).toContain("Всего: <b>3");
+    expect(list.text).toContain("Перевод на карту &lt;организатора&gt;.");
+    expect(labels(list).at(-1)).toEqual(["‹ Аукцион"]);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "invoice", lotId, invoiceId })),
+    );
+    const invoice = lastScreen(calls);
+    expect(invoice.text).toMatch(/^<b>Счёт: Кружка с совой<\/b>/);
+    expect(invoice.text).toContain("Получение: способ не выбран");
+    expect(labels(invoice)).toEqual([
+      ["Самовывоз"],
+      ["Доставка"],
+      ["Цифровая выдача"],
+      ["‹ Счета"],
+    ]);
+
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "fulfillment",
+          lotId,
+          invoiceId,
+          method: "delivery",
+        }),
+      ),
+    );
+    const chosen = lastScreen(calls);
+    expect(chosen.text).toContain("Способ получения выбран");
+    expect(chosen.text).toContain("Получение: доставка");
+    expect(labels(chosen)[1]).toEqual(["Доставка · выбрано"]);
+  });
+
+  it("shows no invoices entry to a viewer without invoices", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls)).flat()).not.toContain("Мои счета");
   });
 });
 

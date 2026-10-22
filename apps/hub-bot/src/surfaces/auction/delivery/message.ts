@@ -23,6 +23,12 @@ import {
   renderFinalNotice,
 } from "../../../core/notifications/final-notice.js";
 import {
+  createInvoiceNoticeRender,
+  type InvoiceNoticeView,
+  isInvoiceNotice,
+  renderInvoiceNotice,
+} from "../../../core/notifications/invoice-notice.js";
+import {
   checkPlaceBids,
   createLotNoticeRender,
   type LotInfo,
@@ -88,6 +94,12 @@ export function traceRaffleCallback(auctionId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "raffle", auctionId })}`;
 }
 
+// «К счёту» под напоминанием об оплате (PER-322) — экран счёта аукционного
+// дерева тем же путём, что кнопка счёта в «Моих счетах».
+export function traceInvoiceCallback(lotId: string, invoiceId: string): string {
+  return `${tracePrefix}${encodeAuctionCallback({ kind: "invoice", lotId, invoiceId })}`;
+}
+
 // «К сету» под извещением о собранном наборе (PER-687) — экран сета из
 // аукционного дерева тем же путём, что кнопка на карточке лота.
 export function traceSetCallback(lotId: string): string {
@@ -141,6 +153,7 @@ export function parseTraceCallback(data: string): string | undefined {
     (parsed.intent.kind === "lot" ||
       parsed.intent.kind === "set" ||
       parsed.intent.kind === "raffle" ||
+      parsed.intent.kind === "invoice" ||
       parsed.intent.kind === "prediction-results" ||
       parsed.intent.kind === "feed" ||
       parsed.intent.kind === "root")
@@ -181,7 +194,20 @@ export function createRenderMessage(
     onTitleMissing,
     timeZone,
   });
+  // Напоминание о счёте (PER-322) права не спрашивает: долг — дело победителя
+  // (invoice-notice.ts), а название лота — подсказка.
+  const renderInvoice = createInvoiceNoticeRender({
+    reads,
+    onTitleMissing,
+    timeZone,
+  });
   return async (content, context) => {
+    if (isInvoiceNotice(content)) {
+      const rendered = await renderInvoice(content, context);
+      return rendered.kind === "ready"
+        ? { kind: "ready", message: invoiceMessage(rendered.message) }
+        : rendered;
+    }
     // Весть о смене круга (PER-537) — не о торгах: право ставить бот для неё не
     // спрашивает, и кнопки, которая упёрлась бы в тот же отказ, у неё нет.
     if (content.kind === "circle-promoted") {
@@ -256,6 +282,9 @@ export function renderNotification(
     return predictionResultsMessage(content);
   }
   if (content.kind === "raffle-result") return raffleMessage(content);
+  if (isInvoiceNotice(content)) {
+    return invoiceMessage(renderInvoiceNotice(content, { timeZone }));
+  }
   if (content.kind === "lot-set-collected") return lotSetMessage(content);
   if (content.kind === "auction-cancelled") return cancelledMessage(content);
   // Начало окна «Счастливых часов» (PER-616) — ряд на каждый лот окна, след
@@ -325,6 +354,24 @@ function announcementMessage(
             notice.kind === "new-auction"
               ? traceRootCallback(view.button.auctionId)
               : traceFeedCallback(view.button.auctionId),
+        },
+      ],
+    ],
+  };
+}
+
+function invoiceMessage(view: InvoiceNoticeView): NotificationMessage {
+  return {
+    text: view.text,
+    format: view.format,
+    rows: [
+      [
+        {
+          text: view.button.text,
+          callback_data: traceInvoiceCallback(
+            view.button.lotId,
+            view.button.invoiceId,
+          ),
         },
       ],
     ],

@@ -12,6 +12,7 @@ import {
   parseTraceCallback,
   renderNotification,
   traceFaqCallback,
+  traceInvoiceCallback,
   traceLotCallback,
   traceNotifyCallback,
   tracePredictionResultsCallback,
@@ -67,7 +68,7 @@ describe("renderNotification", () => {
   // Запись 37 прогона 12.10: покупка называет лот и следующий шаг.
   it("names the lot, the sale price and the next step of a purchase", () => {
     expect(renderNotification(purchased, titled("Кружка")).text).toBe(
-      `Лот <b>Кружка</b> твой за 1${nbsp}500,50${nbsp}₽. Как оплатить и забрать — напишет организатор аукциона.`,
+      `Лот <b>Кружка</b> твой за 1${nbsp}500,50${nbsp}₽. Счёт и как оплатить — в «Моих счетах» аукциона.`,
     );
   });
 
@@ -86,7 +87,7 @@ describe("renderNotification", () => {
       `Твою ставку перебили, цена 1${nbsp}500${nbsp}₽.`,
     );
     expect(renderNotification(purchased, titled("")).text).toBe(
-      `Лот твой за 1${nbsp}500,50${nbsp}₽. Как оплатить и забрать — напишет организатор аукциона.`,
+      `Лот твой за 1${nbsp}500,50${nbsp}₽. Счёт и как оплатить — в «Моих счетах» аукциона.`,
     );
   });
 
@@ -371,6 +372,21 @@ describe("parseTraceCallback", () => {
     expect(inner).toBeDefined();
     const parsed = parseAuctionCallback(inner ?? "");
     expect(parsed.ok && parsed.intent).toEqual({ kind: "raffle", auctionId });
+  });
+
+  // «К счёту» под напоминанием об оплате (PER-322) — тоже след, и с двумя
+  // токенами он укладывается в 64 байта.
+  it("carries an invoice button inside a trace", () => {
+    const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+    const invoiceId = "5b1f3c2e-8d4a-5e6f-9a0b-1c2d3e4f5a6b";
+    const data = traceInvoiceCallback(lotId, invoiceId);
+    expect(Buffer.byteLength(data, "utf8")).toBeLessThanOrEqual(64);
+    const parsed = parseAuctionCallback(parseTraceCallback(data) ?? "");
+    expect(parsed.ok && parsed.intent).toEqual({
+      kind: "invoice",
+      lotId,
+      invoiceId,
+    });
   });
 
   it("carries a set button inside a trace", () => {

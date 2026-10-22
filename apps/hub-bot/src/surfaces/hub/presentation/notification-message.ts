@@ -11,6 +11,10 @@ import { renderAuctionAnnouncement } from "../../../core/notifications/auction-a
 import { renderAuctionCancelledNotice } from "../../../core/notifications/auction-cancelled-notice.js";
 import type { FinalNotice } from "../../../core/notifications/final-notice.js";
 import type {
+  InvoiceNotice,
+  InvoiceNoticeView,
+} from "../../../core/notifications/invoice-notice.js";
+import type {
   LotNotice,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
@@ -125,10 +129,17 @@ export type ReleaseNote = {
 export type OutgoingNotification =
   | Exclude<
       RenderableContent,
-      LotNotice | FinalNotice | StepWindowNotice | { kind: "release-summary" }
+      | LotNotice
+      | FinalNotice
+      | StepWindowNotice
+      | InvoiceNotice
+      | { kind: "release-summary" }
     >
   | AccessRequestView
   | { kind: "lot-notice"; view: LotNoticeView }
+  // Напоминание о счёте (PER-322) приходит собранным: название лота читается
+  // у Auction до отправителя.
+  | { kind: "invoice-notice"; view: InvoiceNoticeView }
   | ReleaseNote;
 
 // Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
@@ -214,6 +225,21 @@ export function renderNotification(
         view.button.text,
         traceCallback(
           `v1:${encodeAuctionCallback({ kind: "raffle", auctionId: view.button.auctionId }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "invoice-notice") {
+    // Напоминание о счёте (PER-322): кнопка следа — экран счёта придёт новым
+    // сообщением, весть останется в истории.
+    const { button } = content.view;
+    return {
+      text: content.view.text,
+      format: content.view.format,
+      keyboard: new InlineKeyboard().text(
+        button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "invoice", lotId: button.lotId, invoiceId: button.invoiceId }).slice(3)}`,
         ),
       ),
     };

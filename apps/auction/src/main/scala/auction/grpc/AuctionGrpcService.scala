@@ -4,6 +4,7 @@ import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
 import auction.aggregate.AuctionState
 import auction.aggregate.MeetupGate
+import auction.aggregate.PaymentInstructions
 import auction.aggregate.Correlation
 import auction.aggregate.Denial
 import auction.invoice.Invoice
@@ -657,6 +658,20 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Текст «как оплатить и получить» (PER-322): право у Meetups без ворот по сходке, затем аукцион. Текст выставляется,
+   * меняется и снимается одной командой.
+   */
+  def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest): Future[wire.SetPaymentInstructionsResponse] =
+    RequestMapping.setPaymentInstructions(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .setPaymentInstructions(command.auctionId, command.text, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setPaymentInstructions(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Видимость аукциона смотрящему (ADR-047, дополнение 2026-10-20): скрытый видит только держатель `run_auctions`, и
    * всем остальным чтения отвечают так, будто аукциона нет.
    */
@@ -1239,11 +1254,18 @@ final class AuctionGrpcService(
           .flatMap(answer => InvoiceMapping.fulfillment(answer.map(_ => ())).fold(refuse, Future.successful))
     }
 
-  /** Счета смотрящего в аукционе из read model; пустой список — смотрящий ничего не выиграл. */
+  /**
+   * Счета смотрящего в аукционе из read model; пустой список — смотрящий ничего не выиграл. Текст оплаты — из строки
+   * аукциона (PER-322): у тестового аукциона из настройки бота строки нет, и текста тоже.
+   */
   def listMyInvoices(in: wire.ListMyInvoicesRequest): Future[wire.ListMyInvoicesResponse] =
     InvoiceMapping.mine(in) match {
       case Left(error) => invalid(error)
-      case Right(query) => invoiceViews.mine(query.auctionId, query.acting.participant).map(InvoiceMapping.mine)
+      case Right(query) =>
+        invoiceViews
+          .mine(query.auctionId, query.acting.participant)
+          .zip(instructionsOf(query.auctionId))
+          .map((invoices, instructions) => InvoiceMapping.mine(invoices, instructions))
     }
 
   /** Сводка организатора — все счета аукциона из read model; право и отказы — те же, что у пульта. */
@@ -1251,10 +1273,15 @@ final class AuctionGrpcService(
     InvoiceMapping.ofAuction(in) match {
       case Left(error) => invalid(error)
       case Right(query) =>
-        administered(query, InvoiceMapping.auctionInvoicesDenied) { _ =>
-          invoiceViews.ofAuction(query.auctionId).map(InvoiceMapping.ofAuction)
+        // Текст — у entity, а не в read model: организатор видит свою правку сразу.
+        administered(query, InvoiceMapping.auctionInvoicesDenied) { auction =>
+          invoiceViews.ofAuction(query.auctionId).map(InvoiceMapping.ofAuction(_, auction.paymentInstructions))
         }
     }
+
+  /** Текст оплаты аукциона из read model; аукциона без строки — тестового из настройки бота — текста нет. */
+  private def instructionsOf(auctionId: AuctionId): Future[Option[PaymentInstructions]] =
+    auctionViews.byId(auctionId.value).map(_.flatMap(_.auction.paymentInstructions))
 
   /** Общий путь отметок организатора: счёт у entity, повтор своего `op_id` до права, затем право и команда. */
   private def marked[R](mark: InvoiceMark, action: InvoiceAction, accepted: R, denied: Denial => Either[Status, R])(
