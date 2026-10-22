@@ -284,10 +284,46 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         Left(PlaceBidRejected.LotNotOpen)
     }
 
-    "accept any amount above the next price while online (Т-43)" in {
+    "accept an amount above the next price while online when it stays within five times that price (Т-43)" in {
       accepted(Lot.decide(trading(price = 100), placeBid(who = 1, amount = 137, opN = 1), bid(1), proxyBid(1), calm))
         .map(_.amount) shouldBe
         Some(money(137))
+    }
+
+    "accept an online bid equal to five times the next price and refuse one unit above it" in {
+      val lot = trading(price = 100, leader = Some(participant(9)))
+
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = 550, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(550))
+      Lot.decide(lot, placeBid(who = 1, amount = 551, opN = 1), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidAboveMaximum(money(550)))
+    }
+
+    "cap the first online bid at five times the starting price" in {
+      val lot = trading(price = 100)
+
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = 500, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(500))
+      Lot.decide(lot, placeBid(who = 1, amount = 501, opN = 1), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidAboveMaximum(money(500)))
+    }
+
+    "measure the online ceiling from the announced ask" in {
+      val lot = trading(price = 100, ask = Some(500), leader = Some(participant(9)))
+
+      Lot.decide(lot, placeBid(who = 1, amount = 499, opN = 1), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidBelowMinimum(money(500)))
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = 2500, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(2500))
+      Lot.decide(lot, placeBid(who = 1, amount = 2501, opN = 1), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidAboveMaximum(money(2500)))
+    }
+
+    "name the next live price when the amount is also above five times that price" in {
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live, leader = Some(participant(9)))
+
+      Lot.decide(lot, placeBid(who = 1, amount = 10000, opN = 1), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
     "reject a live bid above the next price and name that price (Т-40)" in {

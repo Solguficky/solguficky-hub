@@ -83,7 +83,8 @@ object LotCommands extends Commands {
       4 -> Gen.const(state.next),
       3 -> Gen.const(volley),
       2 -> Gen.chooseNum(1L, 40L).map(state.next + _),
-      2 -> Gen.chooseNum(1L, 15L).map(state.next - _)
+      2 -> Gen.chooseNum(1L, 15L).map(state.next - _),
+      1 -> Gen.const(state.next * 5 + 1)
     )
     val ops = Gen.frequency(3 -> Gen.const(state.lastOp + 1), 1 -> Gen.chooseNum(1, math.max(1, state.lastOp)))
     for {
@@ -118,6 +119,8 @@ object LotCommands extends Commands {
           else if (state.phase == Phase.Live && amount != required)
             Expected.Reject(PlaceBidRejected.BidNotAtNextPrice(money(required)))
           else if (amount < required) Expected.Reject(PlaceBidRejected.BidBelowMinimum(money(required)))
+          else if (state.phase == Phase.Online && amount > required * 5)
+            Expected.Reject(PlaceBidRejected.BidAboveMaximum(money(required * 5)))
           else Expected.Accept(who, amount, state.leader)
       }
 

@@ -54,6 +54,18 @@ describe("participant command answers", () => {
         value: { minRequired: rub(1300n) },
       } as PlaceBidRefusal["reason"]),
     ).toMatchObject({ refusal: { kind: "bid-below-minimum" } });
+    expect(
+      refusedBid({
+        case: "bidAboveMaximum",
+        value: { maximum: rub(25500n) },
+      } as PlaceBidRefusal["reason"]),
+    ).toEqual({
+      kind: "refused",
+      refusal: {
+        kind: "bid-above-maximum",
+        next: { minorUnits: 510_000, currency: "RUB" },
+      },
+    });
   });
 
   // Отказ с ценой без цены — дефект соседа, а не отказ без суммы.

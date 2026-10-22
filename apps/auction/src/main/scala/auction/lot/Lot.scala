@@ -601,9 +601,23 @@ object Lot {
   def floor(trading: TradingState): Money =
     trading.ask.filter(_ > trading.currentPrice).getOrElse(trading.currentPrice)
 
+  private val OnlineBidCeiling = 5
+
+  /**
+   * Следующая цена без окна сниженного шага: ask, если он выше текущей, иначе стартовая, пока лидера нет, иначе цена
+   * плюс обычный шаг. Потолок ручной онлайн-ставки считается от неё, и счастливый час его не сдвигает (PER-660).
+   */
+  private def ceilingReference(trading: TradingState): Money =
+    trading.ask.filter(_ > trading.currentPrice) match {
+      case Some(ask) => ask
+      case None if opening(trading) => trading.currentPrice
+      case None => trading.currentPrice.plus(baseStep(trading, trading.currentPrice))
+    }
+
   /**
    * Порядок проверок повторяет RFC-011: валюта, лидерство, затем порог. В `Live` сумма — ожидаемая цена, и проверка
-   * `BidNotAtNextPrice` стоит выше `BidBelowMinimum`, чтобы отказ в финале был один и называл цену (ADR-049).
+   * `BidNotAtNextPrice` стоит выше `BidBelowMinimum`, чтобы отказ в финале был один и называл цену (ADR-049). В
+   * `Online` сумма выше пяти [[ceilingReference]] — `BidAboveMaximum` с этим максимумом (PER-660).
    *
    * Ставку зала лот принимает только в живом финале: зала в онлайн-неделе нет, а право человека в зале никто не
    * проверяет — его заменяет право помощника ведущего (решение владельца в PER-293). Вне `Live` она — `LotNotOpen`, и
@@ -616,12 +630,15 @@ object Lot {
       now: Instant
   ): Either[PlaceBidRejected, LotEvent.BidPlaced] = {
     val required = minRequired(trading, now)
+    val maximum = ceilingReference(trading).times(OnlineBidCeiling)
     if (command.source == BidSource.Floor && trading.phase != Phase.Live) Left(PlaceBidRejected.LotNotOpen)
     else if (command.amount.currency != trading.config.currency) Left(PlaceBidRejected.CurrencyMismatch)
     else if (trading.leader.contains(command.participant)) Left(PlaceBidRejected.BidderIsLeader(trading.currentPrice))
     else if (trading.phase == Phase.Live && command.amount != required)
       Left(PlaceBidRejected.BidNotAtNextPrice(required))
     else if (command.amount < required) Left(PlaceBidRejected.BidBelowMinimum(required))
+    else if (trading.phase == Phase.Online && command.amount > maximum)
+      Left(PlaceBidRejected.BidAboveMaximum(maximum))
     else
       Right(
         LotEvent.BidPlaced(

@@ -61,6 +61,11 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         wire.PlaceBidRefusal.Reason.BidBelowMinimum(wire.BidBelowMinimum(Some(MoneyMessage(110, "RUB"))))
     }
 
+    "carries the maximum price in an above-ceiling refusal" in {
+      refused(PlaceBidRejected.BidAboveMaximum(money(550))) shouldBe
+        wire.PlaceBidRefusal.Reason.BidAboveMaximum(wire.BidAboveMaximum(Some(MoneyMessage(550, "RUB"))))
+    }
+
     "carries the expected price in a not-at-next-price refusal" in {
       refused(PlaceBidRejected.BidNotAtNextPrice(money(120))).bidNotAtNextPrice.flatMap(_.expected) shouldBe
         Some(MoneyMessage(120, "RUB"))

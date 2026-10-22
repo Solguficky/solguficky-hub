@@ -16,6 +16,9 @@ final case class Money(minorUnits: Long, currency: CurrencyCode) {
   /** Та же валюта, другое число минорных единиц: сдвиг цены на шаг внутри одного лота. */
   private[lot] def plus(other: Money): Money = copy(minorUnits = minorUnits + other.minorUnits)
 
+  private[lot] def times(factor: Int): Money =
+    copy(minorUnits = java.lang.Math.multiplyExact(minorUnits, factor.toLong))
+
   private[lot] def <(other: Money): Boolean = minorUnits < other.minorUnits
 
   private[lot] def <=(other: Money): Boolean = minorUnits <= other.minorUnits
