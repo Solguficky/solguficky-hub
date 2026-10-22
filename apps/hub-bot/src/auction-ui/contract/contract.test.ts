@@ -319,6 +319,12 @@ describe("auction contract self-check", () => {
       "predictions: alias question cancelled",
       "predictions: alias reply without text can be retried",
       "predictions: ask and answer alias with same context",
+      "root: with the invoices of the winner",
+      "my invoices: the invoices of the winner with the organizer's text",
+      "my invoice: an invoice with the choice of fulfillment",
+      "my invoice: an invoice of someone else is not found",
+      "fulfillment: the chosen method is shown on the invoice",
+      "fulfillment: a handed over lot keeps its method",
     ]);
   });
 });

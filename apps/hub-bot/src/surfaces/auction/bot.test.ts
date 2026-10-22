@@ -273,6 +273,10 @@ function portsWith(
       cancelRaffleRegistration: async () => {
         throw new Error("not used");
       },
+      listMyInvoices: async () => ({ invoices: [] }),
+      chooseFulfillment: async () => {
+        throw new Error("not used");
+      },
       getMyPredictions: async () => [],
       submitPrediction: async () => {
         throw new Error("not used");

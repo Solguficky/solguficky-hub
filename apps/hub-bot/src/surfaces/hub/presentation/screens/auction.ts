@@ -44,6 +44,7 @@ import type {
   FeedItem,
   LotStatusView,
 } from "../../../../auction-ui/index.js";
+import { invoicesButtonLabel } from "../../../../auction-winner-invoices.js";
 import { money, truncate } from "../../../../core/format.js";
 import {
   adminLabel,
@@ -93,6 +94,11 @@ import {
   raffleScreen,
 } from "./auction-raffle.js";
 import { stageLine } from "./auction-stage.js";
+import {
+  invoiceMissingScreen,
+  invoiceScreen,
+  invoicesScreen,
+} from "./auction-winner-invoices.js";
 import { toSettingsAuction } from "./extensions.js";
 import {
   type AuctionEntry,
@@ -260,6 +266,13 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
         };
       case "raffle-proof":
         return { screen: raffleProofScreen(block, view.body.keyboard) };
+      // Счета победителя (PER-322).
+      case "invoices":
+        return { screen: invoicesScreen(block, view.body.keyboard, view) };
+      case "invoice":
+        return { screen: invoiceScreen(block, view.body.keyboard, view) };
+      case "invoice-missing":
+        return { screen: invoiceMissingScreen(view.body.keyboard) };
       case "raffle-name-choice":
         return {
           screen: raffleNameChoiceScreen(block, view.body.keyboard),
@@ -453,6 +466,7 @@ function rootScreen(
   const favorites = buttons.find(
     (button) => button.action === "root.favorites",
   );
+  const invoices = buttons.find((button) => button.action === "root.invoices");
   // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
   // №66; пересматривает «Розыгрыш своим рядом» PER-669).
   if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData);
@@ -462,6 +476,10 @@ function rootScreen(
   nextRow(keyboard);
   if (predictions !== undefined) {
     keyboard.text(predictionButtonLabel, predictions.callbackData).row();
+  }
+  // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
+  if (invoices !== undefined) {
+    nextRow(keyboard).text(invoicesButtonLabel, invoices.callbackData).row();
   }
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);
@@ -589,6 +607,12 @@ function feedLabel(
     case "lot.set":
     case "set.open-lot":
     case "set.back":
+    case "root.invoices":
+    case "invoices.open":
+    case "invoices.back":
+    case "invoice.fulfillment":
+    case "invoice.back":
+    case "invoice.retry":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -815,6 +839,12 @@ function lotLabel(
     case "root.lots":
     case "root.predictions":
     case "root.raffle":
+    case "root.invoices":
+    case "invoices.open":
+    case "invoices.back":
+    case "invoice.fulfillment":
+    case "invoice.back":
+    case "invoice.retry":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
@@ -948,6 +978,12 @@ function setLotLabelOf(
     case "root.predictions":
     case "root.raffle":
     case "set.back":
+    case "root.invoices":
+    case "invoices.open":
+    case "invoices.back":
+    case "invoice.fulfillment":
+    case "invoice.back":
+    case "invoice.retry":
       throw new Error(`action ${button.action} in a set body`);
     default: {
       const _exhaustive: never = button;
@@ -1175,6 +1211,12 @@ function historyLabel(button: AuctionButton): string {
     case "lot.set":
     case "set.open-lot":
     case "set.back":
+    case "root.invoices":
+    case "invoices.open":
+    case "invoices.back":
+    case "invoice.fulfillment":
+    case "invoice.back":
+    case "invoice.retry":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;

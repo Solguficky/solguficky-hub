@@ -35,6 +35,11 @@ import {
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
 import {
+  fulfillmentOutcomeOn,
+  myInvoicesOf,
+  wireFulfillment,
+} from "../../../core/auction/invoices.js";
+import {
   myPredictionsOf,
   predictionOutcomeOf,
   wirePredictionAnswers,
@@ -135,6 +140,8 @@ type AuctionRpc = Pick<
   | "getRaffle"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
+  | "listMyInvoices"
+  | "chooseFulfillment"
   | "getMyPredictions"
   | "submitPrediction"
   | "getLotImage"
@@ -1187,6 +1194,32 @@ export function createAuctionAdapter(
               onRaffleRefused?.(cause, meta);
               throw cause;
             }
+          },
+          // Счета победителя (PER-322): чтение бросает отказ, выбор способа —
+          // исход с `not-found` и `unanswered`, как команды участника.
+          async listMyInvoices(request) {
+            return myInvoicesOf(
+              await rpc.listMyInvoices(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                },
+                options(meta),
+              ),
+            );
+          },
+          chooseFulfillment(request) {
+            return fulfillmentOutcomeOn(() =>
+              rpc.chooseFulfillment(
+                {
+                  viewer: wireViewer(request.viewer),
+                  invoiceId: request.invoiceId,
+                  method: wireFulfillment(request.method),
+                  opId: request.opId,
+                },
+                options(meta),
+              ),
+            );
           },
           registerForRaffle(request) {
             return unansweredOn(async () =>

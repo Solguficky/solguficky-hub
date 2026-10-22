@@ -987,6 +987,10 @@ function fakeAuction(
               : undefined,
           registerForRaffle: notUsed,
           cancelRaffleRegistration: notUsed,
+          listMyInvoices: async () => ({ invoices: [] }),
+          chooseFulfillment: async () => {
+            throw new Error("not used");
+          },
           getMyPredictions: async () => [],
           submitPrediction: notUsed,
         },

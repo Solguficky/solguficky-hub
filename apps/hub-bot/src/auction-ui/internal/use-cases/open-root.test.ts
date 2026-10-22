@@ -36,6 +36,10 @@ function auctionOf(
     chooseDisplayName: notUsed,
     getAuction: async () => SUMMARY,
     getRaffle: async () => undefined,
+    listMyInvoices: async () => ({ invoices: [] }),
+    chooseFulfillment: async () => {
+      throw new Error("not used");
+    },
     getMyPredictions: predictions,
     submitPrediction: notUsed,
     registerForRaffle: notUsed,

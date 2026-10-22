@@ -6,6 +6,7 @@ import type {
   Viewer,
 } from "../../ports.js";
 import type { AuctionScreenBody } from "../../screen.js";
+import { hasInvoices } from "./invoices.js";
 import { hasRaffle } from "./open-feed.js";
 
 // Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
@@ -33,11 +34,16 @@ export async function openRoot(input: {
     (round) => ({ ok: true as const, round }),
     (error: unknown) => ({ ok: false as const, error }),
   );
+  const invoicesRead = hasInvoices(input);
   const auction = await input.auction.getAuction({
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
-  const [raffle, predictions] = await Promise.all([raffleRead, predictionRead]);
+  const [raffle, predictions, invoices] = await Promise.all([
+    raffleRead,
+    predictionRead,
+    invoicesRead,
+  ]);
   if (auction !== undefined && !predictions.ok) throw predictions.error;
   const predictionRound = predictions.ok ? predictions.round : undefined;
   if (auction === undefined) {
@@ -86,6 +92,21 @@ export async function openRoot(input: {
               },
             ],
           ]),
+      // Счета победителя (PER-322): вход есть, пока у смотрящего есть счета
+      // аукциона; отказ чтения убирает кнопку, как у розыгрыша.
+      ...(invoices
+        ? [
+            [
+              {
+                action: "root.invoices" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "invoices",
+                  auctionId: input.auctionId,
+                }),
+              },
+            ],
+          ]
+        : []),
       // Вход в избранное — только отсюда (PER-644): не из «Настроек» и не из
       // меню бота. Список общий на все аукционы, аукцион в кнопке — возврат.
       ...(input.favorites === undefined

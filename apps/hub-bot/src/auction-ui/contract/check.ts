@@ -17,11 +17,13 @@ import type {
   CommandOutcome,
   DisplayNameOutcome,
   FollowOutcome,
+  FulfillmentOutcome,
   LotHistoryEntryView,
   LotHistoryPage,
   LotPage,
   LotView,
   Money,
+  MyInvoicesView,
   OwnDisplayName,
   PredictionAnswer,
   PredictionOutcome,
@@ -144,6 +146,16 @@ export type PortCall =
       method: "submitPrediction";
       request: Parameters<AuctionMethods["submitPrediction"]>[0];
     }
+  | {
+      port: "auction";
+      method: "listMyInvoices";
+      request: Parameters<AuctionMethods["listMyInvoices"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "chooseFulfillment";
+      request: Parameters<AuctionMethods["chooseFulfillment"]>[0];
+    }
   // Избранное (PER-495): отметки живут в Notifications, а не в Auction.
   | { port: "favorites"; method: "listFollowedLots"; request: Viewer }
   | {
@@ -202,6 +214,12 @@ export type ContractAuction = {
   predictions?: readonly PredictionRoundView[];
   // Ответы отправки прогноза по порядку вызовов.
   predictionSubmissions?: readonly PredictionOutcome[];
+  // Счета смотрящего и текст организатора (PER-322). Нет — `ListMyInvoices`
+  // отказывает, как `unavailable`: корень тогда без «Моих счетов».
+  invoices?: MyInvoicesView | "unavailable";
+  // Ответы выбора способа получения по порядку вызовов; принятый выбор
+  // следующее чтение счетов уже видит.
+  fulfillments?: readonly FulfillmentOutcome[];
 };
 
 export type AuctionContractCase = {
@@ -3270,6 +3288,7 @@ const rootCallback = (auctionId: string) =>
 const rootCalls = (auctionId: string): PortCall[] => [
   raffleCall(auctionId),
   predictionReadCall(auctionId),
+  invoicesCall(auctionId),
   {
     port: "auction",
     method: "getAuction",
@@ -4728,6 +4747,227 @@ const SET_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Счета победителя (PER-322): «Мои счета» в корне, список с суммой и текстом
+// организатора, счёт и выбор способа получения. Чужих счетов шпион не
+// отдаёт, как Auction: в снимке только счета смотрящего.
+const INVOICE_ID = "5b1f3c2e-8d4a-5e6f-9a0b-1c2d3e4f5a6b";
+const FOREIGN_INVOICE_ID = "5b1f3c2e-8d4a-5e6f-9a0b-1c2d3e4f5a6c";
+
+function invoicesCall(auctionId: string): PortCall {
+  return {
+    port: "auction",
+    method: "listMyInvoices",
+    request: { viewer: CONTRACT_VIEWER, auctionId },
+  };
+}
+
+const SOLD_INVOICE = {
+  invoiceId: INVOICE_ID,
+  lotId: SOLD_LOT.lotId,
+  amount: rub(3000),
+  paymentDueAt: "2026-10-31T18:00:00Z",
+  status: "awaiting-payment" as const,
+};
+
+const PAYMENT_TEXT = "Перевод на карту организатора до срока.";
+
+const MY_INVOICES: MyInvoicesView = {
+  invoices: [SOLD_INVOICE],
+  paymentInstructions: PAYMENT_TEXT,
+};
+
+const invoicesCallback = encodeAuctionCallback({
+  kind: "invoices",
+  auctionId: CONTRACT_AUCTION_ID,
+});
+
+const invoiceCallback = (invoiceId: string) =>
+  encodeAuctionCallback({ kind: "invoice", lotId: SOLD_LOT.lotId, invoiceId });
+
+const fulfillmentCallback = (method: "pickup" | "delivery" | "digital") =>
+  encodeAuctionCallback({
+    kind: "fulfillment",
+    lotId: SOLD_LOT.lotId,
+    invoiceId: INVOICE_ID,
+    method,
+  });
+
+const findSoldCall: PortCall = {
+  port: "auction",
+  method: "findLot",
+  request: { viewer: CONTRACT_VIEWER, lotId: SOLD_LOT.lotId },
+};
+
+const choiceCall = (method: "pickup" | "delivery" | "digital"): PortCall => ({
+  port: "auction",
+  method: "chooseFulfillment",
+  request: {
+    viewer: CONTRACT_VIEWER,
+    invoiceId: INVOICE_ID,
+    method,
+    opId: CONTRACT_OP_IDS[0],
+  },
+});
+
+const fulfillmentRows = (["pickup", "delivery", "digital"] as const).map(
+  (method) => [
+    {
+      action: "invoice.fulfillment" as const,
+      method,
+      callbackData: fulfillmentCallback(method),
+    },
+  ],
+);
+
+const toInvoicesRow = [
+  { action: "invoice.back" as const, callbackData: invoicesCallback },
+];
+
+const INVOICE_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "root: with the invoices of the winner",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, summary: CONTRACT_SUMMARY, invoices: MY_INVOICES },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: CONTRACT_SUMMARY,
+        },
+      ],
+      keyboard: [
+        rootLotsRow,
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        [{ action: "root.invoices", callbackData: invoicesCallback }],
+      ],
+    },
+  },
+  {
+    intent: "my invoices: the invoices of the winner with the organizer's text",
+    callbackData: invoicesCallback,
+    auction: { ...AUCTION, invoices: MY_INVOICES },
+    auctionCalls: [invoicesCall(CONTRACT_AUCTION_ID), findSoldCall],
+    body: {
+      blocks: [
+        {
+          kind: "invoices",
+          auctionId: CONTRACT_AUCTION_ID,
+          invoices: [{ ...SOLD_INVOICE, title: "Плакат" }],
+          paymentInstructions: PAYMENT_TEXT,
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "invoices.open",
+            invoiceId: INVOICE_ID,
+            callbackData: invoiceCallback(INVOICE_ID),
+          },
+        ],
+        [
+          {
+            action: "invoices.back",
+            callbackData: rootCallback(CONTRACT_AUCTION_ID),
+          },
+        ],
+      ],
+    },
+  },
+  {
+    intent: "my invoice: an invoice with the choice of fulfillment",
+    callbackData: invoiceCallback(INVOICE_ID),
+    auction: { ...AUCTION, invoices: MY_INVOICES },
+    auctionCalls: [findSoldCall, invoicesCall(CONTRACT_AUCTION_ID)],
+    body: {
+      blocks: [
+        {
+          kind: "invoice",
+          auctionId: CONTRACT_AUCTION_ID,
+          invoice: { ...SOLD_INVOICE, title: "Плакат" },
+          paymentInstructions: PAYMENT_TEXT,
+        },
+      ],
+      keyboard: [...fulfillmentRows, toInvoicesRow],
+    },
+  },
+  {
+    intent: "my invoice: an invoice of someone else is not found",
+    callbackData: invoiceCallback(FOREIGN_INVOICE_ID),
+    auction: { ...AUCTION, invoices: MY_INVOICES },
+    auctionCalls: [findSoldCall, invoicesCall(CONTRACT_AUCTION_ID)],
+    body: {
+      blocks: [{ kind: "invoice-missing", auctionId: CONTRACT_AUCTION_ID }],
+      keyboard: [toInvoicesRow],
+    },
+  },
+  {
+    intent: "fulfillment: the chosen method is shown on the invoice",
+    callbackData: fulfillmentCallback("delivery"),
+    auction: {
+      ...AUCTION,
+      invoices: MY_INVOICES,
+      fulfillments: [{ kind: "accepted" }],
+    },
+    auctionCalls: [
+      choiceCall("delivery"),
+      findSoldCall,
+      invoicesCall(CONTRACT_AUCTION_ID),
+    ],
+    body: {
+      blocks: [
+        {
+          kind: "invoice",
+          auctionId: CONTRACT_AUCTION_ID,
+          invoice: {
+            ...SOLD_INVOICE,
+            fulfillment: "delivery",
+            title: "Плакат",
+          },
+          paymentInstructions: PAYMENT_TEXT,
+          notice: "fulfillment-chosen",
+        },
+      ],
+      keyboard: [...fulfillmentRows, toInvoicesRow],
+    },
+  },
+  {
+    intent: "fulfillment: a handed over lot keeps its method",
+    callbackData: fulfillmentCallback("pickup"),
+    auction: {
+      ...AUCTION,
+      invoices: {
+        invoices: [
+          { ...SOLD_INVOICE, status: "handed-over", fulfillment: "digital" },
+        ],
+      },
+      fulfillments: [{ kind: "refused", refusal: "fulfillment-frozen" }],
+    },
+    auctionCalls: [
+      choiceCall("pickup"),
+      findSoldCall,
+      invoicesCall(CONTRACT_AUCTION_ID),
+    ],
+    body: {
+      blocks: [
+        {
+          kind: "invoice",
+          auctionId: CONTRACT_AUCTION_ID,
+          invoice: {
+            ...SOLD_INVOICE,
+            status: "handed-over",
+            fulfillment: "digital",
+            title: "Плакат",
+          },
+          notice: "fulfillment-frozen",
+        },
+      ],
+      keyboard: [toInvoicesRow],
+    },
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...SET_CASES,
   ...ROOT_CASES,
@@ -5170,6 +5410,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...RAFFLE_CASES,
   ...PER595_CASES,
   ...PREDICTION_CASES,
+  ...INVOICE_CASES,
 ];
 
 export function spyPorts(
@@ -5187,6 +5428,8 @@ export function spyPorts(
   const predictionSubmissions = [...(snapshot.predictionSubmissions ?? [])];
   let predictionRounds =
     snapshot.predictions === undefined ? undefined : [...snapshot.predictions];
+  const fulfillments = [...(snapshot.fulfillments ?? [])];
+  let invoices = snapshot.invoices;
   const { followed, explainer } = snapshot;
   const followCommand = (outcome: FollowOutcome | undefined) => {
     if (outcome === undefined) throw new Error("follow is not expected");
@@ -5316,6 +5559,33 @@ export function spyPorts(
               ? { ...round, answers: outcome.prediction.answers }
               : round,
           );
+        }
+        return outcome;
+      },
+      async listMyInvoices(request) {
+        calls.push({ port: "auction", method: "listMyInvoices", request });
+        if (invoices === undefined || invoices === "unavailable") {
+          throw new Error("invoices unavailable");
+        }
+        return invoices;
+      },
+      async chooseFulfillment(request) {
+        calls.push({ port: "auction", method: "chooseFulfillment", request });
+        const outcome = fulfillments.shift();
+        if (outcome === undefined) throw new Error("choice is not expected");
+        if (
+          outcome.kind === "accepted" &&
+          invoices !== undefined &&
+          invoices !== "unavailable"
+        ) {
+          invoices = {
+            ...invoices,
+            invoices: invoices.invoices.map((invoice) =>
+              invoice.invoiceId === request.invoiceId
+                ? { ...invoice, fulfillment: request.method }
+                : invoice,
+            ),
+          };
         }
         return outcome;
       },

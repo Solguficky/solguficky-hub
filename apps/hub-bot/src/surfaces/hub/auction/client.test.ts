@@ -115,6 +115,8 @@ function adapter(rpc: {
   listAuctionInvoices?: Call;
   markInvoicePaid?: Call;
   markInvoiceHandedOver?: Call;
+  listMyInvoices?: Call;
+  chooseFulfillment?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -165,6 +167,8 @@ function adapter(rpc: {
     listAuctionInvoices: (rpc.listAuctionInvoices ?? notUsed) as never,
     markInvoicePaid: (rpc.markInvoicePaid ?? notUsed) as never,
     markInvoiceHandedOver: (rpc.markInvoiceHandedOver ?? notUsed) as never,
+    listMyInvoices: (rpc.listMyInvoices ?? notUsed) as never,
+    chooseFulfillment: (rpc.chooseFulfillment ?? notUsed) as never,
   });
 }
 

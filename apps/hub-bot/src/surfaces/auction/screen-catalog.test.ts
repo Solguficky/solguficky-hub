@@ -876,6 +876,81 @@ const raffleProofBody = (
   keyboard: [[{ action: "raffle.return", callbackData: "v1:auc:rf:a" }]],
 });
 
+// Счета победителя (PER-322): список, счёт в каждом статусе и кадр «счёта
+// нет» с возвратом к счетам и с «Повторить».
+const winnerInvoice = {
+  invoiceId: "inv-1",
+  lotId: "lot-1",
+  amount: { minorUnits: 300000, currency: "RUB" },
+  paymentDueAt: "2026-10-31T18:00:00Z",
+  title: "Плакат <первый>",
+};
+
+const invoicesBody = (instructions?: string): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "invoices",
+      auctionId: "auc-1",
+      invoices: [
+        { ...winnerInvoice, status: "awaiting-payment" },
+        {
+          ...winnerInvoice,
+          invoiceId: "inv-2",
+          status: "paid",
+          fulfillment: "pickup",
+        },
+      ],
+      ...(instructions === undefined
+        ? {}
+        : { paymentInstructions: instructions }),
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "invoices.open",
+        invoiceId: "inv-1",
+        callbackData: "v1:auc:ia:a:b",
+      },
+    ],
+    [
+      {
+        action: "invoices.open",
+        invoiceId: "inv-2",
+        callbackData: "v1:auc:ia:a:c",
+      },
+    ],
+    [{ action: "invoices.back", callbackData: "v1:auc:rt:auc-1" }],
+  ],
+});
+
+const invoiceBody = (
+  status: "awaiting-payment" | "paid" | "handed-over",
+  notice?: "fulfillment-chosen" | "fulfillment-frozen",
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "invoice",
+      auctionId: "auc-1",
+      invoice: { ...winnerInvoice, status, fulfillment: "delivery" },
+      paymentInstructions: "Перевод на карту.\nСамовывоз — на сходке.",
+      ...(notice === undefined ? {} : { notice }),
+    },
+  ],
+  keyboard: [
+    ...(status === "handed-over"
+      ? []
+      : (["pickup", "delivery", "digital"] as const).map((method) => [
+          {
+            action: "invoice.fulfillment" as const,
+            method,
+            callbackData: `v1:auc:im:a:b:${method[0]}`,
+          },
+        ])),
+    [{ action: "invoice.back", callbackData: "v1:auc:iv:a" }],
+  ],
+});
+
 // Регистрация принята (прогон 14.10, №69): кадр исхода с отменой и
 // возвратами в розыгрыш и в корень аукциона.
 const raffleRegisteredBody = (
@@ -1140,6 +1215,41 @@ const shown: readonly {
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleProofBody(raffle) },
   })),
+  { screen: { kind: "auction", body: invoicesBody("Перевод на карту.") } },
+  { screen: { kind: "auction", body: invoicesBody() } },
+  { screen: { kind: "auction", body: invoiceBody("awaiting-payment") } },
+  {
+    screen: {
+      kind: "auction",
+      body: invoiceBody("paid", "fulfillment-chosen"),
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: invoiceBody("handed-over", "fulfillment-frozen"),
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: {
+        blocks: [{ kind: "invoice-missing", auctionId: "auc-1" }],
+        keyboard: [[{ action: "invoice.back", callbackData: "v1:auc:iv:a" }]],
+      },
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: {
+        blocks: [{ kind: "invoice-missing" }],
+        keyboard: [
+          [{ action: "invoice.retry", callbackData: "v1:auc:ia:a:b" }],
+        ],
+      },
+    },
+  },
   { screen: { kind: "auction", body: raffleRegisteredBody(raffles[0]) } },
   { screen: { kind: "auction", body: raffleRegisteredBody(undefined) } },
   { screen: { kind: "auction", body: raffleNameChoice } },

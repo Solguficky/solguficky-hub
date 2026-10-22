@@ -35,6 +35,11 @@ import {
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
 import {
+  fulfillmentOutcomeOn,
+  myInvoicesOf,
+  wireFulfillment,
+} from "../../core/auction/invoices.js";
+import {
   myPredictionsOf,
   predictionOutcomeOf,
   wirePredictionAnswers,
@@ -114,6 +119,8 @@ export type AuctionRpc = Pick<
   | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
+  | "listMyInvoices"
+  | "chooseFulfillment"
 >;
 // Notifications боту аукциона нужен ради настроек уведомлений аукциона
 // (PER-515, PER-539),
@@ -363,6 +370,32 @@ export function createPorts(
           return snapshot === undefined
             ? undefined
             : auctionSummaryViewOf(snapshot);
+        },
+        // Счета победителя (PER-322): чтение бросает отказ, выбор способа —
+        // исход с `not-found` и `unanswered`, как команды участника.
+        async listMyInvoices(request) {
+          return myInvoicesOf(
+            await auction.listMyInvoices(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              callOptions(timeoutMs),
+            ),
+          );
+        },
+        chooseFulfillment(request) {
+          return fulfillmentOutcomeOn(() =>
+            auction.chooseFulfillment(
+              {
+                viewer: wireViewer(request.viewer),
+                invoiceId: request.invoiceId,
+                method: wireFulfillment(request.method),
+                opId: request.opId,
+              },
+              callOptions(timeoutMs),
+            ),
+          );
         },
         // Розыгрыш среди участников (ADR-066): команды — как у ставки.
         async getRaffle(request) {
