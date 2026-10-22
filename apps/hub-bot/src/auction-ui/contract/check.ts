@@ -4933,6 +4933,33 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
     },
   },
   {
+    intent: "fulfillment: the chosen method shows while the read model lags",
+    callbackData: fulfillmentCallback("digital"),
+    auction: {
+      ...AUCTION,
+      invoices: MY_INVOICES,
+      fulfillments: [{ kind: "accepted" }],
+      lagging: true,
+    },
+    auctionCalls: [
+      choiceCall("digital"),
+      findSoldCall,
+      invoicesCall(CONTRACT_AUCTION_ID),
+    ],
+    body: {
+      blocks: [
+        {
+          kind: "invoice",
+          auctionId: CONTRACT_AUCTION_ID,
+          invoice: { ...SOLD_INVOICE, fulfillment: "digital", title: "Плакат" },
+          paymentInstructions: PAYMENT_TEXT,
+          notice: "fulfillment-chosen",
+        },
+      ],
+      keyboard: [...fulfillmentRows, toInvoicesRow],
+    },
+  },
+  {
     intent: "fulfillment: a handed over lot keeps its method",
     callbackData: fulfillmentCallback("pickup"),
     auction: {
@@ -5573,8 +5600,10 @@ export function spyPorts(
         calls.push({ port: "auction", method: "chooseFulfillment", request });
         const outcome = fulfillments.shift();
         if (outcome === undefined) throw new Error("choice is not expected");
+        // Отставшая read model (`lagging`) принятого выбора ещё не видит.
         if (
           outcome.kind === "accepted" &&
+          snapshot.lagging !== true &&
           invoices !== undefined &&
           invoices !== "unavailable"
         ) {

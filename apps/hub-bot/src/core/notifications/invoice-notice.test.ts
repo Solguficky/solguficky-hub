@@ -79,7 +79,7 @@ describe("renderInvoiceNotice", () => {
       timeZone: "Europe/Moscow",
     });
     expect(view.text).toBe(
-      `Счёт за «Кружка» — 1${nbsp}500${nbsp}₽ — ждёт оплаты до 31 октября в 21:00. Как оплатить и получить — в счёте.`,
+      `Счёт за <b>Кружка</b> — 1${nbsp}500${nbsp}₽ — ждёт оплаты до 31 октября в 21:00. Как оплатить и получить — в счёте.`,
     );
     expect(view.button).toEqual({ lotId, invoiceId, text: "К счёту" });
   });

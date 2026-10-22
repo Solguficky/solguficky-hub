@@ -10,6 +10,7 @@ import {
   invoiceMissingTitle,
   invoiceParagraphs,
   invoicesBackLabel,
+  invoicesBackName,
   invoicesParagraphs,
   invoicesTitle,
   invoiceTitle,
@@ -88,7 +89,7 @@ export function invoiceScreen(
       ...invoiceParagraphs(block, { moment: moment(view) }),
     ),
     keyboard: withNav(rows, {
-      name: invoicesBackLabel.replace(/^‹ /, ""),
+      name: invoicesBackName,
       data: dataOf(keyboard, "invoice.back"),
     }),
     format: "HTML",

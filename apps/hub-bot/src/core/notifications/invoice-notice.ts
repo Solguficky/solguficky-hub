@@ -4,7 +4,7 @@ import type {
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import type { RenderContext, RenderResult } from "../delivery/index.js";
 import { money } from "../format.js";
-import type { LotNoticeReads } from "./lot-notice.js";
+import { bold, type LotNoticeReads } from "./lot-notice.js";
 
 // Напоминание о неоплаченном счёте (PER-330) с кнопкой на счёт (PER-322). У
 // двух ботов весть одна: участнику её доставляет бот хаба, гостю — бот
@@ -68,9 +68,17 @@ export type InvoiceNoticeButton = {
   text: string;
 };
 
-export type InvoiceNoticeView = { text: string; button: InvoiceNoticeButton };
+// Текст в HTML, как у вестей о лоте: название жирным, экранированное здесь.
+export type InvoiceNoticeView = {
+  text: string;
+  format: "HTML";
+  button: InvoiceNoticeButton;
+};
 
 const toInvoiceLabel = "К счёту";
+
+// Предел названия — тот же, что у вестей о лоте.
+const TITLE_LIMIT = 200;
 
 // Срок — дата и время по часам сообщества: до него сутки и больше.
 function dueMoment(instant: string, timeZone: string): string {
@@ -83,13 +91,14 @@ function dueMoment(instant: string, timeZone: string): string {
   }).format(new Date(instant));
 }
 
-// Одна фраза на «ты», без заголовка и разметки (дизайн-код, «Уведомления
-// аукциона»). Название — подсказка: без него весть называет просто лот.
+// Одна фраза на «ты», без заголовка; название лота — жирным, без кавычек, как
+// во всех вестях о лоте (дизайн-код, «Уведомления аукциона»). Название —
+// подсказка: без него весть называет просто лот.
 export function renderInvoiceNotice(
   notice: InvoiceNotice,
   options: { title?: string; timeZone: string },
 ): InvoiceNoticeView {
-  const lot = options.title === undefined ? "лот" : `«${options.title}»`;
+  const lot = bold(options.title, TITLE_LIMIT) ?? "лот";
   const due = dueMoment(notice.paymentDueAt, options.timeZone);
   const sum = money(notice.amount);
   return {
@@ -97,6 +106,7 @@ export function renderInvoiceNotice(
       notice.kind === "invoice-reminder"
         ? `Счёт за ${lot} — ${sum} — ждёт оплаты до ${due}. Как оплатить и получить — в счёте.`
         : `Срок оплаты счёта за ${lot} — ${sum} — истекает ${due}. Как оплатить и получить — в счёте.`,
+    format: "HTML",
     button: {
       lotId: notice.lotId,
       invoiceId: notice.invoiceId,

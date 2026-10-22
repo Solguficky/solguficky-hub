@@ -324,6 +324,7 @@ describe("auction contract self-check", () => {
       "my invoice: an invoice with the choice of fulfillment",
       "my invoice: an invoice of someone else is not found",
       "fulfillment: the chosen method is shown on the invoice",
+      "fulfillment: the chosen method shows while the read model lags",
       "fulfillment: a handed over lot keeps its method",
     ]);
   });

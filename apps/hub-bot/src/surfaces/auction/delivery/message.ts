@@ -328,6 +328,7 @@ function announcementMessage(
 function invoiceMessage(view: InvoiceNoticeView): NotificationMessage {
   return {
     text: view.text,
+    format: view.format,
     rows: [
       [
         {

@@ -647,7 +647,10 @@ function digestLine(
 // Название в вести о лоте — жирным и без кавычек (№19 прогона 12 октября,
 // №71 прогона 14 октября 2026 года). Обрезка — до экранирования: предел
 // считается в знаках, которые человек увидит.
-function bold(title: string | undefined, limit: number): string | undefined {
+export function bold(
+  title: string | undefined,
+  limit: number,
+): string | undefined {
   return title === undefined || title === ""
     ? undefined
     : `<b>${escapeHtml(truncate(title, limit))}</b>`;

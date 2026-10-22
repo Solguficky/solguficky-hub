@@ -13,7 +13,8 @@ import { money, truncate } from "./core/format.js";
 
 export const invoicesTitle = "Мои счета";
 export const invoicesButtonLabel = "Мои счета";
-export const invoicesBackLabel = "‹ Счета";
+export const invoicesBackName = "Счета";
+export const invoicesBackLabel = `‹ ${invoicesBackName}`;
 export const invoiceMissingTitle = "Счёт не найден";
 
 const instructionsHeading = "<b>Как оплатить и получить</b>";

@@ -218,6 +218,7 @@ export function renderNotification(
     const { button } = content.view;
     return {
       text: content.view.text,
+      format: content.view.format,
       keyboard: new InlineKeyboard().text(
         button.text,
         traceCallback(

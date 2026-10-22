@@ -131,6 +131,9 @@ export async function openInvoice(
   lotId: string,
   invoiceId: string,
   notice?: "fulfillment-chosen" | "fulfillment-frozen",
+  // Принятый способ: read model счетов догоняет команду не сразу, и экран
+  // исхода накладывает его поверх прочитанного, как пульт — отметку.
+  chosen?: FulfillmentMethod,
 ): Promise<AuctionScreenBody> {
   const lot = await context.auction.findLot({ viewer: context.viewer, lotId });
   if (lot === undefined) {
@@ -154,7 +157,11 @@ export async function openInvoice(
     viewer: context.viewer,
     auctionId: lot.auctionId,
   });
-  const invoice = mine.invoices.find((each) => each.invoiceId === invoiceId);
+  const read = mine.invoices.find((each) => each.invoiceId === invoiceId);
+  const invoice =
+    read === undefined || chosen === undefined
+      ? read
+      : { ...read, fulfillment: chosen };
   if (invoice === undefined) {
     return {
       blocks: [{ kind: "invoice-missing", auctionId: lot.auctionId }],
@@ -217,6 +224,7 @@ export async function chooseFulfillment(
         intent.lotId,
         intent.invoiceId,
         "fulfillment-chosen",
+        intent.method,
       );
     case "refused":
       return openInvoice(
