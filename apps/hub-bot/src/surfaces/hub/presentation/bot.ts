@@ -95,6 +95,7 @@ import type {
   LotAskError,
   LotFormView,
   LotQuestion,
+  LotTierView,
   MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
@@ -6828,6 +6829,7 @@ function askLotQuestion(
     lot?: LotFormView | undefined;
     error?: LotAskError | undefined;
     maxImageBytes?: number | undefined;
+    suggestedTiers?: LotTierView[] | undefined;
     replaces?: number | undefined;
     // Что уже сделано, строкой над вопросом цепочки нового лота (PER-618).
     lead?: string | undefined;
@@ -6844,7 +6846,7 @@ function askLotQuestion(
       ctx,
       questions,
       pending,
-      lotAskErrorText(ask.error, ask.maxImageBytes),
+      lotAskErrorText(ask.error, ask),
       ask.replaces,
     );
   }
@@ -6986,6 +6988,7 @@ async function renderLotAnswer(
       lot: result.lot,
       error: result.error,
       maxImageBytes: result.maxImageBytes,
+      suggestedTiers: result.suggestedTiers,
       replaces: answer.replyId,
     });
     return handled(

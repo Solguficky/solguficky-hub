@@ -88,12 +88,42 @@ type StepParse =
       policy: LotStepPolicyInput;
       terms: { step: LotAmount } | { tiers: LotTierView[] };
     }
-  | { kind: "rejected"; reason: LotAskError };
+  | { kind: "rejected"; reason: LotAskError; suggestion?: LotTierView[] };
 
-// Шаг из ответа (PER-491): одно число — `fixed`, строки «от суммы — шаг» —
-// `tiered`. Пороги проверяются здесь, до Auction: первая граница ноль и
-// возрастание (И-15), и та же проверка приходит отказом Auction на всякий
-// случай, но человеку она нужна текстом формы.
+/**
+ * Сколько порогов отказ `step-start` повторяет исправленными строками: эхо
+ * ввода длиннее самого ввода, и текст отказа не должен упереться в предел
+ * сообщения Telegram. Длиннее — отказ показывает образец.
+ */
+const maxSuggestedTiers = 20;
+
+type TierOrder = "ordered" | "step-order" | "step-decreasing";
+
+// Соседние пороги: возрастание границ (И-15) Auction проверит и сам, а
+// неубывание шага — правило только формы (PER-709, решение владельца 24.10):
+// Auction убывающий шаг принимает, и И-15 его не запрещает.
+function tierOrder(tiers: LotTierView[]): TierOrder {
+  const pairs = tiers.slice(1).map((tier, i) => [tiers[i], tier] as const);
+  for (const [lower, upper] of pairs) {
+    if (lower === undefined) continue;
+    if (upper.lowerBound.minorUnits <= lower.lowerBound.minorUnits) {
+      return "step-order";
+    }
+  }
+  for (const [lower, upper] of pairs) {
+    if (lower === undefined) continue;
+    if (upper.step.minorUnits < lower.step.minorUnits) return "step-decreasing";
+  }
+  return "ordered";
+}
+
+// Шаг из ответа (PER-491): одно число — `fixed`, строки «от цены — шаг» —
+// `tiered`. Пороги проверяются здесь, до Auction, чтобы человек получил
+// причину текстом формы. Первый порог не с нуля — обычно стартовая цена
+// (прогон dev 24.10): отказ предлагает те же строки с первой границей 0, если
+// сами строки идут по порядку (PER-709). Порядок проверяется до замены: иначе
+// прежняя первая граница выпала бы из сравнения, и подсказка поменяла бы смысл
+// ввода, который нарушал порядок.
 function parseStep(mode: LotStepMode, raw: string): StepParse {
   if (mode === "single") {
     const step = parseRubles(raw);
@@ -123,17 +153,20 @@ function parseStep(mode: LotStepMode, raw: string): StepParse {
     }
     tiers.push({ lowerBound: rubles(bound), step: rubles(step) });
   }
-  const [first] = tiers;
+  const order = tierOrder(tiers);
+  const [first, ...rest] = tiers;
   if (first === undefined || first.lowerBound.minorUnits !== 0) {
-    return { kind: "rejected", reason: "step-order" };
+    return first !== undefined &&
+      order === "ordered" &&
+      tiers.length <= maxSuggestedTiers
+      ? {
+          kind: "rejected",
+          reason: "step-start",
+          suggestion: [{ lowerBound: rubles(0), step: first.step }, ...rest],
+        }
+      : { kind: "rejected", reason: "step-start" };
   }
-  for (let i = 1; i < tiers.length; i += 1) {
-    if (
-      tiers[i]!.lowerBound.minorUnits <= tiers[i - 1]!.lowerBound.minorUnits
-    ) {
-      return { kind: "rejected", reason: "step-order" };
-    }
-  }
+  if (order !== "ordered") return { kind: "rejected", reason: order };
   return { kind: "ok", policy: { kind: "tiered", tiers }, terms: { tiers } };
 }
 
@@ -577,6 +610,9 @@ export function createLotForm(lots: LotAdministration) {
         question,
         lot: current.lot,
         error: step.reason,
+        ...(step.suggestion === undefined
+          ? {}
+          : { suggestedTiers: step.suggestion }),
       };
     }
     const startingPrice = rubles(request.priceRubles);

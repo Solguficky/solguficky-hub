@@ -8,6 +8,7 @@ import type {
   LotQuestion,
   LotRefusal,
   LotTermsView,
+  LotTierView,
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
@@ -231,14 +232,22 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
   };
 }
 
+// Образец порогов: тот же у вопроса и у отказов, чтобы человек видел один ввод.
+const tiersExample = "0 — 100\n5000 — 250";
+// Отказ на пороги не с нуля: обычно человек начал со стартовой цены.
+const fromZeroReason =
+  "Первый порог — 0. Пороги считаются по цене лота от 0, а не от стартовой цены.";
+
 const lotAskErrors: Record<LotAskError, string> = {
   "empty-title": "Название не может быть пустым.",
   "empty-description": "Описание не может быть пустым.",
   "amount-format": "Нужно целое число рублей. Только цифры, без копеек.",
   "amount-range": "Сумма — от 1 до 9 999 999 рублей.",
   "step-format":
-    "Порог — строка «от суммы — шаг», целыми рублями. Например: 0 — 100.",
-  "step-order": "Пороги идут по возрастанию, и первый начинается с 0.",
+    "Это не порог. Каждая строка — «от цены — шаг» целыми рублями. Например: 0 — 100.",
+  "step-start": `${fromZeroReason} Например:\n${tiersExample}`,
+  "step-order": `Цены порогов не по возрастанию. Каждый следующий порог — с цены выше прежнего. Например:\n${tiersExample}`,
+  "step-decreasing": `Шаг не может уменьшаться. С ростом цены шаг остаётся прежним или растёт. Например:\n${tiersExample}`,
   "step-refused": "Аукцион отклонил такой шаг. Проверь шаг и пришли заново.",
   "image-too-large": "Фото слишком большое, аукцион его не принял.",
   "unsupported-image": "Аукцион не узнал в этом файле изображение.",
@@ -260,14 +269,32 @@ export function imageLimitText(maxBytes: number): string {
   return `${Math.max(1, Math.round(maxBytes / 1024))} КБ`;
 }
 
+// Пороги так, как их вводят: целые рубли без разрядов и знака валюты.
+function tiersInput(tiers: LotTierView[]): string {
+  return tiers
+    .map(
+      (tier) =>
+        `${tier.lowerBound.minorUnits / 100} — ${tier.step.minorUnits / 100}`,
+    )
+    .join("\n");
+}
+
 /** Причина отказа ответу на вопрос формы лота: заголовок экрана исхода. */
 export function lotAskErrorText(
   error: LotAskError,
-  maxImageBytes?: number,
+  details: {
+    maxImageBytes?: number | undefined;
+    suggestedTiers?: LotTierView[] | undefined;
+  } = {},
 ): string {
-  return error === "image-too-large" && maxImageBytes !== undefined
-    ? `Фото больше ${imageLimitText(maxImageBytes)}, аукцион его не принял.`
-    : lotAskErrors[error];
+  if (error === "image-too-large" && details.maxImageBytes !== undefined) {
+    return `Фото больше ${imageLimitText(details.maxImageBytes)}, аукцион его не принял.`;
+  }
+  // Исправленный ввод вместо образца (PER-709): человек видит свои же строки.
+  if (error === "step-start" && details.suggestedTiers !== undefined) {
+    return `${fromZeroReason} Пришли так:\n${tiersInput(details.suggestedTiers)}`;
+  }
+  return lotAskErrors[error];
 }
 
 const rublesOf = (amount: number) =>
@@ -287,7 +314,7 @@ function prompt(question: LotQuestion): string {
     case "step":
       return question.mode === "single"
         ? "Шаг ставки в рублях, целым числом: на столько новая ставка обязана быть выше текущей цены. Например: 100"
-        : "Пороги шага строками «от суммы — шаг». Первый — от 0, дальше границы возрастают, шаг растёт. Например:\n0 — 100\n5000 — 250";
+        : `Пороги шага — строками «от цены — шаг». Цена считается от 0, а не от стартовой: первый порог всегда 0. Дальше цены растут, а шаг не уменьшается. Например:\n${tiersExample}\nДо 5 000 ₽ шаг 100 ₽, с 5 000 ₽ — 250 ₽.`;
     case "image":
       return question.chain === true
         ? "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота. Нет фото под рукой — «Пропустить», его можно добавить потом."
