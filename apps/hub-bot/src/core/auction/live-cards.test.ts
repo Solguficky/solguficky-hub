@@ -74,11 +74,15 @@ function manualWatches() {
     end() {
       for (const ended of [...endings.values()]) ended();
     },
-    emit(activeLot: LotView | undefined, lineup: readonly LotView[] = []) {
+    emit(
+      activeLot: LotView | undefined,
+      lineup: readonly LotView[] = [],
+      finished = false,
+    ) {
       for (const listener of [...listeners.values()]) {
         listener({
           auctionId: AUCTION_ID,
-          finished: false,
+          finished,
           ...(activeLot === undefined ? {} : { activeLot }),
           lineup,
         });
@@ -172,6 +176,21 @@ describe("live cards", () => {
     const { stream, edits, cards, lotOf } = setup();
     cards.shown(7, 70, opened);
     stream.emit(undefined, [sold(LOT_A, 3), live(LOT_B, 0, 500)]);
+    await flush();
+    const block = lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] });
+    expect(block?.status.kind).toBe("sold");
+    expect(edits[0]?.body.keyboard.flat().map((b) => b.action)).not.toContain(
+      "lot.bid-final",
+    );
+  });
+
+  // Последнее сообщение потока завершённого аукциона несёт состав с
+  // исходами (PER-712): карточка последнего лота показывает продажу без
+  // нажатия.
+  it("shows the sale of the last lot of the final when the auction finishes", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, opened);
+    stream.emit(undefined, [sold(LOT_A, 3)], true);
     await flush();
     const block = lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] });
     expect(block?.status.kind).toBe("sold");

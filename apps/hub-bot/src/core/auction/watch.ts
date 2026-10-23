@@ -23,9 +23,10 @@ import { lotViewOf } from "./snapshot.js";
 /** Состояние аукциона и его финала из одного сообщения потока. */
 export type AuctionWatchState = {
   auctionId: string;
-  // После этого сообщения сервер закрывает поток: аукцион завершён — или
+  // После этого сообщения сервер закрывает поток: аукцион завершён или
   // отменён (ADR-047, дополнение 2026-10-12), и ни один лот состава уже не
-  // торгуется и не удержан.
+  // торгуется и не удержан. Продажу последнего лота финала read model лотов
+  // может отдать позже конца аукциона, и поток ждёт её (PER-712).
   finished: boolean;
   // Активный лот живого финала; нет — до финала, между лотами и после него.
   activeLot?: LotView;
@@ -41,11 +42,11 @@ export function watchStateOf(message: AuctionWatch): AuctionWatchState {
   return {
     auctionId: auction.id,
     finished:
-      auction.status.case === "finished" ||
-      (auction.status.case === "cancelled" &&
-        message.lineup.every(
-          (lot) => lot.status.case !== "trading" && lot.status.case !== "held",
-        )),
+      (auction.status.case === "finished" ||
+        auction.status.case === "cancelled") &&
+      message.lineup.every(
+        (lot) => lot.status.case !== "trading" && lot.status.case !== "held",
+      ),
     ...(message.activeLot === undefined
       ? {}
       : { activeLot: lotViewOf(message.activeLot) }),

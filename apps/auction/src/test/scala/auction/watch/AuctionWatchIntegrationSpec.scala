@@ -217,6 +217,44 @@ final class AuctionWatchIntegrationSpec
       }
     }
 
+    "sends the sale of the last lot of the final before it ends the stream" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val (_, inFinal) = watchingFinal(node)
+        sellLast(node, inFinal)
+
+        val last = untilEnd(inFinal.queue).lastOption.getOrElse(fail("the stream ended without a message"))
+        last.getAuction.status.isFinished shouldBe true
+        last.lineup.map(lot => lot.id -> lot.status.isSold) shouldBe Seq(inFinal.lot.value.toString -> true)
+      }
+    }
+
+    "gives a watcher who comes after the end one message with the sold lineup and ends the stream" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val (request, inFinal) = watchingFinal(node)
+        inFinal.queue.cancel()
+        sellLast(node, inFinal)
+        // Продажа лота и конец аукциона уже в read model: поздний подписчик читает их одним чтением.
+        eventually {
+          node.client
+            .getAuction()
+            .addHeader("authorization", s"Bearer $hubToken")
+            .invoke(wire.GetAuctionRequest(Some(watcher), inFinal.message.getAuction.id))
+            .futureValue
+            .getAuction
+            .status
+            .isFinished shouldBe true
+        }
+
+        val messages = untilEnd(node.watch(request))
+        messages.last.getAuction.status.isFinished shouldBe true
+        messages.last.lineup.map(lot => lot.id -> lot.status.isSold) shouldBe Seq(inFinal.lot.value.toString -> true)
+      }
+    }
+
     "carries the estimated time of the final to the open stream without a reconnect" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
@@ -309,6 +347,21 @@ final class AuctionWatchIntegrationSpec
       )
       .futureValue
       .isRight shouldBe true
+
+  /** Ставка по следующей цене и продажа активного лота ведущим: состав из одного лота, и аукцион заканчивается. */
+  private def sellLast(node: Node, inFinal: InFinal): Unit = {
+    bid(node, inFinal.lot, inFinal.message.getActiveLot.getNextPrice, participant(2))
+    val auction = AuctionId(UUID.fromString(inFinal.message.getAuction.id))
+    eventually(node.commands.closeLot(auction, inFinal.lot, newOp(), person).futureValue.isRight shouldBe true)
+  }
+
+  /** Сообщения потока до его конца; поток, не закрывшийся за срок, — провал. */
+  private def untilEnd(queue: SinkQueueWithCancel[wire.AuctionWatch]): List[wire.AuctionWatch] =
+    Iterator
+      .continually(queue.pull().futureValue)
+      .takeWhile(_.isDefined)
+      .flatten
+      .toList
 
   private final case class Node(
       commands: AuctionCommands,

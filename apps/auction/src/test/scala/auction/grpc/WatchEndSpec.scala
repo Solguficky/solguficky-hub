@@ -7,8 +7,8 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
 /**
- * Когда `WatchAuction` закрывается (ADR-047, дополнение 2026-10-12): после законченного аукциона сразу, после
- * отменённого — когда ни один лот состава уже не торгуется и не удержан, чтобы последнее сообщение несло снятые лоты.
+ * Когда `WatchAuction` закрывается (ADR-047, дополнение 2026-10-12): после законченного или отменённого аукциона —
+ * когда ни один лот состава уже не торгуется и не удержан, чтобы последнее сообщение несло исходы лотов (PER-712).
  */
 final class WatchEndSpec extends AnyWordSpec with Matchers {
 
@@ -19,15 +19,17 @@ final class WatchEndSpec extends AnyWordSpec with Matchers {
   private val held = wire.LotSnapshot().withHeld(model.LotHeld())
   private val withdrawn =
     wire.LotSnapshot().withWithdrawn(model.WithdrawnReason.WITHDRAWN_REASON_AUCTION_CANCELLED)
+  private val sold = wire.LotSnapshot().withSold(model.LotSale())
   private val cancelled = wire.AuctionSnapshot.Status.Cancelled(AuctionState.Cancelled())
+  private val finished = wire.AuctionSnapshot.Status.Finished(AuctionState.Finished())
 
   "the end of the auction watch" should {
 
-    "come right after a finished auction, whatever its lineup" in {
-      AuctionGrpcService.terminal(
-        watch(wire.AuctionSnapshot.Status.Finished(AuctionState.Finished()), trading)
-      ) shouldBe
-        true
+    "come after a finished auction only once no lot of the lineup trades or is held" in {
+      AuctionGrpcService.terminal(watch(finished)) shouldBe true
+      AuctionGrpcService.terminal(watch(finished, sold)) shouldBe true
+      AuctionGrpcService.terminal(watch(finished, sold, trading)) shouldBe false
+      AuctionGrpcService.terminal(watch(finished, held)) shouldBe false
     }
 
     "come after a cancelled auction only once no lot of the lineup trades or is held" in {
