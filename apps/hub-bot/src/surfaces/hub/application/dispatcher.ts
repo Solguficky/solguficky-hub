@@ -268,6 +268,7 @@ export function createDispatcher(
         case "set-lot-terms":
         case "keep-lot-step":
         case "set-lot-image":
+        case "remove-lot-image":
           return lotForm === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);

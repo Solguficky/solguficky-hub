@@ -43,6 +43,8 @@ import {
   consoleWindowsData,
   lotAskData,
   lotFormData,
+  lotImageRemoveConfirmData,
+  lotImageRemoveData,
   lotKeepStepData,
   lotNewData,
   lotPreviewData,
@@ -1173,6 +1175,11 @@ describe("lot form callbacks", () => {
         { kind: "lot-step-mode", lot, price: 1, mode: "single" },
       ],
       [lotSkipData(lot), { kind: "lot-skip", lot }],
+      [lotImageRemoveData(lot), { kind: "lot-image-remove", lot }],
+      [
+        lotImageRemoveConfirmData(lot, "0zz9a"),
+        { kind: "lot-image-remove-confirm", lot, print: "0zz9a" },
+      ],
     ] as const;
     for (const [data, expected] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
@@ -1252,6 +1259,10 @@ describe("lot form callbacks", () => {
       `v1:lot:sk:${lot}:0`,
       `v1:lot:sk:${lot}:${maxLotRubles + 1}`,
       `v1:lot:sk:${lot}:700:c`,
+      `v1:lot:rm:${lot}:extra`,
+      `v1:lot:ry:${lot}`,
+      `v1:lot:ry:${lot}:ABCDE`,
+      `v1:lot:ry:${lot}:abcde:extra`,
       `v1:lot:drop:${lot}`,
       `v1:q:ln:${auction}`,
       `v1:q:ln:${auction}:short`,

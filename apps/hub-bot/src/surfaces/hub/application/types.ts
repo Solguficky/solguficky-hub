@@ -121,7 +121,10 @@ export type LotAskError =
   // Альбом: лоту нужна одна фотография.
   | "photo-album"
   // Telegram не отдал файл фотографии: её можно прислать ещё раз.
-  | "photo-unavailable";
+  | "photo-unavailable"
+  // Фото сменилось после подтверждения «Убрать фото» (PER-715): ничего не
+  // снято, решают заново.
+  | "photo-changed";
 
 // Способ задать шаг (PER-491): один на все цены либо по ценовым порогам.
 export type LotStepMode = "single" | "tiered";
@@ -154,6 +157,9 @@ export type LotFormView = {
   title?: string;
   description: string;
   hasImage: boolean;
+  // Отпечаток версии фото (PER-715): «Да, убрать фото» несёт его, чтобы не
+  // снять фото, которое сменилось после подтверждения.
+  imagePrint?: string;
   terms: LotTermsView;
 };
 
@@ -378,6 +384,13 @@ export type LotFormRequest =
       intent: "set-lot-image";
       lotId: string;
       image: Uint8Array;
+    })
+  // Снятие фото лота (PER-715): «Да» под подтверждением «Убрать фото?».
+  | (LotFormCall & {
+      intent: "remove-lot-image";
+      lotId: string;
+      // Отпечаток фото, которое подтвердили снять.
+      imagePrint: string;
     });
 
 // Пульт аукциона администратора (PER-320). Пульт — экран хаба, а не тело
@@ -1347,7 +1360,7 @@ export type ExecuteResult =
   | {
       kind: "lot-form";
       lot: LotFormView;
-      saved?: "created" | "text" | "terms" | "image";
+      saved?: "created" | "text" | "terms" | "image" | "image-removed";
     }
   // Предпросмотр лота (PER-512): снимок, прочитанный правом администратора.
   | { kind: "lot-preview"; lot: LotView }

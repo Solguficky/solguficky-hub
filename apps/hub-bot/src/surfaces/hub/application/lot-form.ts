@@ -7,6 +7,7 @@ import type {
   LotReadResult,
   LotStepPolicyInput,
 } from "../auction/port.js";
+import { fingerprint } from "./fingerprint.js";
 import type {
   ExecuteResult,
   LotAmount,
@@ -242,6 +243,9 @@ function viewOf(lot: LotView): LotFormView {
     ...(lot.card === undefined ? {} : { title: lot.card.title }),
     description: lot.card?.description ?? "",
     hasImage: lot.card?.image !== undefined,
+    ...(lot.card?.image === undefined
+      ? {}
+      : { imagePrint: fingerprint(lot.card.image.version) }),
     terms: termsOf(lot),
   };
 }
@@ -538,10 +542,15 @@ export function createLotForm(lots: LotAdministration) {
   // Фото, как название и описание, бот не шлёт у проданного лота. У закрытого
   // без продажи ряд остаётся, а Auction отвечает `CardClosed` (ADR-057). Правка
   // заменяет оба текста, поэтому они
-  // берутся из карточки, как у `setText`.
+  // берутся из карточки, как у `setText`. Снятие фото (PER-715) идёт тем же
+  // путём: та же правка карточки, только с `remove_image` вместо файла.
   async function setImage(
-    request: Extract<LotFormRequest, { intent: "set-lot-image" }>,
+    request: Extract<
+      LotFormRequest,
+      { intent: "set-lot-image" | "remove-lot-image" }
+    >,
   ): Promise<ExecuteResult> {
+    const removing = request.intent === "remove-lot-image";
     const current = await read(request);
     if (current.kind === "refused") return current.result;
     const sold = soldRefusal(current.lot);
@@ -554,21 +563,39 @@ export function createLotForm(lots: LotAdministration) {
         lotId: request.lotId,
       };
     }
+    // Снимается то фото, которое подтвердили (PER-715). Фото уже нет — итог
+    // тот, о котором просили, и команда не нужна. Фото сменилось — новое никто
+    // не подтверждал: ничего не снимается, вопрос о фото задаётся заново.
+    if (request.intent === "remove-lot-image") {
+      if (stored.image === undefined) {
+        return { kind: "lot-form", lot: current.lot, saved: "image-removed" };
+      }
+      if (fingerprint(stored.image.version) !== request.imagePrint) {
+        return {
+          kind: "lot-ask",
+          question: { kind: "image", lotId: request.lotId },
+          lot: current.lot,
+          error: "photo-changed",
+        };
+      }
+    }
     const written = await lots.editLotCard(
       request.identity,
       {
         lotId: request.lotId,
         title: stored.title,
         description: stored.description,
-        image: request.image,
+        ...(request.intent === "remove-lot-image"
+          ? { removeImage: true as const }
+          : { image: request.image }),
       },
       rpcMeta(request),
     );
     if (written.kind === "ok") {
       return {
         kind: "lot-form",
-        lot: { ...current.lot, hasImage: true },
-        saved: "image",
+        lot: { ...current.lot, hasImage: !removing },
+        saved: removing ? "image-removed" : "image",
       };
     }
     if (written.kind === "card-not-found") {
@@ -776,6 +803,7 @@ export function createLotForm(lots: LotAdministration) {
       case "keep-lot-step":
         return keepStep(request);
       case "set-lot-image":
+      case "remove-lot-image":
         return setImage(request);
       default: {
         const _exhaustive: never = request;

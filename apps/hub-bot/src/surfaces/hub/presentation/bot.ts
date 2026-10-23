@@ -214,6 +214,7 @@ import {
   floorSearchData,
   lotAskData,
   lotFormData,
+  lotImageRemoveData,
   lotNewData,
   lotSkipData,
   lotStepModeData,
@@ -357,11 +358,13 @@ import {
   lotAskErrorText,
   lotChainLead,
   lotFormScreen,
+  lotImageRemoveConfirmScreen,
   lotQuestionText,
   lotRefusalText,
   lotSavedNote,
   lotSavedScreen,
   lotStepModeScreen,
+  removePhotoLabel,
   skipPhotoLabel,
   toLot,
   toLots,
@@ -2346,9 +2349,14 @@ async function handleCallback(
     const action: ScreenAction =
       pressed.kind === "question" ? cancelTarget(pressed.step) : pressed;
     const pressedId = ctx.callbackQuery?.message?.message_id;
-    // «Пропустить» под вопросом о фото нового лота (PER-618) уходит от вопроса
-    // так же, как «Отмена»: вопрос удаляется, итог приходит новым сообщением.
-    if (pressed.kind === "question" || pressed.kind === "lot-skip") {
+    // «Пропустить» под вопросом о фото нового лота (PER-618) и «Убрать фото»
+    // (PER-715) уходят от вопроса так же, как «Отмена»: вопрос удаляется, итог
+    // или подтверждение приходит новым сообщением.
+    if (
+      pressed.kind === "question" ||
+      pressed.kind === "lot-skip" ||
+      pressed.kind === "lot-image-remove"
+    ) {
       if (pressedId !== undefined) {
         questions.delete(questionKey(ctx.chat?.id, pressedId));
       }
@@ -2474,7 +2482,9 @@ async function handleCallback(
       action.kind === "lot-ask" ||
       action.kind === "lot-step-mode" ||
       action.kind === "lot-skip" ||
-      action.kind === "lot-keep-step"
+      action.kind === "lot-keep-step" ||
+      action.kind === "lot-image-remove" ||
+      action.kind === "lot-image-remove-confirm"
     ) {
       outcome = canRunAuctions(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
@@ -6626,7 +6636,9 @@ async function handleLotFormCallback(
         | "lot-ask"
         | "lot-step-mode"
         | "lot-skip"
-        | "lot-keep-step";
+        | "lot-keep-step"
+        | "lot-image-remove"
+        | "lot-image-remove-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -6685,6 +6697,38 @@ async function handleLotFormCallback(
       retry: ctx.callbackQuery?.data,
     });
   }
+  // «Да, убрать фото» (PER-715): лот читает сам юзкейс — тексты карточки ему
+  // нужны для правки. Отказ Auction — кадр отказа формы, а не сбоя.
+  if (action.kind === "lot-image-remove-confirm") {
+    const removed = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "remove-lot-image",
+      lotId,
+      imagePrint: action.print,
+      ...rpcCall(ctx, useCase),
+    });
+    if (removed.kind === "lot-form") {
+      await showScreen(
+        ctx,
+        lotSavedScreen(removed.lot, lotSavedNote["image-removed"]),
+      );
+      return sent("lot photo removed");
+    }
+    // Фото сменилось после подтверждения: ничего не снято — исход с «Ввести
+    // заново», который задаёт вопрос о фото с кнопкой для нового фото.
+    if (removed.kind === "lot-ask") {
+      await askLotQuestion(ctx, questions, {
+        question: removed.question,
+        lot: removed.lot,
+        error: removed.error,
+      });
+      return sent("lot photo removal asked again: the photo changed");
+    }
+    return showLotFailure(ctx, removed, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
   // Способ шага выбран (PER-491): цена уже принята и едет в кнопке, поэтому
   // лот читать не нужно — спрашивается сам шаг.
   const result = await runtime.dispatcher.execute({
@@ -6709,6 +6753,28 @@ async function handleLotFormCallback(
   if (action.kind === "lot-skip") {
     await showScreen(ctx, lotSavedScreen(result.lot, lotSavedNote.ready));
     return sent("lot photo skipped");
+  }
+  // «Убрать фото» (PER-715): вопрос удалён до чтения, подтверждение — новым
+  // сообщением. У проданного лота правок нет, а у лота, у которого фото уже
+  // убрали, подтверждать нечего — открывается форма.
+  if (action.kind === "lot-image-remove") {
+    if (isSold(result.lot.terms)) {
+      return showLotFailure(
+        ctx,
+        { kind: "lot-refused", reason: "lot-sold", lotId },
+        { person },
+      );
+    }
+    const { imagePrint } = result.lot;
+    if (imagePrint === undefined) {
+      await showScreen(ctx, lotFormScreen(result.lot));
+      return sent("lot form sent: no photo to remove");
+    }
+    await showScreen(
+      ctx,
+      lotImageRemoveConfirmScreen({ ...result.lot, imagePrint }),
+    );
+    return sent("lot photo removal confirmation sent");
   }
   // Способ шага выбран (PER-491): цена едет в кнопке. Условия могли замерзнуть
   // между ценой и этим нажатием — отказ приходит здесь, до вопроса, а не после
@@ -6895,22 +6961,30 @@ function askLotQuestion(
       ask.replaces,
     );
   }
-  // Фото в цепочке нового лота можно пропустить (PER-618): кнопка стоит над
-  // «Отменой» и, как она, уводит от вопроса.
-  const skip =
-    ask.question.kind === "image" && ask.question.chain === true
-      ? {
-          text: skipPhotoLabel,
-          data: lotSkipData(uuidToToken(ask.question.lotId)),
-        }
-      : undefined;
+  // Фото в цепочке нового лота можно пропустить (PER-618), а у лота с фото —
+  // убрать (PER-715): кнопка стоит над «Отменой» и, как она, уводит от
+  // вопроса. У нового лота фото ещё нет, поэтому двух кнопок сразу не бывает.
+  const photoAction =
+    ask.question.kind !== "image"
+      ? undefined
+      : ask.question.chain === true
+        ? {
+            text: skipPhotoLabel,
+            data: lotSkipData(uuidToToken(ask.question.lotId)),
+          }
+        : ask.lot?.hasImage === true
+          ? {
+              text: removePhotoLabel,
+              data: lotImageRemoveData(uuidToToken(ask.question.lotId)),
+            }
+          : undefined;
   return askQuestion(
     ctx,
     questions,
     pending,
     lotQuestionText(ask.question, ask.lot, ask.lead),
     ask.replaces,
-    skip,
+    photoAction,
   );
 }
 
@@ -11034,6 +11108,8 @@ function callbackUseCase(
     | "lot-step-mode"
     | "lot-skip"
     | "lot-keep-step"
+    | "lot-image-remove"
+    | "lot-image-remove-confirm"
     | "console-view"
     | "console-week"
     | "console-raffle"
@@ -11227,6 +11303,8 @@ function callbackUseCase(
     case "lot-step-mode":
     case "lot-skip":
     case "lot-keep-step":
+    case "lot-image-remove":
+    case "lot-image-remove-confirm":
       return "manage_lot";
     case "console-view":
     case "console-week":
