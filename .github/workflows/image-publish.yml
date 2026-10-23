@@ -263,8 +263,9 @@ jobs:
           push-to-registry: true
 
       # Та же команда, которой хост проверит образ перед выкаткой: подписант —
-      # этот workflow, а не вызывающий, и только со stage. Без --source-ref
-      # проверку прошёл бы образ, опубликованный этим же файлом из любой ветки.
+      # этот workflow, а не вызывающий, и только из ветки среды — stage или main
+      # (дополнение ADR-055 от 2026-10-22). Без --source-ref проверку прошёл бы
+      # образ, опубликованный этим же файлом из любой ветки.
       - name: Проверка attestation
         if: ${{ inputs.publish }}
         env:
@@ -273,4 +274,4 @@ jobs:
           gh attestation verify "oci://$IMAGE" \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-publish.yml" \
-            --source-ref refs/heads/stage
+            --source-ref "$GITHUB_REF"
