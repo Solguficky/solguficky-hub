@@ -2880,6 +2880,13 @@ const DRAWN_RAFFLE: RaffleView = {
   },
 };
 
+// Аукцион отменили до жеребьёвки (PER-698): отпечаток остался, seed не
+// раскроется, регистрации нет.
+const CANCELLED_RAFFLE: RaffleView = {
+  ...REGISTERED_RAFFLE,
+  status: "cancelled",
+};
+
 const raffleCallback = (auctionId = CONTRACT_AUCTION_ID) =>
   callback({ kind: "raffle", auctionId });
 
@@ -2938,9 +2945,12 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
               },
             ],
           ];
-  // «Как проверить честность» (PER-618) — пока у розыгрыша есть отпечаток.
+  // «Как проверить честность» (PER-618) — пока у розыгрыша есть отпечаток;
+  // у отменённого seed не раскроется, и проверять нечего (PER-698).
   const proof =
-    raffle === undefined || raffle.status === "not-held"
+    raffle === undefined ||
+    raffle.status === "not-held" ||
+    raffle.status === "cancelled"
       ? []
       : [
           [
@@ -3094,6 +3104,34 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
     body: raffleScreen(undefined),
   },
+  // Отменённый вместе с аукционом розыгрыш (PER-698) — экран отмены с
+  // возвратом в корень, без регистрации и без проверки, а не кадр сбоя.
+  {
+    intent: "raffle: cancelled",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: CANCELLED_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(CANCELLED_RAFFLE),
+  },
+  // Кнопка регистрации висела до отмены: отказ перечитывает розыгрыш, и
+  // экран говорит об отмене.
+  {
+    intent: "raffle: register after the cancellation",
+    callbackData: callback({
+      kind: "raffle-register",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: {
+      ...AUCTION,
+      raffle: CANCELLED_RAFFLE,
+      registrations: [{ kind: "refused", refusal: "registration-closed" }],
+    },
+    auctionCalls: [
+      raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
+      raffleCall(CONTRACT_AUCTION_ID),
+    ],
+    body: raffleScreen(CANCELLED_RAFFLE),
+  },
   // Техника розыгрыша — отдельным экраном (PER-618): до жеребьёвки отпечаток
   // и раунд, после — раскрытие и пересчёт; что показать, решает оболочка.
   {
@@ -3109,6 +3147,14 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     auction: { ...AUCTION, raffle: DRAWN_RAFFLE },
     auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
     body: raffleProofScreen(DRAWN_RAFFLE),
+  },
+  // Кнопка проверки висела до отмены: экран проверки говорит об отмене.
+  {
+    intent: "raffle: proof of a cancelled raffle",
+    callbackData: raffleProofCallback,
+    auction: { ...AUCTION, raffle: CANCELLED_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleProofScreen(CANCELLED_RAFFLE),
   },
   // Кнопка устарела: розыгрыша нет — экран говорит это, а не падает.
   {
@@ -3339,6 +3385,40 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).
+      keyboard: [
+        [
+          ...rootLotsRow,
+          {
+            action: "root.raffle",
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
+          },
+        ],
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+      ],
+    },
+  },
+  // Корень отменённого аукциона (PER-698): «Розыгрыш» остаётся и ведёт в
+  // экран отмены, а не в сбой.
+  {
+    intent: "root: cancelled auction keeps the raffle",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: { ...CONTRACT_SUMMARY, stage: "cancelled" },
+      raffle: CANCELLED_RAFFLE,
+    },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: { ...CONTRACT_SUMMARY, stage: "cancelled" },
+        },
+      ],
       keyboard: [
         [
           ...rootLotsRow,

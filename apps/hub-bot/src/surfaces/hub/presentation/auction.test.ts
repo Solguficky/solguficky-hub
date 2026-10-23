@@ -1664,6 +1664,26 @@ describe("raffle among the participants", () => {
     expect(screen.text).toContain("Розыгрыш не проводится");
     expect(labels(screen)).toEqual([["‹ Аукцион"]]);
   });
+
+  // Отменённый вместе с аукционом розыгрыш (PER-698) — экран отмены с
+  // возвратом в корень, без регистрации и проверки, а не кадр сбоя.
+  it("shows a raffle cancelled with its auction as its own screen", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: { ...openRaffle, registered: true, status: "cancelled" },
+    });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle", auctionId })),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("<b>Розыгрыш среди участников</b>");
+    expect(screen.text).toContain(
+      "Розыгрыш отменён вместе с аукционом: жеребьёвки не будет.",
+    );
+    expect(labels(screen)).toEqual([["‹ Аукцион"]]);
+  });
 });
 
 // Счета победителя (PER-322): «Мои счета» в корне, список с суммой и текстом

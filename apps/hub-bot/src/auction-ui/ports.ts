@@ -502,14 +502,16 @@ export type PredictionOutcome =
 
 // Где розыгрыш (`auction.v1.RaffleStatus`). `closing` — момент закрытия прошёл,
 // а пул ещё фиксируется; `not-held` — онлайн-торги открылись не раньше момента
-// закрытия, и регистрация не открывалась.
+// закрытия, и регистрация не открывалась; `cancelled` — аукцион отменили до
+// жеребьёвки (ADR-066, дополнение 2026-10-12), и seed не раскроется.
 export type RaffleStatusView =
   | "open"
   | "closing"
   | "awaiting-beacon"
   | "drawn"
   | "no-tickets"
-  | "not-held";
+  | "not-held"
+  | "cancelled";
 
 // Билет пула. Имени нет — его стёрли через 30 дней после жеребьёвки; номер
 // остаётся.

@@ -833,6 +833,8 @@ const raffles: readonly (RaffleView | undefined)[] = [
   }),
   raffleOf("no-tickets", { reveal: { seed: "cd".repeat(32) } }),
   raffleOf("not-held", {}),
+  // Отменён вместе с аукционом (PER-698): отпечаток есть, seed не раскроется.
+  raffleOf("cancelled", { registered: true }),
 ];
 
 const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
@@ -855,7 +857,9 @@ const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
           ],
         ]
       : []),
-    ...(raffle === undefined || raffle.status === "not-held"
+    ...(raffle === undefined ||
+    raffle.status === "not-held" ||
+    raffle.status === "cancelled"
       ? []
       : [[{ action: "raffle.proof" as const, callbackData: "v1:auc:rp:a" }]]),
     [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],

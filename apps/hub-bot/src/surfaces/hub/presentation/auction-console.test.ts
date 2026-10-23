@@ -2516,6 +2516,9 @@ describe("the raffle line of the console", () => {
       raffle({ status: "no-tickets" }),
       "Розыгрыш: не состоялся, никто не зарегистрировался.",
     ],
+    // Аукцион отменили между чтением пульта и чтением розыгрыша (PER-698):
+    // строка называет отмену, а не роняет пульт.
+    [raffle({ status: "cancelled" }), "Розыгрыш: отменён вместе с аукционом."],
   ] as const)("shows the raffle %# by its status", async (read, line) => {
     const auction = fakeAuction({
       status: "prebidding",
