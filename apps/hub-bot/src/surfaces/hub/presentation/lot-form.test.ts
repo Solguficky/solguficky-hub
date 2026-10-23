@@ -25,6 +25,7 @@ import type { IdentityResolver } from "../identity/port.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { newLotIdOf } from "./new-lot-id.js";
 import { type LotFormField, lotAskData } from "./parse-callback.js";
+import { money } from "./screens/auction.js";
 import type { FileDownload, TelegramFiles } from "./telegram-files.js";
 
 // Форма лота администратора в боте хаба (PER-319): входы в ленте и под
@@ -642,6 +643,109 @@ describe("lot form", () => {
     // Заведённый формой лот стоит в ленте аукциона сходки со стартовой ценой.
     await next(() => press(feedData));
     expect(JSON.stringify(last(calls))).toContain("Ваза · старт 1 500 ₽");
+  });
+
+  // Прогон dev 24.10 (PER-714): админ меняет только цену, а шаг оставляет.
+  const { fixedStep: _single, ...unstepped } = scheduled;
+  const tieredLot: LotView = {
+    ...unstepped,
+    tiers: [
+      { lowerBound: rub(0), step: rub(10_000) },
+      { lowerBound: rub(500_000), step: rub(25_000) },
+    ],
+  };
+  it.each([
+    [
+      "single step",
+      scheduled,
+      `Оставить шаг ${money(rub(10_000))}`,
+      { kind: "fixed", step: rub(10_000) },
+    ],
+    [
+      "thresholds",
+      tieredLot,
+      "Оставить пороги шага",
+      { kind: "tiered", tiers: tieredLot.tiers },
+    ],
+  ])(
+    "saves a new price with the lot's %s kept by one press over a restart",
+    async (_, lot, keep, stepPolicy) => {
+      const auction = fakeAuction({ lots: [lot] });
+      const calls: RecordedCall[] = [];
+      const next = async (update: (history: RecordedCall[]) => Update) => {
+        const { bot } = harness("admin", auction, calls);
+        await bot.init();
+        await bot.handleUpdate(update(calls));
+      };
+      const token = uuidToToken(existingLot);
+
+      await next(() => press(`v1:lot:ask:${token}:price`));
+      await next((history) => answer(history, "2 500"));
+
+      // Экран говорит до ухода, что цена без шага не сохранится, и даёт оставить
+      // прежний шаг; цена едет в кнопке.
+      const mode = last(calls);
+      expect(labels(mode)).toEqual([
+        ["Один шаг", "По порогам"],
+        [keep],
+        ["‹ Изменить лот"],
+      ]);
+      expect(dataOf(mode, keep)).toBe(`v1:lot:sk:${token}:2500`);
+      expect(plain(mode)).toContain(
+        "Цена сохранится только вместе с шагом: «‹ Изменить лот» её не сохранит.",
+      );
+
+      await next((history) => press(dataOf(last(history), keep)));
+
+      expect(auction.commands).toEqual([
+        {
+          method: "scheduleLot",
+          args: {
+            auctionId,
+            lotId: existingLot,
+            opId: expect.any(String),
+            startingPrice: rub(250_000),
+            stepPolicy,
+          },
+        },
+      ]);
+      const saved = last(calls);
+      expect(plain(saved)).toBe(
+        ["Цена и шаг сохранены", "Кружка с совой"].join("\n\n"),
+      );
+      expect(labels(saved)).toEqual([["Изменить лот"], ["‹ Лот"]]);
+    },
+  );
+
+  it("leaves the price unsaved when the administrator goes back from choosing the step", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    const token = uuidToToken(existingLot);
+
+    await bot.handleUpdate(press(`v1:lot:ask:${token}:price`));
+    await bot.handleUpdate(answer(calls, "2 500"));
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Изменить лот")));
+
+    expect(auction.commands).toEqual([]);
+    expect(last(calls).text).toMatch(/Стартовая цена: 500\s₽/);
+  });
+
+  it("offers no kept step in the chain of a new lot", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
+    await bot.handleUpdate(answer(calls, "Ваза"));
+    await bot.handleUpdate(answer(calls, "1 500"));
+
+    const mode = last(calls);
+    expect(labels(mode)).toEqual([
+      ["Один шаг", "По порогам"],
+      ["‹ Изменить лот"],
+    ]);
+    expect(plain(mode)).not.toContain("Цена сохранится только");
   });
 
   it("ignores an answer to a question of the form from anyone but the asked after a restart", async () => {
