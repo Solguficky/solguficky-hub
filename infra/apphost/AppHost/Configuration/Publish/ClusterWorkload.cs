@@ -14,6 +14,12 @@ namespace AppHost.Configuration.Publish;
 /// Узел, чей образ берёт сервис; <c>null</c> — свой. Бот аукциона берёт образ бота
 /// хаба (ADR-064, п. 18): у него нет сборки, а значит и своего ключа образа в values.
 /// </param>
+/// <param name="Switched">
+/// Workload включает среда ключом values <c>enabled.&lt;сервис&gt;</c>, а без ключа
+/// он стоит с нулём реплик (<see cref="SwitchedReplicas"/>). Так публичный вход
+/// (ADR-071) получает та среда, которая его включила, а не каждая, куда
+/// ставится чарт.
+/// </param>
 internal sealed record ClusterWorkload(
     long RunAsUser,
     string CpuRequest,
@@ -21,7 +27,8 @@ internal sealed record ClusterWorkload(
     string CpuLimit,
     string MemoryLimit,
     WorkloadProbe? Probe,
-    string? ImageOf = null);
+    string? ImageOf = null,
+    bool Switched = false);
 
 internal abstract record WorkloadProbe;
 
@@ -36,6 +43,14 @@ internal sealed record GrpcProbe(int Port, string ReadinessService) : WorkloadPr
 /// только после миграции и join кластера, поэтому TCP-startup их и ждёт.
 /// </summary>
 internal sealed record HttpProbe(int Port, string ReadinessPath) : WorkloadProbe;
+
+/// <summary>
+/// Все три пробы — TCP-подключение к порту. Для workload'а, чья готовность
+/// зависит от внешней сети и которому никто не шлёт трафик через Service: проба
+/// на внешней связи держала бы <c>helm --wait</c> всего релиза заложником этой
+/// сети (туннель, ADR-071).
+/// </summary>
+internal sealed record TcpProbe(int Port) : WorkloadProbe;
 
 internal static class ClusterWorkloadExtensions
 {
@@ -121,7 +136,18 @@ internal static class ClusterWorkloadExtensions
                         container.LivenessProbe = Timed(new() { TcpSocket = new() { Port = http.Port } });
                         container.ReadinessProbe = Timed(new() { HttpGet = new() { Port = http.Port, Path = http.ReadinessPath } });
                         break;
+                    case TcpProbe tcp:
+                        container.StartupProbe = Timed(new() { TcpSocket = new() { Port = tcp.Port } }, periodSeconds: 5, failureThreshold: 60);
+                        container.LivenessProbe = Timed(new() { TcpSocket = new() { Port = tcp.Port } });
+                        container.ReadinessProbe = Timed(new() { TcpSocket = new() { Port = tcp.Port } });
+                        break;
                 }
+            }
+
+            // Последним: шаблон пода уже заполнен, и переносится он целиком.
+            if (shape.Switched)
+            {
+                kubernetes.Workload = SwitchedDeployment.From(deployment, ValuesKey(resource.Resource.Name));
             }
         });
 

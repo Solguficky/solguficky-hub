@@ -39,10 +39,10 @@ final class LotJournalSpec
     Lot.replay(
       Lot.initial,
       List(
-        Envelope(1, op(1), lotDrafted),
-        Envelope(2, op(2), lotScheduled),
-        Envelope(3, op(3), opened),
-        Envelope(4, op(4), placed.copy(previousLeader = None))
+        Written(Envelope(1, op(1), lotDrafted), decidedAt),
+        Written(Envelope(2, op(2), lotScheduled), decidedAt),
+        Written(Envelope(3, op(3), opened), decidedAt),
+        Written(Envelope(4, op(4), placed.copy(previousLeader = None)), decidedAt)
       )
     )
 
@@ -53,13 +53,19 @@ final class LotJournalSpec
   private val extension = LotEvent.DeadlineExtended(deadline.plus(Duration.ofMinutes(2)), 1)
 
   /** Тот же лот после лимита, который лидер поставил себе пятой строкой. */
-  private val limitedLot: Lot = Lot.apply(tradingLot, Envelope(5, op(5), limitSet))
+  private val limitedLot: Lot = Lot.apply(tradingLot, Envelope(5, op(5), limitSet), decidedAt)
 
   private val heldForFinal = LotEvent.LotHeldForFinal(deadline)
 
   /** Тот же лот, отмеченный для финала шестой строкой и удержанный на дедлайне седьмой. */
   private val heldLot: Lot =
-    Lot.replay(limitedLot, List(Envelope(6, op(6), LotEvent.LotMarkedForFinal), Envelope(7, op(7), heldForFinal)))
+    Lot.replay(
+      limitedLot,
+      List(
+        Written(Envelope(6, op(6), LotEvent.LotMarkedForFinal), decidedAt),
+        Written(Envelope(7, op(7), heldForFinal), decidedAt)
+      )
+    )
 
   /** Эталон пишется так, как его пишет сервис, и сервис читает эталон в то же значение. */
   private def keepsGolden(name: String, stored: StoredLotEvent) = {
@@ -105,6 +111,18 @@ final class LotJournalSpec
           1,
           body.copy(event = body.event.copy(lotOpened = body.event.lotOpened.map(_.copy(stepWindows = Some(broken)))))
         )
+    }
+
+    "read the recorded windows by ascending start whatever order the row lists" in {
+      val earlier = StepWindow(Instant.parse("2026-10-05T12:00:00Z"), Instant.parse("2026-10-05T14:00:00Z"), money(100))
+      val later = StepWindow(Instant.parse("2026-10-05T15:00:00Z"), Instant.parse("2026-10-05T16:00:00Z"), money(50))
+      val listed = openedWithWindows.copy(stepWindows = List(later, earlier))
+
+      LotJournal.envelope(1, storedEvent(listed)) shouldBe Envelope(
+        1,
+        op(1),
+        listed.copy(stepWindows = List(earlier, later))
+      )
     }
 
     "read an opening written before the auction and the schedule into the same event" in {
@@ -169,13 +187,35 @@ final class LotJournalSpec
       keepsGolden("lot-withdrawn", storedEvent(withdrawal, opN = 5))
       LotJournal.envelope(5, storedEvent(withdrawal, opN = 5)).event shouldBe withdrawal
 
-      val withdrawnLot = Lot.apply(tradingLot, Envelope(5, op(5), withdrawal))
+      val withdrawnLot = Lot.apply(tradingLot, Envelope(5, op(5), withdrawal), decidedAt)
       val row = write(kit.system, LotJournal.storeLot(withdrawnLot, sequence = 5))
       row.json shouldBe mapper.readTree(golden("lot-snapshot-withdrawn"))
       LotJournal.restoreLot(
         read(kit.system, row.copy(bytes = golden("lot-snapshot-withdrawn"))).asInstanceOf[StoredLot]
       ) shouldBe withdrawnLot
       withdrawnLot.state shouldBe LotState.Withdrawn(WithdrawnReason.AuctionCancelled)
+    }
+
+    "keep the stored form of a participant removal equal to its golden file and read the golden file back" in {
+      val removal = LotEvent.ParticipantRemoved(participant(2), money(15000), Some(participant(3)), Some(position(6)))
+      keepsGolden(
+        "participant-removed",
+        LotJournal.store(uuid(1), transaction(6, Initiator.Operator(participant(9))), removal)
+      )
+      LotJournal.envelope(6, storedEvent(removal, opN = 6)).event shouldBe removal
+
+      val nobodyLeft = LotEvent.ParticipantRemoved(participant(2), money(10000), None, None)
+      LotJournal.envelope(6, storedEvent(nobodyLeft, opN = 6)).event shouldBe nobodyLeft
+    }
+
+    "refuse to restore a participant removal with a leader but no position instead of trusting the row" in {
+      val stored =
+        storedEvent(LotEvent.ParticipantRemoved(participant(2), money(15000), Some(participant(3)), Some(position(6))))
+      val section = stored.event.participantRemoved.get
+      val corrupted =
+        stored.copy(event = stored.event.copy(participantRemoved = Some(section.copy(leadingBidId = None))))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(6, corrupted)
     }
 
     "keep the stored form of a deadline extension equal to its golden file and read the golden file back" in {
@@ -198,6 +238,32 @@ final class LotJournalSpec
 
       keepsGolden("ask-advanced", stored)
       LotJournal.envelope(5, stored).event shouldBe ask
+    }
+
+    "keep the stored form of a launched window equal to its golden file and read it back into the same event" in {
+      val added = LotEvent.StepWindowAdded(
+        StepWindow(Instant.parse("2026-10-05T12:00:00Z"), Instant.parse("2026-10-05T14:00:00Z"), money(100))
+      )
+      val stored = storedEvent(added, opN = 6)
+
+      keepsGolden("step-window-added", stored)
+      LotJournal.envelope(6, stored).event shouldBe added
+    }
+
+    "refuse a launched window that ends before it starts instead of trading on it" in {
+      val body = storedEvent(LotEvent.StepWindowAdded(StepWindow(deadline, deadline, money(100))))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, body)
+    }
+
+    "keep a launched window in the snapshot of a trading lot by ascending start" in {
+      val earlier = StepWindow(Instant.parse("2026-10-03T12:00:00Z"), Instant.parse("2026-10-03T14:00:00Z"), money(50))
+      val launched = Lot.apply(tradingLot, Envelope(5, op(5), LotEvent.StepWindowAdded(earlier)), decidedAt)
+
+      LotJournal.restoreLot(LotJournal.storeLot(launched, sequence = 5)) shouldBe launched
+      tradingOf(launched).stepWindows shouldBe List(earlier)
+      // История торгов помнит строку окна: переигрывание снятия даст его только входам после неё (ADR-072).
+      tradingOf(launched).course.map(_.addedWindows) shouldBe Some(Vector(AddedWindow(earlier, 5)))
     }
 
     "read an event written before the ask section into the same event" in {
@@ -230,7 +296,7 @@ final class LotJournalSpec
     }
 
     "restore the extended deadline and the extension count from a snapshot" in {
-      val extended = Lot.apply(tradingLot, Envelope(5, op(4), extension))
+      val extended = Lot.apply(tradingLot, Envelope(5, op(4), extension), decidedAt)
       val row = write(kit.system, LotJournal.storeLot(extended, sequence = 5))
 
       LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe extended
@@ -249,11 +315,29 @@ final class LotJournalSpec
       tradingOf(limitedLot).proxyLimits shouldBe Map(participant(2) -> limit(20000, setSeq = 5))
     }
 
-    "read a snapshot written before proxy limits, anti-sniping and the mark as unmarked trading without limits" in {
+    "read a snapshot written before proxy limits, anti-sniping, the mark and the trading history as unmarked trading without limits and with an unknown history" in {
       val row =
         write(kit.system, LotJournal.storeLot(tradingLot, sequence = 4)).copy(bytes = golden("legacy/lot-snapshot"))
 
-      LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe tradingLot
+      LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe
+        tradingLot.copy(state = LotState.Trading(tradingOf(tradingLot).copy(course = None)))
+    }
+
+    "refuse a snapshot whose trading history removes someone who never bid or set a limit" in {
+      val stored = LotJournal.storeLot(tradingLot, sequence = 4)
+      val trading = stored.state.trading.get
+      val course = trading.course.get.copy(removed = List(participant(7).value))
+      val corrupted = stored.copy(state = stored.state.copy(trading = Some(trading.copy(course = Some(course)))))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.restoreLot(corrupted)
+    }
+
+    "read a held lot snapshot written before the trading history as the same held lot with an unknown history" in {
+      val row =
+        write(kit.system, LotJournal.storeLot(heldLot, sequence = 7)).copy(bytes = golden("legacy/lot-snapshot-held"))
+
+      LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe
+        heldLot.copy(state = LotState.Held(heldOf(heldLot).copy(course = None)))
     }
 
     "tell the owner's repeat from another participant's in a snapshot written before the rule (ADR-047, 2026-10-05)" in {

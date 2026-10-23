@@ -6,6 +6,20 @@ import {
   showsStep,
 } from "../../auction-final.js";
 import {
+  predictionButtonLabel,
+  predictionNameChoiceText,
+  predictionNumberQuestionText,
+  predictionParagraphs,
+  predictionRefusalText,
+  predictionRoundTitle,
+  predictionTitle,
+} from "../../auction-prediction.js";
+import {
+  predictionResultsButtonLabel,
+  predictionResultsParagraphs,
+  predictionResultsTitle,
+} from "../../auction-prediction-results.js";
+import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
@@ -14,25 +28,45 @@ import {
   raffleProofLabel,
   raffleProofParagraphs,
   raffleProofTitle,
+  raffleRegisteredParagraphs,
+  raffleRegisteredTitle,
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
 import {
+  collectedLine,
+  type SetLotOptions,
+  setGroupLines,
+  setLabel,
+  setLotLabel,
+  setLotLine,
+  setMark,
+  setMoreLine,
+} from "../../auction-set.js";
+import {
   autoFollowNote,
+  awaitsFirstBid,
   currentValueLine,
-  favoritesEmpty,
+  extensionLine,
+  favoritesEmptyText,
   favoritesSummary,
   feedSummary,
   finalFeedLabel,
   followLabel,
+  historyLine,
   leaderLine,
+  lotButtonTail,
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
   nameSettingsParagraphs,
   nameSettingsTitle,
   ownLotLine,
+  ownProxyLine,
   proxyHintLead,
+  stepBidLabel,
+  struckHistoryLine,
+  tradingPriceLine,
   unfollowLabel,
 } from "../../auction-standing.js";
 import {
@@ -42,29 +76,41 @@ import {
   type AuctionDenial,
   type AuctionScreenBody,
   type AuctionStageView,
-  type BidOriginView,
   type CommandResult,
   encodeAuctionCallback,
   type FeedItem,
-  type HistoryItem,
   type LotStatusView,
   MAX_COMMAND_AMOUNT,
   type Money,
+  parseAuctionCallback,
+  predictionSpec,
 } from "../../auction-ui/index.js";
+import {
+  fulfillmentLabel,
+  invoiceLabel,
+  invoiceMissingParagraphs,
+  invoiceMissingTitle,
+  invoiceParagraphs,
+  invoicesBackLabel,
+  invoicesButtonLabel,
+  invoicesParagraphs,
+  invoicesTitle,
+  invoiceTitle,
+} from "../../auction-winner-invoices.js";
 import type { Presentation } from "../../core/config.js";
 import {
   admittersLine,
   applyLabel,
   menuTitle,
   strayHintText,
+  supportBotLink,
+  supportLabel,
 } from "../../core/entry.js";
 import { money, truncate } from "../../core/format.js";
 import {
   type AuctionNotificationSettings,
   auctionNotificationsExplanation,
-  finalAnnouncementsButtonLabel,
-  OUTBID_FREQUENCIES,
-  outbidButtonLabel,
+  auctionNotificationsRows,
 } from "../../core/notifications/outbid.js";
 import {
   confirmNoLabel,
@@ -72,6 +118,7 @@ import {
   emptyDescription,
   marked,
   pictogram,
+  refreshLabel,
 } from "../../core/pictograms.js";
 import type {
   AuctionListPage,
@@ -115,7 +162,8 @@ export type AuctionEntryScreen =
   // «Настройки» (PER-595): настройки уведомлений аукциона, у бота с
   // Notifications, и имя в идущем аукционе, если такой есть.
   | { kind: "settings"; notifications: boolean; auctionId?: string }
-  | { kind: "notify"; current: AuctionNotificationSettings }
+  // `detached` — экран открыт кнопкой вести, а не из «Настроек» (№73).
+  | { kind: "notify"; current: AuctionNotificationSettings; detached?: true }
   | { kind: "auctions"; list: AuctionListPage }
   | { kind: "past"; list: AuctionListPage }
   | { kind: "details" }
@@ -175,6 +223,9 @@ export type RenderOptions = {
   // Момент показа: год в дате называется, когда он не текущий (дизайн-код,
   // «Формат»). По умолчанию часы процесса; тесты передают свой.
   now?: Date;
+  // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку
+  // «Написать в поддержку ↗» (PER-625, ADR-068). Нет — клавиатуры нет.
+  supportBotUsername?: string;
 };
 
 // Лимит обычного сообщения Bot API — 4096 символов UTF-16 после разбора
@@ -397,38 +448,27 @@ export function renderEntryScreen(
         ],
       };
     }
-    // Настройки уведомлений аукциона (PER-515, PER-539): пять режимов
-    // частоты «перебили» по одному в ряд, текущий отмечен на своей кнопке
-    // маркером «• » (PER-598; дизайн-код, «Уведомления»), и под ними
-    // переключатель анонса финала. Выбор отменяется с того же экрана, поэтому
-    // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
-    // Экран — подраздел «Настроек»: последний ряд — «‹ Настройки» (PER-595).
-    case "notify":
+    // Настройки уведомлений аукциона (PER-515, PER-539, PER-645): каждая
+    // настройка — одна кнопка с текущим значением, нажатие ведёт к
+    // следующему (№72): частота «перебили» по кругу пяти режимов,
+    // «Перебили в финале» и анонс финала — вкл и выкл. Выбор отменяется с
+    // того же экрана, поэтому подтверждения «Да» у него нет: что сработало,
+    // говорит ответ на нажатие. Экран — подраздел «Настроек»: последний ряд —
+    // «‹ Настройки» (PER-595). Открытый кнопкой вести экран возврата в
+    // дерево не несёт: человек пришёл из вести, и она остаётся выше в чате
+    // (№73 прогона 14 октября 2026 года). Выбор на нём держит тот же вид.
+    case "notify": {
+      const detached = screen.detached === true;
+      const rows = auctionNotificationsRows(screen.current).map((row) => [
+        { text: row.text, callback_data: notifyCallback(row.change, detached) },
+      ]);
       return {
-        id: "notify",
+        id: detached ? "notify-notice" : "notify",
         format: "html",
         text: screenText(notifyTitle, ...auctionNotificationsExplanation),
-        keyboard: [
-          ...OUTBID_FREQUENCIES.map((frequency) => [
-            {
-              text: outbidButtonLabel(frequency, screen.current.frequency),
-              callback_data: notifyCallback({ kind: "frequency", frequency }),
-            },
-          ]),
-          [
-            {
-              text: finalAnnouncementsButtonLabel(
-                screen.current.finalAnnouncements,
-              ),
-              callback_data: notifyCallback({
-                kind: "final",
-                enabled: !screen.current.finalAnnouncements,
-              }),
-            },
-          ],
-          [toSettings],
-        ],
+        keyboard: detached ? rows : [...rows, [toSettings]],
       };
+    }
     case "auctions":
     case "past":
       return renderList(screen.kind, screen.list, options);
@@ -475,14 +515,34 @@ export function renderEntryScreen(
       return body;
     }
     // Кадры ожидания допуска, блокировки и перехода в бот хаба в дерево не
-    // входят: экранов за ними у человека здесь нет, и клавиатуры тоже.
-    case "denied":
+    // входят: экранов за ними у человека здесь нет. Кнопка-ссылка в бот
+    // поддержки есть только у ожидания и только когда её адрес задан (PER-625,
+    // ADR-068): «?start=auction» говорит боту поддержки, откуда человек.
+    case "denied": {
+      const support =
+        screen.reason === "not-admitted" &&
+        options.supportBotUsername !== undefined
+          ? [
+              [
+                {
+                  text: supportLabel,
+                  url: supportBotLink(options.supportBotUsername, "auction"),
+                },
+              ],
+            ]
+          : [];
       return {
-        id: screen.reason === "in-community" ? "in-community" : "denied",
+        id:
+          screen.reason === "in-community"
+            ? "in-community"
+            : support.length === 0
+              ? "denied"
+              : "denied-support",
         format: "html",
         text: deniedTexts[screen.reason],
-        keyboard: [],
+        keyboard: support,
       };
+    }
     case "outdated":
       return {
         id: "outdated",
@@ -613,7 +673,8 @@ function renderList(
         ? [
             [
               {
-                text: listTexts.past.backName,
+                // История выделена знаком, как «Архив» хаба (прогон 14.10, №84).
+                text: marked(pictogram.history, listTexts.past.backName),
                 callback_data: entryCallback("past"),
               },
             ],
@@ -672,7 +733,11 @@ function finaleCountdown(
   timeZone: string,
   now?: Date,
 ): string | undefined {
-  if (auction.closesAt === undefined || auction.stage === "finished") {
+  if (
+    auction.closesAt === undefined ||
+    auction.stage === "finished" ||
+    auction.stage === "cancelled"
+  ) {
     return undefined;
   }
   const days =
@@ -720,6 +785,7 @@ const stageLabels: Record<AuctionStage, string> = {
   "lineup-frozen": "готовим финал",
   "in-final": "идёт финал",
   finished: "завершён",
+  cancelled: "отменён",
 };
 
 function lotCount(count: number): string {
@@ -777,7 +843,11 @@ function renderBody(
 ): RenderedScreen {
   const items = new Map<string, FeedItem>();
   for (const block of body.blocks) {
-    if (block.kind === "feed" || block.kind === "favorites") {
+    if (
+      block.kind === "feed" ||
+      block.kind === "favorites" ||
+      block.kind === "set"
+    ) {
       for (const item of block.lots) items.set(item.lotId, item);
     }
   }
@@ -810,6 +880,12 @@ function renderBody(
   );
   if (id === "favorites" && favorites !== undefined) {
     return { id, keyboard, ...renderFavorites(favorites, options) };
+  }
+  const set = body.blocks.find(
+    (block): block is SetBlock => block.kind === "set",
+  );
+  if (id === "set" && set !== undefined) {
+    return { id, keyboard, ...renderSet(set) };
   }
   const feed = body.blocks.find(
     (block): block is FeedBlock => block.kind === "feed",
@@ -857,6 +933,9 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "favorites":
         screen = "favorites";
         break;
+      case "set":
+        screen = "set";
+        break;
       case "follow-refused":
         return "follow-refused";
       case "confirm":
@@ -872,15 +951,38 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "answer-refused":
       case "raffle-answer-refused":
         return "answer-refused";
+      case "prediction-results":
+        return "prediction-results";
       case "raffle":
         return "raffle";
+      case "raffle-registered":
+        return "raffle-registered";
       case "raffle-proof":
         return "raffle-proof";
+      // Счета победителя (PER-322).
+      case "invoices":
+        return "invoices";
+      case "invoice":
+        return "invoice";
+      case "invoice-missing":
+        return "invoice-missing";
       case "raffle-name-choice":
         return "raffle-name-choice";
       case "raffle-question":
       case "name-question":
         return "alias-question";
+      case "prediction":
+        return "predictions";
+      case "prediction-lots":
+        return "prediction-lots";
+      case "prediction-number-question":
+        return "prediction-number-question";
+      case "prediction-name-choice":
+        return "prediction-name-choice";
+      case "prediction-alias-question":
+        return "prediction-alias-question";
+      case "prediction-answer-refused":
+        return "prediction-answer-refused";
       case "name-settings":
         return "name-settings";
       case "name-answer-refused":
@@ -898,6 +1000,7 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
 
 type LotBlock = Extract<AuctionBlock, { kind: "lot" }>;
 type RootBlock = Extract<AuctionBlock, { kind: "root" }>;
+type SetBlock = Extract<AuctionBlock, { kind: "set" }>;
 
 // Стадия корня аукциона: черновика этот бот не получает, но слово для него
 // есть — перевод полон по стадиям.
@@ -910,6 +1013,7 @@ const rootStages: Record<AuctionStageView, string> = {
   "lineup-frozen": "Готовим финал.",
   "in-final": "Идёт финал.",
   finished: "Аукцион завершён.",
+  cancelled: "Аукцион отменён: проданные лоты остались проданными.",
 };
 
 function rootText(block: RootBlock, options: RenderOptions): string {
@@ -930,7 +1034,10 @@ function rootText(block: RootBlock, options: RenderOptions): string {
     [
       rootStages[auction.stage],
       ...(online === undefined ? [] : [online]),
-      ...(auction.final ? ["После них — финал в зале."] : []),
+      // Отменённый аукцион финала уже не проведёт (PER-606).
+      ...(auction.final && auction.stage !== "cancelled"
+        ? ["После них — финал в зале."]
+        : []),
     ].join("\n"),
   );
 }
@@ -953,7 +1060,10 @@ function renderLeaf(
       case "confirm":
         return { format: "html", text: confirmText(block) };
       case "accepted":
-        return { format: "html", text: acceptedText(block) };
+        return {
+          format: "html",
+          text: acceptedText(block, options.timeZone),
+        };
       case "result":
         return {
           format: "html",
@@ -988,13 +1098,60 @@ function renderLeaf(
             raffleNameChoiceText(block.username),
           ),
         };
+      // Счета победителя (PER-322): тексты общие с хабом.
+      case "invoices":
+        return {
+          format: "html",
+          text: screenText(
+            invoicesTitle,
+            ...invoicesParagraphs(block, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+            }),
+          ),
+        };
+      case "invoice":
+        return {
+          format: "html",
+          text: screenText(
+            invoiceTitle(block),
+            ...invoiceParagraphs(block, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+            }),
+          ),
+        };
+      case "invoice-missing":
+        return {
+          format: "html",
+          text: screenText(invoiceMissingTitle, ...invoiceMissingParagraphs()),
+        };
       // Розыгрыш среди участников (ADR-066): тексты общие с хабом.
+      case "prediction-results":
+        return {
+          format: "html",
+          text: screenText(
+            predictionResultsTitle,
+            ...predictionResultsParagraphs(block, { money }),
+          ),
+        };
       case "raffle":
         return {
           format: "html",
           text: screenText(
             raffleTitle,
             ...raffleParagraphs(block.raffle, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+            }),
+          ),
+        };
+      case "raffle-registered":
+        return {
+          format: "html",
+          text: screenText(
+            raffleRegisteredTitle,
+            ...raffleRegisteredParagraphs(block.raffle, {
               moment: (instant) =>
                 readableMoment(instant, options.timeZone, options.now),
             }),
@@ -1008,6 +1165,67 @@ function renderLeaf(
             ...raffleProofParagraphs(block.raffle),
           ),
         };
+      case "prediction":
+        return {
+          format: "html",
+          text: screenText(
+            predictionTitle,
+            ...predictionParagraphs(block, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+              money,
+            }),
+          ),
+        };
+      case "prediction-lots": {
+        const nomination = predictionSpec(block.nomination);
+        const current =
+          block.currentTitle === undefined
+            ? undefined
+            : `Сейчас выбрано: ${escapeHtml(oneLine(block.currentTitle))}`;
+        return {
+          format: "html",
+          text: screenText(
+            paged("Выбрать лот", block),
+            `${nomination.number} · ${escapeHtml(nomination.question)}`,
+            current,
+            block.lots.length === 0
+              ? "В этом раунде пока нет доступных лотов."
+              : block.lots
+                  .map(
+                    (lot) =>
+                      `• ${escapeHtml(oneLine(lot.title ?? untitled))} — ${priceLabel(lot.status)}`,
+                  )
+                  .join("\n"),
+          ),
+        };
+      }
+      case "prediction-number-question":
+        return {
+          format: "html",
+          text: screenText(
+            predictionSpec(block.nomination).question,
+            ...predictionNumberQuestionText(block, money),
+          ),
+          asks: true,
+        };
+      case "prediction-name-choice":
+        return {
+          format: "html",
+          text: screenText(
+            nameSettingsTitle,
+            predictionNameChoiceText(block.username),
+          ),
+        };
+      case "prediction-alias-question":
+        return { format: "html", text: aliasQuestionText(), asks: true };
+      case "prediction-answer-refused": {
+        const refusal = predictionRefusalText(block.refusal);
+        return {
+          format: "html",
+          text: screenText(refusal.title, refusal.detail),
+        };
+      }
       case "raffle-question":
       case "name-question":
         return { format: "html", text: aliasQuestionText(), asks: true };
@@ -1053,21 +1271,30 @@ function confirmText(
 
 // Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с
 // новой ценой открывает «‹ Лот», ленту — «‹ Лоты» (PER-595). У бота с
-// избранным экран говорит, что ставка кладёт лот туда сама (ADR-063).
+// избранным экран говорит, что ставка кладёт лот туда сама (ADR-063), если
+// лота там не было, а продление анти-снайпом называет новый дедлайн
+// (PER-631, №107).
 function acceptedText(
   block: Extract<AuctionBlock, { kind: "accepted" }>,
+  timeZone: string,
 ): string {
   const note = block.favorites === true ? autoFollowNote : undefined;
+  const extension =
+    block.extension === undefined
+      ? undefined
+      : extensionLine(block.extension, timeZone);
   return block.command === "bid"
     ? screenText(
         `Ставка ${money(block.amount)} принята`,
         lotSubject(block.title),
+        extension,
         note,
       )
     : screenText(
         `Автоставка до ${money(block.amount)} включена`,
         lotSubject(block.title),
         "Лимит видишь только ты.",
+        extension,
         note,
       );
 }
@@ -1238,6 +1465,11 @@ export function resultOutcome(result: CommandResult): Outcome {
         title: "Ставка ниже порога",
         detail: `Сейчас можно от ${money(refusal.minRequired)}.`,
       };
+    case "bid-above-maximum":
+      return {
+        title: "Ставка выше потолка",
+        detail: `Максимум сейчас — 5 × ${money(refusal.next)}.`,
+      };
     case "bid-not-at-next-price":
       return {
         title: "Ставка не по цене финала",
@@ -1260,6 +1492,9 @@ export function resultOutcome(result: CommandResult): Outcome {
     // Выбор имени — свой экран, а не отказ: сюда отказ не доходит.
     case "display-name-not-chosen":
       return { title: "Выбери имя в аукционе" };
+    // Снял администратор (ADR-072): кто и почему, ответ не несёт.
+    case "removed-from-lot":
+      return { title: "Ставки на этом лоте для тебя закрыты" };
     default: {
       const _exhaustive: never = refusal;
       return _exhaustive;
@@ -1282,7 +1517,23 @@ function renderHistory(
       block.entries.length === 0
         ? "Ставок пока нет."
         : block.entries
-            .map((entry) => bullet(escapeHtml(historyLine(entry, options))))
+            .map((entry) =>
+              bullet(
+                struckHistoryLine(
+                  entry,
+                  escapeHtml(
+                    historyLine(
+                      entry,
+                      readableMoment(
+                        entry.occurredAt,
+                        options.timeZone,
+                        options.now,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
             .join("\n"),
     ),
   };
@@ -1301,10 +1552,11 @@ function renderFavorites(
     text: screenText(
       paged(favoritesTitle, block),
       ...((block.total ?? block.lots.length) === 0
-        ? [favoritesEmpty]
+        ? [favoritesEmptyText(block.ended)]
         : favoritesSummary(block.total ?? block.lots.length, block.mine ?? [], {
             ...mineOptions,
             price: (item) => favoriteState(item.status, options),
+            ...(block.ended === true ? { ended: true } : {}),
           })),
     ),
   };
@@ -1317,29 +1569,44 @@ function favoriteState(status: LotStatusView, options: RenderOptions): string {
     : priceLabel(status);
 }
 
-// Строка ставки: когда, кто, сколько и как. Имени нет — Auction его не отдал,
-// и строка остаётся без него: идентификатор человеку не показывается. Лимита
-// прокси в строке нет — его нет и в теле.
-function historyLine(entry: HistoryItem, options: RenderOptions): string {
-  return [
-    readableMoment(entry.occurredAt, options.timeZone, options.now),
-    ...(entry.participantName === undefined ? [] : [entry.participantName]),
-    money(entry.amount),
-    originLabel(entry.origin),
-  ].join(" · ");
+// Экран сета (ADR-073, п. 7): лоты сета по порядку организатора и, после
+// итога, кто его собрал. Заголовок называет экран, а предмет — название сета —
+// стоит строкой ниже курсивом: экран-раздел предмета, как «Ставки» лота.
+function renderSet(block: SetBlock): Pick<RenderedScreen, "text" | "format"> {
+  return {
+    format: "html",
+    text: lotSectionText(
+      setLabel,
+      block.name,
+      block.lots.length === 0
+        ? "Лотов в сете пока нет."
+        : block.lots
+            .map((item) => bullet(setLotLine(item, setOptions)))
+            .join("\n"),
+      ...(block.more === undefined ? [] : [setMoreLine(block.more)]),
+      // Имя собравшего — текст участника: без экранирования Telegram отверг бы
+      // разметку.
+      ...(block.collectorName === undefined
+        ? []
+        : [escapeHtml(collectedLine(block.name, block.collectorName))]),
+    ),
+  };
 }
 
-function originLabel(origin: BidOriginView): string {
-  switch (origin.kind) {
-    case "proxy":
-      return "авто";
-    case "manual":
-      return origin.source === "floor" ? "в зале" : "вручную";
-    default: {
-      const _exhaustive: never = origin;
-      return _exhaustive;
-    }
-  }
+// Название и цена лота сета — как у строки ленты: правила оболочки бота
+// аукциона.
+const setOptions: SetLotOptions = {
+  title: (item) => escapeHtml(oneLine(item.title ?? untitled)),
+  buttonTitle: (item) => escapeHtml(shorten(item.title ?? untitled)),
+  price: (item) => priceLabel(item.status),
+};
+
+// Сет, в который входит лот (ADR-073, п. 7): название сета и, после итога,
+// кто его собрал. До итога сета второй строки нет — собравшего Auction ещё не
+// знает.
+function setGroups(block: LotBlock): string[][] {
+  const lotSet = block.set;
+  return lotSet === undefined ? [] : [setGroupLines(lotSet)];
 }
 
 // Карточка лота (дизайн-код, «Карточка»): название, группа статуса, группа
@@ -1360,6 +1627,7 @@ function renderCard(
     ...(block.finalBid === undefined
       ? []
       : [[finalBidLine(block.finalBid, money)]]),
+    ...setGroups(block),
   ];
   const rich = (options.presentation ?? "rich") === "rich";
   // Пустое описание — та же заглушка, что у карточки сходки хаба (дизайн-код,
@@ -1445,7 +1713,8 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             : "Статус: идут торги",
         ],
         [
-          marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
+          // Без ставок — «Стартовая цена» (PER-631, №82).
+          tradingPriceLine(status),
           marked(
             pictogram.leader,
             leaderLine(status.leaderId, participantName, block.standing),
@@ -1545,13 +1814,11 @@ function clockOf(instant: string, timeZone: string): string {
 }
 
 // Свой лимит смотрящего: чужих Auction не отдаёт, и строка говорит, что этот
-// виден только ему.
+// виден только ему; исчерпанный лимит так и назван (PER-631, №81).
 function proxyLine(block: LotBlock): string[] {
   return block.viewerProxyLimit === undefined
     ? []
-    : [
-        `Твоя автоставка: до ${money(block.viewerProxyLimit)} (видишь только ты)`,
-      ];
+    : [ownProxyLine({ ...block, viewerProxyLimit: block.viewerProxyLimit })];
 }
 
 // Описание — единственная часть карточки произвольной длины, поэтому под лимит
@@ -1589,31 +1856,60 @@ function renderButton(
     callback_data: button.callbackData,
   });
   switch (button.action) {
-    case "feed.open-lot":
-    case "favorites.open-lot": {
+    case "feed.open-lot": {
       const item = items.get(button.lotId);
       if (item === undefined) return text(untitled);
       const title = shorten(item.title ?? untitled);
       // В ленте живого финала лот на торгах и лоты состава подписаны иначе
-      // (PER-639); избранное финала не знает.
-      const final =
-        button.action === "feed.open-lot"
-          ? blocks.find((block): block is FeedBlock => block.kind === "feed")
-              ?.final
-          : undefined;
-      return text(
+      // (PER-639).
+      const final = blocks.find(
+        (block): block is FeedBlock => block.kind === "feed",
+      )?.final;
+      const label =
         (final === undefined ? null : finalFeedLabel(item, final, title)) ??
-          `${title} · ${priceLabel(item.status)}`,
+        `${title}${lotButtonTail(item, priceLabel(item.status))}`;
+      // Отметка принадлежности к сету (ADR-073, п. 7): лот сета помечен в
+      // подписи ленты, а название сета карточка называет.
+      return text(
+        item.setName === undefined
+          ? label
+          : `${label} · ${setMark(item.setName)}`,
       );
+    }
+    // Избранное — свой список: отметки сета в нём нет (PER-510).
+    case "favorites.open-lot": {
+      const item = items.get(button.lotId);
+      if (item === undefined) return text(untitled);
+      const title = shorten(item.title ?? untitled);
+      // Лидер видит себя и на кнопке избранного, как в ленте (прогон 14.10,
+      // №83).
+      return text(`${title}${lotButtonTail(item, priceLabel(item.status))}`);
+    }
+    // Лот сета на его экране: подпись как у кнопки ленты, без отметки сета.
+    case "set.open-lot": {
+      const item = items.get(button.lotId);
+      if (item === undefined) return text(untitled);
+      return text(setLotLabel(item, setOptions));
     }
     case "feed.prev":
       return text("←");
     case "feed.next":
       return text("→");
+    case "root.predictions":
+      return text(predictionButtonLabel);
+    case "root.prediction-results":
+      return text(predictionResultsButtonLabel);
+    case "prediction-results.back":
+      return text("‹ Аукцион");
     case "lot.refresh":
-      return text("Обновить");
+      return text(refreshLabel);
     case "lot.history":
       return text("Ставки");
+    // Лоты сета — экран сета с карточки (ADR-073, п. 7).
+    case "lot.set":
+      return text(setLabel);
+    case "set.back":
+      return text("‹ Лот");
     case "lot.back":
       return text("‹ Лоты");
     case "history.prev":
@@ -1638,8 +1934,9 @@ function renderButton(
     case "feed.back":
     case "raffle.back":
       return text(`‹ ${rootTitle}`);
+    // Без ставок первая ставка — не «по шагу» (PER-631, №82).
     case "lot.bid-step":
-      return text(`По шагу (${money(button.amount)})`);
+      return text(stepBidLabel(button.amount, firstBidOffered(blocks)));
     case "lot.bid-final":
       return text(finalBidLabel(button.amount, money));
     case "lot.bid-custom":
@@ -1659,11 +1956,13 @@ function renderButton(
         (block) =>
           block.kind === "name-choice" ||
           block.kind === "raffle-name-choice" ||
+          block.kind === "prediction-name-choice" ||
           block.kind === "name-settings",
       );
       return text(
         (choice?.kind === "name-choice" ||
           choice?.kind === "raffle-name-choice" ||
+          choice?.kind === "prediction-name-choice" ||
           choice?.kind === "name-settings") &&
           choice.username !== undefined
           ? `Ник @${choice.username}`
@@ -1688,6 +1987,32 @@ function renderButton(
       return text(raffleButtonLabel);
     case "root.favorites":
       return text(favoritesTitle);
+    case "root.invoices":
+      return text(invoicesButtonLabel);
+    case "invoices.open": {
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "invoices" }> =>
+          each.kind === "invoices",
+      );
+      return text(
+        invoiceLabel(
+          block?.invoices.find((item) => item.invoiceId === button.invoiceId),
+        ),
+      );
+    }
+    case "invoice.fulfillment": {
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "invoice" }> =>
+          each.kind === "invoice",
+      );
+      return text(fulfillmentLabel(button.method, block?.invoice.fulfillment));
+    }
+    case "invoices.back":
+      return text(`‹ ${rootTitle}`);
+    case "invoice.back":
+      return text(invoicesBackLabel);
+    case "invoice.retry":
+      return text("Повторить");
     case "raffle.register":
       return text(registerLabel);
     case "raffle.cancel":
@@ -1696,6 +2021,50 @@ function renderButton(
       return text(raffleProofLabel);
     case "raffle.return":
       return text(`‹ ${raffleBackName}`);
+    case "prediction.edit": {
+      const parsed = parseAuctionCallback(button.callbackData);
+      if (!parsed.ok || parsed.intent.kind !== "prediction-edit") {
+        throw new Error("prediction edit button has invalid callback data");
+      }
+      const { nomination } = parsed.intent;
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "prediction" }> =>
+          each.kind === "prediction",
+      );
+      const answered = block?.answers.some(
+        (answer) => answer.nomination === nomination,
+      );
+      return text(
+        `${answered ? "Изменить" : "Ответить"} ${predictionSpec(nomination).number}`,
+      );
+    }
+    case "prediction.select-lot": {
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "prediction-lots" }> =>
+          each.kind === "prediction-lots",
+      );
+      const item = block?.lots.find((lot) => lot.lotId === button.lotId);
+      return text(
+        item === undefined
+          ? untitled
+          : `${shorten(item.title ?? untitled)} · ${priceLabel(item.status)}`,
+      );
+    }
+    case "prediction.clear":
+      return text("Очистить");
+    case "prediction.switch-round": {
+      const parsed = parseAuctionCallback(button.callbackData);
+      if (!parsed.ok || parsed.intent.kind !== "prediction") {
+        throw new Error("prediction round button has invalid callback data");
+      }
+      return text(predictionRoundTitle(parsed.intent.round));
+    }
+    case "prediction.back":
+      return text(
+        blocks.some((block) => block.kind === "prediction")
+          ? `‹ ${rootTitle}`
+          : "‹ Прогнозы",
+      );
     default: {
       const _exhaustive: never = button;
       return _exhaustive;
@@ -1703,12 +2072,18 @@ function renderButton(
   }
 }
 
-// «✔️ Да, …» называет действие и сумму (дизайн-код, «Клавиатура»).
+function firstBidOffered(blocks: readonly AuctionBlock[]): boolean {
+  const lot = blocks.find((block) => block.kind === "lot");
+  return lot?.kind === "lot" && awaitsFirstBid(lot.status);
+}
+
+// «✔️ Да, …» называет действие (дизайн-код, «Клавиатура»). Сумма — в вопросе
+// «Поставить N?»: с ней «Да» обрезалось в паре с «Нет» (PER-631, №86).
 function confirmLabel(blocks: readonly AuctionBlock[]): string {
   const confirm = blocks.find((block) => block.kind === "confirm");
   if (confirm?.kind !== "confirm") return confirmYesLabel("подтвердить");
   return confirm.command === "bid"
-    ? confirmYesLabel(`поставить ${money(confirm.amount)}`)
+    ? confirmYesLabel("поставить")
     : confirmYesLabel("включить автоставку");
 }
 

@@ -10,8 +10,9 @@ using Xunit;
 namespace AppHost.UnitTests;
 
 /// <summary>
-/// Имя бота аукциона для ссылок каналов прихода (PER-441) — необязательная
-/// настройка: заданная доезжает до бота хаба, незаданная не появляется вовсе.
+/// Имя бота аукциона для ссылок каналов прихода (PER-441) и имя бота поддержки
+/// (ADR-068, п. 2) — необязательные настройки: заданная доезжает до бота хаба,
+/// незаданная не появляется вовсе.
 /// </summary>
 public class HubBotWiringTests
 {
@@ -33,7 +34,26 @@ public class HubBotWiringTests
         environment.ShouldNotContainKey("BOT_AUCTION_BOT_USERNAME");
     }
 
-    private static async Task<Dictionary<string, object>> EnvironmentAsync(string? auctionBotUsername)
+    /// <summary>Вход в бот поддержки из «Помощи» (ADR-068, п. 2).</summary>
+    [Fact]
+    public async Task HubBot_GetsTheConfiguredSupportBotUsername()
+    {
+        var environment = await EnvironmentAsync(null, " solguficky_support_bot ");
+
+        environment["BOT_SUPPORT_BOT_USERNAME"].ShouldBe("solguficky_support_bot");
+    }
+
+    [Fact]
+    public async Task HubBot_WithoutSupportBotUsername_GetsNoVariable()
+    {
+        var environment = await EnvironmentAsync(null);
+
+        environment.ShouldNotContainKey("BOT_SUPPORT_BOT_USERNAME");
+    }
+
+    private static async Task<Dictionary<string, object>> EnvironmentAsync(
+        string? auctionBotUsername,
+        string? supportBotUsername = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -42,6 +62,7 @@ public class HubBotWiringTests
         {
             ["Parameters:hub-bot-token"] = "222:hub",
             [HubBotSetup.AuctionBotUsernameKey] = auctionBotUsername,
+            [SupportBotLink.UsernameKey] = supportBotUsername,
         });
         var profile = new ProfileConfig { Name = "hub", Services = ["hub-bot"], Infrastructure = [] };
         var bot = HubBotSetup.Configure(new ServiceGraphContext(builder, profile)).Resource;

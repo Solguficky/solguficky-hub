@@ -51,15 +51,27 @@ public class NotificationCategoriesTests
     [Fact]
     public void DefaultEnabled_Reminder_IsDisabled()
     {
-        // Единственная выключенная по умолчанию категория таблицы продукта.
+        // Единственная категория таблицы продукта с постоянным умолчанием,
+        // выключенная по умолчанию.
         NotificationCategories.DefaultEnabled(NotificationCategory.MeetupReminder).ShouldBeFalse();
     }
 
     [Fact]
-    public void DefaultEnabled_EveryCategoryButReminder_IsEnabled()
+    public void DefaultEnabled_ReleaseNotes_IsDisabled()
+    {
+        // Умолчание этой категории — параметр среды, а не константа
+        // (ADR-069, п. 5): stage включает её, прод — нет. Пока параметр не
+        // читается (PER-628), словарь несёт прод-значение таблицы продукта, и
+        // stage включает категорию параметром, а не правкой этого словаря.
+        NotificationCategories.DefaultEnabled(NotificationCategory.ReleaseNotes).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DefaultEnabled_EveryCategoryButReminderAndReleaseNotes_IsEnabled()
     {
         var enabled = NotificationCategories.All
-            .Where(category => category != NotificationCategory.MeetupReminder);
+            .Where(category => category != NotificationCategory.MeetupReminder
+                && category != NotificationCategory.ReleaseNotes);
 
         enabled.ShouldAllBe(category => NotificationCategories.DefaultEnabled(category));
     }
@@ -77,7 +89,8 @@ public class NotificationCategoriesTests
     public void MeetupScoped_AccessRequests_AreGlobalOnly()
     {
         // Заявка не привязана ни к одной сходке.
-        NotificationCategories.MeetupScoped.ShouldNotContain(NotificationCategory.AccessRequest);
+        NotificationCategories.MeetupScoped.ShouldNotContain(NotificationCategory.AccessRequestCommunity);
+        NotificationCategories.MeetupScoped.ShouldNotContain(NotificationCategory.AccessRequestAuction);
     }
 
     [Fact]
@@ -85,28 +98,37 @@ public class NotificationCategoriesTests
     {
         // Иначе очередь заявок копится незамеченной, пока каждый администратор
         // сам не найдёт настройку.
-        NotificationCategories.DefaultEnabled(NotificationCategory.AccessRequest).ShouldBeTrue();
+        NotificationCategories.DefaultEnabled(NotificationCategory.AccessRequestCommunity).ShouldBeTrue();
+        NotificationCategories.DefaultEnabled(NotificationCategory.AccessRequestAuction).ShouldBeTrue();
     }
 
     [Theory]
-    [InlineData(new[] { "access_hub", "place_bids", "manage_members", "admit_bidders" }, true)]
-    [InlineData(new[] { "access_hub", "place_bids", "admit_bidders" }, true)]
-    [InlineData(new[] { "access_hub", "place_bids", "manage_members" }, true)]
-    [InlineData(new[] { "access_hub", "place_bids" }, false)]
-    [InlineData(new[] { "place_bids" }, false)]
-    [InlineData(new string[0], false)]
-    public void IsVisibleTo_AccessRequests_OnlyToQueueModerators(string[] rights, bool visible)
+    [InlineData("manage_members", true, false)]
+    [InlineData("admit_bidders", false, true)]
+    [InlineData("access_hub", false, false)]
+    [InlineData("place_bids", false, false)]
+    [InlineData(null, false, false)]
+    public void IsVisibleTo_AccessRequests_OnlyToTheModeratorOfTheirOwnQueue(
+        string? right,
+        bool communityVisible,
+        bool auctionVisible)
     {
-        // Кто получает факт, тот видит переключатель: держатель права модерации
-        // хотя бы одной очереди (ADR-064).
-        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequest, rights).ShouldBe(visible);
+        // Кто получает факт, тот видит переключатель, и только своей очереди:
+        // держателю одной очередь другой не обещана (ADR-064, PER-635).
+        string[] rights = right is null ? [] : [right];
+
+        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequestCommunity, rights)
+            .ShouldBe(communityVisible);
+        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequestAuction, rights)
+            .ShouldBe(auctionVisible);
     }
 
     [Fact]
     public void IsVisibleTo_EveryOtherCategory_IsVisibleWithoutRights()
     {
         NotificationCategories.All
-            .Where(category => category != NotificationCategory.AccessRequest)
+            .Where(category => category != NotificationCategory.AccessRequestCommunity
+                && category != NotificationCategory.AccessRequestAuction)
             .ShouldAllBe(category => NotificationCategories.IsVisibleTo(category, Array.Empty<string>()));
     }
 

@@ -1,10 +1,9 @@
 import { InlineKeyboard } from "grammy";
 import {
+  type AuctionNotificationChange,
   type AuctionNotificationSettings,
   auctionNotificationsExplanation,
-  finalAnnouncementsButtonLabel,
-  OUTBID_FREQUENCIES,
-  outbidButtonLabel,
+  auctionNotificationsRows,
 } from "../../../../core/notifications/outbid.js";
 import type { NotificationCategoryView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
@@ -13,7 +12,7 @@ import type {
   NotificationCategory,
 } from "../../notifications/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { toSettingsExtensions } from "./extensions.js";
+import { toSettingsAuction } from "./extensions.js";
 import {
   notificationToggleLabel,
   screenText,
@@ -35,8 +34,17 @@ export const categoryLabels: Record<NotificationCategory, string> = {
   reminder: "Напоминание перед началом",
   organizer: "Сообщения организатора",
   announcement: "Объявления сообщества",
-  access: "Запросы доступа",
+  "access-community": "Запросы доступа в сообщество",
+  "access-auction": "Запросы доступа в аукцион",
+  release: "Новое в боте",
 };
+
+// Заявки разведены по очереди: у каждой своя подпись и свой выключатель, и
+// кнопка под оповещением выключает только свою очередь (PER-635).
+export const accessRequestCategories: readonly NotificationCategory[] = [
+  "access-community",
+  "access-auction",
+];
 
 // Новые сходки и объявления сообществу не привязаны ни к какой сходке, и
 // подписаться на них нельзя: они приходят всем, кто их не выключил.
@@ -62,15 +70,22 @@ export function globalNotificationsScreen(
   // Подзаголовков у клавиатуры нет, поэтому группы называет текст, а кнопки
   // идут в том же порядке: сначала то, что приходит без подписки, потом
   // запросы доступа, потом категории сходок. Запросы доступа бот не
-  // показывает и не прячет сам: их нет в снимке у того, кто не администратор.
-  const access = categories.filter((entry) => entry.category === "access");
+  // показывает и не прячет сам: их нет в снимке у того, кто не решает заявки
+  // этой очереди.
+  const access = categories.filter((entry) =>
+    accessRequestCategories.includes(entry.category),
+  );
+  const release = categories.filter((entry) => entry.category === "release");
   const ordered = [
     ...categories.filter((entry) => withoutSubscription(entry.category)),
     ...access,
     ...categories.filter(
       (entry) =>
-        !withoutSubscription(entry.category) && entry.category !== "access",
+        !withoutSubscription(entry.category) &&
+        !accessRequestCategories.includes(entry.category) &&
+        entry.category !== "release",
     ),
+    ...release,
   ];
   const keyboard = new InlineKeyboard();
   for (const entry of ordered) {
@@ -88,7 +103,9 @@ export function globalNotificationsScreen(
       "Приходят всем, без подписки: новые сходки и объявления сообщества.",
       access.length === 0
         ? undefined
-        : "Только администратору: запросы доступа — новые заявки в сообщество и в аукцион.",
+        : access.length === 1
+          ? "Только тому, кто решает заявки этой очереди."
+          : "Только тому, кто решает заявки: у каждой очереди своя настройка, и выключение одной не гасит другую.",
       "По сходкам, на которые ты подписан: изменения, новые материалы, напоминание и сообщения организатора. Здесь — значение для всех таких сходок, включая будущие. У отдельной сходки его можно поменять в её уведомлениях, и тогда общая настройка её уже не меняет.",
       "Нажми на категорию, чтобы включить или выключить её.",
     ),
@@ -141,44 +158,61 @@ export function meetupNotificationsScreen(settings: {
   };
 }
 
-/** Данные переключателя анонса финала: целевое состояние, а не шаг. */
-export function finalAnnouncementsData(enabled: boolean): string {
-  return `v1:notify:final:${enabled ? "1" : "0"}`;
+/**
+ * Данные кнопки настройки уведомлений аукциона: целевое значение, а не шаг.
+ * Данные частоты прежние, поэтому старые кнопки режима, «Реже» и «Частота
+ * уведомлений» из старых сообщений ставят свой режим и открывают экран.
+ */
+export function auctionNotificationsChangeData(
+  change: AuctionNotificationChange,
+  detached = false,
+): string {
+  const tail = detached ? ":n" : "";
+  switch (change.kind) {
+    case "frequency":
+      return `v1:notify:outbid:${change.frequency}${tail}`;
+    case "final":
+      return `v1:notify:final:${change.enabled ? "1" : "0"}${tail}`;
+    case "live":
+      return `v1:notify:live:${change.enabled ? "1" : "0"}${tail}`;
+    case "announcements":
+      return `v1:notify:news:${change.enabled ? "1" : "0"}${tail}`;
+  }
+}
+
+/** Экран настроек аукциона: из «Настроек» или, с `detached`, из вести (№73). */
+export function auctionNotificationsData(detached = false): string {
+  return detached ? "v1:notify:outbid:n" : "v1:notify:outbid";
 }
 
 /**
- * Настройки уведомлений аукциона (PER-552, PER-539) — самодостаточные, как у
- * бота аукциона: пять режимов частоты «перебили» по одному в ряд, текущий
- * отмечен на своей кнопке маркером «• » (PER-598; дизайн-код, «Уведомления»),
- * и под ними переключатель анонса финала. Выбор отменяется с того же экрана,
- * поэтому подтверждения «Да» нет: что сработало, говорит ответ на нажатие.
- * Это настройки расширения «Аукцион» в «Настройках» → «Расширения»: в
- * «Уведомлениях» остаются только категории ядра (PER-605). Данные кнопок
- * частоты прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений и
- * «Частота уведомлений» из новых открывают этот экран на новом месте.
+ * Настройки уведомлений аукциона (PER-552, PER-539, PER-645) —
+ * самодостаточные, как у бота аукциона: каждая настройка — одна кнопка с
+ * текущим значением, нажатие ведёт к следующему (решение владельца по прогону
+ * 14 октября 2026 года, №72; дизайн-код, «Уведомления»). Выбор отменяется с
+ * того же экрана, поэтому подтверждения «Да» нет: что сработало, говорит
+ * ответ на нажатие. Это «Уведомления» расширения «Аукцион» в «Настройках» →
+ * «Расширения» (№74): в «Уведомлениях» настроек остаются только категории
+ * ядра (PER-605). Открытый кнопкой вести экран возврата в дерево не несёт:
+ * человек пришёл из вести, и она остаётся выше в чате (№73 прогона
+ * 14 октября 2026 года); выбор на нём держит тот же вид.
  */
 export function auctionNotificationsScreen(
   current: AuctionNotificationSettings,
+  detached = false,
 ): ShownScreen {
-  const keyboard = new InlineKeyboard();
-  for (const frequency of OUTBID_FREQUENCIES) {
-    keyboard
-      .text(
-        outbidButtonLabel(frequency, current.frequency),
-        `v1:notify:outbid:${frequency}`,
-      )
-      .row();
-  }
-  keyboard
-    .text(
-      finalAnnouncementsButtonLabel(current.finalAnnouncements),
-      finalAnnouncementsData(!current.finalAnnouncements),
-    )
-    .row();
+  const keyboard = InlineKeyboard.from(
+    auctionNotificationsRows(current).map((row) => [
+      InlineKeyboard.text(
+        row.text,
+        auctionNotificationsChangeData(row.change, detached),
+      ),
+    ]),
+  );
   return {
-    id: "notify-outbid",
-    text: screenText("Аукцион", ...auctionNotificationsExplanation),
-    keyboard: withNav(keyboard, toSettingsExtensions),
+    id: detached ? "notify-outbid-notice" : "notify-outbid",
+    text: screenText("Уведомления", ...auctionNotificationsExplanation),
+    keyboard: detached ? keyboard : withNav(keyboard, toSettingsAuction),
     format: "HTML",
   };
 }

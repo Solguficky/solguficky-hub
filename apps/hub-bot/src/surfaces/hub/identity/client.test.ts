@@ -12,7 +12,6 @@ import {
   ApplicationCardSchema,
   ApplicationOutcome,
   AppointAdministratorResponseSchema,
-  CommunityFilter,
   DecideApplicationResponseSchema,
   DismissAdministratorResponseSchema,
   GetCommunityMemberResponseSchema,
@@ -29,12 +28,13 @@ import {
   createAdministratorManager,
   createApplicationAdministrator,
   createApplicationModerator,
-  createAuctionModerationAdministrator,
   createCommunityAdministrator,
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
+  createParticipantUsernameResolver,
   createPlaceBidsReader,
+  createRightRecordAdministrator,
   createTelegramRecipientResolver,
   requestIdHeader,
   useCaseHeader,
@@ -414,6 +414,95 @@ describe("organizer resolver", () => {
   });
 });
 
+describe("participant username resolver", () => {
+  const winnerId = "0192f0a0-0000-7000-8000-00000000a002";
+  const viewer = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+  };
+
+  function failing(cause: unknown, refused?: (failure: unknown) => void) {
+    return createParticipantUsernameResolver(
+      {
+        resolveParticipantUsername: () => Promise.reject(cause),
+      },
+      3_000,
+      refused,
+    );
+  }
+
+  it("sends the viewer as the actor and returns the username", async () => {
+    const rpc = vi.fn().mockResolvedValue({ telegramUsername: "owl" });
+    const participants = createParticipantUsernameResolver({
+      resolveParticipantUsername: rpc,
+    });
+    await expect(
+      participants.resolveParticipantUsername(viewer, winnerId, {
+        requestId: "req-2",
+      }),
+    ).resolves.toEqual({ kind: "resolved", telegramUsername: "owl" });
+    expect(rpc).toHaveBeenCalledWith(
+      {
+        actor: { identityId: viewer.identityId },
+        identityId: winnerId,
+      },
+      expect.objectContaining({ headers: { [requestIdHeader]: "req-2" } }),
+    );
+  });
+
+  it("resolves a participant without a username to an absent field", async () => {
+    const participants = createParticipantUsernameResolver({
+      resolveParticipantUsername: vi.fn().mockResolvedValue({}),
+    });
+    await expect(
+      participants.resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toEqual({ kind: "resolved" });
+  });
+
+  // Отказ участнику — не сбой: во второй раз он и не повторится, и записи
+  // на warn не заслуживает.
+  it("keeps the refusal of a participant apart from a failure", async () => {
+    const refused = vi.fn();
+    await expect(
+      failing(
+        new ConnectError("not an organizer", Code.PermissionDenied),
+        refused,
+      ).resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toEqual({ kind: "denied" });
+    expect(refused).not.toHaveBeenCalled();
+  });
+
+  it("separates not-found from an unanswered call", async () => {
+    await expect(
+      failing(
+        new ConnectError("unknown", Code.NotFound),
+      ).resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toEqual({ kind: "not-found" });
+    const refused = vi.fn();
+    await expect(
+      failing(
+        new ConnectError("down", Code.Unavailable),
+        refused,
+      ).resolveParticipantUsername(viewer, winnerId, { requestId: "req-3" }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    expect(refused).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "req-3" }),
+    );
+  });
+
+  it("reports a contract violation to the caller as a refusal", async () => {
+    const refused = vi.fn();
+    await expect(
+      failing(
+        new ConnectError("bad id", Code.InvalidArgument),
+        refused,
+      ).resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toMatchObject({ kind: "rejected", code: "InvalidArgument" });
+    expect(refused).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "InvalidArgument" }),
+    );
+  });
+});
+
 describe("application administrator", () => {
   const actor = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
@@ -582,6 +671,7 @@ describe("community administrator", () => {
       listCommunityMembers: vi.fn(),
       getCommunityMember: vi.fn(),
       blockCommunityMember: vi.fn(),
+      demoteCommunityMember: vi.fn(),
       listAllowedUsernames: vi.fn().mockResolvedValue({ usernames: [] }),
       addAllowedUsername: vi.fn(),
       removeAllowedUsername: vi.fn(),
@@ -598,21 +688,21 @@ describe("community administrator", () => {
           telegramUserId: 42n,
           admitted: true,
           circle: Circle.MEMBER,
-          auctionModeration: true,
+          grantedRights: [AccessRight.ADMIT_BIDDERS],
         },
         {
           identityId: "guest",
           telegramUserId: 43n,
           admitted: false,
           circle: Circle.GUEST,
-          auctionModeration: false,
+          grantedRights: [AccessRight.PLACE_BIDS],
         },
         {
           identityId: "newcomer",
           telegramUserId: 0n,
           admitted: false,
           circle: Circle.UNSPECIFIED,
-          auctionModeration: false,
+          grantedRights: [],
         },
         // Старый Identity круга не присылает, участника называет admitted.
         {
@@ -620,7 +710,7 @@ describe("community administrator", () => {
           telegramUserId: 44n,
           admitted: true,
           circle: Circle.UNSPECIFIED,
-          auctionModeration: false,
+          grantedRights: [],
         },
       ],
     });
@@ -637,19 +727,27 @@ describe("community administrator", () => {
             telegramUserId: 42n,
             circle: "member",
             auctionModeration: true,
+            auctionRunning: false,
           },
           {
             identityId: "guest",
             telegramUserId: 43n,
             circle: "guest",
             auctionModeration: false,
+            auctionRunning: false,
           },
-          { identityId: "newcomer", circle: "none", auctionModeration: false },
+          {
+            identityId: "newcomer",
+            circle: "none",
+            auctionModeration: false,
+            auctionRunning: false,
+          },
           {
             identityId: "older",
             telegramUserId: 44n,
             circle: "member",
             auctionModeration: false,
+            auctionRunning: false,
           },
         ],
         allowedUsernames: [],
@@ -658,7 +756,7 @@ describe("community administrator", () => {
     expect(listCommunityMembers).toHaveBeenCalledWith(
       {
         actor: { identityId: actor.identityId },
-        filter: CommunityFilter.AUCTION_MODERATORS,
+        grantedRight: AccessRight.ADMIT_BIDDERS,
       },
       expect.anything(),
     );
@@ -674,7 +772,7 @@ describe("community administrator", () => {
             telegramUserId: 42n,
             admitted: true,
             circle: Circle.MEMBER,
-            auctionModeration: false,
+            grantedRights: [],
           },
         },
       }),
@@ -689,12 +787,36 @@ describe("community administrator", () => {
         telegramUserId: 42n,
         circle: "member",
         auctionModeration: false,
+        auctionRunning: false,
       },
     });
     expect(getCommunityMember).toHaveBeenCalledWith(
       { actor: { identityId: actor.identityId }, identityId: memberId },
       expect.anything(),
     );
+  });
+
+  it("demotes the member and reports whether the circle changed", async () => {
+    const demoteCommunityMember = vi.fn().mockResolvedValue({ changed: true });
+
+    await expect(
+      community({ demoteCommunityMember }).demote(actor, memberId),
+    ).resolves.toEqual({ kind: "ok", value: true });
+    expect(demoteCommunityMember).toHaveBeenCalledWith(
+      { actor: { identityId: actor.identityId }, identityId: memberId },
+      expect.anything(),
+    );
+  });
+
+  it("maps demote failure of a preset holder to invalid", async () => {
+    const administrator = community({
+      demoteCommunityMember: () =>
+        Promise.reject(new ConnectError("refused", Code.FailedPrecondition)),
+    });
+
+    await expect(administrator.demote(actor, memberId)).resolves.toMatchObject({
+      kind: "invalid",
+    });
   });
 
   it.each([
@@ -728,66 +850,61 @@ describe("community administrator", () => {
   });
 });
 
-describe("auction moderation administrator", () => {
+describe("right record administrator", () => {
   const actor = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
   };
   const memberId = "0192f0a0-0000-7000-8000-00000000b001";
 
-  function moderation(
+  function records(
     overrides: Partial<
-      Parameters<typeof createAuctionModerationAdministrator>[0]
+      Parameters<typeof createRightRecordAdministrator>[0]
     > = {},
   ) {
-    return createAuctionModerationAdministrator({
-      grantAuctionModeration: vi.fn(),
-      revokeAuctionModeration: vi.fn(),
+    return createRightRecordAdministrator({
+      grantRight: vi.fn(),
+      revokeRight: vi.fn(),
       ...overrides,
     });
   }
 
-  it("sends the actor and the member on grant and revoke", async () => {
-    const grantAuctionModeration = vi.fn().mockResolvedValue({ changed: true });
-    const revokeAuctionModeration = vi
-      .fn()
-      .mockResolvedValue({ changed: false });
-    const administrator = moderation({
-      grantAuctionModeration,
-      revokeAuctionModeration,
-    });
+  it.each([
+    ["admit-bidders", AccessRight.ADMIT_BIDDERS],
+    ["run-auctions", AccessRight.RUN_AUCTIONS],
+  ] as const)(
+    "sends the actor, the member and the %s record on grant and revoke",
+    async (right, wire) => {
+      const grantRight = vi.fn().mockResolvedValue({ changed: true });
+      const revokeRight = vi.fn().mockResolvedValue({ changed: false });
+      const administrator = records({ grantRight, revokeRight });
 
-    await expect(
-      administrator.grantAuctionModeration(actor, memberId),
-    ).resolves.toEqual({ kind: "ok", value: true });
-    await expect(
-      administrator.revokeAuctionModeration(actor, memberId),
-    ).resolves.toEqual({ kind: "ok", value: false });
-    const request = {
-      actor: { identityId: actor.identityId },
-      identityId: memberId,
-    };
-    expect(grantAuctionModeration).toHaveBeenCalledWith(
-      request,
-      expect.anything(),
-    );
-    expect(revokeAuctionModeration).toHaveBeenCalledWith(
-      request,
-      expect.anything(),
-    );
-  });
+      await expect(
+        administrator.grantRightRecord(actor, memberId, right),
+      ).resolves.toEqual({ kind: "ok", value: true });
+      await expect(
+        administrator.revokeRightRecord(actor, memberId, right),
+      ).resolves.toEqual({ kind: "ok", value: false });
+      const request = {
+        actor: { identityId: actor.identityId },
+        identityId: memberId,
+        right: wire,
+      };
+      expect(grantRight).toHaveBeenCalledWith(request, expect.anything());
+      expect(revokeRight).toHaveBeenCalledWith(request, expect.anything());
+    },
+  );
 
   it.each([
     [Code.FailedPrecondition, "not-member"],
     [Code.PermissionDenied, "forbidden"],
     [Code.Unavailable, "unavailable"],
   ])("maps grant failure %s to %s", async (code, kind) => {
-    const administrator = moderation({
-      grantAuctionModeration: () =>
-        Promise.reject(new ConnectError("refused", code)),
+    const administrator = records({
+      grantRight: () => Promise.reject(new ConnectError("refused", code)),
     });
 
     await expect(
-      administrator.grantAuctionModeration(actor, memberId),
+      administrator.grantRightRecord(actor, memberId, "run-auctions"),
     ).resolves.toMatchObject({ kind });
   });
 });

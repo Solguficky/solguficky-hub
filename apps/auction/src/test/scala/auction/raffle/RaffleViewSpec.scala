@@ -41,6 +41,17 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       awaiting.toString should not include seed.hex
     }
 
+    "names the announced prize on every state that has terms" in {
+      val withPrize = terms.copy(prize = Some("кружка"))
+      view(RaffleState.Open(withPrize, Vector.empty)).get.prize shouldBe Some("кружка")
+      view(RaffleState.Fixed(withPrize, Vector(person(1)))).get.prize shouldBe Some("кружка")
+      view(RaffleState.Drawn(withPrize, Vector(person(1)), randomness, closesAt.plusSeconds(61))).get.prize shouldBe
+        Some("кружка")
+      view(RaffleState.Open(terms, Vector.empty)).get.prize shouldBe None
+      // Без условий приза нет: непроведённый розыгрыш его не называет.
+      view(RaffleState.NotHeld(closesAt)).get.prize shouldBe None
+    }
+
     "reveals after the draw the seed, the randomness, V and the winning ticket with the names of the pool" in {
       val tickets = Vector(person(2), person(1))
       val drawnAt = closesAt.plusSeconds(61)

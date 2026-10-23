@@ -54,6 +54,18 @@ describe("participant command answers", () => {
         value: { minRequired: rub(1300n) },
       } as PlaceBidRefusal["reason"]),
     ).toMatchObject({ refusal: { kind: "bid-below-minimum" } });
+    expect(
+      refusedBid({
+        case: "bidAboveMaximum",
+        value: { maximum: rub(25500n) },
+      } as PlaceBidRefusal["reason"]),
+    ).toEqual({
+      kind: "refused",
+      refusal: {
+        kind: "bid-above-maximum",
+        next: { minorUnits: 510_000, currency: "RUB" },
+      },
+    });
   });
 
   // Отказ с ценой без цены — дефект соседа, а не отказ без суммы.
@@ -113,6 +125,26 @@ describe("participant command answers", () => {
         minLimit: { minorUnits: 120_000, currency: "RUB" },
       },
     });
+  });
+
+  // Снятый с лота участник (ADR-072) получает один отказ на ставку и на лимит.
+  it("reads a removal from the lot on a bid and on a limit", () => {
+    expect(
+      refusedBid({
+        case: "participantRemovedFromLot",
+        value: {},
+      } as PlaceBidRefusal["reason"]),
+    ).toEqual({ kind: "refused", refusal: { kind: "removed-from-lot" } });
+    expect(
+      limitOutcomeOf(
+        create(SetProxyLimitResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "participantRemovedFromLot", value: {} } },
+          },
+        }),
+      ),
+    ).toEqual({ kind: "refused", refusal: { kind: "removed-from-lot" } });
   });
 
   it("reads a chosen name and its refusal", () => {

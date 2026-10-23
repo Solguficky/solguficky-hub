@@ -1,6 +1,7 @@
 package auction.aggregate
 
 import auction.catalog.LotId
+import auction.lot.AddStepWindow
 import auction.lot.CloseLot
 import auction.lot.CloseLotRejected
 import auction.lot.CloseReason
@@ -9,6 +10,7 @@ import auction.lot.OpId
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ResumeLot
+import auction.lot.StepWindow
 import auction.lot.WithdrawLot
 import auction.lot.WithdrawLotRejected
 import auction.lot.WithdrawnReason
@@ -48,6 +50,17 @@ enum LotStanding {
     }
 }
 
+/**
+ * Что аукцион знает о доставке запущенного окна лоту (ADR-047, дополнение 2026-10-12). `Sending` — `AddStepWindow`
+ * ушёл, ответа нет; `Delivered` — лот ответил: принял окно или отказал, потому что уже не в торгах, — и ждать от него
+ * нечего; `Unanswered` — ответ не пришёл.
+ */
+enum WindowDelivery {
+  case Sending
+  case Delivered
+  case Unanswered
+}
+
 /** Чем лот ответил на закрытие по дедлайну: продан или закрыт без продажи — либо удержан для финала (П-09). */
 enum Closure {
   case Closed
@@ -76,6 +89,9 @@ enum LotInstruction {
   /** Активный лот финала завершился, а аукцион этого ещё не записал: пора записать `FinalLotCompleted` (PER-607). */
   case Complete(lot: LotId)
 
+  /** Доставить лоту окно, запущенное под `launch` (ADR-047, дополнение 2026-10-12). */
+  case AddWindow(lot: LotId, launch: OpId, command: AddStepWindow)
+
   /**
    * Аукцион кончился, а записи о том нет: в финале завершён каждый лот состава, в перерыве не осталось удержанных —
    * пора записать `AuctionFinished`.
@@ -99,8 +115,21 @@ enum LotInstruction {
  * вопрос о состоянии или подтверждением открытия. Поэтому таймер после рестарта взводится тем же опросом, а лот с
  * дедлайном, истёкшим за время простоя, закрывается сразу. Наступил ли дедлайн, решает лот (П-05): на отказ закрытия
  * аукцион спрашивает его состояние заново и взводит таймер по тому, что лот ответил.
+ *
+ * Окна, запущенные по ходу торгов, доставляются лотам той же парой «команда — подтверждение» (ADR-047, дополнение
+ * 2026-10-12): `deliveries` — знание о доставке по `op_id` запуска и лоту, несохраняемое, как и знание о лотах.
+ * Recovery начинает с пустого и шлёт каждое запущенное окно каждому его лоту заново: `op_id` доставки тот же, и лот,
+ * уже записавший окно, второго события не пишет.
  */
-final case class LotRoster(lots: Map[LotId, LotStanding]) {
+/**
+ * `removals` — сколько снятий участника ушло лоту и ещё не получило ответа (PER-658). Пока хоть одно в пути, цена
+ * удержанного лота может измениться, и состав финала не известен; знание о самом лоте снятие не трогает.
+ */
+final case class LotRoster(
+    lots: Map[LotId, LotStanding],
+    deliveries: Map[(OpId, LotId), WindowDelivery] = Map.empty,
+    removals: Map[LotId, Int] = Map.empty
+) {
 
   /** Лоты, подтвердившие открытие. */
   def active: Set[LotId] = lots.collect { case (lot, LotStanding.Active) => lot }.toSet
@@ -152,6 +181,19 @@ object LotRoster {
   /** `op_id` конца аукциона после финала — шаг без человека, как конец ожидания лотов. */
   def finishOf(startedBy: OpId): OpId = stepOpId(startedBy, "auction-finished")
 
+  /** Пространство имён `op_id` доставки запущенного окна лоту (UUIDv5). */
+  val WindowNamespace: UUID = UUID.fromString("6f1d8b2e-4a93-4c57-b0e8-3d9a72c514fb")
+
+  /**
+   * `AddStepWindow` лоту окна, запущенного под `launch`. `op_id` — UUIDv5 от `op_id` запуска и лота (ADR-047,
+   * дополнение 2026-10-12): одинаков после любого рестарта, и лот на повтор отвечает исходным `StepWindowAdded`.
+   */
+  def windowOf(launch: LaunchedWindow, lot: LotId): AddStepWindow =
+    AddStepWindow(
+      StepWindow(launch.window.from, launch.window.until, launch.window.step),
+      OpId(Auction.nameBased(WindowNamespace, s"${launch.opId.value}/${lot.value}"))
+    )
+
   /** Пространство имён `op_id` снятия лота отменённым аукционом (UUIDv5). */
   val WithdrawNamespace: UUID = UUID.fromString("9e3c5a71-2b8d-4f06-a1e4-6d0b7c93f852")
 
@@ -178,7 +220,10 @@ object LotRoster {
   def survey(auction: Auction): (LotRoster, List[LotInstruction]) =
     auction.state match {
       case AuctionState.Cancelled(_, _, cancelledBy) => withdraw(empty, auction.lots.toList, cancelledBy)
-      case current if asking(current) => settling(auction, ask(empty, auction.lots.toList))
+      case current if asking(current) =>
+        val (asked, questions) = settling(auction, ask(empty, auction.lots.toList))
+        val (delivering, windows) = deliver(auction, asked, auction.launched)
+        (delivering, questions ++ windows)
       case AuctionState.Final(_, _, _, _, _) if Auction.lineupCompleted(auction) => (empty, List(LotInstruction.Finish))
       case current @ AuctionState.Final(_, _, _, _, _) => ask(empty, current.activeLot.toList)
       case _ => (empty, Nil)
@@ -210,7 +255,10 @@ object LotRoster {
     val silent = roster.lots.collect { case (lot, LotStanding.Unanswered) => lot }.toList
     auction.state match {
       case AuctionState.Cancelled(_, _, cancelledBy) => withdraw(roster, silent, cancelledBy)
-      case current if asking(current) => ask(roster, silent)
+      case current if asking(current) =>
+        val (asked, questions) = ask(roster, silent)
+        val (delivering, windows) = deliver(auction, asked, auction.launched)
+        (delivering, questions ++ windows)
       case AuctionState.Final(_, _, _, _, _) => ask(roster, silent)
       case _ => (roster, Nil)
     }
@@ -247,6 +295,58 @@ object LotRoster {
           }
         }
         withdraw(roster, pending, cancelledBy)
+      case _ => (roster, Nil)
+    }
+
+  /**
+   * Шаг доставки после команды запуска: записанное окно и повтор того же `op_id` шлют окно лотам, которым оно ещё не
+   * доставлено и не в пути. `op_id` под другим событием окон не трогает.
+   */
+  def launched(auction: Auction, roster: LotRoster, opId: OpId): (LotRoster, List[LotInstruction]) =
+    deliver(auction, roster, auction.launched.filter(_.opId == opId))
+
+  /**
+   * Лот ответил на `AddStepWindow`: и принятое окно, и отказ лота, который уже не в торгах, доставку завершают —
+   * аукцион такого лота не ждёт. Ответ, которого аукцион не ждёт, знания не меняет.
+   */
+  def windowAnswered(roster: LotRoster, launch: OpId, lot: LotId): LotRoster =
+    roster.deliveries.get(launch -> lot) match {
+      case Some(WindowDelivery.Sending) =>
+        roster.copy(deliveries = roster.deliveries.updated(launch -> lot, WindowDelivery.Delivered))
+      case _ => roster
+    }
+
+  /** Ответа на `AddStepWindow` нет: лот мог записать окно, и истину даст повтор с тем же `op_id`. */
+  def windowUnanswered(roster: LotRoster, launch: OpId, lot: LotId): LotRoster =
+    roster.deliveries.get(launch -> lot) match {
+      case Some(WindowDelivery.Sending) =>
+        roster.copy(deliveries = roster.deliveries.updated(launch -> lot, WindowDelivery.Unanswered))
+      case _ => roster
+    }
+
+  /**
+   * Окна шлются только в онлайн-торгах: окно кончается не позже `closesAt`, и после общего дедлайна доставлять нечего,
+   * а отменённый аукцион лотам ничего, кроме снятия, не шлёт. Шлётся окно лоту, о доставке которому знания нет или
+   * ответ не пришёл.
+   */
+  private def deliver(
+      auction: Auction,
+      roster: LotRoster,
+      launches: List[LaunchedWindow]
+  ): (LotRoster, List[LotInstruction]) =
+    auction.state match {
+      case AuctionState.Prebidding(_, _) =>
+        val due = for {
+          launch <- launches
+          lot <- launch.window.lots.toList.sortBy(_.value)
+          if roster.deliveries.get(launch.opId -> lot).forall(_ == WindowDelivery.Unanswered)
+        } yield (launch, lot)
+        (
+          roster.copy(deliveries = due.foldLeft(roster.deliveries) { case (known, (launch, lot)) =>
+            known.updated(launch.opId -> lot, WindowDelivery.Sending)
+          }),
+          due.map((launch, lot) => LotInstruction.AddWindow(lot, launch.opId, windowOf(launch, lot)))
+        )
       case _ => (roster, Nil)
     }
 
@@ -307,6 +407,30 @@ object LotRoster {
         roster.mark(lot, LotStanding.Closing)
       case _ => roster
     }
+
+  /**
+   * Снятие участника ушло лоту (ADR-072, «Открыто»; PER-658). Пока оно в пути — в какой бы фазе ни ушло, — состав
+   * финала не известен: заморозка, пришедшая до ответа, отвечает «состав пока не известен», а не берёт в состав цену,
+   * которую снятие вот-вот изменит. Снятия считаются, а не отмечаются: ответ на одно не открывает заморозку, пока в
+   * пути другое. Знание о самом лоте шаг не трогает.
+   */
+  def removingParticipant(roster: LotRoster, lot: LotId): LotRoster =
+    roster.copy(removals = roster.removals.updated(lot, roster.removals.getOrElse(lot, 0) + 1))
+
+  /**
+   * Лот ответил на снятие участника или ответа не дождались. Снятие больше не в пути; удержанный по знанию лот аукцион
+   * спрашивает заново: снятие могло изменить его цену, а за время в пути его мог продать ведущий. Вопрос встаёт в
+   * очередь лота после самого снятия, и до ответа на него состав по-прежнему не известен. Лот, о котором аукцион знает
+   * другое, — открываемый, закрываемый, — шаг не трогает.
+   */
+  def participantRemovalAnswered(roster: LotRoster, lot: LotId): (LotRoster, List[LotInstruction]) = {
+    val left = roster.removals.getOrElse(lot, 0) - 1
+    val settled = roster.copy(removals = if (left > 0) roster.removals.updated(lot, left) else roster.removals - lot)
+    settled.lots.get(lot) match {
+      case Some(LotStanding.Held) => ask(settled, List(lot))
+      case _ => (settled, Nil)
+    }
+  }
 
   /**
    * Лот ответил на закрытие ведущим. Принятое — лот закрыт, и перерыв, в котором не осталось удержанных, кончается.
@@ -409,7 +533,7 @@ object LotRoster {
    */
   def lineup(auction: Auction, roster: LotRoster): Option[Set[LotId]] =
     auction.state match {
-      case AuctionState.Break(_, _) if complete(auction, roster) => Some(roster.held)
+      case AuctionState.Break(_, _) if complete(auction, roster) && roster.removals.isEmpty => Some(roster.held)
       case _ => None
     }
 
@@ -486,6 +610,7 @@ object LotRoster {
     )
 
   extension (roster: LotRoster) {
-    private def mark(lot: LotId, standing: LotStanding): LotRoster = LotRoster(roster.lots.updated(lot, standing))
+    private def mark(lot: LotId, standing: LotStanding): LotRoster =
+      roster.copy(lots = roster.lots.updated(lot, standing))
   }
 }

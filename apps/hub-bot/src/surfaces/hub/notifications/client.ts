@@ -4,6 +4,7 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import type { ReleaseSummary as WireReleaseSummary } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
   NotificationsService,
   type AuctionNotificationPreferences as WireAuctionPreferences,
@@ -28,6 +29,7 @@ import {
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import type {
   AuctionNotificationsResult,
+  BroadcastAudienceCount,
   BroadcastResult,
   CategoryState,
   GlobalPreferences,
@@ -52,6 +54,11 @@ type NotificationsRpc = Pick<
   | "setAuctionNotificationPreferences"
   | "broadcastToMeetupSubscribers"
   | "broadcastToCommunity"
+  | "previewMeetupBroadcast"
+  | "previewCommunityBroadcast"
+  | "reportReleaseNotes"
+  | "listReleaseSummaries"
+  | "getReleaseSummary"
 >;
 
 // Избранные лоты (PER-495) — порт аукционного дерева на том же соединении:
@@ -153,6 +160,19 @@ export function createNotificationsAdapter(
       return toFailure(cause);
     }
   };
+  const audience = async (
+    operation: () => Promise<{ recipientCount: number }>,
+  ): Promise<BroadcastAudienceCount> => {
+    try {
+      const response = await operation();
+      return Number.isInteger(response.recipientCount) &&
+        response.recipientCount >= 0
+        ? { kind: "ok", recipientCount: response.recipientCount }
+        : { kind: "invalid", cause: response.recipientCount };
+    } catch (cause) {
+      return toFailure(cause);
+    }
+  };
   // Частота вне словаря — `UNSPECIFIED` или число новее бота — ответ вне
   // контракта: сервер отдаёт умолчание `EVERY` сам, и бот его не додумывает.
   const auctionSettings = async (
@@ -197,6 +217,14 @@ export function createNotificationsAdapter(
           options(meta),
         ),
       ),
+    previewMeetupBroadcast: ({ identityId, meetupId }, meta) =>
+      audience(() =>
+        rpc.previewMeetupBroadcast({ identityId, meetupId }, options(meta)),
+      ),
+    previewCommunityBroadcast: ({ identityId }, meta) =>
+      audience(() =>
+        rpc.previewCommunityBroadcast({ identityId }, options(meta)),
+      ),
     getGlobalPreferences: (identityId, meta) =>
       global(() =>
         rpc.getGlobalNotificationPreferences({ identityId }, options(meta)),
@@ -228,6 +256,72 @@ export function createNotificationsAdapter(
           options(meta),
         ),
       ),
+    reportReleaseNotes: async (recordIds, meta) => {
+      try {
+        await rpc.reportReleaseNotes(
+          { recordIds: [...recordIds] },
+          options(meta),
+        );
+        return { kind: "ok" };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    listReleaseSummaries: async (pageToken, meta) => {
+      try {
+        const response = await rpc.listReleaseSummaries(
+          { pageToken: pageToken ?? "", pageSize: 0 },
+          options(meta),
+        );
+        const next = response.nextPageToken;
+        return {
+          kind: "ok",
+          page: {
+            summaries: response.summaries.map(toReleaseSummary),
+            ...(next === "" ? {} : { nextPageToken: next }),
+          },
+        };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    getReleaseSummary: async (summaryId, meta) => {
+      try {
+        const response = await rpc.getReleaseSummary(
+          { summaryId },
+          options(meta),
+        );
+        const summary = response.summary;
+        if (summary === undefined) return { kind: "not-found" };
+        const olderId = response.olderSummaryId;
+        const newerId = response.newerSummaryId;
+        return {
+          kind: "ok",
+          view: {
+            summary: toReleaseSummary(summary),
+            ...(olderId === undefined || olderId === "" ? {} : { olderId }),
+            ...(newerId === undefined || newerId === "" ? {} : { newerId }),
+          },
+        };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        return toFailure(cause);
+      }
+    },
+  };
+}
+
+function toReleaseSummary(summary: WireReleaseSummary): {
+  id: string;
+  summarizedAt: string;
+  recordIds: readonly string[];
+} {
+  return {
+    id: summary.summaryId,
+    summarizedAt: summary.summarizedAt,
+    recordIds: summary.recordIds,
   };
 }
 
@@ -290,9 +384,10 @@ function isMeetupCategory(
   category: NotificationCategory,
 ): category is MeetupCategory {
   return (
-    category !== "published" &&
-    category !== "announcement" &&
-    category !== "access"
+    category === "changes" ||
+    category === "material" ||
+    category === "reminder" ||
+    category === "organizer"
   );
 }
 
@@ -310,8 +405,12 @@ function toWire(category: NotificationCategory): WireCategory {
       return WireCategory.ORGANIZER_MESSAGE;
     case "announcement":
       return WireCategory.COMMUNITY_ANNOUNCEMENT;
-    case "access":
-      return WireCategory.ACCESS_REQUEST;
+    case "access-community":
+      return WireCategory.ACCESS_REQUEST_COMMUNITY;
+    case "access-auction":
+      return WireCategory.ACCESS_REQUEST_AUCTION;
+    case "release":
+      return WireCategory.RELEASE_NOTES;
     default: {
       const _exhaustive: never = category;
       throw new Error(`Unsupported notification category ${_exhaustive}`);
@@ -335,8 +434,12 @@ function fromWire(value: WireCategory): NotificationCategory | undefined {
       return "organizer";
     case WireCategory.COMMUNITY_ANNOUNCEMENT:
       return "announcement";
-    case WireCategory.ACCESS_REQUEST:
-      return "access";
+    case WireCategory.ACCESS_REQUEST_COMMUNITY:
+      return "access-community";
+    case WireCategory.ACCESS_REQUEST_AUCTION:
+      return "access-auction";
+    case WireCategory.RELEASE_NOTES:
+      return "release";
     default:
       return undefined;
   }

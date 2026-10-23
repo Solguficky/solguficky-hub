@@ -28,6 +28,22 @@ export type RaffleTextOptions = {
   moment: (instant: string) => string;
 };
 
+// Экран исхода регистрации (прогон 14.10, №69): заголовок — исход, под ним
+// когда закроется регистрация и что дальше.
+export const raffleRegisteredTitle = "Ты в розыгрыше";
+
+/** Абзацы экрана исхода регистрации, уже экранированные. */
+export function raffleRegisteredParagraphs(
+  raffle: RaffleView | undefined,
+  options: RaffleTextOptions,
+): string[] {
+  const closes =
+    raffle === undefined
+      ? "Номер билета появится, когда регистрация закроется."
+      : `Номер билета появится, когда регистрация закроется — ${escapeHtml(options.moment(raffle.closesAt))}. Итог — через пару минут после этого.`;
+  return [closes, "Отменить регистрацию можно до её закрытия."];
+}
+
 // Экран «Как проверить честность» (PER-618): техника розыгрыша за кнопкой с
 // экрана участника, возврат — «‹ Розыгрыш».
 export const raffleProofTitle = "Как проверить честность";
@@ -48,6 +64,7 @@ export function raffleParagraphs(
     case "open":
       return [
         rules,
+        ...prizeLine(raffle),
         `Регистрация до ${closesAt}. Итог — через пару минут после закрытия регистрации.`,
         raffle.registered
           ? "<b>Ты зарегистрирован.</b> Отменить регистрацию можно до её закрытия."
@@ -56,6 +73,7 @@ export function raffleParagraphs(
       ];
     case "closing":
       return [
+        ...prizeLine(raffle),
         `Регистрация закрыта ${closesAt}: билеты получают номера.`,
         raffle.registered
           ? "Ты зарегистрирован: номер билета появится, когда пул зафиксируют."
@@ -64,6 +82,7 @@ export function raffleParagraphs(
       ];
     case "awaiting-beacon":
       return [
+        ...prizeLine(raffle),
         `Регистрация закрыта ${closesAt}.`,
         poolLine(raffle),
         ticketList(raffle),
@@ -73,6 +92,7 @@ export function raffleParagraphs(
     case "drawn":
       return [
         winnerLine(raffle),
+        ...prizeLine(raffle),
         ...drawnAtLine(raffle, options),
         poolLine(raffle),
         ticketList(raffle),
@@ -138,6 +158,14 @@ export function raffleProofParagraphs(
 
 const rules =
   "Один билет каждому участнику аукциона за бесплатную регистрацию. Ставки и покупки на билет не влияют, проигрыш ничего не стоит. Приз предоставляет организатор.";
+
+// Приз — строка-поле «ключ: значение» (дизайн-код, «Формат»). Приза нет — нет
+// и строки: розыгрыш без приза выглядит как до PER-649.
+function prizeLine(raffle: RaffleView): string[] {
+  return raffle.prize === undefined
+    ? []
+    : [`Приз: ${escapeHtml(raffle.prize)}`];
+}
 
 function roundLink(raffle: RaffleView): string {
   return raffle.beaconRound === undefined

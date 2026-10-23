@@ -30,6 +30,7 @@ export type SectionCommand =
   | "menu"
   | "meetups"
   | "next"
+  | "events"
   | "settings"
   | "manage"
   | "help";
@@ -38,6 +39,7 @@ const sectionCommands: Readonly<Record<string, SectionCommand>> = {
   menu: "menu",
   meetups: "meetups",
   next: "next",
+  events: "events",
   settings: "settings",
   manage: "manage",
   help: "help",

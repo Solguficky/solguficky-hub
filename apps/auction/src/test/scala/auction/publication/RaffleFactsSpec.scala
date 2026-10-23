@@ -34,8 +34,10 @@ final class RaffleFactsSpec extends AnyWordSpec with Matchers {
 
   private val pool = Vector(person(3), person(1), person(2))
 
+  private val prize = "кружка"
+
   private val journal = List(
-    RaffleEvent.RaffleOpened(closesAt, seed, 9000L),
+    RaffleEvent.RaffleOpened(closesAt, seed, 9000L, Some(prize)),
     RaffleEvent.Registered(person(3)),
     RaffleEvent.Registered(person(1)),
     RaffleEvent.Registered(person(2)),
@@ -82,6 +84,20 @@ final class RaffleFactsSpec extends AnyWordSpec with Matchers {
         .map(_.winningTicket)
       Some(state.winningTicket) shouldBe shown
       state.winningTicket should (be >= 1 and be <= pool.size)
+      // Приз едет фактом (PER-649): победитель узнаёт, что получил.
+      state.rafflePrize shouldBe Some(prize)
+    }
+
+    // Приза нет — поля в факте нет: весть победителя остаётся прежней.
+    "publish a drawn raffle without a prize leaving its prize unset" in {
+      val plain = List(
+        RaffleEvent.RaffleOpened(closesAt, seed, 9000L),
+        RaffleEvent.Registered(person(1)),
+        RaffleEvent.PoolFixed(Vector(person(1))),
+        RaffleEvent.RaffleDrawn(randomness, drawnAt)
+      ).zipWithIndex.map((event, index) => (index + 1).toLong -> stored(event, index + 1))
+      val state = message(facts(plain).last._2).state.getOrElse(fail("expected a state"))
+      state.rafflePrize shouldBe None
     }
 
     "publish nothing for a raffle that is not held" in {

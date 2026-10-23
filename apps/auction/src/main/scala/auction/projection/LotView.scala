@@ -18,7 +18,10 @@ final case class LotViewRow(lotId: UUID, auctionId: UUID, stored: StoredLot) {
   def version: Long = stored.sequence
 }
 
-/** Ставка в хронологии лота: строка `lot_bid`, ключ — номер события в журнале лота. */
+/**
+ * Ставка в хронологии лота: строка `lot_bid`, ключ — номер события в журнале лота. `removed` — автора сняли с лота
+ * позже (ADR-072, PER-658): ставка остаётся в хронологии, но больше не считается.
+ */
 final case class BidRecord(
     lotId: UUID,
     sequence: Long,
@@ -28,16 +31,45 @@ final case class BidRecord(
     currency: String,
     origin: String,
     source: Option[String],
+    occurredAt: Instant,
+    removed: Boolean = false
+)
+
+/**
+ * Снятие участника, которое пишет свёртка (PER-658): ключ — номер `ParticipantRemoved`, цена и лидер — итог снятия, с
+ * которыми лот пошёл дальше. `participant` нужен только пометке его ставок и участия: строка `lot_removal` его не
+ * хранит, кого сняли, говорят помеченные ставки.
+ */
+final case class RemovalRecord(
+    lotId: UUID,
+    sequence: Long,
+    participant: UUID,
+    minorUnits: Long,
+    currency: String,
+    leader: Option[UUID],
     occurredAt: Instant
 )
+
+/** Запись хронологии лота в порядке журнала: ставка или снятие участника — строка `lot_removal`. */
+enum HistoryRecord {
+  case Bid(bid: BidRecord)
+  case Removal(sequence: Long, minorUnits: Long, currency: String, leader: Option[UUID], occurredAt: Instant)
+
+  def position: Long =
+    this match {
+      case Bid(bid) => bid.sequence
+      case removal: Removal => removal.sequence
+    }
+}
 
 /**
  * Что пишет свёртка нескольких событий лота: строку после последнего применённого события и факты статистики из
  * применённых событий. `participants` — авторы ставок и владельцы принятых прокси-лимитов в порядке журнала, с
  * повторами: отзыв лимита участника не снимает, поэтому строки только добавляются. `startingPrice` — стартовая цена из
  * `LotOpened`: в состоянии лота после открытия её нет, а рост цены статистики считается от неё. `heldPrice` — цена
- * удержания из `LotHeldForFinal`, которую состояние `Held` теряет при `LotResumed`; `resumedSequence` — номер события
- * `LotResumed`: по нему ставки финала отделяются от ставок недели (PER-608).
+ * удержания из `LotHeldForFinal` и из снятия участника с удержанного лота (PER-658), которую состояние `Held` теряет
+ * при `LotResumed`; `resumedSequence` — номер события `LotResumed`: по нему ставки финала отделяются от ставок недели
+ * (PER-608). `removals` — снятия участников: их ставки и участие помечаются снятыми, а снятие ложится в хронологию.
  */
 final case class LotViewFold(
     row: Option[LotViewRow],
@@ -45,7 +77,8 @@ final case class LotViewFold(
     participants: List[UUID],
     startingPrice: Option[StoredMoney],
     heldPrice: Option[StoredMoney] = None,
-    resumedSequence: Option[Long] = None
+    resumedSequence: Option[Long] = None,
+    removals: List[RemovalRecord] = Nil
 )
 
 /** Событие, которое свёртка применила, и строка лота сразу после него. */
@@ -96,7 +129,7 @@ object LotView {
     else if (sequence != version + 1) Left(LotViewDefect.Gap(lotId, version, sequence))
     else {
       val before = current.fold(Lot.initial)(row => LotJournal.restoreLot(row.stored))
-      val after = Lot.apply(before, LotJournal.envelope(sequence, stored))
+      val after = Lot.apply(before, LotJournal.envelope(sequence, stored), stored.occurredAt)
       (after.state, after.auction) match {
         case (LotState.Initial, _) | (_, None) => Left(LotViewDefect.Unborn(lotId, sequence))
         case (_, Some(auction)) =>
@@ -124,16 +157,33 @@ object LotView {
         participants = applied.flatMap(step => participant(step.stored)),
         startingPrice = applied.flatMap(step => step.stored.event.lotOpened.map(_.startingPrice)).lastOption,
         heldPrice = applied.flatMap(heldPrice).lastOption,
-        resumedSequence = applied.filter(step => step.stored.event.kind == "LotResumed").lastOption.map(_.sequence)
+        resumedSequence = applied.filter(step => step.stored.event.kind == "LotResumed").lastOption.map(_.sequence),
+        removals = applied.flatMap(step => removal(lotId, step.sequence, step.stored))
       )
     }
 
   /**
    * Цена, с которой лот удержан для финала (PER-608): состояние строки после `LotHeldForFinal`. Событие времени цены не
-   * несёт (ADR-047), а цена есть в состоянии `Held`, которое следующий `LotResumed` теряет.
+   * несёт (ADR-047), а цена есть в состоянии `Held`, которое следующий `LotResumed` теряет. Снятие участника с
+   * удержанного лота меняет эту цену (ADR-072, «Последствия»), и строка после него — тоже цена удержания.
    */
   private def heldPrice(step: AppliedEvent): Option[StoredMoney] =
-    step.stored.event.lotHeldForFinal.flatMap(_ => step.row.stored.state.held.map(_.currentPrice))
+    if (step.stored.event.lotHeldForFinal.isDefined || step.stored.event.participantRemoved.isDefined)
+      step.row.stored.state.held.map(_.currentPrice)
+    else None
+
+  private def removal(lotId: UUID, sequence: Long, stored: StoredLotEvent): Option[RemovalRecord] =
+    stored.event.participantRemoved.map { removed =>
+      RemovalRecord(
+        lotId = lotId,
+        sequence = sequence,
+        participant = removed.participant,
+        minorUnits = removed.price.minorUnits,
+        currency = removed.price.currency,
+        leader = removed.leader,
+        occurredAt = stored.occurredAt
+      )
+    }
 
   /**
    * Участник лота для статистики (`LotStatistics.unique_participant_count`): автор принятой ставки, ручной или

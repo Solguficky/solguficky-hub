@@ -107,7 +107,7 @@ sequenceDiagram
     participant CI as CI (develop)
     participant O as ops-репозиторий: main
     participant T as таймер на хосте
-    participant K as k3s: namespace test
+    participant K as k3s: namespace stage
     CI->>O: deploy key записи: digest или версия
     loop OnUnitInactiveSec=2min
         T->>O: fetch по read-only deploy key

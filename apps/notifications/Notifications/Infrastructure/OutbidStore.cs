@@ -139,6 +139,16 @@ public static class OutbidStore
             AND NOT EXISTS (SELECT 1 FROM outbid_digest_line WHERE recipient_id = @RecipientId);
         """;
 
+    private const string ReadLiveFinalSql = """
+        SELECT enabled FROM live_final_outbid_preference WHERE identity_id = @IdentityId;
+        """;
+
+    private const string SetLiveFinalSql = """
+        INSERT INTO live_final_outbid_preference (identity_id, enabled, updated_at)
+        VALUES (@IdentityId, @Enabled, @UpdatedAt)
+        ON CONFLICT (identity_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at;
+        """;
+
     private const string OutbidKind = "outbid";
     private const string ProxyRaisedKind = "proxy_raised";
 
@@ -149,6 +159,19 @@ public static class OutbidStore
         var rows = await work.Query<string>(ReadPreferenceSql, new { IdentityId = identityId }, cancellationToken);
         return rows.Count == 0 ? null : OutbidFrequencies.FromStorage(rows[0]);
     }
+
+    /// <summary>Выключатель перебитий в живом финале (PER-645); <c>null</c> — человек его не трогал.</summary>
+    public static async Task<bool?> ReadLiveFinal(UnitOfWork work, Guid identityId,
+        CancellationToken cancellationToken)
+    {
+        var rows = await work.Query<bool>(ReadLiveFinalSql, new { IdentityId = identityId }, cancellationToken);
+        return rows.Count == 0 ? null : rows[0];
+    }
+
+    public static Task SetLiveFinal(UnitOfWork work, Guid identityId, bool enabled, DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        work.Execute(SetLiveFinalSql, new { IdentityId = identityId, Enabled = enabled, UpdatedAt = now.UtcDateTime },
+            cancellationToken);
 
     public static Task SetPreference(UnitOfWork work, Guid identityId, OutbidFrequency frequency, DateTimeOffset now,
         CancellationToken cancellationToken) =>
@@ -197,8 +220,11 @@ public static class OutbidStore
     /// <summary>
     /// Ставка лота во все его строки: ведёт ли человек лот по лидеру этой
     /// ставки, её повод и цена. Возврат лидерства строку не убирает.
+    ///
+    /// Лидер может быть пустым: снятие участника оставляет лот без ведущего,
+    /// и строка окна тогда не говорит «лот за тобой» (ADR-072, PER-672).
     /// </summary>
-    public static Task FollowLot(UnitOfWork work, Guid lotId, Guid leader, Guid eventId, long version, Money price,
+    public static Task FollowLot(UnitOfWork work, Guid lotId, Guid? leader, Guid eventId, long version, Money price,
         CancellationToken cancellationToken) =>
         work.Execute(FollowLotSql, new
         {
@@ -293,7 +319,9 @@ public static class OutbidStore
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "unknown stored lot activity kind"),
     };
 
-    // Имена полей совпадают с колонками, как в PreferenceStore.
-    private sealed record LineRow(Guid lot_id, string kind, DateTime added_at, Guid last_leader_id,
+    // Имена полей совпадают с колонками, как в PreferenceStore. Лидер пустой:
+    // снятие участника оставляет лот без ведущего, и строка тогда не говорит
+    // «лот за тобой» (ADR-072, PER-672).
+    private sealed record LineRow(Guid lot_id, string kind, DateTime added_at, Guid? last_leader_id,
         long price_minor_units, string price_currency);
 }

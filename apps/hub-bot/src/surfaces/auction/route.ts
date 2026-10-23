@@ -5,6 +5,7 @@ import {
   admission,
   applicationQueue,
   decideEntry,
+  encodeAuctionCallback,
   handleAuctionUpdate,
   parseAuctionCallback,
   type ResolvedIdentity,
@@ -25,6 +26,7 @@ import {
   parseEntryCallback,
   startCallback,
 } from "./faq.js";
+import { lotIdOf } from "./start-payload.js";
 
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.
@@ -151,6 +153,7 @@ export function routeAuctionStart(input: {
   user: TelegramUser;
   firstName: string;
   sourceCode?: string;
+  lotToken?: string;
 }): Promise<RouteOutcome> {
   return routeEntry({
     ports: input.ports,
@@ -161,6 +164,7 @@ export function routeAuctionStart(input: {
       ...(input.sourceCode === undefined
         ? {}
         : { sourceCode: input.sourceCode }),
+      ...(input.lotToken === undefined ? {} : { lotToken: input.lotToken }),
     },
   });
 }
@@ -169,7 +173,12 @@ async function routeEntry(input: {
   ports: EntryPorts;
   user: TelegramUser;
   action:
-    | { kind: "start"; firstName: string; sourceCode?: string }
+    | {
+        kind: "start";
+        firstName: string;
+        sourceCode?: string;
+        lotToken?: string;
+      }
     | { kind: "callback"; data: string; firstName: string }
     | { kind: "reply"; data: string; text?: string };
 }): Promise<RouteOutcome> {
@@ -179,11 +188,16 @@ async function routeEntry(input: {
       : undefined;
   // `/start` — команда либо её повтор кнопкой после сбоя: он разрешает
   // личность, а код канала несёт дальше, в кнопку «Подать заявку».
-  const starting: { sourceCode?: string } | undefined =
+  const starting: { sourceCode?: string; lotToken?: string } | undefined =
     input.action.kind === "start"
-      ? input.action.sourceCode === undefined
-        ? {}
-        : { sourceCode: input.action.sourceCode }
+      ? {
+          ...(input.action.sourceCode === undefined
+            ? {}
+            : { sourceCode: input.action.sourceCode }),
+          ...(input.action.lotToken === undefined
+            ? {}
+            : { lotToken: input.action.lotToken }),
+        }
       : local?.action === "start"
         ? local.sourceCode === undefined
           ? {}
@@ -263,110 +277,11 @@ async function routeEntry(input: {
   }
   const { viewer } = identity;
   const identityId = viewer.identityId;
-  // Право перепроверяется на каждом действии той же политикой, что у шлюза:
-  // старая клавиатура и отметка FAQ доступа не дают, а участник сообщества
-  // получает переход в бот хаба и на экранах оболочки.
-  const denial = admission("auction", {
-    rights: viewer.rights,
-    blocked: identity.blocked,
-  });
-  // Без права аукциона и без блокировки — приветствие с кнопкой заявки:
-  // есть ли заявка, разрешение личности не знает, а «на рассмотрении» без
-  // неё было бы ложью (PER-592).
-  if (denial === "not-admitted") {
-    return {
-      screen: {
-        kind: "welcome",
-        ...(starting?.sourceCode === undefined
-          ? {}
-          : { sourceCode: starting.sourceCode }),
-      },
-      identityId,
-    };
-  }
-  if (denial !== undefined) {
-    return { screen: { kind: "denied", reason: denial }, identityId };
-  }
-  // Корневое меню — общий родитель разделов (PER-592). Отметкой FAQ оно не
-  // закрыто: иначе «‹ Меню» с FAQ вернула бы в FAQ, а разделы за меню
-  // закрыты ею по-прежнему.
-  const menu = { screen: { kind: "menu" }, identityId } as const;
-  try {
-    const action = local?.action;
-    if (action === "faq" || action === "details" || action === "question") {
-      return { screen: { kind: action }, identityId };
-    }
-    if (action === "menu") return menu;
-    // Отметку ставит только кнопка «Аукционы» под FAQ: фиксируется действие,
-    // не доставка Telegram и не факт прочтения. Запись идемпотентна: таймаут
-    // безопасно повторить тем же действием. Дальше кнопка открывает список,
-    // как «Аукционы».
-    if (action === "read") {
-      await input.ports.faq.acknowledge(viewer);
-    } else if (!(await input.ports.faq.acknowledged(viewer))) {
-      // Без отметки любой раздел, кроме FAQ, показывает FAQ.
-      return { screen: { kind: "faq" }, identityId };
-    }
-    // «Настройки» (PER-595): имя выбирается в идущем аукционе — ближайшем
-    // активном. Торги открыты у одного аукциона (RFC-017). Сбой списка
-    // убирает пункт имени, а не раздел: частота от Auction не зависит.
-    if (local?.action === "settings") {
-      const [current] = await readAuctions({
-        catalog: input.ports.catalog,
-        viewer,
-        listing: "active",
-      }).catch(() => []);
-      return {
-        screen: {
-          kind: "settings",
-          notifications: input.ports.outbid !== undefined,
-          ...(current === undefined ? {} : { auctionId: current.auctionId }),
-        },
-        identityId,
-      };
-    }
-    if (local?.action === "notify") {
-      return await outbidSettings({
-        ports: input.ports,
-        viewer,
-        exit,
-        ...(local.choose === undefined ? {} : { choose: local.choose }),
-      });
-    }
-    const listScreen = async (list: ListAction): Promise<RouteOutcome> => {
-      const auctions = await readAuctions({
-        catalog: input.ports.catalog,
-        viewer,
-        listing: listingOf[list],
-      });
-      return {
-        screen: { kind: list, list: listPage(auctions, local?.page ?? 0) },
-        identityId,
-      };
-    };
-    // Вход и допущенная заявка открывают корневое меню (PER-592); «Аукционы»
-    // под FAQ — список, который отметку и ставит.
-    if (
-      input.action.kind === "start" ||
-      starting !== undefined ||
-      entering !== undefined
-    ) {
-      return menu;
-    }
-    if (action === "read") return await listScreen("auctions");
-    if (action === "auctions" || action === "past") {
-      return await listScreen(action);
-    }
-    const { action: update } = input;
-    const result = await tradeCallback({
-      ports: input.ports,
-      identity,
-      user: input.user,
-      data: update.data,
-      ...(update.kind === "reply"
-        ? { reply: update.text === undefined ? {} : { text: update.text } }
-        : {}),
-    });
+  // Экран торгового результата: тем же путём идёт и ссылка на лот `l_<токен>`,
+  // и нажатие. Тело пакета, отказ доступа и устаревший экран.
+  const auctionOutcome = async (
+    result: AuctionResult,
+  ): Promise<RouteOutcome> => {
     switch (result.kind) {
       case "screen": {
         const root = result.body.blocks.find((block) => block.kind === "root");
@@ -409,7 +324,155 @@ async function routeEntry(input: {
         return _exhaustive;
       }
     }
+  };
+  // Право перепроверяется на каждом действии той же политикой, что у шлюза:
+  // старая клавиатура и отметка FAQ доступа не дают, а участник сообщества
+  // получает переход в бот хаба и на экранах оболочки.
+  const denial = admission("auction", {
+    rights: viewer.rights,
+    blocked: identity.blocked,
+  });
+  // Без права аукциона и без блокировки — приветствие с кнопкой заявки:
+  // есть ли заявка, разрешение личности не знает, а «на рассмотрении» без
+  // неё было бы ложью (PER-592).
+  if (denial === "not-admitted") {
+    return {
+      screen: {
+        kind: "welcome",
+        ...(starting?.sourceCode === undefined
+          ? {}
+          : { sourceCode: starting.sourceCode }),
+      },
+      identityId,
+    };
+  }
+  if (denial !== undefined) {
+    return { screen: { kind: "denied", reason: denial }, identityId };
+  }
+  // Корневое меню — общий родитель разделов (PER-592). Отметкой FAQ оно не
+  // закрыто: иначе «‹ Меню» с FAQ вернула бы в FAQ, а разделы за меню
+  // закрыты ею по-прежнему.
+  const menu = { screen: { kind: "menu" }, identityId } as const;
+  try {
+    // Ссылка на лот `l_<токен>` (PER-492) открывает карточку лота: цель названа
+    // самой ссылкой, поэтому отметка FAQ её не перекрывает — та закрывает вход в
+    // дерево без цели, `/start` и разделы. Токен недоверенный: не разобранный,
+    // он не открывает ничего, и приход идёт обычным `/start`. Отказ Auction на
+    // этом пути — тот же кадр недоступности, что у нажатия, а не тишина: ветка
+    // стоит внутри `try`.
+    if (starting?.lotToken !== undefined) {
+      const lotId = lotIdOf(starting.lotToken);
+      if (lotId !== undefined) {
+        return await auctionOutcome(
+          await tradeCallback({
+            ports: input.ports,
+            identity,
+            user: input.user,
+            data: encodeAuctionCallback({ kind: "lot", lotId, page: 0 }),
+          }),
+        );
+      }
+    }
+    const action = local?.action;
+    if (action === "faq" || action === "details" || action === "question") {
+      return { screen: { kind: action }, identityId };
+    }
+    if (action === "menu") return menu;
+    // Отметку ставит только кнопка «Аукционы» под FAQ: фиксируется действие,
+    // не доставка Telegram и не факт прочтения. Запись идемпотентна: таймаут
+    // безопасно повторить тем же действием. Дальше кнопка открывает список,
+    // как «Аукционы».
+    if (action === "read") {
+      await input.ports.faq.acknowledge(viewer);
+    } else if (!(await input.ports.faq.acknowledged(viewer))) {
+      // Без отметки любой раздел, кроме FAQ, показывает FAQ.
+      return { screen: { kind: "faq" }, identityId };
+    }
+    // «Настройки» (PER-595): имя выбирается в идущем аукционе — ближайшем
+    // активном. Торги открыты у одного аукциона (RFC-017). Сбой списка
+    // убирает пункт имени, а не раздел: частота от Auction не зависит.
+    if (local?.action === "settings") {
+      const [current] = await readAuctions({
+        catalog: input.ports.catalog,
+        viewer,
+        listing: "active",
+      }).catch(() => []);
+      return {
+        screen: {
+          kind: "settings",
+          notifications: input.ports.outbid !== undefined,
+          ...(current === undefined ? {} : { auctionId: current.auctionId }),
+        },
+        identityId,
+      };
+    }
+    if (local?.action === "notify") {
+      return await outbidSettings({
+        ports: input.ports,
+        viewer,
+        exit,
+        ...(local.choose === undefined ? {} : { choose: local.choose }),
+        ...(local.detached === true ? { detached: true } : {}),
+      });
+    }
+    const listScreen = async (list: ListAction): Promise<RouteOutcome> => {
+      const auctions = await readAuctions({
+        catalog: input.ports.catalog,
+        viewer,
+        listing: listingOf[list],
+      });
+      return {
+        screen: { kind: list, list: listPage(auctions, local?.page ?? 0) },
+        identityId,
+      };
+    };
+    // Вход и допущенная заявка открывают корневое меню (PER-592); «Аукционы»
+    // под FAQ — список, который отметку и ставит.
+    if (
+      input.action.kind === "start" ||
+      starting !== undefined ||
+      entering !== undefined
+    ) {
+      return menu;
+    }
+    if (action === "read") return await listScreen("auctions");
+    if (action === "auctions" || action === "past") {
+      return await listScreen(action);
+    }
+    const { action: update } = input;
+    return await auctionOutcome(
+      await tradeCallback({
+        ports: input.ports,
+        identity,
+        user: input.user,
+        data: update.data,
+        ...(update.kind === "reply"
+          ? { reply: update.text === undefined ? {} : { text: update.text } }
+          : {}),
+      }),
+    );
   } catch (cause) {
+    // Карточка, хронология, избранное и экран сета начинаются с GetLot. Лот,
+    // который исчез или стал невидимым, — устаревшая кнопка, а не временный
+    // отказ Auction: повтор того же callback его не откроет. Список намерений
+    // тот же, что у хаба (bot.ts).
+    if (
+      cause instanceof ConnectError &&
+      cause.code === Code.NotFound &&
+      input.action.kind === "callback"
+    ) {
+      const parsed = parseAuctionCallback(input.action.data);
+      if (
+        parsed.ok &&
+        (parsed.intent.kind === "lot" ||
+          parsed.intent.kind === "set" ||
+          parsed.intent.kind === "history" ||
+          parsed.intent.kind === "follow" ||
+          parsed.intent.kind === "unfollow")
+      ) {
+        return { screen: { kind: "outdated" }, identityId };
+      }
+    }
     return { screen: unavailable, identityId, failure: classify(cause) };
   }
 }
@@ -424,6 +487,8 @@ async function outbidSettings(input: {
   viewer: Viewer;
   exit: UnavailableExit;
   choose?: AuctionNotificationChange;
+  // Экран открыт из вести (№73 прогона 14 октября 2026 года).
+  detached?: true;
 }): Promise<RouteOutcome> {
   const { outbid } = input.ports;
   const identityId = input.viewer.identityId;
@@ -454,7 +519,11 @@ async function outbidSettings(input: {
     };
   }
   return {
-    screen: { kind: "notify", current },
+    screen: {
+      kind: "notify",
+      current,
+      ...(input.detached === true ? { detached: true } : {}),
+    },
     identityId,
     ...(input.choose === undefined
       ? {}

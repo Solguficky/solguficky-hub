@@ -30,10 +30,16 @@ export type LogFields = {
   telegram_environment?: string;
   // Задано ли имя бота аукциона для ссылок каналов прихода (PER-441).
   auction_bot_links?: boolean;
+  // Сколько записей «Что нового» своей поверхности нашёл процесс в образе
+  // (ADR-069, п. 1).
+  release_notes?: number;
   notification_id?: string;
   notification_type?: string;
   attempt?: number;
   retry_delay_ms?: number;
+  // Чем кончилась реплика переписки бота поддержки: скопирована, отказ и
+  // его вид (ADR-068).
+  outcome?: string;
 };
 
 export type Logger = {

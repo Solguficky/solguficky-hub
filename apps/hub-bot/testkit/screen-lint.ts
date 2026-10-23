@@ -1,10 +1,19 @@
-import { followLabel, unfollowLabel } from "../src/auction-standing.js";
+import { raffleButtonLabel } from "../src/auction-raffle.js";
 import {
+  followLabel,
+  lotNextLabel,
+  lotPrevLabel,
+  lotsLabel,
+  unfollowLabel,
+} from "../src/auction-standing.js";
+import {
+  adminLabel,
   admitLabel,
   declineLabel,
   extensionsLabel,
   marked,
   pictogram,
+  refreshLabel,
 } from "../src/core/pictograms.js";
 import type { Surface } from "../src/core/surface.js";
 import {
@@ -55,14 +64,23 @@ const auctionShape: [UnknownEntryKeys<typeof auctionCatalog>] extends [never]
 void hubShape;
 void auctionShape;
 
-// Пары карточки лота у обоих ботов (PER-594, PER-644): ряды складываются по
-// смыслу — ставки, которые человек задаёт сам, и слежение за лотом:
-// «Обновить» с отметкой избранного.
+// Пары карточки лота у обоих ботов (PER-594, PER-644, PER-669): ряды
+// складываются по смыслу — ставки, которые человек задаёт сам, и взгляд на
+// лот: «Ставки» с отметкой избранного. Листание лотов — ряд
+// `[◀️][🔄 Обновить][▶️]`; на краях ленты и у лота с итогом он короче.
 const lotCardPairs = [
   "Своя сумма|Автоставка",
-  `Обновить|${followLabel}`,
-  `Обновить|${unfollowLabel}`,
+  `Ставки|${followLabel}`,
+  `Ставки|${unfollowLabel}`,
+  `${lotPrevLabel}|${refreshLabel}|${lotNextLabel}`,
+  `${lotPrevLabel}|${refreshLabel}`,
+  `${refreshLabel}|${lotNextLabel}`,
 ];
+
+// Корень аукциона у обоих ботов (решение владельца по прогону 14.10, №66;
+// пересматривает «Розыгрыш своим рядом» PER-669): лоты и розыгрыш — одним
+// рядом.
+const auctionRootPairs = [`${lotsLabel}|${raffleButtonLabel}`];
 
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
@@ -81,21 +99,52 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   "• Модераторы|Разрешённые ники",
   "Модераторы|Разрешённые ники",
   // Подписи карточки несут знаки своих разделов (PER-644).
-  `${marked(pictogram.edit, "Изменить")}|${marked(pictogram.status, "Статус")}`,
+  `${adminLabel("Изменить")}|${adminLabel("Статус")}`,
   `${marked(pictogram.off, "Отписаться")}|${marked(pictogram.settings, "Уведомления сходки")}`,
   `${marked(pictogram.materials, "Материалы (#)")}|${extensionsLabel}`,
-  // Корень аукциона (PER-605): входы администратора и розыгрыша, затем свои
-  // отметки и правила — парами, как стояли в корне ленты (PER-500).
-  "Пульт|Розыгрыш",
+  // Корень аукциона (PER-605): свои отметки и правила — парой, как стояли в
+  // корне ленты (PER-500). «🛠 Пульт» ряд с «Розыгрышем» больше не делит
+  // (PER-669).
   "Избранное|Правила и FAQ",
+  // Вход в финал ведущего и помощника (PER-565): «Пульт» и «Ставки зала» —
+  // одна группа ведения финала одним рядом.
+  `${adminLabel("Пульт")}|${adminLabel("Ставки зала")}`,
+  // Сеты лотов (PER-509) — рядом с пультом: оба ведут аукцион по праву.
+  `${adminLabel("Пульт")}|${adminLabel("Сеты")}`,
   // Способ шага лота (PER-491): бинарная пара выбора одним рядом.
   "Один шаг|По порогам",
+  // «Сводка дня» рядом со «Счастливыми часами» (PER-492): в онлайн-торгах с
+  // окнами и восемью лотами отдельный ряд вывел бы пульт за двенадцать.
+  "Счастливые часы|Сводка дня",
+  // «Отменить аукцион» в ряду «Сводки дня» (PER-606): тот же довод — отдельный
+  // ряд вывел бы пульт онлайн-торгов за двенадцать.
+  "Сводка дня|Отменить аукцион",
+  "Счастливые часы|Сводка дня|Отменить аукцион",
+  // Видимость рядом со сроками недели (PER-673): тот же довод — отдельный ряд
+  // вывел бы запланированный аукцион с розыгрышем, призом и листанием за
+  // двенадцать.
+  "Сроки недели|Опубликовать",
+  "Сроки недели|Снять с публикации",
+  // Ориентировочное время финала (PER-663): анонс и его снятие — одна группа,
+  // и в один ряд они встают: два «🗑» в ряд не встают, а пульт упирается в
+  // потолок рядов.
+  "Время финала|🗑 Убрать время финала",
+  // Поля «Изменить лот» по два в ряд (прогон 12.10, №17): шесть рядов
+  // столбиком выводили экран за высоту телефона.
+  `${marked(pictogram.title, "Название")}|${marked(pictogram.description, "Описание")}`,
+  `${marked(pictogram.photo, "Фото")}|${marked(pictogram.price, "Цена и шаг")}`,
   ...lotCardPairs,
+  ...auctionRootPairs,
 ]);
 
 type Catalog = Readonly<Record<string, ScreenEntry>>;
 
-const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
+// Поверхность с деревом экранов. У бота поддержки экранов нет — у человека
+// переписка, у операторов тема (ADR-068; дизайн-код, «Бот поддержки»), — и
+// каталога ему не положено.
+export type ScreenSurface = Exclude<Surface, "support">;
+
+const configFor: Record<ScreenSurface, (catalog: Catalog) => LintConfig> = {
   hub: (catalog) => ({
     tag: hubTag,
     catalog,
@@ -110,24 +159,24 @@ const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
     },
     namedPairs: hubNamedPairs,
   }),
-  // Именованные пары у дерева аукциона — только пары карточки лота, группа
-  // родителей одна — списки аукционов, в которые возвращает лента.
+  // Именованные пары у дерева аукциона — пары карточки лота и корня аукциона,
+  // группа родителей одна — списки аукционов, в которые возвращает лента.
   auction: (catalog) => ({
     tag: auctionTag,
     catalog,
     parentGroups: { [auctionListParent]: auctionLists },
-    namedPairs: new Set(lotCardPairs),
+    namedPairs: new Set([...lotCardPairs, ...auctionRootPairs]),
   }),
 };
 
-const configs: Record<Surface, LintConfig> = {
+const configs: Record<ScreenSurface, LintConfig> = {
   hub: configFor.hub(hubCatalog),
   auction: configFor.auction(auctionCatalog),
 };
 
 /** Каталог передаётся только в тестах каталогов и линтера; в работе он один. */
 export function inspectCall(
-  surface: Surface,
+  surface: ScreenSurface,
   method: string,
   payload: unknown,
   catalog?: Catalog,
@@ -145,7 +194,7 @@ export function inspectCall(
  * передаётся только в тестах самого правила.
  */
 export function inspectCatalog(
-  surface: Surface,
+  surface: ScreenSurface,
   catalog?: Catalog,
 ): ScreenViolation[] {
   return inspectGraphWith(

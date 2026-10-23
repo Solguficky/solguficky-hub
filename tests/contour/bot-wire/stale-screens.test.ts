@@ -100,10 +100,12 @@ describe("кнопки на старых экранах", () => {
     await organizer.says("/manage");
     await organizer.pressesFromOlderRelease("Сходки и объявления");
     expect(organizer.sees()).toMatch(/^Сходки(?! и объявления)/);
-    expect(organizer.buttons()).not.toContain("Создать сходку");
+    // «Создать сходку» теперь есть и в «Сходках» (прогон 14.10), поэтому
+    // группу выдаёт пункт, которого в «Сходках» нет.
+    expect(organizer.buttons()).not.toContain("Скрытые сходки");
 
     // Процесс жив: следующее нажатие обрабатывается как обычно.
-    await organizer.presses("Архив");
+    await organizer.presses("🗂 Архив");
     expect(organizer.buttons()).toContain("‹ Сходки");
   });
 });

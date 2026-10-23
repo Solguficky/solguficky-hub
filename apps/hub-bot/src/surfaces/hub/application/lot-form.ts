@@ -148,9 +148,10 @@ function termsOf(lot: LotView): LotTermsView {
         ...(lot.fixedStep === undefined ? {} : { step: lot.fixedStep }),
         ...(lot.tiers === undefined ? {} : { tiers: lot.tiers }),
       };
+    case "sold":
+      return { kind: "closed", soldFor: lot.status.price };
     case "trading":
     case "held":
-    case "sold":
     case "unsold":
     case "withdrawn":
       return { kind: "closed" };
@@ -159,6 +160,13 @@ function termsOf(lot: LotView): LotTermsView {
       return _exhaustive;
     }
   }
+}
+
+/** Лот продан: его название, описание и фото больше не меняются. */
+export function isSold(
+  terms: LotTermsView,
+): terms is { kind: "closed"; soldFor: LotAmount } {
+  return terms.kind === "closed" && terms.soldFor !== undefined;
 }
 
 function viewOf(lot: LotView): LotFormView {
@@ -281,6 +289,12 @@ export function createLotForm(lots: LotAdministration) {
           ...(lot === undefined ? {} : { lot }),
           error: "unsupported-image",
         };
+      case "card-closed":
+        return {
+          kind: "lot-refused",
+          reason: "card-closed",
+          lotId: question.lotId,
+        };
       default:
         return failed(card);
     }
@@ -370,9 +384,25 @@ export function createLotForm(lots: LotAdministration) {
         };
       case "auction-not-found":
         return { kind: "lot-refused", reason: "auction-not-found" };
+      case "meetup-cancelled":
+        return {
+          kind: "lot-refused",
+          reason: "meetup-cancelled",
+          auctionId: request.auctionId,
+        };
       default:
         return failed(added);
     }
+  }
+
+  // Проданный лот покупатель купил под этим названием, описанием и фото:
+  // их правку бот не пропускает и из вопроса, заданного до продажи (решение
+  // владельца 15 октября 2026 года). Гонку «продан между чтением и записью»
+  // закрывает отказ Auction `CardClosed` (PER-638).
+  function soldRefusal(lot: LotFormView): ExecuteResult | undefined {
+    return isSold(lot.terms)
+      ? { kind: "lot-refused", reason: "lot-sold", lotId: lot.lotId }
+      : undefined;
   }
 
   async function setText(
@@ -380,6 +410,8 @@ export function createLotForm(lots: LotAdministration) {
   ): Promise<ExecuteResult> {
     const current = await read(request);
     if (current.kind === "refused") return current.result;
+    const sold = soldRefusal(current.lot);
+    if (sold !== undefined) return sold;
     const question: LotQuestion = {
       kind: "text",
       field: request.field,
@@ -437,14 +469,17 @@ export function createLotForm(lots: LotAdministration) {
     return cardRefused(written, question, current.lot);
   }
 
-  // Фото меняется в любом состоянии лота, как название и описание: каталог
-  // торгов не касается (ADR-057). Правка заменяет оба текста, поэтому они
+  // Фото, как название и описание, бот не шлёт у проданного лота. У закрытого
+  // без продажи ряд остаётся, а Auction отвечает `CardClosed` (ADR-057). Правка
+  // заменяет оба текста, поэтому они
   // берутся из карточки, как у `setText`.
   async function setImage(
     request: Extract<LotFormRequest, { intent: "set-lot-image" }>,
   ): Promise<ExecuteResult> {
     const current = await read(request);
     if (current.kind === "refused") return current.result;
+    const sold = soldRefusal(current.lot);
+    if (sold !== undefined) return sold;
     const stored = current.raw.card;
     if (stored === undefined) {
       return {
@@ -592,6 +627,12 @@ export function createLotForm(lots: LotAdministration) {
         };
       case "auction-not-found":
         return { kind: "lot-refused", reason: "auction-not-found" };
+      case "meetup-cancelled":
+        return {
+          kind: "lot-refused",
+          reason: "meetup-cancelled",
+          lotId: request.lotId,
+        };
       case "currency-mismatch":
         // Аукцион ведётся не в рублях: человек это не исправит, а форма другой
         // валюты не знает.

@@ -11,29 +11,31 @@ import type { LotView, ResolvedIdentity } from "./ports.js";
 // Правила тела экрана (дизайн-код, «Аукцион: тело, шлюз, оболочка»): тело,
 // которое шлюз отдаёт обоим ботам, держит предел `callback_data`, по кнопке в
 // ряду — пара только у листания, у подтверждения `[Да, …] [Нет]` (решение
-// владельца 10 октября 2026 года) и у групп карточки лота (PER-594) — и место
-// под ряд навигации оболочки.
+// владельца 10 октября 2026 года) и у групп карточки лота (PER-594), три —
+// только у листания лотов с «Обновить» посередине (PER-669), — и место под ряд
+// навигации оболочки.
 // Подписи, заголовок и навигацию проверяет линтер экрана бота, который тело
 // показал.
 
 const rules: BodyRules = {
   pair: (row) =>
-    row.every(({ action }) =>
-      [
-        "feed.prev",
-        "feed.next",
-        "history.prev",
-        "history.next",
-        "lot.prev",
-        "lot.next",
-      ].includes(action),
-    ) ||
+    (row.length === 2 &&
+      row.every(({ action }) =>
+        ["feed.prev", "feed.next", "history.prev", "history.next"].includes(
+          action,
+        ),
+      )) ||
     [
       "confirm.yes|confirm.no",
-      // Пары карточки лота складываются по смыслу (PER-594, PER-644).
+      // Пары карточки лота складываются по смыслу (PER-594, PER-644,
+      // PER-669), листание лотов — с «Обновить» посередине.
       "lot.bid-custom|lot.proxy",
-      "lot.refresh|lot.follow",
-      "lot.refresh|lot.unfollow",
+      "lot.history|lot.follow",
+      "lot.history|lot.unfollow",
+      "lot.prev|lot.refresh|lot.next",
+      "lot.prev|lot.refresh",
+      "lot.refresh|lot.next",
+      "lot.prev|lot.next",
     ].includes(row.map(({ action }) => action).join("|")),
   // Общий потолок двенадцать рядов. Оболочка бота аукциона сегодня ставит
   // под телом два ряда — FAQ и меню, — и пока исключение `rows` ленты в её
@@ -58,6 +60,25 @@ const lots: LotView[] = Array.from({ length: 20 }, (_, n) => ({
     phase: "online",
   },
 }));
+
+// Лот сета (PER-510): сет назван, и в нём второй лот.
+const SET_LOT_ID = "01929b7e-5c1d-7a3f-8e4b-00000000f001";
+lots.push({
+  lotId: SET_LOT_ID,
+  auctionId,
+  version: 1,
+  card: { title: "Лот сета", description: "" },
+  proxyEnabled: true,
+  status: {
+    kind: "trading",
+    currentPrice: { minorUnits: 1000, currency: "RUB" },
+    phase: "online",
+  },
+  lotSet: {
+    name: "Лесные дары",
+    lotIds: [SET_LOT_ID, "01929b7e-5c1d-7a3f-8e4b-00000000f002"],
+  },
+});
 
 // Самый длинный Telegram id: адресат вопроса едет в его «Отмене».
 const user = {
@@ -140,6 +161,21 @@ const surface: AuctionSurface = {
       async cancelRaffleRegistration() {
         throw new Error("not used");
       },
+      async listMyInvoices() {
+        return { invoices: [] };
+      },
+      async chooseFulfillment() {
+        throw new Error("not used");
+      },
+      async getMyPredictions() {
+        return [];
+      },
+      async getPredictionResults() {
+        throw new Error("not used");
+      },
+      async submitPrediction() {
+        throw new Error("not used");
+      },
     },
     operations: {
       newOperationId() {
@@ -175,6 +211,14 @@ describe("auction screen body", () => {
     if (lot === undefined) throw new Error("no lots");
     const body = await bodyOf(
       encodeAuctionCallback({ kind: "lot", lotId: lot.lotId, page: 2 }),
+    );
+    expect(inspectBody(body.keyboard, rules)).toEqual([]);
+  });
+
+  // Экран сета (PER-510): ряд на каждый лот сета и возврат.
+  it("keeps the set screen within the body rules", async () => {
+    const body = await bodyOf(
+      encodeAuctionCallback({ kind: "set", lotId: SET_LOT_ID, page: 2 }),
     );
     expect(inspectBody(body.keyboard, rules)).toEqual([]);
   });

@@ -1,6 +1,7 @@
 using Dapper;
 using Grpc.Core;
 using Notifications.Auction;
+using Notifications.Facts;
 using Notifications.Favorites;
 using Notifications.Infrastructure;
 using Notifications.IntegrationTests.Infrastructure;
@@ -259,7 +260,7 @@ public class FavoriteLotTests
         (await Count(db, "lot_replica")).ShouldBe(1);
     }
 
-    private static FavoriteOperations Favorites(NpgsqlDataSource source) => new(source, TimeProvider.System);
+    private static FavoriteOperations Favorites(NpgsqlDataSource source) => new(source, TimeProvider.System, new FactTelemetry());
 
     private static AuctionLotFact LotFact(string occasion, global::Auction.V1.LotEvent message) =>
         AuctionMapping.Decode($"events.auction.{occasion}", EventFactory.Bytes(message))

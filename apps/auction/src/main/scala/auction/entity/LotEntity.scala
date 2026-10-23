@@ -7,8 +7,10 @@ import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityTypeKey
 import org.apache.pekko.persistence.Persistence
 import org.apache.pekko.persistence.typed.PersistenceId
+import org.apache.pekko.persistence.typed.SnapshotSelectionCriteria
 import org.apache.pekko.persistence.typed.scaladsl.Effect
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
+import org.apache.pekko.persistence.typed.scaladsl.Recovery
 import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
 import java.time.Clock
@@ -29,7 +31,15 @@ object LotEntity {
 
   val TypeKey: EntityTypeKey[Command] = EntityTypeKey[Command]("lot")
 
-  /** Snapshot через каждые сто событий; журнал при этом не усекается — он источник истины и окно дедупликации. */
+  /**
+   * Snapshot через каждые сто событий; журнал при этом не усекается — он источник истины и окно дедупликации.
+   *
+   * Восстанавливается лот replay'ем журнала целиком, без snapshot (PER-657): snapshot прежней формы не несёт истории
+   * торгов, по которой снятие участника переигрывает торги (ADR-072), а пустая история дала бы молча неверный итог.
+   * Новые snapshots пишутся по-прежнему, уже с историей, — вернуть их чтение можно, когда прежних не останется. Pekko
+   * после такого восстановления сам пишет snapshot последнего номера, поэтому каждое пробуждение лота добавляет строку
+   * `snapshot`; `keepNSnapshots` держит их число.
+   */
   val DefaultSnapshotEvery: Int = 100
 
   /**
@@ -113,6 +123,33 @@ object LotEntity {
       replyTo: ActorRef[Either[ResumeLotRejected, Envelope]]
   ) extends Command
 
+  /**
+   * Снятие участника с лота (ADR-072); шлёт аукцион по команде администратора сходки, инициатор — `Operator`. Ответ
+   * несёт версию лота, как у ставки: с неё чтение показывает новых лидера и цену вместе с продлением (PER-658).
+   */
+  final case class Remove(
+      command: RemoveParticipant,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[RemoveParticipantRejected, Recorded]]
+  ) extends Command
+
+  /**
+   * Предпросмотр снятия (ADR-072, «Последствия»; PER-658): то же `Lot.decide`, что у [[Remove]], на текущем номере
+   * лота, без записи. Ответ — итог снятия и номер, на котором он решён: снятие с этим `expectedVersion` запишет тот же
+   * итог, а лот, ушедший от номера, ответит `LotChanged`.
+   */
+  final case class PreviewRemoval(
+      participant: ParticipantId,
+      replyTo: ActorRef[Either[RemoveParticipantRejected, RemovalPreview]]
+  ) extends Command
+
+  /** Итог снятия без записи: событие, продлённый дедлайн, если снятие продлевает торги, и номер лота. */
+  final case class RemovalPreview(
+      removed: LotEvent.ParticipantRemoved,
+      extendedDeadline: Option[Instant],
+      version: Long
+  )
+
   /** Ask ведущего (П-08); шлёт аукцион по команде ведущего, инициатор — `Operator`. */
   final case class Ask(
       command: AdvanceAsk,
@@ -125,6 +162,16 @@ object LotEntity {
       command: WithdrawLot,
       initiator: Initiator,
       replyTo: ActorRef[Either[WithdrawLotRejected, Envelope]]
+  ) extends Command
+
+  /**
+   * Окно сниженного шага, запущенное по ходу торгов; шлёт аукцион (ADR-047, дополнение 2026-10-12). `None` в ответе —
+   * лот принял окно без записи: оно в чужой валюте.
+   */
+  final case class AddWindow(
+      command: AddStepWindow,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[AddStepWindowRejected, Option[Envelope]]]
   ) extends Command
 
   final case class Get(replyTo: ActorRef[Lot]) extends Command
@@ -153,9 +200,10 @@ object LotEntity {
         commandHandler = (state, command) => handle(state, command, clock, newId),
         eventHandler = (state, stored) => {
           val sequence = state.sequence + 1
-          State(Lot.apply(state.lot, LotJournal.envelope(sequence, stored)), sequence)
+          State(Lot.apply(state.lot, LotJournal.envelope(sequence, stored), stored.occurredAt), sequence)
         }
       ).snapshotAdapter(LotJournal.snapshotAdapter)
+        .withRecovery(Recovery.withSnapshotSelectionCriteria(SnapshotSelectionCriteria.none))
         .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
         .withTagger(_ => tag)
     }
@@ -188,10 +236,28 @@ object LotEntity {
         record(state, Lot.decide(lot, unmark, now), unmark.opId, initiator, replyTo, now, newId)
       case Resume(resume, initiator, replyTo) =>
         record(state, Lot.decide(lot, resume, BidId(newId()), now), resume.opId, initiator, replyTo, now, newId)
+      case Remove(removal, initiator, replyTo) =>
+        val decision = Lot.decide(lot, removal, state.sequence, BidId(newId()), now)
+        recordWith(state, decision, removal.opId, initiator, replyTo, now, newId)(Recorded(_, _))
+      case PreviewRemoval(participant, replyTo) =>
+        // `op_id` предпросмотра свежий и в окно `seen` не попадает: решение не пишется, и повтора у него нет.
+        val removal = RemoveParticipant(participant, OpId(newId()), state.sequence)
+        Effect.reply(replyTo)(
+          Lot.decide(lot, removal, state.sequence, BidId(newId()), now).map(previewOf(_, state.sequence))
+        )
       case Ask(ask, initiator, replyTo) =>
         record(state, Lot.decide(lot, ask, BidId(newId()), now), ask.opId, initiator, replyTo, now, newId)
       case Withdraw(withdrawal, initiator, replyTo) =>
         record(state, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, now, newId)
+      case AddWindow(add, initiator, replyTo) =>
+        Lot.decide(lot, add) match {
+          case Right(None) => Effect.reply(replyTo)(Right(None))
+          case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+          case Right(Some(decision)) =>
+            recordWith(state, Right(decision), add.opId, initiator, replyTo, now, newId)((envelope, _) =>
+              Some(envelope)
+            )
+        }
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }
@@ -239,6 +305,17 @@ object LotEntity {
         Effect
           .persist((event :: derived).map(LotJournal.store(newId(), transaction, _)))
           .thenReply(replyTo)(written => Right(reply(firstOf(written.lot, opId), written.sequence)))
+    }
+
+  private def previewOf(decision: Decision, version: Long): RemovalPreview =
+    decision match {
+      case Decision.Accepted(removed: LotEvent.ParticipantRemoved, derived) =>
+        RemovalPreview(
+          removed,
+          derived.collectFirst { case LotEvent.DeadlineExtended(deadline, _) => deadline },
+          version
+        )
+      case other => throw new IllegalStateException(s"removal preview decided $other")
     }
 
   /** Первый конверт записанной транзакции: `apply` кладёт его в окно `seen`, поэтому после записи он там есть. */

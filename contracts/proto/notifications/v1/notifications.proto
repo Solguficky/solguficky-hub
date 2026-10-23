@@ -75,7 +75,9 @@ message Notification {
     // only to the previous leader named by the auction fact: a subscription is
     // not required. Sent one by one only when the recipient's outbid frequency
     // is "every outbid"; a frequency with an interval folds outbids into
-    // lot_activity_digest instead, and "off" withholds them.
+    // lot_activity_digest instead, and "off" withholds them. On a lot in the
+    // live final the frequency does not apply: sent one by one only when the
+    // recipient turned live_final_outbids on, withheld otherwise.
     LotOutbid lot_outbid = 14;
 
     // The recipient bought a lot: it was sold to them.
@@ -96,7 +98,8 @@ message Notification {
     // price of a lot; the recipient leads. Sent only to that bidder: a
     // subscription is not required. The outbid frequency governs it as it
     // governs lot_outbid: one by one under "every outbid", a line of
-    // lot_activity_digest under an interval, nothing under "off".
+    // lot_activity_digest under an interval, nothing under "off". On a lot in
+    // the live final live_final_outbids governs it as it governs lot_outbid.
     LotProxyRaised lot_proxy_raised = 19;
 
     // The recipient's circle changed between guest and member. This fact is
@@ -128,6 +131,76 @@ message Notification {
     // ticket holder, the winner included. No category governs it: one message
     // per raffle.
     RaffleResult raffle_result = 26;
+
+    // A daily summary of what is new in the bot was created for the surface of
+    // this recipient. One fact per recipient of that surface who has the
+    // category on. The text of the records is absent: it lives in the image of
+    // the surface's bot.
+    ReleaseSummary release_summary = 27;
+
+    // The prediction results of an auction were settled. One fact per
+    // participant who predicted; nobody else receives it. No category governs
+    // it: one message per auction.
+    PredictionResults prediction_results = 28;
+
+    // An auction was cancelled after its trading started. One fact per person
+    // with a favorite row on a lot of the auction, followed or unfollowed, and
+    // per buyer of its sold lots: a person who bid on three lots gets one. A
+    // bid_placed of the cancelled auction that arrives after the cancellation
+    // gives its leader the same fact unless they already have it. No category
+    // governs it: one message per auction.
+    AuctionCancelled auction_cancelled = 29;
+
+    // The deadline of a followed lot is close. It is a second moment of the
+    // same reminder, so it is a type of its own: the two moments must not
+    // collide on the cause key.
+    LotDeadlineClose lot_deadline_close = 30;
+
+    // The next lot of the live final belongs to the recipient: the lot is
+    // named inside the message and never in a second message.
+    AuctionFinalLotNext auction_final_lot_next = 31;
+
+    // A window of reduced bid step started on a lot the recipient follows. One
+    // fact per recipient and window start, however many lots of the window the
+    // recipient follows: every such lot is named inside the fact with the step
+    // and the end of its own window, never in a second fact. A lot that left
+    // trading, a window that already ended, a cancelled auction and a blocked
+    // recipient produce no fact. No category governs it: unfollowing the lot is
+    // how it is turned off.
+    StepWindowStarted step_window_started = 32;
+
+    // An administrator removed a participant from a lot, and the lead passed
+    // to the recipient. Sent only to the new leader named by the auction fact;
+    // the participant who was removed gets nothing. No category and no outbid
+    // frequency governs it: the lead came back without a bid of the recipient.
+    LotLeadRestored lot_lead_restored = 33;
+
+    // A new auction of a meetup became visible to participants: it was
+    // published, or its trading started while it was still hidden. One fact per
+    // person who holds the auction right, delivered by the bot of their circle;
+    // guests without that right get nothing. The auction announcement switch of
+    // the auction notification preferences turns it off; no general category
+    // governs it: the auction settings are self-sufficient.
+    AuctionPublished auction_published = 34;
+
+    // The online phase of an auction started: its trading is open. The same
+    // audience and the same switch as auction_published. One fact per auction
+    // and person: a repeated cause produces no second fact.
+    AuctionTradingOpened auction_trading_opened = 35;
+
+    // The invoice of a sold lot is not paid yet. One fact per invoice and
+    // recipient: the winner of the sale, named by the invoice fact. It fires
+    // about twelve hours after the invoice was raised. No category governs it:
+    // the invoice is the winner's own business.
+    InvoiceReminder invoice_reminder = 36;
+
+    // The payment deadline of an unpaid invoice is a day away. It is a second
+    // moment of the same reminder, so it is a type of its own: the two moments
+    // must not collide on the cause key.
+    InvoiceDueReminder invoice_due_reminder = 37;
+
+    // The recipient collected the set: every lot in it was sold to them.
+    LotSetCollected lot_set_collected = 38;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -168,13 +241,43 @@ message Cause {
     string outbid_digest_id = 6;
 
     // event_id of the consumed Auction auction event. Stable across
-    // republication, therefore a transport repeat is recognized.
+    // republication, therefore a transport repeat is recognized. An
+    // auction_cancelled fact carries the event_id of auction_cancelled, also
+    // when a late bid_placed of that auction caused it.
     string auction_event_id = 7;
 
     // event_id of the consumed Auction raffle event. Stable across
     // republication, therefore a transport repeat is recognized.
     string auction_raffle_event_id = 8;
+
+    // Identifier of the release-notes summary that produced the fact. A
+    // summary is created once, so it produces one fact per recipient.
+    string release_summary_id = 9;
+
+    // event_id of the consumed Auction prediction results event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string auction_prediction_results_event_id = 10;
   }
+}
+
+// A day of release notes of one surface: the records the environment saw for
+// the first time that day, named by id. The text is deliberately absent — it
+// lives in the image of the surface's bot. The same message answers the summary
+// read of the service contract.
+message ReleaseSummary {
+  // Canonical lowercase UUIDv7 with hyphens. Stable id of the summary: a
+  // channel uses it as the target of the button under a delivered summary and
+  // as the anchor of paging.
+  string summary_id = 1;
+
+  // RFC 3339 UTC instant at which the summary was created. Which day the
+  // channel names is the channel's business.
+  string summarized_at = 2;
+
+  // At least one record. Ids of the records of the summary, in the order the
+  // environment saw them. The text is not carried: the channel takes it from
+  // its own image and drops a record its image does not know.
+  repeated string record_ids = 3;
 }
 
 // The subset of the meetup state a channel needs to render a notification
@@ -258,6 +361,93 @@ message LotReminder {
   string lot_id = 1;
 }
 
+// The deadline of a followed lot is close. Nothing else is carried: the
+// price, the exact deadline and the title are read by the channel from
+// Auction by lot_id, as for the other lot types.
+message LotDeadlineClose {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+}
+
+// The invoice of a sold lot is not paid yet. The fact carries what the channel
+// cannot read itself: the amount and the payment deadline are values of the
+// invoice, not of a read model. The lot title is not part of the trading
+// domain; the channel reads it by lot_id, as for the other lot types.
+message InvoiceReminder {
+  // Canonical lowercase UUIDv5 with hyphens: the invoice of the sale.
+  string invoice_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the sold lot.
+  string lot_id = 2;
+
+  // The amount to pay: the price of the sale. It never changes.
+  auction.v1.Money amount = 3;
+
+  // RFC 3339 instant in UTC: the payment is due by this moment.
+  string payment_due_at = 4;
+}
+
+// The payment deadline of an unpaid invoice is a day away. The body is the
+// body of the first reminder: the invoice, the lot, the amount and the
+// deadline are the same values.
+message InvoiceDueReminder {
+  // Canonical lowercase UUIDv5 with hyphens: the invoice of the sale.
+  string invoice_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the sold lot.
+  string lot_id = 2;
+
+  // The amount to pay: the price of the sale. It never changes.
+  auction.v1.Money amount = 3;
+
+  // RFC 3339 instant in UTC: the payment is due by this moment.
+  string payment_due_at = 4;
+}
+
+// A window of reduced bid step started on the followed lots of the recipient.
+// The fact carries what the channel cannot read itself: the step and the end
+// are values of the window the lot recorded, not of the lot's read model. The
+// lot titles are not part of the trading domain; the channel reads them by
+// lot_id, as for the other lot types.
+message StepWindowStarted {
+  // Canonical lowercase UUID with hyphens: the auction the window belongs to.
+  string auction_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the window, the same for
+  // every lot below.
+  string starts_at = 2;
+
+  // Never empty. The followed lots whose window starts at starts_at, each with
+  // the step and the end of its own window: two windows that share a start may
+  // differ in both.
+  repeated StepWindowLot lots = 3;
+}
+
+// One lot of a StepWindowStarted fact: the window of reduced step the lot
+// recorded, as the auction fact carried it.
+message StepWindowLot {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+
+  // The step in force in the window, in the currency of the lot.
+  auction.v1.Money step = 3;
+}
+
+// The next lot of the live final belongs to the recipient. Nothing else is
+// carried: the title and the price of the lot are read by the channel from
+// Auction by lot_id, as for the other lot types.
+message AuctionFinalLotNext {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // How many minutes the lot is expected to take, rounded down. It is an
+  // estimate and not a promise.
+  int32 estimated_minutes = 2;
+}
+
 // The result of the draw as the recipient sees it. The recipient won when
 // ticket equals winning_ticket. Names of ticket holders are not carried: the
 // channel leads the recipient to the result screen, read from AuctionService.
@@ -274,6 +464,132 @@ message RaffleResult {
 
   // How many tickets took part in the draw. At least 1.
   uint32 ticket_count = 4;
+
+  // The prize of the raffle as the organizer declared it, one line. Unset when
+  // the raffle has no prize: the message then names no prize, not an empty one.
+  optional string raffle_prize = 5;
+}
+
+// An auction cancelled after its trading started, as the recipient sees it.
+// Lots sold before the cancellation stay sold, and the recipient's own are
+// listed; the rest were withdrawn. The auction and lot titles are not part of
+// the trading domain; the channel reads them by id.
+message AuctionCancelled {
+  // Canonical lowercase UUID with hyphens, version 5 or 7.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The lots of the auction the recipient bought, in no particular order.
+  // Empty for everyone else, and for a buyer whose sale reached Notifications
+  // before the price was kept. A sale that reached Notifications after the
+  // cancellation gives its buyer this fact with that sale alone, unless they
+  // already have it.
+  repeated CancelledAuctionPurchase purchases = 3;
+}
+
+message CancelledAuctionPurchase {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price the lot was sold at.
+  auction.v1.Money price = 2;
+}
+
+// A new auction of a meetup, as the recipient sees it. The title of the meetup
+// names it: the auction itself has no title, and the channel renders the message
+// without calling Meetups.
+message AuctionPublished {
+  // Canonical lowercase UUIDv5 with hyphens: the auction of the meetup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The title of the meetup as the replica knew it when the fact was written.
+  // Empty when the replica knows the meetup by its id alone; the message then
+  // names no title, not an empty one.
+  string meetup_title = 3;
+
+  // The online phase of the auction: the week of the trading. Unset when the
+  // auction is published before it is scheduled; it is then absent, and the
+  // message names no dates.
+  auction.v1.OnlinePhase online_phase = 4;
+}
+
+// The online phase of an auction started: the trading is open. The deadline of
+// the week is closes_at of the phase; it is absent when the phase ends on a
+// command rather than by time.
+message AuctionTradingOpened {
+  // Canonical lowercase UUIDv5 with hyphens: the auction of the meetup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The title of the meetup as the replica knew it when the fact was written.
+  // Empty when the replica knows the meetup by its id alone.
+  string meetup_title = 3;
+
+  // The online phase of the auction that just started.
+  auction.v1.OnlinePhase online_phase = 4;
+}
+
+// The prediction results of an auction as the recipient sees them: the outcome
+// of every nomination that was played, who guessed it, and the recipient's own
+// result. What the others predicted is never carried: only the names of those
+// who guessed.
+message PredictionResults {
+  // Canonical lowercase UUID with hyphens, version 5 or 7: the auction of the
+  // results.
+  string auction_id = 1;
+
+  // Every nomination that was played, in the order of ADR-067. A nomination
+  // with no sales is absent.
+  repeated PredictionNominationOutcome nominations = 2;
+
+  // The recipient's own result, one entry per nomination in nominations that
+  // they answered, in the order of ADR-067. An answer to a nomination that was
+  // not played is absent: it has no result.
+  repeated PredictionOwnResult yours = 3;
+}
+
+message PredictionNominationOutcome {
+  // UNSPECIFIED is not a value.
+  auction.v1.PredictionNomination nomination = 1;
+
+  // The final value of the nomination. Exactly one is set.
+  oneof value {
+    PredictionLots lots = 2;
+    int64 number = 3;
+  }
+
+  // How many guessed. It counts a winner whose name was erased.
+  uint32 winners = 4;
+
+  // The display names of those who guessed, as the history of bids reads them.
+  // An erased name is absent, so there may be fewer names than winners.
+  repeated string winner_names = 5;
+}
+
+// The winning lots of a lot answer: every lot that shared the first place.
+message PredictionLots {
+  // Canonical lowercase UUIDv7 with hyphens.
+  repeated string lot_ids = 1;
+}
+
+message PredictionOwnResult {
+  // UNSPECIFIED is not a value.
+  auction.v1.PredictionNomination nomination = 1;
+
+  // True when the recipient named a winning lot or the number with the smallest
+  // deviation.
+  bool guessed = 2;
+
+  // The distance from the final value of a number answer that missed. Unset
+  // when guessed and for a lot answer: a wrong lot has no distance.
+  optional int64 deviation = 3;
 }
 
 message OrganizerMessage {
@@ -331,6 +647,22 @@ message LotProxyRaised {
   string lot_id = 1;
 
   // The price of the lot after the proxy bid.
+  auction.v1.Money current_price = 2;
+}
+
+// The lead of a lot came back to the recipient: an administrator removed the
+// participant who led it. The recipient is the new leader, so no field names
+// them, and who was removed is not carried either - the auction fact does not
+// name them. The lot title is read by lot_id.
+//
+// A removal that kept the leader, and a removal that left the lot without one,
+// produce no notification. A lot held for the final sends this notification
+// too, carrying the price the lot goes on with.
+message LotLeadRestored {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price of the lot after the removal. It is not higher than before it.
   auction.v1.Money current_price = 2;
 }
 
@@ -424,15 +756,23 @@ message AuctionFinalStarted {
 
 // A new application was opened in a queue the recipient moderates. The
 // applicant is not carried: who asked, by which name and from which channel is
-// data for the moderator, and the channel leads the recipient to the
-// application queue, where it is read from IdentityService under the
-// moderator's own rights.
+// data for the moderator, and the channel reads the application from
+// IdentityService under the moderator's own rights by the cursor carried here.
 message AccessRequested {
   reserved 1;
   reserved "circle";
 
   // The queue the application lies in, and so the screen the channel leads to.
   identity.v1.ApplicationQueue queue = 2;
+
+  // Canonical lowercase UUIDv7 string with hyphens. Empty when the Identity
+  // event predates it: the channel then leads to the queue from its start.
+  string application_id = 3;
+
+  // RFC 3339 instant in UTC with exactly millisecond precision: the moment the
+  // application was created, as identity.v1.ApplicationCard.created_at gives
+  // it. Empty exactly when application_id is.
+  string created_at = 4;
 }
 
 // The recipient was admitted by an application. Who decided is deliberately
@@ -460,4 +800,19 @@ message CircleChanged {
 
   // The circle the person has after the event.
   identity.v1.Circle current_circle = 2;
+}
+
+// The set was collected: every lot was sold to the same participant. The name
+// and lot count are carried; lot titles are omitted because they are catalog
+// attributes outside the trading event.
+message LotSetCollected {
+  // The name of the set as the organizer typed it.
+  string set_name = 1;
+
+  // How many lots are in the set.
+  uint32 lot_count = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the first lot in organizer order,
+  // which is a member of the collected set.
+  string lot_id = 3;
 }

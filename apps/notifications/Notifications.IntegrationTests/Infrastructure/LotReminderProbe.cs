@@ -7,6 +7,7 @@ namespace Notifications.IntegrationTests.Infrastructure;
 public sealed record LotReminderTaskRow(
     Guid TaskId,
     Guid LotId,
+    string Kind,
     DateTime Deadline,
     DateTime DueAt,
     string State,
@@ -19,6 +20,12 @@ public sealed record LotReminderTaskRow(
 /// </summary>
 public static class LotReminderProbe
 {
+    /// <summary>Вид задания часом: за час до дедлайна.</summary>
+    public const string Hour = "hour";
+
+    /// <summary>Вид задания ближнего момента: за 15 минут до дедлайна.</summary>
+    public const string Close = "close";
+
     public static IReadOnlyList<LotReminderTaskRow> Tasks(string connectionString, Guid lotId)
     {
         using var connection = new NpgsqlConnection(connectionString);
@@ -27,6 +34,7 @@ public static class LotReminderProbe
             """
             SELECT task_id AS TaskId,
                    lot_id AS LotId,
+                   kind AS Kind,
                    deadline AS Deadline,
                    due_at AS DueAt,
                    state AS State,
@@ -39,15 +47,16 @@ public static class LotReminderProbe
             new { lotId }).ToList();
     }
 
-    public static LotReminderTaskRow? Live(string connectionString, Guid lotId) =>
-        Tasks(connectionString, lotId).SingleOrDefault(task => task.State == "scheduled");
+    public static LotReminderTaskRow? Live(string connectionString, Guid lotId, string kind) =>
+        Tasks(connectionString, lotId)
+            .SingleOrDefault(task => task.State == "scheduled" && task.Kind == kind);
 
     /// <summary>
     /// Сдвигает момент срабатывания живого задания в прошлое. Так тест изображает
     /// простой кластера: «время прошло, пока силоса не было». Двигаются данные,
     /// а не часы процесса.
     /// </summary>
-    public static void MoveDueToPast(string connectionString, Guid lotId)
+    public static void MoveDueToPast(string connectionString, Guid lotId, string kind)
     {
         using var connection = new NpgsqlConnection(connectionString);
 
@@ -55,14 +64,14 @@ public static class LotReminderProbe
             """
             UPDATE lot_reminder_task
             SET due_at = now() - interval '1 minute'
-            WHERE lot_id = @lotId AND state = 'scheduled';
+            WHERE lot_id = @lotId AND kind = @kind AND state = 'scheduled';
             """,
-            new { lotId });
+            new { lotId, kind });
 
         if (moved != 1)
         {
             throw new InvalidOperationException(
-                $"expected exactly one live lot reminder task for {lotId}, moved {moved}");
+                $"expected exactly one live lot reminder task of kind {kind} for {lotId}, moved {moved}");
         }
     }
 }

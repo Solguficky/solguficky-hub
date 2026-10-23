@@ -64,6 +64,12 @@ enum AccessRight {
 
   // Granting and revoking PRESET_ADMIN.
   ACCESS_RIGHT_GRANT_ADMINS = 6;
+
+  // Running the auction of a meetup: enabling, discarding and cancelling it,
+  // the administrator console and the final host console, the lot catalog
+  // shared by every auction and floor bids. Comes with PRESET_ADMIN; a member
+  // is granted it one by one.
+  ACCESS_RIGHT_RUN_AUCTIONS = 7;
 }
 
 // The queue an application lies in. The queues are independent: a refusal in

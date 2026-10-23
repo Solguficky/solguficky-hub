@@ -146,10 +146,26 @@ function lotBody(input: {
         },
       ]
     : [];
-  // Ряды складываются по смыслу (дизайн-код, «Клавиатура»): «Обновить» и
-  // отметка избранного — одна группа, слежение за лотом, а «Ставки» — рядом
-  // ниже (решение владельца по прогону 14 октября 2026 года, PER-644).
-  const watch = [...refresh, ...followButtons(lot, input.page, following)];
+  // Ряды складываются по смыслу (дизайн-код, «Клавиатура»): «Ставки» и
+  // отметка избранного — взгляд на лот, а «Обновить» встаёт в середину
+  // листания — «предыдущий, этот же, следующий» — над возвратом (решение
+  // владельца по отзыву тестовой группы 19 октября 2026 года, PER-669).
+  const lookRow = [...history, ...followButtons(lot, input.page, following)];
+  // Лоты сета — содержимое карточки (ADR-073, п. 7): свой ряд между взглядом
+  // на лот и листанием.
+  const setRow: AuctionButton[] =
+    lot.lotSet === undefined
+      ? []
+      : [
+          {
+            action: "lot.set",
+            callbackData: encodeAuctionCallback({
+              kind: "set",
+              lotId: lot.lotId,
+              page: input.page,
+            }),
+          },
+        ];
   return {
     blocks: [
       {
@@ -165,9 +181,9 @@ function lotBody(input: {
     ],
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
-      ...(watch.length === 0 ? [] : [watch]),
-      ...(history.length === 0 ? [] : [history]),
-      ...neighborRows(input.neighbors),
+      ...(lookRow.length === 0 ? [] : [lookRow]),
+      ...(setRow.length === 0 ? [] : [setRow]),
+      ...pagerRows(input.neighbors, refresh),
       [
         {
           action: "lot.back",
@@ -219,6 +235,9 @@ function lotBlock(
     ...(nextWindow === undefined ? {} : { nextWindow }),
     status: lot.status,
     ...(participantName === undefined ? {} : { participantName }),
+    // Сет, в который входит лот (ADR-073, п. 7): карточка называет его и
+    // ведёт к его экрану.
+    ...(lot.lotSet === undefined ? {} : { set: lot.lotSet }),
   };
 }
 
@@ -268,10 +287,13 @@ async function followingOf(
   }
 }
 
-// «‹ пред / след ›» — листание лотов в одном сообщении (PER-644): ряд стоит
-// над возвратом, на краях ленты своей кнопки нет. Сосед — та же кнопка лота
-// со своей страницей ленты.
-function neighborRows(neighbors: LotNeighbors): AuctionButton[][] {
+// `[◀️][🔄 Обновить][▶️]` — листание лотов в одном сообщении (PER-644) с
+// «Обновить» посередине (PER-669): ряд стоит над возвратом, на краях ленты
+// своей кнопки нет. Сосед — та же кнопка лота со своей страницей ленты.
+function pagerRows(
+  neighbors: LotNeighbors,
+  refresh: AuctionButton[],
+): AuctionButton[][] {
   const button = (
     action: "lot.prev" | "lot.next",
     neighbor: LotNeighbors["prev"],
@@ -290,12 +312,13 @@ function neighborRows(neighbors: LotNeighbors): AuctionButton[][] {
         ];
   const row = [
     ...button("lot.prev", neighbors.prev),
+    ...refresh,
     ...button("lot.next", neighbors.next),
   ];
   return row.length === 0 ? [] : [row];
 }
 
-// Кнопка избранного стоит рядом с «Обновить»: это действие экрана, а не
+// Кнопка избранного стоит рядом со «Ставками»: это действие экрана, а не
 // навигация. Состояния нет — нет и кнопки. У закрытого лота «Добавить в
 // избранное» нет: следить за ним уже не за чем, а Notifications вычищает его
 // реплику через 30 дней, и поздняя отметка отказывала бы вечным «попробуй

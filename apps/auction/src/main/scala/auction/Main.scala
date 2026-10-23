@@ -8,11 +8,13 @@ import auction.entity.AuctionRaffle
 import auction.entity.UuidV7
 import auction.grpc.CallerTable
 import auction.grpc.MethodAccess
-import auction.identity.GrpcRaffleAccess
+import auction.identity.GrpcIdentityAccess
 import auction.identity.IdentitySettings
 import auction.lot.AuctionId
 import auction.lot.ParticipantId
 import auction.meetup.GrpcMeetupAuthority
+import auction.meetup.GrpcMeetupStandings
+import auction.meetup.MeetupFactsSettings
 import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
@@ -20,6 +22,7 @@ import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickPredictionStore
 import auction.persistence.SlickRaffleTickets
 import auction.persistence.SlickResultsOutcomes
+import auction.persistence.SlickSetOutcomes
 import auction.persistence.SlickResultsStore
 import auction.naming.DisplayNameCommands
 import auction.raffle.RaffleSettings
@@ -27,6 +30,7 @@ import auction.publication.PublicationSettings
 import auction.results.ResultNames
 import auction.results.ResultsForecasts
 import auction.telemetry.DeadlineMetrics
+import auction.telemetry.MeetupFactsMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
 import auction.telemetry.Telemetry
@@ -37,6 +41,7 @@ import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.http.scaladsl.Http
+import org.apache.pekko.http.scaladsl.server.Directives.concat
 import org.slf4j.LoggerFactory
 
 import java.time.Clock
@@ -68,6 +73,7 @@ object Main {
     val backlogTimeout: FiniteDuration = config.getDuration("auction.projection.backlog-timeout").toScala
     val overdueGrace = config.getDuration("auction.deadlines.overdue-grace")
     val publication = PublicationSettings.fromConfig(config)
+    val meetupFacts = MeetupFactsSettings.fromConfig(config)
     val slot = SlotSettings.fromConfig(config, askTimeout) match {
       case Right(settings) => settings
       case Left(reason) => fail(reason, None)
@@ -133,6 +139,9 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
+    // Один клиент Identity на все вопросы о `place_bids`: кандидаты розыгрыша, человек ставки зала и список имён
+    // аукциона для помощника ведущего.
+    val placeBidsAccess = GrpcIdentityAccess(identity)
     val displayNames = DisplayNameCommands(SlickDisplayNameStore(system))
     val raffleTickets = SlickRaffleTickets(system, displayNames)
     val resultNames: ResultNames = new ResultNames {
@@ -144,7 +153,7 @@ object Main {
       sharding,
       clock,
       UuidV7.generator(clock),
-      GrpcRaffleAccess(identity),
+      placeBidsAccess,
       DrandBeacon(beacon),
       raffleTickets,
       raffle
@@ -176,12 +185,14 @@ object Main {
       AuctionRaffle.sharded(sharding, askTimeout),
       AuctionNode.registerSlot(sharding, clock, UuidV7.generator(clock), slot),
       predictions,
-      results
+      results,
+      SlickSetOutcomes(system)
     )
+    val invoices = AuctionNode.registerInvoices(sharding, clock, UuidV7.generator(clock), askTimeout)
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)
       logger.warn(
-        "auction raffle access check is off: AUCTION_IDENTITY_GRPC_URL is not set, pools are fixed without exclusions"
+        "auction place_bids check is off: AUCTION_IDENTITY_GRPC_URL is not set, raffle pools are fixed without exclusions, floor bids and auction names are not screened"
       )
     if (meetups.url.isEmpty)
       logger.warn(
@@ -189,6 +200,7 @@ object Main {
       )
     val projectionMetrics = ProjectionMetrics(telemetry.getMeter("auction"), clock)
     AuctionNode.startProjection(system, projectionMetrics, backlogTimeout)
+    AuctionNode.startInvoicing(system, sharding, invoices, projectionMetrics, askTimeout, backlogTimeout)
     AuctionNode.watchDeadlines(
       system,
       DeadlineMetrics(telemetry.getMeter("auction")),
@@ -203,11 +215,31 @@ object Main {
       publication,
       backlogTimeout
     )
+    // Durable не объявлен — дефект развёртывания: процесс падает с ненулевым кодом, а не работает без наследования
+    // отмен сходок, как при отказе привязки границы. Выход — не на потоке потребителя: остановка узла ждёт его.
+    AuctionNode.startMeetupFacts(
+      system,
+      sharding,
+      meetupFacts,
+      MeetupFactsMetrics(telemetry.getMeter("auction")),
+      reason =>
+        Future {
+          logger.error(s"auction meetup facts consumer failed: $reason")
+          system.terminate()
+          System.exit(1)
+        }
+    )
     val readiness = AuctionNode.readiness(system, readinessTimeout)
+    // Один источник изменений на gRPC-поток ботов и поток экрана зала: слушатель базы и его соединение одни.
+    val changes = AuctionNode.listenChanges(system)
 
     Http()
       .newServerAt(httpConfig.host, httpConfig.port)
-      .bind(BoundaryLogging.boundary(HealthRoutes.route(readiness)))
+      .bind(
+        BoundaryLogging.boundary(
+          concat(HealthRoutes.route(readiness), AuctionNode.screen(system, changes, GrpcMeetupStandings(meetups)))
+        )
+      )
       .onComplete(bound("http", system))
 
     Http()
@@ -220,9 +252,11 @@ object Main {
           callers,
           askTimeout,
           GrpcMeetupAuthority(meetups),
-          AuctionNode.listenChanges(system),
+          placeBidsAccess.holdsRight,
+          changes,
           clock,
-          overdueGrace
+          overdueGrace,
+          invoices
         )
       )
       .onComplete(bound("grpc", system))

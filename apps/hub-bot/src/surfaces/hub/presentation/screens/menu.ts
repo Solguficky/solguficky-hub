@@ -3,10 +3,16 @@ import type {
   AccessRight,
   ApplicationQueue,
 } from "../../../../auction-ui/index.js";
-import { menuTitle } from "../../../../core/entry.js";
+import {
+  menuTitle,
+  supportBotLink,
+  supportLabel,
+} from "../../../../core/entry.js";
 import type { BotCommand } from "../../../../core/menu-commands.js";
-import { extensionsLabel } from "../../../../core/pictograms.js";
+import { adminLabel, extensionsLabel } from "../../../../core/pictograms.js";
+import type { CommunityDay } from "../../community-time.js";
 import { botCommands, managerCommands } from "../commands.js";
+import { eventLines, type HubEvent } from "./events.js";
 import { settingsExtensionsData } from "./extensions.js";
 import {
   bullet,
@@ -14,6 +20,7 @@ import {
   nextRow,
   type Parent,
   screenText,
+  toEvents,
   toManage,
   toMeetups,
   toMenu,
@@ -30,14 +37,21 @@ import type { ShownScreen } from "./show.js";
 
 // Бот показывает и пропускает пункты по праву, которое проверит сервис
 // (RFC-016): вход, который ведёт в отказ, хуже его отсутствия. Круг и набор
-// пунктов не решают. Сходки, скрытые сходки, объявление и аукцион у сходки с
-// каталогом лотов — праву вести сходки; очередь сообщества, состав и каналы —
-// праву управлять составом; очередь аукциона — праву допускать к торгам;
-// администраторы — праву назначать администраторов (PER-521).
+// пунктов не решают. Сходки, скрытые сходки и объявление — праву вести
+// сходки; очередь сообщества, состав и каналы — праву управлять составом;
+// очередь аукциона — праву допускать к торгам; администраторы — праву
+// назначать администраторов (PER-521). Аукцион у сходки, его пульт, пульт
+// ведущего и каталог лотов — праву вести аукцион (ADR-070, PER-654): они живут
+// в корне аукциона сходки, а не в «Управлении», и одно это право «Управления»
+// и `/manage` не открывает.
 type Viewer = { rights: readonly AccessRight[] };
 
 export function canManageMeetups(person: Viewer): boolean {
   return person.rights.includes("manage-meetups");
+}
+
+export function canRunAuctions(person: Viewer): boolean {
+  return person.rights.includes("run-auctions");
 }
 
 export function canManageMembers(person: Viewer): boolean {
@@ -50,7 +64,7 @@ export function canAdmitBidders(person: Viewer): boolean {
 
 /**
  * Назначать и снимать администраторов: у мейнтейнера это право есть и без
- * набора admin, и «Управление» тогда показывает ему один этот пункт.
+ * набора admin, и «Управление» тогда показывает ему одну группу «Участники».
  */
 export function canGrantAdmins(person: Viewer): boolean {
   return person.rights.includes("grant-admins");
@@ -66,37 +80,50 @@ export function commandsFor(person: Viewer): readonly BotCommand[] {
   return canOpenManagement(person) ? managerCommands : botCommands;
 }
 
+/** Идущие события для меню: время сообщества и сами события (PER-669). */
+export type MenuEvents = {
+  events: readonly HubEvent[];
+  timeZone: string;
+  today: CommunityDay;
+};
+
 /**
- * Корневое меню: разделы бота кнопками в порядке списка команд — тот же
- * источник, `commandsFor`, поэтому кнопки меню и команды одного человека не
- * расходятся. «Управление» — держателю права управления. Возврата у корня нет.
+ * Корневое меню (PER-669; решение владельца по отзыву тестовой группы
+ * 19 октября 2026 года): `[Сходки][Ближайшая сходка]`, `[События]` — пока
+ * идёт хотя бы одно событие, `[Настройки][Помощь]` и «🛠 Управление» своим
+ * рядом держателю права управления. Без событий — ни кнопки, ни строки о них:
+ * бот не шумит. Те же разделы — команды кнопки меню клиента. Возврата у
+ * корня нет.
  */
-export function menuScreen(person: Viewer): ShownScreen {
-  const keyboard = new InlineKeyboard();
-  for (const entry of commandsFor(person)) {
-    const data = sectionData[entry.command];
-    if (data !== undefined) nextRow(keyboard).text(entry.description, data);
+export function menuScreen(person: Viewer, current?: MenuEvents): ShownScreen {
+  const keyboard = new InlineKeyboard()
+    .text("Сходки", toMeetups.data)
+    .text("Ближайшая сходка", "v1:nav:next");
+  const events = current?.events ?? [];
+  if (events.length > 0) nextRow(keyboard).text(toEvents.name, toEvents.data);
+  nextRow(keyboard).text("Настройки", toSettings.data).text("Помощь", helpData);
+  if (canOpenManagement(person)) {
+    nextRow(keyboard).text(adminLabel("Управление"), toManage.data);
   }
+  const lines =
+    current === undefined
+      ? []
+      : eventLines(events, current.timeZone, current.today);
   return {
     id: "menu",
     text: screenText(
       menuTitle,
       "Разделы бота. Те же разделы — в кнопке меню рядом с полем ввода.",
+      lines.length === 0
+        ? undefined
+        : ["Идут события:", ...lines.map(escapeHtml)].join("\n"),
     ),
     keyboard,
     format: "HTML",
   };
 }
 
-// Кнопка раздела в меню — те же данные, что «Повторить» под его командой.
-// Своей команды `/menu` у меню кнопки нет.
-const sectionData: Readonly<Record<string, string | undefined>> = {
-  meetups: toMeetups.data,
-  next: "v1:nav:next",
-  settings: toSettings.data,
-  manage: toManage.data,
-  help: "v1:nav:help",
-};
+const helpData = "v1:nav:help";
 
 /**
  * Группы «Управления» (решение владельца 10 октября 2026 года): вместо девяти
@@ -106,17 +133,30 @@ const sectionData: Readonly<Record<string, string | undefined>> = {
  */
 export type ManageGroup = "meetups" | "applications" | "members";
 
+// Пояснение под заголовком группы (PER-633, прогон 14.10 №104): заголовок
+// без абзаца сжимает пузырь, и подписи кнопок не влезают.
 const groups: Record<
   ManageGroup,
-  { label: string; code: string; id: ManageGroupScreen }
+  { label: string; code: string; id: ManageGroupScreen; lead: string }
 > = {
-  meetups: { label: "Сходки и объявления", code: "m", id: "manage-meetups" },
+  meetups: {
+    label: "Сходки и объявления",
+    code: "m",
+    id: "manage-meetups",
+    lead: "Новые сходки, черновики и объявления всему сообществу.",
+  },
   applications: {
     label: "Заявки и отказы",
     code: "a",
     id: "manage-applications",
+    lead: "Очереди заявок и тех, кому отказано.",
   },
-  members: { label: "Участники", code: "p", id: "manage-members" },
+  members: {
+    label: "Участники",
+    code: "p",
+    id: "manage-members",
+    lead: "Кто в сообществе и с какими правами.",
+  },
 };
 
 type ManageGroupScreen =
@@ -226,13 +266,11 @@ export function manageGroups(person: Viewer): ManageGroup[] {
 }
 
 /**
- * Родитель пункта управления: его группа, а если человек видит одну группу —
- * само «Управление», которое тогда сразу показывает её пункты.
+ * Родитель пункта управления — всегда его группа: место пункта не зависит от
+ * того, сколько групп человек видит (решение владельца по прогону 14.10, №49).
  */
-export function manageItemParent(person: Viewer, group: ManageGroup): Parent {
-  return manageGroups(person).length === 1
-    ? toManage
-    : { name: groups[group].label, data: manageGroupData(group) };
+export function manageItemParent(group: ManageGroup): Parent {
+  return { name: groups[group].label, data: manageGroupData(group) };
 }
 
 function itemsKeyboard(items: readonly Item[]): InlineKeyboard {
@@ -244,35 +282,36 @@ function itemsKeyboard(items: readonly Item[]): InlineKeyboard {
 }
 
 /**
- * «Управление» — раздел под корневым меню: возврат «‹ Меню». Человек с одной группой
- * видит сразу её пункты, с несколькими — кнопки групп. Ключ создания рождается
- * при отрисовке и лежит в кнопке: два быстрых нажатия несут один ключ, а
- * перерисовка — новый. Заявки в аукцион лежат рядом с заявками в сообщество:
- * заявка гостя подана в бот аукциона, а не в конкретный аукцион (решение
- * владельца по PER-534, дополнение ADR-064 к пункту 12).
+ * «Управление» — раздел под корневым меню: кнопки видимых групп и возврат
+ * «‹ Меню». Одна видимая группа тоже идёт кнопкой: раскрытие одной группы
+ * прямо в «Управлении» убрано (решение владельца по прогону 14.10, №49).
+ * Заявки в аукцион лежат рядом с заявками в сообщество: заявка гостя подана в
+ * бот аукциона, а не в конкретный аукцион (решение владельца по PER-534,
+ * дополнение ADR-064 к пункту 12).
  */
-export function manageScreen(
-  person: Viewer,
-  newMeetupToken: string,
-  counts?: ApplicationCounts,
-): ShownScreen {
-  const visible = manageGroups(person);
-  const [only] = visible;
-  const keyboard =
-    visible.length === 1 && only !== undefined
-      ? itemsKeyboard(groupItems(person, only, newMeetupToken, counts))
-      : itemsKeyboard(
-          visible.map((group) => [groups[group].label, manageGroupData(group)]),
-        );
+export function manageScreen(person: Viewer): ShownScreen {
+  const keyboard = itemsKeyboard(
+    manageGroups(person).map((group) => [
+      groups[group].label,
+      manageGroupData(group),
+    ]),
+  );
   return {
     id: "manage",
     keyboard: withNav(keyboard, toMenu),
-    text: screenText("Управление"),
+    text: screenText(
+      "Управление",
+      "Сходки, заявки и участники сообщества — по группам.",
+    ),
     format: "HTML",
   };
 }
 
-/** Экран группы — ребёнок «Управления»: её пункты и возврат «‹ Управление». */
+/**
+ * Экран группы — ребёнок «Управления»: её пункты и возврат «‹ Управление».
+ * Ключ создания сходки рождается при отрисовке и лежит в кнопке: два быстрых
+ * нажатия несут один ключ, а перерисовка — новый.
+ */
 export function manageGroupScreen(
   person: Viewer,
   group: ManageGroup,
@@ -281,7 +320,7 @@ export function manageGroupScreen(
 ): ShownScreen {
   return {
     id: groups[group].id,
-    text: screenText(groups[group].label),
+    text: screenText(groups[group].label, groups[group].lead),
     keyboard: withNav(
       itemsKeyboard(groupItems(person, group, newMeetupToken, counts)),
       toManage,
@@ -318,10 +357,20 @@ export function settingsScreen(): ShownScreen {
 const extensionsHelp = `Расширения сходки, например аукцион, — кнопка «${extensionsLabel}» в её карточке.`;
 
 /**
- * «Помощь» — раздел под меню: текст о боте и команды строками, кнопка одна —
- * «‹ Меню». `welcome` — текст о боте, абзацы через пустую строку.
+ * «Помощь» — раздел под меню: текст о боте и команды строками. Под текстом
+ * «Что нового», при адресе бота поддержки — «Написать в поддержку ↗»
+ * (PER-625), последним рядом «‹ Меню». `welcome` — текст о боте, абзацы через
+ * пустую строку.
  */
-export function helpScreen(person: Viewer, welcome: string): ShownScreen {
+export function helpScreen(
+  person: Viewer,
+  welcome: string,
+  supportBotUsername?: string,
+): ShownScreen {
+  const keyboard = new InlineKeyboard().text("Что нового", "v1:wn").row();
+  if (supportBotUsername !== undefined) {
+    keyboard.url(supportLabel, supportBotLink(supportBotUsername, "hub")).row();
+  }
   return {
     id: "help",
     text: screenText(
@@ -335,7 +384,7 @@ export function helpScreen(person: Viewer, welcome: string): ShownScreen {
         ),
       ].join("\n"),
     ),
-    keyboard: withNav(new InlineKeyboard(), toMenu),
+    keyboard: withNav(keyboard, toMenu),
     format: "HTML",
   };
 }

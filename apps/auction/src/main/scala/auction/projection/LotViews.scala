@@ -10,8 +10,15 @@ import java.util.UUID
 import scala.concurrent.Future
 
 /**
+ * Сет лота (ADR-073) в read model: название, лоты в порядке организатора и собравший — после итога и только у
+ * собранного сета.
+ */
+final case class LotSetView(lotSetId: UUID, name: String, lots: List[UUID], collector: Option[UUID])
+
+/**
  * Лот из read model вместе с карточкой каталога: карточку торги не знают (ADR-057), и она присоединяется при чтении.
- * `bidCount` — число строк `lot_bid` лота, ручных и прокси вместе (PER-320).
+ * `bidCount` — число строк `lot_bid` лота, ручных и прокси вместе (PER-320), без ставок снятых участников (PER-658).
+ * `lotSet` — сет лота, только полный: сет меньше чем из двух лотов участнику не показывается (ADR-073, п. 3).
  */
 final case class LotSnapshotView(
     lotId: UUID,
@@ -19,19 +26,23 @@ final case class LotSnapshotView(
     version: Long,
     lot: Lot,
     card: Option[LotCard],
-    bidCount: Long = 0
+    bidCount: Long = 0,
+    lotSet: Option[LotSetView] = None
 )
 
 /**
  * Статистика лота реестра для ручного отбора финалистов (PER-481) и метрики финала для прогнозов (PER-608, ADR-067 п.
  * 6): только агрегаты, без участников и лимитов. `bidCount` считается тем же выражением по `lot_bid`, что
  * `LotSnapshotView.bidCount`, `participantCount` — по `lot_participant`, `lastBidAt` — время последней строки `lot_bid`
- * по номеру события. `startingPrice` — из `LotOpened`: строки нет, пока лот не открывался.
+ * по номеру события; снятые участники и их ставки не считаются нигде (PER-658). `startingPrice` — из `LotOpened`:
+ * строки нет, пока лот не открывался.
  *
  * `heldPrice` — цена, с которой лот удержан в D 00:00 (`HeldState.currentPrice` на `LotHeldForFinal`), а
  * `finalBidCount` — принятые ставки лота состава после его возврата в торги: строки `lot_bid` с номером события больше
  * `LotResumed`. Состав — заморозка `FinalLineupFrozen` (`auction_lineup`), а не признак удержания: удержанный лот,
  * проданный или снятый до заморозки, в состав не входит. У лота вне состава обеих метрик нет — `None`, а не ноль.
+ *
+ * `contest` — смены лидера и самая длинная дуэль за всю жизнь лота (PER-511), по его хронологии ядром [[LotContest]].
  */
 final case class LotStatisticsView(
     lotId: UUID,
@@ -41,7 +52,8 @@ final case class LotStatisticsView(
     participantCount: Long,
     lastBidAt: Option[Instant],
     heldPrice: Option[Money] = None,
-    finalBidCount: Option[Long] = None
+    finalBidCount: Option[Long] = None,
+    contest: LotContest = LotContest.none
 ) {
 
   /**
@@ -82,6 +94,38 @@ final case class LotStatisticsView(
     else Money(current.minorUnits - start.minorUnits, start.currency)
 }
 
+/**
+ * Статистика лота за окно (PER-492): сколько принятых ставок лот получил в окне, до какой цены он в нём дошёл и какова
+ * была его цена к открытию окна. Число ставок и максимум считаются по строкам `lot_bid` окна без ставок снятых
+ * участников, `priceBefore` — цена последней до окна ставки или снятия участника (PER-658), с которой лот пошёл дальше,
+ * а без них — стартовая цена `LotOpened`. Полей участников здесь нет намеренно: сводка дня зовёт лот по цене и
+ * оспоренности, а не по людям. `contest` — смены лидера и самая длинная дуэль внутри окна (PER-511): лидер к открытию
+ * окна берётся из хронологии до него.
+ */
+final case class DayLotStatisticsView(
+    lotId: UUID,
+    bidCount: Long,
+    maxPrice: Option[Money],
+    priceBefore: Option[Money],
+    contest: LotContest = LotContest.none
+) {
+
+  /**
+   * Рост за окно — максимум окна минус цена, с которой окно открылось, абсолютная сумма в валюте лота. Ставок в окне не
+   * было — роста нет; цены к открытию окна не было — тоже. Расхождение валют — испорченный read model, а не нулевой
+   * рост.
+   */
+  def growth: Option[Money] =
+    maxPrice.flatMap(top => priceBefore.map(before => difference(top, before)))
+
+  private def difference(top: Money, before: Money): Money =
+    if (top.currency != before.currency)
+      throw IllegalStateException(
+        s"lot $lotId trades in ${top.currency.value}, opened in ${before.currency.value}"
+      )
+    else Money(top.minorUnits - before.minorUnits, before.currency)
+}
+
 /** Изображение лота так, как оно лежит в строке каталога: байты, тип и версия этих байтов. */
 final case class LotImageView(content: IArray[Byte], mediaType: String, version: String)
 
@@ -108,14 +152,22 @@ trait LotViews {
   def image(lotId: UUID): Future[Option[LotImageView]]
 
   /**
-   * Ставки лота по возрастанию номера события в журнале, строго после `after`, не больше `limit`. Порядок — журнала, а
-   * не часов: события одной команды делят время. `None` — read model лота не знает; лот без ставок — пустой список.
+   * Ставки и снятия участников лота по возрастанию номера события в журнале, строго после `after`, не больше `limit`.
+   * Порядок — журнала, а не часов: события одной команды делят время. Ставка снятого участника приходит с пометкой
+   * (PER-658). `None` — read model лота не знает; лот без ставок — пустой список.
    */
-  def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]]
+  def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[HistoryRecord]]]
 
   /**
    * Статистика каждого лота реестра аукциона сходки по возрастанию `lot_id`, без страниц. Лот реестра, которого read
    * model ещё не знает, в выдачу не попадает, как у `registryPage`.
    */
   def statistics(auctionId: UUID): Future[List[LotStatisticsView]]
+
+  /**
+   * Статистика каждого лота реестра аукциона сходки за окно `[from, until)` по возрастанию `lot_id`, без страниц. Лот
+   * реестра, которого read model ещё не знает, в выдачу не попадает, как у `registryPage`; лот без ставок в окне
+   * приходит с нулём ставок и без цены, а не пропускается — «ставок не было» читается потребителем по всем лотам.
+   */
+  def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]]
 }

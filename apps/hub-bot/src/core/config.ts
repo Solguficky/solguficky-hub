@@ -1,3 +1,4 @@
+import { isTelegramBotUsername } from "./entry.js";
 import { type ServiceName, serviceNames } from "./service.js";
 import type { Surface } from "./surface.js";
 
@@ -36,6 +37,20 @@ export type ProcessConfig = {
 // а пустой адрес ушёл бы в клиент.
 export function reader(env: Env): (name: string) => string | undefined {
   return (name) => env[name] || undefined;
+}
+
+// Имя бота из переменной: его отсутствие выключает ссылку, а форма проверяется
+// на старте — ссылка на чужой или несуществующий бот молчит так же, как
+// ссылка в никуда (PER-441, PER-625).
+export function readBotUsername(
+  env: Env,
+  name: string,
+): Loaded<string | undefined> {
+  const username = reader(env)(name);
+  if (username !== undefined && !isTelegramBotUsername(username)) {
+    return { ok: false, error: `${name} must be a Telegram bot username` };
+  }
+  return { ok: true, config: username };
 }
 
 // Отказ называет только имя переменной: значения токенов в запись не попадают.

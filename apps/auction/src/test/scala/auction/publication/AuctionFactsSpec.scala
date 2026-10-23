@@ -97,6 +97,33 @@ final class AuctionFactsSpec extends AnyWordSpec with Matchers {
       published(9).getState.config shouldBe defined
     }
 
+    "publish a collected set once with its name, its lots in order and the collector, and nothing for its definition" in {
+      val set = LotSetId(uuid(40))
+      val defined = AuctionEvent.LotSetDefined(set, LotSetName("Красный сет").toOption.get, List(other, lot))
+      val withSet = journal.take(3) ++ List(
+        defined,
+        AuctionEvent.AuctionScheduled(config()),
+        AuctionEvent.PrebiddingStarted,
+        AuctionEvent.LotSetSettled(set, LotSetSettlement.Collected(participant(2)))
+      ).zipWithIndex.map((event, index) => (index + 4).toLong -> stored(event, index + 4))
+      val published = facts(withSet)
+      published(3) shouldBe None
+      published.flatten.count(_.subject == LotFacts.SubjectPrefix + "lot_set_collected") shouldBe 1
+      message(published(6)).getLotSetCollected shouldBe bus.LotSetCollected(
+        lotSetId = set.value.toString,
+        name = "Красный сет",
+        lotIds = List(other, lot).map(_.value.toString),
+        collectorId = participant(2).value.toString
+      )
+    }
+
+    "publish nothing for a set that nobody collected" in {
+      AuctionFacts.occasion(
+        AuctionEvent.LotSetSettled(LotSetId(uuid(40)), LotSetSettlement.NotCollected),
+        Auction.initial
+      ) shouldBe None
+    }
+
     "publish the completion of each lot of the final with no active lot and the end of the final once" in {
       val ended = journal ++ List(
         AuctionEvent.FinalLotCompleted(other),
@@ -147,6 +174,29 @@ final class AuctionFactsSpec extends AnyWordSpec with Matchers {
       state.status.isCancelled shouldBe true
       state.lotIds shouldBe List(lot, other).map(_.value).sorted.map(_.toString)
       state.config shouldBe defined
+    }
+
+    // Видимость — факт аукциона, а не подпись: по нему Notifications сообщает о новом аукционе и снимает
+    // неотправленную весть (ADR-047, дополнение 2026-10-20; PER-646).
+    "publish the visibility as its own fact and carry the flag in every snapshot" in {
+      val visible = journal.take(2) ++ List(
+        AuctionEvent.AuctionPublished,
+        AuctionEvent.AuctionHidden,
+        AuctionEvent.AuctionPublished
+      ).zipWithIndex.map((event, index) => (index + 3).toLong -> stored(event, index + 3))
+      val published = facts(visible)
+      published.map(_.map(_.subject)) shouldBe List(
+        "auction_drafted",
+        "lot_added",
+        "auction_published",
+        "auction_hidden",
+        "auction_published"
+      ).map(name => Some(LotFacts.SubjectPrefix + name))
+      val bodies = published.map(message)
+      // Рождение скрыто, публикация снимает признак, снятие возвращает его.
+      bodies.map(_.getState.hidden) shouldBe List(true, true, false, true, false)
+      bodies(2).getState.status.isDraft shouldBe true
+      bodies(3).getState.status.isDraft shouldBe true
     }
   }
 }

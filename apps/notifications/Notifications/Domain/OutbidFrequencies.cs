@@ -16,11 +16,13 @@ public abstract record OutbidDecision
 }
 
 /// <summary>
-/// Настройки уведомлений аукциона целиком (PER-539): частота перебитий и
-/// ответов автоставки и выключатель анонса финала. Покупку и допуск не
-/// выключает ни одна из них.
+/// Настройки уведомлений аукциона целиком (PER-539, PER-645, PER-646): частота
+/// перебитий и ответов автоставки, выключатель анонса финала, выключатель
+/// перебитий в живом финале и выключатель вестей о новом аукционе и открытии
+/// торгов. Покупку и допуск не выключает ни одна из них.
 /// </summary>
-public sealed record AuctionPreferences(OutbidFrequency OutbidFrequency, bool FinalAnnouncements);
+public sealed record AuctionPreferences(OutbidFrequency OutbidFrequency, bool FinalAnnouncements,
+    bool LiveFinalOutbids, bool AuctionAnnouncements);
 
 /// <summary>
 /// Словарь настройки перебитий: хранение, умолчание и решение. Правило живёт
@@ -56,6 +58,20 @@ public static class OutbidFrequencies
         ByStorage.TryGetValue(stored, out var frequency)
             ? frequency
             : throw new ArgumentOutOfRangeException(nameof(stored), stored, "unknown stored outbid frequency");
+
+    /// <summary>
+    /// Умолчание выключателя перебитий в живом финале: в зале «перебили» —
+    /// шум, и молчат они, пока человек их не включил (PER-645).
+    /// </summary>
+    public const bool LiveFinalDefault = false;
+
+    /// <summary>
+    /// Решение в живом финале: частота здесь не действует — лот в зале живёт
+    /// минуты, и сводка пришла бы после продажи. Включивший получает каждое
+    /// событие, остальные — ни одного (PER-645).
+    /// </summary>
+    public static OutbidDecision DecideLiveFinal(bool? enabled) =>
+        enabled ?? LiveFinalDefault ? new OutbidDecision.Send() : new OutbidDecision.Suppress();
 
     /// <summary>Решение по заданному значению; отсутствие строки — умолчание.</summary>
     public static OutbidDecision Decide(OutbidFrequency? frequency) =>

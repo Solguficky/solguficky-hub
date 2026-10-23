@@ -96,10 +96,126 @@ describe("lot card in the hub shell", () => {
     );
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\n💰 Цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
+        "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
         "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81).
+  it("names an exhausted own limit of a participant who does not lead", () => {
+    const { screen } = auctionScreen(
+      view(
+        [
+          lot({
+            card: { title: "Кружка", description: "" },
+            nextPrice: rub(950),
+            status: {
+              kind: "trading",
+              currentPrice: rub(900),
+              leaderId: "p-2",
+              phase: "online",
+            },
+            participantName: "@owl",
+            viewerProxyLimit: rub(900),
+          }),
+        ],
+        "plain",
+      ),
+    );
+    expect(plain(screen.text)).toContain(
+      "💰 Цена: 900 ₽\n👤 Лидер: @owl\n\n" +
+        "Следующая ставка: от 950 ₽\n" +
+        "Автоставка до 900 ₽ исчерпана — подними лимит",
+    );
+  });
+
+  // Без ставок первая ставка — по стартовой цене, а не «по шагу» (PER-631,
+  // №82); с лидером — по шагу.
+  it("offers the first bid instead of the step on a lot without bids", () => {
+    const labelOf = (leaderId?: string) => {
+      const block = lot({
+        nextPrice: rub(1000),
+        status: {
+          kind: "trading",
+          currentPrice: rub(1000),
+          ...(leaderId === undefined ? {} : { leaderId }),
+          phase: "online",
+        },
+      });
+      const { screen } = auctionScreen({
+        ...view([block]),
+        body: {
+          blocks: [block],
+          keyboard: [
+            [
+              {
+                action: "lot.bid-step",
+                callbackData: "v1:auc:cb:x:0",
+                amount: rub(1000),
+              },
+            ],
+            [{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }],
+          ],
+        },
+      });
+      return plain(String(screen.keyboard.inline_keyboard[0]?.[0]?.text ?? ""));
+    };
+    expect(labelOf()).toBe("Первая ставка (1 000 ₽)");
+    expect(labelOf("p-2")).toBe("По шагу (1 000 ₽)");
+  });
+
+  // Принятая ставка называет продление анти-снайпом по часам сообщества
+  // (PER-631, №107): номер продления — или что продлений больше не будет.
+  it("names the anti-sniping extension on an accepted bid", () => {
+    const accepted = (
+      extension: Extract<AuctionBlock, { kind: "accepted" }>["extension"],
+    ) =>
+      plain(
+        auctionScreen({
+          ...view([]),
+          body: {
+            blocks: [
+              {
+                kind: "accepted",
+                command: "bid",
+                lotId: "lot-1",
+                auctionId,
+                title: "Кружка",
+                amount: rub(1300),
+                ...(extension === undefined ? {} : { extension }),
+              },
+            ],
+            keyboard: [
+              [{ action: "accepted.lot", callbackData: "v1:auc:lot:x:0" }],
+              [{ action: "accepted.feed", callbackData: "v1:auc:feed:x:0" }],
+            ],
+          },
+        }).screen.text,
+      );
+    // 08:03 UTC — 11:03 по Москве.
+    expect(
+      accepted({
+        kind: "extended",
+        deadline: "2026-10-10T08:03:00Z",
+        used: 3,
+        max: 3,
+        windowSeconds: 120,
+      }),
+    ).toContain("Торги продлены до 11:03 (продление 3 из 3).");
+    expect(
+      accepted({
+        kind: "extended",
+        deadline: "2026-10-10T08:03:00Z",
+        used: 1,
+        max: 3,
+        windowSeconds: 60,
+      }),
+    ).toContain("Торги продлены до 11:03");
+    expect(
+      accepted({ kind: "exhausted", deadline: "2026-10-10T08:03:00Z" }),
+    ).toContain("Продлений больше не будет: торги закроются в 11:03.");
+    expect(accepted(undefined)).not.toContain("продл");
   });
 
   // Пустое описание — заглушка, та же, что у карточки сходки (PER-594).
@@ -131,6 +247,37 @@ describe("lot card in the hub shell", () => {
         "<p>Статус: продан</p><p>💰 Цена продажи: 3 000 ₽<br>👤 Победитель: Сыч</p>" +
         "<p>Роспись.<br>Ручная.</p><p>Объём 300 мл.</p>",
     );
+  });
+
+  // Организатор видит настоящий аккаунт победителя рядом с псевдонимом
+  // (PER-648), а участнику поле не задаётся, и остаётся псевдоним.
+  it("adds the real account of the sold winner next to the pseudonym", () => {
+    const { screen } = auctionScreen({
+      ...view([
+        lot({
+          card: { title: "Кружка", description: "Роспись." },
+          status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+          participantName: "Сыч*",
+        }),
+      ]),
+      winnerUsername: "owl",
+    });
+    expect(plain(screen.text)).toContain("👤 Победитель: Сыч* (@owl)");
+  });
+
+  it("does not repeat the account when the winner is shown by it", () => {
+    const { screen } = auctionScreen({
+      ...view([
+        lot({
+          card: { title: "Кружка", description: "Роспись." },
+          status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
+          participantName: "@owl",
+        }),
+      ]),
+      winnerUsername: "owl",
+    });
+    expect(plain(screen.text)).toContain("👤 Победитель: @owl");
+    expect(plain(screen.text)).not.toContain("@owl (@owl)");
   });
 
   // Чужой год называется в дате (дизайн-код, «Формат»).
@@ -212,7 +359,7 @@ describe("feed and history in the hub shell", () => {
     // Лента — просто список лотов (PER-605): пульт, избранное и правила
     // стоят в корне аукциона, а над лотами — только «Добавить лот».
     expect(rows).toHaveLength(11);
-    expect(rows[0]).toEqual(["Добавить лот"]);
+    expect(rows[0]).toEqual(["🛠 Добавить лот"]);
     expect(rows.at(-1)).toEqual(["‹ Аукцион"]);
   });
 
@@ -301,6 +448,7 @@ describe("feed and history in the hub shell", () => {
             lotId: "lot-1",
             auctionId: auctionId,
             title: "Кружка",
+            status: { kind: "unsold" },
             page: 0,
             pageCount: 1,
             entries: [
@@ -322,6 +470,73 @@ describe("feed and history in the hub shell", () => {
     });
     expect(plain(screen.text)).toBe(
       "<b>Ставки</b>\n<i>Кружка</i>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+    );
+  });
+});
+
+describe("history with removals in the hub shell", () => {
+  it("strikes the bids of a removed participant and shows the removal as its own line", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "history",
+            lotId: "lot-1",
+            auctionId: auctionId,
+            title: "Кружка",
+            status: { kind: "unsold" },
+            page: 0,
+            pageCount: 1,
+            entries: [
+              {
+                kind: "bid",
+                sequence: 1,
+                occurredAt: "2025-10-03T16:04:00Z",
+                amount: rub(500),
+                origin: { kind: "manual", source: "bot" },
+                participantName: "@jay",
+                removed: true,
+              },
+              {
+                kind: "bid",
+                sequence: 2,
+                occurredAt: "2025-10-03T16:05:00Z",
+                amount: rub(450),
+                origin: { kind: "proxy" },
+                participantName: "@owl",
+              },
+              {
+                kind: "removal",
+                sequence: 3,
+                occurredAt: "2025-10-03T16:06:00Z",
+                price: rub(400),
+                leaderName: "@owl",
+              },
+              {
+                kind: "removal",
+                sequence: 4,
+                occurredAt: "2025-10-03T16:07:00Z",
+                price: rub(300),
+              },
+            ],
+          },
+        ],
+        keyboard: [
+          [{ action: "history.back", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toBe(
+      [
+        "<b>Ставки</b>",
+        "<i>Кружка</i>",
+        "",
+        "• <s>3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную</s>",
+        "• 3 октября 2025, пт, 19:05 · @owl · 450 ₽ · авто",
+        "• 3 октября 2025, пт, 19:06 · участник снят · цена 400 ₽ · ведёт @owl",
+        "• 3 октября 2025, пт, 19:07 · участник снят · цена 300 ₽",
+      ].join("\n"),
     );
   });
 });
@@ -492,6 +707,33 @@ describe("bid sheet in the hub shell", () => {
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
     ).toEqual([["‹ Лот"]]);
+  });
+
+  it("names five times the next price when a bid is above the ceiling", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "result",
+            result: {
+              command: "bid",
+              kind: "refused",
+              refusal: { kind: "bid-above-maximum", next: rub(5100) },
+            },
+            lotId: "lot-1",
+            auctionId: auctionId,
+            title: "Кружка",
+          },
+        ],
+        keyboard: [
+          [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toBe(
+      "<b>Ставка выше потолка</b>\n\n<b>Кружка</b>\n\nМаксимум сейчас — 5 × 5 100 ₽.",
+    );
   });
 
   // Непринятый ответ — свой экран с «Ввести заново» над «К лоту» (PER-472).
@@ -844,5 +1086,177 @@ describe("live final in the hub shell", () => {
     );
     expect(text).toContain("Следующая ставка: 1 700 ₽");
     expect(text).not.toContain("Ведущий объявил");
+  });
+});
+
+// Сет лотов (ADR-073, п. 7): карточка лота сета называет сет и ведёт к его
+// экрану, после итога — строка собравшего; экран сета перечисляет лоты сета.
+describe("lot set in the hub shell", () => {
+  const setLot = (overrides: Partial<Extract<AuctionBlock, { kind: "lot" }>>) =>
+    lot({
+      card: { title: "Кружка", description: "" },
+      status: { kind: "unsold" },
+      ...overrides,
+    });
+
+  it("names the set on the card and opens its screen", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          setLot({
+            set: { name: "Лесные дары", lotIds: ["lot-1", "lot-2"] },
+          }),
+        ],
+        keyboard: [
+          [{ action: "lot.set", callbackData: "v1:auc:st:lot-1:0" }],
+          [{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toContain("Сет: «Лесные дары»");
+    // До итога сета собравшего нет (ADR-073, п. 4).
+    expect(plain(screen.text)).not.toContain("собрал");
+    const rows = screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => button.text),
+    );
+    expect(rows[0]).toEqual(["Лоты сета"]);
+  });
+
+  it("names the collector of the set after the outcome", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          setLot({
+            set: {
+              name: "Лесные дары",
+              lotIds: ["lot-1", "lot-2"],
+              collectorName: "@jay",
+            },
+          }),
+        ],
+        keyboard: [[{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }]],
+      },
+    });
+    expect(plain(screen.text)).toContain("Сет «Лесные дары» собрал @jay");
+  });
+
+  it("lists the lots of the set and returns to the lot", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "set",
+            auctionId: auctionId,
+            name: "Лесные дары",
+            lots: [
+              {
+                lotId: "lot-1",
+                title: "Кружка",
+                status: { kind: "unsold" },
+              },
+              {
+                lotId: "lot-2",
+                title: "Плакат",
+                status: { kind: "sold", winnerId: "p-1", price: rub(700) },
+              },
+            ],
+            collectorName: "@jay",
+          },
+        ],
+        keyboard: [
+          [
+            {
+              action: "set.open-lot",
+              lotId: "lot-1",
+              callbackData: "v1:auc:lot:lot-1:0",
+            },
+          ],
+          [
+            {
+              action: "set.open-lot",
+              lotId: "lot-2",
+              callbackData: "v1:auc:lot:lot-2:0",
+            },
+          ],
+          [{ action: "set.back", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toContain("<i>Лесные дары</i>");
+    expect(plain(screen.text)).toContain("• Кружка — не продан");
+    expect(plain(screen.text)).toContain("• Плакат — продан за 700 ₽");
+    const rows = screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => plain(button.text)),
+    );
+    expect(rows[0]).toEqual(["Кружка · не продан"]);
+    expect(rows[1]).toEqual(["Плакат · продан за 700 ₽"]);
+    expect(rows.at(-1)).toEqual(["‹ Лот"]);
+  });
+
+  // Экран показывает до восьми лотов, а остальные — строкой «И ещё N.»
+  // (дизайн-код, «Лоты сета»).
+  it("names the lots of the set the screen did not show", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "set",
+            auctionId: auctionId,
+            name: "Лесные дары",
+            lots: [
+              { lotId: "lot-1", title: "Кружка", status: { kind: "unsold" } },
+            ],
+            more: 2,
+          },
+        ],
+        keyboard: [
+          [
+            {
+              action: "set.open-lot",
+              lotId: "lot-1",
+              callbackData: "v1:auc:lot:lot-1:0",
+            },
+          ],
+          [{ action: "set.back", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(plain(screen.text)).toContain("И ещё 2.");
+  });
+
+  it("marks a lot of the set in the feed", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "feed",
+            auctionId: auctionId,
+            page: 0,
+            pageCount: 1,
+            lots: [
+              {
+                lotId: "a",
+                title: "Носки",
+                status: { kind: "scheduled", startingPrice: rub(500) },
+                setName: "Лесные дары",
+              },
+            ],
+          },
+        ],
+        keyboard: [
+          [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+          [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
+        ],
+      },
+    });
+    const rows = screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => plain(button.text)),
+    );
+    expect(rows[0]).toEqual(["Носки · старт 500 ₽ · Сет «Лесные дары»"]);
   });
 });

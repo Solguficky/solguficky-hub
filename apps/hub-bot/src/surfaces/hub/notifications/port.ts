@@ -10,10 +10,16 @@ import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 export type MeetupCategory = "changes" | "material" | "reminder" | "organizer";
 
 // Глобальные категории поверх тех же четырёх: подписаться на ещё не созданную
-// сходку нельзя, а объявление и заявка не привязаны ни к одной. Запросы
-// доступа видит только модератор очереди, но решает это сервис: категории нет
-// в снимке остальных, и бот рисует снимок, а не права.
-export type GlobalOnlyCategory = "published" | "announcement" | "access";
+// сходку нельзя, а объявление и заявка не привязаны ни к одной. Заявки
+// разведены по очереди: выключение одной не гасит другую (PER-635). Кто из
+// модераторов видит какую — решает сервис: категории нет в снимке остальных, и
+// бот рисует снимок, а не права.
+export type GlobalOnlyCategory =
+  | "published"
+  | "announcement"
+  | "access-community"
+  | "access-auction"
+  | "release";
 
 export type NotificationCategory = MeetupCategory | GlobalOnlyCategory;
 
@@ -67,6 +73,10 @@ export type BroadcastResult =
   | { kind: "ok"; created: boolean }
   | NotificationFailure;
 
+export type BroadcastAudienceCount =
+  | { kind: "ok"; recipientCount: number }
+  | NotificationFailure;
+
 // Автор, ключ и текст. Круга адресатов в команде нет: его разворачивает сервис,
 // и право на рассылку он проверяет сам, какой бы ни была поверхность.
 export type Broadcast = {
@@ -74,6 +84,34 @@ export type Broadcast = {
   broadcastId: string;
   body: string;
 };
+
+export type ReleaseSummary = {
+  id: string;
+  summarizedAt: string;
+  recordIds: readonly string[];
+};
+
+export type ReleaseSummaryNeighbours = {
+  summary: ReleaseSummary;
+  olderId?: string;
+  newerId?: string;
+};
+
+export type ReleaseSummariesPage = {
+  summaries: readonly ReleaseSummary[];
+  nextPageToken?: string;
+};
+
+export type ReleaseReportResult = { kind: "ok" } | NotificationFailure;
+
+export type ReleaseSummariesResult =
+  | { kind: "ok"; page: ReleaseSummariesPage }
+  | NotificationFailure;
+
+export type ReleaseSummaryResult =
+  | { kind: "ok"; view: ReleaseSummaryNeighbours }
+  | { kind: "not-found" }
+  | NotificationFailure;
 
 // Каждая команда несёт целевое состояние, а не переворот текущего, и возвращает
 // снимок области, к которой относится. Операции снятия переопределения в
@@ -125,4 +163,24 @@ export type Notifications = {
     broadcast: Broadcast,
     meta?: RpcMetadata,
   ): Promise<BroadcastResult>;
+  previewMeetupBroadcast(
+    request: { identityId: string; meetupId: string },
+    meta?: RpcMetadata,
+  ): Promise<BroadcastAudienceCount>;
+  previewCommunityBroadcast(
+    request: { identityId: string },
+    meta?: RpcMetadata,
+  ): Promise<BroadcastAudienceCount>;
+  reportReleaseNotes(
+    recordIds: readonly string[],
+    meta?: RpcMetadata,
+  ): Promise<ReleaseReportResult>;
+  listReleaseSummaries(
+    pageToken: string | undefined,
+    meta?: RpcMetadata,
+  ): Promise<ReleaseSummariesResult>;
+  getReleaseSummary(
+    summaryId: string,
+    meta?: RpcMetadata,
+  ): Promise<ReleaseSummaryResult>;
 };

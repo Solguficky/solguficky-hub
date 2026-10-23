@@ -280,6 +280,50 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       }
     }
 
+    // ADR-072 на entity: снятие переигрывает торги по истории в состоянии, и после рестарта — журналом, с snapshot
+    // посреди истории и без него — снятый не возвращается, а история остаётся той же.
+    "remove a participant by replaying the trading without them and keep the result over a restart" in {
+      List(LotEntity.DefaultSnapshotEvery, 2).foreach { snapshotEvery =>
+        entity = EventSourcedBehaviorTestKit(
+          kit.system,
+          LotEntity(s"lot-removal-$snapshotEvery", clock, sequentialIds(), snapshotEvery),
+          serialization
+        )
+        openThrough()
+        limitOf(who = 1, max = 300, opN = 4)
+        bidOf(who = 2, amount = 200, opN = 5)
+        bidOf(who = 3, amount = 310, opN = 6)
+
+        val preview = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]](
+          LotEntity.PreviewRemoval(participant(3), _)
+        )
+        val version = preview.reply.map(_.version).toOption.get
+        val removed = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.Recorded]](
+          LotEntity.Remove(removeParticipant(who = 3, opN = 7, version), organizer, _)
+        )
+
+        (preview.events, preview.state.sequence) shouldBe (Nil, version)
+        preview.reply.map(p => (p.removed.leader, p.removed.price)) shouldBe Right((Some(participant(1)), money(210)))
+        removed.reply.map(_.lotVersion) shouldBe Right(version + 1)
+        removed.events.map(row => (row.event.kind, row.actor.kind)) shouldBe List(("ParticipantRemoved", "Operator"))
+        val after = tradingOf(removed.state.lot)
+        (after.leader, after.currentPrice) shouldBe (Some(participant(1)), money(210))
+        after.course.map(_.removed) shouldBe Some(Set(participant(3)))
+        val restarted = entity.restart().state
+        restarted shouldBe removed.state
+        bidOf(who = 3, amount = 400, opN = 8).reply shouldBe Left(PlaceBidRejected.ParticipantRemovedFromLot)
+        limitOf(who = 3, max = 500, opN = 9).reply shouldBe Left(SetProxyLimitRejected.ParticipantRemovedFromLot)
+        val repeated = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.Recorded]](
+          LotEntity.Remove(removeParticipant(who = 3, opN = 7, version), organizer, _)
+        )
+        (repeated.events, repeated.reply.map(_.envelope)) shouldBe (Nil, removed.reply.map(_.envelope))
+        val stale = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.Recorded]](
+          LotEntity.Remove(removeParticipant(who = 1, opN = 10, version), organizer, _)
+        )
+        (stale.events, stale.reply) shouldBe (Nil, Left(RemoveParticipantRejected.LotChanged))
+      }
+    }
+
     "answer a bid that a proxy answers inside the window with the version of the extension, the last event (PER-470)" in {
       // Лимит ставится задолго до дедлайна, без продления; ставка — за минуту до него, в окне.
       val time = MovingClock(decidedAt)

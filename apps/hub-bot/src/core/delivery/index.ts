@@ -2,7 +2,11 @@
 // Telegram, общая для бота хаба и бота аукциона. Разбор своих веток `oneof`,
 // текст и клавиатура остаются у бота.
 
-export { type BusStatus, busConnectionOperation } from "./bus-status.js";
+export {
+  type BusStatus,
+  busConnectionOperation,
+  watchBusStatus,
+} from "./bus-status.js";
 export {
   type DeliveryHandlerDeps,
   type DeliveryMessage,

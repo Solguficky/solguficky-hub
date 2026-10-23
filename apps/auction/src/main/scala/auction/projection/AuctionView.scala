@@ -6,6 +6,7 @@ import auction.aggregate.AuctionState
 import auction.entity.AuctionJournal
 import auction.entity.StoredAuction
 import auction.entity.StoredAuctionEvent
+import auction.entity.StoredLotSet
 
 import java.util.UUID
 
@@ -24,6 +25,9 @@ final case class AuctionViewRow(auctionId: UUID, meetupId: UUID, stored: StoredA
    * последнего состав не несёт, поэтому строку `auction_lineup` обработчик пишет на заморозке и уже не удаляет.
    */
   def lineup: Set[UUID] = stored.order.fold(Set.empty[UUID])(_.toSet)
+
+  /** Сеты лотов аукциона (ADR-073) в форме snapshot: определение и итог. */
+  def sets: List[StoredLotSet] = stored.sets.getOrElse(Nil)
 }
 
 /** Событие аукциона, которое проекция применить не может: обработчик падает, offset остаётся перед ним. */

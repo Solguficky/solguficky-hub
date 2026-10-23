@@ -79,6 +79,9 @@ final class GrpcBoundarySpec
     def withdrawProxyLimit(in: wire.WithdrawProxyLimitRequest) = unused
     def selectForFinal(in: wire.SelectForFinalRequest) = unused
     def deselectForFinal(in: wire.DeselectForFinalRequest) = unused
+    def previewParticipantRemoval(in: wire.PreviewParticipantRemovalRequest) = unused
+    def removeParticipant(in: wire.RemoveParticipantRequest) = unused
+    def launchStepWindow(in: wire.LaunchStepWindowRequest) = unused
     def freezeFinalLineup(in: wire.FreezeFinalLineupRequest) = unused
     def startFinal(in: wire.StartFinalRequest) = unused
     def startNextLot(in: wire.StartNextLotRequest) = unused
@@ -89,23 +92,30 @@ final class GrpcBoundarySpec
       else Source.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest) = unused
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest) = unused
+    def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest) = unused
     def createLotCard(in: wire.CreateLotCardRequest) = unused
     def editLotCard(in: wire.EditLotCardRequest) = unused
     def listAuctionLots(in: wire.ListAuctionLotsRequest) = unused
     def listLotHistory(in: wire.ListLotHistoryRequest) = unused
     def chooseDisplayName(in: wire.ChooseDisplayNameRequest) = unused
     def getDisplayNames(in: wire.GetDisplayNamesRequest) = unused
+    def listAuctionNames(in: wire.ListAuctionNamesRequest) = unused
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest) = unused
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest) = unused
     def getLotImage(in: wire.GetLotImageRequest) = unused
     def draftAuction(in: wire.DraftAuctionRequest) = unused
     def addLot(in: wire.AddLotRequest) = unused
     def removeLot(in: wire.RemoveLotRequest) = unused
+    def saveLotSet(in: wire.SaveLotSetRequest) = unused
+    def deleteLotSet(in: wire.DeleteLotSetRequest) = unused
     def scheduleLot(in: wire.ScheduleLotRequest) = unused
     def scheduleAuction(in: wire.ScheduleAuctionRequest) = unused
     def startPrebidding(in: wire.StartPrebiddingRequest) = unused
     def discardAuction(in: wire.DiscardAuctionRequest) = unused
+    def publishAuction(in: wire.PublishAuctionRequest) = unused
+    def hideAuction(in: wire.HideAuctionRequest) = unused
     def cancelAuction(in: wire.CancelAuctionRequest) = unused
+    def setFinalTime(in: wire.SetFinalTimeRequest) = unused
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest) = unused
     def getAuction(in: wire.GetAuctionRequest) = unused
     def listAuctions(in: wire.ListAuctionsRequest) = unused
@@ -121,6 +131,7 @@ final class GrpcBoundarySpec
     def chooseFulfillment(in: wire.ChooseFulfillmentRequest) = unused
     def listMyInvoices(in: wire.ListMyInvoicesRequest) = unused
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest) = unused
+    def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest) = unused
   }
 
   private lazy val binding =
@@ -228,6 +239,34 @@ final class GrpcBoundarySpec
       written("grpc_code") shouldBe "OK"
       written("caller") shouldBe "hub-bot"
       written("request_id") shouldBe "req-7"
+    }
+
+    "adds the fields the service noted to its record without letting them replace the frame" in {
+      val noting = GrpcBoundary(
+        table,
+        (_: Caller, _: auction.aggregate.Correlation, notes: OperationNotes) => {
+          notes.add(OperationNotes.Source, "FLOOR")
+          notes.add("result", "forged")
+          Stub
+        }
+      )
+      val request = HttpRequest(
+        method = HttpMethods.POST,
+        uri = "/auction.v1.AuctionService/PlaceBid",
+        headers = List(RawHeader("authorization", "Bearer hub")),
+        entity = HttpEntity(
+          ContentType(MediaType.customBinary("application", "grpc", MediaType.NotCompressible)),
+          ByteString(0.toByte) ++ ByteString(ByteBuffer.allocate(4).putInt(bid.serializedSize).array()) ++
+            ByteString(bid.toByteArray)
+        ),
+        protocol = HttpProtocols.`HTTP/2.0`
+      )
+      // Успешный унарный ответ несёт grpc-status трейлером в теле, а не заголовком: код читается из записи.
+      noting(request).futureValue.discardEntityBytes()
+      val written = record
+      written("grpc_code") shouldBe "OK"
+      written("source") shouldBe "FLOOR"
+      written("result") shouldBe "ok"
     }
 
     "admits the hub bot to lot statistics with its token" in {

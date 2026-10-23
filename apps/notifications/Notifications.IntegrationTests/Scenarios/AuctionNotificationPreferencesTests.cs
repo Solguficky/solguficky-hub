@@ -9,14 +9,15 @@ namespace Notifications.IntegrationTests.Scenarios;
 
 /// <summary>
 /// Чтение и запись настроек уведомлений аукциона через настоящую границу
-/// сервиса: частота перебитий (PER-514) и выключатель анонса финала (PER-539).
+/// сервиса: частота перебитий (PER-514), выключатель анонса финала (PER-539)
+/// и выключатель перебитий в живом финале (PER-645).
 /// Вызывающие — оба бота: экран настроек есть у бота аукциона (PER-515) и у
 /// бота хаба (PER-552).
 /// </summary>
 public class AuctionNotificationPreferencesTests
 {
     [Fact]
-    public async Task When_PersonNeverSetAnything_Expect_EveryOutbidAndFinalAnnouncements()
+    public async Task When_PersonNeverSetAnything_Expect_EveryOutbidFinalAnnouncementsAndSilentLiveFinal()
     {
         await using var service = await PreferencesUnderTest.Start();
         var client = service.ClientPresenting(SiloUnderTest.AuctionBotToken);
@@ -28,6 +29,35 @@ public class AuctionNotificationPreferencesTests
         preferences.IdentityId.ShouldBe(identityId);
         preferences.OutbidFrequency.ShouldBe(OutbidFrequency.Every);
         preferences.FinalAnnouncements.ShouldBeTrue();
+        preferences.LiveFinalOutbids.ShouldBeFalse();
+    }
+
+    /// <summary>Выключатель финала своей строкой: частоту и анонс он не трогает.</summary>
+    [Fact]
+    public async Task When_OnlyLiveFinalSet_Expect_OtherSettingsKept()
+    {
+        await using var service = await PreferencesUnderTest.Start();
+        var client = service.ClientPresenting(SiloUnderTest.AuctionBotToken);
+        var identityId = Guid.CreateVersion7().ToString("D");
+        await client.SetAuctionNotificationPreferencesAsync(new SetAuctionNotificationPreferencesRequest
+        {
+            IdentityId = identityId,
+            OutbidFrequency = OutbidFrequency.AtMostEvery60Minutes,
+            FinalAnnouncements = false,
+        });
+
+        var answered = await client.SetAuctionNotificationPreferencesAsync(new SetAuctionNotificationPreferencesRequest
+        {
+            IdentityId = identityId,
+            LiveFinalOutbids = true,
+        });
+        var read = await client.GetAuctionNotificationPreferencesAsync(
+            new GetAuctionNotificationPreferencesRequest { IdentityId = identityId });
+
+        answered.LiveFinalOutbids.ShouldBeTrue();
+        answered.OutbidFrequency.ShouldBe(OutbidFrequency.AtMostEvery60Minutes);
+        answered.FinalAnnouncements.ShouldBeFalse();
+        read.ShouldBe(answered);
     }
 
     [Fact]

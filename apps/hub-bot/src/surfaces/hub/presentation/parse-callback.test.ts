@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { maxLotRubles } from "../application/lot-form.js";
+import { uuidToToken } from "./meetup-deep-link.js";
 import {
   auctionFaqData,
   cardCursorData,
@@ -7,9 +8,12 @@ import {
   consoleCloseConfirmData,
   consoleCloseData,
   consoleConfirmData,
+  consoleDaySummaryData,
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
+  consoleFinalTimeData,
+  consoleFinalTimeRemoveData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -18,11 +22,22 @@ import {
   consoleOpenData,
   consoleRaffleData,
   consoleRaffleRemoveData,
+  consoleSetAskData,
+  consoleSetData,
+  consoleSetDeleteConfirmData,
+  consoleSetDeleteData,
+  consoleSetLotData,
+  consoleSetsData,
   consoleStartFinalData,
   consoleViewData,
+  consoleVisibilityData,
   consoleWeekData,
   consoleWindowAskData,
   consoleWindowData,
+  consoleWindowLaunchData,
+  consoleWindowLaunchGoData,
+  consoleWindowLaunchLotData,
+  consoleWindowLaunchPageData,
   consoleWindowLotData,
   consoleWindowRemoveData,
   consoleWindowsData,
@@ -37,6 +52,7 @@ import {
   questionData,
   traceCallback,
 } from "./parse-callback.js";
+import { releasePostData } from "./screens/release-notes.js";
 
 describe("callback parser", () => {
   it("parses a hub FAQ action with its auction target", () => {
@@ -129,6 +145,27 @@ describe("callback parser", () => {
     expect(parseCallback("v1:nav:archive")).toEqual({ kind: "archive" });
   });
 
+  it("parses a release-notes post and the part carried in the button", () => {
+    const summaryId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+    const latest = releasePostData();
+    const part = releasePostData({ summaryId, part: 2 });
+    expect(Buffer.byteLength(part, "utf8")).toBeLessThanOrEqual(64);
+    expect(parseCallback(latest)).toEqual({ kind: "release-notes" });
+    expect(parseCallback(part)).toEqual({
+      kind: "release-notes",
+      token: uuidToToken(summaryId),
+      part: 2,
+    });
+    expect(
+      parseCallback(traceCallback(releasePostData({ summaryId, part: 1 }))),
+    ).toEqual({
+      kind: "release-notes",
+      token: uuidToToken(summaryId),
+      trace: true,
+    });
+    expect(parseCallback("v1:wn:not-a-token")).toEqual({ kind: "malformed" });
+  });
+
   it("parses the publication confirmation with the version it was shown with", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     const callbacks = [
@@ -163,6 +200,20 @@ describe("callback parser", () => {
       kind: "malformed",
     });
     expect(parseCallback(`v1:manage:publish:${token}:0`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
+  // Данные кнопки «Включить аукцион» прежние, и она из старых сообщений
+  // по-прежнему включает аукцион (PER-654).
+  it("parses enabling the auction of a meetup", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+
+    expect(parseCallback(`v1:manage:auction:${token}`)).toEqual({
+      kind: "enable-auction",
+      token,
+    });
+    expect(parseCallback("v1:manage:auction:short")).toEqual({
       kind: "malformed",
     });
   });
@@ -395,7 +446,8 @@ describe("callback parser", () => {
       [
         `v1:cm:mg:${token}:m9999`,
         {
-          kind: "grant-moderation",
+          kind: "grant-record",
+          right: "admit-bidders",
           token,
           place: { filter: "members", page: 9999 },
         },
@@ -403,9 +455,28 @@ describe("callback parser", () => {
       [
         `v1:cm:mv:${token}:o1`,
         {
-          kind: "revoke-moderation",
+          kind: "revoke-record",
+          right: "admit-bidders",
           token,
           place: { filter: "moderators", page: 1 },
+        },
+      ],
+      [
+        `v1:cm:ag:${token}:m2`,
+        {
+          kind: "grant-record",
+          right: "run-auctions",
+          token,
+          place: { filter: "members", page: 2 },
+        },
+      ],
+      [
+        `v1:cm:av:${token}:o0`,
+        {
+          kind: "revoke-record",
+          right: "run-auctions",
+          token,
+          place: { filter: "moderators", page: 0 },
         },
       ],
       [
@@ -414,6 +485,22 @@ describe("callback parser", () => {
           kind: "ask-block-member",
           token,
           place: { filter: "guests", page: 0 },
+        },
+      ],
+      [
+        `v1:cm:dq:${token}:m0`,
+        {
+          kind: "ask-demote-member",
+          token,
+          place: { filter: "members", page: 0 },
+        },
+      ],
+      [
+        `v1:cm:dy:${token}:o2`,
+        {
+          kind: "demote-member",
+          token,
+          place: { filter: "moderators", page: 2 },
         },
       ],
       [
@@ -445,12 +532,13 @@ describe("callback parser", () => {
       [`v1:cm:ad:${token}:${next}`, { kind: "outdated" }],
       [
         `v1:cm:mg:${token}:3`,
-        { kind: "grant-moderation", token, place: members },
+        { kind: "grant-record", right: "admit-bidders", token, place: members },
       ],
       [
         `v1:cm:mv:${token}`,
         {
-          kind: "revoke-moderation",
+          kind: "revoke-record",
+          right: "admit-bidders",
           token,
           place: { filter: "moderators", page: 0 },
         },
@@ -543,6 +631,9 @@ describe("callback parser", () => {
       `v1:cm:bq:${token}:x`,
       `v1:cm:bq:${token}:pshort`,
       `v1:cm:by:${token}:a`,
+      `v1:cm:dq:${token}`,
+      `v1:cm:dq:${token}:x`,
+      `v1:cm:dy:${token}:z0`,
       "v1:cm:rm:0",
       "v1:cm:rm:x:alice",
       "v1:cm:rm:0:al-ice",
@@ -672,10 +763,15 @@ describe("notification callbacks", () => {
       category: "published",
       enabled: false,
     });
-    expect(parseCallback("v1:notify:gset:access:1")).toEqual({
+    expect(parseCallback("v1:notify:gset:access-community:1")).toEqual({
       kind: "notify-set-global",
-      category: "access",
+      category: "access-community",
       enabled: true,
+    });
+    expect(parseCallback("v1:notify:gset:access-auction:0")).toEqual({
+      kind: "notify-set-global",
+      category: "access-auction",
+      enabled: false,
     });
   });
 
@@ -692,9 +788,18 @@ describe("notification callbacks", () => {
       kind: "notify-disable-global",
       category: "announcement",
     });
-    expect(parseCallback("v1:notify:off:access")).toEqual({
+    expect(parseCallback("v1:notify:off:access-community")).toEqual({
       kind: "notify-disable-global",
-      category: "access",
+      category: "access-community",
+    });
+    expect(parseCallback("v1:notify:off:access-auction")).toEqual({
+      kind: "notify-disable-global",
+      category: "access-auction",
+    });
+    // Прежняя общая категория контрактом больше не существует: кнопка из
+    // старого сообщения не выключает ни одну очередь вслепую.
+    expect(parseCallback("v1:notify:off:access")).toEqual({
+      kind: "malformed",
     });
     expect(parseCallback("v1:notify:off:unknown")).toEqual({
       kind: "malformed",
@@ -725,7 +830,8 @@ describe("notification callbacks", () => {
       "reminder",
       "announcement",
       "published",
-      "access",
+      "access-community",
+      "access-auction",
     ]) {
       expect(parseCallback(`v1:notify:moff:${token}:${category}`)).toEqual({
         kind: "malformed",
@@ -1155,11 +1261,67 @@ describe("auction console callbacks", () => {
   const op = "AZnypHwefTqbIU-OEqs0qg";
   const defaultSort = { metric: "bids", direction: "descending" };
 
+  it("parses every button of the lot sets within the byte budget", () => {
+    // Худший случай: двузначный номер сета и четырёхзначная страница.
+    const set = { index: 99, print: "z0a9q" };
+    const cases = [
+      [consoleSetsData(auction), { kind: "console-sets", auction }],
+      [consoleSetAskData(auction), { kind: "console-set-ask", auction }],
+      [
+        consoleSetData(auction, set),
+        { kind: "console-set", auction, set, page: 0 },
+      ],
+      [
+        consoleSetData(auction, set, 9999),
+        { kind: "console-set", auction, set, page: 9999 },
+      ],
+      [
+        consoleSetLotData({ auction, set, lot, selected: true }),
+        { kind: "console-set-lot", auction, set, lot, selected: true },
+      ],
+      [
+        consoleSetLotData({ auction, set, lot, selected: false }),
+        { kind: "console-set-lot", auction, set, lot, selected: false },
+      ],
+      [
+        consoleSetDeleteData(auction, set),
+        { kind: "console-set-delete", auction, set },
+      ],
+      [
+        consoleSetDeleteConfirmData(auction, set),
+        { kind: "console-set-delete-confirm", auction, set },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    expect(
+      parseCallback(questionData({ kind: "console-set", auction }, 42)),
+    ).toEqual({
+      kind: "question",
+      step: { kind: "console-set", auction },
+      askedBy: 42,
+    });
+    // Лишняя часть и чужой номер — не кнопка сета.
+    expect(parseCallback(`${consoleSetsData(auction)}:1`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:ac:tw:${auction}:01:z0a9q`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("parses every button of the happy hours within the byte budget", () => {
     // Худший случай: двузначный номер окна и четырёхзначная страница.
     const window = { index: 99, print: "z0a9q" };
     const cases = [
       [consoleWindowsData(auction), { kind: "console-windows", auction }],
+      [
+        consoleDaySummaryData(auction),
+        { kind: "console-day-summary", auction },
+      ],
       [consoleWindowAskData(auction), { kind: "console-window-ask", auction }],
       [
         consoleWindowData(auction, window),
@@ -1207,6 +1369,60 @@ describe("auction console callbacks", () => {
     expect(parseCallback(data)).toEqual({ kind: "malformed" });
   });
 
+  it("parses every button of the window launch within the byte budget", () => {
+    // Худший случай: шестьдесят четыре лота в реестре и страница из четырёх
+    // цифр — черновик несёт в кнопке набор лотов маской.
+    const draft = {
+      from: "2026-10-20T15:00:00Z",
+      until: "2026-10-20T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+      lots: [0, 1, 63],
+    };
+    const cases = [
+      [
+        consoleWindowLaunchData(auction),
+        { kind: "console-window-launch", auction },
+      ],
+      [
+        consoleWindowLaunchGoData(auction, draft),
+        { kind: "console-window-launch-go", auction, draft },
+      ],
+      [
+        consoleWindowLaunchLotData(auction, draft, 63),
+        { kind: "console-window-launch-lot", auction, draft, lot: 63 },
+      ],
+      [
+        consoleWindowLaunchPageData(auction, draft, 9999),
+        { kind: "console-window-launch-page", auction, draft, page: 9999 },
+      ],
+      // Первая страница без номера — как у других экранов пульта.
+      [
+        consoleWindowLaunchPageData(auction, draft, 0),
+        { kind: "console-window-launch-page", auction, draft, page: 0 },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    expect(
+      parseCallback(questionData({ kind: "console-launch", auction }, 42)),
+    ).toEqual({
+      kind: "question",
+      step: { kind: "console-launch", auction },
+      askedBy: 42,
+    });
+  });
+
+  it.each([
+    `v1:ac:ht:${"2u8Fx81oUEiwPctIYOjccw"}:broken:1`,
+    `v1:ac:hm:${"2u8Fx81oUEiwPctIYOjccw"}:broken`,
+    `v1:ac:hp:${"2u8Fx81oUEiwPctIYOjccw"}:broken:1`,
+  ])("refuses a malformed window launch button %s", (data) => {
+    expect(parseCallback(data)).toEqual({ kind: "malformed" });
+  });
+
   it("parses every button of the console within the byte budget", () => {
     const cases = [
       [
@@ -1239,9 +1455,22 @@ describe("auction console callbacks", () => {
         consoleFinalData(auction, false),
         { kind: "console-final", auction, final: false },
       ],
+      [consoleFinalTimeData(auction), { kind: "console-final-time", auction }],
+      [
+        consoleFinalTimeRemoveData(auction),
+        { kind: "console-final-time-remove", auction },
+      ],
       [
         consoleFinalData(auction, true),
         { kind: "console-final", auction, final: true },
+      ],
+      [
+        consoleVisibilityData(auction, true),
+        { kind: "console-visibility", auction, published: true },
+      ],
+      [
+        consoleVisibilityData(auction, false),
+        { kind: "console-visibility", auction, published: false },
       ],
       [consoleOpenData(auction), { kind: "console-open", auction }],
       [
@@ -1391,6 +1620,15 @@ describe("auction console callbacks", () => {
     expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
   });
 
+  it("carries the auction of the final time question in its cancel button", () => {
+    const askedBy = 9007199254740991;
+    const step: QuestionStep = { kind: "console-final-time", auction };
+    const asked = `v1:q:ft:${auction}:${askedBy}`;
+    expect(questionData(step, askedBy)).toBe(asked);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+  });
+
   it("carries the auction and the lineup position of the final ask question in its cancel button", () => {
     const askedBy = 9007199254740991;
     const step: QuestionStep = { kind: "final-ask", auction, position: 99 };
@@ -1413,6 +1651,8 @@ describe("auction console callbacks", () => {
       `v1:ac:rx:${auction}:1`,
       `v1:ac:f:${auction}`,
       `v1:ac:f:${auction}:2`,
+      `v1:ac:p:${auction}`,
+      `v1:ac:p:${auction}:2`,
       `v1:ac:o:${auction}:1`,
       `v1:ac:y:${auction}`,
       `v1:ac:y:${auction}:short`,

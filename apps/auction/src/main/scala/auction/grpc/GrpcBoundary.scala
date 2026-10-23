@@ -50,14 +50,15 @@ object GrpcBoundary {
   def apply(table: CallerTable, service: AuctionService)(using
       system: ActorSystem[?]
   ): HttpRequest => Future[HttpResponse] =
-    apply(table, (_: Caller, _: Correlation) => service)
+    apply(table, (_: Caller, _: Correlation, _: OperationNotes) => service)
 
   /**
    * Граница, которая собирает сервис на каждый вызов с его сквозными значениями: сгенерированный сервис заголовков не
    * видит, а вызов Meetups обязан их передать (logging.md). Вызывающий тоже едет в сервис: черновик аукциона по
-   * идентификатору отдаётся одному боту хаба (PER-605). Обработчик и так строится на каждый запрос.
+   * идентификатору отдаётся одному боту хаба (PER-605). Обработчик и так строится на каждый запрос. Заметки вызова
+   * сервис наполняет полями, которые знает только он, и они уходят в ту же запись операции.
    */
-  def apply(table: CallerTable, service: (Caller, Correlation) => AuctionService)(using
+  def apply(table: CallerTable, service: (Caller, Correlation, OperationNotes) => AuctionService)(using
       system: ActorSystem[?]
   ): HttpRequest => Future[HttpResponse] = {
     import system.executionContext
@@ -68,10 +69,11 @@ object GrpcBoundary {
       val method = MethodAccess.methodOf(request.uri.path.toString)
       val decision = CallerGate.decide(table, method, header(request, "authorization"))
       val outcome = new AtomicReference[Outcome](Outcome(Status.OK, None))
+      val notes = OperationNotes()
 
       val target = decision match {
         case GateDecision.Admitted(caller) =>
-          service(caller, Correlation(header(request, "x-request-id"), header(request, "x-use-case")))
+          service(caller, Correlation(header(request, "x-request-id"), header(request, "x-use-case")), notes)
         case GateDecision.Refused(_, _) => refusing
       }
 
@@ -81,7 +83,7 @@ object GrpcBoundary {
       }
 
       AuctionServiceHandler(target, _ => capturing(outcome, admitted))(system)(request).map { response =>
-        def record(): Unit = write(request, method, decision, outcome.get(), response, startedAtNanos)
+        def record(): Unit = write(request, method, decision, outcome.get(), notes, response, startedAtNanos)
         if (method.exists(streaming)) afterBody(response)(record)
         else {
           record()
@@ -157,6 +159,7 @@ object GrpcBoundary {
       method: Option[String],
       decision: GateDecision,
       outcome: Outcome,
+      notes: OperationNotes,
       response: HttpResponse,
       startedAtNanos: Long
   ): Unit = {
@@ -191,7 +194,7 @@ object GrpcBoundary {
         Map("caller_refusal" -> refusal.field) ++ caller.map("caller" -> _.node)
     }
 
-    logger.info("request handled", StructuredArguments.entries((frame ++ caller).asJava))
+    logger.info("request handled", StructuredArguments.entries((notes.all ++ frame ++ caller).asJava))
   }
 
   private def header(request: HttpRequest, name: String): Option[String] =
@@ -213,19 +216,30 @@ object GrpcBoundary {
     def listLotHistory(in: wire.ListLotHistoryRequest): Future[wire.ListLotHistoryResponse] = refuse
     def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] = refuse
     def getDisplayNames(in: wire.GetDisplayNamesRequest): Future[wire.GetDisplayNamesResponse] = refuse
+    def listAuctionNames(in: wire.ListAuctionNamesRequest): Future[wire.ListAuctionNamesResponse] = refuse
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest): Future[wire.FaqAcknowledgement] = refuse
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest): Future[wire.FaqAcknowledgement] = refuse
     def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = refuse
     def draftAuction(in: wire.DraftAuctionRequest): Future[wire.DraftAuctionResponse] = refuse
     def addLot(in: wire.AddLotRequest): Future[wire.AddLotResponse] = refuse
     def removeLot(in: wire.RemoveLotRequest): Future[wire.RemoveLotResponse] = refuse
+    def saveLotSet(in: wire.SaveLotSetRequest): Future[wire.SaveLotSetResponse] = refuse
+    def deleteLotSet(in: wire.DeleteLotSetRequest): Future[wire.DeleteLotSetResponse] = refuse
     def scheduleLot(in: wire.ScheduleLotRequest): Future[wire.ScheduleLotResponse] = refuse
     def scheduleAuction(in: wire.ScheduleAuctionRequest): Future[wire.ScheduleAuctionResponse] = refuse
     def startPrebidding(in: wire.StartPrebiddingRequest): Future[wire.StartPrebiddingResponse] = refuse
     def discardAuction(in: wire.DiscardAuctionRequest): Future[wire.DiscardAuctionResponse] = refuse
+    def publishAuction(in: wire.PublishAuctionRequest): Future[wire.PublishAuctionResponse] = refuse
+    def hideAuction(in: wire.HideAuctionRequest): Future[wire.HideAuctionResponse] = refuse
     def cancelAuction(in: wire.CancelAuctionRequest): Future[wire.CancelAuctionResponse] = refuse
+    def setFinalTime(in: wire.SetFinalTimeRequest): Future[wire.SetFinalTimeResponse] = refuse
     def selectForFinal(in: wire.SelectForFinalRequest): Future[wire.SelectForFinalResponse] = refuse
     def deselectForFinal(in: wire.DeselectForFinalRequest): Future[wire.DeselectForFinalResponse] = refuse
+    def previewParticipantRemoval(
+        in: wire.PreviewParticipantRemovalRequest
+    ): Future[wire.PreviewParticipantRemovalResponse] = refuse
+    def removeParticipant(in: wire.RemoveParticipantRequest): Future[wire.RemoveParticipantResponse] = refuse
+    def launchStepWindow(in: wire.LaunchStepWindowRequest): Future[wire.LaunchStepWindowResponse] = refuse
     def freezeFinalLineup(in: wire.FreezeFinalLineupRequest): Future[wire.FreezeFinalLineupResponse] = refuse
     def startFinal(in: wire.StartFinalRequest): Future[wire.StartFinalResponse] = refuse
     def startNextLot(in: wire.StartNextLotRequest): Future[wire.StartNextLotResponse] = refuse
@@ -236,6 +250,7 @@ object GrpcBoundary {
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest): Future[wire.GetAuctionConsoleResponse] = refuse
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest): Future[wire.GetAuctionLotStatisticsResponse] =
       refuse
+    def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest): Future[wire.GetAuctionDaySummaryResponse] = refuse
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
     def getAuction(in: wire.GetAuctionRequest): Future[wire.GetAuctionResponse] = refuse
     def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
@@ -256,5 +271,7 @@ object GrpcBoundary {
     def chooseFulfillment(in: wire.ChooseFulfillmentRequest): Future[wire.ChooseFulfillmentResponse] = refuse
     def listMyInvoices(in: wire.ListMyInvoicesRequest): Future[wire.ListMyInvoicesResponse] = refuse
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest): Future[wire.ListAuctionInvoicesResponse] = refuse
+    def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest): Future[wire.SetPaymentInstructionsResponse] =
+      refuse
   }
 }

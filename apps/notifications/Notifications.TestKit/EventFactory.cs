@@ -1,3 +1,4 @@
+using System.Globalization;
 using Google.Protobuf;
 using Identity.V1;
 using Meetups.V1;
@@ -145,6 +146,8 @@ public static class EventFactory
     /// сообщество, гость — аукцион. Снимок — тот, что был до заявки:
     /// незаблокирован, с кругом <paramref name="held" /> и его правами, если
     /// круг есть, и правами <paramref name="granted" />, выданными записями.
+    /// Заявка названа курсором, как её называет Identity с PER-634; событие
+    /// старше курсора тест получает, очистив поля.
     /// </summary>
     public static IdentityEvent Application(
         string identityId,
@@ -161,7 +164,12 @@ public static class EventFactory
             Version = version,
             OccurredAt = Committed.AddMinutes(version).ToString("O"),
             State = new IdentityState { Id = identityId },
-            ApplicationSubmitted = new ApplicationSubmitted { Queue = Queue(circle) },
+            ApplicationSubmitted = new ApplicationSubmitted
+            {
+                Queue = Queue(circle),
+                ApplicationId = NewId(),
+                CreatedAt = Committed.AddMinutes(version).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+            },
         };
         Hold(message.State, held);
         message.State.Rights.Add(granted.Where(right => !message.State.Rights.Contains(right)));
@@ -331,9 +339,9 @@ public static class EventFactory
     /// </summary>
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
         string? leader = null, long version = 3, bool proxy = false, bool overtaken = false, bool answers = false,
-        string? deadline = null, string? auction = null)
+        string? deadline = null, string? auction = null, bool live = false)
     {
-        var message = BidWithoutDeadline(lotId, previousLeader, leader, version, proxy, overtaken, answers);
+        var message = BidWithoutDeadline(lotId, previousLeader, leader, version, proxy, overtaken, answers, live);
         if (auction is not null) message.State.AuctionId = auction;
         if (deadline is not null) message.State.Trading.Deadline = deadline;
         return message;
@@ -348,7 +356,8 @@ public static class EventFactory
     /// <c>lot_resumed</c>. Дедлайн и лидер — как в снимке.
     /// </summary>
     public static global::Auction.V1.LotEvent Trading(string lotId, string occasion, long version = 2,
-        string? deadline = null, string? leader = null)
+        string? deadline = null, string? leader = null, string? auction = null,
+        params (string From, string Until, long Step)[] windows)
     {
         var message = Closed(lotId, version);
         message.State.Config = Config();
@@ -357,11 +366,21 @@ public static class EventFactory
             CurrentPrice = new global::Auction.V1.Money { MinorUnits = 10000, Currency = "RUB" },
             Phase = global::Auction.V1.LotPhase.Online,
         };
+        if (auction is not null) message.State.AuctionId = auction;
         if (deadline is not null) message.State.Trading.Deadline = deadline;
         if (leader is not null)
         {
             message.State.Trading.LeaderId = leader;
             message.State.Trading.LeadingBidId = NewId();
+        }
+        foreach (var window in windows)
+        {
+            message.State.StepWindows.Add(new global::Auction.V1.StepWindow
+            {
+                From = window.From,
+                Until = window.Until,
+                Step = new global::Auction.V1.Money { MinorUnits = window.Step, Currency = "RUB" },
+            });
         }
         switch (occasion)
         {
@@ -369,6 +388,7 @@ public static class EventFactory
             case "ask_advanced": message.AskAdvanced = new global::Auction.V1.AskAdvanced(); break;
             case "deadline_extended": message.DeadlineExtended = new global::Auction.V1.DeadlineExtended(); break;
             case "lot_resumed": message.LotResumed = new global::Auction.V1.LotResumed(); break;
+            case "step_window_added": message.StepWindowAdded = new global::Auction.V1.StepWindowAdded(); break;
             default: throw new ArgumentOutOfRangeException(nameof(occasion));
         }
         return message;
@@ -392,7 +412,7 @@ public static class EventFactory
     }
 
     private static global::Auction.V1.LotEvent BidWithoutDeadline(string lotId, string? previousLeader,
-        string? leader, long version, bool proxy, bool overtaken, bool answers) => new()
+        string? leader, long version, bool proxy, bool overtaken, bool answers, bool live = false) => new()
     {
         EventId = NewId(), LotId = lotId, Version = version,
         OccurredAt = Committed.AddMinutes(version).ToString("O"),
@@ -404,7 +424,7 @@ public static class EventFactory
             {
                 LeaderId = leader ?? NewId(), LeadingBidId = NewId(),
                 CurrentPrice = new global::Auction.V1.Money { MinorUnits = 12300, Currency = "RUB" },
-                Phase = global::Auction.V1.LotPhase.Online,
+                Phase = live ? global::Auction.V1.LotPhase.Live : global::Auction.V1.LotPhase.Online,
             },
         },
         BidPlaced = Placed(previousLeader, proxy, overtaken, answers),
@@ -428,9 +448,10 @@ public static class EventFactory
         return message;
     }
 
-    public static global::Auction.V1.LotEvent Unsold(string lotId, long version = 7)
+    public static global::Auction.V1.LotEvent Unsold(string lotId, long version = 7, string? auction = null)
     {
         var message = Closed(lotId, version);
+        if (auction is not null) message.State.AuctionId = auction;
         message.State.Config = Config();
         message.State.Unsold = global::Auction.V1.UnsoldReason.NoBids;
         message.LotUnsold = new global::Auction.V1.LotUnsold();
@@ -460,11 +481,99 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Снятие участника с лота (ADR-072): снимок — лот после снятия.
+    /// <paramref name="previousLeader" /> — лидер до снятия, <c>null</c> — его не
+    /// было; <paramref name="leader" /> — лидер после, <c>null</c> — лот никто не
+    /// ведёт; <paramref name="held" /> — снятие в удержании, а не в торгах.
+    /// </summary>
+    public static global::Auction.V1.LotEvent ParticipantRemoved(string lotId, string? previousLeader = null,
+        string? leader = null, long version = 8, bool held = false, long price = 10000, string? deadline = null,
+        string? auction = null)
+    {
+        var message = Closed(lotId, version);
+        if (auction is not null) message.State.AuctionId = auction;
+        message.State.Config = Config();
+        var money = new global::Auction.V1.Money { MinorUnits = price, Currency = "RUB" };
+        if (held)
+        {
+            message.State.Held = new global::Auction.V1.LotHeld { CurrentPrice = money };
+            if (leader is not null)
+            {
+                message.State.Held.LeaderId = leader;
+                message.State.Held.LeadingBidId = NewId();
+            }
+        }
+        else
+        {
+            message.State.Trading = new global::Auction.V1.LotTrading
+            {
+                CurrentPrice = money,
+                Phase = global::Auction.V1.LotPhase.Online,
+            };
+            if (deadline is not null) message.State.Trading.Deadline = deadline;
+            if (leader is not null)
+            {
+                message.State.Trading.LeaderId = leader;
+                message.State.Trading.LeadingBidId = NewId();
+            }
+        }
+        message.ParticipantRemoved = new global::Auction.V1.ParticipantRemoved();
+        if (previousLeader is not null) message.ParticipantRemoved.PreviousLeaderId = previousLeader;
+        return message;
+    }
+
     /// <summary>Аукцион сходки: UUIDv5, как его выводит Auction.</summary>
-    public static string AuctionOfMeetup()
+    public static string AuctionOfMeetup() => UuidV5();
+
+    /// <summary>Счёт продажи: UUIDv5, как его выводит Auction из ставки продажи.</summary>
+    public static string InvoiceOfSale() => UuidV5();
+
+    // UUIDv5: подменяется только знак версии, остальное — случайный UUID.
+    private static string UuidV5()
     {
         var random = Guid.NewGuid().ToString();
         return string.Concat(random.AsSpan(0, 14), "5", random.AsSpan(15));
+    }
+
+    /// <summary>
+    /// Факт счёта: <paramref name="issued" /> = true — счёт выставлен, иначе
+    /// подтверждена оплата. Срок оплаты по умолчанию — через семь суток после
+    /// коммита, как срок платформы.
+    /// </summary>
+    public static global::Auction.V1.InvoiceEvent Invoice(string invoiceId, string lotId, string? winner = null,
+        long version = 1, bool issued = true, long amount = 45600, string currency = "RUB",
+        string? dueAt = null, string? auction = null, string? occurredAt = null)
+    {
+        var message = new global::Auction.V1.InvoiceEvent
+        {
+            EventId = NewId(),
+            InvoiceId = invoiceId,
+            Version = version,
+            OccurredAt = occurredAt ?? Committed.AddMinutes(version).ToString("O"),
+            State = new global::Auction.V1.InvoiceState
+            {
+                Id = invoiceId,
+                AuctionId = auction ?? NewId(),
+                LotId = lotId,
+                WinnerId = winner ?? NewId(),
+                Amount = new global::Auction.V1.Money { MinorUnits = amount, Currency = currency },
+                PaymentDueAt = dueAt ?? Committed.AddDays(7).ToString("O"),
+            },
+        };
+
+        if (issued)
+        {
+            message.State.AwaitingPayment = new global::Auction.V1.InvoiceState.Types.AwaitingPayment();
+            message.InvoiceIssued = new global::Auction.V1.InvoiceIssued();
+        }
+        else
+        {
+            message.State.Paid = new global::Auction.V1.InvoiceState.Types.Paid();
+            message.InvoicePaid = new global::Auction.V1.InvoicePaid();
+        }
+
+        return message;
     }
 
     /// <summary>Состав финала заморожен: лоты в порядке финала.</summary>
@@ -487,12 +596,123 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Онлайн-торги кончились без удержанных лотов, и с ними аукцион
+    /// (PER-604): снимок <c>finished</c> и реестр лотов.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent PrebiddingFinished(string auction, string meetup,
+        params string[] registry)
+    {
+        var message = AuctionFact(auction, meetup, 12);
+        message.State.LotIds.AddRange(registry);
+        message.State.Finished = new global::Auction.V1.AuctionState.Types.Finished();
+        message.PrebiddingEnded = new global::Auction.V1.PrebiddingEnded();
+        return message;
+    }
+
+    /// <summary>Аукцион отменён после старта торгов (PER-601): снимок <c>cancelled</c> и реестр.</summary>
+    public static global::Auction.V1.AuctionEvent AuctionCancelled(string auction, string meetup,
+        params string[] registry)
+    {
+        var message = AuctionFact(auction, meetup, 15);
+        message.State.LotIds.AddRange(registry);
+        message.State.Cancelled = new global::Auction.V1.AuctionState.Types.Cancelled();
+        message.AuctionCancelled = new global::Auction.V1.AuctionCancelled();
+        return message;
+    }
+
+    /// <summary>Аукцион удалён до торгов: снимок <c>discarded</c> с реестром, который у него был.</summary>
+    public static global::Auction.V1.AuctionEvent AuctionDiscarded(string auction, string meetup,
+        params string[] registry)
+    {
+        var message = AuctionFact(auction, meetup, 5);
+        message.State.LotIds.AddRange(registry);
+        message.State.Discarded = new global::Auction.V1.AuctionState.Types.Discarded();
+        message.AuctionDiscarded = new global::Auction.V1.AuctionDiscarded();
+        return message;
+    }
+
+    /// <summary>
+    /// Аукцион опубликован (PER-646): снимок видимого аукциона. Неделя есть у
+    /// запланированного: она приезжает снимком конфигурации, а у черновика поля
+    /// нет вовсе.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent AuctionPublished(string auction, string meetup,
+        global::Auction.V1.OnlinePhase? phase = null)
+    {
+        var message = AuctionFact(auction, meetup, 6);
+        message.State.Hidden = false;
+        if (phase is null)
+        {
+            message.State.Draft = new global::Auction.V1.AuctionState.Types.Draft();
+        }
+        else
+        {
+            message.State.Config = new global::Auction.V1.AuctionConfig { OnlinePhase = phase };
+            message.State.Scheduled = new global::Auction.V1.AuctionState.Types.Scheduled();
+        }
+        message.AuctionPublished = new global::Auction.V1.AuctionPublished();
+        return message;
+    }
+
+    /// <summary>Аукцион снят с публикации до торгов (PER-646): снимок скрытого черновика.</summary>
+    public static global::Auction.V1.AuctionEvent AuctionHidden(string auction, string meetup)
+    {
+        var message = AuctionFact(auction, meetup, 7);
+        message.State.Hidden = true;
+        message.State.Draft = new global::Auction.V1.AuctionState.Types.Draft();
+        message.AuctionHidden = new global::Auction.V1.AuctionHidden();
+        return message;
+    }
+
+    /// <summary>
+    /// Онлайн-неделя открыта (PER-646): снимок <c>prebidding</c> с неделей.
+    /// Признак скрытия снят — ADR-047 снимает его при открытии торгов.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent PrebiddingStarted(string auction, string meetup,
+        global::Auction.V1.OnlinePhase phase)
+    {
+        var message = AuctionFact(auction, meetup, 8);
+        message.State.Hidden = false;
+        message.State.Config = new global::Auction.V1.AuctionConfig { OnlinePhase = phase };
+        message.State.Prebidding = new global::Auction.V1.AuctionState.Types.Prebidding();
+        message.PrebiddingStarted = new global::Auction.V1.PrebiddingStarted();
+        return message;
+    }
+
+    /// <summary>Лот финала взят в работу: активный лот и порядок состава.</summary>
+    public static global::Auction.V1.AuctionEvent FinalLotActivated(string auction, string meetup, string activeLot,
+        params string[] lineup)
+    {
+        var message = AuctionFact(auction, meetup, 22);
+        message.State.InFinal = new global::Auction.V1.AuctionState.Types.Final();
+        message.State.InFinal.Order.AddRange(lineup);
+        message.State.InFinal.ActiveLotId = activeLot;
+        message.FinalLotActivated = new global::Auction.V1.FinalLotActivated();
+        return message;
+    }
+
     /// <summary>Аукцион кончился после финала.</summary>
     public static global::Auction.V1.AuctionEvent AuctionFinished(string auction, string meetup)
     {
         var message = AuctionFact(auction, meetup, 30);
         message.State.Finished = new global::Auction.V1.AuctionState.Types.Finished();
         message.AuctionFinished = new global::Auction.V1.AuctionFinished();
+        return message;
+    }
+
+    /// <summary>Собранный сет: название и упорядоченный состав в поводе.</summary>
+    public static global::Auction.V1.AuctionEvent LotSetCollected(string auction, string meetup, string collector,
+        string name, params string[] lotIds)
+    {
+        var message = AuctionFact(auction, meetup, 31);
+        message.LotSetCollected = new global::Auction.V1.LotSetCollected
+        {
+            LotSetId = NewId(),
+            Name = name,
+            CollectorId = collector,
+        };
+        message.LotSetCollected.LotIds.AddRange(lotIds);
         return message;
     }
 
@@ -510,6 +730,74 @@ public static class EventFactory
             RaffleDrawn = new global::Auction.V1.RaffleDrawn(),
         };
         message.State.Tickets.AddRange(tickets);
+        return message;
+    }
+
+    /// <summary>
+    /// Тот же итог с призом в снимке (PER-649): приз объявлен вместе с моментом
+    /// закрытия регистрации и едет в факт жеребьёвки.
+    /// </summary>
+    public static global::Auction.V1.RaffleEvent RaffleDrawnWithPrize(string auction, uint winningTicket,
+        string prize, params string[] tickets)
+    {
+        var message = RaffleDrawn(auction, winningTicket, tickets);
+        message.State.RafflePrize = prize;
+        return message;
+    }
+
+    /// <summary>
+    /// Итоги прогнозов (PER-567): две номинации — лот и число — и по участнику
+    /// на каждого из <paramref name="participants"/>. Первый угадал лот, все
+    /// промахнулись с числом на свой номер; угадавший назван «Первый».
+    /// </summary>
+    public static global::Auction.V1.PredictionResultsEvent PredictionResultsSettled(string auction,
+        params string[] participants)
+    {
+        var lot = NewId();
+        var message = new global::Auction.V1.PredictionResultsEvent
+        {
+            EventId = NewId(), PredictionResultsId = auction, Version = 1,
+            OccurredAt = Committed.AddMinutes(50).ToString("O"),
+            State = new global::Auction.V1.PredictionResultsState { AuctionId = auction },
+            PredictionResultsSettled = new global::Auction.V1.PredictionResultsSettled(),
+        };
+        var lotOutcome = new global::Auction.V1.NominationOutcome
+        {
+            Nomination = global::Auction.V1.PredictionNomination.MostExpensiveLot,
+            Lots = new global::Auction.V1.NominationLots(),
+            Winners = participants.Length > 0 ? 1u : 0u,
+        };
+        lotOutcome.Lots.LotIds.Add(lot);
+        if (participants.Length > 0)
+        {
+            lotOutcome.WinnerNames.Add(new global::Auction.V1.WinnerName { ParticipantId = participants[0], Name = "Первый" });
+        }
+        message.State.Nominations.Add(lotOutcome);
+        message.State.Nominations.Add(new global::Auction.V1.NominationOutcome
+        {
+            Nomination = global::Auction.V1.PredictionNomination.TotalSales, Number = 60_000,
+        });
+        for (var index = 0; index < participants.Length; index++)
+        {
+            var result = new global::Auction.V1.ParticipantResult { ParticipantId = participants[index] };
+            result.Participation.Add(index == 0
+                ? new global::Auction.V1.Participation
+                {
+                    Nomination = global::Auction.V1.PredictionNomination.MostExpensiveLot,
+                    Guessed = new global::Auction.V1.Guessed(),
+                }
+                : new global::Auction.V1.Participation
+                {
+                    Nomination = global::Auction.V1.PredictionNomination.MostExpensiveLot,
+                    Missed = new global::Auction.V1.Missed(),
+                });
+            result.Participation.Add(new global::Auction.V1.Participation
+            {
+                Nomination = global::Auction.V1.PredictionNomination.TotalSales,
+                Missed = new global::Auction.V1.Missed { Deviation = index + 1 },
+            });
+            message.State.Participants.Add(result);
+        }
         return message;
     }
 

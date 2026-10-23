@@ -124,6 +124,17 @@ function ports(
       cancelRaffleRegistration: vi.fn(async () => {
         throw new Error("not used");
       }),
+      listMyInvoices: async () => ({ invoices: [] }),
+      chooseFulfillment: async () => {
+        throw new Error("not used");
+      },
+      getMyPredictions: vi.fn(async () => []),
+      getPredictionResults: vi.fn(async () => {
+        throw new Error("not used");
+      }),
+      submitPrediction: vi.fn(async () => {
+        throw new Error("not used");
+      }),
     },
     operations: {
       newOperationId: vi.fn(() => "01929b7e-5c1d-7a3f-8e4b-00000000c001"),
@@ -144,6 +155,7 @@ function ports(
 }
 
 const lotButton = encodeAuctionCallback({ kind: "lot", lotId, page: 0 });
+const setButton = encodeAuctionCallback({ kind: "set", lotId, page: 0 });
 const feedButton = encodeAuctionCallback({
   kind: "feed",
   auctionId,
@@ -702,6 +714,35 @@ describe("routeAuctionCallback", () => {
       grpcCode: "Unimplemented",
     });
   });
+
+  // Лот, которого Auction больше не отдаёт, повтором не откроется: карточка,
+  // хронология и экран сета получают кадр устаревшего экрана, как в хабе.
+  it.each([
+    ["a lot card", lotButton],
+    ["a set screen", setButton],
+    [
+      "a bid history",
+      encodeAuctionCallback({
+        kind: "history",
+        lotId,
+        page: 0,
+        historyPage: 0,
+      }),
+    ],
+  ])(
+    "treats a missing lot behind %s as outdated instead of offering a futile retry",
+    async (_name, data) => {
+      const p = ports(identity({ rights: GUEST }));
+      vi.mocked(p.auction.getLot).mockRejectedValue(
+        new ConnectError("not found", Code.NotFound),
+      );
+
+      const outcome = await routeAuctionCallback({ ports: p, user, data });
+
+      expect(outcome.screen).toEqual({ kind: "outdated" });
+      expect(outcome.failure).toBeUndefined();
+    },
+  );
 
   // Критерий PER-306: недоступный Auction — именованный экран, а не пустая
   // лента.

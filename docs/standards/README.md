@@ -17,6 +17,7 @@ Standards — канонические нормативы для реализа�
 | [observability/logging.md](observability/logging.md) | каркас полей структурной записи, correlation и privacy |
 | [git/branching.md](git/branching.md) | база ветвления, имя ветки, параллельные рабочие деревья, заголовок и тело pull request |
 | [git/commit-messages.md](git/commit-messages.md) | формат сообщения коммита |
+| [git/release-notes.md](git/release-notes.md) | запись «Что нового» в pull request с видимым людям изменением |
 | [backlog/linear.md](backlog/linear.md) | структура бэклога, метки, оценки и форма задачи |
 
 Новый документ создаётся по [template.md](template.md).

@@ -1,18 +1,25 @@
+import type { ReleaseNotes } from "../../../core/release-notes.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoles,
   LotAdministration,
   MeetupAuctions,
 } from "../auction/port.js";
+import type { ParticipantUsernameResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createAuctionConsole } from "./auction-console.js";
+import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
+import { createFloorBids } from "./floor-bids.js";
 import { createLotForm } from "./lot-form.js";
+import { createLotSets } from "./lot-sets.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
+import { createParticipantRemoval } from "./participant-removal.js";
+import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
 
@@ -33,7 +40,11 @@ export function createDispatcher(
     timeZone: string;
     // Часы бота; тест их подменяет.
     now?: () => Date;
+    // Настоящий аккаунт победителя для пульта (PER-648): его отдаёт Identity
+    // по праву ведущего.
+    usernames?: ParticipantUsernameResolver;
   },
+  releaseNotes?: ReleaseNotes,
 ): Dispatcher {
   const lotForm = lots === undefined ? undefined : createLotForm(lots);
   const auctionConsole =
@@ -43,7 +54,28 @@ export function createDispatcher(
           consoles.auctions,
           consoles.timeZone,
           consoles.now,
+          consoles.usernames,
         );
+  // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
+  // пускает право вести аукцион.
+  const floorBids =
+    consoles === undefined ? undefined : createFloorBids(consoles.auctions);
+  // Снятие участника с лота (PER-659) — тот же порт: команды администратора
+  // пускает право вести аукцион.
+  const participantRemoval =
+    consoles === undefined
+      ? undefined
+      : createParticipantRemoval(consoles.auctions);
+  // Сеты лотов (PER-509) — тот же порт: команды сета пускает право вести
+  // аукцион.
+  const lotSets =
+    consoles === undefined ? undefined : createLotSets(consoles.auctions);
+  // Счета аукциона (PER-321) — тот же порт: сводку и отметки пускает право
+  // вести аукцион.
+  const auctionInvoices =
+    consoles === undefined
+      ? undefined
+      : createAuctionInvoices(consoles.auctions, consoles.now);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -58,6 +90,10 @@ export function createDispatcher(
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
   const broadcasts =
     notifications === undefined ? undefined : createBroadcasts(notifications);
+  const releaseNotesView =
+    notifications === undefined || releaseNotes === undefined
+      ? undefined
+      : createReleaseNotes(notifications, releaseNotes);
   // Карточка сходки: сама сходка из Meetups, подписка из Notifications и
   // аукцион из Auction — для строки аукциона (PER-594); меню «Расширения» —
   // сходка и аукцион. Отказ соседа сходки экран не роняет.
@@ -100,12 +136,22 @@ export function createDispatcher(
       // Meetups и остаётся верной. Состояние подписки при этом не
       // показывается, и кнопки подписки в кадре не будет — вместо
       // выдуманного «выключены» человек видит отсутствие выбора.
+      const cancelConsequence =
+        request.intent === "view-meetup" &&
+        request.withCancelConsequence === true &&
+        meetupAuction !== undefined
+          ? await meetupAuction.cancelConsequence(withAuction.auction, request)
+          : undefined;
+      const shown =
+        cancelConsequence === undefined
+          ? withAuction
+          : { ...withAuction, cancelConsequence };
       return preferences?.kind === "ok"
         ? {
-            ...withAuction,
+            ...shown,
             subscribed: preferences.preferences.subscribed,
           }
-        : withAuction;
+        : shown;
     }
     if (result.kind === "not-found") return { kind: "meetup-not-found" };
     return result.kind === "invalid"
@@ -191,7 +237,6 @@ export function createDispatcher(
           if (meetupAuction === undefined)
             return { kind: "rejected", reason: "auction-not-configured" };
           return meetupAuction.enable(request);
-        case "create-meetup":
         case "set-meetup-field":
         case "update-meetup-field":
         case "publish-meetup":
@@ -226,17 +271,27 @@ export function createDispatcher(
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);
         case "view-auction-console":
+        case "view-day-summary":
         case "ask-auction-week":
         case "prepare-auction-week-start":
         case "schedule-auction-week":
         case "ask-auction-raffle":
         case "set-auction-raffle":
         case "remove-auction-raffle":
+        case "ask-auction-raffle-prize":
+        case "set-auction-raffle-prize":
+        case "remove-auction-raffle-prize":
         case "set-auction-final":
+        case "set-auction-visibility":
+        case "ask-auction-final-time":
+        case "set-auction-final-time":
+        case "remove-auction-final-time":
         case "start-auction-week":
         case "mark-auction-finalist":
         case "prepare-auction-discard":
         case "discard-auction":
+        case "prepare-auction-cancel":
+        case "cancel-auction":
         case "order-final-lineup":
         case "freeze-final-lineup":
         case "start-auction-final":
@@ -251,13 +306,56 @@ export function createDispatcher(
         case "add-step-window":
         case "set-step-window-lot":
         case "remove-step-window":
+        case "ask-step-window-launch":
+        case "add-step-window-launch":
+        case "set-step-window-launch-lot":
+        case "view-step-window-launch":
+        case "launch-step-window":
           return auctionConsole === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);
+        case "view-floor-bids":
+        case "ask-floor-search":
+        case "prepare-floor-bid":
+        case "place-floor-bid":
+          return floorBids === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : floorBids(request);
+        case "view-lot-removal":
+        case "prepare-participant-removal":
+        case "remove-participant":
+          return participantRemoval === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : participantRemoval(request);
+        case "view-lot-sets":
+        case "ask-lot-set":
+        case "add-lot-set":
+        case "view-lot-set":
+        case "set-lot-set-lot":
+        case "prepare-lot-set-delete":
+        case "delete-lot-set":
+          return lotSets === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : lotSets(request);
+        case "view-auction-invoices":
+        case "view-auction-invoice":
+        case "prepare-invoice-mark":
+        case "mark-invoice":
+        case "ask-auction-payment-text":
+        case "set-auction-payment-text":
+        case "remove-auction-payment-text":
+          return auctionInvoices === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : auctionInvoices(request);
         case "send-broadcast":
+        case "preview-broadcast":
           return broadcasts === undefined
             ? { kind: "rejected", reason: "notifications-not-configured" }
             : broadcasts(request);
+        case "view-release-notes":
+          return releaseNotesView === undefined
+            ? { kind: "rejected", reason: "notifications-not-configured" }
+            : releaseNotesView(request);
         default: {
           const _exhaustive: never = request;
           return { kind: "rejected", reason: String(_exhaustive) };

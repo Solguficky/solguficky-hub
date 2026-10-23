@@ -18,6 +18,7 @@ public class AuctionFinalTests
     private const string HeldSubject = "events.auction.lot_held_for_final";
     private const string LineupSubject = "events.auction.final_lineup_frozen";
     private const string StartedSubject = "events.auction.final_started";
+    private const string ActivatedSubject = "events.auction.final_lot_activated";
     private const string FinishedSubject = "events.auction.auction_finished";
 
     /// <summary>
@@ -122,6 +123,11 @@ public class AuctionFinalTests
     /// Старт финала получают все участники, лидер состава тоже; конец аукциона
     /// забывает его круг и удержания.
     /// </summary>
+    /// <remarks>
+    /// Старт финала — и момент, когда первый лот состава становится следующим:
+    /// его лидер узнаёт об этом отдельным фактом (ADR-063, дополнение
+    /// 2026-10-20).
+    /// </remarks>
     [Fact]
     public async Task When_FinalStartedThenAuctionFinished_Expect_FactPerBidderAndAudienceForgotten()
     {
@@ -139,15 +145,25 @@ public class AuctionFinalTests
         var started = EventFactory.FinalStarted(auction, meetup, lot);
         await nats.Publish(StartedSubject, started);
 
-        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 3);
         var facts = published.Select(entry => entry.Fact).ToList();
-        facts.ShouldAllBe(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionFinalStarted);
-        facts.ShouldAllBe(fact => fact.AuctionFinalStarted.AuctionId == auction && fact.AuctionFinalStarted.MeetupId == meetup);
-        facts.Select(fact => fact.RecipientId).ShouldBe(new[] { leader, bidder }, ignoreOrder: true);
+        var announced = facts
+            .Where(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionFinalStarted)
+            .ToArray();
+        announced.ShouldAllBe(fact => fact.AuctionFinalStarted.AuctionId == auction && fact.AuctionFinalStarted.MeetupId == meetup);
+        announced.Select(fact => fact.RecipientId).ShouldBe(new[] { leader, bidder }, ignoreOrder: true);
+
+        // Следующий лот состава — лидеру первого лота: его лот идёт первым.
+        var next = facts.Single(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionFinalLotNext);
+        next.RecipientId.ShouldBe(leader);
+        next.AuctionFinalLotNext.LotId.ShouldBe(lot);
+        // Пока не прошёл ни один лот, оценка длительности — запасная.
+        next.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(FinalEstimate.FallbackMinutes);
 
         await nats.Publish(FinishedSubject, EventFactory.AuctionFinished(auction, meetup));
         await Eventually(() => Count(db, "auction_bidder"), count => count == 0);
         (await Count(db, "lot_hold")).ShouldBe(0);
+        (await Count(db, "auction_final_lot")).ShouldBe(0);
     }
 
     /// <summary>
@@ -182,6 +198,35 @@ public class AuctionFinalTests
         await Eventually(() => Task.FromResult(silo.Service<AuctionTelemetry>().Total("final_announced")),
             count => count == 2);
         (await Count(db, "notification")).ShouldBe(2);
+    }
+
+    /// <summary>
+    /// Лот финала взяли в работу: следующий лот состава известен, и его лидер
+    /// узнаёт, что его лот идёт следом (ADR-063, дополнение 2026-10-20).
+    /// </summary>
+    [Fact]
+    public async Task When_LotActivated_Expect_NextLotLeaderNotified()
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var auction = EventFactory.AuctionOfMeetup();
+        var meetup = EventFactory.NewId();
+        var (firstLeader, secondLeader) = (EventFactory.NewId(), EventFactory.NewId());
+        var (first, second) = (EventFactory.NewId(), EventFactory.NewId());
+
+        await nats.Publish(HeldSubject, EventFactory.HeldForFinal(first, auction: auction, leader: firstLeader));
+        await nats.Publish(HeldSubject, EventFactory.HeldForFinal(second, auction: auction, leader: secondLeader));
+        await nats.Publish(ActivatedSubject,
+            EventFactory.FinalLotActivated(auction, meetup, first, first, second));
+
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
+        var fact = published.Single().Fact;
+        fact.TypeCase.ShouldBe(Notification.TypeOneofCase.AuctionFinalLotNext);
+        fact.RecipientId.ShouldBe(secondLeader);
+        fact.AuctionFinalLotNext.LotId.ShouldBe(second);
+        // Пока не прошёл ни один лот, оценка длительности — запасная.
+        fact.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(FinalEstimate.FallbackMinutes);
     }
 
     [Theory]

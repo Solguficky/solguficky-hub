@@ -14,13 +14,42 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionAnnouncementNotice,
+  newAuctionNoticeOf,
+  tradingOpenedNoticeOf,
+} from "../../../core/notifications/auction-announcement-notice.js";
+import {
+  type AuctionCancelledNotice,
+  auctionCancelledNoticeOf,
+} from "../../../core/notifications/auction-cancelled-notice.js";
+import {
+  type FinalNotice,
+  finalNoticeOf,
+} from "../../../core/notifications/final-notice.js";
+import {
+  type InvoiceNotice,
+  invoiceNoticeOf,
+} from "../../../core/notifications/invoice-notice.js";
+import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type LotSetNotice,
+  lotSetNoticeOf,
+} from "../../../core/notifications/lot-set-notice.js";
+import {
+  type PredictionResultsNotice,
+  predictionResultsNoticeOf,
+} from "../../../core/notifications/prediction-results-notice.js";
+import {
   type RaffleNotice,
   raffleNoticeOf,
 } from "../../../core/notifications/raffle-notice.js";
+import {
+  type StepWindowNotice,
+  stepWindowNoticeOf,
+} from "../../../core/notifications/step-window-notice.js";
 
 // Ветки, которые доставляет бот аукциона (integration.md, «потребитель
 // выбирается по ветке `oneof type`»). Факт несёт только лот и сумму: название
@@ -29,8 +58,24 @@ import {
 // ботом хаба (PER-598).
 export type AuctionNotificationContent =
   | LotNotice
+  // Анонс состава и старта финала (PER-478) — тот же, что у бота хаба.
+  | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота хаба.
   | RaffleNotice
+  // Напоминания о неоплаченном счёте (PER-330) с кнопкой на счёт (PER-322) —
+  // те же, что у бота хаба.
+  | InvoiceNotice
+  // Собранный сет (PER-687) — тот же, что у бота хаба.
+  | LotSetNotice
+  | PredictionResultsNotice
+  // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота хаба.
+  | AuctionCancelledNotice
+  // Начало окна «Счастливых часов» на отмеченных лотах (PER-616) — то же,
+  // что у бота хаба.
+  | StepWindowNotice
+  // Вести о новом аукционе и об открытии торгов (PER-646) — те же, что у бота
+  // хаба.
+  | AuctionAnnouncementNotice
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
   // public: допуск в хаб доставляет бот хаба.
   | { kind: "access-granted" }
@@ -68,12 +113,38 @@ function toContent(
   switch (type.case) {
     case "lotOutbid":
     case "lotProxyRaised":
+    case "lotLeadRestored":
     case "lotPurchased":
     case "lotActivityDigest":
     case "lotReminder":
+    case "lotDeadlineClose":
+    case "auctionFinalLotNext":
       return lotNoticeOf(type);
+    case "auctionFinalLineup":
+    case "auctionFinalStarted":
+      return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "invoiceReminder":
+      return invoiceNoticeOf("invoice-reminder", type.value);
+    case "invoiceDueReminder":
+      return invoiceNoticeOf("invoice-due-reminder", type.value);
+    case "lotSetCollected":
+      return lotSetNoticeOf(type.value);
+    // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
+    // факт несёт, разбор их не читает: они остаются на экране.
+    case "predictionResults":
+      return predictionResultsNoticeOf(type.value);
+    case "auctionCancelled":
+      return auctionCancelledNoticeOf(type.value);
+    // Начало окна «Счастливых часов» (PER-616): ветка своя, разбор общий —
+    // право получателя и названия лотов читает общий рендер вести.
+    case "stepWindowStarted":
+      return stepWindowNoticeOf(type.value);
+    case "auctionPublished":
+      return newAuctionNoticeOf(type.value);
+    case "auctionTradingOpened":
+      return tradingOpenedNoticeOf(type.value);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {

@@ -36,10 +36,21 @@ public sealed record CategoryDefinition(
 public static class NotificationCategories
 {
     /// <summary>
-    /// Права модерации очередей заявок: управление составом решает очередь
-    /// сообщества, допуск к торгам — очередь аукциона (ADR-064, пункт 12; RFC-016).
+    /// Право модерации очереди: управление составом решает очередь сообщества,
+    /// допуск к торгам — очередь аукциона (ADR-064, пункт 12; RFC-016). Своя
+    /// категория у каждой очереди, и видит она только своего держателя:
+    /// выключение одной не гасит заявки другой (PER-635, ADR-062).
     /// </summary>
-    public static readonly IReadOnlyList<string> QueueModerators = ["manage_members", "admit_bidders"];
+    public const string CommunityQueueModerator = "manage_members";
+
+    /// <inheritdoc cref="CommunityQueueModerator"/>
+    public const string AuctionQueueModerator = "admit_bidders";
+
+    /// <summary>Аудитория категории: одна очередь — одно право.</summary>
+    public static readonly IReadOnlyList<string> CommunityQueueModerators = [CommunityQueueModerator];
+
+    /// <inheritdoc cref="CommunityQueueModerators"/>
+    public static readonly IReadOnlyList<string> AuctionQueueModerators = [AuctionQueueModerator];
 
     // Порядок объявления — порядок словаря в контракте, и он же порядок
     // категорий в глобальном снимке: снимок тотален по словарю, поэтому
@@ -54,7 +65,8 @@ public static class NotificationCategories
         (NotificationCategory.MeetupChanged, new CategoryDefinition("meetup_changed", true, true)),
         (NotificationCategory.MeetupMaterial, new CategoryDefinition("meetup_material", true, true)),
 
-        // Единственная категория, выключенная по умолчанию.
+        // Единственная категория с постоянным умолчанием, выключенная по
+        // умолчанию; у «Нового в боте» умолчание задаёт среда (ADR-069, п. 5).
         (NotificationCategory.MeetupReminder, new CategoryDefinition("meetup_reminder", false, true)),
 
         (NotificationCategory.OrganizerMessage, new CategoryDefinition("organizer_message", true, true)),
@@ -64,11 +76,32 @@ public static class NotificationCategories
         // эта выключается глобально, как любая другая.
         (NotificationCategory.CommunityAnnouncement, new CategoryDefinition("community_announcement", true, false)),
 
-        // Новая заявка на доступ. Видна держателю права модерации хотя бы
-        // одной очереди: кто получает факт, тот видит переключатель, а
-        // остальным он обещал бы то, чего не бывает (ADR-064). Включена по
-        // умолчанию, иначе очередь копится незамеченной (ADR-062).
-        (NotificationCategory.AccessRequest, new CategoryDefinition("access_request", true, false, QueueModerators)),
+        // Сводка выпуска: «Новое в боте». Только глобальная — сводка
+        // принадлежит поверхности бота, а не сходке, и переопределять её у
+        // сходки негде. Умолчание этого словаря — прод: для сообщества
+        // категория выключена, пока человек не включит её сам, а stage
+        // включает её параметром среды (ADR-069, п. 5; таблица продукта —
+        // docs/product/overview.md). Параметр читает CategoryDefaults, а
+        // здесь остаётся значение, которое действует без него.
+        //
+        // Аудитории нет намеренно: в хабе весь бот доступен только держателю
+        // `access_hub`, а в боте аукциона — держателю его права, поэтому
+        // переключатель видит лишь тот, кому сводка и положена. Одна строка
+        // на две поверхности не выразила бы оба права, а сузила бы одно.
+        (NotificationCategory.ReleaseNotes, new CategoryDefinition("release_notes", false, false)),
+
+        // Новая заявка в очередь сообщества. Видна держателю права управления
+        // составом: кто получает факт, тот видит переключатель, а остальным он
+        // обещал бы то, чего не бывает (ADR-064). Включена по умолчанию, иначе
+        // очередь копится незамеченной (ADR-062).
+        (NotificationCategory.AccessRequestCommunity,
+            new CategoryDefinition("access_request_community", true, false, CommunityQueueModerators)),
+
+        // Новая заявка в очередь аукциона — своя категория с тех пор, как
+        // выключение общей подписи не называло, какую очередь оно гасит
+        // (PER-635): держатель права модерировать аукцион видит только эту.
+        (NotificationCategory.AccessRequestAuction,
+            new CategoryDefinition("access_request_auction", true, false, AuctionQueueModerators)),
     ];
 
     private static readonly IReadOnlyDictionary<NotificationCategory, CategoryDefinition> ByCategory =

@@ -90,7 +90,7 @@ final class AuctionWatchIntegrationSpec
 
   private object Granted extends MeetupAuthority {
     def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority] =
-      Future.successful(Authority.Granted)
+      Future.successful(Authority.Granted(Standings.published))
   }
 
   private val watcher =
@@ -217,6 +217,25 @@ final class AuctionWatchIntegrationSpec
       }
     }
 
+    "carries the estimated time of the final to the open stream without a reconnect" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val auction = onlineWeek(node)
+        awaitVisible(node, auction)
+        val queue = node.watch(wire.WatchAuctionRequest(Some(watcher), auction.value.toString))
+        val reader = Reader(queue)
+        reader.next(10.seconds).getOrElse(fail("the stream ended")).getAuction.finalAt shouldBe empty
+        val at = Instant.now().plusSeconds(3600)
+
+        node.commands.setFinalTime(auction, Some(at), newOp(), person).futureValue shouldBe Right(())
+
+        val changed = reader.next(10.seconds).getOrElse(fail("the estimated time did not arrive"))
+        Instant.parse(changed.getAuction.finalAt.getOrElse(fail("the estimated time is absent"))) shouldBe at
+        reader.cancel()
+      }
+    }
+
     "answers an auction that was never drafted with not found" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
@@ -324,7 +343,15 @@ final class AuctionWatchIntegrationSpec
         .newServerAt("127.0.0.1", 0)
         .withSettings(AuctionNode.grpcServerSettings(kit.system))
         .bind(
-          AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, Granted, AuctionNode.listenChanges(kit.system))
+          AuctionNode.grpc(
+            kit.system,
+            sharding,
+            callers,
+            10.seconds,
+            Granted,
+            _ => Future.successful(true),
+            AuctionNode.listenChanges(kit.system)
+          )
         )
         .futureValue
       val client = wire.AuctionServiceClient(
@@ -367,6 +394,33 @@ final class AuctionWatchIntegrationSpec
     node.commands.startNextLot(auction, newOp(), person).futureValue shouldBe Right(finalist)
     (auction, finalist)
   }
+
+  /**
+   * Аукцион с открытой онлайн-неделей: время финала в нём ещё можно выставить, а снимок читается.
+   */
+  private def onlineWeek(node: Node): AuctionId = {
+    val auction = node.commands
+      .draft(MeetupId(newId()), newOp(), person)
+      .futureValue
+      .fold(denial => fail(s"the auction was not drafted: $denial"), _.auctionId)
+    val week = OnlinePhase(Instant.now().minusSeconds(3600), Some(Instant.now().plusSeconds(600)), closesLots = true)
+    node.commands.schedule(auction, configInput(Some(week)), newOp(), person).futureValue shouldBe Right(())
+    node.commands.startPrebidding(auction, newOp(), person).futureValue shouldBe Right(())
+    auction
+  }
+
+  /**
+   * Ждёт, пока проекция опубликует аукцион: до этого он скрыт, и поток отвечает «не найден».
+   */
+  private def awaitVisible(node: Node, auction: AuctionId): Unit =
+    eventually {
+      val read = node.client
+        .getAuction()
+        .addHeader("authorization", s"Bearer $hubToken")
+        .invoke(wire.GetAuctionRequest(Some(watcher), auction.value.toString))
+        .futureValue
+      read.auction.isDefined shouldBe true
+    }
 
   private def quietLot() =
     _root_.auction.lot.LotFixtures

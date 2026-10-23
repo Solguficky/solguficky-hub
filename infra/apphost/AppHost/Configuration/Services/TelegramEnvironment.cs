@@ -10,10 +10,17 @@ namespace AppHost.Configuration.Services;
 /// владеет, среда — в какой Telegram этот узел ходит, и профиля на среду не
 /// заводится. Каждая среда несёт своё имя secret parameter, поэтому прод- и
 /// тест-токен живут под разными ключами user-secrets и не подменяют друг друга.
-/// У бота аукциона своя пара параметров: токены двух ботов независимы и общего
-/// fallback не имеют (ADR-044, «Конфигурация и Aspire»).
+/// У ботов аукциона и поддержки свои параметры: токены трёх ботов независимы и
+/// общего fallback не имеют (ADR-044, «Конфигурация и Aspire»; ADR-068, п. 1).
+/// Группа операторов поддержки тоже своя у среды: группа одного Telegram в
+/// другом не существует.
 /// </summary>
-internal sealed record TelegramEnvironment(string Value, string TokenParameter, string AuctionBotTokenParameter)
+internal sealed record TelegramEnvironment(
+    string Value,
+    string TokenParameter,
+    string AuctionBotTokenParameter,
+    string SupportBotTokenParameter,
+    string SupportGroupParameter)
 {
     private const string ConfigurationKey = "Telegram:Environment";
     private const string CommandLineKey = "telegram-environment";
@@ -22,8 +29,8 @@ internal sealed record TelegramEnvironment(string Value, string TokenParameter, 
     private static readonly IReadOnlyDictionary<string, TelegramEnvironment> Known =
         new Dictionary<string, TelegramEnvironment>(StringComparer.Ordinal)
         {
-            [DefaultName] = new(DefaultName, "hub-bot-token", "auction-bot-token"),
-            ["test"] = new("test", "hub-bot-test-token", "auction-bot-test-token"),
+            [DefaultName] = new(DefaultName, "hub-bot-token", "auction-bot-token", "support-bot-token", "support-bot-group-id"),
+            ["test"] = new("test", "hub-bot-test-token", "auction-bot-test-token", "support-bot-test-token", "support-bot-test-group-id"),
         };
 
     /// <summary>
@@ -57,4 +64,7 @@ internal sealed record TelegramEnvironment(string Value, string TokenParameter, 
 
     /// <summary>Параметры токена бота хаба во всех средах.</summary>
     public static IEnumerable<string> HubBotTokenParameters => Known.Values.Select(known => known.TokenParameter);
+
+    /// <summary>Параметры токена бота аукциона во всех средах.</summary>
+    public static IEnumerable<string> AuctionBotTokenParameters => Known.Values.Select(known => known.AuctionBotTokenParameter);
 }

@@ -14,6 +14,7 @@ enum AccessRight {
   case AdmitBidders
   case ManageMeetups
   case GrantAdmins
+  case RunAuctions
 }
 
 /**
@@ -22,8 +23,11 @@ enum AccessRight {
  */
 final case class Viewer(rights: Set[AccessRight]) {
 
-  /** Ведущий каталога лотов: каталог общий на все аукционы и входит в право вести сходки (RFC-016, О-1). */
-  def managesLotCatalog: Boolean = rights.contains(AccessRight.ManageMeetups)
+  /** Ведущий каталога лотов: каталог общий на все аукционы и входит в право вести аукцион (ADR-070, п. 1). */
+  def managesLotCatalog: Boolean = rights.contains(AccessRight.RunAuctions)
+
+  /** Ведёт аукцион: пульт, состав финала и ставки зала (ADR-070, п. 1). */
+  def runsAuctions: Boolean = rights.contains(AccessRight.RunAuctions)
 
   /**
    * Участник торгов: право ставить. Его держат гость по допуску и участник сообщества по кругу, поэтому отдельного

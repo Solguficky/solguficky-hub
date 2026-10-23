@@ -29,7 +29,11 @@ type Record struct {
 	Preset         string
 	PreviousCircle string
 	Queue          string
-	OccurredAt     time.Time
+	// ApplicationID и ApplicationCreatedAt — курсор заявки у application_submitted;
+	// пусто у строк, записанных до него, и у чужих поводов.
+	ApplicationID        string
+	ApplicationCreatedAt time.Time
+	OccurredAt           time.Time
 	// TraceParent — контекст трассировки запроса, записавшего строку; пусто, если
 	// запись шла вне спана. В сообщение не входит.
 	TraceParent string
@@ -128,7 +132,9 @@ func (r Record) setRightOccasion(event *identityv1.IdentityEvent) error {
 	return nil
 }
 
-// setApplicationOccasion — заявка открыта или допущена.
+// setApplicationOccasion — заявка открыта или допущена. Открытая называет себя
+// курсором карточки: момент — с точностью до миллисекунды, как его отдаёт
+// ApplicationCard, иначе курсор из события и из очереди разошлись бы строкой.
 func (r Record) setApplicationOccasion(event *identityv1.IdentityEvent) error {
 	queue, err := applicationQueue(r.Queue)
 	if err != nil {
@@ -136,7 +142,11 @@ func (r Record) setApplicationOccasion(event *identityv1.IdentityEvent) error {
 	}
 	if r.Occasion == ApplicationSubmitted {
 		event.Occasion = &identityv1.IdentityEvent_ApplicationSubmitted{
-			ApplicationSubmitted: &identityv1.ApplicationSubmitted{Queue: queue},
+			ApplicationSubmitted: &identityv1.ApplicationSubmitted{
+				Queue:         queue,
+				ApplicationId: r.ApplicationID,
+				CreatedAt:     applicationInstant(r.ApplicationCreatedAt),
+			},
 		}
 	} else {
 		event.Occasion = &identityv1.IdentityEvent_ApplicationAdmitted{
@@ -198,6 +208,8 @@ func accessRight(name string) (identityv1.AccessRight, error) {
 		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS, nil
 	case "grant_admins":
 		return identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS, nil
+	case "run_auctions":
+		return identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS, nil
 	default:
 		return identityv1.AccessRight_ACCESS_RIGHT_UNSPECIFIED, fmt.Errorf("outbox: unknown right %q", name)
 	}
@@ -234,4 +246,17 @@ func applicationQueue(name string) (identityv1.ApplicationQueue, error) {
 	default:
 		return identityv1.ApplicationQueue_APPLICATION_QUEUE_UNSPECIFIED, fmt.Errorf("outbox: unknown queue %q", name)
 	}
+}
+
+// applicationLayout — RFC 3339 в UTC с ровно миллисекундной точностью: тот же
+// вид, что у ApplicationCard.created_at в ответах IdentityService.
+const applicationLayout = "2006-01-02T15:04:05.000Z07:00"
+
+// applicationInstant — момент заявки строкой контракта; нулевой — пусто: строка
+// записана до курсора, и событие уходит без него.
+func applicationInstant(t time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	return t.UTC().Format(applicationLayout)
 }

@@ -51,6 +51,17 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     },
     getAuction: async () => undefined,
     getRaffle: async () => undefined,
+    listMyInvoices: async () => ({ invoices: [] }),
+    chooseFulfillment: async () => {
+      throw new Error("not used");
+    },
+    getMyPredictions: async () => [],
+    getPredictionResults: async () => {
+      throw new Error("not used");
+    },
+    submitPrediction: async () => {
+      throw new Error("not used");
+    },
     registerForRaffle: async () => {
       throw new Error("not used");
     },

@@ -70,7 +70,7 @@ func TestAccessChangesAdvanceVersionWithSnapshotAfterChange(t *testing.T) {
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {}[] blocked=false",
 		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
-		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,place_bids}[admin] blocked=false",
+		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,place_bids,run_auctions}[admin] blocked=false",
 		"v4 preset_revoked(admin) member{access_hub,place_bids}[] blocked=false",
 	)
 	if got := profileVersion(t, db, identityID); got != 4 {
@@ -114,7 +114,7 @@ func TestBlockOfBlockedProfileRevokesLeftoverAccess(t *testing.T) {
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {}[] blocked=false",
 		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
-		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,place_bids}[admin] blocked=false",
+		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,place_bids,run_auctions}[admin] blocked=false",
 		"v4 profile_blocked() {}[] blocked=true",
 	)
 	assertJournalSummary(t, db, identityID, "grant:member", "grant:preset:admin", "revoke:member", "revoke:preset:admin")

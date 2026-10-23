@@ -10,10 +10,23 @@ import {
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
 import {
+  createFinalNoticeRender,
+  isFinalNotice,
+} from "../../core/notifications/final-notice.js";
+import {
+  createInvoiceNoticeRender,
+  isInvoiceNotice,
+} from "../../core/notifications/invoice-notice.js";
+import {
   createLotNoticeRender,
   isLotNotice,
+  type LotNoticeReads,
   logMissingTitle,
 } from "../../core/notifications/lot-notice.js";
+import {
+  createStepWindowNoticeRender,
+  isStepWindowNotice,
+} from "../../core/notifications/step-window-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { rpcMeta } from "../../core/rpc-metadata.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
@@ -21,6 +34,10 @@ import { createDispatcher } from "./application/dispatcher.js";
 import { createAuctionClient } from "./auction/client.js";
 import { communityDay } from "./community-time.js";
 import { readHubConfig } from "./config.js";
+import {
+  createAccessRequestRender,
+  logBodyMissing,
+} from "./delivery/access-request.js";
 import { decodeNotification } from "./delivery/notification.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createMeetupsClient } from "./meetups/client.js";
@@ -31,6 +48,9 @@ import {
   createNotificationApi,
   createNotificationSender,
 } from "./presentation/notification-message.js";
+import { releaseTraceDay } from "./presentation/screens/release-notes.js";
+import { toReleaseTrace } from "./release-lines.js";
+import { startReleaseNotesReport } from "./release-report.js";
 
 // Поверхность хаба (ADR-064, п. 18): процесс с `BOT_SURFACE=hub`. Здесь — её
 // клиенты, бот и разбор её веток уведомлений; процесс вокруг них общий
@@ -40,6 +60,7 @@ export const hubSurface: SurfaceDefinition = ({
   config,
   logger,
   tracing,
+  releaseNotes,
 }) => {
   const loaded = readHubConfig(env);
   if (!loaded.ok) return loaded;
@@ -86,7 +107,28 @@ export const hubSurface: SurfaceDefinition = ({
     logger.info("AUCTION_GRPC_URL is not set: meetup auctions are off");
   }
   // Клиент Auction один в трёх ролях диспетчера: оболочка сходки, форма
-  // лота и пульт аукциона администратора.
+  // лота и пульт аукциона администратора. Identity создаётся до диспетчера:
+  // пульт спрашивает у него настоящий аккаунт победителя (PER-648).
+  const identity = createIdentityClient(config.identityUrl, {
+    communityTimeZone,
+    tracing,
+    serviceToken,
+    // Настоящий аккаунт победителя гасит экран, и карточка остаётся с
+    // псевдонимом (PER-648); warn делает деградацию видимой.
+    onParticipantUsernameRefused: (failure) =>
+      logger.warn("participant username unavailable", {
+        ...(failure.requestId === undefined
+          ? {}
+          : { request_id: failure.requestId }),
+        error_category:
+          failure.code === undefined ? "dependency_unavailable" : "invariant",
+        error:
+          failure.code ??
+          (failure.cause instanceof Error
+            ? failure.cause.message
+            : String(failure.cause)),
+      }),
+  });
   const dispatcher = createDispatcher(
     meetups,
     notifications,
@@ -95,12 +137,24 @@ export const hubSurface: SurfaceDefinition = ({
     auction,
     auction === undefined
       ? undefined
-      : { auctions: auction, timeZone: communityTimeZone },
+      : {
+          auctions: auction,
+          timeZone: communityTimeZone,
+          usernames: identity,
+        },
+    releaseNotes,
   );
-  const identity = createIdentityClient(config.identityUrl, {
-    communityTimeZone,
-    tracing,
-    serviceToken,
+  const releaseReport = startReleaseNotesReport({
+    recordIds: releaseNotes.idsFor("hub"),
+    logger,
+    report: async (recordIds) => {
+      const reported = await notifications.reportReleaseNotes(recordIds);
+      if (reported.kind === "ok") return { kind: "ok" };
+      return {
+        kind: "failed",
+        cause: "cause" in reported ? reported.cause : new Error(reported.kind),
+      };
+    },
   });
   // Карточки финала (PER-336): поток аукциона и темп правок живут столько же,
   // сколько процесс, и гасятся до клиентов.
@@ -133,6 +187,9 @@ export const hubSurface: SurfaceDefinition = ({
     ...(hub.auctionBotUsername === undefined
       ? {}
       : { auctionBotUsername: hub.auctionBotUsername }),
+    ...(hub.supportBotUsername === undefined
+      ? {}
+      : { supportBotUsername: hub.supportBotUsername }),
     communityTimeZone,
     ...(auction === undefined
       ? {}
@@ -178,29 +235,67 @@ export const hubSurface: SurfaceDefinition = ({
   });
   // Без Auction аукционных фактов нет, а пришедший всё равно уходит — без
   // названия и без кнопки частоты: её экран живёт в расширении аукциона.
+  const noticeReads: LotNoticeReads | undefined =
+    auction === undefined
+      ? undefined
+      : {
+          holdsPlaceBids: (identityId, requestId) =>
+            identity.holdsPlaceBids(
+              identityId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+          lotInfo: (identityId, lotId, requestId) =>
+            auction.lotInfo(
+              identityId,
+              lotId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+        };
   const renderLot = createLotNoticeRender({
-    reads:
-      auction === undefined
-        ? undefined
-        : {
-            holdsPlaceBids: (identityId, requestId) =>
-              identity.holdsPlaceBids(
-                identityId,
-                requestId === undefined ? undefined : rpcMeta({ requestId }),
-              ),
-            lotTitle: (identityId, lotId, requestId) =>
-              auction.lotTitle(
-                identityId,
-                lotId,
-                requestId === undefined ? undefined : rpcMeta({ requestId }),
-              ),
-          },
+    reads: noticeReads,
     onTitleMissing: logMissingTitle(logger),
     frequencyButton: auction !== undefined,
+    timeZone: communityTimeZone,
+  });
+  // Анонс финала (PER-478) — тот же общий рендер и те же чтения, что у бота
+  // аукциона; у отправителя он едет видом вести о лоте.
+  const renderFinal = createFinalNoticeRender({
+    reads: noticeReads,
+    onTitleMissing: logMissingTitle(logger),
+  });
+  // Начало окна «Счастливых часов» (PER-616) — тот же общий рендер и те же
+  // чтения, что у бота аукциона: право получателя у Identity, названия лотов
+  // окна у Auction.
+  const renderStepWindow = createStepWindowNoticeRender({
+    reads: noticeReads,
+    onTitleMissing: logMissingTitle(logger),
+    timeZone: communityTimeZone,
+  });
+  // Напоминание о счёте (PER-322) — тот же общий рендер, что у бота аукциона:
+  // права не спрашивает, название лота — подсказка.
+  const renderInvoice = createInvoiceNoticeRender({
+    reads: noticeReads,
+    onTitleMissing: logMissingTitle(logger),
+    timeZone: communityTimeZone,
+  });
+  // Оповещение о заявке несёт её тело (PER-634): карточку бот читает при
+  // доставке из очереди правами получателя, тем же вызовом, что экран заявки.
+  const renderAccessRequest = createAccessRequestRender({
+    read: (identityId, queue, after, requestId) =>
+      identity.readApplicationQueue(
+        { identityId },
+        queue,
+        after,
+        requestId === undefined ? undefined : rpcMeta({ requestId }),
+      ),
+    now: Date.now,
+    onBodyMissing: logBodyMissing(logger),
   });
   const sender = createNotificationSender(
     createNotificationApi(token, environment),
     hub.auctionBotUsername,
+    today,
+    communityTimeZone,
   );
   return {
     ok: true,
@@ -225,13 +320,57 @@ export const hubSurface: SurfaceDefinition = ({
                   ),
               },
               // Вести хаба рисует отправитель, соседи им не нужны. Весть о лоте
-              // собирает общий рендер двух ботов (PER-598): право получателя у
-              // Identity и название лота у Auction.
+              // и анонс финала собирают общие рендеры двух ботов (PER-598,
+              // PER-478): право получателя у Identity и название лота у
+              // Auction. Оповещение о заявке читает её карточку у Identity
+              // (PER-634).
               render: async (content, context) => {
-                if (!isLotNotice(content)) {
+                if (content.kind === "release-summary") {
+                  const day = releaseTraceDay(
+                    content.summarizedAt,
+                    communityTimeZone,
+                    today(),
+                  );
+                  if (day === undefined) {
+                    return {
+                      kind: "rejected",
+                      cause: new Error("release summary date"),
+                    };
+                  }
+                  return toReleaseTrace(
+                    releaseNotes,
+                    content.recordIds,
+                    content.summaryId,
+                    day,
+                  );
+                }
+                if (content.kind === "access-requested") {
+                  return renderAccessRequest(content, context);
+                }
+                if (isInvoiceNotice(content)) {
+                  const rendered = await renderInvoice(content, context);
+                  return rendered.kind === "ready"
+                    ? {
+                        kind: "ready",
+                        message: {
+                          kind: "invoice-notice" as const,
+                          view: rendered.message,
+                        },
+                      }
+                    : rendered;
+                }
+                if (
+                  !isLotNotice(content) &&
+                  !isFinalNotice(content) &&
+                  !isStepWindowNotice(content)
+                ) {
                   return { kind: "ready", message: content };
                 }
-                const rendered = await renderLot(content, context);
+                const rendered = isFinalNotice(content)
+                  ? await renderFinal(content, context)
+                  : isStepWindowNotice(content)
+                    ? await renderStepWindow(content, context)
+                    : await renderLot(content, context);
                 return rendered.kind === "ready"
                   ? {
                       kind: "ready",
@@ -246,6 +385,7 @@ export const hubSurface: SurfaceDefinition = ({
             }),
         }),
       close() {
+        releaseReport.close();
         limiter.close();
         watches?.close();
         identity.close();

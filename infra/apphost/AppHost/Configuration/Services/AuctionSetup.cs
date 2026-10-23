@@ -7,8 +7,9 @@ namespace AppHost.Configuration.Services;
 
 internal static class AuctionSetup
 {
-    // Порты, которые открывает Containerfile (EXPOSE 8080 8081).
-    private const int ContainerHttpPort = 8080;
+    // Порты, которые открывает Containerfile (EXPOSE 8080 8081). HTTP-порт читают
+    // и правила туннеля к экрану зала (CloudflaredSetup).
+    internal const int ContainerHttpPort = 8080;
     private const int ContainerGrpcPort = 8081;
 
     // Проба готовности сервиса: 200 — узел Up и журнал отвечает (ADR-054).

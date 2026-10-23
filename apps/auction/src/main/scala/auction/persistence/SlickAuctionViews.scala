@@ -40,12 +40,19 @@ final class SlickAuctionViews(database: Database, json: AuctionViewJson)(using E
           WHERE auction_id = ${auctionId.toString}::uuid
             AND status <> ${AuctionViewHandler.Discarded}""".as[AuctionSnapshotView].headOption
 
-  def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]] = {
+  // Признак скрытия — поле `hidden` снимка в `state`: snapshot без него, записанный до признака, — видимый аукцион.
+  def page(
+      listing: AuctionListing,
+      after: Option[UUID],
+      limit: Int,
+      revealHidden: Boolean
+  ): Future[List[AuctionSnapshotView]] = {
     val statuses = AuctionViews.statuses(listing).mkString("{", ",", "}")
     val from = after.getOrElse(new UUID(0L, 0L)).toString
     database.run(
       sql"""SELECT auction_id::text, state::text FROM auction_view
             WHERE status = ANY($statuses::text[]) AND auction_id > $from::uuid
+              AND ($revealHidden OR NOT coalesce((state ->> 'hidden')::boolean, false))
             ORDER BY auction_id LIMIT $limit""".as[AuctionSnapshotView].map(_.toList)
     )
   }

@@ -74,9 +74,14 @@ func TestCommunityMembersCarryTelegramUserID(t *testing.T) {
 // communityOfFilter — идентификаторы списка под фильтром, по порядку ответа.
 func communityOfFilter(t *testing.T, svc identityService, actor *identityv1.IdentityActor, filter identityv1.CommunityFilter) map[string]*identityv1.CommunityMember {
 	t.Helper()
-	list, err := svc.ListCommunityMembers(t.Context(), &identityv1.ListCommunityMembersRequest{Actor: actor, Filter: filter})
+	return communityOf(t, svc, &identityv1.ListCommunityMembersRequest{Actor: actor, Filter: filter})
+}
+
+func communityOf(t *testing.T, svc identityService, req *identityv1.ListCommunityMembersRequest) map[string]*identityv1.CommunityMember {
+	t.Helper()
+	list, err := svc.ListCommunityMembers(t.Context(), req)
 	if err != nil {
-		t.Fatalf("list %s: %v", filter, err)
+		t.Fatalf("list %v: %v", req, err)
 	}
 	members := map[string]*identityv1.CommunityMember{}
 	for _, member := range list.GetMembers() {
@@ -85,7 +90,7 @@ func communityOfFilter(t *testing.T, svc identityService, actor *identityv1.Iden
 	return members
 }
 
-func assertCommunityIDs(t *testing.T, filter identityv1.CommunityFilter, got map[string]*identityv1.CommunityMember, want ...string) {
+func assertCommunityIDs(t *testing.T, filter any, got map[string]*identityv1.CommunityMember, want ...string) {
 	t.Helper()
 	ids := make([]string, 0, len(got))
 	for id := range got {
@@ -94,7 +99,7 @@ func assertCommunityIDs(t *testing.T, filter identityv1.CommunityFilter, got map
 	slices.Sort(ids)
 	slices.Sort(want)
 	if !slices.Equal(ids, want) {
-		t.Fatalf("%s lists %v, want %v", filter, ids, want)
+		t.Fatalf("%v lists %v, want %v", filter, ids, want)
 	}
 }
 
@@ -111,7 +116,7 @@ func TestCommunityMembersCarryCircleAndModerationByFilter(t *testing.T) {
 	mustChange(t)(svc.admitMember(t.Context(), memberID, uuid.NullUUID{}))
 	moderatorID := seedProfile(t, db, 9533)
 	mustChange(t)(svc.admitMember(t.Context(), moderatorID, uuid.NullUUID{}))
-	granted, err := svc.GrantAuctionModeration(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: actor, IdentityId: moderatorID})
+	granted, err := svc.GrantRight(t.Context(), &identityv1.ChangeRightRequest{Actor: actor, IdentityId: moderatorID, Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS})
 	if err != nil || !granted.GetChanged() {
 		t.Fatalf("grant moderation: changed=%t error=%v", granted.GetChanged(), err)
 	}
@@ -133,20 +138,31 @@ func TestCommunityMembersCarryCircleAndModerationByFilter(t *testing.T) {
 		newcomerID:  {identityv1.Circle_CIRCLE_UNSPECIFIED, false, false},
 	} {
 		got := all[id]
-		if got.GetCircle() != want.circle || got.GetAdmitted() != want.admitted || got.GetAuctionModeration() != want.moderation {
-			t.Fatalf("member %s: circle=%s admitted=%t moderation=%t, want %+v", id, got.GetCircle(), got.GetAdmitted(), got.GetAuctionModeration(), want)
+		if got.GetCircle() != want.circle || got.GetAdmitted() != want.admitted || slices.Contains(got.GetGrantedRights(), identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS) != want.moderation {
+			t.Fatalf("member %s: circle=%s admitted=%t granted=%v, want %+v", id, got.GetCircle(), got.GetAdmitted(), got.GetGrantedRights(), want)
 		}
 	}
 	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_MEMBERS,
 		communityOfFilter(t, svc, actor, identityv1.CommunityFilter_COMMUNITY_FILTER_MEMBERS), adminID, memberID, moderatorID)
 	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_GUESTS,
 		communityOfFilter(t, svc, actor, identityv1.CommunityFilter_COMMUNITY_FILTER_GUESTS), guestID)
-	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_AUCTION_MODERATORS,
-		communityOfFilter(t, svc, actor, identityv1.CommunityFilter_COMMUNITY_FILTER_AUCTION_MODERATORS), moderatorID)
+	assertCommunityIDs(t, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, communityOf(t, svc, &identityv1.ListCommunityMembersRequest{
+		Actor: actor, GrantedRight: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS,
+	}), moderatorID)
+	assertCommunityIDs(t, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, communityOf(t, svc, &identityv1.ListCommunityMembersRequest{
+		Actor: actor, Filter: identityv1.CommunityFilter_COMMUNITY_FILTER_GUESTS, GrantedRight: identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS,
+	}), guestID)
+	if granted := all[guestID].GetGrantedRights(); !slices.Equal(granted, []identityv1.AccessRight{identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS}) {
+		t.Fatalf("guest granted rights = %v, want place_bids", granted)
+	}
 
 	_, err = svc.ListCommunityMembers(t.Context(), &identityv1.ListCommunityMembersRequest{Actor: actor, Filter: identityv1.CommunityFilter(99)})
 	if status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("unknown filter: error=%v, want InvalidArgument", err)
+	}
+	_, err = svc.ListCommunityMembers(t.Context(), &identityv1.ListCommunityMembersRequest{Actor: actor, GrantedRight: identityv1.AccessRight(99)})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("unknown granted right filter: error=%v, want InvalidArgument", err)
 	}
 }
 
@@ -172,13 +188,13 @@ func TestGetCommunityMemberRefusesByValue(t *testing.T) {
 	}
 
 	found := get(actor, memberID).GetFound()
-	if found.GetIdentityId() != memberID || found.GetCircle() != identityv1.Circle_CIRCLE_MEMBER || found.GetAuctionModeration() || found.GetTelegramUserId() != 9542 {
+	if found.GetIdentityId() != memberID || found.GetCircle() != identityv1.Circle_CIRCLE_MEMBER || len(found.GetGrantedRights()) != 0 || found.GetTelegramUserId() != 9542 {
 		t.Fatalf("found = %v", found)
 	}
-	if _, err := svc.GrantAuctionModeration(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: actor, IdentityId: memberID}); err != nil {
+	if _, err := svc.GrantRight(t.Context(), &identityv1.ChangeRightRequest{Actor: actor, IdentityId: memberID, Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS}); err != nil {
 		t.Fatalf("grant moderation: %v", err)
 	}
-	if !get(actor, memberID).GetFound().GetAuctionModeration() {
+	if !slices.Equal(get(actor, memberID).GetFound().GetGrantedRights(), []identityv1.AccessRight{identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS}) {
 		t.Fatal("moderation granted, card does not show it")
 	}
 

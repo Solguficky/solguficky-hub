@@ -17,7 +17,8 @@
         "opensAt": "2026-10-01T18:00:00Z",
         "closesAt": "2026-10-08T21:00:00Z",
         "closesLots": true,
-        "raffleClosesAt": null
+        "raffleClosesAt": null,
+        "rafflePrize": null
       },
       "finalBlocks": 1,
       "closingPolicy": {
@@ -66,11 +67,18 @@
             "0190f2a0-0000-7000-8000-00000000000b"
           ]
         }
-      ]
+      ],
+      "paymentTerm": "PT168H"
     },
     "prebiddingEnded": null,
     "finalLineupFrozen": null,
     "finalLotActivated": null,
-    "finalLotCompleted": null
+    "finalLotCompleted": null,
+    "stepWindowLaunched": null,
+    "finalTime": null,
+    "lotSetDefined": null,
+    "lotSetDeleted": null,
+    "lotSetSettled": null,
+    "paymentInstructions": null
   }
 }

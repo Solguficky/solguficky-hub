@@ -22,6 +22,8 @@
       "at": "2026-10-07T18:00:00Z"
     },
     "askAdvanced": null,
-    "lotWithdrawn": null
+    "lotWithdrawn": null,
+    "stepWindowAdded": null,
+    "participantRemoved": null
   }
 }

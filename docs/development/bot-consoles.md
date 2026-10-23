@@ -161,10 +161,10 @@ sh $S alice@hub press Прикрепить
 sh $S alice@hub say /meetups
 sh $S alice@hub press 17 октября · Настолки у Алисы
 sh $S alice@hub press 🧩 Расширения          # меню расширений сходки (PER-605)
-sh $S alice@hub press Включить аукцион       # исход «Аукцион включён» с кнопкой «🔨 Аукцион»
-sh $S alice@hub press 🔨 Аукцион             # корень: «🔨 Лоты», «Пульт», «Правила и FAQ»; read model может отстать — повтори
-sh $S alice@hub press 🔨 Лоты                # лента: «Добавить лот» и лоты
-sh $S alice@hub press Добавить лот
+sh $S alice@hub press 🛠 Включить аукцион    # исход «Аукцион включён» с кнопкой «🔨 Аукцион»
+sh $S alice@hub press 🔨 Аукцион             # корень: «🔨 Лоты», «Правила и FAQ», «🛠 Пульт»; read model может отстать — повтори
+sh $S alice@hub press 🔨 Лоты                # лента: «🛠 Добавить лот» и лоты
+sh $S alice@hub press 🛠 Добавить лот
 sh $S alice@hub say Кружка солегуфика        # название — единственный вопрос; дальше экран «Изменить лот»
 sh $S alice@hub press Фото
 sh $S alice@hub photo                        # настоящий JPEG; виды: big (сверх предела), broken (не картинка), lost (Telegram не отдал)
@@ -181,7 +181,7 @@ sh $S alice@hub press ‹ Лот                  # карточка лота: r
 ```bash
 sh $S alice@hub press ‹ Лоты
 sh $S alice@hub press ‹ Аукцион              # пульт стоит в корне аукциона
-sh $S alice@hub press Пульт
+sh $S alice@hub press 🛠 Пульт
 sh $S alice@hub press Сроки недели
 sh $S alice@hub say 06.10.2026 12:00 — 08.10.2026 00:00   # время сообщества; конец — общий дедлайн лотов
 sh $S alice@hub press Открыть онлайн-неделю
@@ -215,12 +215,12 @@ sh $S carol@auction press ✔️ Да, включить автоставку
 
 ```bash
 sh $S slow meetups 1500              # запросы ботов к Meetups доходят на 1,5 с позже
-sh $S bob@hub press Архив            # tookMs ≈ 1500, в api — sendChatAction, затем ответ на нажатие и правка
+sh $S bob@hub press 🗂 Архив          # tookMs ≈ 1500, в api — sendChatAction, затем ответ на нажатие и правка
 sh $S slow auction 4000              # дольше дедлайна RPC: бот получает таймаут сам
-sh $S carol@auction press Обновить   # tookMs ≈ 3000, кадр «Аукцион сейчас недоступен» с «Повторить» и «‹ Аукционы»
+sh $S carol@auction press 🔄 Обновить   # tookMs ≈ 3000, кадр «Аукцион сейчас недоступен» с «Повторить» и «‹ Аукционы»
 sh $S slow auction 0                 # снять задержку
 sh $S down auction                   # соединения рвутся: отказ соединения, а не дедлайн
-sh $S carol@auction press Обновить   # тот же кадр за миллисекунды, в log — dependency_unavailable
+sh $S carol@auction press 🔄 Обновить   # тот же кадр за миллисекунды, в log — dependency_unavailable
 sh $S up auction
 sh $S carol@auction press Повторить
 ```
@@ -283,7 +283,7 @@ sh $L say /start
 
 ```bash
 sh $L say /start                         # допущенный /start открывает «Сходки»
-sh $L press Архив
+sh $L press 🗂 Архив
 sh $L press ‹ Сходки
 sh $L look                               # перечитать чат из Telegram, ничего не делая
 ```

@@ -49,7 +49,13 @@ describe("screen catalog", () => {
       .map(([id]) => id);
 
     expect(roots).toEqual(["menu"]);
-    expect(sections).toEqual(["meetups", "settings", "help", "manage"]);
+    expect(sections).toEqual([
+      "meetups",
+      "settings",
+      "help",
+      "events",
+      "manage",
+    ]);
     expect(inspectCatalog("hub")).toEqual([]);
   });
 

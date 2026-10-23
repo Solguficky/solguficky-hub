@@ -5,6 +5,7 @@ using Notifications.Facts;
 using Notifications.Favorites;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
+using Notifications.ReleaseNotes;
 using Notifications.V1;
 
 namespace Notifications.Transport;
@@ -17,10 +18,12 @@ namespace Notifications.Transport;
 /// сообщения с ролями в контракте нет намеренно, потому что Notifications
 /// решения о доступе по ролям не принимает — свои подписки и настройки человек
 /// меняет себе, а право на рассылку подтверждает владелец ресурса синхронным
-/// вызовом. Из какого интерфейса пришла команда, сервис не знает.
+/// вызовом. Из какого интерфейса пришла команда, сервис не знает. Исключение —
+/// сводки выпуска: они принадлежат образу бота, а не человеку, и поверхность им
+/// называет токен вызывающего (ADR-069).
 /// </remarks>
 public sealed class NotificationsGrpcService(PreferenceOperations operations, FavoriteOperations favorites,
-    BroadcastOperations broadcasts)
+    BroadcastOperations broadcasts, ReleaseNotesStore releases, TimeProvider clock)
     : NotificationsService.NotificationsServiceBase
 {
     public override async Task<MeetupNotificationPreferences> SubscribeToMeetup(
@@ -136,9 +139,11 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         ServerCallContext context)
     {
         var identityId = RequestValidation.IdentityId(request.IdentityId);
-        var (frequency, finalAnnouncements) = RequestValidation.AuctionPreferences(request);
+        var (frequency, finalAnnouncements, liveFinalOutbids, auctionAnnouncements) =
+            RequestValidation.AuctionPreferences(request);
 
-        var stored = await operations.SetAuction(identityId, frequency, finalAnnouncements, context.CancellationToken);
+        var stored = await operations.SetAuction(identityId, frequency, finalAnnouncements, liveFinalOutbids,
+            auctionAnnouncements, context.CancellationToken);
 
         return Map(identityId, stored);
     }
@@ -250,6 +255,99 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         return Map(broadcastId, result);
     }
 
+    public override async Task<BroadcastAudience> PreviewMeetupBroadcast(
+        PreviewMeetupBroadcastRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var meetupId = RequestValidation.MeetupId(request.MeetupId);
+        var result = await broadcasts.PreviewMeetup(authorId, meetupId, Chain(context));
+
+        return Map(result);
+    }
+
+    public override async Task<BroadcastAudience> PreviewCommunityBroadcast(
+        PreviewCommunityBroadcastRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var result = await broadcasts.PreviewCommunity(authorId, Chain(context));
+
+        return Map(result);
+    }
+
+    /// <summary>
+    /// Полный набор записей образа бота (ADR-069, п. 2). Повтор того же набора
+    /// ничего не меняет и отказом не является.
+    /// </summary>
+    public override async Task<ReleaseNotesAccepted> ReportReleaseNotes(
+        ReportReleaseNotesRequest request,
+        ServerCallContext context)
+    {
+        var surface = Surface(context);
+        var recordIds = RequestValidation.RecordIds(request.RecordIds);
+        var now = clock.GetUtcNow();
+
+        await releases.Report(surface, recordIds, now, context.CancellationToken);
+
+        return new ReleaseNotesAccepted { AcceptedAt = NotificationFacts.Instant(now) };
+    }
+
+    public override async Task<ReleaseSummaries> ListReleaseSummaries(
+        ListReleaseSummariesRequest request,
+        ServerCallContext context)
+    {
+        var surface = Surface(context);
+        var before = RequestValidation.SummaryPageToken(request.PageToken);
+        var size = RequestValidation.SummaryPageSize(request.PageSize);
+
+        var (summaries, more) = await releases.Page(surface, before, size, context.CancellationToken);
+
+        return new ReleaseSummaries
+        {
+            Summaries = { summaries.Select(ReleaseFacts.Summary) },
+            NextPageToken = more ? summaries[^1].SummaryId.ToString("D") : string.Empty,
+        };
+    }
+
+    /// <summary>
+    /// Сводка поверхности с соседями. Чужая и несуществующая сводка отвечают
+    /// одинаково: поверхность видит только свои.
+    /// </summary>
+    public override async Task<ReleaseSummaryWithNeighbours> GetReleaseSummary(
+        GetReleaseSummaryRequest request,
+        ServerCallContext context)
+    {
+        var surface = Surface(context);
+        var summaryId = RequestValidation.SummaryId(request.SummaryId);
+
+        var found = await releases.One(surface, summaryId, context.CancellationToken)
+            ?? throw Refused(StatusCode.NotFound, "summary is not known to the surface of the caller");
+
+        var response = new ReleaseSummaryWithNeighbours { Summary = ReleaseFacts.Summary(found.Summary) };
+        if (found.Older is { } older)
+        {
+            response.OlderSummaryId = older.ToString("D");
+        }
+
+        if (found.Newer is { } newer)
+        {
+            response.NewerSummaryId = newer.ToString("D");
+        }
+
+        return response;
+    }
+
+    // Поверхность называет токен вызывающего, а не поле запроса: решение
+    // гейта уже лежит в контексте. Его отсутствие или вызывающий без
+    // поверхности — дефект таблицы допуска, а не форма запроса.
+    private static ReleaseSurface Surface(ServerCallContext context) =>
+        context.UserState.TryGetValue(CallerGateInterceptor.DecisionKey, out var value)
+        && value is GateDecision { Caller: { } caller }
+        && ReleaseSurface.Of(caller) is { } surface
+            ? surface
+            : throw new InvalidOperationException("release notes call without a caller surface");
+
     // Заголовки цепочки приходят метаданными gRPC, а не полями запроса
     // (docs/architecture/integration.md). Пустые значения — то же, что
     // отсутствие: своего id сервис не рождает.
@@ -293,6 +391,21 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
             _ => throw new InvalidOperationException($"unexpected broadcast result {result}"),
         };
 
+    private static BroadcastAudience Map(BroadcastPreview result) =>
+        (result.Authority.Verdict, result.Audience) switch
+        {
+            (AuthorityVerdict.Denied, _) => throw Refused(StatusCode.PermissionDenied, "not allowed to broadcast"),
+            (AuthorityVerdict.Unavailable, _) => throw Refused(
+                StatusCode.Unavailable,
+                "the owner of the resource is unavailable and the right is not confirmed"),
+            (AuthorityVerdict.Failed, _) => throw Refused(StatusCode.Internal, "the right check failed"),
+            (_, AudienceRead.MeetupNotReplicated) => throw Refused(
+                StatusCode.Unavailable,
+                "the meetup is not replicated yet"),
+            (_, AudienceRead.Counted counted) => new BroadcastAudience { RecipientCount = counted.RecipientCount },
+            _ => throw new InvalidOperationException($"unexpected broadcast preview {result}"),
+        };
+
     private static BroadcastAccepted Accepted(Guid broadcastId, DateTimeOffset acceptedAt, bool created) =>
         new()
         {
@@ -331,5 +444,7 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
             IdentityId = identityId.ToString("D"),
             OutbidFrequency = preferences.OutbidFrequency,
             FinalAnnouncements = preferences.FinalAnnouncements,
+            LiveFinalOutbids = preferences.LiveFinalOutbids,
+            AuctionAnnouncements = preferences.AuctionAnnouncements,
         };
 }

@@ -3,6 +3,11 @@
 // сообщения. Пакет поэтому не зависит ни от `@bufbuild/protobuf`, ни от
 // сгенерированного кода, а contract suite подставляет вместо клиентов шпионов.
 
+import type {
+  PredictionNomination,
+  PredictionRound,
+} from "./prediction-spec.js";
+
 export const ACCESS_RIGHTS = [
   "access-hub",
   "place-bids",
@@ -10,6 +15,7 @@ export const ACCESS_RIGHTS = [
   "admit-bidders",
   "manage-meetups",
   "grant-admins",
+  "run-auctions",
 ] as const;
 
 // Права, которые Identity вывел из круга, наборов и выданных записей (RFC-016).
@@ -112,6 +118,9 @@ export type LotStatusView =
       leaderId?: string;
       // Момент RFC 3339 в UTC. Нет — лот ведёт человек, а не время.
       deadline?: string;
+      // Сколько раз анти-снайп уже продлил дедлайн; ноль — реальное значение.
+      // Нет — адаптер его не назвал, и экран о продлении молчит.
+      extensionsUsed?: number;
       // Онлайн-торги принимают любую сумму от порога, живой финал — ровно
       // следующую цену (ADR-049): у карточки финала одна кнопка на неё.
       phase: TradingPhase;
@@ -138,6 +147,19 @@ export type StepWindowView = {
 export type StepTierView = {
   lowerBound: Money;
   step: Money;
+};
+
+// Сет лотов, в который входит лот (ADR-073, п. 1): название и состав по
+// порядку организатора. Сет из меньше чем двух лотов участнику не
+// показывается, поэтому в снимке его нет вовсе.
+export type LotSetView = {
+  name: string;
+  // Лоты сета по порядку организатора.
+  lotIds: readonly string[];
+  // Собравший сет по отображаемому имени в аукционе. До итога сета его нет:
+  // Auction записывает собравшего один раз, когда последний лот сета пришёл к
+  // терминальному исходу (ADR-073, п. 4).
+  collectorName?: string;
 };
 
 // Срез `auction.v1.LotSnapshot`, который нужен экранам. Поля добавляют листья,
@@ -168,7 +190,18 @@ export type LotView = {
   proxyEnabled: boolean;
   // Свой лимит смотрящего. Чужих лимитов Auction не отдаёт вовсе.
   viewerProxyLimit?: Money;
+  // Сет, в который входит лот (ADR-073). Нет — лот вне сета.
+  lotSet?: LotSetView;
+  // Анти-снайп из условий торгов: ставка ближе `windowSeconds` к дедлайну
+  // продлевает его, пока продлений меньше `maxExtensions` (PER-631, №107).
+  // Нет — у лота нет условий торгов.
+  antiSnipe?: AntiSnipeView;
   status: LotStatusView;
+};
+
+export type AntiSnipeView = {
+  windowSeconds: number;
+  maxExtensions: number;
 };
 
 // Одна страница `ListAuctionLots`. Пустой `nextPageToken` — лента кончилась.
@@ -183,20 +216,36 @@ export type BidOriginView =
   | { kind: "manual"; source: "bot" | "floor" }
   | { kind: "proxy" };
 
-// Запись хронологии лота — публичный факт его журнала. Сегодня это только
-// ставка: серия автоставок уже свёрнута Auction в одну запись с итоговой
-// ценой. Запись вида, которого пакет не знает, адаптер пропускает.
-export type LotHistoryEntryView = {
-  kind: "bid";
-  // Позиция факта в журнале лота: монотонна, но не непрерывна.
-  sequence: number;
-  // Момент RFC 3339 в UTC.
-  occurredAt: string;
-  bidId: string;
-  participantId: string;
-  amount: Money;
-  origin: BidOriginView;
-};
+// Запись хронологии лота — публичный факт его журнала: ставка или снятие
+// участника администратором (ADR-072). Серия автоставок уже свёрнута Auction
+// в одну запись с итоговой ценой. Запись вида, которого пакет не знает,
+// адаптер пропускает.
+export type LotHistoryEntryView =
+  | {
+      kind: "bid";
+      // Позиция факта в журнале лота: монотонна, но не непрерывна.
+      sequence: number;
+      // Момент RFC 3339 в UTC.
+      occurredAt: string;
+      bidId: string;
+      participantId: string;
+      amount: Money;
+      origin: BidOriginView;
+      // Автора ставки потом сняли с лота: запись остаётся с пометкой. Нет —
+      // ставка не снята.
+      removed?: true;
+    }
+  | {
+      // Кого сняли, говорят пометки ставок; кто снял и почему, Auction
+      // наружу не отдаёт.
+      kind: "removal";
+      sequence: number;
+      occurredAt: string;
+      // Цена, с которой лот пошёл дальше.
+      price: Money;
+      // Лидер после снятия. Нет — вести лот некому.
+      leaderId?: string;
+    };
 
 // Одна страница `ListLotHistory` по возрастанию `sequence`. Пустой
 // `nextPageToken` — хронология кончилась.
@@ -216,7 +265,8 @@ export type AuctionStageView =
   | "on-break"
   | "lineup-frozen"
   | "in-final"
-  | "finished";
+  | "finished"
+  | "cancelled";
 
 // Срез `auction.v1.AuctionSnapshot` для корня аукциона. Моменты — RFC 3339 в
 // UTC; нет — у черновика конфигурации нет или фаза их не задала.
@@ -229,6 +279,10 @@ export type AuctionSummaryView = {
   final: boolean;
   // Состав финала (PER-639): есть, только пока состав объявлен или идёт финал.
   lineup?: FinalLineupView;
+  // Аукцион скрыт от участников (ADR-047, дополнение 2026-10-20): признак
+  // приходит только тому, от кого аукцион не скрыт, — держателю
+  // `run_auctions`; остальным скрытого аукциона нет вовсе.
+  hidden?: true;
 };
 
 // Замороженный состав финала: лоты в порядке выхода и лот, который ведущий
@@ -318,7 +372,133 @@ export interface AuctionPort {
     auctionId: string;
     opId: string;
   }): Promise<RaffleOutcome<RaffleCancellationRefusal>>;
+  // Прогнозы (ADR-067): читается только состояние смотрящего; отправка всегда
+  // заменяет весь прогноз раунда, а `unanswered` повторяется с тем же `opId`.
+  getMyPredictions(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<readonly PredictionRoundView[]>;
+  submitPrediction(request: {
+    viewer: Viewer;
+    auctionId: string;
+    round: PredictionRound;
+    answers: readonly PredictionAnswer[];
+    opId: string;
+  }): Promise<PredictionOutcome>;
+  // Счета смотрящего в аукционе и текст организатора «как оплатить и
+  // получить» (PER-322). Пустой список — смотрящий ничего не выиграл; чужих
+  // счетов Auction не отдаёт. Отказы метод бросает.
+  listMyInvoices(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<MyInvoicesView>;
+  // Способ получения своего счёта (P-54): выбор заменяет прежний до выдачи.
+  chooseFulfillment(request: {
+    viewer: Viewer;
+    invoiceId: string;
+    method: FulfillmentMethod;
+    opId: string;
+  }): Promise<FulfillmentOutcome>;
+  // Итоги прогнозов (PER-568). Четыре исхода чтения Auction.
+  getPredictionResults(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<PredictionResultsView>;
 }
+
+// Счёт проданного лота глазами победителя (PER-322; integration.md,
+// «Счета»). Деньги идут мимо продукта: оплату отмечает организатор, и статус
+// меняется только его отметкой.
+export type FulfillmentMethod = "pickup" | "delivery" | "digital";
+
+export type InvoiceStatus = "awaiting-payment" | "paid" | "handed-over";
+
+export type WinnerInvoiceView = {
+  invoiceId: string;
+  lotId: string;
+  amount: Money;
+  // Момент RFC 3339 в UTC. Просрочка — не статус: счёт ждёт оплаты после него.
+  paymentDueAt: string;
+  // Нет — победитель способ ещё не выбрал.
+  fulfillment?: FulfillmentMethod;
+  status: InvoiceStatus;
+};
+
+export type MyInvoicesView = {
+  invoices: readonly WinnerInvoiceView[];
+  // Свободный текст администратора; нет — он его не написал.
+  paymentInstructions?: string;
+};
+
+// `not-found` — счёта нет или он чужой: Auction их не различает.
+export type FulfillmentOutcome =
+  | { kind: "accepted" }
+  | { kind: "refused"; refusal: "fulfillment-frozen" }
+  | { kind: "not-found" }
+  | { kind: "unanswered" };
+
+export type PredictionOwnResult =
+  | { kind: "guessed" }
+  | { kind: "missed"; deviation?: number };
+
+export type PredictionNominationResult = {
+  nomination: PredictionNomination;
+  value:
+    | { kind: "lots"; lotIds: readonly string[] }
+    | { kind: "number"; value: number };
+  winnerNames: readonly string[];
+  winnerCount: number;
+  mine?: PredictionOwnResult;
+};
+
+export type PredictionResultsView =
+  | { kind: "after-final" }
+  | { kind: "by-hand" }
+  | { kind: "cancelled" }
+  | {
+      kind: "counted";
+      nominations: readonly PredictionNominationResult[];
+    };
+
+export type PredictionAnswer =
+  | {
+      nomination: PredictionNomination;
+      answer: { kind: "lot"; lotId: string };
+    }
+  | {
+      nomination: PredictionNomination;
+      answer: { kind: "number"; value: number };
+    };
+
+export type PredictionRoundStatus =
+  | "not-open"
+  | "open"
+  | "closed"
+  | "cancelled";
+
+export type PredictionRoundView = {
+  round: PredictionRound;
+  status: PredictionRoundStatus;
+  answers: readonly PredictionAnswer[];
+};
+
+export type Prediction = Pick<PredictionRoundView, "round" | "answers">;
+
+export type PredictionRefusal =
+  | { kind: "round-not-open" }
+  | { kind: "round-closed" }
+  | { kind: "cancelled" }
+  | { kind: "display-name-not-chosen" }
+  | {
+      kind: "lot-not-in-round";
+      nomination: PredictionNomination;
+      lotId: string;
+    };
+
+export type PredictionOutcome =
+  | { kind: "accepted"; prediction: Prediction }
+  | { kind: "refused"; refusal: PredictionRefusal }
+  | { kind: "unanswered" };
 
 // Где розыгрыш (`auction.v1.RaffleStatus`). `closing` — момент закрытия прошёл,
 // а пул ещё фиксируется; `not-held` — онлайн-торги открылись не раньше момента
@@ -360,6 +540,8 @@ export type RaffleView = {
   tickets: readonly RaffleTicketView[];
   myTicket?: number;
   reveal?: RaffleRevealView;
+  // Приз розыгрыша одной строкой (PER-649); нет — розыгрыш без приза.
+  prize?: string;
 };
 
 export type RaffleRegistrationRefusal =
@@ -392,17 +574,23 @@ export type BidRefusal =
   | { kind: "lot-not-open" }
   | { kind: "lot-on-hold"; currentPrice: Money }
   | { kind: "bid-below-minimum"; minRequired: Money }
+  | { kind: "bid-above-maximum"; next: Money }
   | { kind: "bid-not-at-next-price"; expected: Money }
   | { kind: "bidder-is-leader"; currentPrice: Money }
   | { kind: "currency-mismatch" }
-  | { kind: "display-name-not-chosen" };
+  | { kind: "display-name-not-chosen" }
+  | { kind: "removed-from-lot" };
 
+// `removed-from-lot` у ставки и у лимита — администратор снял участника с лота
+// (ADR-072): ставить и выставлять лимит на этом лоте он больше не может, а кто
+// и почему снял, ответ не несёт.
 export type ProxyLimitRefusal =
   | { kind: "lot-not-open" }
   | { kind: "proxy-below-current-price"; minLimit: Money }
   | { kind: "proxy-disabled" }
   | { kind: "currency-mismatch" }
-  | { kind: "display-name-not-chosen" };
+  | { kind: "display-name-not-chosen" }
+  | { kind: "removed-from-lot" };
 
 // Исход команды с `op_id`. `unanswered` — ответа не было вовсе: дедлайн вызова
 // истёк или связь оборвалась. Только его пакет повторяет, и тем же `op_id`:

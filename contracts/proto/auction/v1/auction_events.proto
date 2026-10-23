@@ -72,15 +72,18 @@ message LotEvent {
     LotWithdrawn lot_withdrawn = 12;
     LotHeldForFinal lot_held_for_final = 13;
     LotResumed lot_resumed = 14;
+    StepWindowAdded step_window_added = 17;
+    ParticipantRemoved participant_removed = 18;
   }
 }
 
 // The public state of a lot after an event.
 //
 // It is defined here and does not reuse the state of the service contract. The
-// fields coincide today, but separate definitions keep a change of the read API
-// from silently becoming a change of this contract. Field numbers match
-// auction.v1.LotSnapshot so that the two stay readable side by side.
+// fields otherwise coincide, but separate definitions keep a change of the read
+// API from silently becoming a change of this contract. Field numbers match
+// auction.v1.LotSnapshot so that the two stay readable side by side, except the
+// windows of reduced step, which only this state carries (number 19).
 message LotState {
   // The version is a value of the envelope and is not repeated here: two copies
   // of one number can disagree. Numbers 5 and 6 carry values LotSnapshot computes
@@ -89,8 +92,10 @@ message LotState {
   // 15 is the bid count of the read model: a consumer of the bus counts the
   // bid_placed facts it receives. Numbers 16 to 18 are the regular step and the
   // windows of reduced step at the instant LotSnapshot answers: they depend on
-  // the clock of the reader, and a fact holds one instant.
-  reserved 4, 5, 6, 7, 15, 16, 17, 18;
+  // the clock of the reader, and a fact holds one instant, so the windows of the
+  // lot come as data in number 19 instead. Number 20 is the collectible set of
+  // the lot, which the journal of the auction holds, not the journal of the lot.
+  reserved 4, 5, 6, 7, 15, 16, 17, 18, 20;
 
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
@@ -116,6 +121,28 @@ message LotState {
     UnsoldReason unsold = 13;
     WithdrawnReason withdrawn = 14;
   }
+
+  // The windows of reduced bid step the lot recorded, by ascending start, as in
+  // its state. Set only while the lot is trading; empty on a lot with no windows
+  // and on a lot in the live final, which does not carry them. These are data of
+  // the fact, unlike numbers 16 to 18: they do not depend on the clock of the
+  // reader. Every window is in the currency of the lot: a window in another
+  // currency is not recorded by the lot and does not appear here.
+  repeated StepWindow step_windows = 19;
+}
+
+// A window of reduced bid step of one lot as the lot recorded it: the half-open
+// interval [from, until) with the step in force in it. It is not the window of
+// LotSnapshot: that one answers at an instant, while this one is the recorded
+// window itself.
+message StepWindow {
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+
+  Money step = 3;
 }
 
 // The lot came into existence: its auction recorded it in the registry and the lot
@@ -199,6 +226,25 @@ message LotHeldForFinal {}
 // live, and neither a deadline nor an ask.
 message LotResumed {}
 
+// A window of reduced step launched during the online phase was added to the lot.
+// The windows are state.step_windows, the new one among them; which of them is new
+// is not carried. A window announced in the configuration comes with lot_opened
+// instead and never with this occasion.
+message StepWindowAdded {}
+
+// A participant was removed from the lot by the administrator of the meetup. The
+// state is the lot after the removal: the leader and the price it goes on with,
+// which may be lower than before. Who was removed, who removed them and why is
+// deliberately not carried.
+message ParticipantRemoved {
+  // Canonical lowercase UUIDv7 with hyphens: the participant who led before the
+  // removal. Absent when the lot had no leader - absent, not an empty string.
+  //
+  // It equals state leader_id when the removal kept the leader; the lead changed
+  // only when the two differ.
+  optional string previous_leader_id = 1;
+}
+
 // A recorded public fact about one auction: why it changed and what is
 // true about it now. The envelope is the one of LotEvent, field for field, so that
 // a consumer of both reads them the same way; which of the two arrived is told by
@@ -246,6 +292,9 @@ message AuctionEvent {
     AuctionFinished auction_finished = 16;
     AuctionDiscarded auction_discarded = 18;
     AuctionCancelled auction_cancelled = 19;
+    LotSetCollected lot_set_collected = 20;
+    AuctionPublished auction_published = 21;
+    AuctionHidden auction_hidden = 22;
   }
 }
 
@@ -273,6 +322,16 @@ message AuctionState {
   // Canonical lowercase UUIDv7 with hyphens: the meetup the auction was born at.
   // Set by auction_drafted and never changed after. Always set.
   string meetup_id = 4;
+
+  // Whether the auction is hidden from participants. It mirrors
+  // AuctionSnapshot.hidden of the service contract field for field and keeps its
+  // number. Visibility is a fact of its own - auction_published and
+  // auction_hidden - so the snapshot would show a stale visibility until the next
+  // fact of the auction if the flag were absent here. A fact written before the
+  // flag existed carries no value and describes a visible auction. A hidden
+  // auction is unset in every read of a viewer without the auction right, so a
+  // consumer must not treat a fact of a hidden auction as public.
+  bool hidden = 5;
 
   // Where the auction is. Exactly one is set.
   //
@@ -368,6 +427,24 @@ message LotRemoved {
   string lot_id = 1;
 }
 
+// Every lot of a collectible set was sold to one participant. The sets are not
+// carried in state.
+message LotSetCollected {
+  // Canonical lowercase UUIDv7 with hyphens: the id the organizer gave the set.
+  string lot_set_id = 1;
+
+  // The name of the set as the organizer typed it.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots of the set in the
+  // order of the organizer.
+  repeated string lot_ids = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the
+  // collector, the winner of every lot of the set. Names are not carried.
+  string collector_id = 4;
+}
+
 // The online phase started; the registry and the configuration are frozen from
 // now on. The lots open by their own facts.
 message PrebiddingStarted {}
@@ -408,6 +485,19 @@ message AuctionDiscarded {}
 // Who cancelled it is not carried. Lots are withdrawn by their own facts, which
 // may come before or after this one.
 message AuctionCancelled {}
+
+// The auction became visible to participants: the organizer published it, or its
+// trading started while it was still hidden. The branch carries nothing: the state
+// has hidden = false and the configuration is there when the online phase is
+// scheduled. A repeated publication writes the fact again, so a consumer
+// deduplicates by event_id and not by visibility.
+message AuctionPublished {}
+
+// The auction was hidden from participants again before its trading started. The
+// state has hidden = true. Nothing else changes: the registry and the
+// configuration stay as they were, and a consumer of this fact drops what it was
+// going to say about a publication that no longer holds.
+message AuctionHidden {}
 
 // A recorded public fact about one invoice: why it changed and what is true about
 // it now. The envelope is the one of LotEvent, field for field; which of the
@@ -565,6 +655,10 @@ message RaffleState {
   // The number of the winning ticket, from 1 to the count of tickets. 0 means
   // there is no draw yet; it is never 0 on raffle_drawn.
   uint32 winning_ticket = 2;
+
+  // The prize of the raffle as the organizer declared it, one line. Unset when
+  // the raffle has no prize; it is then absent, not empty.
+  optional string raffle_prize = 3;
 }
 
 // The draw was made: the winning ticket is in the state and never changes. The

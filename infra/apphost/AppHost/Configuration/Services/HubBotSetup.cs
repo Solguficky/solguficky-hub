@@ -36,6 +36,7 @@ internal static class HubBotSetup
         Wire(
             context,
             TelegramEnvironment.Resolve(context.Builder.Configuration),
+            SupportBotLink.Local(context.Builder.Configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.HubBot));
 
     /// <summary>
@@ -47,6 +48,7 @@ internal static class HubBotSetup
         Wire(
                 context,
                 TelegramEnvironment.Production,
+                SupportBotLink.Published(context.Builder),
                 context.Builder.AddDockerfile(
                     AppHostNames.Resources.HubBot,
                     RepositoryPaths.Root(context.Builder),
@@ -57,6 +59,7 @@ internal static class HubBotSetup
     private static IResourceBuilder<T> Wire<T>(
         ServiceGraphContext context,
         TelegramEnvironment environment,
+        SupportBotLink? support,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
@@ -73,9 +76,12 @@ internal static class HubBotSetup
             bot.WithEnvironment("BOT_AUCTION_BOT_USERNAME", auctionBotUsername);
         }
 
+        // Вход в бот поддержки из «Помощи» и ожидания допуска (ADR-068, п. 2).
+        support?.Username(bot);
+
         return bot
-            // Один пакет на два бота (ADR-064, п. 18): поверхность — параметр
-            // процесса, переменные у двух ботов общие, а значения свои.
+            // Один пакет на три бота (ADR-064, п. 18): поверхность — параметр
+            // процесса, переменные у ботов общие, а значения свои.
             .WithEnvironment("BOT_SURFACE", "hub")
             .WithEnvironment("BOT_TOKEN", token)
             // Не путать с токеном Bot API выше: этим бот доказывает себя

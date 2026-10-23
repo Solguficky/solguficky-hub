@@ -96,9 +96,13 @@ enum Phase {
 /**
  * Окно сниженного шага лота — полуинтервал `[from, until)` и сумма шага в нём (RFC-011, П-03; ADR-047, дополнение
  * 2026-10-08). Лот получает только окна, в которые организатор его выбрал, поэтому списка лотов здесь нет; валюта суммы
- * — валюта лота, окна в чужой валюте лот при открытии отбрасывает (И-04).
+ * — валюта лота, окна в чужой валюте лот при открытии и при запуске отбрасывает (И-04).
  */
-final case class StepWindow(from: Instant, until: Instant, step: Money)
+final case class StepWindow(from: Instant, until: Instant, step: Money) {
+
+  /** Полуинтервалы пересекаются: каждое начинается раньше, чем кончается другое. */
+  def overlaps(other: StepWindow): Boolean = from.isBefore(other.until) && other.from.isBefore(until)
+}
 
 /**
  * Действующий прокси-лимит участника (RFC-011, «Состояние лота»).
@@ -109,6 +113,53 @@ final case class StepWindow(from: Instant, until: Instant, step: Money)
  */
 final case class ProxyLimit(max: Money, setSeq: Long)
 
+/** Что сделал участник входом торгов: ручная ставка, выставленный или снятый прокси-лимит (ADR-072, п. 2). */
+enum Move {
+  case Bid(amount: Money)
+  case LimitSet(max: Money)
+  case LimitWithdrawn
+}
+
+/**
+ * Вход торгов лота (ADR-072, п. 2): участник, что он сделал, момент команды `at` и `sequence` события. Производные
+ * ставки прокси входами не являются — их дают правила, и переигрывание выводит их заново.
+ */
+final case class Entry(participant: ParticipantId, move: Move, at: Instant, sequence: Long)
+
+/** Окно, запущенное по ходу торгов (`StepWindowAdded`), и номер строки журнала, с которой лот его знает. */
+final case class AddedWindow(window: StepWindow, sequence: Long)
+
+/**
+ * История торгов лота — то, по чему снятие участника переигрывает торги без него (ADR-072, п. 2). Стартовая цена и окна
+ * сниженного шага лежат здесь, а не только в торгах: удержание окон не несёт, а переигрывание в `Held` идёт по ним.
+ * `stepWindows` — окна `LotOpened`, `addedWindows` — запущенные потом вместе с номером строки: вход видит окно, только
+ * если лот знал его к этому входу. Без номера окно, которое аукцион запустил с текущего момента, а лот записал позже,
+ * дало бы при переигрывании сниженный шаг входу, принятому ещё по обычному. `online` — входы онлайн-недели, на которые
+ * П-02 отвечал; `held` — лимиты, записанные в удержании, которые ждали финала без пересчёта. Входы живого финала
+ * история не копит: снятие в `Live` закрыто (п. 4), а другой фазы, где оно открыто, после финала нет. `removed` —
+ * снятые участники (И-22).
+ */
+final case class Course(
+    startingPrice: Money,
+    stepWindows: List[StepWindow],
+    online: Vector[Entry],
+    held: Vector[Entry],
+    removed: Set[ParticipantId],
+    addedWindows: Vector[AddedWindow] = Vector.empty
+) {
+
+  /** Окна, которые лот знал к строке `sequence`, по возрастанию начала — как `stepWindows` торгов в тот момент. */
+  def windowsAt(sequence: Long): List[StepWindow] =
+    (stepWindows ++ addedWindows.filter(_.sequence < sequence).map(_.window)).sortBy(_.from)
+}
+
+object Course {
+
+  /** История лота, торги которого только что открылись: входов и снятых ещё нет. */
+  def opened(startingPrice: Money, stepWindows: List[StepWindow]): Course =
+    Course(startingPrice, stepWindows, Vector.empty, Vector.empty, Set.empty)
+}
+
 /**
  * Состояние лота в торгах (RFC-011, «Состояние лота»).
  *
@@ -117,9 +168,11 @@ final case class ProxyLimit(max: Money, setSeq: Long)
  * раз анти-снайп уже продлил дедлайн (П-04); он лежит рядом с дедлайном, чтобы лимит продлений восстанавливался из
  * журнала вместе с ним (ПП-2). `markedForFinal` — лот отмечен для финала (П-09): торги идут как обычно, а закрытие по
  * дедлайну удержит его вместо продажи. Это состояние, а не настройка: `false` из `LotOpened` и `LotResumed`, `true` из
- * `LotMarkedForFinal` (И-10). `stepWindows` — окна сниженного шага из `LotOpened`, заморожены, как `config` (И-21), и
- * действуют только в фазе `Online`. В живой финал они не доходят: удержание их не переносит, и `LotResumed` строит
- * торги без окон.
+ * `LotMarkedForFinal` (И-10). `stepWindows` — окна сниженного шага из `LotOpened` и `StepWindowAdded` по возрастанию
+ * начала: они только дописываются и после записи не меняются (И-21, ADR-047, дополнение 2026-10-12), и действуют только
+ * в фазе `Online`. В живой финал они не доходят: удержание их не переносит, и `LotResumed` строит торги без окон.
+ * `course` — история торгов для снятия участника (ADR-072); пуста она только у состояния, прочитанного из строки
+ * прежней формы, которая истории не несла: entity поднимает лот replay'ем журнала, и там история есть всегда.
  */
 final case class TradingState(
     config: LotConfig,
@@ -132,12 +185,14 @@ final case class TradingState(
     extensionsUsed: Int,
     proxyLimits: Map[ParticipantId, ProxyLimit],
     markedForFinal: Boolean,
+    course: Option[Course],
     stepWindows: List[StepWindow] = Nil
 )
 
 /**
  * Лот удержан для живого финала: те же цена, лидер, лимиты и счётчик продлений, что были в торгах на момент дедлайна,
- * дедлайна и ask нет (П-09). Лимит, записанный в удержании, ждёт финала: пересчёт П-02 здесь не запускается.
+ * дедлайна и ask нет (П-09). Лимит, записанный в удержании, ждёт финала: пересчёт П-02 здесь не запускается. `course` —
+ * та же история торгов, что в [[TradingState]]: снятие участника открыто и в удержании (ADR-072, п. 4).
  */
 final case class HeldState(
     config: LotConfig,
@@ -145,7 +200,8 @@ final case class HeldState(
     leader: Option[ParticipantId],
     leadingBidId: Option[BidId],
     proxyLimits: Map[ParticipantId, ProxyLimit],
-    extensionsUsed: Int
+    extensionsUsed: Int,
+    course: Option[Course]
 )
 
 final case class Sale(winner: ParticipantId, price: Money, bidId: BidId, at: Instant)
@@ -254,8 +310,21 @@ final case class UnmarkForFinal(opId: OpId)
  */
 final case class WithdrawLot(reason: WithdrawnReason, opId: OpId)
 
+/**
+ * Снятие участника с лота целиком (ADR-072, п. 1): все его ставки и действующий лимит. Шлёт аукцион по команде
+ * администратора сходки; администратор — инициатор конверта, в команду он не входит. `expectedVersion` — номер лота, на
+ * котором администратор видел предпросмотр (PER-658): снятие необратимо, и итог, которого он не видел, не пишется.
+ */
+final case class RemoveParticipant(participant: ParticipantId, opId: OpId, expectedVersion: Long)
+
 /** Возврат удержанного лота в торги живого финала (П-09): без дедлайна и ask, в фазе `Live`. */
 final case class ResumeLot(opId: OpId)
+
+/**
+ * Окно сниженного шага, запущенное по ходу торгов (ADR-047, дополнение 2026-10-12). Шлёт аукцион после
+ * `StepWindowLaunched` каждому лоту окна и после рестарта — тем же `op_id`, пока лот не ответит.
+ */
+final case class AddStepWindow(window: StepWindow, opId: OpId)
 
 /**
  * Следующая цена, которую ведущий объявил залу (RFC-011, П-08). Ведущего команда не несёт: он — инициатор конверта, а
@@ -280,11 +349,17 @@ final case class AdvanceAsk(newAsk: Money, opId: OpId)
  * без payload (дополнение 2026-10-06): он только снимает признак.
  *
  * `AskAdvanced` несёт только объявленную сумму: кто её объявил, лежит в конверте инициатором, как в контракте шины.
- * `LotWithdrawn` — только причину: снявший лежит там же (ADR-047, `actor`).
+ * `LotWithdrawn` — только причину: снявший лежит там же (ADR-047, `actor`). `StepWindowAdded` — запущенное окно без
+ * множества лотов, той же формы, что окно в `LotOpened` (дополнение 2026-10-12).
  *
  * `overtakenByProxy` у ручной ставки — её той же командой перебила производная ставка другого участника, и лидерство,
  * взятое ею, команду не пережило. Свёртка его не читает: это знание о транзакции для потребителей факта, которое
  * проекция публикации, видящая по одному событию, иначе не получила бы (PER-473). У производной ставки всегда `false`.
+ *
+ * `ParticipantRemoved` несёт итог переигрывания торгов без снятого (ADR-072, п. 1): цену, лидера и `leadingBidId` —
+ * позицию лидера, новую ставку суммой `price`, которой в журнале может не быть. Лидер и позиция пусты вместе: у
+ * оставшихся нет ни ставки, ни лимита (И-02). Итог в событии, а не вывод при `apply`, — исход замораживается в момент
+ * решения и от версии правил переигрывания не зависит.
  */
 enum LotEvent {
   case LotDrafted(auction: AuctionId)
@@ -314,6 +389,14 @@ enum LotEvent {
   case LotUnmarkedForFinal
   case AskAdvanced(ask: Money)
   case LotWithdrawn(reason: WithdrawnReason)
+  case StepWindowAdded(window: StepWindow)
+
+  case ParticipantRemoved(
+      participant: ParticipantId,
+      price: Money,
+      leader: Option[ParticipantId],
+      leadingBidId: Option[BidId]
+  )
 }
 
 /**
@@ -323,6 +406,12 @@ enum LotEvent {
  * только сворачивает журнал в его порядке (П-07); второго счётчика рядом с журнальным нет.
  */
 final case class Envelope(sequence: Long, opId: OpId, event: LotEvent)
+
+/**
+ * Строка журнала лота, как её сворачивает [[Lot.replay]]: конверт и момент записи — `occurred_at` строки. Момент нужен
+ * истории торгов: по нему переигрывание снятия знает, когда был вход (ADR-072, п. 2).
+ */
+final case class Written(envelope: Envelope, at: Instant)
 
 /*
  * `LotNotFound` — ответ лоту в `Initial` на любую команду, кроме `DraftLot`: «тот же ответ, что и команде к
@@ -371,6 +460,8 @@ enum PlaceBidRejected {
   case BidderIsLeader(currentPrice: Money)
   case BidNotAtNextPrice(expected: Money)
   case BidBelowMinimum(minRequired: Money)
+  case BidAboveMaximum(maximum: Money)
+  case ParticipantRemovedFromLot
 }
 
 /**
@@ -385,6 +476,7 @@ enum SetProxyLimitRejected {
   case ProxyDisabledForLot
   case CurrencyMismatch
   case ProxyBelowCurrentPrice(minLimit: Money)
+  case ParticipantRemovedFromLot
 }
 
 /**
@@ -454,6 +546,35 @@ enum WithdrawLotRejected {
   case LotNotFound
   case OpIdTaken
   case LotAlreadyClosed
+}
+
+/**
+ * Отказы `AddStepWindow` (ADR-047, дополнение 2026-10-12). `LotNotOpen` — лот не в торгах онлайн-этапа: закрыт, снят,
+ * удержан или уже в живом финале; аукцион такого лота не ждёт. `OpIdTaken` — `op_id` уже записан под другим событием
+ * лота.
+ */
+enum AddStepWindowRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotNotOpen
+}
+
+/**
+ * Отказы `RemoveParticipant` (ADR-072, п. 1 и 4). `LotNotOpen` — лот не в торгах и не удержан. `NotInOnlinePhase` — лот
+ * в живом финале: ставки там ведёт ведущий. `DeadlinePassed` — дедлайн наступил, даже если закрытие ещё не пришло: тот
+ * же судья, что у отметки финала. `NotALotParticipant` — у человека на лоте нет ни принятой ручной ставки, ни
+ * выставленного лимита, в том числе снятого потом. `ParticipantAlreadyRemoved` — его уже сняли под другим `op_id`.
+ * `LotChanged` — лот ушёл от номера, на котором администратор видел предпросмотр (PER-658).
+ */
+enum RemoveParticipantRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotNotOpen
+  case NotInOnlinePhase
+  case DeadlinePassed
+  case NotALotParticipant
+  case ParticipantAlreadyRemoved
+  case LotChanged
 }
 
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */

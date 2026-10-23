@@ -6,7 +6,7 @@ using Notifications.Reminders;
 namespace Notifications.Infrastructure;
 
 /// <summary>Живое задание лота: то, что нужно ядру для решения.</summary>
-public sealed record LiveLotReminderTask(Guid TaskId, DateTimeOffset Deadline, DateTimeOffset DueAt);
+public sealed record LiveLotReminderTask(Guid TaskId, LotReminderKind Kind, DateTimeOffset Deadline, DateTimeOffset DueAt);
 
 /// <summary>Исход исполнения задания лота.</summary>
 public enum LotFireOutcome
@@ -38,23 +38,25 @@ public sealed record LotFireResult(LotFireOutcome Outcome, FactCount Facts);
 public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTelemetry telemetry)
 {
     private const string LiveSql = """
-        SELECT task_id, deadline, due_at
+        SELECT task_id, kind, deadline, due_at
         FROM lot_reminder_task
-        WHERE lot_id = @LotId AND state = 'scheduled';
+        WHERE lot_id = @LotId AND kind = @Kind AND state = 'scheduled';
         """;
 
-    // «Срабатывало ли вообще» — не «по этому ли дедлайну»: продление после
-    // срабатывания нового напоминания не рождает (ADR-063, п.4).
+    // «Срабатывало ли по этому виду» — не «по этому ли дедлайну» и не «по лоту
+    // вообще»: продление после срабатывания часового не рождает нового
+    // часового (ADR-063, п.4), а второй момент после первого завести можно
+    // (ADR-063, дополнение 2026-10-20).
     private const string FiredEverSql = """
         SELECT EXISTS (
             SELECT 1 FROM lot_reminder_task
-            WHERE lot_id = @LotId AND state = 'fired'
+            WHERE lot_id = @LotId AND kind = @Kind AND state = 'fired'
         );
         """;
 
     private const string InsertSql = """
-        INSERT INTO lot_reminder_task (task_id, lot_id, deadline, due_at, state, created_at)
-        VALUES (@TaskId, @LotId, @Deadline, @DueAt, 'scheduled', @Now);
+        INSERT INTO lot_reminder_task (task_id, lot_id, kind, deadline, due_at, state, created_at)
+        VALUES (@TaskId, @LotId, @Kind, @Deadline, @DueAt, 'scheduled', @Now);
         """;
 
     private const string SupersedeSql = """
@@ -66,7 +68,7 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
     private const string CancelSql = """
         UPDATE lot_reminder_task
         SET state = 'cancelled', reason = @Reason
-        WHERE lot_id = @LotId AND state = 'scheduled';
+        WHERE lot_id = @LotId AND kind = @Kind AND state = 'scheduled';
         """;
 
     private const string FireSql = """
@@ -75,29 +77,52 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
         WHERE task_id = @TaskId AND state = 'scheduled';
         """;
 
-    /// <summary>Живое задание лота, если оно есть.</summary>
-    public async Task<LiveLotReminderTask?> Live(Guid lotId, CancellationToken cancellationToken)
+    // Последнее задание лота и вида, живое или сработавшее, под блокировкой: с
+    // ней поздняя отметка и срабатывание не разминутся. Срабатывание,
+    // захватившее строку раньше, отметка ждёт и видит уже «сработало»; отметку,
+    // взявшую строку раньше, ждёт захват срабатывания, и его разворот следящих
+    // её видит. Живого задания после сработавшего не бывает.
+    private const string LockLatestSql = """
+        SELECT task_id AS TaskId, kind AS Kind, state = 'fired' AS Fired
+        FROM lot_reminder_task
+        WHERE lot_id = @LotId AND kind = @Kind AND state IN ('scheduled', 'fired')
+        ORDER BY created_at DESC
+        LIMIT 1
+        FOR SHARE;
+        """;
+
+    /// <summary>Живое задание лота и вида, если оно есть.</summary>
+    public async Task<LiveLotReminderTask?> Live(Guid lotId, LotReminderKind kind, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
 
         var row = await connection.QuerySingleOrDefaultAsync<LiveRow>(
-            new CommandDefinition(LiveSql, new { LotId = lotId }, cancellationToken: cancellationToken));
+            new CommandDefinition(
+                LiveSql,
+                new { LotId = lotId, Kind = LotReminderKinds.Text(kind) },
+                cancellationToken: cancellationToken));
 
-        return row is null ? null : new LiveLotReminderTask(row.task_id, Moment(row.deadline), Moment(row.due_at));
+        return row is null
+            ? null
+            : new LiveLotReminderTask(row.task_id, LotReminderKinds.Parse(row.kind), Moment(row.deadline), Moment(row.due_at));
     }
 
-    /// <summary>По этому лоту напоминание уже срабатывало.</summary>
-    public async Task<bool> FiredEver(Guid lotId, CancellationToken cancellationToken)
+    /// <summary>По этому лоту и виду напоминание уже срабатывало.</summary>
+    public async Task<bool> FiredEver(Guid lotId, LotReminderKind kind, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
 
         return await connection.ExecuteScalarAsync<bool>(
-            new CommandDefinition(FiredEverSql, new { LotId = lotId }, cancellationToken: cancellationToken));
+            new CommandDefinition(
+                FiredEverSql,
+                new { LotId = lotId, Kind = LotReminderKinds.Text(kind) },
+                cancellationToken: cancellationToken));
     }
 
     /// <summary>Заводит задание. Возвращает его идентификатор.</summary>
     public async Task<Guid> Create(
         Guid lotId,
+        LotReminderKind kind,
         DateTimeOffset deadline,
         DateTimeOffset dueAt,
         DateTimeOffset now,
@@ -110,7 +135,15 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
         await connection.ExecuteAsync(
             new CommandDefinition(
                 InsertSql,
-                new { TaskId = taskId, LotId = lotId, Deadline = deadline.UtcDateTime, DueAt = dueAt.UtcDateTime, Now = now.UtcDateTime },
+                new
+                {
+                    TaskId = taskId,
+                    LotId = lotId,
+                    Kind = LotReminderKinds.Text(kind),
+                    Deadline = deadline.UtcDateTime,
+                    DueAt = dueAt.UtcDateTime,
+                    Now = now.UtcDateTime,
+                },
                 cancellationToken: cancellationToken));
 
         return taskId;
@@ -120,6 +153,7 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
     public async Task<Guid> Supersede(
         Guid liveTaskId,
         Guid lotId,
+        LotReminderKind kind,
         DateTimeOffset deadline,
         DateTimeOffset dueAt,
         DateTimeOffset now,
@@ -141,7 +175,15 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
         await connection.ExecuteAsync(
             new CommandDefinition(
                 InsertSql,
-                new { TaskId = taskId, LotId = lotId, Deadline = deadline.UtcDateTime, DueAt = dueAt.UtcDateTime, Now = now.UtcDateTime },
+                new
+                {
+                    TaskId = taskId,
+                    LotId = lotId,
+                    Kind = LotReminderKinds.Text(kind),
+                    Deadline = deadline.UtcDateTime,
+                    DueAt = dueAt.UtcDateTime,
+                    Now = now.UtcDateTime,
+                },
                 transaction,
                 cancellationToken: cancellationToken));
 
@@ -151,13 +193,16 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
         return taskId;
     }
 
-    /// <summary>Снимает живое задание лота. Возвращает число снятых строк.</summary>
-    public async Task<int> Cancel(Guid lotId, string reason, CancellationToken cancellationToken)
+    /// <summary>Снимает живое задание лота и вида. Возвращает число снятых строк.</summary>
+    public async Task<int> Cancel(Guid lotId, LotReminderKind kind, string reason, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
 
         var removed = await connection.ExecuteAsync(
-            new CommandDefinition(CancelSql, new { LotId = lotId, Reason = reason }, cancellationToken: cancellationToken));
+            new CommandDefinition(
+                CancelSql,
+                new { LotId = lotId, Kind = LotReminderKinds.Text(kind), Reason = reason },
+                cancellationToken: cancellationToken));
 
         telemetry.Remove(removed, "cancelled");
         return removed;
@@ -193,7 +238,8 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
             return new LotFireResult(LotFireOutcome.AlreadyFired, FactCount.None);
         }
 
-        var facts = await NotificationStore.AddLotReminder(work, task.TaskId, lotId, task.Deadline, now, cancellationToken);
+        var facts = await NotificationStore.AddLotReminder(work, task.TaskId, task.Kind, lotId, task.Deadline, now,
+            cancellationToken);
 
         if (facts is null)
         {
@@ -207,9 +253,51 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
         return new LotFireResult(LotFireOutcome.Sent, facts);
     }
 
+    /// <summary>
+    /// Напоминание человеку, который отметил лот позже часового срабатывания
+    /// (PER-647), в транзакции <paramref name="work" /> самой отметки.
+    /// </summary>
+    /// <remarks>
+    /// Повод — ближний момент, а не часовой: его задание и его срабатывание
+    /// несут один ключ, поэтому человек получит одно сообщение, а не два
+    /// (ADR-063, дополнение 2026-10-20). Часовое задание при этом сработало:
+    /// пока оно живо, человек попадёт в его разворот сам, и досрочного сообщения
+    /// не нужно. Второго задания у лота нет — у лота, заведённого до этого
+    /// дополнения, — и тогда повод остаётся часовым.
+    /// </remarks>
+    public static async Task<FactCount> RemindLateFollower(
+        UnitOfWork work,
+        Guid identityId,
+        Guid lotId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var hour = (await work.Query<LatestRow>(
+            LockLatestSql,
+            new { LotId = lotId, Kind = LotReminderKinds.Text(LotReminderKind.Hour) },
+            cancellationToken)).SingleOrDefault();
+        if (hour is not { Fired: true })
+        {
+            return FactCount.None;
+        }
+
+        var close = (await work.Query<LatestRow>(
+            LockLatestSql,
+            new { LotId = lotId, Kind = LotReminderKinds.Text(LotReminderKind.Close) },
+            cancellationToken)).SingleOrDefault();
+
+        return close is null
+            ? await NotificationStore.AddLateLotReminder(work, hour.TaskId, LotReminderKind.Hour, lotId, identityId, now,
+                cancellationToken)
+            : await NotificationStore.AddLateLotReminder(work, close.TaskId, LotReminderKind.Close, lotId, identityId, now,
+                cancellationToken);
+    }
+
     // timestamptz читается как DateTime, а не DateTimeOffset — так его отображает
     // Npgsql. Перевод идёт через ToUniversalTime, как в ReminderTaskStore.
-    private sealed record LiveRow(Guid task_id, DateTime deadline, DateTime due_at);
+    private sealed record LiveRow(Guid task_id, string kind, DateTime deadline, DateTime due_at);
+
+    private sealed record LatestRow(Guid TaskId, string Kind, bool Fired);
 
     private static DateTimeOffset Moment(DateTime value) => new(value.ToUniversalTime());
 }

@@ -12,7 +12,8 @@
       "event": {
         "kind": "AuctionDrafted",
         "auctionDrafted": {
-          "meetupId": "0190f2a0-0000-7000-8000-00000000000a"
+          "meetupId": "0190f2a0-0000-7000-8000-00000000000a",
+          "hidden": true
         },
         "lotAdded": null,
         "lotRemoved": null,
@@ -20,7 +21,13 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null
       }
     },
     {
@@ -37,7 +44,13 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null
       }
     }
   ],
@@ -46,5 +59,10 @@
   "order": null,
   "activated": null,
   "cancelledBy": null,
-  "completed": null
+  "completed": null,
+  "launched": null,
+  "hidden": true,
+  "finalAt": null,
+  "sets": null,
+  "paymentInstructions": null
 }

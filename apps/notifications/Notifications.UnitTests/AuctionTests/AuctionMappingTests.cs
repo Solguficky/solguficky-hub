@@ -22,6 +22,15 @@ public class AuctionMappingTests
         bid.LotId.ShouldBe(Guid.Parse(message.LotId));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void When_BidPhaseIsOnlineOrLive_Expect_LiveFlagFollowsThePhase(bool live)
+    {
+        var message = EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId(), live: live);
+        Decode(message).LiveFinal.ShouldBe(live);
+    }
+
     [Fact]
     public void When_FirstBid_Expect_NoRecipient() =>
         Decode(EventFactory.Bid(EventFactory.NewId())).OutbidRecipient.ShouldBeNull();
@@ -96,10 +105,16 @@ public class AuctionMappingTests
     [Theory]
     [InlineData("events.auction.auction_scheduled")]
     [InlineData("events.auction.lot_added")]
-    [InlineData("events.auction.invoice_issued")]
     [InlineData("events.auction.future_occasion")]
     public void When_NotLotSubject_Expect_NotParsedAsLotEvent(string subject) =>
         AuctionMapping.Decode(subject, new byte[] { 0xff }).ShouldBeOfType<AuctionDecoded.Ignored>();
+
+    [Fact]
+    public void When_InvoiceSubjectCarriesBrokenProtobuf_Expect_Poison() =>
+        // Факт счёта разбирается отдельным сообщением (InvoiceEvent), поэтому
+        // мусор в subject'е счёта — яд, а не «не наш subject».
+        AuctionMapping.Decode(AuctionFeed.InvoiceIssuedSubject, new byte[] { 0xff })
+            .ShouldBeOfType<AuctionDecoded.Poison>();
 
     [Theory]
     [InlineData("events.auction.lot_unsold")]
@@ -392,6 +407,65 @@ public class AuctionMappingTests
             default: throw new ArgumentOutOfRangeException(nameof(field));
         }
         AuctionMapping.Decode(AuctionFeed.BidPlacedSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Poison>();
+    }
+
+    [Fact]
+    public void When_StepWindowAdded_Expect_WindowsInSnapshot()
+    {
+        var auction = EventFactory.AuctionOfMeetup();
+        var message = EventFactory.Trading(EventFactory.NewId(), "step_window_added", version: 3, auction: auction,
+            windows: [("2026-10-12T19:00:00Z", "2026-10-12T19:30:00Z", 50L)]);
+
+        var fact = AuctionMapping
+            .Decode("events.auction.step_window_added", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>()
+            .Value;
+
+        var window = fact.Snapshot.Windows.ShouldHaveSingleItem();
+        window.From.ShouldBe(new DateTimeOffset(2026, 10, 12, 19, 0, 0, TimeSpan.Zero));
+        window.Until.ShouldBe(new DateTimeOffset(2026, 10, 12, 19, 30, 0, TimeSpan.Zero));
+        window.Step.MinorUnits.ShouldBe(50);
+        window.Step.Currency.ShouldBe("RUB");
+    }
+
+    [Fact]
+    public void When_LotHasNoWindows_Expect_EmptyWindowList()
+    {
+        var message = EventFactory.Trading(EventFactory.NewId(), "lot_opened");
+
+        var fact = AuctionMapping
+            .Decode("events.auction.lot_opened", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>()
+            .Value;
+
+        fact.Snapshot.Windows.ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData("from")]
+    [InlineData("until")]
+    [InlineData("non_utc")]
+    [InlineData("order")]
+    [InlineData("step")]
+    [InlineData("currency")]
+    public void When_StepWindowInvalid_Expect_Poison(string field)
+    {
+        var message = EventFactory.Trading(EventFactory.NewId(), "step_window_added", version: 3,
+            windows: [("2026-10-12T19:00:00Z", "2026-10-12T19:30:00Z", 50L)]);
+        var window = message.State.StepWindows[0];
+        switch (field)
+        {
+            case "from": window.From = "not-a-moment"; break;
+            case "until": window.Until = ""; break;
+            case "non_utc": window.From = "2026-10-12T19:00:00+03:00"; break;
+            case "order": window.Until = window.From; break;
+            case "step": window.Step = null; break;
+            case "currency": window.Step.Currency = "rub"; break;
+            default: throw new ArgumentOutOfRangeException(nameof(field));
+        }
+
+        AuctionMapping.Decode("events.auction.step_window_added", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Poison>();
     }
 
     internal static AuctionBid Decode(LotEvent message) =>

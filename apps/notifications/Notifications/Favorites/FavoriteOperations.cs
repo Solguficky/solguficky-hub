@@ -1,3 +1,4 @@
+using Notifications.Facts;
 using Notifications.Infrastructure;
 using Npgsql;
 
@@ -18,13 +19,19 @@ public abstract record FollowResult
 /// Каждая операция — одна транзакция вместе с состоянием, которое она
 /// возвращает, как у <see cref="Preferences.PreferenceOperations" />.
 /// </remarks>
-public sealed class FavoriteOperations(NpgsqlDataSource source, TimeProvider clock)
+public sealed class FavoriteOperations(NpgsqlDataSource source, TimeProvider clock, FactTelemetry facts)
 {
     /// <summary>
     /// Ставит отметку или возвращает снятую. Лот, которого реплика ещё не
     /// знает, отметку не получает: ссылаться ей было бы не на что ни
     /// напоминанию, ни чистке.
     /// </summary>
+    /// <remarks>
+    /// Отметка, появившаяся после срабатывания напоминания о лоте, получает
+    /// его сразу и той же транзакцией (PER-647): отметка без напоминания не
+    /// закоммитится. Повторная живая отметка ничего не меняет и напоминания не
+    /// ищет.
+    /// </remarks>
     public async Task<FollowResult> Follow(Guid identityId, Guid lotId, CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
@@ -33,10 +40,15 @@ public sealed class FavoriteOperations(NpgsqlDataSource source, TimeProvider clo
         {
             return new FollowResult.UnknownLot();
         }
-        await FavoriteStore.Follow(work, identityId, lotId, clock.GetUtcNow(), cancellationToken);
+
+        var now = clock.GetUtcNow();
+        var reminded = await FavoriteStore.Follow(work, identityId, lotId, now, cancellationToken)
+            ? await LotReminderTaskStore.RemindLateFollower(work, identityId, lotId, now, cancellationToken)
+            : FactCount.None;
         var following = await FavoriteStore.Following(work, identityId, lotId, cancellationToken);
 
         await work.Commit(cancellationToken);
+        facts.Record(NotificationFacts.LotReminderType, reminded);
 
         return new FollowResult.Done(following);
     }

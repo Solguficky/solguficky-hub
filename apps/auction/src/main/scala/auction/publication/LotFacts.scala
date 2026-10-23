@@ -6,6 +6,9 @@ import auction.entity.LotJournal
 import auction.lot.BidOrigin
 import auction.lot.LotEvent
 import auction.lot.LotState
+import auction.lot.ParticipantId
+import auction.lot.Phase
+import auction.lot.StepWindow
 import auction.projection.AppliedEvent
 import auction.projection.LotViewRow
 import auction.v1.auction as model
@@ -25,10 +28,16 @@ object LotFacts {
 
   val SubjectPrefix: String = "events.auction."
 
-  def fact(applied: AppliedEvent): Option[Fact] =
+  /** Факты свёртки по порядку: строка до каждого события — строка после предыдущего, а до первого — `before`. */
+  def facts(before: Option[LotViewRow], applied: List[AppliedEvent]): List[Fact] =
+    applied.zip(before :: applied.map(step => Some(step.row))).flatMap((step, previous) => fact(step, previous))
+
+  /** Факт одного события; `before` — строка лота до него, из неё повод снятия берёт прежнего лидера. */
+  def fact(applied: AppliedEvent, before: Option[LotViewRow]): Option[Fact] =
     occasion(
       LotJournal.envelope(applied.sequence, applied.stored).event,
-      LotJournal.restoreInitiator(applied.stored.actor)
+      LotJournal.restoreInitiator(applied.stored.actor),
+      before.flatMap(leaderOf)
     ).map { (name, occasion) =>
       val message = bus.LotEvent(
         eventId = applied.stored.eventId.toString,
@@ -49,8 +58,15 @@ object LotFacts {
    * `initiator` — тот, чья команда записала событие: производная ставка, поставленная не командой самого участника,
    * отвечает другому (`answers_other_bidder`, PER-473). Флаг выводится из конверта, а не хранится в событии:
    * производную ставку пишут только ставка и прокси-лимит, а их инициатор — всегда участник.
+   *
+   * `previousLeader` — лидер лота до события. Его берёт только снятие участника (ADR-072, п. 5): ставка несёт прежнего
+   * лидера в самом событии, а снятие — нет, его итог — уже новый лидер.
    */
-  def occasion(event: LotEvent, initiator: Initiator): Option[(String, bus.LotEvent.Occasion)] =
+  def occasion(
+      event: LotEvent,
+      initiator: Initiator,
+      previousLeader: => Option[ParticipantId]
+  ): Option[(String, bus.LotEvent.Occasion)] =
     event match {
       case LotEvent.LotDrafted(_) => Some("lot_drafted" -> bus.LotEvent.Occasion.LotDrafted(bus.LotDrafted()))
       case LotEvent.LotScheduled(_) => Some("lot_scheduled" -> bus.LotEvent.Occasion.LotScheduled(bus.LotScheduled()))
@@ -76,10 +92,23 @@ object LotFacts {
       case LotEvent.AskAdvanced(_) => Some("ask_advanced" -> bus.LotEvent.Occasion.AskAdvanced(bus.AskAdvanced()))
       case LotEvent.LotWithdrawn(_) =>
         Some("lot_withdrawn" -> bus.LotEvent.Occasion.LotWithdrawn(bus.LotWithdrawn()))
+      case LotEvent.StepWindowAdded(_) =>
+        Some("step_window_added" -> bus.LotEvent.Occasion.StepWindowAdded(bus.StepWindowAdded()))
       // Отметка — рабочий выбор организатора до заморозки состава: публичным факт становится только удержание.
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal |
           LotEvent.LotUnmarkedForFinal =>
         None
+      // Кого сняли, кто и почему, факт не несёт: снимок называет нового лидера, повод — прежнего (ADR-072, п. 5).
+      case LotEvent.ParticipantRemoved(_, _, _, _) =>
+        val removed = bus.ParticipantRemoved(previousLeaderId = previousLeader.map(_.value.toString))
+        Some("participant_removed" -> bus.LotEvent.Occasion.ParticipantRemoved(removed))
+    }
+
+  private def leaderOf(row: LotViewRow): Option[ParticipantId] =
+    LotJournal.restoreLot(row.stored).state match {
+      case LotState.Trading(trading) => trading.leader
+      case LotState.Held(held) => held.leader
+      case _ => None
     }
 
   /** Публичное состояние лота: без прокси-лимитов и без того, что снимок ответа считает для одного смотрящего. */
@@ -94,11 +123,24 @@ object LotFacts {
           .withConfig(LotValues.config(schedule.config))
           .withScheduled(model.LotSchedule(Some(LotValues.money(schedule.startingPrice))))
       case LotState.Trading(trading) =>
-        base.withConfig(LotValues.config(trading.config)).withTrading(LotValues.trading(trading))
+        base
+          .withConfig(LotValues.config(trading.config))
+          .withTrading(LotValues.trading(trading))
+          // Окна действуют только в онлайн-фазе: живой финал их не несёт (ADR-047, П-03), и публикатор
+          // держит это обещание схемы, а не полагается на форму состояния.
+          .withStepWindows(if (trading.phase == Phase.Online) trading.stepWindows.map(stepWindow) else Nil)
       case LotState.Held(held) => base.withConfig(LotValues.config(held.config)).withHeld(LotValues.held(held))
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
       case LotState.Unsold(reason) => base.withUnsold(LotValues.unsold(reason))
       case LotState.Withdrawn(reason) => base.withWithdrawn(LotValues.withdrawn(reason))
     }
   }
+
+  /** Окно сниженного шага как данные факта: записанный полуинтервал `[from, until)` и его сумма. */
+  private def stepWindow(window: StepWindow): bus.StepWindow =
+    bus.StepWindow(
+      from = LotValues.instant(window.from),
+      until = LotValues.instant(window.until),
+      step = Some(LotValues.money(window.step))
+    )
 }

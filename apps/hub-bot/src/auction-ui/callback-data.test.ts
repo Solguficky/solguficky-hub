@@ -46,6 +46,21 @@ describe("auction callback_data", () => {
     });
   });
 
+  // Экран сета (ADR-073, п. 7): открывается с карточки лота сета, поэтому
+  // несёт его и страницу ленты.
+  it("encodes the set of a lot and parses it back", () => {
+    const raw = encodeAuctionCallback({
+      kind: "set",
+      lotId: LOT_ID,
+      page: 3,
+    });
+    expect(raw).toBe(`v1:auc:st:${LOT_TOKEN}:3`);
+    expect(parseAuctionCallback(raw)).toEqual({
+      ok: true,
+      intent: { kind: "set", lotId: LOT_ID, page: 3 },
+    });
+  });
+
   it("fits the largest version with the largest page into 64 bytes", () => {
     const raw = encodeAuctionCallback({
       kind: "lot",
@@ -167,6 +182,7 @@ describe("auction callback_data", () => {
 
   it("encodes the raffle actions and parses them back", () => {
     const cases = [
+      [{ kind: "prediction-results" as const, auctionId: AUCTION_ID }, "pi"],
       [{ kind: "raffle" as const, auctionId: AUCTION_ID }, "rf"],
       [{ kind: "raffle-register" as const, auctionId: AUCTION_ID }, "rr"],
       [{ kind: "raffle-cancel" as const, auctionId: AUCTION_ID }, "rc"],

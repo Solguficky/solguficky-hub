@@ -3,8 +3,13 @@ package auction.grpc
 import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
+import auction.aggregate.LaunchStepWindow
+import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
+import auction.aggregate.PaymentInstructions
+import auction.aggregate.PreviewLotParticipantRemoval
+import auction.aggregate.RemoveLotParticipant
 import auction.aggregate.StepWindowConfig
 import auction.lot.AuctionId
 import auction.projection.AuctionListing
@@ -40,16 +45,20 @@ import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
+import auction.v1.auction_service.HideAuctionRequest
 import auction.v1.auction_service.RegisterForRaffleRequest
 import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
+import auction.v1.auction_service.PreviewParticipantRemovalRequest
+import auction.v1.auction_service.RemoveParticipantRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
+import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.GetLotRequest
@@ -57,15 +66,22 @@ import auction.v1.auction_service.GetPredictionResultsRequest
 import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
+import auction.v1.auction_service.LaunchStepWindowRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
+import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
 import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
+import auction.v1.auction_service.SaveLotSetRequest
+import auction.v1.auction_service.DeleteLotSetRequest
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.PublishAuctionRequest
 import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.SetFinalTimeRequest
+import auction.v1.auction_service.SetPaymentInstructionsRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
@@ -114,6 +130,29 @@ final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
 /** Правка реестра — `AddLot` и `RemoveLot` несут одно и то же. */
 final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId, acting: Acting)
 
+/**
+ * Определение сета лотов аукциону сходки (ADR-073). Название здесь не проверяется: пустое название — отказ домена, а не
+ * форма запроса.
+ */
+final case class LotSetSaveCommand(
+    auctionId: AuctionId,
+    set: LotSetId,
+    name: String,
+    lots: List[LotId],
+    opId: OpId,
+    acting: Acting
+)
+
+final case class LotSetDeleteCommand(auctionId: AuctionId, set: LotSetId, opId: OpId, acting: Acting)
+
+/** Запуск окна сниженного шага аукциону сходки. Окно здесь ещё не проверено: его случаи — решение домена. */
+final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchStepWindow, acting: Acting)
+
+/** Снятие участника с лота аукциона сходки и его предпросмотр. */
+final case class RemovalCommand(auctionId: AuctionId, command: RemoveLotParticipant, acting: Acting)
+
+final case class RemovalPreviewCommand(auctionId: AuctionId, command: PreviewLotParticipantRemoval, acting: Acting)
+
 /** Ask ведущего лоту реестра: то же, что команда реестра, и объявленная сумма. */
 final case class AskCommand(registry: RegistryCommand, newAsk: Money)
 
@@ -140,8 +179,24 @@ final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Act
 /** Удаление аукциона до торгов. */
 final case class DiscardCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
+/** Публикация (`published`) или снятие аукциона сходки (ADR-047, дополнение 2026-10-20). */
+final case class VisibilityCommand(auctionId: AuctionId, published: Boolean, opId: OpId, acting: Acting)
+
 /** Отмена аукциона после старта торгов. */
 final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/**
+ * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): `at` пусто — время снимается.
+ */
+final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opId: OpId, acting: Acting)
+
+/** Текст «как оплатить и получить» (PER-322): `text` пусто — текст снимается. */
+final case class PaymentInstructionsCommand(
+    auctionId: AuctionId,
+    text: Option[PaymentInstructions],
+    opId: OpId,
+    acting: Acting
+)
 
 /**
  * Заморозка состава финала: `order` — лоты в порядке выхода, как их прислал пульт. Дубли и пустой список — не форма
@@ -167,6 +222,9 @@ final case class AuctionQuery(auctionId: AuctionId, acting: Acting)
 /** Чтение пульта администратора: аукцион сходки и тот, кто смотрит. */
 final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
 
+/** Сводка дня торгов: аукцион сходки и окно `[from, until)`, за которое считается статистика лотов. */
+final case class DaySummaryQuery(auctionId: AuctionId, acting: Acting, from: Instant, until: Instant)
+
 /** Подписка на поток аукциона сходки: аукцион и тот, кто смотрит. */
 final case class WatchQuery(auctionId: AuctionId, acting: Acting)
 
@@ -184,6 +242,9 @@ final case class ChooseCommand(auctionId: AuctionId, choice: NameChoice, acting:
 
 /** Имена названных участников аукциона. */
 final case class NamesQuery(auctionId: AuctionId, participants: Set[ParticipantId], acting: Acting)
+
+/** Все выбранные имена аукциона для помощника ведущего. */
+final case class AuctionNamesQuery(auctionId: AuctionId, acting: Acting)
 
 /**
  * Отображение сгенерированных сообщений в доменные типы — trusted boundary.
@@ -318,6 +379,12 @@ object RequestMapping {
       }
     } yield NamesQuery(AuctionId(auctionId), participants, acting)
 
+  def listAuctionNames(request: ListAuctionNamesRequest): Either[FormError, AuctionNamesQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auctionId <- lotAuction(request.auctionId)
+    } yield AuctionNamesQuery(AuctionId(auctionId), acting)
+
   /**
    * Пустой ник — выставленный выбор «ника нет», и отвечает на него отказ выбора, а не форма (integration.md, «Имя
    * участника»). Непустая строка, какой Telegram ником не присылает, — нарушение формы.
@@ -348,12 +415,79 @@ object RequestMapping {
   def removeLot(request: RemoveLotRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
 
+  def saveLotSet(request: SaveLotSetRequest): Either[FormError, LotSetSaveCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      set <- uuidV7("lot_set_id", request.lotSetId)
+      lots <- request.lotIds
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, raw) =>
+          acc.flatMap(lots => uuidV7("lot_ids", raw).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+      opId <- uuidV7("op_id", request.opId)
+    } yield LotSetSaveCommand(auction, LotSetId(set), request.name, lots, OpId(opId), acting)
+
+  def deleteLotSet(request: DeleteLotSetRequest): Either[FormError, LotSetDeleteCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      set <- uuidV7("lot_set_id", request.lotSetId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield LotSetDeleteCommand(auction, LotSetId(set), OpId(opId), acting)
+
   /** Отметка и снятие отметки несут то же, что команды реестра: аукцион сходки, лот и `op_id`. */
   def selectForFinal(request: SelectForFinalRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
 
   def deselectForFinal(request: DeselectForFinalRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  /**
+   * Снятие участника: форма команды реестра, участник и номер лота из предпросмотра. Номер обязателен — `0` не номер
+   * лота, у рождённого лота он начинается с 1, — и без него снятие записало бы итог, которого администратор не видел.
+   */
+  def removeParticipant(request: RemoveParticipantRequest): Either[FormError, RemovalCommand] =
+    for {
+      registered <- registry(request.viewer, request.auctionId, request.lotId, request.opId)
+      participant <- uuidV7("participant_id", request.participantId)
+      version <- Either.cond(request.expectedVersion > 0, request.expectedVersion, FormError("expected_version"))
+    } yield RemovalCommand(
+      registered.auctionId,
+      RemoveLotParticipant(registered.lotId, ParticipantId(participant), version, registered.opId),
+      registered.acting
+    )
+
+  def previewParticipantRemoval(request: PreviewParticipantRemovalRequest): Either[FormError, RemovalPreviewCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- canonicalUuidV5(request.auctionId).toRight(FormError("auction_id"))
+      lot <- uuidV7("lot_id", request.lotId)
+      participant <- uuidV7("participant_id", request.participantId)
+    } yield RemovalPreviewCommand(
+      AuctionId(auction),
+      PreviewLotParticipantRemoval(LotId(lot), ParticipantId(participant)),
+      acting
+    )
+
+  /**
+   * Запуск окна сниженного шага: форма — моменты, сумма и идентификаторы. Пустой список лотов, окно вне онлайн-этапа и
+   * сумма не в той валюте — отказы домена (`StepWindowLotsEmpty` и соседи), а не форма запроса.
+   */
+  def launchStepWindow(request: LaunchStepWindowRequest): Either[FormError, StepWindowLaunchCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      from <- request.from.fold[Either[FormError, Option[Instant]]](Right(None))(instant("from", _).map(Some(_)))
+      until <- instant("until", request.until)
+      step <- money("step", request.step)
+      lots <- request.lotIds
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, raw) =>
+          acc.flatMap(lots => uuidV7("lot_ids", raw).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+      opId <- uuidV7("op_id", request.opId)
+    } yield StepWindowLaunchCommand(auction, LaunchStepWindow(from, until, step, lots, OpId(opId)), acting)
 
   def advanceAsk(request: AdvanceAskRequest): Either[FormError, AskCommand] =
     for {
@@ -371,6 +505,15 @@ object RequestMapping {
   /** Статистика лотов несёт то же, что пульт: аукцион сходки и смотрящего, которого Meetups проверит на право. */
   def getAuctionLotStatistics(request: GetAuctionLotStatisticsRequest): Either[FormError, ConsoleQuery] =
     administered(request.viewer, request.auctionId)
+
+  /** Сводка дня торгов: то же право, что у пульта, и окно, которое называет вызывающий. */
+  def getAuctionDaySummary(request: GetAuctionDaySummaryRequest): Either[FormError, DaySummaryQuery] =
+    for {
+      query <- administered(request.viewer, request.auctionId)
+      from <- instant("from", request.from)
+      until <- instant("until", request.until)
+      _ <- Either.cond(until.isAfter(from), (), FormError("until"))
+    } yield DaySummaryQuery(query.auctionId, query.acting, from, until)
 
   /** Чтение итогов прогнозов смотрящим: аукцион сходки; право `place_bids` граница проверит до чтения. */
   def getPredictionResults(request: GetPredictionResultsRequest): Either[FormError, PredictionQuery] =
@@ -439,12 +582,51 @@ object RequestMapping {
       opId <- uuidV7("op_id", request.opId)
     } yield DiscardCommand(auction, OpId(opId), acting)
 
+  def publishAuction(request: PublishAuctionRequest): Either[FormError, VisibilityCommand] =
+    visibility(request.viewer, request.auctionId, request.opId, published = true)
+
+  def hideAuction(request: HideAuctionRequest): Either[FormError, VisibilityCommand] =
+    visibility(request.viewer, request.auctionId, request.opId, published = false)
+
+  private def visibility(viewer: Option[ViewerMessage], auctionId: String, opId: String, published: Boolean) =
+    for {
+      acting <- acting(viewer)
+      auction <- meetupAuction(auctionId)
+      opId <- uuidV7("op_id", opId)
+    } yield VisibilityCommand(auction, published, OpId(opId), acting)
+
   def cancelAuction(request: CancelAuctionRequest): Either[FormError, CancelCommand] =
     for {
       acting <- acting(request.viewer)
       auction <- meetupAuction(request.auctionId)
       opId <- uuidV7("op_id", request.opId)
     } yield CancelCommand(auction, OpId(opId), acting)
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19). Момент приходит строкой RFC 3339, а пустое поле —
+   * снятие времени: отдельной команды нет.
+   */
+  def setFinalTime(request: SetFinalTimeRequest): Either[FormError, FinalTimeCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      at <- request.finalAt.fold[Either[FormError, Option[Instant]]](Right(None))(instant("final_at", _).map(Some(_)))
+    } yield FinalTimeCommand(auction, at, OpId(opId), acting)
+
+  /**
+   * Текст «как оплатить и получить» (PER-322). Пустое поле — снятие текста; поле, пустое после обрезки краёв или
+   * длиннее предела, — не форма запроса, а `INVALID_ARGUMENT`: снятие называет отсутствие поля, а не пустая строка.
+   */
+  def setPaymentInstructions(request: SetPaymentInstructionsRequest): Either[FormError, PaymentInstructionsCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      text <- request.text.fold[Either[FormError, Option[PaymentInstructions]]](Right(None))(raw =>
+        PaymentInstructions.parse(raw).map(Some(_)).toRight(FormError("text"))
+      )
+    } yield PaymentInstructionsCommand(auction, text, OpId(opId), acting)
 
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {
@@ -513,7 +695,10 @@ object RequestMapping {
               case None => Right(None)
               case Some(raw) => instant("config.online_phase.raffle_closes_at", raw).map(Some(_))
             }
-          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots, raffleClosesAt))
+            // Приз — одна строка: пробелы по краям не значение. Пустую строку не глотаем — её отвергает ядро
+            // (`RafflePrizeBlank`), иначе опечатка в объявлении приза прошла бы молча отсутствием приза.
+            rafflePrize = phase.rafflePrize.map(_.trim)
+          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots, raffleClosesAt, rafflePrize))
       }
       closing <- config.closingPolicy.map(_.policy) match {
         case Some(ClosingPolicyMessage.Policy.ByAuctioneer(_)) => Right(ClosingPolicy.ByAuctioneer)
@@ -530,7 +715,9 @@ object RequestMapping {
           acc.flatMap(windows => stepWindow(window).map(_ :: windows))
         }
         .map(_.reverse)
-    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults, windows)
+      // Срок оплаты — любое число секунд: границы судит ядро (`PaymentTermOutOfRange`), а не форма.
+      paymentTerm = config.paymentTermSeconds.map(java.time.Duration.ofSeconds)
+    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults, windows, paymentTerm)
 
   private def stepWindow(window: AuctionStepWindowMessage): Either[FormError, StepWindowConfig] =
     for {
@@ -657,6 +844,7 @@ object RequestMapping {
       case AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS => Some(AccessRight.AdmitBidders)
       case AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS => Some(AccessRight.ManageMeetups)
       case AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS => Some(AccessRight.GrantAdmins)
+      case AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS => Some(AccessRight.RunAuctions)
       case AccessRightMessage.ACCESS_RIGHT_UNSPECIFIED | AccessRightMessage.Unrecognized(_) => None
     }
 

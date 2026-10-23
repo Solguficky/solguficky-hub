@@ -85,12 +85,15 @@ export type AuctionWatches = {
    * пришедший к открытому потоку, сразу получает последнее состояние: иначе
    * изменение между его чтением и подпиской прошло бы мимо. `ended` — поток
    * закрылся сам: аукцион завершён или ни у одного подписчика нет прав.
+   * `interrupted` — поток оборвался и переподключается: последнее
+   * состояние могло устареть, а следующее придёт после переподключения.
    */
   subscribe(
     auctionId: string,
     viewer: Viewer,
     listener: (state: AuctionWatchState) => void,
     ended?: () => void,
+    interrupted?: () => void,
   ): () => void;
   /** Число открытых потоков — по нему видно, что подписки не текут. */
   open(): number;
@@ -128,6 +131,7 @@ type Subscriber = {
   viewer: Viewer;
   listener: (state: AuctionWatchState) => void;
   ended?: () => void;
+  interrupted?: () => void;
 };
 
 type Feed = {
@@ -171,6 +175,18 @@ export function createAuctionWatches(options: {
     }
   };
 
+  // Поток оборвался и пойдёт заново: подписчик, которому важно, что
+  // показанное могло устареть, узнаёт об этом до паузы.
+  const interrupt = (auctionId: string, feed: Feed) => {
+    for (const subscriber of [...feed.subscribers.values()]) {
+      try {
+        subscriber.interrupted?.();
+      } catch (cause) {
+        options.onError?.(auctionId, cause, "listener");
+      }
+    }
+  };
+
   // Поток закрылся сам: подписчики узнают, что состояний больше не будет.
   const end = (auctionId: string, feed: Feed) => {
     if (feeds.get(auctionId) === feed) feeds.delete(auctionId);
@@ -210,6 +226,9 @@ export function createAuctionWatches(options: {
             return;
           }
         }
+        // Сервер закрыл поток без последнего состояния — так он уходит на
+        // рестарте: переподключение идёт так же, как после отказа.
+        if (!signal.aborted) interrupt(auctionId, feed);
       } catch (cause) {
         if (signal.aborted) return;
         options.onError?.(auctionId, cause, "stream");
@@ -225,6 +244,7 @@ export function createAuctionWatches(options: {
         } else {
           denied = 0;
         }
+        interrupt(auctionId, feed);
       }
       if (signal.aborted) return;
       const delay = delays[Math.min(attempt, delays.length - 1)] ?? 0;
@@ -234,7 +254,7 @@ export function createAuctionWatches(options: {
   };
 
   return {
-    subscribe(auctionId, viewer, listener, ended) {
+    subscribe(auctionId, viewer, listener, ended, interrupted) {
       if (closed) return () => {};
       let feed = feeds.get(auctionId);
       const id = nextId++;
@@ -242,6 +262,7 @@ export function createAuctionWatches(options: {
         viewer,
         listener,
         ...(ended === undefined ? {} : { ended }),
+        ...(interrupted === undefined ? {} : { interrupted }),
       };
       if (feed === undefined) {
         const created: Feed = {

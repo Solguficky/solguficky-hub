@@ -32,4 +32,31 @@ describe("readAuctionConfig", () => {
     const result = readAuctionConfig({ AUCTION_BOT_AUCTION_ID: "lot-1" });
     expect(result.ok && "auctionId" in result.config).toBe(false);
   });
+
+  // Имя бота поддержки — адрес кнопки кадра ожидания допуска (PER-625,
+  // ADR-068): без него кнопки нет, а чужое имя — отказ конфигурации.
+  it("reads the support bot name", () => {
+    expect(
+      readAuctionConfig({ BOT_SUPPORT_BOT_USERNAME: "solguficky_support_bot" }),
+    ).toEqual({
+      ok: true,
+      config: expect.objectContaining({
+        supportBotUsername: "solguficky_support_bot",
+      }),
+    });
+  });
+
+  it("refuses a support bot name that is not a bot username", () => {
+    expect(
+      readAuctionConfig({ BOT_SUPPORT_BOT_USERNAME: "@support_bot" }),
+    ).toEqual({
+      ok: false,
+      error: "BOT_SUPPORT_BOT_USERNAME must be a Telegram bot username",
+    });
+  });
+
+  it("leaves the support bot off without its name", () => {
+    const result = readAuctionConfig({});
+    expect(result.ok && "supportBotUsername" in result.config).toBe(false);
+  });
 });

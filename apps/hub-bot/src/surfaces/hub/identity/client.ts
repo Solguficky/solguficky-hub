@@ -37,7 +37,6 @@ import type {
   ApplicationCard,
   ApplicationDecision,
   ApplicationModerator,
-  AuctionModerationAdministrator,
   CommunityAdministrator,
   CommunityFilter,
   CommunityMember,
@@ -46,11 +45,15 @@ import type {
   OrganizerResolver,
   OrganizerUsernameResult,
   ApplicationOutcome as Outcome,
+  ParticipantUsernameResolver,
+  ParticipantUsernameResult,
   ReconsiderResult,
+  RecordRight,
   RefusedApplication,
   RequestAccessInput,
   RequestAccessResult,
   ResolveIdentityInput,
+  RightRecordAdministrator,
   SourceChannelAdministrator,
   TelegramRecipientResolver,
   TelegramRecipientResult,
@@ -83,11 +86,16 @@ export type OrganizerRpc = Pick<
   Client<typeof IdentityService>,
   "resolveOrganizerUsername"
 >;
+export type ParticipantUsernameRpc = Pick<
+  Client<typeof IdentityService>,
+  "resolveParticipantUsername"
+>;
 type IdentityAdminRpc = Pick<
   Client<typeof IdentityService>,
   | "listCommunityMembers"
   | "getCommunityMember"
   | "blockCommunityMember"
+  | "demoteCommunityMember"
   | "listAllowedUsernames"
   | "addAllowedUsername"
   | "removeAllowedUsername"
@@ -100,9 +108,9 @@ type SourceChannelAdminRpc = Pick<
   Client<typeof IdentityService>,
   "listSourceChannels" | "createSourceChannel"
 >;
-type AuctionModerationRpc = Pick<
+type RightRecordRpc = Pick<
   Client<typeof IdentityService>,
-  "grantAuctionModeration" | "revokeAuctionModeration"
+  "grantRight" | "revokeRight"
 >;
 type AdministratorRpc = Pick<
   Client<typeof IdentityService>,
@@ -117,11 +125,12 @@ export type IdentityClient = IdentityResolver &
   AccessRequester &
   TelegramRecipientResolver &
   OrganizerResolver &
+  ParticipantUsernameResolver &
   CommunityAdministrator &
   ApplicationAdministrator &
   SourceChannelAdministrator &
   ApplicationModerator &
-  AuctionModerationAdministrator &
+  RightRecordAdministrator &
   AdministratorManager & {
     close(): void;
   };
@@ -133,7 +142,18 @@ export function createIdentityClient(
     tracing,
     serviceToken,
     timeoutMs = identityRpcTimeoutMs,
-  }: RpcClientOptions & { communityTimeZone: string },
+    // Отказ чтения настоящего аккаунта участника гасит экран, и карточка
+    // остаётся с псевдонимом; запись на warn делает деградацию видимой, как у
+    // чтения имён Auction.
+    onParticipantUsernameRefused,
+  }: RpcClientOptions & {
+    communityTimeZone: string;
+    onParticipantUsernameRefused?: (failure: {
+      code?: string;
+      requestId?: string;
+      cause: unknown;
+    }) => void;
+  },
 ): IdentityClient & PlaceBidsReader {
   const sessionManager = new Http2SessionManager(baseUrl);
   const transport = createGrpcTransport({
@@ -152,10 +172,15 @@ export function createIdentityClient(
   });
   const sourceChannels = createSourceChannelAdministrator(client, timeoutMs);
   const moderator = createApplicationModerator(client, timeoutMs);
-  const moderation = createAuctionModerationAdministrator(client, timeoutMs);
+  const records = createRightRecordAdministrator(client, timeoutMs);
   const administrators = createAdministratorManager(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
+  const participants = createParticipantUsernameResolver(
+    client,
+    timeoutMs,
+    onParticipantUsernameRefused,
+  );
   return {
     resolve: (input, meta) => resolver.resolve(input, meta),
     requestAccess: (input, meta) => requester.requestAccess(input, meta),
@@ -163,12 +188,14 @@ export function createIdentityClient(
       recipients.resolveTelegramUserId(identityId, meta),
     resolveOrganizerUsername: (viewer, identityId, meta) =>
       organizers.resolveOrganizerUsername(viewer, identityId, meta),
+    resolveParticipantUsername: (viewer, identityId, meta) =>
+      participants.resolveParticipantUsername(viewer, identityId, meta),
     ...createPlaceBidsReader(client, timeoutMs),
     ...administrator,
     ...applications,
     ...sourceChannels,
     ...moderator,
-    ...moderation,
+    ...records,
     ...administrators,
     close() {
       sessionManager.abort();
@@ -200,7 +227,7 @@ export function createCommunityAdministrator(
         const wireActor = actorMessage(actor);
         const [members, usernames] = await Promise.all([
           rpc.listCommunityMembers(
-            { actor: wireActor, filter: wireFilter[filter] },
+            { actor: wireActor, ...wireFilter[filter] },
             options(meta),
           ),
           rpc.listAllowedUsernames({ actor: wireActor }, options(meta)),
@@ -257,6 +284,16 @@ export function createCommunityAdministrator(
           options(meta),
         ),
       ),
+    // Понижение (PER-642) отвечает тем же `changed`: заявку `declined` и
+    // событие `circle_changed` пишет Identity своей транзакцией, а весть о
+    // смене круга человеку доставляет доставка хаба.
+    demote: (actor, identityId, meta) =>
+      change(() =>
+        rpc.demoteCommunityMember(
+          { actor: actorMessage(actor), identityId },
+          options(meta),
+        ),
+      ),
     addAllowedUsername: (actor, username, meta) =>
       change(() =>
         rpc.addAllowedUsername(
@@ -274,10 +311,17 @@ export function createCommunityAdministrator(
   };
 }
 
-const wireFilter: Readonly<Record<CommunityFilter, WireCommunityFilter>> = {
-  members: WireCommunityFilter.MEMBERS,
-  guests: WireCommunityFilter.GUESTS,
-  moderators: WireCommunityFilter.AUCTION_MODERATORS,
+// Модераторы — держатели записи `ADMIT_BIDDERS`: фильтр по выданному праву,
+// а не по кругу (PER-651).
+const wireFilter: Readonly<
+  Record<
+    CommunityFilter,
+    { filter?: WireCommunityFilter; grantedRight?: WireRight }
+  >
+> = {
+  members: { filter: WireCommunityFilter.MEMBERS },
+  guests: { filter: WireCommunityFilter.GUESTS },
+  moderators: { grantedRight: WireRight.ADMIT_BIDDERS },
 };
 
 // Старый Identity круга не присылает: участника тогда называет `admitted`, а
@@ -298,7 +342,8 @@ function communityMemberOf(member: WireCommunityMember): CommunityMember {
         : member.circle === WireCircle.GUEST
           ? "guest"
           : "none",
-    auctionModeration: member.auctionModeration,
+    auctionModeration: member.grantedRights.includes(WireRight.ADMIT_BIDDERS),
+    auctionRunning: member.grantedRights.includes(WireRight.RUN_AUCTIONS),
   };
 }
 
@@ -356,13 +401,19 @@ export function createApplicationAdministrator(
   };
 }
 
-// Право модерации аукциона (ADR-064, пункт 7): выдача и отзыв.
-// FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
-// заблокирован.
-export function createAuctionModerationAdministrator(
-  rpc: AuctionModerationRpc,
+// Записи прав, которые выдаёт держатель права управлять составом: модерация
+// аукциона (ADR-064, пункт 7) и ведение аукциона (ADR-070, п. 1) — общими
+// GrantRight и RevokeRight (PER-651). FAILED_PRECONDITION у выдачи — штатный
+// ответ: человек не участник или заблокирован.
+const recordWire: Readonly<Record<RecordRight, WireRight>> = {
+  "admit-bidders": WireRight.ADMIT_BIDDERS,
+  "run-auctions": WireRight.RUN_AUCTIONS,
+};
+
+export function createRightRecordAdministrator(
+  rpc: RightRecordRpc,
   timeoutMs = identityRpcTimeoutMs,
-): AuctionModerationAdministrator {
+): RightRecordAdministrator {
   const options = (meta?: RpcMetadata) => ({
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
@@ -371,10 +422,10 @@ export function createAuctionModerationAdministrator(
     identityId: actor.identityId,
   });
   return {
-    async grantAuctionModeration(actor, identityId, meta) {
+    async grantRightRecord(actor, identityId, right, meta) {
       try {
-        const response = await rpc.grantAuctionModeration(
-          { actor: actorMessage(actor), identityId },
+        const response = await rpc.grantRight(
+          { actor: actorMessage(actor), identityId, right: recordWire[right] },
           options(meta),
         );
         return { kind: "ok", value: response.changed };
@@ -388,10 +439,10 @@ export function createAuctionModerationAdministrator(
         return classifyAdminFailure(cause);
       }
     },
-    async revokeAuctionModeration(actor, identityId, meta) {
+    async revokeRightRecord(actor, identityId, right, meta) {
       try {
-        const response = await rpc.revokeAuctionModeration(
-          { actor: actorMessage(actor), identityId },
+        const response = await rpc.revokeRight(
+          { actor: actorMessage(actor), identityId, right: recordWire[right] },
           options(meta),
         );
         return { kind: "ok", value: response.changed };
@@ -938,6 +989,59 @@ export function createOrganizerResolver(
 
 function classifyOrganizerFailure(cause: unknown): OrganizerUsernameResult {
   if (cause instanceof ConnectError) {
+    if (cause.code === Code.NotFound) return { kind: "not-found" };
+    if (permanentCodes.has(cause.code)) {
+      return { kind: "rejected", code: Code[cause.code], cause };
+    }
+  }
+  return { kind: "unavailable", cause };
+}
+
+// Отказ `PERMISSION_DENIED` — не сбой, а ответ участнику, который открыл
+// карточку проданного лота: настоящий аккаунт победителя видит только
+// организатор. Поэтому он отдельным исходом, а не `rejected`.
+export function createParticipantUsernameResolver(
+  rpc: ParticipantUsernameRpc,
+  timeoutMs = identityRpcTimeoutMs,
+  onRefused?: (failure: {
+    code?: string;
+    requestId?: string;
+    cause: unknown;
+  }) => void,
+): ParticipantUsernameResolver {
+  return {
+    async resolveParticipantUsername(viewer, identityId, meta) {
+      try {
+        const response = await rpc.resolveParticipantUsername(
+          {
+            actor: { identityId: viewer.identityId },
+            identityId,
+          },
+          { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+        );
+        return response.telegramUsername === undefined
+          ? { kind: "resolved" }
+          : { kind: "resolved", telegramUsername: response.telegramUsername };
+      } catch (cause) {
+        const failure = classifyParticipantFailure(cause);
+        if (failure.kind === "unavailable" || failure.kind === "rejected") {
+          onRefused?.({
+            ...(failure.kind === "rejected" ? { code: failure.code } : {}),
+            ...(meta?.requestId === undefined
+              ? {}
+              : { requestId: meta.requestId }),
+            cause: failure.cause,
+          });
+        }
+        return failure;
+      }
+    },
+  };
+}
+
+function classifyParticipantFailure(cause: unknown): ParticipantUsernameResult {
+  if (cause instanceof ConnectError) {
+    if (cause.code === Code.PermissionDenied) return { kind: "denied" };
     if (cause.code === Code.NotFound) return { kind: "not-found" };
     if (permanentCodes.has(cause.code)) {
       return { kind: "rejected", code: Code[cause.code], cause };

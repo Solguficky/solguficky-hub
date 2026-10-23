@@ -255,7 +255,8 @@ jobs:
       - run: buf generate --template apps/identity/buf.gen.yaml
       - run: go build ./...
         working-directory: apps/identity
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       # Фикстуры разбора лога — та же проверка, что в `just verify`.
       - run: just identity-test-log-check
       # Тесты через рецепт, а не прямым `go test`: тег integration, порог
@@ -303,7 +304,8 @@ jobs:
       # команды идут без working-directory.
       - run: dotnet tool restore
       - run: dotnet fantomas --check apps/meetups
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - run: dotnet build Meetups.sln --nologo
         working-directory: apps/meetups
       # Оба уровня через рецепты, а не прямым dotnet test: порог числа тестов и
@@ -332,7 +334,8 @@ jobs:
       - run: sh tools/notifications/check-contracts-generated.sh
       # Гейта форматирования здесь нет: Fantomas C# не форматирует, а своего
       # гейта для C# в репозитории нет ни у AppHost, ни у ServiceDefaults.
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - run: dotnet build Notifications.sln --nologo
         working-directory: apps/notifications
       # Через рецепты по той же причине, что у Meetups: порог и --fail-skips
@@ -447,7 +450,8 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       # До сборки: битый путь в aspire.config.json называет проверка, а не
       # поздний отказ CLI у человека.
       - run: just apphost-config-check
@@ -600,6 +604,18 @@ jobs:
         working-directory: apps/auction
         env:
           AUCTION_INTEGRATION_TESTS: "1"
+      # Браузерный уровень (`*BrowserSpec`): страница экрана зала в Chromium
+      # против настоящего узла (PER-485). Chromium и его системные библиотеки
+      # ставит CLI того же Playwright, что в build.sbt, — версия браузера не
+      # расходится с драйвером. Сьюты отбирает своя переменная, как L1.
+      - name: Install Chromium for browser tests
+        run: sbt -batch "Test/runMain com.microsoft.playwright.CLI install --with-deps chromium"
+        working-directory: apps/auction
+      - name: Scala browser tests
+        run: sbt -batch test
+        working-directory: apps/auction
+        env:
+          AUCTION_BROWSER_TESTS: "1"
 
   # nats-tester — единственный потребитель схем, чей сгенерированный код лежит
   # в Git: инструмент ставится без protoc, поэтому классы обязаны совпадать со
@@ -631,7 +647,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ steps.tools.outputs.python }}
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       # Установка не только для проверки: она же подтверждает, что пакет
       # собирается из pyproject и ставится.
       - run: python -m pip install -e tools/nats-tester
@@ -663,7 +680,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - name: Skill frontmatter parses as a YAML mapping
         run: sh tools/skillshare/check-frontmatter.sh
       - name: Commands are generated from the rulesync source
@@ -725,7 +743,8 @@ jobs:
             apps/hub-bot/package-lock.json
       - run: npm ci
         working-directory: apps/hub-bot
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - name: Contour contracts stay generated-only
         run: just contour-contracts-check
       # Через рецепт, а не напрямую: иначе порог --minimum-expected-tests

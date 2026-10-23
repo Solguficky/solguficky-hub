@@ -229,7 +229,7 @@ describe("meetupsScreen", () => {
     // «Сходки» — раздел под меню (PER-592): «Архив» — последним рядом
     // содержимого, затем листание, последним — «‹ Меню».
     expect(rows(first)).toHaveLength(8 + 3);
-    expect(rows(first).at(-3)).toEqual(["Архив"]);
+    expect(rows(first).at(-3)).toEqual(["🗂 Архив"]);
     expect(rows(first).at(-2)).toEqual(["→"]);
     expect(rows(first).at(-1)).toEqual(["‹ Меню"]);
     expect(first.keyboard.inline_keyboard.at(-2)?.[0]).toMatchObject({
@@ -238,7 +238,7 @@ describe("meetupsScreen", () => {
     expect(last.text).toContain("· 3 из 3");
     expect(rows(last)).toEqual([
       ["17 августа · Сходка 17"],
-      ["Архив"],
+      ["🗂 Архив"],
       ["←"],
       ["‹ Меню"],
     ]);
@@ -323,9 +323,9 @@ describe("cardScreen", () => {
     const screen = cardScreen({ ...view, meetup: meetup(), subscribed: true });
 
     expect(rows(screen)).toEqual([
-      ["✏️ Изменить", "🏷 Статус"],
+      ["🛠 Изменить", "🛠 Статус"],
       ["📎 Материалы (0)", "🧩 Расширения"],
-      ["📣 Написать подписчикам"],
+      ["🛠 Написать подписчикам"],
       ["🔕 Отписаться", "⚙️ Уведомления сходки"],
       ["‹ Сходки"],
     ]);
@@ -428,6 +428,13 @@ describe("cardScreen", () => {
       );
     });
 
+    // Скрытый аукцион (PER-673) отдают только держателю `run_auctions`.
+    it("names an auction hidden from participants", () => {
+      expect(
+        withAuction({ auctionId, stage: "draft", final: false, hidden: true }),
+      ).toContain("\n\n🔨 Аукцион: готовится, скрыт от участников\n\n");
+    });
+
     it("names a finished auction by its stage", () => {
       expect(
         withAuction({ auctionId, stage: "finished", final: false }),
@@ -492,7 +499,7 @@ describe("cardScreen", () => {
 
     expect(rows(screen)).toEqual([
       ["🧩 Расширения"],
-      ["📣 Написать подписчикам"],
+      ["🛠 Написать подписчикам"],
       ["⚙️ Уведомления сходки"],
       ["‹ Архив"],
     ]);

@@ -22,6 +22,8 @@
     "askAdvanced": null,
     "lotWithdrawn": {
       "reason": "AuctionCancelled"
-    }
+    },
+    "stepWindowAdded": null,
+    "participantRemoved": null
   }
 }

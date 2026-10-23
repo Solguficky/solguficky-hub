@@ -3,6 +3,7 @@ import type {
   AuctionConsole,
   AuctionSnapshot,
   ConsoleLot as WireConsoleLot,
+  ConsoleLotSet as WireConsoleLotSet,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
 import { finalLineupOf } from "../../../core/auction/auction.js";
 import { lotViewOf, moneyOf } from "../../../core/auction/snapshot.js";
@@ -11,6 +12,7 @@ import type {
   AuctionWeek,
   ConsoleAuctionStatus,
   ConsoleLotSnapshot,
+  LotSet,
   StepWindow,
 } from "../application/types.js";
 
@@ -26,10 +28,28 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
   return {
     auctionId: auction.id,
     status: statusOf(auction.status),
+    hidden: auction.hidden,
+    // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
+    // торгов. Нет — анонса нет, и пульт говорит об этом строкой.
+    ...(auction.finalAt === undefined || auction.finalAt === ""
+      ? {}
+      : { finalAt: auction.finalAt }),
     ...(week === undefined ? {} : { week }),
     ...(lineup === undefined ? {} : { lineup }),
+    // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает, а
+    // пульт показывает их рядом с объявленными.
+    launchedWindows: console.launchedStepWindows.map(windowOf),
     lots: console.lots.map(consoleLotOf),
+    lotSets: console.lotSets.map(lotSetOf),
   };
+}
+
+// Сет лотов (ADR-073, PER-509). Название у сета непустое всегда: Auction
+// пустого не принимает.
+function lotSetOf(set: WireConsoleLotSet): LotSet {
+  if (set.lotSetId === "") throw new Error("lot set without id");
+  if (set.name.trim() === "") throw new Error("lot set without name");
+  return { lotSetId: set.lotSetId, name: set.name, lotIds: [...set.lotIds] };
 }
 
 function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {
@@ -47,6 +67,10 @@ function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {
     ...(phase?.raffleClosesAt === undefined
       ? {}
       : { raffleClosesAt: phase.raffleClosesAt }),
+    // Приз розыгрыша (PER-649): нет поля или пробельная строка — приза нет.
+    ...(phase?.rafflePrize === undefined || phase.rafflePrize.trim() === ""
+      ? {}
+      : { rafflePrize: phase.rafflePrize }),
     final: config.finalBlocks > 0,
     windows: config.stepWindows.map(windowOf),
   };
@@ -82,12 +106,10 @@ function statusOf(status: AuctionSnapshot["status"]): ConsoleAuctionStatus {
       return "final";
     case "finished":
       return "finished";
-    // Отменённый аукцион (ADR-047, дополнение 2026-10-12) экраны ещё не
-    // показывают — это PER-606. Отменяют аукцион кнопка пульта (PER-606) и
-    // отмена сходки (PER-602), и ни одной ещё нет, поэтому отменённого
-    // аукциона в ответах не бывает; перевод бросает, как на незнакомом статусе.
+    // Отменённый аукцион (ADR-047, дополнение 2026-10-12) — конечная стадия,
+    // как завершённый, и статус отличает одно от другого (PER-606).
     case "cancelled":
-      throw new Error("auction snapshot is cancelled, not shown yet");
+      return "cancelled";
     case undefined:
       throw new Error("auction snapshot without status");
     default: {

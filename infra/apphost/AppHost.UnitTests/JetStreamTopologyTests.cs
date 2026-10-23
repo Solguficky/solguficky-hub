@@ -100,6 +100,18 @@ public class JetStreamTopologyTests
         journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.MaxAge);
     }
 
+    /// <summary>
+    /// Пара «человек ↔ тема» бота поддержки живёт 180 дней с последнего
+    /// сообщения (ADR-068, п. 8): срок — свой, а не окно стрима журналов.
+    /// </summary>
+    [Fact]
+    public void KeyValueBuckets_SupportTopics_LiveHalfAYear()
+    {
+        var topics = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "support-bot-topics");
+
+        topics.MaxAge.ShouldBe(TimeSpan.FromDays(180));
+    }
+
     [Fact]
     public void ToConfig_Bucket_KeepsLatestStateOnDisk()
     {
@@ -120,15 +132,35 @@ public class JetStreamTopologyTests
     public void Durables_AnyDurable_FiltersItsStreamSubject()
     {
         var subjects = JetStreamTopology.Streams.ToDictionary(stream => stream.Name, stream => stream.Subject);
+        // Узкий фильтр пара объявляет явно; он обязан лежать внутри subjects своего стрима.
+        var narrowed = JetStreamTopology.Consumers
+            .SelectMany(consumer => (consumer.FilterSubjects ?? new Dictionary<string, string>())
+                .Select(filter => JetStreamTopology.DurableName(consumer.Consumer, filter.Key)))
+            .ToHashSet();
 
         foreach (var durable in JetStreamTopology.Durables)
         {
-            if (!durable.FilterSubject.StartsWith("events.notifications.notification_created.", StringComparison.Ordinal))
+            if (narrowed.Contains(durable.Durable))
+            {
+                durable.FilterSubject.ShouldStartWith(subjects[durable.Stream].TrimEnd('>'));
+            }
+            else
             {
                 durable.FilterSubject.ShouldBe(subjects[durable.Stream]);
             }
         }
     }
+
+    /// <summary>
+    /// Auction читает из стрима Meetups только отмену сходки (ADR-047,
+    /// дополнение 2026-10-12): остальные поводы ему не адресованы, и durable на
+    /// весь стрим копил бы неподтверждаемое.
+    /// </summary>
+    [Fact]
+    public void Durables_Auction_ReadsOnlyMeetupCancellations() =>
+        JetStreamTopology.Durables
+            .Single(durable => durable.Durable == "auction-meetups-events")
+            .ShouldBe(new ConsumerSpec("auction-meetups-events", "MEETUPS_EVENTS", "events.meetups.meetup_cancelled"));
 
     /// <summary>
     /// Точка, <c>*</c>, <c>&gt;</c> и пробел в имени durable сервер запрещает:

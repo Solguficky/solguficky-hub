@@ -6,6 +6,7 @@ import {
   communityMemberRefusalText,
   communityMemberScreen,
   communityScreen,
+  demoteMemberConfirmScreen,
 } from "./community.js";
 import type { ShownScreen } from "./show.js";
 
@@ -20,12 +21,14 @@ function person(
   index: number,
   circle: CommunityMember["circle"],
   auctionModeration = false,
+  auctionRunning = false,
 ): CommunityMember {
   return {
     identityId: id(index),
     telegramUsername: `user${index}`,
     circle,
     auctionModeration,
+    auctionRunning,
   };
 }
 
@@ -62,8 +65,9 @@ describe("community list", () => {
     const screen = communityScreen(snapshot, { kind: "list", place: members });
 
     expect(screen.id).toBe("community");
+    // Ники — только на кнопках, текст — сводка (прогон 14.10, №53).
     expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @user1\n• @user2 · модерирует аукцион",
+      "<b>Состав сообщества</b>\n\nУчастники: 2\n\nМодерируют аукцион: 1.",
     );
     expect(rows(screen)).toEqual([
       ["• Участники", "Гости"],
@@ -78,19 +82,20 @@ describe("community list", () => {
     expect(dataOf(screen, "Разрешённые ники")).toBe("v1:cm:u");
   });
 
-  // Как на экране «Администраторы»: смотрящий видит себя «(ты)» в тексте, а
-  // кнопка остаётся ником (PER-618).
-  it("marks the viewer in the text", () => {
+  // Ники только на кнопках (прогон 14.10, №53): смотрящий видит себя «(ты)»
+  // на своей кнопке, как строкой на экране «Администраторы» (PER-618).
+  it("marks the viewer on the button", () => {
     const screen = communityScreen(
       snapshot,
       { kind: "list", place: members },
       { viewerId: id(2) },
     );
 
-    expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @user1\n• @user2 (ты) · модерирует аукцион",
+    expect(screen.text).not.toContain("@user2");
+    expect(rows(screen)).toContainEqual(["@user2 (ты)"]);
+    expect(dataOf(screen, "@user2 (ты)")).toBe(
+      `v1:cm:v:${uuidToToken(id(2))}:m0`,
     );
-    expect(rows(screen)).toContainEqual(["@user2"]);
   });
 
   it("shows the guests apart from the members", () => {
@@ -99,9 +104,7 @@ describe("community list", () => {
       place: { filter: "guests", page: 0 },
     });
 
-    expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nГости: 1\n\n• @user3",
-    );
+    expect(screen.text).toBe("<b>Состав сообщества</b>\n\nГости: 1");
     expect(rows(screen)[0]).toEqual(["Участники", "• Гости"]);
     expect(dataOf(screen, "@user3")).toBe(`v1:cm:v:${uuidToToken(id(3))}:g0`);
   });
@@ -113,8 +116,9 @@ describe("community list", () => {
     });
 
     expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nМодераторы аукциона: 1\n\n• @user2",
+      "<b>Состав сообщества</b>\n\nМодераторы аукциона: 1",
     );
+    expect(rows(screen)).toContainEqual(["@user2"]);
     expect(rows(screen)[1]).toEqual(["• Модераторы", "Разрешённые ники"]);
   });
 
@@ -160,7 +164,7 @@ describe("community list", () => {
     );
   });
 
-  it("names a person without a username by the code and a mention", () => {
+  it("names a person without a username by the code on the button", () => {
     const screen = communityScreen(
       {
         members: [
@@ -169,6 +173,7 @@ describe("community list", () => {
             telegramUserId: 5001n,
             circle: "member",
             auctionModeration: false,
+            auctionRunning: false,
           },
         ],
         allowedUsernames: [],
@@ -176,9 +181,6 @@ describe("community list", () => {
       { kind: "list", place: members },
     );
 
-    expect(screen.text).toContain(
-      '<a href="tg://user?id=5001">без ника</a> · 12ab34cd',
-    );
     expect(screen.text).not.toContain("01a0e306");
     expect(rows(screen)).toContainEqual(["без ника · 12ab34cd"]);
   });
@@ -187,20 +189,26 @@ describe("community list", () => {
 describe("community member card", () => {
   const place = { filter: "members", page: 2 } as const;
 
-  it("offers moderation to a member and returns to the same page", () => {
+  it("offers both records to a member and returns to the same page", () => {
     const screen = communityMemberScreen(person(1, "member"), place);
     const token = uuidToToken(id(1));
 
     expect(screen.id).toBe("community-member");
     expect(screen.text).toBe(
-      "<b>Карточка человека</b>\n\n@user1\n\nКруг: участник\nМодерация аукциона: нет",
+      "<b>Карточка человека</b>\n\n@user1\n\nКруг: участник\nМодерация аукциона: нет\nВедение аукциона: нет",
     );
     expect(rows(screen)).toEqual([
       ["Выдать модерацию"],
+      ["Выдать ведение аукциона"],
+      ["Понизить в гостя"],
       ["Закрыть доступ"],
       nav,
     ]);
     expect(dataOf(screen, "Выдать модерацию")).toBe(`v1:cm:mg:${token}:m2`);
+    expect(dataOf(screen, "Выдать ведение аукциона")).toBe(
+      `v1:cm:ag:${token}:m2`,
+    );
+    expect(dataOf(screen, "Понизить в гостя")).toBe(`v1:cm:dq:${token}:m2`);
     expect(dataOf(screen, "Закрыть доступ")).toBe(`v1:cm:bq:${token}:m2`);
     expect(dataOf(screen, "‹ Состав")).toBe("v1:cm:l:m2");
   });
@@ -214,7 +222,21 @@ describe("community member card", () => {
     );
   });
 
-  it("offers no moderation to a guest", () => {
+  it("revokes running the auction from its holder", () => {
+    const screen = communityMemberScreen(
+      person(1, "member", false, true),
+      place,
+    );
+
+    expect(screen.text).toContain("Ведение аукциона: есть");
+    expect(dataOf(screen, "Снять ведение аукциона")).toBe(
+      `v1:cm:av:${uuidToToken(id(1))}:m2`,
+    );
+  });
+
+  // Понижать гостя некуда: у него и записей нет, а круг уже `guest`
+  // (PER-642). Кнопку понижения видит только участник.
+  it("offers neither records nor demotion to a guest", () => {
     const screen = communityMemberScreen(person(3, "guest"), {
       filter: "guests",
       page: 0,
@@ -226,13 +248,25 @@ describe("community member card", () => {
     expect(rows(screen)).toEqual([["Закрыть доступ"], nav]);
   });
 
+  it("shows the outcome of the last action as a note under the person", () => {
+    const screen = communityMemberScreen(
+      person(1, "guest"),
+      { filter: "guests", page: 0 },
+      "Понижен до гостя.",
+    );
+
+    expect(screen.text).toBe(
+      "<b>Карточка человека</b>\n\n@user1\n\nПонижен до гостя.\n\nКруг: гость",
+    );
+  });
+
   it.each([
     [{ kind: "forbidden" } as const, "без права"],
     [{ kind: "identity-unknown" } as const, "Такого человека нет в составе."],
     [{ kind: "blocked" } as const, "Доступ этому человеку уже закрыт."],
     [
       { kind: "holds-preset" } as const,
-      "Это администратор: закрыть доступ или поменять модерацию отсюда нельзя. Правами администратора управляет мейнтейнер в «Участники → Администраторы».",
+      "Это администратор: закрыть доступ или поменять модерацию и ведение аукциона отсюда нельзя. Правами администратора управляет мейнтейнер в «Участники → Администраторы».",
     ],
     [{ kind: "invalid" } as const, "недоступно"],
   ])("tells refusal %o as a screen text", (result, text) => {
@@ -257,7 +291,7 @@ describe("community allowed usernames", () => {
     expect(rows(screen)).toEqual([
       ["🗑 Убрать @alice_1"],
       ["Добавить ник"],
-      ["Обновить"],
+      ["🔄 Обновить"],
       nav,
     ]);
     expect(dataOf(screen, "🗑 Убрать @alice_1")).toBe("v1:cm:rm:0:alice_1");
@@ -274,6 +308,28 @@ describe("community allowed usernames", () => {
 
     expect(rows(screen)).toHaveLength(12);
     expect(dataOf(screen, "🗑 Убрать @nick8")).toBe("v1:cm:rm:1:nick8");
+  });
+});
+
+describe("demoting to guest", () => {
+  it("asks with a red confirmation and returns to the card", () => {
+    const place = { filter: "members", page: 1 } as const;
+    const screen = demoteMemberConfirmScreen(person(1, "member"), place);
+    const token = uuidToToken(id(1));
+
+    expect(screen.id).toBe("community-demote-confirm");
+    expect(screen.text).toBe(
+      "<b>Понизить до гостя?</b>\n\n@user1 станет гостем: служебные права снимаются, торги аукциона остаются. Вернуть участника из карточки нельзя — отказанную заявку пересматривают в «Отказанных».",
+    );
+    expect(rows(screen)).toEqual([["✔️ Да, понизить в гостя", "✖️ Нет"]]);
+    expect(dataOf(screen, "✔️ Да, понизить в гостя")).toBe(
+      `v1:cm:dy:${token}:m1`,
+    );
+    expect(dataOf(screen, "✖️ Нет")).toBe(`v1:cm:v:${token}:m1`);
+    const yes = screen.keyboard.inline_keyboard[0]?.[0];
+    expect(yes !== undefined && "style" in yes ? yes.style : undefined).toBe(
+      "danger",
+    );
   });
 });
 

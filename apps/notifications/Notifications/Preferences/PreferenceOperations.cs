@@ -3,6 +3,8 @@ using Notifications.Infrastructure;
 using Notifications.V1;
 using Npgsql;
 
+using Notifications.Auction;
+
 namespace Notifications.Preferences;
 
 /// <summary>
@@ -22,7 +24,8 @@ namespace Notifications.Preferences;
 public sealed class PreferenceOperations(
     NpgsqlDataSource source,
     SubscriptionStore subscriptions,
-    PreferenceStore preferences)
+    PreferenceStore preferences,
+    CategoryDefaults defaults)
 {
     /// <summary>Подписывает человека на сходку и отдаёт снимок у этой сходки.</summary>
     public Task<MeetupPreferences> SubscribeToMeetup(
@@ -156,6 +159,8 @@ public sealed class PreferenceOperations(
         Guid identityId,
         OutbidFrequency? frequency,
         bool? finalAnnouncements,
+        bool? liveFinalOutbids,
+        bool? auctionAnnouncements,
         CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
@@ -169,6 +174,14 @@ public sealed class PreferenceOperations(
         {
             await FinalStore.SetAnnouncements(work, identityId, enabled, now, cancellationToken);
         }
+        if (liveFinalOutbids is { } live)
+        {
+            await OutbidStore.SetLiveFinal(work, identityId, live, now, cancellationToken);
+        }
+        if (auctionAnnouncements is { } announcements)
+        {
+            await AuctionAnnouncementStore.Set(work, identityId, announcements, now, cancellationToken);
+        }
         var stored = await ReadAuction(work, identityId, cancellationToken);
 
         await work.Commit(cancellationToken);
@@ -179,7 +192,9 @@ public sealed class PreferenceOperations(
     private static async Task<AuctionPreferences> ReadAuction(UnitOfWork work, Guid identityId,
         CancellationToken cancellationToken) =>
         new(await OutbidStore.ReadPreference(work, identityId, cancellationToken) ?? OutbidFrequencies.Default,
-            await FinalStore.ReadAnnouncements(work, identityId, cancellationToken) ?? true);
+            await FinalStore.ReadAnnouncements(work, identityId, cancellationToken) ?? true,
+            await OutbidStore.ReadLiveFinal(work, identityId, cancellationToken) ?? OutbidFrequencies.LiveFinalDefault,
+            await AuctionAnnouncementStore.Read(work, identityId, cancellationToken) ?? AuctionAnnouncementStore.Default);
 
     /// <summary>Видел ли человек пояснение автоставки (PER-517).</summary>
     public async Task<bool> ReadProxyExplainer(Guid identityId, CancellationToken cancellationToken)
@@ -238,7 +253,7 @@ public sealed class PreferenceOperations(
     {
         var global = await preferences.ReadGlobal(work, identityId, cancellationToken);
 
-        return EffectivePreference.Global(identityId, global, rights);
+        return EffectivePreference.Global(identityId, global, rights, defaults);
     }
 }
 

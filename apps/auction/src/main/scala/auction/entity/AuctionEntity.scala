@@ -2,6 +2,7 @@ package auction.entity
 
 import auction.aggregate.*
 import auction.catalog.LotId
+import auction.lot.AddStepWindowRejected
 import auction.lot.AdvanceAskRejected
 import auction.lot.AuctionId
 import auction.lot.CloseLotRejected
@@ -11,6 +12,7 @@ import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinalRejected
@@ -146,6 +148,12 @@ enum OpeningRejected {
  * recovery, пока итоги не подтвердят подсчёт. Неполный снимок исходов лотов — `NotComplete` — подсчёт не начинает, и
  * это штатное ожидание, а не сбой: следующий тик спросит снова. Отменённый аукцион `Settle` не зовёт — итогов у него
  * нет. Удаление до торгов чистит строки итогов на всякий случай: у аукциона до торгов их быть не может.
+ *
+ * Итог сета лотов (ADR-073, п. 4) entity пишет сама — событием `LotSetSettled` под выведенным `op_id`
+ * ([[LotSets.settlementOf]]). Победителей лотов журнал аукциона не хранит, поэтому исходы приходят портом
+ * [[AuctionSetOutcomes]] из read model торгов: на тике переспроса и после recovery, пока у полного сета нет итога.
+ * Отставшая проекция — «ещё не кончился», и итог появляется на следующем тике. Итог пишется один раз: повтор упирается
+ * в окно `seen` и в итог, уже лежащий в сете.
  */
 object AuctionEntity {
 
@@ -173,6 +181,19 @@ object AuctionEntity {
       command: RemoveLot,
       initiator: Initiator,
       replyTo: ActorRef[Either[RemoveLotRejected, AuctionAnswer]]
+  ) extends Command
+
+  /** Определение сета лотов до старта торгов (ADR-073). */
+  final case class SaveSet(
+      command: SaveLotSet,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[SaveLotSetRejected, AuctionAnswer]]
+  ) extends Command
+
+  final case class DeleteSet(
+      command: DeleteLotSet,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[DeleteLotSetRejected, AuctionAnswer]]
   ) extends Command
 
   /** Планирование; `Schedule` — имя сообщения, как `LotEntity.Plan` у лота. */
@@ -212,6 +233,37 @@ object AuctionEntity {
       replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Публикация или снятие до торгов (ADR-047, дополнение 2026-10-20); `Show` — имя сообщения, как `Plan` у лота. */
+  final case class Show(
+      command: ChangeVisibility,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[VisibilityRejected, AuctionAnswer]]
+  ) extends Command
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): выставить, изменить или снять. `Announce` — имя
+   * сообщения: время объявляют, а не назначают. Событие пишет аукцион, ответ — после записи.
+   */
+  final case class Announce(
+      command: SetFinalTime,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[FinalTimeRejected, AuctionAnswer]]
+  ) extends Command
+
+  /** Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. Ответ — после записи. */
+  final case class Instruct(
+      command: SetPaymentInstructions,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[PaymentInstructionsRejected, AuctionAnswer]]
+  ) extends Command
+
+  /**
+   * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, инициатор — планировщик. Что делать,
+   * решает агрегат: удаление идёт путём `Discard`, отмена — путём `Cancel`, под тем же `op_id`, поэтому прогнозы, лоты,
+   * розыгрыш и слот следуют за ними так же. Ответ — после записи или без неё; отказов нет.
+   */
+  final case class InheritCancellation(command: ApplyMeetupCancelled, replyTo: ActorRef[AuctionAnswer]) extends Command
+
   /**
    * Условия торгов лоту реестра — `ScheduleLot`, идущий через аукцион; `PlanLot` — имя сообщения, как `LotEntity.Plan`
    * у лота. События аукцион не пишет: решает, можно ли ещё менять условия, и шлёт команду лоту. Ответ приходит после
@@ -238,6 +290,22 @@ object AuctionEntity {
       command: DeselectForFinal,
       initiator: Initiator,
       replyTo: ActorRef[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
+  ) extends Command
+
+  /**
+   * Снятие участника с лота реестра (ADR-072; PER-658): та же форма, что `Select`. Ответ — номер лота, с которого
+   * чтение показывает снятие целиком. Пока снятие в пути, состав финала не известен (`LotRoster.removingParticipant`).
+   */
+  final case class RemoveParticipantFromLot(
+      command: RemoveLotParticipant,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, Long]]
+  ) extends Command
+
+  /** Предпросмотр снятия: решение аукциона то же, лот отвечает итогом без записи, и знание не меняется. */
+  final case class PreviewParticipantRemoval(
+      command: PreviewLotParticipantRemoval,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, LotEntity.RemovalPreview]]
   ) extends Command
 
   /** Ask ведущего лоту реестра (П-08): та же форма, что `Select` — решает аукцион, событие пишет лот. */
@@ -279,6 +347,17 @@ object AuctionEntity {
       command: CloseAuctionLot,
       initiator: Initiator,
       replyTo: ActorRef[Either[CloseAuctionLotRejected, LotEnding]]
+  ) extends Command
+
+  /**
+   * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12): событие `StepWindowLaunched`. Ответ — после записи;
+   * лотам окно уходит после неё, и ответ их не ждёт. Повтор того же `op_id` события не пишет, но дошлёт окно лотам, не
+   * ответившим раньше; ответ на повтор — исходный конверт, каким бы событием он ни был.
+   */
+  final case class Launch(
+      command: LaunchStepWindow,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[LaunchStepWindowRejected, AuctionAnswer]]
   ) extends Command
 
   final case class Get(replyTo: ActorRef[Auction]) extends Command
@@ -333,6 +412,13 @@ object AuctionEntity {
   /** Ответ розыгрыша на открытие; неудача — ответа нет, и открытие повторится на тике переспроса. */
   private[entity] final case class RaffleAnswered(answer: Try[Done]) extends Command
 
+  /** Ответ лота на `AddStepWindow` окна, запущенного под `launch`; неудача — ответа нет. */
+  private[entity] final case class WindowAnswered(
+      launch: OpId,
+      lot: LotId,
+      answer: Try[Either[AddStepWindowRejected, Unit]]
+  ) extends Command
+
   /** Ответ лота на `WithdrawLot`; неудача — ответа нет. */
   private[entity] final case class LotWithdrew(lot: LotId, answer: Try[Either[WithdrawLotRejected, Unit]])
       extends Command
@@ -355,11 +441,14 @@ object AuctionEntity {
       answer: Try[Done]
   ) extends Command
 
-  /** Ответ прогнозов на удаление вместе с удалением аукциона, которое его ждёт; неудача — ответа нет. */
+  /**
+   * Ответ прогнозов на удаление вместе с удалением аукциона, которое его ждёт, и тем, кому отдать его ответ; неудача —
+   * ответа нет.
+   */
   private[entity] final case class PredictionsWiped(
       command: DiscardAuction,
       initiator: Initiator,
-      replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]],
+      reply: Either[DiscardAuctionRejected, AuctionAnswer] => Unit,
       answer: Try[Done]
   ) extends Command
 
@@ -368,6 +457,12 @@ object AuctionEntity {
    * исходов неполон: подсчёт не начался, и следующий тик спросит снова (ADR-067, п. 8).
    */
   private[entity] final case class ResultsAnswered(answer: Try[Either[SettleRefused, Done]]) extends Command
+
+  /** Исходы лотов сетов без итога; неудача — ответа нет, и следующий тик спросит снова. */
+  private[entity] final case class SetOutcomesRead(answer: Try[Map[LotId, LotOutcome]]) extends Command
+
+  /** Исходы, уточнённые у лотов кончившегося аукциона, — итог пишется по ним без второго уточнения. */
+  private[entity] final case class SetOutcomesKnown(answer: Try[Map[LotId, LotOutcome]]) extends Command
 
   /** Ответ итогов на удаление вместе с аукционом; неудача — ответа нет, и запись об этом одна. */
   private[entity] final case class ResultsDiscarded(answer: Try[Done]) extends Command
@@ -410,6 +505,20 @@ object AuctionEntity {
       answer: Try[Either[R, Unit]]
   ) extends Command
 
+  /** Ответ лота на снятие участника вместе с тем, кому его отдать; неудача — ответа нет. */
+  private[entity] final case class LotParticipantRemoved(
+      lot: LotId,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, Long]],
+      answer: Try[Either[RemoveParticipantRejected, Long]]
+  ) extends Command
+
+  /** Ответ лота на предпросмотр снятия вместе с тем, кому его отдать; неудача — ответа нет. */
+  private[entity] final case class RemovalPreviewed(
+      lot: LotId,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, LotEntity.RemovalPreview]],
+      answer: Try[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]]
+  ) extends Command
+
   /** Ответ лота на ask вместе с тем, кому его отдать; неудача — ответа нет. */
   private[entity] final case class LotAsked(
       lot: LotId,
@@ -432,6 +541,8 @@ object AuctionEntity {
    *   прогнозы аукциона: раунды по фактам аукциона, отмена и удаление вместе с ним
    * @param results
    *   итоги прогнозов: подсчёт по переходу в `Finished`, удаление вместе с аукционом
+   * @param setOutcomes
+   *   исходы лотов сетов из read model торгов: итог сета после торгов
    */
   def apply(
       auctionId: String,
@@ -444,7 +555,8 @@ object AuctionEntity {
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
       predictions: AuctionPredictions = AuctionPredictions.none,
-      results: AuctionResults = AuctionResults.none
+      results: AuctionResults = AuctionResults.none,
+      setOutcomes: AuctionSetOutcomes = AuctionSetOutcomes.none
   ): Behavior[Command] =
     Behaviors.withTimers[Command] { timers =>
       Behaviors.setup { context =>
@@ -493,6 +605,8 @@ object AuctionEntity {
             // Записать событие можно только в обработке команды, поэтому шаги финала — сообщением себе, как `Settle`.
             case LotInstruction.Complete(lot) => context.self ! FinalLotEnded(lot)
             case LotInstruction.Finish => context.self ! FinishDue
+            case LotInstruction.AddWindow(lot, launch, command) =>
+              context.pipeToSelf(lots.addWindow(lot, command))(WindowAnswered(launch, lot, _))
           }
         }
 
@@ -512,7 +626,7 @@ object AuctionEntity {
           auction.state match {
             case AuctionState.Prebidding(config, _) if !raffleOpened =>
               config.raffleClosesAt.foreach { closesAt =>
-                context.pipeToSelf(raffle.open(auctionId, closesAt))(RaffleAnswered(_))
+                context.pipeToSelf(raffle.open(auctionId, closesAt, config.rafflePrize))(RaffleAnswered(_))
               }
             case _ => ()
           }
@@ -566,6 +680,49 @@ object AuctionEntity {
               context
                 .pipeToSelf(Try(results.settle(auctionId)).fold(Future.failed, answer => answer))(ResultsAnswered(_))
             case _ => ()
+          }
+
+        // Чтение исходов сетов в пути: тик, пришедший раньше ответа, второго чтения не шлёт. Рестарт начинает с `false`.
+        var setsReading = false
+
+        /**
+         * Итог сетов (ADR-073, п. 4): после старта торгов, пока у полного сета нет итога, entity читает исходы его
+         * лотов и пишет итог, когда каждый лот пришёл к конечному исходу.
+         */
+        def followSets(auction: Auction): Unit = {
+          val awaiting = LotSets.awaiting(auction)
+          if (!setsReading && auction.state.started.isDefined && awaiting.nonEmpty) {
+            setsReading = true
+            val lots = awaiting.values.flatMap(_.lots).toSet
+            context.pipeToSelf(Try(setOutcomes.outcomes(lots)).fold(Future.failed, answer => answer))(
+              SetOutcomesRead(_)
+            )
+          }
+        }
+
+        /**
+         * Лоты кончившегося аукциона, которых нет среди исходов read model: та не отличает лот, который отстал, от
+         * лота, который не открывался вовсе, а лот отличает. Не открывавшийся — `NotOpened`; остальные ждут следующего
+         * тика.
+         */
+        def unopened(missing: Set[LotId]): Future[Map[LotId, LotOutcome]] = {
+          given scala.concurrent.ExecutionContext = context.executionContext
+          Future
+            .traverse(missing.toList)(lot => Try(lots.stateOf(lot)).fold(Future.failed, state => state).map(lot -> _))
+            .map(_.collect { case (lot, LotState.Initial | LotState.Draft | LotState.Scheduled(_)) =>
+              lot -> LotOutcome.NotOpened
+            }.toMap)
+        }
+
+        /** Пишет следующий итог по снимку исходов и решает дальше тем же снимком — сообщением себе. */
+        def settleNext(state: State, outcomes: Map[LotId, LotOutcome]): Effect[StoredAuctionEvent, State] =
+          LotSets.next(state.auction, outcomes) match {
+            case None => Effect.none
+            case Some((opId, event)) =>
+              record(state.auction, AuctionDecision.Accepted(event), opId, Initiator.Scheduler, clock, newId) {
+                (_, _) =>
+                  context.self ! SetOutcomesKnown(Success(outcomes))
+              }
           }
 
         def warnResults(message: String, failure: Throwable): Unit =
@@ -676,10 +833,10 @@ object AuctionEntity {
             decision: Either[DiscardAuctionRejected, AuctionDecision],
             discard: DiscardAuction,
             initiator: Initiator,
-            replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]]
+            reply: Either[DiscardAuctionRejected, AuctionAnswer] => Unit
         ): EffectBuilder[StoredAuctionEvent, State] =
           decision match {
-            case Left(rejected) => Effect.none.thenRun(_ => replyTo ! Left(rejected))
+            case Left(rejected) => Effect.none.thenRun(_ => reply(Left(rejected)))
             case Right(accepted) =>
               record(state.auction, accepted, discard.opId, initiator, clock, newId) { (_, answer) =>
                 accepted match {
@@ -695,15 +852,61 @@ object AuctionEntity {
                     )(ResultsDiscarded(_))
                   case AuctionDecision.Repeated(_) | AuctionDecision.Unchanged => ()
                 }
-                replyTo ! Right(answer)
+                reply(Right(answer))
               }
+          }
+
+        // Прогнозы удаляются до записи удаления: удалённый аукцион ничего не переспрашивает, и удаление, потерянное
+        // после записи, оставило бы старые прогнозы аукциону, рождённому заново. До планирования прогнозов нет.
+        def discarding(
+            state: State,
+            discard: DiscardAuction,
+            initiator: Initiator,
+            reply: Either[DiscardAuctionRejected, AuctionAnswer] => Unit
+        ): Effect[StoredAuctionEvent, State] =
+          (state.auction.state, Auction.decide(state.auction, discard)) match {
+            case (AuctionState.Scheduled(_), Right(AuctionDecision.Accepted(_))) =>
+              wiping = true
+              Effect.none.thenRun { _ =>
+                context.pipeToSelf(askPredictions(predictions.discard(auctionId)))(
+                  PredictionsWiped(discard, initiator, reply, _)
+                )
+              }
+            case (_, decision) => discarded(state, decision, discard, initiator, reply)
+          }
+
+        def cancelling(
+            state: State,
+            cancel: CancelAuction,
+            initiator: Initiator,
+            reply: Either[CancelAuctionRejected, AuctionAnswer] => Unit
+        ): Effect[StoredAuctionEvent, State] =
+          Auction.decide(state.auction, cancel, LotRoster.lineup(state.auction, roster)) match {
+            case Left(rejected) => Effect.none.thenRun(_ => reply(Left(rejected)))
+            case Right(decision) =>
+              record(state.auction, decision, cancel.opId, initiator, clock, newId) { (auction, answer) =>
+                reply(Right(answer))
+                timers.cancel(PrebiddingKey)
+                follow(LotRoster.cancelled(auction, roster, decision))
+                cancelRaffle(auction)
+                followPredictions(auction)
+                releaseSlot(auction)
+              }
+          }
+
+        // Ответ на факт отмены сходки. Отказа у него нет: путь удаления или отмены, выбранный по решению агрегата, своего
+        // отказа на том же состоянии дать не может.
+        def inherited(replyTo: ActorRef[AuctionAnswer])(answer: Either[?, AuctionAnswer]): Unit =
+          answer match {
+            case Right(answered) => replyTo ! answered
+            case Left(rejected) => throw new IllegalStateException(s"meetup cancellation answered $rejected")
           }
 
         def onCommand(state: State, command: Command): Effect[StoredAuctionEvent, State] =
           command match {
-            case PredictionsWiped(discard, initiator, replyTo, Success(_)) =>
+            case PredictionsWiped(discard, initiator, reply, Success(_)) =>
               wiping = false
-              discarded(state, Auction.decide(state.auction, discard), discard, initiator, replyTo).thenUnstashAll()
+              discarded(state, Auction.decide(state.auction, discard), discard, initiator, reply).thenUnstashAll()
             case PredictionsWiped(_, _, _, Failure(failure)) =>
               wiping = false
               Effect.none
@@ -765,18 +968,20 @@ object AuctionEntity {
               Effect.none
             case SlotReleased(Failure(failure)) =>
               Effect.none.thenRun(_ => warnSlot("trading slot did not answer the release", failure))
-            case Cancel(cancel, initiator, replyTo) =>
-              Auction.decide(state.auction, cancel, LotRoster.lineup(state.auction, roster)) match {
-                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
-                case Right(decision) =>
-                  record(state.auction, decision, cancel.opId, initiator, clock, newId) { (auction, answer) =>
-                    replyTo ! Right(answer)
-                    timers.cancel(PrebiddingKey)
-                    follow(LotRoster.cancelled(auction, roster, decision))
-                    cancelRaffle(auction)
-                    followPredictions(auction)
-                    releaseSlot(auction)
-                  }
+            case Cancel(cancel, initiator, replyTo) => cancelling(state, cancel, initiator, replyTo ! _)
+            case InheritCancellation(inherit, replyTo) =>
+              Auction.decide(state.auction, inherit, LotRoster.lineup(state.auction, roster)) match {
+                case AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded) |
+                    AuctionDecision.Repeated(AuctionEnvelope(_, _, AuctionEvent.AuctionDiscarded)) =>
+                  discarding(state, DiscardAuction(inherit.opId), Initiator.Scheduler, inherited(replyTo))
+                // Повтор отмены идёт тем же путём, что новая: события он не пишет, но доснимает неответившие лоты.
+                case AuctionDecision.Accepted(AuctionEvent.AuctionCancelled) |
+                    AuctionDecision.Repeated(AuctionEnvelope(_, _, AuctionEvent.AuctionCancelled)) =>
+                  cancelling(state, CancelAuction(inherit.opId), Initiator.Scheduler, inherited(replyTo))
+                case decision =>
+                  record(state.auction, decision, inherit.opId, Initiator.Scheduler, clock, newId)((_, answer) =>
+                    replyTo ! answer
+                  )
               }
             case LotWithdrew(lot, Success(answer)) =>
               Effect.none.thenRun { after =>
@@ -797,6 +1002,22 @@ object AuctionEntity {
                 )
               }
             case Roster(replyTo) => Effect.reply(replyTo)(roster)
+            case Launch(launch, initiator, replyTo) =>
+              Auction.decide(state.auction, launch, clock.instant(), roster.active) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(decision) =>
+                  record(state.auction, decision, launch.opId, initiator, clock, newId) { (auction, answer) =>
+                    replyTo ! Right(answer)
+                    follow(LotRoster.launched(auction, roster, launch.opId))
+                  }
+              }
+            case WindowAnswered(launch, lot, Success(_)) =>
+              Effect.none.thenRun(_ => roster = LotRoster.windowAnswered(roster, launch, lot))
+            case WindowAnswered(launch, lot, Failure(failure)) =>
+              Effect.none.thenRun { _ =>
+                logUnanswered(lot, failure)
+                roster = LotRoster.windowUnanswered(roster, launch, lot)
+              }
             case LotObserved(lot, Success(lotState)) =>
               Effect.none.thenRun(after => follow(LotRoster.observed(after.auction, roster, lot, lotState)))
             case LotObserved(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
@@ -822,6 +1043,7 @@ object AuctionEntity {
                     confirmSlot(after.auction)
                     releaseSlot(after.auction)
                     followResults(after.auction)
+                    followSets(after.auction)
                 }
               }
             // Общий дедлайн ждёт закрытия раунда каталога, пока торги не начались, и спрашивается снова через тик.
@@ -997,6 +1219,29 @@ object AuctionEntity {
               Effect.none
             case ResultsAnswered(Failure(failure)) =>
               Effect.none.thenRun(_ => warnResults("results did not answer the auction", failure))
+            // Каждый ответ пишет не больше одного итога: следующий сет, решённый тем же снимком, — сообщением себе, как
+            // шаги финала. Сет без итога в этом снимке ждёт следующего тика. В кончившемся аукционе лоты без исхода
+            // уточняются у самих лотов: не открывавшийся лот иначе держал бы сет без итога вечно (ADR-073, п. 4).
+            case SetOutcomesRead(Success(outcomes)) =>
+              val missing = LotSets.unknown(state.auction, outcomes)
+              state.auction.state match {
+                case AuctionState.Finished(_, _) if missing.nonEmpty =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(unopened(missing))(answer => SetOutcomesKnown(answer.map(outcomes ++ _)))
+                  }
+                case _ =>
+                  setsReading = false
+                  settleNext(state, outcomes)
+              }
+            case SetOutcomesKnown(Success(outcomes)) =>
+              setsReading = false
+              settleNext(state, outcomes)
+            case SetOutcomesKnown(Failure(failure)) =>
+              setsReading = false
+              Effect.none.thenRun(_ => warnResults("lots of the sets did not answer the auction", failure))
+            case SetOutcomesRead(Failure(failure)) =>
+              setsReading = false
+              Effect.none.thenRun(_ => warnResults("lot outcomes of the sets were not read", failure))
             case ResultsDiscarded(Success(_)) => Effect.none
             case ResultsDiscarded(Failure(failure)) =>
               Effect.none.thenRun(_ => warnResults("results did not discard", failure))
@@ -1050,6 +1295,43 @@ object AuctionEntity {
                 case Success(answer) => Effect.reply(chosen.replyTo)(answer.left.map(FinalChoiceRejected.ByLot(_)))
                 case Failure(failure) => Effect.none.thenRun(_ => logUnanswered(chosen.lot, failure))
               }
+            case RemoveParticipantFromLot(removal, initiator, replyTo) =>
+              Auction.decide(state.auction, removal) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(command) =>
+                  Effect.none.thenRun { _ =>
+                    roster = LotRoster.removingParticipant(roster, removal.lot)
+                    context.pipeToSelf(lots.removeParticipant(removal.lot, command, initiator))(
+                      LotParticipantRemoved(removal.lot, replyTo, _)
+                    )
+                  }
+              }
+            case LotParticipantRemoved(lot, replyTo, Success(answer)) =>
+              Effect.none.thenRun { _ =>
+                follow(LotRoster.participantRemovalAnswered(roster, lot))
+                replyTo ! answer.left.map(ParticipantRemovalRejected.ByLot(_))
+              }
+            // Ответа не дождались, но снятие могло записаться: оно больше не в пути, удержанный лот спрашивается
+            // заново, а прочее знание о лоте остаётся за своими командами.
+            case LotParticipantRemoved(lot, _, Failure(failure)) =>
+              Effect.none.thenRun { _ =>
+                logUnanswered(lot, failure)
+                follow(LotRoster.participantRemovalAnswered(roster, lot))
+              }
+            case PreviewParticipantRemoval(preview, replyTo) =>
+              Auction.decide(state.auction, preview) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(participant) =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(lots.previewRemoval(preview.lot, participant))(
+                      RemovalPreviewed(preview.lot, replyTo, _)
+                    )
+                  }
+              }
+            // Ни знание, ни журнал предпросмотр не меняет: ответ лота уходит вызывающему как есть.
+            case RemovalPreviewed(_, replyTo, Success(answer)) =>
+              Effect.reply(replyTo)(answer.left.map(ParticipantRemovalRejected.ByLot(_)))
+            case RemovalPreviewed(lot, _, Failure(failure)) => Effect.none.thenRun(_ => logUnanswered(lot, failure))
             case AskLot(ask, initiator, replyTo) =>
               Auction.decide(state.auction, ask) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
@@ -1070,6 +1352,11 @@ object AuctionEntity {
             case Remove(remove, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, remove)
               answered(state.auction, decision, remove.opId, initiator, replyTo, clock, newId)
+            case SaveSet(save, initiator, replyTo) =>
+              answered(state.auction, Auction.decide(state.auction, save), save.opId, initiator, replyTo, clock, newId)
+            case DeleteSet(delete, initiator, replyTo) =>
+              val decision = Auction.decide(state.auction, delete)
+              answered(state.auction, decision, delete.opId, initiator, replyTo, clock, newId)
             case Schedule(schedule, initiator, replyTo) =>
               Auction.decide(state.auction, schedule) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
@@ -1079,19 +1366,29 @@ object AuctionEntity {
                     followPredictions(auction)
                   }
               }
-            // Прогнозы удаляются до записи удаления: удалённый аукцион ничего не переспрашивает, и удаление, потерянное
-            // после записи, оставило бы старые прогнозы аукциону, рождённому заново. До планирования прогнозов нет.
-            case Discard(discard, initiator, replyTo) =>
-              (state.auction.state, Auction.decide(state.auction, discard)) match {
-                case (AuctionState.Scheduled(_), Right(AuctionDecision.Accepted(_))) =>
-                  wiping = true
-                  Effect.none.thenRun { _ =>
-                    context.pipeToSelf(askPredictions(predictions.discard(auctionId)))(
-                      PredictionsWiped(discard, initiator, replyTo, _)
-                    )
-                  }
-                case (_, decision) => discarded(state, decision, discard, initiator, replyTo)
-              }
+            case Discard(discard, initiator, replyTo) => discarding(state, discard, initiator, replyTo ! _)
+            case Show(show, initiator, replyTo) =>
+              answered(state.auction, Auction.decide(state.auction, show), show.opId, initiator, replyTo, clock, newId)
+            case Announce(announce, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, announce),
+                announce.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
+            case Instruct(instruct, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, instruct),
+                instruct.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 
@@ -1114,6 +1411,7 @@ object AuctionEntity {
             confirmSlot(state.auction)
             releaseSlot(state.auction)
             followResults(state.auction)
+            followSets(state.auction)
             armPrebidding(state.auction)
           }
       }

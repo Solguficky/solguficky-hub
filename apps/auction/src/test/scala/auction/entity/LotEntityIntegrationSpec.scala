@@ -112,6 +112,33 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
     replies.receiveMessage(patience).map(_.envelope)
   }
 
+  private def previewOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int) = {
+    val replies = kit.createTestProbe[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]]()
+    entity ! LotEntity.PreviewRemoval(participant(who), replies.ref)
+    replies.receiveMessage(patience)
+  }
+
+  private def removeOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int, opN: Int, version: Long) = {
+    val replies = kit.createTestProbe[Either[RemoveParticipantRejected, LotEntity.Recorded]]()
+    entity ! LotEntity.Remove(removeParticipant(who, opN, version), Initiator.Operator(participant(9)), replies.ref)
+    replies.receiveMessage(patience).map(_.envelope)
+  }
+
+  /** Snapshot прежней формы: у торгов нет истории, как у snapshot, записанного до PER-657. */
+  private def forgetHistory(database: DatabaseSettings, id: String): Int =
+    withConnection(database) { connection =>
+      Using.resource(
+        connection.prepareStatement(
+          """UPDATE snapshot
+            |SET snapshot_payload = convert_to((convert_from(snapshot_payload, 'UTF8')::jsonb #- '{state,trading,course}')::text, 'UTF8')
+            |WHERE persistence_id = ?""".stripMargin
+        )
+      ) { statement =>
+        statement.setString(1, persistenceId(id))
+        statement.executeUpdate()
+      }
+    }
+
   private def read(kit: ActorTestKit, entity: ActorRef[LotEntity.Command]): Lot = {
     val replies = kit.createTestProbe[Lot]()
     entity ! LotEntity.Get(replies.ref)
@@ -226,7 +253,8 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
       }
     }
 
-    "recover from a snapshot and the events after it with the deduplication window of the snapshot" in {
+    // Snapshot лежит в базе, но recovery его не читает (PER-657): окно дедупликации даёт replay журнала целиком.
+    "recover from the whole journal while a snapshot exists, keeping the deduplication window" in {
       val database = freshDatabase()
       val id = UUID.randomUUID().toString
       val first = node(database)
@@ -251,8 +279,45 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
           (money(120), Some(participant(2)), Some(deadline))
         journal(database, id).map(_.sequence) shouldBe List(1L, 2L, 3L, 4L, 5L)
         val snapshot = snapshots(database, id)
-        snapshot.map(_.manifest) shouldBe List(classOf[StoredLot].getName)
+        // Восстановившись журналом без snapshot, Pekko пишет snapshot последнего номера — уже с историей торгов.
+        snapshot.map(row => (row.sequence, row.manifest)) shouldBe
+          List((4L, classOf[StoredLot].getName), (5L, classOf[StoredLot].getName))
         snapshot.flatMap(row => floatingPoints(row.payload)) shouldBe Nil
+      } finally second.shutdownTestKit()
+    }
+
+    // ADR-072 на настоящей базе: snapshot без истории торгов не мешает снятию — лот поднимается журналом.
+    "remove a participant on a new node whose snapshots carry no trading history, by replaying the journal" in {
+      val database = freshDatabase()
+      val id = UUID.randomUUID().toString
+      val first = node(database)
+      try {
+        val entity = lot(first, id, snapshotEvery = 2)
+        openOn(first, entity)
+        limitOn(first, entity, who = 1, max = 300, opN = 4)
+        bidOn(first, entity, who = 2, amount = 200, opN = 5)
+        bidOn(first, entity, who = 3, amount = 310, opN = 6)
+        eventually(snapshots(database, id) should not be empty)
+      } finally first.shutdownTestKit()
+      forgetHistory(database, id) should be > 0
+      snapshots(database, id)
+        .map(row => mapper.readTree(row.payload).at("/state/trading").has("course"))
+        .distinct shouldBe
+        List(false)
+
+      val second = node(database)
+      try {
+        val entity = lot(second, id, snapshotEvery = 2)
+        val preview = previewOn(second, entity, who = 3).toOption.get
+        val removed = removeOn(second, entity, who = 3, opN = 7, preview.version)
+        val after = tradingOf(read(second, entity))
+
+        removed.map(_.event) shouldBe Right(
+          LotEvent.ParticipantRemoved(participant(3), money(210), Some(participant(1)), after.leadingBidId)
+        )
+        (preview.removed.leader, preview.removed.price) shouldBe (Some(participant(1)), money(210))
+        (after.leader, after.currentPrice) shouldBe (Some(participant(1)), money(210))
+        removeOn(second, entity, who = 3, opN = 7, preview.version) shouldBe removed
       } finally second.shutdownTestKit()
     }
 

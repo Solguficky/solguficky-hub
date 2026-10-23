@@ -50,7 +50,7 @@ import {
   routeAuctionStart,
 } from "./route.js";
 import { screenMark } from "./screen-catalog.js";
-import { sourceCodeOf } from "./start-payload.js";
+import { startPayloadOf } from "./start-payload.js";
 import { startWaiting } from "./waiting.js";
 
 // Операция команды в логе: имя раздела, который она открывает.
@@ -72,6 +72,9 @@ export type BotOptions = {
   ports: PortsFactory;
   logger: Logger;
   faq?: FaqContent;
+  // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку
+  // «Написать в поддержку ↗» (PER-625, ADR-068). Нет — кнопки нет.
+  supportBotUsername?: string;
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
   photos?: PhotoCache;
@@ -107,6 +110,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ? {}
         : { presentation: options.presentation }),
       ...(options.faq === undefined ? {} : { faq: options.faq }),
+      ...(options.supportBotUsername === undefined
+        ? {}
+        : { supportBotUsername: options.supportBotUsername }),
     });
   const photos = options.photos ?? createPhotoCache();
   const questions = options.questions ?? createQuestionMemory();
@@ -213,12 +219,17 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   }
 
   direct.command("start", (ctx) => {
-    const sourceCode = sourceCodeOf(ctx.match);
+    const payload = startPayloadOf(ctx.match);
     return answerCommand(ctx, {
       operation: "start",
       route: (ports) =>
         routeAuctionStart({
-          ...(sourceCode === undefined ? {} : { sourceCode }),
+          ...(payload.sourceCode === undefined
+            ? {}
+            : { sourceCode: payload.sourceCode }),
+          ...(payload.lotToken === undefined
+            ? {}
+            : { lotToken: payload.lotToken }),
           ports,
           user: userOf(ctx.from),
           firstName: ctx.from.first_name,

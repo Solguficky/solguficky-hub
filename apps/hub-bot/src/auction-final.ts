@@ -74,6 +74,8 @@ export function finalBidLine(
           return `Ты уже лидируешь: цена ${money(refusal.currentPrice)} — твоя`;
         case "bid-below-minimum":
           return `Цену уже подняли: следующая ставка — ${money(refusal.minRequired)}`;
+        case "bid-above-maximum":
+          return `Максимум сейчас — 5 × ${money(refusal.next)}`;
         case "lot-on-hold":
           return "Лот ждёт финала: ставки сейчас не принимаются";
         case "lot-not-open":
@@ -83,6 +85,8 @@ export function finalBidLine(
         // Выбор имени — свой экран: сюда отказ не доходит.
         case "display-name-not-chosen":
           return "Выбери имя в аукционе";
+        case "removed-from-lot":
+          return "Ставки на этом лоте для тебя закрыты";
         default: {
           const _exhaustive: never = refusal;
           return _exhaustive;

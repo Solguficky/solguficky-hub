@@ -258,7 +258,7 @@ func TestReconsiderBlockedUnblocksAndGrantsGuestInOneOperation(t *testing.T) {
 	// Модератор аукциона решает очередь аукциона, но блокировку не снимает.
 	moderatorID := seedProfile(t, db, 9703)
 	mustChange(t)(svc.grantCircle(t.Context(), moderatorID, circleMember, uuid.NullUUID{}))
-	if _, err := svc.GrantAuctionModeration(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(adminID), IdentityId: moderatorID}); err != nil {
+	if _, err := svc.GrantRight(t.Context(), &identityv1.ChangeRightRequest{Actor: adminActor(adminID), IdentityId: moderatorID, Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS}); err != nil {
 		t.Fatalf("grant moderation: %v", err)
 	}
 	_, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(moderatorID), ApplicationId: applicationID})

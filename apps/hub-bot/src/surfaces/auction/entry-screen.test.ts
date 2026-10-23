@@ -115,6 +115,34 @@ describe("renderEntryScreen", () => {
     );
   });
 
+  // Ожидание допуска несёт вход в бот поддержки, когда её адрес задан
+  // (PER-625, ADR-068): «?start=auction» говорит боту поддержки, откуда
+  // человек. Отказ, блокировка и переход в бот хаба кнопки не несут.
+  it("offers the support bot on the waiting frame when its address is set", () => {
+    const render: RenderOptions = {
+      ...options,
+      supportBotUsername: "solguficky_support_bot",
+    };
+    const waiting = renderEntryScreen(
+      { kind: "denied", reason: "not-admitted" },
+      render,
+    );
+    expect(waiting.id).toBe("denied-support");
+    expect(waiting.keyboard).toEqual([
+      [
+        {
+          text: "Написать в поддержку ↗",
+          url: "https://t.me/solguficky_support_bot?start=auction",
+        },
+      ],
+    ]);
+    for (const reason of ["declined", "blocked", "in-community"] as const) {
+      const screen = renderEntryScreen({ kind: "denied", reason }, render);
+      expect(screen.keyboard).toEqual([]);
+      expect(screen.id).toBe(reason === "in-community" ? reason : "denied");
+    }
+  });
+
   it("hints how to answer an open question and where to go otherwise", () => {
     const open = renderEntryScreen(
       { kind: "hint", openQuestion: true },
@@ -458,9 +486,37 @@ describe("renderEntryScreen", () => {
     );
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\n💰 Цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
+        "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
         "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
         "Описание пока не добавлено.",
+    );
+  });
+
+  // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81):
+  // строка говорит, что он исчерпан. Лидеру тот же лимит — обычная строка.
+  it("names an exhausted own limit of a participant who does not lead", () => {
+    const course = (standing?: "leader") =>
+      plain(
+        lotScreen(
+          {
+            card: { title: "Кружка", description: "" },
+            nextPrice: rub(950),
+            status: {
+              kind: "trading",
+              currentPrice: rub(900),
+              leaderId: "p-2",
+              phase: "online",
+            },
+            viewerProxyLimit: rub(900),
+            ...(standing === undefined ? {} : { standing }),
+          },
+          plainCard,
+        ).text,
+      );
+    expect(course()).toContain("Автоставка до 900 ₽ исчерпана — подними лимит");
+    expect(course()).not.toContain("Твоя автоставка");
+    expect(course("leader")).toContain(
+      "Твоя автоставка: до 900 ₽ (видишь только ты)",
     );
   });
 
@@ -498,6 +554,36 @@ describe("renderEntryScreen", () => {
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       ["‹ Лот"],
     ]);
+  });
+
+  it("names five times the next price when a bid is above the ceiling", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "result",
+              result: {
+                command: "bid",
+                kind: "refused",
+                refusal: { kind: "bid-above-maximum", next: rub(5100) },
+              },
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
+            },
+          ],
+          keyboard: [
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toBe(
+      "<b>Ставка выше потолка</b>\n\n<b>Кружка</b>\n\nМаксимум сейчас — 5 × 5 100 ₽.",
+    );
   });
 
   // Чужой год называется в дате (дизайн-код, «Формат»).
@@ -744,6 +830,7 @@ describe("bid sheet screens", () => {
       lotId: "lot-1",
       auctionId: "auc-1",
       title: "Кружка",
+      status: { kind: "unsold" },
       page: 0,
       pageCount: 1,
       entries: [
@@ -759,6 +846,61 @@ describe("bid sheet screens", () => {
     });
     expect(plain(screen.text)).toBe(
       "<b>Ставки</b>\n<i>Кружка</i>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+    );
+  });
+
+  it("strikes the bids of a removed participant and shows the removal as its own line", () => {
+    const screen = body({
+      kind: "history",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка",
+      status: { kind: "unsold" },
+      page: 0,
+      pageCount: 1,
+      entries: [
+        {
+          kind: "bid",
+          sequence: 1,
+          occurredAt: "2025-10-03T16:04:00Z",
+          amount: rub(500),
+          origin: { kind: "manual", source: "bot" },
+          participantName: "@jay",
+          removed: true,
+        },
+        {
+          kind: "bid",
+          sequence: 2,
+          occurredAt: "2025-10-03T16:05:00Z",
+          amount: rub(450),
+          origin: { kind: "proxy" },
+          participantName: "@owl",
+        },
+        {
+          kind: "removal",
+          sequence: 3,
+          occurredAt: "2025-10-03T16:06:00Z",
+          price: rub(400),
+          leaderName: "@owl",
+        },
+        {
+          kind: "removal",
+          sequence: 4,
+          occurredAt: "2025-10-03T16:07:00Z",
+          price: rub(300),
+        },
+      ],
+    });
+    expect(plain(screen.text)).toBe(
+      [
+        "<b>Ставки</b>",
+        "<i>Кружка</i>",
+        "",
+        "• <s>3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную</s>",
+        "• 3 октября 2025, пт, 19:05 · @owl · 450 ₽ · авто",
+        "• 3 октября 2025, пт, 19:06 · участник снят · цена 400 ₽ · ведёт @owl",
+        "• 3 октября 2025, пт, 19:07 · участник снят · цена 300 ₽",
+      ].join("\n"),
     );
   });
 });
@@ -904,7 +1046,7 @@ describe("auction lists", () => {
     // Пустой список — не тупик (PER-592): «Прошедшие» внутри раздела и
     // возврат в меню.
     expect(screen.keyboard).toEqual([
-      [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+      [{ text: "🗂 Прошедшие", callback_data: entryCallback("past") }],
       [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
     ]);
   });

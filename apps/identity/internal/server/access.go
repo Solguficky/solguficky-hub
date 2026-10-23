@@ -61,6 +61,7 @@ const (
 	rightManageMembers = "manage_members"
 	rightManageMeetups = "manage_meetups"
 	rightGrantAdmins   = "grant_admins"
+	rightRunAuctions   = "run_auctions"
 )
 
 // Что выдаётся и снимается. Таблица issuers ниже — единственное место, где
@@ -75,7 +76,9 @@ const (
 	grantPlaceBids grantable = "record:place_bids"
 	// Запись admit_bidders участнику.
 	grantAdmitBidders grantable = "record:admit_bidders"
-	grantAdminPreset  grantable = "preset:admin"
+	// Запись run_auctions участнику (ADR о наборах, дополнение 2026-10-18).
+	grantRunAuctions grantable = "record:run_auctions"
+	grantAdminPreset grantable = "preset:admin"
 	// Набор maintainer выдаёт только общий секрет: строки в issuers у него нет.
 	grantMaintainerPreset grantable = "preset:maintainer"
 )
@@ -86,6 +89,7 @@ var issuers = map[grantable]string{
 	grantMemberCircle: rightManageMembers,
 	grantPlaceBids:    rightAdmitBidders,
 	grantAdmitBidders: rightManageMembers,
+	grantRunAuctions:  rightManageMembers,
 	grantAdminPreset:  rightGrantAdmins,
 }
 
@@ -252,6 +256,8 @@ func accessRight(name string) (identityv1.AccessRight, bool) {
 		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS, true
 	case rightGrantAdmins:
 		return identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS, true
+	case rightRunAuctions:
+		return identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS, true
 	default:
 		return identityv1.AccessRight_ACCESS_RIGHT_UNSPECIFIED, false
 	}
@@ -273,6 +279,8 @@ func rightName(right identityv1.AccessRight) (string, bool) {
 		return rightManageMeetups, true
 	case identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS:
 		return rightGrantAdmins, true
+	case identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS:
+		return rightRunAuctions, true
 	default:
 		return "", false
 	}

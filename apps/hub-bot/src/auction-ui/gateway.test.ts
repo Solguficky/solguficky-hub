@@ -105,6 +105,21 @@ function surfaceFor(
         async cancelRaffleRegistration() {
           throw new Error("not used");
         },
+        async listMyInvoices() {
+          return { invoices: [] };
+        },
+        async chooseFulfillment() {
+          throw new Error("not used");
+        },
+        async getMyPredictions() {
+          return [];
+        },
+        async getPredictionResults() {
+          throw new Error("not used");
+        },
+        async submitPrediction() {
+          throw new Error("not used");
+        },
       },
       operations: {
         newOperationId() {

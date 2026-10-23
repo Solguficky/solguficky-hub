@@ -33,7 +33,7 @@ describe("notifications client", () => {
           { category: WireCategory.MEETUP_REMINDER, enabled: false },
           { category: WireCategory.ORGANIZER_MESSAGE, enabled: true },
           { category: WireCategory.COMMUNITY_ANNOUNCEMENT, enabled: true },
-          { category: WireCategory.ACCESS_REQUEST, enabled: false },
+          { category: WireCategory.ACCESS_REQUEST_COMMUNITY, enabled: false },
         ],
       }),
     });
@@ -50,7 +50,7 @@ describe("notifications client", () => {
           { category: "reminder", enabled: false },
           { category: "organizer", enabled: true },
           { category: "announcement", enabled: true },
-          { category: "access", enabled: false },
+          { category: "access-community", enabled: false },
         ],
       },
     });
@@ -85,7 +85,7 @@ describe("notifications client", () => {
         categories: [
           { category: WireCategory.MEETUP_CHANGED, enabled: true },
           { category: WireCategory.COMMUNITY_ANNOUNCEMENT, enabled: true },
-          { category: WireCategory.ACCESS_REQUEST, enabled: true },
+          { category: WireCategory.ACCESS_REQUEST_AUCTION, enabled: true },
         ],
       }),
     });
@@ -130,8 +130,9 @@ describe("notifications client", () => {
     );
   });
 
-  // Запросы доступа меняет только администратор: остальным сервис отвечает
-  // `PERMISSION_DENIED`, и это отказ по праву, а не недоступность.
+  // Запросы доступа меняет только тот, кто решает заявки этой очереди:
+  // остальным сервис отвечает `PERMISSION_DENIED`, и это отказ по праву, а не
+  // недоступность.
   it("sends access requests on the wire and reads a refusal as forbidden", async () => {
     const setGlobalCategoryPreference = vi
       .fn()
@@ -140,7 +141,7 @@ describe("notifications client", () => {
 
     const result = await notifications.setGlobalCategory(
       "identity-id",
-      "access",
+      "access-community",
       false,
     );
 
@@ -148,7 +149,7 @@ describe("notifications client", () => {
     expect(setGlobalCategoryPreference).toHaveBeenCalledWith(
       {
         identityId: "identity-id",
-        category: WireCategory.ACCESS_REQUEST,
+        category: WireCategory.ACCESS_REQUEST_COMMUNITY,
         enabled: false,
       },
       expect.anything(),
@@ -214,6 +215,27 @@ describe("notifications client", () => {
       },
       expect.anything(),
     );
+  });
+
+  it("reads a recipient count and rejects a count that is not a whole number", async () => {
+    const previewMeetupBroadcast = vi
+      .fn()
+      .mockResolvedValueOnce({ recipientCount: 3 })
+      .mockResolvedValueOnce({ recipientCount: -1 });
+    const notifications = adapter({ previewMeetupBroadcast });
+
+    await expect(
+      notifications.previewMeetupBroadcast({
+        identityId: "identity-id",
+        meetupId: "meetup-id",
+      }),
+    ).resolves.toEqual({ kind: "ok", recipientCount: 3 });
+    await expect(
+      notifications.previewMeetupBroadcast({
+        identityId: "identity-id",
+        meetupId: "meetup-id",
+      }),
+    ).resolves.toEqual({ kind: "invalid", cause: -1 });
   });
 
   it.each([
@@ -288,6 +310,34 @@ describe("auction notification settings", () => {
     });
   });
 
+  // «Перебили в финале» (PER-645) уходит один, и ответ несёт все три.
+  it("sends the live final switch alone", async () => {
+    const setAuctionNotificationPreferences = vi.fn().mockResolvedValue({
+      outbidFrequency: WireOutbidFrequency.OFF,
+      finalAnnouncements: true,
+      liveFinalOutbids: true,
+    });
+    const notifications = adapter({ setAuctionNotificationPreferences });
+
+    const result = await notifications.setAuctionNotifications("identity-id", {
+      kind: "live",
+      enabled: true,
+    });
+
+    expect(setAuctionNotificationPreferences).toHaveBeenCalledWith(
+      { identityId: "identity-id", liveFinalOutbids: true },
+      expect.anything(),
+    );
+    expect(result).toEqual({
+      kind: "ok",
+      settings: {
+        frequency: "off",
+        finalAnnouncements: true,
+        liveFinalOutbids: true,
+      },
+    });
+  });
+
   // Умолчание `EVERY` отдаёт сервер, и бот его не додумывает: незнакомое
   // значение — ответ вне контракта, а не недоступность.
   it("reports a mode outside the dictionary as unknown", async () => {
@@ -301,6 +351,77 @@ describe("auction notification settings", () => {
     expect(await notifications.getAuctionNotifications("identity-id")).toEqual({
       kind: "unknown",
       value: WireOutbidFrequency.UNSPECIFIED,
+    });
+  });
+
+  it("maps the release-notes category and the summary reads", async () => {
+    const reportReleaseNotes = vi.fn().mockResolvedValue({
+      acceptedAt: "2026-10-14T12:00:00Z",
+    });
+    const listReleaseSummaries = vi.fn().mockResolvedValue({
+      summaries: [
+        {
+          summaryId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+          summarizedAt: "2026-10-14T12:00:00Z",
+          recordIds: ["known"],
+        },
+      ],
+      nextPageToken: "",
+    });
+    const getReleaseSummary = vi.fn().mockResolvedValue({
+      summary: {
+        summaryId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+        summarizedAt: "2026-10-14T12:00:00Z",
+        recordIds: ["known"],
+      },
+      olderSummaryId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402",
+    });
+    const notifications = adapter({
+      reportReleaseNotes,
+      listReleaseSummaries,
+      getReleaseSummary,
+      getGlobalNotificationPreferences: vi.fn().mockResolvedValue({
+        categories: [
+          { category: WireCategory.MEETUP_PUBLISHED, enabled: true },
+          { category: WireCategory.RELEASE_NOTES, enabled: false },
+        ],
+      }),
+    });
+
+    await notifications.reportReleaseNotes(["known"]);
+    expect(reportReleaseNotes).toHaveBeenCalledWith(
+      { recordIds: ["known"] },
+      expect.any(Object),
+    );
+    await expect(
+      notifications.listReleaseSummaries(undefined),
+    ).resolves.toEqual({
+      kind: "ok",
+      page: {
+        summaries: [
+          {
+            id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+            summarizedAt: "2026-10-14T12:00:00Z",
+            recordIds: ["known"],
+          },
+        ],
+      },
+    });
+    await expect(
+      notifications.getReleaseSummary("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401"),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      view: { olderId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402" },
+    });
+    await expect(
+      notifications.getGlobalPreferences("identity-id"),
+    ).resolves.toMatchObject({
+      preferences: {
+        categories: [
+          { category: "published", enabled: true },
+          { category: "release", enabled: false },
+        ],
+      },
     });
   });
 

@@ -1,4 +1,4 @@
-import type { CallOptions, Client } from "@connectrpc/connect";
+import type { Client } from "@connectrpc/connect";
 import { createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
@@ -35,6 +35,18 @@ import {
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
 import {
+  fulfillmentOutcomeOn,
+  myInvoicesOf,
+  wireFulfillment,
+} from "../../core/auction/invoices.js";
+import { predictionResultsOf } from "../../core/auction/prediction-results.js";
+import {
+  myPredictionsOf,
+  predictionOutcomeOf,
+  wirePredictionAnswers,
+  wirePredictionRound,
+} from "../../core/auction/predictions.js";
+import {
   cancellationOutcomeOf,
   raffleOf,
   registrationOutcomeOf,
@@ -53,6 +65,7 @@ import {
   createFavoritesPort,
   type FavoritesRpc,
 } from "../../core/notifications/favorites.js";
+import { lotInfoOf } from "../../core/notifications/lot-notice.js";
 import {
   type AuctionNotificationsRpc,
   createAuctionNotificationsPort,
@@ -101,10 +114,15 @@ export type AuctionRpc = Pick<
   | "getRaffle"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
+  | "getMyPredictions"
+  | "getPredictionResults"
+  | "submitPrediction"
   | "getLotImage"
   | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
+  | "listMyInvoices"
+  | "chooseFulfillment"
 >;
 // Notifications боту аукциона нужен ради настроек уведомлений аукциона
 // (PER-515, PER-539),
@@ -355,6 +373,32 @@ export function createPorts(
             ? undefined
             : auctionSummaryViewOf(snapshot);
         },
+        // Счета победителя (PER-322): чтение бросает отказ, выбор способа —
+        // исход с `not-found` и `unanswered`, как команды участника.
+        async listMyInvoices(request) {
+          return myInvoicesOf(
+            await auction.listMyInvoices(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              callOptions(timeoutMs),
+            ),
+          );
+        },
+        chooseFulfillment(request) {
+          return fulfillmentOutcomeOn(() =>
+            auction.chooseFulfillment(
+              {
+                viewer: wireViewer(request.viewer),
+                invoiceId: request.invoiceId,
+                method: wireFulfillment(request.method),
+                opId: request.opId,
+              },
+              callOptions(timeoutMs),
+            ),
+          );
+        },
         // Розыгрыш среди участников (ADR-066): команды — как у ставки.
         async getRaffle(request) {
           try {
@@ -392,6 +436,42 @@ export function createPorts(
                 {
                   viewer: wireViewer(request.viewer),
                   auctionId: request.auctionId,
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
+            ),
+          );
+        },
+        async getMyPredictions(request) {
+          const response = await auction.getMyPredictions(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return myPredictionsOf(response);
+        },
+        async getPredictionResults(request) {
+          const response = await auction.getPredictionResults(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return predictionResultsOf(response);
+        },
+        submitPrediction(request) {
+          return unansweredOn(async () =>
+            predictionOutcomeOf(
+              await auction.submitPrediction(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                  round: wirePredictionRound(request.round),
+                  answers: wirePredictionAnswers(request.answers),
                   opId: request.opId,
                 },
                 callOptions(timeoutMs),
@@ -516,7 +596,7 @@ export function createDeliveryPorts(
         );
         return response.granted;
       },
-      async lotTitle(identityId, lotId, requestId) {
+      async lotInfo(identityId, lotId, requestId) {
         // Право `place-bids` у получателя Identity подтвердил шагом раньше, и
         // смотрящий несёт только его: Auction без него лот не отдаёт, а
         // выдумывать получателю права канал не вправе.
@@ -527,8 +607,7 @@ export function createDeliveryPorts(
           },
           options(requestId),
         );
-        // Карточки у лота может не быть: тогда текст обходится без названия.
-        return snapshot.card?.title ?? "";
+        return lotInfoOf(snapshot);
       },
     },
   };

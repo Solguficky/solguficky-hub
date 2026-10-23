@@ -90,7 +90,7 @@ describe("inspectCall configuration", () => {
       rulesOf("sendMessage", {
         text: "<b>Сходки</b>",
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[key("Архив")]] },
+        reply_markup: { inline_keyboard: [[key("🗂 Архив")]] },
         [foreign]: "meetups",
       }),
     ).toEqual(["untagged"]);
@@ -125,13 +125,13 @@ describe("inspectCall configuration", () => {
     expect(
       rulesOf(
         "editMessageText",
-        call("meetups", "<b>Сходки</b>", [[key("Архив")], [key("‹ Сходки")]]),
+        call("meetups", "<b>Сходки</b>", [[key("🗂 Архив")], [key("‹ Сходки")]]),
       ),
     ).toEqual(["nav"]);
     expect(
       rulesOf(
         "editMessageText",
-        call("meetups", "<b>Сходки</b>", [[key("Архив")]]),
+        call("meetups", "<b>Сходки</b>", [[key("🗂 Архив")]]),
       ),
     ).toEqual([]);
   });

@@ -14,6 +14,7 @@ func TestIssuersMatchTheIssuanceTable(t *testing.T) {
 		grantMemberCircle: rightManageMembers,
 		grantPlaceBids:    rightAdmitBidders,
 		grantAdmitBidders: rightManageMembers,
+		grantRunAuctions:  rightManageMembers,
 		grantAdminPreset:  rightGrantAdmins,
 	}
 	if len(issuers) != len(want) {
@@ -53,6 +54,7 @@ func TestIssuingRightIsNotSelfIssued(t *testing.T) {
 	granted := map[grantable]string{
 		grantPlaceBids:    rightPlaceBids,
 		grantAdmitBidders: rightAdmitBidders,
+		grantRunAuctions:  rightRunAuctions,
 	}
 	for g, right := range granted {
 		if issuer, _ := issuingRight(g); issuer == right {
@@ -69,7 +71,7 @@ func TestVocabularyRoundTrips(t *testing.T) {
 
 func assertRightsRoundTrip(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{rightAccessHub, rightPlaceBids, rightAdmitBidders, rightManageMembers, rightManageMeetups, rightGrantAdmins} {
+	for _, name := range []string{rightAccessHub, rightPlaceBids, rightAdmitBidders, rightManageMembers, rightManageMeetups, rightGrantAdmins, rightRunAuctions} {
 		value, ok := accessRight(name)
 		if !ok {
 			t.Fatalf("right %q has no contract value", name)

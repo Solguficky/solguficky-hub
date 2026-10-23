@@ -73,6 +73,19 @@ public class MigrationsTests
             "final_announcement_preference",
             "lot_reminder",
             "raffle_result",
+            "release_notes_preference",
+            "live_final_outbid_preference",
+            "prediction_results",
+            "release_notes",
+            "auction_ended",
+            "lot_reminder_close_and_final_next",
+            "access_request_by_queue",
+            "step_window_task",
+            "lot_lead_restored",
+            "outbid_digest_leader_nullable",
+            "auction_announcement",
+            "invoice_reminder",
+            "lot_set_collected",
         ]);
 
         var main = names.IndexOf("orleans_main");

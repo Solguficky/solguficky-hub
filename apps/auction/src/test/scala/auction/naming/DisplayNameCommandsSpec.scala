@@ -26,6 +26,7 @@ final class DisplayNameCommandsSpec extends AnyWordSpec with Matchers with Scala
     def choose(auction: AuctionId, participant: ParticipantId, name: ChosenName): Future[ChooseResult] = touched
     def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean] = touched
     def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] = touched
+    def all(auction: AuctionId): Future[Map[ParticipantId, StoredName]] = touched
   }
 
   /** Модель таблицы: уникальность псевдонима в аукционе и заморозка — те же правила, что держит база. */
@@ -66,6 +67,13 @@ final class DisplayNameCommandsSpec extends AnyWordSpec with Matchers with Scala
       synchronized {
         Future.successful(rows.collect {
           case ((a, p), (name, frozen)) if a == auction && participants(p) => p -> StoredName(name, frozen)
+        })
+      }
+
+    def all(auction: AuctionId): Future[Map[ParticipantId, StoredName]] =
+      synchronized {
+        Future.successful(rows.collect {
+          case ((a, p), (name, frozen)) if a == auction => p -> StoredName(name, frozen)
         })
       }
   }

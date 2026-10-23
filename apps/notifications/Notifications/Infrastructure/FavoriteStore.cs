@@ -64,6 +64,17 @@ public static class FavoriteStore
         DELETE FROM lot_favorite WHERE lot_id = ANY(@LotIds);
         """;
 
+    // Строка «аукцион закончен» живёт тот же горизонт от записи (PER-604).
+    private const string PruneEndedSql = """
+        DELETE FROM auction_ended WHERE recorded_at < @Threshold;
+        """;
+
+    // Причастный к отмене — любая строка на лоте, живая или снятая (ADR-047,
+    // дополнение 2026-10-12, «Факт отмены»).
+    private const string FollowersSql = """
+        SELECT DISTINCT identity_id FROM lot_favorite WHERE lot_id = ANY(@LotIds) ORDER BY identity_id;
+        """;
+
     /// <summary>Отметка лидеру ставки, если на этом лоте у него нет ни отметки, ни снятия.</summary>
     public static Task AutoFollow(UnitOfWork work, Guid identityId, Guid lotId, DateTimeOffset now,
         CancellationToken cancellationToken) =>
@@ -73,9 +84,11 @@ public static class FavoriteStore
     public static async Task<bool> KnownLot(UnitOfWork work, Guid lotId, CancellationToken cancellationToken) =>
         (await work.Query<Guid>(KnownLotSql, new { LotId = lotId }, cancellationToken)).Count > 0;
 
-    public static Task Follow(UnitOfWork work, Guid identityId, Guid lotId, DateTimeOffset now,
+    /// <summary>Ставит отметку. Возвращает, появилась ли она этим вызовом.</summary>
+    public static async Task<bool> Follow(UnitOfWork work, Guid identityId, Guid lotId, DateTimeOffset now,
         CancellationToken cancellationToken) =>
-        work.Execute(FollowSql, new { IdentityId = identityId, LotId = lotId, Now = now.UtcDateTime }, cancellationToken);
+        await
+        work.Execute(FollowSql, new { IdentityId = identityId, LotId = lotId, Now = now.UtcDateTime }, cancellationToken) > 0;
 
     public static Task Unfollow(UnitOfWork work, Guid identityId, Guid lotId, DateTimeOffset now,
         CancellationToken cancellationToken) =>
@@ -91,15 +104,31 @@ public static class FavoriteStore
 
     /// <summary>
     /// Удаляет реплики лотов, конечное положение которых старше порога, и все
-    /// отметки этих лотов, снятые и нет. Возвращает число удалённых лотов.
+    /// отметки этих лотов, снятые и нет, а с ними строки «аукцион закончен»,
+    /// записанные раньше порога. Возвращает число удалённых лотов.
     /// </summary>
+    /// <remarks>
+    /// Правило 30 дней после конечного положения лота остаётся запасным для
+    /// всех реплик, а не только для записанных без аукциона: аукцион, чей конец
+    /// не пришёл, иначе держал бы их бессрочно (PER-604).
+    /// </remarks>
     public static async Task<int> Prune(UnitOfWork work, DateTimeOffset threshold, CancellationToken cancellationToken)
     {
         var lots = await work.Query<Guid>(PruneReplicaSql, new { Threshold = threshold.UtcDateTime }, cancellationToken);
         if (lots.Count > 0)
         {
-            await work.Execute(PruneFavoritesSql, new { LotIds = lots.ToArray() }, cancellationToken);
+            await Forget(work, lots, cancellationToken);
         }
+        await work.Execute(PruneEndedSql, new { Threshold = threshold.UtcDateTime }, cancellationToken);
         return lots.Count;
     }
+
+    /// <summary>Все, у кого есть строка на этих лотах, живая или снятая.</summary>
+    public static Task<IReadOnlyList<Guid>> Followers(UnitOfWork work, IReadOnlyList<Guid> lotIds,
+        CancellationToken cancellationToken) =>
+        work.Query<Guid>(FollowersSql, new { LotIds = lotIds.ToArray() }, cancellationToken);
+
+    /// <summary>Удаляет все отметки лотов, снятые и нет.</summary>
+    public static Task<int> Forget(UnitOfWork work, IReadOnlyList<Guid> lotIds, CancellationToken cancellationToken) =>
+        work.Execute(PruneFavoritesSql, new { LotIds = lotIds.ToArray() }, cancellationToken);
 }

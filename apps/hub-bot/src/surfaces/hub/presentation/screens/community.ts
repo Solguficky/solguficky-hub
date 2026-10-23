@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { refreshLabel } from "../../../../core/pictograms.js";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
   CommunityCircle,
@@ -16,7 +17,6 @@ import {
 } from "../parse-callback.js";
 import { toAdministrators } from "./administrators.js";
 import {
-  bullet,
   confirmKeyboard,
   escapeHtml,
   nextRow,
@@ -32,8 +32,6 @@ import {
 } from "./kit.js";
 import { canGrantAdmins } from "./menu.js";
 import type { ShownScreen } from "./show.js";
-
-const refreshLabel = "Обновить";
 
 /** Какой из экранов состава показать. */
 export type CommunityView =
@@ -53,7 +51,7 @@ export function toCommunityPlace(place: CommunityPlace): Parent {
 }
 
 function memberData(
-  verb: "v" | "mg" | "mv" | "bq" | "by",
+  verb: "v" | "mg" | "mv" | "ag" | "av" | "dq" | "dy" | "bq" | "by",
   member: CommunityMember,
   place: CommunityPlace,
 ): string {
@@ -128,7 +126,7 @@ function filterLabel(filter: CommunityFilter, current: CommunityFilter) {
 export type CommunityScreenOptions = {
   // Исход последнего действия над разрешёнными никами.
   notice?: string | undefined;
-  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  // Родитель — группа пункта (`manageItemParent`).
   parent?: Parent;
   // Кто смотрит: его строка списка помечена «(ты)», как у администраторов.
   viewerId?: string;
@@ -151,19 +149,27 @@ export function communityScreen(
   }
 }
 
-// Строка человека в тексте списка: смотрящий помечен «(ты)», модерация —
-// только под фильтром участников: под фильтром модераторов её видно и так.
-function memberLine(
-  member: CommunityMember,
+// Сводка над кнопками людей (прогон 14.10, №53): ники только на кнопках, а
+// текст называет, сколько из них модерирует аукцион, — под фильтром
+// модераторов это видно и так.
+function moderationSummary(
+  people: readonly CommunityMember[],
   filter: CommunityFilter,
+): string | undefined {
+  if (filter !== "members") return undefined;
+  const moderators = people.filter((member) => member.auctionModeration).length;
+  return moderators === 0 ? undefined : `Модерируют аукцион: ${moderators}.`;
+}
+
+// Кнопка человека в списке: смотрящий помечен «(ты)», как строка списка
+// администраторов.
+function memberButton(
+  member: CommunityMember,
   viewerId: string | undefined,
 ): string {
-  const self = member.identityId === viewerId ? " (ты)" : "";
-  const moderation =
-    filter === "members" && member.auctionModeration
-      ? " · модерирует аукцион"
-      : "";
-  return bullet(`${memberHtml(member)}${self}${moderation}`);
+  return member.identityId === viewerId
+    ? `${memberLabel(member)} (ты)`
+    : memberLabel(member);
 }
 
 /**
@@ -203,7 +209,10 @@ function listScreen(
     )
     .text("Разрешённые ники", "v1:cm:u");
   for (const member of page.items) {
-    nextRow(keyboard).text(memberLabel(member), memberData("v", member, shown));
+    nextRow(keyboard).text(
+      memberButton(member, viewerId),
+      memberData("v", member, shown),
+    );
   }
   withPager(keyboard, page, (target) =>
     communityListData({ filter: place.filter, page: target }),
@@ -215,9 +224,7 @@ function listScreen(
       `${filterTitles[place.filter]}: ${people.length}`,
       page.items.length === 0
         ? emptyTexts[place.filter]
-        : page.items
-            .map((member) => memberLine(member, place.filter, viewerId))
-            .join("\n"),
+        : moderationSummary(people, place.filter),
     ),
     keyboard: withNav(keyboard, parent),
     format: "HTML",
@@ -225,14 +232,19 @@ function listScreen(
 }
 
 /**
- * Карточка человека (PER-547): круг и модерация аукциона. Модерацию выдают
- * только участнику (ADR-065, п. 4): у гостя её кнопки нет. Кнопки видит
+ * Карточка человека (PER-547): круг, модерация и ведение аукциона. Обе записи
+ * выдают только участнику (ADR-065, п. 4 и п. 9; ADR-070, п. 1): у гостя их
+ * кнопок нет. Кнопки видит
  * держатель права управлять составом — без него экран не открывается.
  * Карточку перечитывает каждое действие с неё, «Обновить» ей не нужно.
+ * Понижение до гостя (PER-642) — тоже только у участника: у гостя и у
+ * человека без круга понижать нечего. `notice` — итог последнего действия:
+ * карточка после понижения показывает его строкой, как список ников.
  */
 export function communityMemberScreen(
   member: CommunityMember,
   place: CommunityPlace,
+  notice?: string,
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
   if (member.circle === "member") {
@@ -240,6 +252,13 @@ export function communityMemberScreen(
       member.auctionModeration ? "Снять модерацию" : "Выдать модерацию",
       memberData(member.auctionModeration ? "mv" : "mg", member, place),
     );
+    nextRow(keyboard).text(
+      member.auctionRunning
+        ? "Снять ведение аукциона"
+        : "Выдать ведение аукциона",
+      memberData(member.auctionRunning ? "av" : "ag", member, place),
+    );
+    nextRow(keyboard).text("Понизить в гостя", memberData("dq", member, place));
   }
   nextRow(keyboard).text("Закрыть доступ", memberData("bq", member, place));
   return {
@@ -247,10 +266,14 @@ export function communityMemberScreen(
     text: screenText(
       "Карточка человека",
       memberHtml(member),
+      notice === undefined ? undefined : escapeHtml(notice),
       [
         `Круг: ${circleWords[member.circle]}`,
         member.circle === "member"
           ? `Модерация аукциона: ${member.auctionModeration ? "есть" : "нет"}`
+          : undefined,
+        member.circle === "member"
+          ? `Ведение аукциона: ${member.auctionRunning ? "есть" : "нет"}`
           : undefined,
       ]
         .filter((line) => line !== undefined)
@@ -275,7 +298,7 @@ export function communityMemberRefusalText(
     case "blocked":
       return "Доступ этому человеку уже закрыт.";
     case "holds-preset":
-      return "Это администратор: закрыть доступ или поменять модерацию отсюда нельзя. Правами администратора управляет мейнтейнер в «Участники → Администраторы».";
+      return "Это администратор: закрыть доступ или поменять модерацию и ведение аукциона отсюда нельзя. Правами администратора управляет мейнтейнер в «Участники → Администраторы».";
     default:
       return unavailable;
   }
@@ -329,6 +352,34 @@ function usernamesScreen(
             .join("\n"),
     ),
     keyboard: withNav(keyboard, toCommunity),
+    format: "HTML",
+  };
+}
+
+/**
+ * Подтверждение понижения до гостя (PER-642). Понижение необратимо с этой
+ * карточки — вернуть круг `member` можно только пересмотром отказанной
+ * заявки, — и о смене круга человеку уходит весть: подтверждение нужно по
+ * обоим признакам дизайн-кода. Текст говорит, что остаётся с человеком, а не
+ * только что отнимается: доступ к аукциону понижение не отнимает (ADR-064,
+ * п. 9). «Нет» возвращает на карточку.
+ */
+export function demoteMemberConfirmScreen(
+  member: CommunityMember,
+  place: CommunityPlace,
+): ShownScreen {
+  return {
+    id: "community-demote-confirm",
+    text: screenText(
+      "Понизить до гостя?",
+      `${memberHtml(member)} станет гостем: служебные права снимаются, торги аукциона остаются. Вернуть участника из карточки нельзя — отказанную заявку пересматривают в «Отказанных».`,
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, понизить в гостя",
+      yesData: memberData("dy", member, place),
+      noData: memberData("v", member, place),
+      irreversible: true,
+    }),
     format: "HTML",
   };
 }

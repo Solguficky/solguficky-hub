@@ -59,10 +59,30 @@ describe("auction snapshot for the root", () => {
     ).toEqual({ auctionId: AUCTION_ID, stage: "draft", final: false });
   });
 
-  // Отменённый аукцион экраны покажут в PER-606; до него перевод не выдумывает
-  // ему стадию.
-  it("throws on a cancelled auction until the screens show it", () => {
-    expect(() =>
+  // Видимость (PER-673): признак есть только у скрытого и только `true`.
+  it("carries the hidden mark of an auction hidden from participants", () => {
+    expect(
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          hidden: true,
+          status: {
+            case: "draft",
+            value: create(AuctionState_DraftSchema, {}),
+          },
+        }),
+      ),
+    ).toEqual({
+      auctionId: AUCTION_ID,
+      stage: "draft",
+      final: false,
+      hidden: true,
+    });
+  });
+
+  // Отменённый аукцион — своя конечная стадия, а не завершённый (PER-606).
+  it("translates a cancelled auction to its own stage", () => {
+    expect(
       auctionSummaryViewOf(
         create(AuctionSnapshotSchema, {
           id: AUCTION_ID,
@@ -72,7 +92,7 @@ describe("auction snapshot for the root", () => {
           },
         }),
       ),
-    ).toThrow("auction snapshot is cancelled, not shown yet");
+    ).toEqual({ auctionId: AUCTION_ID, stage: "cancelled", final: false });
   });
 
   // Дефект соседа — отказ перевода, а не корень с выдуманной стадией.

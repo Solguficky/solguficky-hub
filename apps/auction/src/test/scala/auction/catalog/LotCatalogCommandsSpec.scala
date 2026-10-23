@@ -2,6 +2,7 @@ package auction.catalog
 
 import auction.access.AccessRight
 import auction.access.Viewer
+import java.util.concurrent.TimeoutException
 import org.scalacheck.Gen
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
@@ -23,13 +24,14 @@ final class LotCatalogCommandsSpec
 
   private val admin = Viewer(AccessRight.values.toSet)
 
-  // Все, у кого нет права вести сходки, в том числе держатель остальных служебных прав: каталог открывает только
-  // оно (RFC-016, О-1).
+  // Все, у кого нет права вести аукцион, в том числе держатель права вести сходки и остальных служебных прав:
+  // каталог открывает только оно (ADR-070, п. 1).
   private val notAdmins = Gen.oneOf(
     Viewer(Set.empty),
     Viewer(Set(AccessRight.PlaceBids)),
     Viewer(Set(AccessRight.AccessHub, AccessRight.PlaceBids)),
-    Viewer(AccessRight.values.toSet - AccessRight.ManageMeetups)
+    Viewer(Set(AccessRight.ManageMeetups)),
+    Viewer(AccessRight.values.toSet - AccessRight.RunAuctions)
   )
 
   private val blankTitles = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\r', '\u00A0', '\u2007', '\u202F')).map(_.mkString)
@@ -37,6 +39,12 @@ final class LotCatalogCommandsSpec
   private val oversized = TestImages.jpeg(LotImage.MaxBytes + 1)
 
   private def lotId() = LotId(UUID.randomUUID())
+
+  private def catalog(
+      store: LotCatalogStore,
+      standing: LotId => Future[CardStanding] = _ => Future.successful(CardStanding.Open)
+  ) =
+    LotCatalogCommands(store, standing)
 
   private def versionOf(bytes: IArray[Byte]): ImageVersion = LotImage(bytes).map(_.version).getOrElse(fail("refused"))
 
@@ -70,7 +78,7 @@ final class LotCatalogCommandsSpec
   "lot catalog commands" should {
 
     "refuses a viewer who is not a meetup administrator before touching the store" in {
-      val commands = LotCatalogCommands(Untouchable)
+      val commands = catalog(Untouchable)
       forAll(notAdmins) { viewer =>
         commands.create(viewer, lotId(), "Лот", "", None).futureValue shouldBe Left(CatalogRefusal.NotAdmin)
         commands.edit(viewer, lotId(), "Лот", "", ImageChange.Keep).futureValue shouldBe Left(CatalogRefusal.NotAdmin)
@@ -78,7 +86,7 @@ final class LotCatalogCommandsSpec
     }
 
     "refuses a non-administrator who sends or removes an image before touching the store" in {
-      val commands = LotCatalogCommands(Untouchable)
+      val commands = catalog(Untouchable)
       forAll(notAdmins) { viewer =>
         commands.create(viewer, lotId(), "Лот", "", Some(TestImages.jpeg())).futureValue shouldBe
           Left(CatalogRefusal.NotAdmin)
@@ -90,7 +98,7 @@ final class LotCatalogCommandsSpec
     }
 
     "refuses a blank title before touching the store" in {
-      val commands = LotCatalogCommands(Untouchable)
+      val commands = catalog(Untouchable)
       forAll(blankTitles) { title =>
         commands.create(admin, lotId(), title, "описание", None).futureValue shouldBe Left(CatalogRefusal.EmptyTitle)
         commands.edit(admin, lotId(), title, "описание", ImageChange.Keep).futureValue shouldBe
@@ -100,13 +108,13 @@ final class LotCatalogCommandsSpec
 
     "answers a non-administrator with a blank title and an oversized image by the missing right" in {
       forAll(notAdmins, blankTitles) { (viewer, title) =>
-        LotCatalogCommands(Untouchable).create(viewer, lotId(), title, "", Some(oversized)).futureValue shouldBe
+        catalog(Untouchable).create(viewer, lotId(), title, "", Some(oversized)).futureValue shouldBe
           Left(CatalogRefusal.NotAdmin)
       }
     }
 
     "refuses an oversized image before touching the store with the limit named" in {
-      val commands = LotCatalogCommands(Untouchable)
+      val commands = catalog(Untouchable)
       val refusal = Left(CatalogRefusal.ImageTooLarge(LotImage.MaxBytes))
 
       commands.create(admin, lotId(), "Кружка", "", Some(oversized)).futureValue shouldBe refusal
@@ -114,7 +122,7 @@ final class LotCatalogCommandsSpec
     }
 
     "refuses bytes that are not an image before touching the store" in {
-      val commands = LotCatalogCommands(Untouchable)
+      val commands = catalog(Untouchable)
       val text = IArray.from("не картинка".getBytes(java.nio.charset.StandardCharsets.UTF_8))
 
       commands.create(admin, lotId(), "Кружка", "", Some(text)).futureValue shouldBe
@@ -124,7 +132,7 @@ final class LotCatalogCommandsSpec
     }
 
     "answers a blank title with an oversized image by the title" in {
-      LotCatalogCommands(Untouchable).create(admin, lotId(), " ", "", Some(oversized)).futureValue shouldBe
+      catalog(Untouchable).create(admin, lotId(), " ", "", Some(oversized)).futureValue shouldBe
         Left(CatalogRefusal.EmptyTitle)
     }
 
@@ -132,7 +140,7 @@ final class LotCatalogCommandsSpec
       val store = InMemory()
       val id = lotId()
 
-      val created = LotCatalogCommands(store).create(admin, id, "  Кружка с гербом ", "", None).futureValue
+      val created = catalog(store).create(admin, id, "  Кружка с гербом ", "", None).futureValue
 
       created.map(_.title.value) shouldBe Right("  Кружка с гербом ")
       store.rows(id).title.value shouldBe "  Кружка с гербом "
@@ -140,7 +148,7 @@ final class LotCatalogCommandsSpec
 
     "creates a card with the version of its image and one without" in {
       val store = InMemory()
-      val commands = LotCatalogCommands(store)
+      val commands = catalog(store)
       val pictured = lotId()
       val bare = lotId()
 
@@ -151,7 +159,7 @@ final class LotCatalogCommandsSpec
 
     "accepts a repeated creation with the same fields and keeps one card" in {
       val store = InMemory()
-      val commands = LotCatalogCommands(store)
+      val commands = catalog(store)
       val id = lotId()
       val first = commands.create(admin, id, "Кружка", "с гербом", Some(TestImages.jpeg())).futureValue
 
@@ -161,7 +169,7 @@ final class LotCatalogCommandsSpec
 
     "refuses a repeated creation with other fields and leaves the card as it was" in {
       val store = InMemory()
-      val commands = LotCatalogCommands(store)
+      val commands = catalog(store)
       val id = lotId()
       val first = commands.create(admin, id, "Кружка", "с гербом", Some(TestImages.jpeg(fill = 1))).futureValue
 
@@ -175,7 +183,7 @@ final class LotCatalogCommandsSpec
 
     "replaces the text of an existing card and keeps its image when the edit names none" in {
       val store = InMemory()
-      val commands = LotCatalogCommands(store)
+      val commands = catalog(store)
       val id = lotId()
       commands.create(admin, id, "Кружка", "с гербом", Some(TestImages.jpeg())).futureValue
 
@@ -188,7 +196,7 @@ final class LotCatalogCommandsSpec
 
     "changes the version together with the image and drops it with a removed image" in {
       val store = InMemory()
-      val commands = LotCatalogCommands(store)
+      val commands = catalog(store)
       val id = lotId()
       commands.create(admin, id, "Кружка", "", Some(TestImages.jpeg(fill = 1))).futureValue
 
@@ -204,9 +212,30 @@ final class LotCatalogCommandsSpec
     "refuses to edit a card that does not exist" in {
       val store = InMemory()
 
-      LotCatalogCommands(store).edit(admin, lotId(), "Кружка", "", ImageChange.Keep).futureValue shouldBe
+      catalog(store).edit(admin, lotId(), "Кружка", "", ImageChange.Keep).futureValue shouldBe
         Left(CatalogRefusal.CardNotFound)
       store.rows shouldBe empty
+    }
+
+    "refuses to change the title, description or image of a closed card and does not touch the store" in {
+      val closed = catalog(Untouchable, _ => Future.successful(CardStanding.Closed))
+      val image = ImageChange.Replace(TestImages.jpeg())
+
+      closed.edit(admin, lotId(), "Новое", "текст", image).futureValue shouldBe Left(CatalogRefusal.CardClosed)
+      closed.edit(admin, lotId(), "Новое", "", ImageChange.Keep).futureValue shouldBe Left(CatalogRefusal.CardClosed)
+    }
+
+    "does not ask the lot when the title is blank" in {
+      catalog(Untouchable, _ => fail("the lot was asked"))
+        .edit(admin, lotId(), " ", "", ImageChange.Keep)
+        .futureValue shouldBe Left(CatalogRefusal.EmptyTitle)
+    }
+
+    "does not write the card when the lot does not answer" in {
+      catalog(Untouchable, _ => Future.failed(new TimeoutException("ask")))
+        .edit(admin, lotId(), "Новое", "", ImageChange.Keep)
+        .failed
+        .futureValue shouldBe a[TimeoutException]
     }
   }
 }

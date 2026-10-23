@@ -17,6 +17,7 @@ import type {
   AddLotResult,
   AuctionScreens,
   LotAdministration,
+  LotCardResult,
   MeetupAuctions,
   ScheduleLotResult,
 } from "../auction/port.js";
@@ -43,7 +44,7 @@ const lotData = (lotId: string) =>
 const rub = (minorUnits: number): Money => ({ minorUnits, currency: "RUB" });
 
 // Права, как их выводит Identity (RFC-016): набор `admin` несёт право вести
-// сходки с каталогом лотов, участник — только права хаба и ставок.
+// аукцион с каталогом лотов (ADR-070), участник — только права хаба и ставок.
 function identity(holder: "admin" | "member") {
   const rights: readonly AccessRight[] =
     holder === "admin"
@@ -53,6 +54,7 @@ function identity(holder: "admin" | "member") {
           "manage-members",
           "admit-bidders",
           "manage-meetups",
+          "run-auctions",
         ]
       : ["access-hub", "place-bids"];
   return {
@@ -75,6 +77,7 @@ function fakeAuction(
     schedule?: () => ScheduleLotResult | undefined;
     // Предел изображения Auction в байтах; по умолчанию — 1 МиБ, как у него.
     imageLimit?: number;
+    edit?: () => LotCardResult | undefined;
     // Сколько первых чтений после `AddLot` read model ещё не знает лот.
     readLag?: number;
   } = {},
@@ -93,6 +96,7 @@ function fakeAuction(
   };
   const port: MeetupAuctions & AuctionScreens & LotAdministration = {
     getMeetupAuction: notUsed,
+    soldLots: notUsed,
     enableAuction: notUsed,
     async createLotCard(_person, card) {
       commands.push({ method: "createLotCard", args: card });
@@ -104,6 +108,8 @@ function fakeAuction(
     },
     async editLotCard(_person, card) {
       commands.push({ method: "editLotCard", args: card });
+      const refused = options.edit?.();
+      if (refused !== undefined && refused.kind !== "ok") return refused;
       const lot = lots.get(card.lotId);
       if (lot === undefined) return { kind: "card-not-found" };
       const image = card.image;
@@ -195,6 +201,17 @@ function fakeAuction(
             throw new Error("not used");
           },
           cancelRaffleRegistration: async () => {
+            throw new Error("not used");
+          },
+          listMyInvoices: async () => ({ invoices: [] }),
+          chooseFulfillment: async () => {
+            throw new Error("not used");
+          },
+          getMyPredictions: async () => [],
+          getPredictionResults: async () => {
+            throw new Error("not used");
+          },
+          submitPrediction: async () => {
             throw new Error("not used");
           },
         },
@@ -433,13 +450,13 @@ describe("entries into the lot form", () => {
     const feed = last(calls);
     // Над списком лотов — только «Добавить лот»: пульт и правила стоят в
     // корне аукциона (PER-605).
-    expect(labels(feed)[0]).toEqual(["Добавить лот"]);
-    expect(dataOf(feed, "Добавить лот")).toBe(`v1:lot:new:${auctionToken}`);
+    expect(labels(feed)[0]).toEqual(["🛠 Добавить лот"]);
+    expect(dataOf(feed, "🛠 Добавить лот")).toBe(`v1:lot:new:${auctionToken}`);
 
     await bot.handleUpdate(press(lotData(existingLot)));
     const card = last(calls);
-    expect(labels(card)).toContainEqual(["Изменить лот"]);
-    expect(dataOf(card, "Изменить лот")).toBe(
+    expect(labels(card)).toContainEqual(["🛠 Изменить лот"]);
+    expect(dataOf(card, "🛠 Изменить лот")).toBe(
       `v1:lot:form:${uuidToToken(existingLot)}`,
     );
   });
@@ -453,8 +470,8 @@ describe("entries into the lot form", () => {
     await bot.handleUpdate(press(lotData(existingLot)));
 
     const text = JSON.stringify(shown(calls));
-    expect(text).not.toContain("Добавить лот");
-    expect(text).not.toContain("Изменить лот");
+    expect(text).not.toContain("🛠 Добавить лот");
+    expect(text).not.toContain("🛠 Изменить лот");
   });
 
   it("refuses a form button and an answer of someone who is not an administrator before Auction is asked", async () => {
@@ -553,11 +570,10 @@ describe("lot form", () => {
         ].join("\n"),
       ].join("\n\n"),
     );
+    // Поля по два в ряд со знаками (прогон 12.10, №17 и №18).
     expect(labels(opened)).toEqual([
-      ["Название"],
-      ["Описание"],
-      ["Фото"],
-      ["Цена и шаг"],
+      ["🔖 Название", "📝 Описание"],
+      ["🖼 Фото", "💰 Цена и шаг"],
       ["Глазами участника"],
       ["‹ Лот"],
     ]);
@@ -778,9 +794,8 @@ describe("lot form", () => {
     const form = last(calls);
     // Фото — каталог, а не условия торгов: его ряд остаётся (ADR-057).
     expect(labels(form)).toEqual([
-      ["Название"],
-      ["Описание"],
-      ["Фото"],
+      ["🔖 Название", "📝 Описание"],
+      ["🖼 Фото"],
       ["Глазами участника"],
       ["‹ Лот"],
     ]);
@@ -795,6 +810,62 @@ describe("lot form", () => {
     );
     expect(question.bind(null, calls)).toThrow("no question was asked");
     expect(auction.commands).toEqual([]);
+  });
+
+  it("closes the title, description and photo of a sold lot, also to an old button and an old question", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    const lot = uuidToToken(existingLot);
+    // Вопрос о названии задан, пока лот не продан.
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:title`));
+    const asked = calls.length;
+    auction.lots.set(existingLot, {
+      ...scheduled,
+      status: { kind: "sold", winnerId: existingLot, price: rub(90_000) },
+    });
+
+    await bot.handleUpdate(answer(calls.slice(0, asked), "Новое название"));
+    expect(plain(last(calls))).toBe(
+      "Лот продан. Название, описание и фото больше не меняются.",
+    );
+
+    await bot.handleUpdate(press(`v1:lot:form:${lot}`));
+    const form = last(calls);
+    // У проданного лота правка закрыта; цена продажи — вместо подписи торгов.
+    expect(labels(form)).toEqual([["Глазами участника"], ["‹ Лот"]]);
+    expect(form.text).toMatch(
+      /Лот продан за 900\s₽: название, описание и фото больше не меняются\./,
+    );
+    expect(form.text).not.toContain("Торги по лоту начались");
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    expect(plain(last(calls))).toBe(
+      "Лот продан. Название, описание и фото больше не меняются.",
+    );
+    expect(
+      auction.commands.filter((command) => command.method === "editLotCard"),
+    ).toEqual([]);
+  });
+
+  it("shows a closed-card frame with a return to the lot when Auction refuses the edit", async () => {
+    const auction = fakeAuction({
+      lots: [{ ...scheduled, status: { kind: "unsold" } }],
+      edit: () => ({ kind: "card-closed" }),
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    const lot = uuidToToken(existingLot);
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:title`));
+    await bot.handleUpdate(answer(calls, "Новое название"));
+
+    const refusal = last(calls);
+    expect(plain(refusal)).toBe(
+      "Лот закрыт. Название, описание и фото больше не меняются.",
+    );
+    expect(labels(refusal)).toEqual([["‹ Лот"]]);
+    expect(auction.lots.get(existingLot)?.card?.title).toBe("Кружка с совой");
   });
 
   it("tells the administrator that trading started when Auction freezes the terms after both answers", async () => {

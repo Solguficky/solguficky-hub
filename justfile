@@ -39,7 +39,11 @@ PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad
 # вызывают, скрипт читает значения тем же grep-разбором строки, что и CI, —
 # поэтому закреплён и сам just. Мажор Node тот же, что у setup-node в CI;
 # версии .NET, Go и JDK скрипт берёт из global.json, go.mod и .java-version.
+# Джобы CI ставят just tools/env/install-just.sh из релиза и сверяют архив
+# x86_64-unknown-linux-musl с суммой: сторонний setup-just искал релиз через
+# API и ронял джобы, когда поиск возвращался пустым.
 JUST_VERSION := "1.58.0"
+JUST_SHA256 := "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d"
 LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
@@ -191,19 +195,29 @@ verify: check-agent-tools check-mcp check-commands check-published-pages check-d
 # поднимает его джобу в CI. Карта путей одна — джоба changes в ci.yml, её
 # читает tools/verify/select-recipes.sh. Правка justfile или ci.yml поднимает
 # все джобы, и здесь выбирается весь verify. Выбор печатается до прогона.
+# Тяжёлые группы — сборки на JVM и .NET, переменная heavy в селекторе —
+# локально не идут: их печатает строка «уходит в CI», и проверяют джобы CI с
+# теми же именами. Тогда зелёный локальный прогон выходит с кодом 3 —
+# «оценено не полностью», — и сдача ждёт эти джобы на draft PR
+# (docs/development/agent-execution-loop.md, «Бюджет гейта»). Код 0 — всё
+# проверено здесь; любой отказ рецептов — код 1, чтобы рецепт, упавший со
+# своим кодом 3, не выдал себя за ушедшее в CI.
 verify-changed:
-    @recipes=$(sh tools/verify/select-recipes.sh) && echo "verify-changed: $recipes" && "{{ just_executable() }}" $recipes
+    @recipes=$(sh tools/verify/select-recipes.sh) && deferred=$(sh tools/verify/select-recipes.sh --deferred) \
+        && echo "verify-changed: $recipes" && { "{{ just_executable() }}" $recipes || exit 1; } \
+        && if [ -n "$deferred" ]; then echo "verify-changed: оценено не полностью, ждать джобы CI: $deferred" >&2; exit 3; fi
 
 # Все уровни тестов всех компонентов: L0, L1 и L2. Пропущенный тест роняет
 # прогон — у .NET флагом --fail-skips, у Identity разбором `go test -json`,
 # у vitest reporter'ом vitest.fail-on-skip.ts, у ScalaTest обёрткой
 # `Test / executeTests` в build.sbt.
 # Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
-# умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
+# умолчания нет; браузерный сьют Auction при первом прогоне скачивает Chromium.
+# Линт, формат и контракты сюда не входят — их держит `verify`.
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
 # секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
-test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
+test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration auction-test-browser contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools nats-tester-tools
@@ -242,7 +256,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "104"
+APPHOST_TEST_THRESHOLD := "153"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -311,7 +325,7 @@ identity-test: identity-proto
 # `go test -tags=integration -list . ./...` без базы. Опечатка в теге молча
 # выключает файл, на который не ссылаются соседние файлы пакета, и недобор до
 # порога — единственный её след; файл со ссылками роняет компиляцию пакета.
-IDENTITY_TEST_THRESHOLD := "247"
+IDENTITY_TEST_THRESHOLD := "260"
 
 # Все тесты Identity под тегом integration: unit-файлы тег не исключает, поэтому
 # прогон полный. База обязательна: `testdb` без PostgreSQL роняет тест, а не
@@ -508,7 +522,7 @@ meetups-build:
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "570"
+MEETUPS_UNIT_TEST_THRESHOLD := "572"
 MEETUPS_INTEGRATION_TEST_THRESHOLD := "140"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,
@@ -562,12 +576,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 688. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 928. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "495"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "225"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "630"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "298"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает
@@ -637,6 +651,16 @@ auction-test:
 # L1: схема, журнал, шардинг и готовность на PostgreSQL в Testcontainers; нужен Docker
 auction-test-integration:
     cd apps/auction && AUCTION_INTEGRATION_TESTS=1 sbt -batch test
+
+# Chromium той версии, что у Playwright в build.sbt, драйвер скачивает сам при
+# первом прогоне; системные библиотеки Linux он не ставит — в CI их ставит
+# отдельный шаг. За перехватом TLS на машине драйвер (Node) падает на
+# сертификате: NODE_USE_SYSTEM_CA=1 даёт ему хранилище системы. Это L1
+# Auction: в `verify` не входит, входит в `test-all`, в CI — шаг джобы auction.
+#
+# Страница экрана зала в Chromium против настоящего узла; нужны Docker и сеть
+auction-test-browser:
+    cd apps/auction && AUCTION_BROWSER_TESTS=1 sbt -batch test
 
 # scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
 # отдельная задача — иначе build.sbt остаётся единственным неформатируемым

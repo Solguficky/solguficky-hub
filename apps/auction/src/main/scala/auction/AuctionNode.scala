@@ -2,6 +2,7 @@ package auction
 
 import auction.aggregate.AuctionCommands
 import auction.aggregate.MeetupAuthority
+import auction.boundary.ScreenRoutes
 import auction.catalog.LotCatalogCommands
 import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
@@ -9,19 +10,26 @@ import auction.entity.AuctionLots
 import auction.entity.AuctionPredictions
 import auction.entity.AuctionRaffle
 import auction.entity.AuctionResults
+import auction.entity.AuctionSetOutcomes
 import auction.entity.AuctionSlot
+import auction.entity.LotCardGate
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
 import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
+import auction.meetup.MeetupCancellationConsumer
+import auction.meetup.MeetupFactsSettings
 import auction.lot.AuctionId
+import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalDatabase
 import auction.persistence.SlickAuctionViews
 import auction.persistence.SlickAuctionWatchViews
+import auction.persistence.SlickFinalBids
 import auction.persistence.SlickLotViews
+import auction.persistence.SlickScreenViews
 import auction.projection.AuctionProjection
 import auction.projection.AuctionViewHandler
 import auction.projection.LotProjection
@@ -37,6 +45,7 @@ import auction.publication.PublicationSettings
 import auction.publication.RafflePublicationHandler
 import auction.publication.ResultsPublicationHandler
 import auction.telemetry.DeadlineMetrics
+import auction.telemetry.MeetupFactsMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
 import auction.persistence.SlickDisplayNameStore
@@ -56,10 +65,20 @@ import auction.raffle.RaffleTickets
 import auction.raffle.Seed
 import auction.results.ResultNames
 import auction.results.ResultsEntity
+import auction.invoice.InvoiceGateway
+import auction.persistence.SlickInvoiceViews
+import auction.projection.InvoiceProjection
+import auction.projection.InvoicePublicationHandler
+import auction.projection.InvoiceViewHandler
+import auction.projection.InvoicingHandler
+import auction.projection.InvoicingProjection
 import auction.results.ResultsForecasts
 import auction.results.ResultsGateway
 import auction.results.ResultsOutcomes
 import auction.results.ResultsStore
+import auction.screen.MeetupStandings
+import auction.screen.ScreenFeed
+import auction.screen.StreamLimit
 import auction.slot.SlotHolders
 import auction.slot.TradingSlotEntity
 import auction.watch.AuctionChanges
@@ -70,6 +89,7 @@ import org.apache.pekko.Done
 import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
+import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.settings.ServerSettings
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
@@ -141,7 +161,8 @@ object AuctionNode {
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
       predictions: AuctionPredictions = AuctionPredictions.none,
-      results: AuctionResults = AuctionResults.none
+      results: AuctionResults = AuctionResults.none,
+      setOutcomes: AuctionSetOutcomes = AuctionSetOutcomes.none
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
     sharding.init(
@@ -155,7 +176,8 @@ object AuctionNode {
           raffle = raffle,
           slot = slot,
           predictions = predictions,
-          results = results
+          results = results,
+          setOutcomes = setOutcomes
         )
       }
         .withSettings(remembered(system))
@@ -219,6 +241,42 @@ object AuctionNode {
       )
     )
     AuctionResults.sharded(sharding, askTimeout)
+  }
+
+  /**
+   * Регистрирует entity счёта проданного лота (PER-338); идентификатор entity — идентификатор счёта, UUIDv5 от `bid_id`
+   * продажи. Таймеров у неё нет, поэтому шардинг её не помнит. Выставляет счета [[startInvoicing]], команды и чтения —
+   * gRPC-граница.
+   */
+  def registerInvoices(
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID,
+      askTimeout: FiniteDuration
+  ): InvoiceGateway =
+    InvoiceGateway.sharded(sharding, clock, newId, askTimeout)
+
+  /**
+   * Выставление счетов по продажам (PER-338): проекция журнала лотов `lot-invoicing` на каждый `LotSold` спрашивает
+   * срок оплаты у entity аукциона и выставляет счёт entity счёта. Entity лота, аукциона и счёта к этому моменту уже
+   * зарегистрированы в `sharding`.
+   */
+  def startInvoicing(
+      system: ActorSystem[?],
+      sharding: ClusterSharding,
+      invoices: InvoiceGateway,
+      metrics: ProjectionMetrics,
+      askTimeout: FiniteDuration,
+      backlogTimeout: FiniteDuration
+  ): Unit = {
+    import system.executionContext
+    val auctions = AuctionGateway.sharded(sharding, askTimeout)
+    InvoicingProjection.init(
+      system,
+      metrics,
+      () => InvoicingHandler(auction => auctions.get(auction).map(InvoicingHandler.termOf), invoices.issue)
+    )
+    metrics.watchBacklog(InvoicingProjection.Name, InvoicingProjection.backlog(system, backlogTimeout))
   }
 
   /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */
@@ -301,6 +359,11 @@ object AuctionNode {
       AuctionProjection.Name,
       AuctionProjection.backlog(system, AuctionProjection.Name, backlogTimeout)
     )
+    InvoiceProjection.init(system, InvoiceProjection.ViewName, metrics, () => InvoiceViewHandler(system))
+    metrics.watchBacklog(
+      InvoiceProjection.ViewName,
+      InvoiceProjection.backlog(system, InvoiceProjection.ViewName, backlogTimeout)
+    )
   }
 
   /**
@@ -349,6 +412,16 @@ object AuctionNode {
       ResultsProjection.PublicationName,
       ResultsProjection.backlog(system, ResultsProjection.PublicationName, backlogTimeout)
     )
+    InvoiceProjection.init(
+      system,
+      InvoiceProjection.PublicationName,
+      metrics,
+      () => InvoicePublicationHandler(system)
+    )
+    metrics.watchBacklog(
+      InvoiceProjection.PublicationName,
+      InvoiceProjection.backlog(system, InvoiceProjection.PublicationName, backlogTimeout)
+    )
     val pool = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database.source
     val outbox = LotOutbox(() => pool.createConnection())
     publicationMetrics.watchOutbox(() => outbox.backlog())
@@ -365,6 +438,47 @@ object AuctionNode {
         }
     }
   }
+
+  /**
+   * Наследование отмены сходки (ADR-047, дополнение 2026-10-12): durable-потребитель `events.meetups.meetup_cancelled`
+   * отдаёт аукциону сходки `ApplyMeetupCancelled` через шардинг, а отставание durable видно метриками. Без адреса шины
+   * потребитель не стартует, как релей фактов: профиль без NATS живёт, но отмены сходок в нём не наследуются, и запись
+   * об этом одна. Durable не объявлен — `missing`: узел обязан остановиться, а не работать без наследования молча.
+   *
+   * @return
+   *   потребитель, если он стартовал; останавливает его `CoordinatedShutdown`
+   */
+  def startMeetupFacts(
+      system: ActorSystem[?],
+      sharding: ClusterSharding,
+      settings: MeetupFactsSettings,
+      metrics: MeetupFactsMetrics,
+      missing: String => Unit
+  ): Option[MeetupCancellationConsumer] =
+    settings.natsUrl match {
+      case None =>
+        logger.warn("auction meetup facts consumer is off: AUCTION_NATS_URL is not set, meetup cancellations wait")
+        None
+      case Some(url) =>
+        given Timeout = Timeout(settings.answerTimeout)
+        val consumer = MeetupCancellationConsumer(
+          url,
+          settings,
+          inheritance =>
+            sharding
+              .entityRefFor(AuctionEntity.TypeKey, inheritance.auctionId.value.toString)
+              .ask(AuctionEntity.InheritCancellation(inheritance.command, _)),
+          missing
+        )
+        val watching = metrics.watchPending(MeetupCancellationConsumer.Durable, () => consumer.backlog())
+        // Остановка регистрируется до старта: отказ привязки приходит сразу и может сам начать остановку узла.
+        CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "auction-meetup-facts") { () =>
+          watching.close()
+          consumer.close()
+          Future.successful(Done)
+        }
+        Some(consumer.start())
+    }
 
   /**
    * Предел тела запроса gRPC-границы. Умолчание pekko-http — 8 MiB, и файл крупнее до домена не дошёл бы: вместо
@@ -407,9 +521,9 @@ object AuctionNode {
   }
 
   /**
-   * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, имён участников, read model и права у
-   * Meetups, обёрнутый проверкой вызывающего и записью операции. Entity лота и аукциона к этому моменту уже
-   * зарегистрированы в `sharding`.
+   * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, имён участников, read model, права у Meetups
+   * и права `place_bids` человека зала у Identity, обёрнутый проверкой вызывающего и записью операции. Entity лота и
+   * аукциона к этому моменту уже зарегистрированы в `sharding`.
    */
   def grpc(
       system: ActorSystem[?],
@@ -417,9 +531,11 @@ object AuctionNode {
       callers: CallerTable,
       askTimeout: FiniteDuration,
       authority: MeetupAuthority,
+      placeBidsRight: ParticipantId => Future[Boolean],
       changes: AuctionChanges,
       clock: Clock = Clock.systemUTC(),
-      overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace
+      overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace,
+      invoices: InvoiceGateway = InvoiceGateway.none
   ): HttpRequest => Future[HttpResponse] = {
     given ActorSystem[?] = system
     import system.executionContext
@@ -428,7 +544,10 @@ object AuctionNode {
     val raffleTickets = SlickRaffleTickets(system, names)
     val service = AuctionGrpcService(
       lots,
-      LotCatalogCommands(SlickLotCatalogStore(system)),
+      LotCatalogCommands(
+        SlickLotCatalogStore(system),
+        id => lots.stateOf(id.value).map(LotCardGate.standing)
+      ),
       SlickFaqAcknowledgements(system),
       SlickLotViews(system),
       AuctionCommands(AuctionGateway.sharded(sharding, askTimeout), lots, authority),
@@ -441,9 +560,32 @@ object AuctionNode {
       predictions = PredictionGateway.sharded(sharding, SlickPredictionStore(system), askTimeout),
       results = ResultsGateway.sharded(sharding, SlickResultsStore(system), askTimeout),
       watchViews = SlickAuctionWatchViews(system),
-      changes = changes
+      changes = changes,
+      placeBidsRight = placeBidsRight,
+      finalBids = SlickFinalBids(system),
+      invoices = invoices,
+      invoiceViews = SlickInvoiceViews(system)
     )
-    GrpcBoundary(callers, (caller, correlation) => service.within(correlation, Some(caller)))
+    GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
+  }
+
+  /**
+   * Маршруты экрана зала (ADR-040, дополнение 2026-10-19): поток на тех же поводах, что `WatchAuction`, — `changes`
+   * общий с gRPC-границей, — и ворота по состоянию сходки у Meetups. Предел потоков и период heartbeat — из
+   * `auction.screen`.
+   */
+  def screen(system: ActorSystem[?], changes: AuctionChanges, standings: MeetupStandings): Route = {
+    val config = system.settings.config
+    import system.executionContext
+    val views = SlickScreenViews(system)
+    val feed = ScreenFeed(
+      views,
+      SlickDisplayNameStore(system),
+      standings,
+      changes,
+      StreamLimit(config.getInt("auction.screen.max-streams"))
+    )
+    ScreenRoutes.route(feed, views, config.getDuration("auction.screen.heartbeat").toScala)
   }
 
   def readiness(system: ActorSystem[?], timeout: FiniteDuration): () => Future[Readiness] = {

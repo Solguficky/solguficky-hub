@@ -116,6 +116,25 @@ export type OrganizerResolver = {
     meta?: RpcMetadata,
   ): Promise<OrganizerUsernameResult>;
 };
+
+// Настоящий аккаунт участника аукциона для экранов организатора (PER-648).
+// Identity отвечает только держателю права `run-auctions`: `denied` — обычный
+// ответ участнику, который открыл карточку проданного лота, и экран остаётся с
+// псевдонимом. Отсутствие ника — `resolved` без поля, а не отказ.
+export type ParticipantUsernameResult =
+  | { kind: "resolved"; telegramUsername?: string }
+  | { kind: "denied" }
+  | { kind: "not-found" }
+  | { kind: "unavailable"; cause: unknown }
+  | { kind: "rejected"; code: string; cause: unknown };
+
+export type ParticipantUsernameResolver = {
+  resolveParticipantUsername(
+    viewer: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<ParticipantUsernameResult>;
+};
 // Круг человека состава (ADR-065, п. 1). `none` — круга нет: человек нажал
 // кнопку бота, но не допущен ни в один круг.
 export type CommunityCircle = "member" | "guest" | "none";
@@ -129,6 +148,8 @@ export type CommunityMember = {
   // набора admin, который тоже в составе (PER-618), право от набора, а не
   // записью, и здесь оно ложно.
   auctionModeration: boolean;
+  // Запись run_auctions (ADR-070, п. 1) — так же: у набора admin ложно.
+  auctionRunning: boolean;
 };
 // Фильтр состава (PER-547): люди без круга не входят ни в один.
 export type CommunityFilter = "members" | "guests" | "moderators";
@@ -163,6 +184,16 @@ export type CommunityAdministrator = {
     meta?: RpcMetadata,
   ): Promise<CommunityMemberResult>;
   block(
+    actor: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
+  // Понижение участника до гостя (PER-642): тот же отказ по кругу `member`,
+  // что и отказ по заявке (ADR-060, п. 13). `false` — круга `member` у человека
+  // уже нет, в том числе у заблокированного. Держатель набора — отказ Identity
+  // (ADR-065, п. 8), а не значение ответа: карточку такого человека бот и так
+  // не показывает.
+  demote(
     actor: IdentityActor,
     identityId: string,
     meta?: RpcMetadata,
@@ -285,23 +316,29 @@ export type ApplicationAdministrator = {
   ): Promise<ReconsiderResult>;
 };
 
-// `not-member` у выдачи — человек не участник или заблокирован: модерацию
+// Право, которое участнику выдают поштучной записью с карточки состава:
+// модерация аукциона (ADR-065, п. 4) и ведение аукциона (ADR-070, п. 1).
+export type RecordRight = "admit-bidders" | "run-auctions";
+
+// `not-member` у выдачи — человек не участник или заблокирован: запись
 // получает только участник, который остаётся в своём круге.
-export type GrantModerationResult =
+export type GrantRecordResult =
   | IdentityAdminResult<boolean>
   | { kind: "not-member" };
 
-// Выдача и отзыв права модерации аукциона — у держателя права управлять
-// составом; Identity решает это сам по своему хранилищу.
-export type AuctionModerationAdministrator = {
-  grantAuctionModeration(
+// Выдача и отзыв записи — у держателя права управлять составом; Identity
+// решает это сам по своему хранилищу.
+export type RightRecordAdministrator = {
+  grantRightRecord(
     actor: IdentityActor,
     identityId: string,
+    right: RecordRight,
     meta?: RpcMetadata,
-  ): Promise<GrantModerationResult>;
-  revokeAuctionModeration(
+  ): Promise<GrantRecordResult>;
+  revokeRightRecord(
     actor: IdentityActor,
     identityId: string,
+    right: RecordRight,
     meta?: RpcMetadata,
   ): Promise<IdentityAdminResult<boolean>>;
 };

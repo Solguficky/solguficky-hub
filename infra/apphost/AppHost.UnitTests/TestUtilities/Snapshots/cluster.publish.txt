@@ -34,11 +34,13 @@ auction: ContainerResource
   health: auction_http_/health_200_check
 auction-bot: ContainerResource
   image: /hub-bot:latest
+  env: AUCTION_FAQ_QUESTION_URL=https://t.me/{support-bot-username.value}?start=auction
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={auction-bot-service-token.value}
+  env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
   env: BOT_SURFACE=auction
   env: BOT_TOKEN={auction-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
@@ -53,6 +55,7 @@ auction-bot: ContainerResource
   relationship: Reference identity
   relationship: Reference nats
   relationship: Reference notifications
+  relationship: Reference support-bot-username
   relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor nats
@@ -69,6 +72,17 @@ auction-db-user: ParameterResource
   secret: True
 auction-service-token: ParameterResource
   secret: True
+cloudflared: ContainerResource
+  image: docker.io/cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
+  arg: tunnel
+  arg: --config
+  arg: /etc/cloudflared/config.yml
+  arg: run
+  env: TUNNEL_METRICS=0.0.0.0:2000
+  env: TUNNEL_TOKEN={cloudflared-tunnel-token.value}
+  relationship: Reference cloudflared-tunnel-token
+cloudflared-tunnel-token: ParameterResource
+  secret: True
 hub-bot: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/hub-bot/Containerfile context=<repo>
@@ -77,6 +91,7 @@ hub-bot: ContainerResource
   env: BOT_ENVIRONMENT=prod
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
   env: BOT_SURFACE=hub
   env: BOT_TOKEN={hub-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
@@ -94,6 +109,7 @@ hub-bot: ContainerResource
   relationship: Reference meetups
   relationship: Reference nats
   relationship: Reference notifications
+  relationship: Reference support-bot-username
   relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor meetups
@@ -112,6 +128,7 @@ identity: ContainerResource
   env: IDENTITY_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
   env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_SUPPORT_BOT={support-bot-service-token.value}
   env: IDENTITY_DATABASE_URL={identity-db.connectionString}
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
@@ -127,6 +144,7 @@ identity: ContainerResource
   relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference notifications-service-token
+  relationship: Reference support-bot-service-token
   relationship: WaitFor identity-db
   relationship: WaitFor nats
   health: identity-grpc
@@ -135,7 +153,7 @@ identity-db: ConnectionStringParameterResource
 identity-maintainer-token: ParameterResource
   secret: True
 jetstream-topology: ContainerResource
-  image: docker.io/natsio/nats-box:
+  image: docker.io/natsio/nats-box@sha256:be25666441c3aee65193aba33d60ff2f06ede7ee9eba58864324b33d7eb94fea
   arg: /topology/apply.sh
   arg: /topology
   env: NATS_URL={nats.connectionString}
@@ -185,6 +203,7 @@ notifications: ProjectResource
   env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: NOTIFICATIONS_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_NATS_URL={nats.connectionString}
+  env: NOTIFICATIONS_RELEASE_NOTES_ENABLED_BY_DEFAULT={notifications-release-notes-enabled-by-default.value}
   env: NOTIFICATIONS_SERVICE_ID={notifications-service-id.value}
   env: NOTIFICATIONS_SERVICE_TOKEN={notifications-service-token.value}
   env: NOTIFICATIONS_SILO_ADVERTISED_HOST={notifications.bindings.grpc.host}
@@ -200,6 +219,7 @@ notifications: ProjectResource
   relationship: Reference notifications
   relationship: Reference notifications-cluster-id
   relationship: Reference notifications-db
+  relationship: Reference notifications-release-notes-enabled-by-default
   relationship: Reference notifications-service-id
   relationship: Reference notifications-service-token
   relationship: WaitFor identity
@@ -211,7 +231,36 @@ notifications-cluster-id: ParameterResource
   secret: False
 notifications-db: ConnectionStringParameterResource
   secret: True
+notifications-release-notes-enabled-by-default: ParameterResource
+  secret: False
 notifications-service-id: ParameterResource
   secret: False
 notifications-service-token: ParameterResource
   secret: True
+support-bot: ContainerResource
+  image: /hub-bot:latest
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL={nats.connectionString}
+  env: BOT_SERVICE_TOKEN={support-bot-service-token.value}
+  env: BOT_SUPPORT_GROUP_ID={support-bot-group-id.value}
+  env: BOT_SURFACE=support
+  env: BOT_TOKEN={support-bot-token.value}
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  waits: identity WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference identity
+  relationship: Reference nats
+  relationship: Reference support-bot-group-id
+  relationship: Reference support-bot-service-token
+  relationship: Reference support-bot-token
+  relationship: WaitFor identity
+  relationship: WaitFor nats
+support-bot-group-id: ParameterResource
+  secret: False
+support-bot-service-token: ParameterResource
+  secret: True
+support-bot-token: ParameterResource
+  secret: True
+support-bot-username: ParameterResource
+  secret: False

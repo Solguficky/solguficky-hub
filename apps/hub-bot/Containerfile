@@ -39,6 +39,9 @@ WORKDIR /app
 COPY apps/hub-bot/package.json ./
 COPY --from=deps /app/node_modules node_modules
 COPY --from=build /src/apps/hub-bot/dist dist
+# Записи «Что нового» (ADR-069, п. 1) — данные, а не код: процесс читает их при
+# старте из каталога рядом с package.json, сборке они не нужны.
+COPY apps/hub-bot/release-notes release-notes
 # uid числом: runtime проверяет non-root без чтения /etc/passwd образа.
 USER 1000:1000
 # Команда в CMD, а не в ENTRYPOINT, и точка входа базы (docker-entrypoint.sh)

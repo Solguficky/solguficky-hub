@@ -43,4 +43,28 @@ describe("readHubConfig", () => {
       }),
     });
   });
+
+  // Имя бота поддержки проверяется так же: ссылка «Помощи» и кадра ожидания
+  // ведёт в него (PER-625, ADR-068).
+  it("refuses a support bot name that is not a bot username", () => {
+    expect(
+      readHubConfig({ BOT_SUPPORT_BOT_USERNAME: "@solguficky_support_bot" }),
+    ).toEqual({
+      ok: false,
+      error: "BOT_SUPPORT_BOT_USERNAME must be a Telegram bot username",
+    });
+    expect(
+      readHubConfig({ BOT_SUPPORT_BOT_USERNAME: "solguficky_support_bot" }),
+    ).toEqual({
+      ok: true,
+      config: expect.objectContaining({
+        supportBotUsername: "solguficky_support_bot",
+      }),
+    });
+  });
+
+  it("leaves the support bot off without its name", () => {
+    const result = readHubConfig({});
+    expect(result.ok && "supportBotUsername" in result.config).toBe(false);
+  });
 });

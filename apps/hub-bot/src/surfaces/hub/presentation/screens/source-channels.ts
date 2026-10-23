@@ -52,7 +52,7 @@ export function sourceChannelsScreen(
   requestedPage: number,
   bots: SourceLinkBots,
   notice?: string,
-  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  // Родитель — группа пункта (`manageItemParent`).
   parent: Parent = toManage,
 ): ShownScreen {
   const page = paginate(channels, requestedPage);

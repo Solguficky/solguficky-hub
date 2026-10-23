@@ -13,6 +13,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -26,14 +27,15 @@ const (
 	ProfileBlocked    Occasion = "profile_blocked"
 	ProfileUnblocked  Occasion = "profile_unblocked"
 	// ApplicationSubmitted — открыта новая заявка в очередь. Доступ не меняет,
-	// но версию занимает, как любое событие профиля; событие называет очередь.
+	// но версию занимает, как любое событие профиля; событие называет очередь
+	// и саму заявку её курсором.
 	ApplicationSubmitted Occasion = "application_submitted"
 	// ApplicationAdmitted — модератор очереди допустил человека по заявке:
 	// решением или пересмотром. Пишется после выдач той же транзакции; событие
 	// называет очередь.
 	ApplicationAdmitted Occasion = "application_admitted"
-	// RightGranted — право выдано поштучной записью: admit_bidders участнику или
-	// place_bids гостю, у которого круг уже есть. Запись, пришедшая со сменой
+	// RightGranted — право выдано поштучной записью: admit_bidders или
+	// run_auctions участнику или place_bids гостю, у которого круг уже есть. Запись, пришедшая со сменой
 	// круга, едет снимком circle_changed и этого повода не даёт.
 	RightGranted Occasion = "right_granted"
 	// RightRevoked — поштучная запись снята, и права у человека больше нет.
@@ -48,13 +50,16 @@ const (
 
 // Event — повод и то, что он называет, в словаре хранилища. Заполняется только
 // поле своего повода: PreviousCircle у circle_changed (пусто — круга не было),
-// Preset у поводов набора, Right у поводов права, Queue у поводов заявки.
+// Preset у поводов набора, Right у поводов права, Queue у поводов заявки,
+// ApplicationID и ApplicationCreatedAt — курсор заявки — у application_submitted.
 type Event struct {
-	Occasion       Occasion
-	PreviousCircle string
-	Preset         string
-	Right          string
-	Queue          string
+	Occasion             Occasion
+	PreviousCircle       string
+	Preset               string
+	Right                string
+	Queue                string
+	ApplicationID        string
+	ApplicationCreatedAt time.Time
 }
 
 // ErrProfileNotFound — событие названо на профиль, которого нет. Для вызывающего
@@ -75,12 +80,13 @@ RETURNING version, blocked`
 	insertEventSQL = `
 INSERT INTO identity_outbox
     (event_id, identity_id, version, occasion, blocked, occurred_at, traceparent,
-     circle, rights, presets, access_right, preset, previous_circle, queue)
+     circle, rights, presets, access_right, preset, previous_circle, queue,
+     application_id, application_created_at)
 SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::boolean, now(), $6::text,
        (SELECT circle FROM identity_circles
         WHERE identity_id = $2::uuid AND revoked_at IS NULL AND NOT $5::boolean),
        identity_access_rights($2::uuid), identity_active_presets($2::uuid),
-       $7::text, $8::text, $9::text, $10::text`
+       $7::text, $8::text, $9::text, $10::text, $11::uuid, $12::timestamptz`
 )
 
 // Append записывает событие о профиле в транзакции изменения. Он двигает версию
@@ -112,7 +118,8 @@ func Append(ctx context.Context, tx *sql.Tx, identityID string, event Event) err
 	}
 	if _, err := tx.ExecContext(ctx, insertEventSQL,
 		eventID.String(), identityID, version, string(event.Occasion), blocked, nullable(TraceParent(ctx)),
-		nullable(event.Right), nullable(event.Preset), nullable(event.PreviousCircle), nullable(event.Queue)); err != nil {
+		nullable(event.Right), nullable(event.Preset), nullable(event.PreviousCircle), nullable(event.Queue),
+		nullable(event.ApplicationID), nullableTime(event.ApplicationCreatedAt)); err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
 	return nil
@@ -122,6 +129,14 @@ func Append(ctx context.Context, tx *sql.Tx, identityID string, event Event) err
 // пустое значение.
 func nullable(value string) any {
 	if value == "" {
+		return nil
+	}
+	return value
+}
+
+// nullableTime — нулевой момент в колонку уходит NULL, как пустая строка.
+func nullableTime(value time.Time) any {
+	if value.IsZero() {
 		return nil
 	}
 	return value

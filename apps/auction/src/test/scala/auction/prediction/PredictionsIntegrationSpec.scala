@@ -67,7 +67,7 @@ final class PredictionsIntegrationSpec
 
   private object Granted extends MeetupAuthority {
     def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority] =
-      Future.successful(Authority.Granted)
+      Future.successful(Authority.Granted(Standings.published))
   }
 
   private final case class Node(

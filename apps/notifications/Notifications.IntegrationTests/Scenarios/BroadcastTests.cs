@@ -303,4 +303,70 @@ public class BroadcastTests
         toCommunity.StatusCode.ShouldBe(StatusCode.Unavailable);
         (await env.Accepted()).ShouldBe(0);
     }
+
+    [Fact]
+    public async Task When_AudiencePreviewed_Expect_CountEqualsFactsAndNothingStoredBeforeAccept()
+    {
+        await using var env = await BroadcastsUnderTest.Start();
+        var meetupId = await Meetup(env.Db, "Сходка у реки");
+        var author = await Person(env.Db, AdminHolding);
+        var included = await Person(env.Db, MemberHolding);
+        var categoryOff = await Person(env.Db, MemberHolding);
+        await Subscribe(env.Db, author, meetupId);
+        await Subscribe(env.Db, included, meetupId);
+        await Subscribe(env.Db, categoryOff, meetupId);
+        await Preference(env.Db, categoryOff, meetupId, "organizer_message", enabled: false);
+
+        var meetupPreview = await env.Client.PreviewMeetupBroadcastAsync(PreviewMeetup(author, meetupId), Plain);
+
+        meetupPreview.RecipientCount.ShouldBe(1);
+        (await CountRows(env.Db, "broadcast")).ShouldBe(0);
+        (await CountRows(env.Db, "notification")).ShouldBe(0);
+
+        var meetupBroadcast = NewId();
+        await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, meetupId, meetupBroadcast), Plain);
+        var meetupFacts = await env.Facts(meetupBroadcast);
+        meetupFacts.Count.ShouldBe(meetupPreview.RecipientCount);
+        meetupFacts.Single().RecipientId.ShouldBe(included);
+
+        var announced = await Person(env.Db, MemberHolding);
+        var announcementOff = await Person(env.Db, MemberHolding);
+        await Preference(env.Db, announcementOff, null, "community_announcement", enabled: false);
+        var communityPreview = await env.Client.PreviewCommunityBroadcastAsync(PreviewCommunity(author), Plain);
+        var communityBroadcast = NewId();
+        await env.Client.BroadcastToCommunityAsync(ToCommunity(author, communityBroadcast), Plain);
+        var communityFacts = await env.Facts(communityBroadcast);
+
+        communityFacts.Select(fact => fact.RecipientId).ShouldBe(
+            new[] { included, categoryOff, announced },
+            ignoreOrder: true);
+        communityFacts.Count.ShouldBe(communityPreview.RecipientCount);
+        communityFacts.ShouldAllBe(fact => fact.RecipientId != announcementOff && fact.RecipientId != author);
+
+        var emptyMeetup = await Meetup(env.Db);
+        var lonely = await Person(env.Db, AdminHolding);
+        await Subscribe(env.Db, lonely, emptyMeetup);
+        var emptyPreview = await env.Client.PreviewMeetupBroadcastAsync(PreviewMeetup(lonely, emptyMeetup), Plain);
+        var emptyBroadcast = NewId();
+        var accepted = await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(lonely, emptyMeetup, emptyBroadcast), Plain);
+
+        emptyPreview.RecipientCount.ShouldBe(0);
+        accepted.Created.ShouldBeTrue();
+        (await env.Facts(emptyBroadcast)).ShouldBeEmpty();
+
+        var missing = await Should.ThrowAsync<RpcException>(() =>
+            env.Client.PreviewMeetupBroadcastAsync(PreviewMeetup(author, NewId()), Plain).ResponseAsync);
+        missing.StatusCode.ShouldBe(StatusCode.Unavailable);
+
+        env.Owners.Meetups = Denied;
+        var denied = await Should.ThrowAsync<RpcException>(() =>
+            env.Client.PreviewMeetupBroadcastAsync(PreviewMeetup(author, meetupId), Plain).ResponseAsync);
+        denied.StatusCode.ShouldBe(StatusCode.PermissionDenied);
+    }
+
+    private static PreviewMeetupBroadcastRequest PreviewMeetup(Guid author, string meetupId) =>
+        new() { IdentityId = author.ToString(), MeetupId = meetupId };
+
+    private static PreviewCommunityBroadcastRequest PreviewCommunity(Guid author) =>
+        new() { IdentityId = author.ToString() };
 }

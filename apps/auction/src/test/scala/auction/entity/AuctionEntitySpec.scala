@@ -4,6 +4,8 @@ import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
 import auction.entity.JournalFixtures.*
+import auction.lot.AddStepWindow
+import auction.lot.AddStepWindowRejected
 import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLot
@@ -22,7 +24,10 @@ import auction.lot.MarkForFinal
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.ParticipantId
 import auction.lot.PlaceBid
+import auction.lot.RemoveParticipant
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLot
 import auction.lot.ResumeLotRejected
 import auction.lot.Sale
@@ -170,7 +175,7 @@ final class AuctionEntitySpec
       Lot.decide(lots(lot), command, LotFixtures.bid(90), LotFixtures.proxyBid(90), at) match {
         case Right(Decision.Accepted(event, derived)) =>
           val after = (event :: derived).foldLeft(lots(lot)) { (current, each) =>
-            Lot.apply(current, Envelope(current.seen.size.toLong + 1, command.opId, each))
+            Lot.apply(current, Envelope(current.seen.size.toLong + 1, command.opId, each), at)
           }
           lots = lots.updated(lot, after)
         case other => throw new AssertionError(s"the lot did not take the bid: $other")
@@ -221,6 +226,36 @@ final class AuctionEntitySpec
           )
       }
 
+    /** Снятие участника: лот решает по своему ядру, номер лота подделка не ведёт и принимает любой. */
+    def removeParticipant(
+        lot: LotId,
+        command: RemoveParticipant,
+        initiator: Initiator
+    ): Future[Either[RemoveParticipantRejected, Long]] =
+      synchronized {
+        choices :+= (lot, command, initiator)
+        if (lost(lot)) Promise[Either[RemoveParticipantRejected, Long]]().future
+        else
+          Future.successful(
+            Lot
+              .decide(lots(lot), command, command.expectedVersion, LotFixtures.position(92), now())
+              .map(decision => written(lot, command.opId, decision))
+              .map(_ => lots(lot).seen.size.toLong)
+          )
+      }
+
+    def previewRemoval(
+        lot: LotId,
+        participant: ParticipantId
+    ): Future[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]] =
+      synchronized {
+        val removal = RemoveParticipant(participant, LotFixtures.op(93), 0)
+        Future.successful(Lot.decide(lots(lot), removal, 0, LotFixtures.position(93), now()).map {
+          case Decision.Accepted(removed: LotEvent.ParticipantRemoved, _) => LotEntity.RemovalPreview(removed, None, 0)
+          case other => fail(s"a preview decided $other")
+        })
+      }
+
     def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]] =
       synchronized {
         choices :+= (lot, command, initiator)
@@ -243,6 +278,17 @@ final class AuctionEntitySpec
       else Future.successful(answer)
     }
 
+    private var windows = Vector.empty[(LotId, AddStepWindow)]
+
+    def added: Vector[(LotId, AddStepWindow)] = synchronized(windows)
+
+    /** Окно, запущенное по ходу торгов; `lost` — лот окно принял, но ответ потерялся. */
+    def addWindow(lot: LotId, command: AddStepWindow): Future[Either[AddStepWindowRejected, Unit]] = synchronized {
+      windows :+= lot -> command
+      val answer = Lot.decide(lots(lot), command).map(_.foreach(written(lot, command.opId, _)))
+      if (lost(lot)) Promise[Either[AddStepWindowRejected, Unit]]().future else Future.successful(answer)
+    }
+
     private def opening(event: LotEvent): Option[Instant] =
       event match {
         case opened: LotEvent.LotOpened => opened.deadline
@@ -255,7 +301,7 @@ final class AuctionEntitySpec
         case Decision.Accepted(event, _) =>
           val current = lots(lot)
           val sequence = current.seen.size.toLong + 1
-          lots = lots.updated(lot, Lot.apply(current, Envelope(sequence, opId, event)))
+          lots = lots.updated(lot, Lot.apply(current, Envelope(sequence, opId, event), LotFixtures.calm))
           event
         case Decision.Repeated(original) => original.event
       }
@@ -284,7 +330,8 @@ final class AuctionEntitySpec
       shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
-      predictions: AuctionPredictions = AuctionPredictions.none
+      predictions: AuctionPredictions = AuctionPredictions.none,
+      setOutcomes: AuctionSetOutcomes = AuctionSetOutcomes.none
   ): Kit =
     EventSourcedBehaviorTestKit(
       kit.system,
@@ -298,7 +345,8 @@ final class AuctionEntitySpec
         shard,
         raffle,
         slot,
-        predictions
+        predictions,
+        setOutcomes = setOutcomes
       ),
       serialization
     )
@@ -389,6 +437,11 @@ final class AuctionEntitySpec
       AuctionEntity.Start(StartPrebidding(op(opN)), administrator, _)
     )
 
+  private def launch(opN: Int, from: Option[Instant], until: Instant, chosen: List[LotId] = List(lot)) =
+    entity.runCommand[Either[LaunchStepWindowRejected, AuctionAnswer]](
+      AuctionEntity.Launch(LaunchStepWindow(from, until, LotFixtures.money(1), chosen, op(opN)), administrator, _)
+    )
+
   private def discard(opN: Int) =
     entity.runCommand[Either[DiscardAuctionRejected, AuctionAnswer]](
       AuctionEntity.Discard(DiscardAuction(op(opN)), administrator, _)
@@ -399,18 +452,22 @@ final class AuctionEntitySpec
       AuctionEntity.Cancel(CancelAuction(op(opN)), administrator, _)
     )
 
+  private def inherit(opN: Int) =
+    entity.runCommand[AuctionAnswer](AuctionEntity.InheritCancellation(ApplyMeetupCancelled(op(opN)), _))
+
   private def roster: LotRoster = entity.runCommand[LotRoster](AuctionEntity.Roster(_)).reply
 
   /** Розыгрыш-подмена: открытие и отмена зовут свои функции. */
   private def raffleOf(
-      open: (String, Instant) => Future[org.apache.pekko.Done],
+      open: (String, Instant, Option[String]) => Future[org.apache.pekko.Done],
       cancel: (String, auction.lot.OpId) => Future[org.apache.pekko.Done] = (_, _) =>
         Future.successful(org.apache.pekko.Done)
   ): AuctionRaffle = {
     val opening = open
     val cancelling = cancel
     new AuctionRaffle {
-      def open(auctionId: String, closesAt: Instant): Future[org.apache.pekko.Done] = opening(auctionId, closesAt)
+      def open(auctionId: String, closesAt: Instant, prize: Option[String]): Future[org.apache.pekko.Done] =
+        opening(auctionId, closesAt, prize)
       def cancel(auctionId: String, opId: auction.lot.OpId): Future[org.apache.pekko.Done] = cancelling(auctionId, opId)
     }
   }
@@ -649,7 +706,7 @@ final class AuctionEntitySpec
       val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)
       val opened = new java.util.concurrent.ConcurrentLinkedQueue[(String, java.time.Instant)]()
       val failures = new java.util.concurrent.atomic.AtomicInteger(1)
-      val raffle = raffleOf { (auctionId, at) =>
+      val raffle = raffleOf { (auctionId, at, _) =>
         opened.add(auctionId -> at)
         if (failures.getAndDecrement() > 0) Future.failed(new RuntimeException("raffle did not answer"))
         else Future.successful(org.apache.pekko.Done)
@@ -671,12 +728,34 @@ final class AuctionEntitySpec
       opened.toArray.toSet shouldBe Set("auction-1" -> closesAt)
     }
 
+    "hands the raffle prize from the schedule to the opening" in {
+      val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)
+      val prize = "сертификат в книжный на 5000 ₽"
+      val prizes = new java.util.concurrent.ConcurrentLinkedQueue[Option[String]]()
+      entity = entityOf(
+        lots,
+        recheckEvery = 50.millis,
+        raffle = raffleOf { (_, _, opened) =>
+          prizes.add(opened)
+          Future.successful(org.apache.pekko.Done)
+        }
+      )
+      draft(1)
+      add(2)
+      schedule(
+        3,
+        configInput(Some(AuctionFixtures.week.copy(raffleClosesAt = Some(closesAt), rafflePrize = Some(prize))))
+      ).reply.isRight shouldBe true
+      start(4).reply.isRight shouldBe true
+      eventually(prizes.toArray.toSet shouldBe Set(Some(prize)))
+    }
+
     "does not open a raffle for an auction scheduled without one" in {
       val opened = new java.util.concurrent.atomic.AtomicInteger(0)
       entity = entityOf(
         lots,
         recheckEvery = 50.millis,
-        raffle = raffleOf { (_, _) =>
+        raffle = raffleOf { (_, _, _) =>
           opened.incrementAndGet()
           Future.successful(org.apache.pekko.Done)
         }
@@ -916,7 +995,7 @@ final class AuctionEntitySpec
       val cancelled = new java.util.concurrent.ConcurrentLinkedQueue[(String, auction.lot.OpId)]()
       val failures = new java.util.concurrent.atomic.AtomicInteger(1)
       val raffle = raffleOf(
-        (_, _) => Future.successful(org.apache.pekko.Done),
+        (_, _, _) => Future.successful(org.apache.pekko.Done),
         (auctionId, opId) => {
           cancelled.add(auctionId -> opId)
           if (failures.getAndDecrement() > 0) Future.failed(new RuntimeException("raffle did not answer"))
@@ -989,6 +1068,66 @@ final class AuctionEntitySpec
         AuctionAnswer.Written(AuctionEnvelope(5, op(next + 1), AuctionEvent.AuctionDrafted(meetup)))
       entity.runCommand[Inspection](AuctionEntity.Inspect(op(next + 2), _)).reply shouldBe
         Inspection.Present(meetup, registryOpen = true)
+    }
+
+    "discards a draft on a cancelled meetup on behalf of the scheduler and writes nothing for a redelivery" in {
+      draft(1)
+      val discarded = inherit(50)
+      discarded.reply shouldBe AuctionAnswer.Written(AuctionEnvelope(2, op(50), AuctionEvent.AuctionDiscarded))
+      discarded.events.map(_.actor) shouldBe List(StoredActor("Scheduler", None))
+      discarded.state.auction.state shouldBe AuctionState.Initial
+      val repeated = inherit(50)
+      repeated.events shouldBe empty
+      repeated.reply shouldBe discarded.reply
+    }
+
+    "erases the predictions of a scheduled auction before the discard of a cancelled meetup is written" in {
+      val predictions = Predictions()
+      val wiped = Promise[org.apache.pekko.Done]()
+      predictions.discarding = () => wiped.future
+      entity = entityOf(lots, predictions = predictions)
+      scheduledWith(lot)
+      val answer = kit.createTestProbe[AuctionAnswer]()
+      entity.runCommand(AuctionEntity.InheritCancellation(ApplyMeetupCancelled(op(50)), answer.ref)).events shouldBe
+        empty
+      answer.expectNoMessage(200.millis)
+      wiped.success(org.apache.pekko.Done)
+      answer.receiveMessage() shouldBe AuctionAnswer.Written(AuctionEnvelope(4, op(50), AuctionEvent.AuctionDiscarded))
+      entity.getState().auction.state shouldBe AuctionState.Initial
+      predictions.count("discard") shouldBe 1
+    }
+
+    "cancels a trading auction of a cancelled meetup and withdraws its lots like a cancel of the administrator" in {
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      val cancelled = inherit(50)
+      cancelled.reply shouldBe AuctionAnswer.Written(AuctionEnvelope(5, op(50), AuctionEvent.AuctionCancelled))
+      cancelled.state.auction.state shouldBe AuctionState.Cancelled(config(), op(opening), op(50))
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Withdrawn))
+      lots.withdraws.map(_._2) shouldBe Vector(LotRoster.withdrawalOf(op(50), lot))
+      inherit(50).events shouldBe empty
+    }
+
+    "cancels an auction that opened its prebidding between the cancel of the meetup and the delivery of the fact" in {
+      val opening = scheduledWith(lot)
+      // Ворота у торгов уже закрыты, но открытие успело пройти до факта: факт застаёт аукцион идущим и отменяет его.
+      start(opening).reply.isRight shouldBe true
+      inherit(50).reply shouldBe AuctionAnswer.Written(AuctionEnvelope(5, op(50), AuctionEvent.AuctionCancelled))
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Withdrawn))
+      trading shouldBe false
+    }
+
+    "writes nothing for a meetup without an auction and for an auction that already finished or was cancelled" in {
+      val absent = inherit(50)
+      absent.reply shouldBe AuctionAnswer.Unchanged
+      absent.events shouldBe empty
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      cancel(opening + 1).reply.isRight shouldBe true
+      val late = inherit(51)
+      late.reply shouldBe AuctionAnswer.Unchanged
+      late.events shouldBe empty
     }
 
     "refuses to discard an auction that was never drafted or whose prebidding started, without writing" in {
@@ -1084,6 +1223,74 @@ final class AuctionEntitySpec
       eventually(roster.lots(other) shouldBe LotStanding.Declined(OpenLotRejected.LotNotScheduled))
       lots.opens.map(_._1) shouldBe Vector(lot, other)
       start(opening + 1).reply shouldBe Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotScheduled))
+    }
+
+    "records a launched window, answers before the lots and delivers it to each lot under a derived op_id" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      val window =
+        StepWindowConfig(opensAt.plusSeconds(7200), opensAt.plusSeconds(10800), LotFixtures.money(1), Set(lot))
+
+      launch(opening + 1, Some(window.from), window.until).reply shouldBe
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(opening + 1), AuctionEvent.StepWindowLaunched(window))))
+      eventually(roster.deliveries shouldBe Map((op(opening + 1), lot) -> WindowDelivery.Delivered))
+      lots.added shouldBe Vector(lot -> LotRoster.windowOf(LaunchedWindow(op(opening + 1), window), lot))
+      lots.stateNow(lot) match {
+        case LotState.Trading(trading) =>
+          trading.stepWindows shouldBe List(auction.lot.StepWindow(window.from, window.until, window.step))
+        case other => fail(s"the lot is not trading: $other")
+      }
+    }
+
+    "answers a repeated launch with the original envelope and writes nothing" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      val first = launch(opening + 1, None, opensAt.plusSeconds(10800))
+      time.instant0 = opensAt.plusSeconds(5400)
+
+      val repeated = launch(opening + 1, None, opensAt.plusSeconds(10800))
+
+      repeated.events shouldBe empty
+      repeated.reply shouldBe first.reply
+      eventually(lots.added should have size 1)
+    }
+
+    "refuses a lot whose opening it has not confirmed and writes nothing" in {
+      val opening = scheduledWith(lot, other)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.lots(other) shouldBe LotStanding.Declined(OpenLotRejected.LotNotScheduled))
+
+      val refused = launch(opening + 1, None, opensAt.plusSeconds(10800), List(lot, other))
+
+      refused.reply shouldBe Left(LaunchStepWindowRejected.LotNotOpen(other))
+      refused.events shouldBe empty
+      lots.added shouldBe empty
+    }
+
+    "delivers a launched window again after a restart under the same op_id, and the lot records it once" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      lots.lost = Set(lot)
+      launch(opening + 1, None, opensAt.plusSeconds(10800)).reply.isRight shouldBe true
+      eventually(lots.added should have size 1)
+      lots.lost = Set.empty
+
+      entity.restart()
+
+      eventually(roster.deliveries.values.toSet shouldBe Set(WindowDelivery.Delivered))
+      lots.added.map(_._2.opId).distinct should have size 1
+      lots.added should have size 2
+      lots.stateNow(lot) match {
+        case LotState.Trading(trading) => trading.stepWindows should have size 1
+        case other => fail(s"the lot is not trading: $other")
+      }
     }
 
     "asks no lot after a restart before prebidding" in {
@@ -1542,6 +1749,111 @@ final class AuctionEntitySpec
       start(opening)
       eventually(roster.active shouldBe Set(lot))
       shard.expectNoMessage(300.millis)
+    }
+  }
+
+  /**
+   * Исходы лотов сета, какими их видит read model: тест задаёт их сам и меняет между тиками. Каждый вопрос записывается
+   * лотами, о которых спросили.
+   */
+  private final class SetOutcomes extends AuctionSetOutcomes {
+    @volatile var known: Map[LotId, LotOutcome] = Map.empty
+    val asked = new java.util.concurrent.ConcurrentLinkedQueue[Set[LotId]]()
+
+    def outcomes(lots: Set[LotId]): Future[Map[LotId, LotOutcome]] = {
+      asked.add(lots)
+      Future.successful(known.view.filterKeys(lots).toMap)
+    }
+  }
+
+  private val collection = LotSetId(uuid(40))
+
+  private def saveSet(opN: Int, chosen: LotId*) =
+    entity.runCommand[Either[SaveLotSetRejected, AuctionAnswer]](
+      AuctionEntity.SaveSet(
+        SaveLotSet(collection, LotSetName("Сет").toOption.get, chosen.toList, op(opN)),
+        administrator,
+        _
+      )
+    )
+
+  private def settlements: Int =
+    entity.getState().auction.seen.values.count(_.event.isInstanceOf[AuctionEvent.LotSetSettled])
+
+  "lot set of the auction entity" should {
+
+    "records the collector once the read model shows every lot of the set sold to one participant" in {
+      val outcomes = SetOutcomes()
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled()), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      start(opening + 1).reply.isRight shouldBe true
+
+      // Один лот продан, второй ещё торгуется: итога нет, сколько бы тиков ни прошло.
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)))
+      eventually(outcomes.asked.size should be >= 2)
+      settlements shouldBe 0
+
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)), third -> LotOutcome.Sold(participant(2)))
+      eventually(
+        entity.getState().auction.sets(collection).settlement shouldBe Some(LotSetSettlement.Collected(participant(2)))
+      )
+
+      // Сет с итогом больше не спрашивается, и рестарт итога не повторяет.
+      val asked = outcomes.asked.size
+      entity.restart()
+      Thread.sleep(300)
+      outcomes.asked.size shouldBe asked
+      settlements shouldBe 1
+    }
+
+    "records an uncollected set when a lot of the set went unsold" in {
+      val outcomes = SetOutcomes()
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled()), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      start(opening + 1).reply.isRight shouldBe true
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)), third -> LotOutcome.Unsold)
+      eventually(
+        entity.getState().auction.sets(collection).settlement shouldBe Some(LotSetSettlement.NotCollected)
+      )
+      settlements shouldBe 1
+    }
+
+    "leaves a set uncollected when the auction ended with a lot of the set that never opened" in {
+      val outcomes = SetOutcomes()
+      // `third` без условий торгов: открытие он отклоняет, и аукцион кончается без него.
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.drafted), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      // Ставка — до окна анти-снайпа: лот закрывается с общим дедлайном, без продления.
+      time.instant0 = closesAt.minusSeconds(600)
+      start(opening + 1).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      lots.bid(lot, LotFixtures.placeBid(who = 2, amount = 110, opN = 90), time.instant())
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(timeout(Span(5, Seconds)))(entity.getState().auction.state shouldBe a[AuctionState.Finished])
+
+      // Read model знает только проданный лот: неоткрытый аукцион уточняет у самого лота.
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)))
+      eventually(
+        entity.getState().auction.sets(collection).settlement shouldBe Some(LotSetSettlement.NotCollected)
+      )
+      settlements shouldBe 1
+    }
+
+    "does not read outcomes before prebidding started" in {
+      val outcomes = SetOutcomes()
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled()), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      Thread.sleep(300)
+      outcomes.asked shouldBe empty
     }
   }
 }

@@ -115,6 +115,10 @@ public sealed record ScheduleColumns(
 /// <param name="OccasionPreset">Выданный набор у <c>preset_granted</c>; у остальных поводов пусто.</param>
 /// <param name="OccasionQueue">Очередь заявки у заявки и допуска; у остальных поводов пусто.</param>
 /// <param name="OccasionRight">Выданное право у <c>right_granted</c>; у остальных поводов пусто.</param>
+/// <param name="Application">
+/// Курсор открытой заявки у <c>application_submitted</c>; пусто у события,
+/// которое его ещё не несёт, и у остальных поводов.
+/// </param>
 public sealed record IdentityFact(
     Guid EventId,
     Guid IdentityId,
@@ -127,10 +131,20 @@ public sealed record IdentityFact(
     IdentityOccasion Occasion = IdentityOccasion.Other,
     string? OccasionPreset = null,
     AccessQueue? OccasionQueue = null,
-    string? OccasionRight = null) : ReplicaEvent(EventId, IdentityId, Version, OccurredAt)
+    string? OccasionRight = null,
+    SubmittedApplication? Application = null) : ReplicaEvent(EventId, IdentityId, Version, OccurredAt)
 {
     public override string Source => ReplicaFeeds.IdentitySource;
 }
+
+/// <summary>
+/// Курсор заявки в очереди: по нему бот модератора читает её карточку
+/// (PER-634). Значения — строки события как пришли: Notifications их только
+/// переносит, а сравнивает с очередью Identity.
+/// </summary>
+/// <param name="Id">Каноническая UUIDv7-строка заявки.</param>
+/// <param name="CreatedAt">Момент создания заявки, RFC 3339 с миллисекундами.</param>
+public sealed record SubmittedApplication(string Id, string CreatedAt);
 
 /// <summary>
 /// Повод события Identity, сведённый к тому, что различает адресные факты.

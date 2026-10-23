@@ -1,5 +1,7 @@
 package auction.grpc
 
+import auction.aggregate.Auction
+import auction.contract.AuctionValues
 import auction.lot.Lot
 import auction.lot.LotState
 import auction.lot.ParticipantId
@@ -34,8 +36,24 @@ object ConsoleMapping {
           markedForFinal = marked(view.lot),
           overdue = overdue(view.lot, now, grace)
         )
-      }
+      },
+      // Запущенные по ходу торгов окна (PER-615): пульт показывает их рядом с объявленными, и в конфигурации их
+      // нет — конфигурация заменяется планированием и заморожена после открытия недели.
+      launchedStepWindows = auction.auction.launched.map(_.window).map(AuctionValues.stepWindow),
+      // Сеты (ADR-073, п. 3; PER-509) — из агрегата, все, и неполные: организатор собирает сет постепенно и видит его
+      // до второго лота. Снимок лота неполный сет не показывает.
+      lotSets = lotSets(auction.auction)
     )
+
+  /** Сеты аукциона в порядке идентификатора: UUIDv7 сортируется по времени создания, и номер сета в пульте устойчив. */
+  def lotSets(auction: Auction): List[wire.ConsoleLotSet] =
+    auction.sets.toList.sortBy(_._1.value.toString).map { case (id, set) =>
+      wire.ConsoleLotSet(
+        lotSetId = id.value.toString,
+        name = set.name.value,
+        lotIds = set.lots.map(_.value.toString)
+      )
+    }
 
   /** Отмечен для финала: в торгах с отметкой либо уже удержан — удерживается только отмеченный лот. */
   def marked(lot: Lot): Boolean =

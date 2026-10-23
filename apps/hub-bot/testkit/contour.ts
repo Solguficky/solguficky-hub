@@ -341,6 +341,7 @@ function asAdmin(identityId: string) {
       AccessRight.ADMIT_BIDDERS,
       AccessRight.MANAGE_MEMBERS,
       AccessRight.MANAGE_MEETUPS,
+      AccessRight.RUN_AUCTIONS,
     ],
   };
 }

@@ -141,7 +141,45 @@ export async function registerForRaffle(
   ) {
     return nameChoiceBody(context, auctionId);
   }
-  return settle(context, auctionId, outcome);
+  return outcome.kind === "accepted"
+    ? registeredBody(auctionId, outcome.raffle)
+    : settle(context, auctionId, outcome);
+}
+
+// Принятая регистрация — свой экран исхода (прогон 14.10, №69): отмена
+// регистрации, затем возвраты в розыгрыш и в корень аукциона — как у принятой
+// ставки «‹ Лот» и «‹ Лоты».
+function registeredBody(
+  auctionId: string,
+  raffle: RaffleView | undefined,
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "raffle-registered",
+        auctionId,
+        ...(raffle === undefined ? {} : { raffle }),
+      },
+    ],
+    keyboard: [
+      [
+        {
+          action: "raffle.cancel",
+          callbackData: encodeAuctionCallback({
+            kind: "raffle-cancel",
+            auctionId,
+          }),
+        },
+      ],
+      [toRaffle(auctionId)],
+      [
+        {
+          action: "raffle.back",
+          callbackData: encodeAuctionCallback({ kind: "root", auctionId }),
+        },
+      ],
+    ],
+  };
 }
 
 export async function cancelRaffleRegistration(

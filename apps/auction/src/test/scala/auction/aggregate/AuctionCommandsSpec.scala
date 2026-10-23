@@ -6,6 +6,7 @@ import auction.catalog.LotId
 import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
+import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.entity.OpeningRejected
 import auction.lot.*
@@ -39,7 +40,9 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
 
     def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection] = Future.successful(inspection)
 
-    def get(auctionId: AuctionId): Future[Auction] = fail("the auction was read")
+    var known: Option[Auction] = None
+
+    def get(auctionId: AuctionId): Future[Auction] = Future.successful(known.getOrElse(fail("the auction was read")))
 
     def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer] = {
       commands :+= command
@@ -54,6 +57,20 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     def removeLot(auctionId: AuctionId, command: RemoveLot, initiator: Initiator) = {
       commands :+= command
       Future.successful(removeAnswer)
+    }
+
+    var saveSetAnswer: Either[SaveLotSetRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def saveLotSet(auctionId: AuctionId, command: SaveLotSet, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(saveSetAnswer)
+    }
+
+    var deleteSetAnswer: Either[DeleteLotSetRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def deleteLotSet(auctionId: AuctionId, command: DeleteLotSet, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(deleteSetAnswer)
     }
 
     var scheduleAnswer: Either[ScheduleAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
@@ -76,6 +93,27 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(discardAnswer)
     }
 
+    var visibilityAnswer: Either[VisibilityRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def changeVisibility(auctionId: AuctionId, command: ChangeVisibility, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(visibilityAnswer)
+    }
+
+    var finalTimeAnswer: Either[FinalTimeRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setFinalTime(auctionId: AuctionId, command: SetFinalTime, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(finalTimeAnswer)
+    }
+
+    var instructionsAnswer: Either[PaymentInstructionsRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setPaymentInstructions(auctionId: AuctionId, command: SetPaymentInstructions, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(instructionsAnswer)
+    }
+
     var cancelAnswer: Either[CancelAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) = {
@@ -90,6 +128,21 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(planAnswer)
     }
 
+    var removalAnswer: Either[ParticipantRemovalRejected, Long] = Right(7)
+
+    def removeParticipant(auctionId: AuctionId, command: RemoveLotParticipant, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(removalAnswer)
+    }
+
+    var previewAnswer: Either[ParticipantRemovalRejected, LotEntity.RemovalPreview] =
+      Left(ParticipantRemovalRejected.LotNotInAuction)
+
+    def previewParticipantRemoval(auctionId: AuctionId, command: PreviewLotParticipantRemoval) = {
+      commands :+= command
+      Future.successful(previewAnswer)
+    }
+
     var selectAnswer: Either[FinalChoiceRejected[MarkForFinalRejected], Unit] = Right(())
     var deselectAnswer: Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit] = Right(())
 
@@ -101,6 +154,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     def deselectForFinal(auctionId: AuctionId, command: DeselectForFinal, initiator: Initiator) = {
       commands :+= command
       Future.successful(deselectAnswer)
+    }
+
+    var launchAnswer: Either[LaunchStepWindowRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def launchStepWindow(auctionId: AuctionId, command: LaunchStepWindow, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(launchAnswer)
     }
 
     var askAnswer: Either[AdvanceLotAskRejected, Unit] = Right(())
@@ -146,6 +206,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(answer)
     }
     def auctionOf(lotId: UUID) = Future.successful(bornIn)
+    def stateOf(lotId: UUID): Future[LotState] = fail("the lot state was read")
     def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) = fail("a bid was placed")
     def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) = fail("a limit was set")
     def withdrawProxyLimit(lotId: UUID, command: WithdrawProxyLimit, initiator: Initiator) =
@@ -164,7 +225,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     }
   }
 
-  private def granted: Meetups = Meetups(Authority.Granted)
+  private def granted: Meetups = Meetups(Authority.Granted(Standings.published))
 
   "auction commands" should {
 
@@ -195,13 +256,15 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
 
     "drafts the auction derived from the meetup once meetups confirms the administrator" in {
       val auctions = Auctions(Inspection.Absent)
-      AuctionCommands(auctions, noLots, Meetups(Authority.Granted)).draft(meetup, op(1), person).futureValue shouldBe
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.published)))
+        .draft(meetup, op(1), person)
+        .futureValue shouldBe
         Right(Drafted(auctionOfMeetup, alreadyExisted = false))
       auctions.commands shouldBe List(DraftAuction(meetup, op(1)))
     }
 
     "answers a registry command on an auction without a journal with AuctionNotFound before meetups" in {
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       val commands = AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
       commands.addLot(auctionOfMeetup, lot, op(2), person).futureValue shouldBe Left(Denial.AuctionNotFound)
       commands.removeLot(auctionOfMeetup, lot, op(2), person).futureValue shouldBe
@@ -212,7 +275,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     "adds a lot to the registry and then drafts it in the auction with the same op_id" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
       val lots = Lots(Right(Envelope(1, op(2), LotEvent.LotDrafted(auctionOfMeetup))))
-      AuctionCommands(auctions, lots, Meetups(Authority.Granted))
+      AuctionCommands(auctions, lots, Meetups(Authority.Granted(Standings.published)))
         .addLot(auctionOfMeetup, lot, op(2), person)
         .futureValue shouldBe Right(())
       auctions.commands shouldBe List(AddLot(lot, op(2)))
@@ -221,7 +284,11 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
 
     "accepts a lot that was already born, as after RemoveLot" in {
       val lots = Lots(Left(DraftLotRejected.LotAlreadyExists), bornIn = Some(auctionOfMeetup))
-      AuctionCommands(Auctions(Inspection.Present(meetup, registryOpen = true)), lots, Meetups(Authority.Granted))
+      AuctionCommands(
+        Auctions(Inspection.Present(meetup, registryOpen = true)),
+        lots,
+        Meetups(Authority.Granted(Standings.published))
+      )
         .addLot(auctionOfMeetup, lot, op(2), person)
         .futureValue shouldBe Right(())
     }
@@ -229,7 +296,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     "refuses a lot that a repeated op_id drafted in another auction and leaves the registry untouched" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
       val lots = Lots(Right(Envelope(1, op(2), LotEvent.LotDrafted(auctionId(9)))))
-      AuctionCommands(auctions, lots, Meetups(Authority.Granted))
+      AuctionCommands(auctions, lots, Meetups(Authority.Granted(Standings.published)))
         .addLot(auctionOfMeetup, lot, op(2), person)
         .futureValue shouldBe Left(Denial.LotOfAnotherAuction)
       auctions.commands shouldBe empty
@@ -238,7 +305,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     "refuses a lot born in another auction and leaves the registry untouched" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
       val lots = Lots(Left(DraftLotRejected.LotAlreadyExists), bornIn = Some(auctionId(9)))
-      AuctionCommands(auctions, lots, Meetups(Authority.Granted))
+      AuctionCommands(auctions, lots, Meetups(Authority.Granted(Standings.published)))
         .addLot(auctionOfMeetup, lot, op(2), person)
         .futureValue shouldBe Left(Denial.LotOfAnotherAuction)
       auctions.commands shouldBe empty
@@ -267,14 +334,14 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     "passes LotNotInAuction from the auction through as a refusal of the removal" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
       auctions.removeAnswer = Left(RemoveLotRejected.LotNotInAuction)
-      AuctionCommands(auctions, noLots, Meetups(Authority.Granted))
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.published)))
         .removeLot(auctionOfMeetup, lot, op(2), person)
         .futureValue shouldBe Left(RemovalRefusal.LotNotInAuction)
     }
 
     "refuses a lot before it is born once the registry is frozen" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
-      AuctionCommands(auctions, noLots, Meetups(Authority.Granted))
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.published)))
         .addLot(auctionOfMeetup, lot, op(2), person)
         .futureValue shouldBe Left(Denial.LotsFrozen)
       auctions.commands shouldBe empty
@@ -291,8 +358,43 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         Left(RemovalRefusal.Denied(Denial.LotsFrozen))
     }
 
+    "checks the right before the name of a lot set and touches no auction without it" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      val set = LotSetId(new UUID(6L, 1L))
+      AuctionCommands(auctions, noLots, Meetups(Authority.NotAdministrator))
+        .saveLotSet(auctionOfMeetup, set, " ", List(lot), op(2), person)
+        .futureValue shouldBe Left(LotSetRefusal.Denied(Denial.NotAdministrator))
+      AuctionCommands(auctions, noLots, granted)
+        .saveLotSet(auctionOfMeetup, set, " ", List(lot), op(2), person)
+        .futureValue shouldBe Left(LotSetRefusal.NameEmpty)
+      auctions.commands shouldBe empty
+    }
+
+    "passes the refusals of a lot set from the auction through" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      val set = LotSetId(new UUID(6L, 1L))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      auctions.saveSetAnswer = Left(SaveLotSetRejected.LotInAnotherSet(lot, LotSetId(new UUID(6L, 2L))))
+      commands.saveLotSet(auctionOfMeetup, set, "Сет", List(lot), op(2), person).futureValue shouldBe
+        Left(LotSetRefusal.LotInAnotherSet(lot, LotSetId(new UUID(6L, 2L))))
+      auctions.saveSetAnswer = Left(SaveLotSetRejected.LotsFrozen)
+      commands.saveLotSet(auctionOfMeetup, set, "Сет", List(lot), op(3), person).futureValue shouldBe
+        Left(LotSetRefusal.Denied(Denial.LotsFrozen))
+      auctions.deleteSetAnswer = Left(DeleteLotSetRejected.LotSetNotFound)
+      commands.deleteLotSet(auctionOfMeetup, set, op(4), person).futureValue shouldBe
+        Left(LotSetRefusal.LotSetNotFound)
+    }
+
+    "answers a lot of the discarded birth as a lot of another auction" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      auctions.addAnswer = Left(AddLotRejected.LotOfDiscardedAuction)
+      AuctionCommands(auctions, Lots(Left(DraftLotRejected.LotAlreadyExists), Some(auctionOfMeetup)), granted)
+        .addLot(auctionOfMeetup, lot, op(2), person)
+        .futureValue shouldBe Left(Denial.LotOfAnotherAuction)
+    }
+
     "answers scheduling and opening of an auction without a journal with AuctionNotFound before meetups" in {
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       val commands = AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
       commands.schedule(auctionOfMeetup, configInput(), op(2), person).futureValue shouldBe
         Left(SchedulingRefusal.Denied(Denial.AuctionNotFound))
@@ -348,7 +450,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     }
 
     "answers a discard of an auction without a journal with AuctionNotFound before meetups" in {
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
         .discard(auctionOfMeetup, op(2), person)
         .futureValue shouldBe Left(DiscardRefusal.Denied(Denial.AuctionNotFound))
@@ -370,6 +472,68 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       }
     }
 
+    "refuses the commands of a cancelled meetup before the auction, except discarding and cancelling it" in {
+      val cancelled = Meetups(Authority.Granted(Standings.cancelled))
+      val absent = Auctions(Inspection.Absent)
+      AuctionCommands(absent, noLots, cancelled).draft(meetup, op(2), person).futureValue shouldBe
+        Left(Denial.MeetupCancelled)
+      absent.commands shouldBe empty
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      val commands = AuctionCommands(auctions, noLots, cancelled)
+      commands.addLot(auctionOfMeetup, lot, op(3), person).futureValue shouldBe Left(Denial.MeetupCancelled)
+      commands.startPrebidding(auctionOfMeetup, op(4), person).futureValue shouldBe
+        Left(OpeningRefusal.Denied(Denial.MeetupCancelled))
+      commands.schedule(auctionOfMeetup, configInput(), op(5), person).futureValue shouldBe
+        Left(SchedulingRefusal.Denied(Denial.MeetupCancelled))
+      commands.closeLot(auctionOfMeetup, lot, op(6), person).futureValue shouldBe
+        Left(ClosingRefusal.Denied(Denial.MeetupCancelled))
+      auctions.commands shouldBe empty
+      commands.discard(auctionOfMeetup, op(7), person).futureValue shouldBe Right(())
+      commands.cancel(auctionOfMeetup, op(8), person).futureValue shouldBe Right(())
+      auctions.commands shouldBe List(DiscardAuction(op(7)), CancelAuction(op(8)))
+    }
+
+    "refuses opening the prebidding of a hidden meetup and opens it once the meetup is published again" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.hidden)))
+        .startPrebidding(auctionOfMeetup, op(2), person)
+        .futureValue shouldBe Left(OpeningRefusal.Denied(Denial.MeetupHidden))
+      // Скрытие закрывает только открытие торгов: реестр и планирование идут.
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.hidden)))
+        .schedule(auctionOfMeetup, configInput(), op(3), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(auctions, noLots, granted).startPrebidding(auctionOfMeetup, op(4), person).futureValue shouldBe
+        Right(())
+      auctions.commands shouldBe List(ScheduleAuction(configInput(), op(3)), StartPrebidding(op(4)))
+    }
+
+    "reads an answer of meetups without the state of the meetup as unavailable for commands, not for reading" in {
+      val unknown = Meetups(Authority.Granted(None))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      val commands = AuctionCommands(auctions, noLots, unknown)
+      commands.startPrebidding(auctionOfMeetup, op(2), person).futureValue shouldBe
+        Left(OpeningRefusal.Denied(Denial.Unavailable))
+      commands.draft(meetup, op(3), person).futureValue shouldBe Left(Denial.Unavailable)
+      auctions.commands shouldBe empty
+      commands.authorize(meetup, person).futureValue shouldBe Right(())
+    }
+
+    "authorizes a command that the auction does not write through the gate it names" in {
+      val commands =
+        AuctionCommands(Auctions(Inspection.Absent), noLots, Meetups(Authority.Granted(Standings.cancelled)))
+      commands.authorize(meetup, person).futureValue shouldBe Right(())
+      commands.authorize(meetup, person, MeetupGate.NotCancelled).futureValue shouldBe Left(Denial.MeetupCancelled)
+    }
+
+    "answers a repeated command of a cancelled meetup from the window before asking meetups" in {
+      val original = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup))
+      val meetups = Meetups(Authority.Granted(Standings.cancelled))
+      AuctionCommands(Auctions(Inspection.Repeated(original)), noLots, meetups)
+        .draft(meetup, op(1), person)
+        .futureValue shouldBe Right(Drafted(auctionOfMeetup, alreadyExisted = false))
+      meetups.asked shouldBe 0
+    }
+
     "discards the auction once meetups confirms the administrator and passes its refusal through" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
       val commands = AuctionCommands(auctions, noLots, granted)
@@ -389,7 +553,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     }
 
     "answers a cancel of an auction without a journal with AuctionNotFound before meetups" in {
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
         .cancel(auctionOfMeetup, op(2), person)
         .futureValue shouldBe Left(CancellationRefusal.Denied(Denial.AuctionNotFound))
@@ -479,7 +643,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     }
 
     "answers the conditions of a lot of an auction without a journal with AuctionNotFound before meetups" in {
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
         .scheduleLot(auctionOfMeetup, lot, money(5000), step, op(4), person)
         .futureValue shouldBe Left(LotSchedulingRefusal.Denied(Denial.AuctionNotFound))
@@ -524,7 +688,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     "refuses the conditions of a lot under the op_id of another auction command without asking meetups or the auction" in {
       val added = AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot))
       val auctions = Auctions(Inspection.Repeated(added))
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       AuctionCommands(auctions, noLots, meetups)
         .scheduleLot(auctionOfMeetup, lot, money(5000), step, op(2), person)
         .futureValue shouldBe Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken))
@@ -579,8 +743,65 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.DeadlinePassed))
     }
 
+    "sends a removal of a participant and its preview to the auction once meetups confirms the administrator" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.known = Some(Auction(AuctionState.Prebidding(config(), op(3)), Some(meetup), Set(lot), Map.empty))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      val removal = RemoveLotParticipant(lot, participant(3), 12, op(4))
+      val preview = PreviewLotParticipantRemoval(lot, participant(3))
+
+      commands.removeParticipant(auctionOfMeetup, removal, person).futureValue shouldBe Right(7)
+      commands.previewParticipantRemoval(auctionOfMeetup, preview, person).futureValue shouldBe
+        Left(ParticipantRemovalRefusal.LotNotInAuction)
+      auctions.commands shouldBe List(removal, preview)
+    }
+
+    "refuses a removal and its preview that meetups does not confirm and does not reach the auction" in {
+      for (
+        (answer, denial) <- List(
+          Authority.NotAdministrator -> Denial.NotAdministrator,
+          Authority.MeetupNotFound -> Denial.MeetupNotFound,
+          Authority.Granted(Standings.cancelled) -> Denial.MeetupCancelled
+        )
+      ) {
+        val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+        auctions.known = Some(Auction(AuctionState.Prebidding(config(), op(3)), Some(meetup), Set(lot), Map.empty))
+        val commands = AuctionCommands(auctions, noLots, Meetups(answer))
+        commands
+          .removeParticipant(auctionOfMeetup, RemoveLotParticipant(lot, participant(3), 12, op(4)), person)
+          .futureValue shouldBe Left(ParticipantRemovalRefusal.Denied(denial))
+        commands
+          .previewParticipantRemoval(auctionOfMeetup, PreviewLotParticipantRemoval(lot, participant(3)), person)
+          .futureValue shouldBe Left(ParticipantRemovalRefusal.Denied(denial))
+        auctions.commands shouldBe empty
+      }
+    }
+
+    "refuses a removal under the op_id of another auction command and passes the refusals of the auction and the lot" in {
+      val started = AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted)
+      val removal = RemoveLotParticipant(lot, participant(3), 12, op(3))
+      AuctionCommands(Auctions(Inspection.Repeated(started)), noLots, granted)
+        .removeParticipant(auctionOfMeetup, removal, person)
+        .futureValue shouldBe Left(ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.OpIdTaken))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      for (
+        (answer, refusal) <- List(
+          ParticipantRemovalRejected.LineupFrozen -> ParticipantRemovalRefusal.LineupFrozen,
+          ParticipantRemovalRejected.NotInPrebidding -> ParticipantRemovalRefusal.NotInPrebidding,
+          ParticipantRemovalRejected.AuctionNotFound -> ParticipantRemovalRefusal.Denied(Denial.AuctionNotFound),
+          ParticipantRemovalRejected.ByLot(RemoveParticipantRejected.LotChanged) ->
+            ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotChanged)
+        )
+      ) {
+        auctions.removalAnswer = Left(answer)
+        commands.removeParticipant(auctionOfMeetup, removal.copy(opId = op(4)), person).futureValue shouldBe
+          Left(refusal)
+      }
+    }
+
     "answers a choice of a finalist on an auction without a journal with AuctionNotFound before meetups" in {
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
         .selectForFinal(auctionOfMeetup, lot, op(4), person)
         .futureValue shouldBe Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound))
@@ -591,7 +812,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     "refuses a choice under the op_id of another auction command without asking meetups or the auction" in {
       val started = AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted)
       val auctions = Auctions(Inspection.Repeated(started))
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       val commands = AuctionCommands(auctions, noLots, meetups)
       commands.selectForFinal(auctionOfMeetup, lot, op(3), person).futureValue shouldBe
         Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.OpIdTaken))
@@ -639,7 +860,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     }
 
     "answers the commands of the final on an auction without a journal with AuctionNotFound before meetups" in {
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       val commands = AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
       commands.freezeFinalLineup(auctionOfMeetup, List(lot), op(6), person).futureValue shouldBe
         Left(LineupRefusal.Denied(Denial.AuctionNotFound))
@@ -653,7 +874,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     // Повтор следующего лота отвечает лотом исходной активации из окна аукциона, без Meetups и без entity.
     "answers a repeated next lot with the lot of the original activation and another command with OpIdTaken" in {
       val activated = AuctionEnvelope(9, op(8), AuctionEvent.FinalLotActivated(lot))
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       val auctions = Auctions(Inspection.Repeated(activated))
       AuctionCommands(auctions, noLots, meetups).startNextLot(auctionOfMeetup, op(8), person).futureValue shouldBe
         Right(lot)
@@ -685,7 +906,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     "refuses a closing under the op_id of another auction command and a stranger without reaching the auction" in {
       val started = AuctionEnvelope(8, op(7), AuctionEvent.FinalStarted)
       val repeated = Auctions(Inspection.Repeated(started))
-      val meetups = Meetups(Authority.Granted)
+      val meetups = Meetups(Authority.Granted(Standings.published))
       AuctionCommands(repeated, noLots, meetups).closeLot(auctionOfMeetup, lot, op(7), person).futureValue shouldBe
         Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.OpIdTaken))
       meetups.asked shouldBe 0
@@ -698,6 +919,146 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .futureValue shouldBe Left(ClosingRefusal.Denied(Denial.NotAdministrator))
       repeated.commands shouldBe empty
       stranger.commands shouldBe empty
+    }
+
+    "passes a repeated step window launch to the auction without asking meetups and answers the original window" in {
+      val window = StepWindowConfig(deadline, deadline.plusSeconds(3600), money(1), Set(lot))
+      val original = AuctionEnvelope(5, op(7), AuctionEvent.StepWindowLaunched(window))
+      val repeated = Auctions(Inspection.Repeated(original))
+      repeated.launchAnswer = Right(AuctionAnswer.Written(original))
+      val meetups = Meetups(Authority.NotAdministrator)
+      val command = LaunchStepWindow(None, deadline.plusSeconds(3600), money(1), List(lot), op(7))
+
+      AuctionCommands(repeated, noLots, meetups).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Right(window)
+      meetups.asked shouldBe 0
+      repeated.commands shouldBe List(command)
+    }
+
+    "refuses a launch under the op_id of another auction command, an absent auction and a stranger" in {
+      val command = LaunchStepWindow(None, deadline, money(1), List(lot), op(7))
+      val taken = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(7), AuctionEvent.PrebiddingStarted)))
+      AuctionCommands(taken, noLots, granted).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Left(LaunchRefusal.OpIdTaken)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, granted)
+        .launchStepWindow(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(LaunchRefusal.Denied(Denial.AuctionNotFound))
+      val stranger = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(stranger, noLots, Meetups(Authority.NotAdministrator))
+        .launchStepWindow(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(LaunchRefusal.Denied(Denial.NotAdministrator))
+      stranger.commands shouldBe empty
+    }
+
+    "hands a granted launch to the auction as the administrator and returns the recorded window" in {
+      val window = StepWindowConfig(deadline, deadline.plusSeconds(3600), money(1), Set(lot))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.launchAnswer =
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(7), AuctionEvent.StepWindowLaunched(window))))
+      val command = LaunchStepWindow(None, deadline.plusSeconds(3600), money(1), List(lot), op(7))
+
+      AuctionCommands(auctions, noLots, granted).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Right(window)
+      auctions.commands shouldBe List(command)
+      auctions.launchAnswer = Left(LaunchStepWindowRejected.LotNotOpen(lot))
+      AuctionCommands(auctions, noLots, granted).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.LotNotOpen(lot)))
+    }
+
+    // ADR-040, дополнение 2026-10-19: ориентировочное время финала — команда администратора.
+    "hands the estimated time of the final to the auction once meetups confirms the administrator" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val at = deadline.plusSeconds(3600)
+      AuctionCommands(auctions, noLots, granted)
+        .setFinalTime(auctionOfMeetup, Some(at), op(7), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SetFinalTime(Some(at), op(7)))
+    }
+
+    "answers a repeated estimated time from the window without asking meetups" in {
+      val original = AuctionEnvelope(5, op(7), AuctionEvent.FinalTimeSet(deadline))
+      val repeated = Auctions(Inspection.Repeated(original))
+      val meetups = Meetups(Authority.NotAdministrator)
+      AuctionCommands(repeated, noLots, meetups)
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Right(())
+      meetups.asked shouldBe 0
+      repeated.commands shouldBe empty
+    }
+
+    "refuses the opposite action under the op_id of the time already set or cleared" in {
+      val set = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.FinalTimeSet(deadline))))
+      AuctionCommands(set, noLots, granted)
+        .setFinalTime(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
+      val cleared = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.FinalTimeCleared)))
+      AuctionCommands(cleared, noLots, granted)
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
+      set.commands shouldBe empty
+      cleared.commands shouldBe empty
+    }
+
+    // PER-322: текст оплаты — повтор своего текста принимается, другой текст под тем же `op_id` — чужая команда.
+    "answers the payment text repeated under its op_id and refuses another text under it" in {
+      val text = PaymentInstructions.parse("Карта").get
+      val repeated = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.PaymentInstructionsSet(text))))
+      AuctionCommands(repeated, noLots, granted)
+        .setPaymentInstructions(auctionOfMeetup, Some(text), op(7), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(repeated, noLots, granted)
+        .setPaymentInstructions(auctionOfMeetup, PaymentInstructions.parse("Наличными"), op(7), person)
+        .futureValue shouldBe Left(PaymentInstructionsRefusal.OpIdTaken)
+      AuctionCommands(repeated, noLots, granted)
+        .setPaymentInstructions(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(PaymentInstructionsRefusal.OpIdTaken)
+      repeated.commands shouldBe empty
+    }
+
+    "hands the payment text to the auction of a cancelled meetup" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val text = PaymentInstructions.parse("Карта").get
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.cancelled)))
+        .setPaymentInstructions(auctionOfMeetup, Some(text), op(7), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SetPaymentInstructions(Some(text), op(7)))
+    }
+
+    "refuses a foreign command that took the op_id of the time" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.finalTimeAnswer = Right(AuctionAnswer.Written(AuctionEnvelope(5, op(7), AuctionEvent.PrebiddingStarted)))
+      AuctionCommands(auctions, noLots, granted)
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
+    }
+
+    "refuses an estimated time under the op_id of another auction command, an absent auction and a stranger" in {
+      val taken = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(7), AuctionEvent.PrebiddingStarted)))
+      AuctionCommands(taken, noLots, granted)
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, granted)
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.Denied(Denial.AuctionNotFound))
+      val stranger = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(stranger, noLots, Meetups(Authority.NotAdministrator))
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.Denied(Denial.NotAdministrator))
+      stranger.commands shouldBe empty
+    }
+
+    "answers the refusal of the auction about the estimated time of the final" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      auctions.finalTimeAnswer = Left(FinalTimeRejected.FinalAlreadyStarted)
+      commands.setFinalTime(auctionOfMeetup, Some(deadline), op(7), person).futureValue shouldBe
+        Left(FinalTimeRefusal.FinalAlreadyStarted)
+      auctions.finalTimeAnswer = Left(FinalTimeRejected.AuctionAlreadyFinished)
+      commands.setFinalTime(auctionOfMeetup, Some(deadline), op(8), person).futureValue shouldBe
+        Left(FinalTimeRefusal.AuctionAlreadyFinished)
+      auctions.finalTimeAnswer = Left(FinalTimeRejected.AuctionAlreadyCancelled)
+      commands.setFinalTime(auctionOfMeetup, None, op(9), person).futureValue shouldBe
+        Left(FinalTimeRefusal.AuctionAlreadyCancelled)
     }
 
     "grants the console only once meetups confirms the administrator" in {

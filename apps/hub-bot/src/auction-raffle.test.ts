@@ -77,3 +77,50 @@ describe("shared raffle result text", () => {
     ).toContain("Жеребьёвка: &lt;b&gt;14 октября");
   });
 });
+
+// Приз розыгрыша (PER-649) — строка-поле экрана участника: её видно и до
+// жеребьёвки, и в итоге, а без приза строки нет вовсе.
+describe("shared raffle prize line", () => {
+  const prizeLines = (paragraphs: readonly string[]): string[] =>
+    paragraphs.filter((line) => line.startsWith("Приз: "));
+
+  it("names the prize on every screen where the raffle is still going", () => {
+    for (const status of ["open", "closing", "awaiting-beacon"] as const) {
+      expect(
+        prizeLines(
+          raffleParagraphs({ ...base, status, prize: "кружка" }, { moment }),
+        ),
+      ).toEqual(["Приз: кружка"]);
+    }
+  });
+
+  it("names the prize in the result right after the winner", () => {
+    const paragraphs = raffleParagraphs(drawnRaffle({ prize: "кружка" }), {
+      moment,
+    });
+    expect(paragraphs.indexOf("Приз: кружка")).toBe(1);
+  });
+
+  // Пустых строк «Приз:» экран не показывает: розыгрыш без приза выглядит как
+  // до PER-649.
+  it("shows no prize line when the raffle has no prize", () => {
+    for (const status of [
+      "open",
+      "closing",
+      "awaiting-beacon",
+      "drawn",
+      "no-tickets",
+      "not-held",
+    ] as const) {
+      expect(
+        prizeLines(raffleParagraphs({ ...base, status }, { moment })),
+      ).toEqual([]);
+    }
+  });
+
+  it("escapes the prize it is handed", () => {
+    expect(
+      raffleParagraphs({ ...base, prize: "кружка <b>" }, { moment }),
+    ).toContain("Приз: кружка &lt;b&gt;");
+  });
+});

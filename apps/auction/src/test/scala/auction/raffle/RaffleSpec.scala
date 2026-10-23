@@ -59,6 +59,22 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       seeded shouldBe false
     }
 
+    "carries the announced prize in its terms and leaves it out when none was announced" in {
+      val withPrize =
+        Raffle.decide(Raffle.initial, OpenRaffle(closesAt, Some("кружка")), before, seed) match {
+          case RaffleDecision.Accepted(event) => step(Raffle.initial, op(1), event)
+          case other => fail(s"raffle did not open: $other")
+        }
+      withPrize.state match {
+        case RaffleState.Open(opened, _) => opened.prize shouldBe Some("кружка")
+        case other => fail(s"raffle is not open: $other")
+      }
+      open.state match {
+        case RaffleState.Open(opened, _) => opened.prize shouldBe None
+        case other => fail(s"raffle is not open: $other")
+      }
+    }
+
     "does not change the announced terms on a repeated opening" in {
       Raffle.decide(open, OpenRaffle(closesAt.plusSeconds(3600)), before, seed) shouldBe RaffleDecision.Unchanged
     }

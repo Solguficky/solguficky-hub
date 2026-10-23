@@ -2,6 +2,7 @@ package auction.persistence
 
 import auction.access.AccessRight
 import auction.access.Viewer
+import auction.catalog.CardStanding
 import auction.catalog.CatalogRefusal
 import auction.catalog.ImageChange
 import auction.catalog.LotCatalogCommands
@@ -19,6 +20,7 @@ import org.scalatest.wordspec.AnyWordSpec
 
 import java.util.UUID
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.Future
 import scala.util.Using
 
 final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with ScalaFutures with PostgresFixture {
@@ -72,7 +74,12 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
     val kit = node(database)
     try {
       val store = SlickLotCatalogStore(kit.system)
-      use(store, LotCatalogCommands(store)(using kit.system.executionContext))
+      use(
+        store,
+        LotCatalogCommands(store, _ => Future.successful(CardStanding.Open))(using
+          kit.system.executionContext
+        )
+      )
     } finally kit.shutdownTestKit()
   }
 

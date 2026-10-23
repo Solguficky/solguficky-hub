@@ -74,6 +74,56 @@ let ``The community administrator relation is asked of Identity as the manage_me
 
     test <@ identity.Asked = [ Sample.authorId, ManageMeetups ] @>
 
+/// Ведущий аукциона — держатель run_auctions (ADR-070): Auction спрашивает этим
+/// отношением, и manage_meetups его не заменяет.
+[<Fact>]
+let ``The auction runner relation is asked of Identity as the run_auctions right`` () =
+    let identity = Identity(Ok true)
+
+    execute
+        (deps identity (Store stored))
+        { query with
+            Accepted = Set.singleton AuctionRunner
+        }
+    |> Async.AwaitTask
+    |> Async.RunSynchronously
+    |> ignore
+
+    test <@ identity.Asked = [ Sample.authorId, RunAuctions ] @>
+
+/// Держатель одного manage_meetups ведущим аукциона не становится: Identity
+/// спрашивают run_auctions, и «нет» по нему — отказ до загрузки.
+[<Fact>]
+let ``A holder of manage_meetups alone is refused the auction runner relation`` () =
+    let asked = ResizeArray<AccessRight>()
+    let store = Store stored
+
+    let deps =
+        {
+            AskRight =
+                Some(fun _ right ->
+                    asked.Add right
+                    Task.FromResult(Ok(right = ManageMeetups))
+                )
+            Load = store.Load
+        }
+
+    let result =
+        execute
+            deps
+            { query with
+                Accepted = Set.singleton AuctionRunner
+            }
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
+    test
+        <@
+            result = Error CheckMeetupAuthorityError.Forbidden
+            && List.ofSeq asked = [ RunAuctions ]
+            && store.Loaded = []
+        @>
+
 /// Неразличимость для постороннего проверяется не сравнением ответов, а тем, что
 /// загрузки нет вовсе: одинаковый путь исполнения одинаков и по времени.
 [<Fact>]

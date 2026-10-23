@@ -22,6 +22,7 @@ service MeetupsService {
   rpc GetMeetup(GetMeetupRequest) returns (MeetupSnapshot);
   rpc ListMeetupStates(ListMeetupStatesRequest) returns (ListMeetupStatesResponse);
   rpc CheckMeetupAuthority(CheckMeetupAuthorityRequest) returns (MeetupAuthority);
+  rpc GetMeetupStanding(GetMeetupStandingRequest) returns (MeetupStanding);
 }
 
 // Deliberately carries no description of the caller's scenario and no roles of
@@ -51,6 +52,10 @@ enum MeetupRelation {
   // Holder of identity.v1.ACCESS_RIGHT_MANAGE_MEETUPS; the relation holds for
   // every meetup.
   MEETUP_RELATION_COMMUNITY_ADMINISTRATOR = 1;
+
+  // Holder of identity.v1.ACCESS_RIGHT_RUN_AUCTIONS; the relation holds for
+  // every meetup.
+  MEETUP_RELATION_AUCTION_RUNNER = 2;
 }
 
 // The status is the whole answer to "does the relation hold"; the body carries
@@ -59,6 +64,21 @@ enum MeetupRelation {
 // grant or expiry here. An UNSPECIFIED state value means the producer did not
 // supply it.
 message MeetupAuthority {
+  MeetupLifecycle lifecycle = 1;
+  MeetupVisibility visibility = 2;
+}
+
+// A service read without a person: the caller decides its own gate on the
+// meetup's state and shows nothing of the meetup itself. A hidden meetup is
+// answered like any other. NOT_FOUND means the meetup does not exist.
+message GetMeetupStandingRequest {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+}
+
+// Both axes are always supplied by the producer; an UNSPECIFIED value means the
+// producer did not supply it and the caller has no state to decide on.
+message MeetupStanding {
   MeetupLifecycle lifecycle = 1;
   MeetupVisibility visibility = 2;
 }

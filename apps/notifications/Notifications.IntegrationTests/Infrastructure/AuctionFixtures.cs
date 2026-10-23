@@ -32,7 +32,32 @@ public static class AuctionFixtures
     public static AuctionSale DecodeSale(global::Auction.V1.LotEvent message) =>
         AuctionMapping.Decode(AuctionFeed.LotSoldSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Sale>().Value;
 
-    public static Task<long> Count(IsolatedDatabase db, string table) =>
+    public static AuctionRemoval DecodeRemoval(global::Auction.V1.LotEvent message) =>
+        AuctionMapping.Decode(AuctionFeed.ParticipantRemovedSubject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Removal>().Value;
+
+    /// <summary>Факт лота без повода: удержание, открытие и прочее.</summary>
+    public static AuctionLotFact DecodeLot(string subject, global::Auction.V1.LotEvent message) =>
+        AuctionMapping.Decode(subject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Lot>().Value;
+
+    /// <summary>Лидер и цена из реплики лота: по нему адресуются напоминание и «перебили».</summary>
+    public static async Task<Guid?> ReplicaLeader(IsolatedDatabase db, string lotId)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        return await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+            "SELECT leader_id FROM lot_replica WHERE lot_id = @LotId;",
+            new { LotId = Guid.Parse(lotId) }, cancellationToken: Cancellation));
+    }
+
+    /// <summary>Удержание лота: его читают анонс состава финала и весть «твой лот следующий».</summary>
+    public static async Task<(Guid? Leader, long Price)?> Hold(IsolatedDatabase db, string lotId)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        var row = await connection.QuerySingleOrDefaultAsync<(Guid? Leader, long Price)?>(new CommandDefinition(
+            "SELECT leader_id AS \"Leader\", price_minor_units AS \"Price\" FROM lot_hold WHERE lot_id = @LotId;",
+            new { LotId = Guid.Parse(lotId) }, cancellationToken: Cancellation));
+        return row;
+    }    public static Task<long> Count(IsolatedDatabase db, string table) =>
         Scalar<long>(db, $"SELECT count(*) FROM {table};");
 
     public static async Task<Notification> StoredFact(IsolatedDatabase db) =>
@@ -71,6 +96,32 @@ public static class AuctionFixtures
         await using var work = await UnitOfWork.Begin(source, Cancellation);
         await FinalStore.SetAnnouncements(work, Guid.Parse(identityId), enabled, EventFactory.Committed, Cancellation);
         await work.Commit(Cancellation);
+    }
+
+    /// <summary>Выключатель перебитий в живом финале участника, как его записала бы команда.</summary>
+    public static async Task SetLiveFinalOutbids(IsolatedDatabase db, string identityId, bool enabled)
+    {
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        await using var work = await UnitOfWork.Begin(source, Cancellation);
+        await OutbidStore.SetLiveFinal(work, Guid.Parse(identityId), enabled, EventFactory.Committed, Cancellation);
+        await work.Commit(Cancellation);
+    }
+
+    /// <summary>Выключатель вестей о новом аукционе, как его записала бы команда (PER-646).</summary>
+    public static async Task SetAuctionAnnouncements(IsolatedDatabase db, string identityId, bool enabled)
+    {
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        await using var work = await UnitOfWork.Begin(source, Cancellation);
+        await AuctionAnnouncementStore.Set(work, Guid.Parse(identityId), enabled, EventFactory.Committed,
+            Cancellation);
+        await work.Commit(Cancellation);
+    }
+
+    /// <summary>Та же ставка, но на лоте живого финала (<c>LOT_PHASE_LIVE</c>).</summary>
+    public static global::Auction.V1.LotEvent Live(global::Auction.V1.LotEvent bid)
+    {
+        bid.State.Trading.Phase = global::Auction.V1.LotPhase.Live;
+        return bid;
     }
 
     /// <summary>Закрывает все окна, наступившие к моменту, как это сделал бы проход.</summary>

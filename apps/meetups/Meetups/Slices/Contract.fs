@@ -76,6 +76,7 @@ module Inbound =
         let relation (value: Meetups.V1.MeetupRelation) =
             match value with
             | Meetups.V1.MeetupRelation.CommunityAdministrator -> Some CommunityAdministrator
+            | Meetups.V1.MeetupRelation.AuctionRunner -> Some AuctionRunner
             | _ -> None
 
         let parsed = values |> Seq.map relation |> List.ofSeq
@@ -153,6 +154,7 @@ module Inbound =
         | Identity.V1.AccessRight.AdmitBidders -> Some AdmitBidders
         | Identity.V1.AccessRight.ManageMeetups -> Some ManageMeetups
         | Identity.V1.AccessRight.GrantAdmins -> Some GrantAdmins
+        | Identity.V1.AccessRight.RunAuctions -> Some RunAuctions
         | _ -> None
 
     let viewer (value: Meetups.V1.Viewer) : Result<Viewer, InvalidRequest> =

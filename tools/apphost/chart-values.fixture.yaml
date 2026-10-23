@@ -3,8 +3,8 @@
 # Every image is pinned by a synthetic digest: the check proves that the chart
 # takes the image from values and carries a digest reference through unchanged.
 # Real digests, the registry path and the secret values live in the ops
-# repository (ADR-055) and never here. The auction bot has no key of its own:
-# it runs the hub bot's image (ADR-064, item 18).
+# repository (ADR-055) and never here. The auction and support bots have no key
+# of their own: they run the hub bot's image (ADR-064, item 18).
 parameters:
   identity:
     identity_image: "ghcr.io/solguficky/identity@sha256:1111111111111111111111111111111111111111111111111111111111111111"

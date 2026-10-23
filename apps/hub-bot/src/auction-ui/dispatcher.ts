@@ -10,6 +10,11 @@ import {
 } from "./internal/use-cases/commands.js";
 import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
 import {
+  chooseFulfillment,
+  openInvoice,
+  openInvoices,
+} from "./internal/use-cases/invoices.js";
+import {
   answerNameQuestion,
   askNameAlias,
   chooseNameUsername,
@@ -19,6 +24,19 @@ import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
+import { openSet } from "./internal/use-cases/open-set.js";
+import { openPredictionResults } from "./internal/use-cases/prediction-results.js";
+import {
+  answerPredictionAlias,
+  answerPredictionNumber,
+  askPredictionAlias,
+  cancelPredictionAlias,
+  choosePredictionUsername,
+  clearPredictionNomination,
+  editPrediction,
+  openPrediction,
+  submitPredictionLot,
+} from "./internal/use-cases/predictions.js";
 import {
   answerRaffleQuestion,
   askRaffleAlias,
@@ -101,6 +119,15 @@ export function dispatchAuctionIntent(input: {
         page: intent.page,
         historyPage: intent.historyPage,
       });
+    // Экран сета (ADR-073, п. 7): открывается с карточки лота сета.
+    case "set":
+      return openSet({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
+      });
     case "confirm":
       return confirmCommand(context, intent);
     case "commit":
@@ -142,6 +169,8 @@ export function dispatchAuctionIntent(input: {
           ? {}
           : { auctionId: intent.auctionId }),
       });
+    case "prediction-results":
+      return openPredictionResults(context, intent.auctionId);
     case "raffle":
       return openRaffle(context, intent.auctionId);
     case "raffle-register":
@@ -169,6 +198,44 @@ export function dispatchAuctionIntent(input: {
       return input.answer === undefined
         ? openName(context, intent.auctionId)
         : answerNameQuestion(context, intent.auctionId, input.answer.text);
+    case "prediction":
+      return openPrediction(context, intent);
+    case "prediction-edit":
+      return editPrediction(context, intent);
+    case "prediction-lots":
+      return editPrediction(context, intent);
+    case "prediction-lot":
+      return submitPredictionLot(context, intent);
+    case "prediction-clear":
+      return clearPredictionNomination(context, intent);
+    case "prediction-username":
+      return choosePredictionUsername(context, intent);
+    case "prediction-ask-alias":
+      return Promise.resolve(askPredictionAlias(context, intent));
+    case "prediction-number-question":
+      return input.answer === undefined
+        ? openPrediction(context, intent)
+        : answerPredictionNumber(context, {
+            ...intent,
+            ...(input.answer.text === undefined
+              ? {}
+              : { text: input.answer.text }),
+          });
+    case "prediction-alias-question":
+      return input.answer === undefined
+        ? Promise.resolve(cancelPredictionAlias(context, intent))
+        : answerPredictionAlias(context, {
+            ...intent,
+            ...(input.answer.text === undefined
+              ? {}
+              : { text: input.answer.text }),
+          });
+    case "invoices":
+      return openInvoices(context, intent.auctionId);
+    case "invoice":
+      return openInvoice(context, intent.lotId, intent.invoiceId);
+    case "fulfillment":
+      return chooseFulfillment(context, intent);
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

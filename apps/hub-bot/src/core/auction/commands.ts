@@ -45,6 +45,11 @@ export function bidOutcomeOf(
             kind: "bid-below-minimum",
             minRequired: priced(reason.value.minRequired),
           });
+        case "bidAboveMaximum":
+          return refused({
+            kind: "bid-above-maximum",
+            next: fifth(priced(reason.value.maximum)),
+          });
         case "bidNotAtNextPrice":
           return refused({
             kind: "bid-not-at-next-price",
@@ -59,6 +64,8 @@ export function bidOutcomeOf(
           return refused({ kind: "currency-mismatch" });
         case "displayNameNotChosen":
           return refused({ kind: "display-name-not-chosen" });
+        case "participantRemovedFromLot":
+          return refused({ kind: "removed-from-lot" });
         // Отказы ставки зала: бот ставит от имени смотрящего и источника не
         // передаёт, поэтому такой отказ — дефект соседа, а не исход ставки.
         case "notMeetupAdministrator":
@@ -105,6 +112,8 @@ export function limitOutcomeOf(
           return refused({ kind: "currency-mismatch" });
         case "displayNameNotChosen":
           return refused({ kind: "display-name-not-chosen" });
+        case "participantRemovedFromLot":
+          return refused({ kind: "removed-from-lot" });
         case undefined:
           throw new Error("proxy limit refusal without a reason");
         default: {
@@ -193,6 +202,13 @@ function displayNameRefusalOf(
 
 function refused<Refusal>(refusal: Refusal): CommandOutcome<Refusal> {
   return { kind: "refused", refusal };
+}
+
+function fifth(maximum: Money): Money {
+  if (maximum.minorUnits % 5 !== 0) {
+    throw new Error("bid ceiling is not five times a next price");
+  }
+  return { minorUnits: maximum.minorUnits / 5, currency: maximum.currency };
 }
 
 function priced(money: WireMoney | undefined): Money {

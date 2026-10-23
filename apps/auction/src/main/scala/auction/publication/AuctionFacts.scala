@@ -3,6 +3,7 @@ package auction.publication
 import auction.aggregate.Auction
 import auction.aggregate.AuctionEvent
 import auction.aggregate.AuctionState
+import auction.aggregate.LotSetSettlement
 import auction.contract.AuctionValues
 import auction.contract.LotValues
 import auction.entity.AuctionJournal
@@ -17,6 +18,9 @@ import auction.v1.auction_events as bus
  *
  * Удалённый до торгов аукцион свёрнут в `Initial`, и снимок после события его не опишет. Поэтому снимок
  * `auction_discarded` — строка до события со статусом `discarded`: сходка, конфигурация и реестр, какими они были.
+ *
+ * Сеты лотов (ADR-073) снимок не несёт: определение и удаление сета фактов не дают, а итог сета — факт
+ * `lot_set_collected` с сетом в поводе и только у собранного сета. Его читает Notifications, чтобы сообщить собравшему.
  */
 object AuctionFacts {
 
@@ -28,7 +32,7 @@ object AuctionFacts {
       after: AuctionViewRow
   ): Option[Fact] = {
     val event = AuctionJournal.restoreEvent(stored.event)
-    occasion(event).map { (name, occasion) =>
+    occasion(event, AuctionJournal.restoreAuction(after.stored)).map { (name, occasion) =>
       val snapshot = event match {
         case AuctionEvent.AuctionDiscarded =>
           before.fold(throw new IllegalStateException(s"auction ${after.auctionId} discarded without a row"))(discarded)
@@ -48,11 +52,12 @@ object AuctionFacts {
 
   /**
    * Повод события и имя его subject'а, как у [[LotFacts.occasion]]: match без ветки по умолчанию, и новое событие
-   * аукциона не скомпилируется, пока ему не назначат повод.
+   * аукциона не скомпилируется, пока ему не назначат повод. `after` — аукцион после события: из него итог сета берёт
+   * название и лоты сета.
    */
-  def occasion(event: AuctionEvent): Option[(String, bus.AuctionEvent.Occasion)] =
+  def occasion(event: AuctionEvent, after: Auction): Option[(String, bus.AuctionEvent.Occasion)] =
     event match {
-      case AuctionEvent.AuctionDrafted(_) =>
+      case AuctionEvent.AuctionDrafted(_, _) =>
         Some("auction_drafted" -> bus.AuctionEvent.Occasion.AuctionDrafted(bus.AuctionDrafted()))
       case AuctionEvent.AuctionScheduled(_) =>
         Some("auction_scheduled" -> bus.AuctionEvent.Occasion.AuctionScheduled(bus.AuctionScheduled()))
@@ -86,6 +91,32 @@ object AuctionFacts {
         Some("auction_discarded" -> bus.AuctionEvent.Occasion.AuctionDiscarded(bus.AuctionDiscarded()))
       case AuctionEvent.AuctionCancelled =>
         Some("auction_cancelled" -> bus.AuctionEvent.Occasion.AuctionCancelled(bus.AuctionCancelled()))
+      // Запущенное окно публикуют его лоты фактом `step_window_added`: окна — данные лота, а не аукциона (ADR-047,
+      // дополнение 2026-10-12).
+      case AuctionEvent.StepWindowLaunched(_) => None
+      // Видимость — факт аукциона: по нему Notifications сообщает о новом аукционе и снимает неотправленную весть
+      // (ADR-047, дополнение 2026-10-20; PER-646).
+      case AuctionEvent.AuctionPublished =>
+        Some("auction_published" -> bus.AuctionEvent.Occasion.AuctionPublished(bus.AuctionPublished()))
+      case AuctionEvent.AuctionHidden =>
+        Some("auction_hidden" -> bus.AuctionEvent.Occasion.AuctionHidden(bus.AuctionHidden()))
+      // Ориентировочное время финала — подпись для экрана зала и бота хаба, а не повод для шины (ADR-040, дополнение
+      // 2026-10-19).
+      case AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared => None
+      // Текст оплаты подписчика на шине не имеет: победитель читает его вместе со счетами (PER-322).
+      case AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared => None
+      // Определение сета — рабочий выбор организатора до торгов, как отметка финалиста: фактом он не публикуется.
+      case AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) => None
+      // Несобранный сет никому не сообщается (ADR-073, пп. 5–6): факта у него нет.
+      case AuctionEvent.LotSetSettled(_, LotSetSettlement.NotCollected) => None
+      case AuctionEvent.LotSetSettled(id, LotSetSettlement.Collected(by)) =>
+        val set =
+          after.sets.getOrElse(id, throw new IllegalStateException(s"lot set ${id.value} settled without a set"))
+        Some(
+          "lot_set_collected" -> bus.AuctionEvent.Occasion.LotSetCollected(
+            bus.LotSetCollected(id.value.toString, set.name.value, set.lots.map(_.value.toString), by.value.toString)
+          )
+        )
     }
 
   /** Публичное состояние аукциона: сходка, конфигурация, реестр по возрастанию `lot_id` и статус. */
@@ -122,7 +153,10 @@ object AuctionFacts {
       id = row.auctionId.toString,
       config = config.map(AuctionValues.config),
       lotIds = auction.lots.toList.map(_.value).sorted.map(_.toString),
-      meetupId = row.meetupId.toString
+      meetupId = row.meetupId.toString,
+      // Признак скрытия шина несёт полем, а не поводом: без него снимок показывал бы видимость до следующего факта
+      // аукциона (ADR-047, дополнение 2026-10-20).
+      hidden = auction.hidden
     )
   }
 }

@@ -14,6 +14,8 @@ import auction.lot.LotFixtures.op
 import auction.lot.LotFixtures.rub
 import auction.lot.MarkForFinal
 import auction.lot.Money
+import auction.lot.RemoveParticipant
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ScheduleLot
 import auction.lot.StepPolicyInput
 import auction.lot.UnmarkForFinal
@@ -23,6 +25,7 @@ import org.scalatest.wordspec.AnyWordSpec
 import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
 
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 
 final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPropertyChecks {
@@ -32,6 +35,9 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
 
   private val meetup = MeetupId(UUID.fromString("0190a0e0-0000-7000-8000-000000000001"))
   private val lot = LotId(new UUID(5L, 1L))
+
+  /** Ориентировочное время финала: подпись администратора, а не условие торгов (ADR-040, дополнение 2026-10-19). */
+  private val finalAt: Instant = Instant.parse("2026-10-09T18:00:00Z")
 
   private def born: Auction =
     Auction.apply(Auction.initial, AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)))
@@ -69,6 +75,24 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         id.variant shouldBe 2
         Auction.idOf(MeetupId(a)) shouldBe Auction.idOf(MeetupId(a))
         if (a != b) Auction.idOf(MeetupId(b)) should not be Auction.idOf(MeetupId(a))
+      }
+    }
+  }
+
+  "op_id of a meetup cancellation" should {
+
+    "keeps the vector fixed by its namespace" in {
+      // Сменённое пространство имён дало бы повторной доставке факта новый `op_id`, и окно `seen` её бы не узнало.
+      Auction.meetupCancellationOf(UUID.fromString("0190a0e0-0000-7000-8000-0000000000aa")).value.toString shouldBe
+        "5e8b899a-97a5-5112-b58e-0a4d5892ffb0"
+    }
+
+    "is a version 5 uuid, the same for one event and different for another" in {
+      forAll(Gen.uuid, Gen.uuid) { (a, b) =>
+        val id = Auction.meetupCancellationOf(a).value
+        id.version shouldBe 5
+        Auction.meetupCancellationOf(a) shouldBe Auction.meetupCancellationOf(a)
+        if (a != b) Auction.meetupCancellationOf(b) should not be Auction.meetupCancellationOf(a)
       }
     }
   }
@@ -187,6 +211,58 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Right(AuctionDecision.Repeated(AuctionEnvelope(8, op(8), AuctionEvent.LotAdded(lot))))
     }
 
+    "is born hidden from participants, and a birth written before the visibility mark is visible" in {
+      Auction.decide(Auction.initial, DraftAuction(meetup, op(1))) shouldBe
+        AuctionDecision.Accepted(AuctionEvent.AuctionDrafted(meetup, hidden = true))
+      born.hidden shouldBe true
+      val legacy = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup, hidden = false))
+      Auction.apply(Auction.initial, legacy).hidden shouldBe false
+    }
+
+    "is published and hidden again from a draft and once scheduled, writing an event each time" in {
+      for (auction <- List(born, scheduled)) {
+        val publishing = Auction.decide(auction, ChangeVisibility(published = true, op(10)))
+        publishing shouldBe Right(AuctionDecision.Accepted(AuctionEvent.AuctionPublished))
+        val published = applied(auction, publishing.toOption.get, 10, 10)
+        published.hidden shouldBe false
+        published.state shouldBe auction.state
+        // Уже видимый аукцион пишет публикацию ещё раз: запоздавший повтор не должен её отменить, как у `LotAdded`.
+        Auction.decide(published, ChangeVisibility(published = true, op(11))) shouldBe
+          Right(AuctionDecision.Accepted(AuctionEvent.AuctionPublished))
+        val hiding = Auction.decide(published, ChangeVisibility(published = false, op(12)))
+        hiding shouldBe Right(AuctionDecision.Accepted(AuctionEvent.AuctionHidden))
+        applied(published, hiding.toOption.get, 12, 12).hidden shouldBe true
+      }
+    }
+
+    "answers a repeated publication with the original envelope, whatever the visibility is now" in {
+      val published = Auction.apply(born, AuctionEnvelope(10, op(10), AuctionEvent.AuctionPublished))
+      val hidden = Auction.apply(published, AuctionEnvelope(11, op(11), AuctionEvent.AuctionHidden))
+      Auction.decide(hidden, ChangeVisibility(published = true, op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.AuctionPublished)))
+    }
+
+    "refuses to change its visibility before it is born and once prebidding started" in {
+      for (published <- List(true, false)) {
+        Auction.decide(Auction.initial, ChangeVisibility(published, op(4))) shouldBe
+          Left(VisibilityRejected.AuctionNotFound)
+        Auction.decide(started, ChangeVisibility(published, op(4))) shouldBe
+          Left(VisibilityRejected.AuctionAlreadyStarted)
+      }
+    }
+
+    "is published by the start of prebidding and stays visible after it" in {
+      scheduled.hidden shouldBe true
+      started.hidden shouldBe false
+    }
+
+    "is born hidden again after a discard of a published auction" in {
+      val published = Auction.apply(born, AuctionEnvelope(10, op(10), AuctionEvent.AuctionPublished))
+      val discarded = Auction.apply(published, AuctionEnvelope(11, op(11), AuctionEvent.AuctionDiscarded))
+      discarded.hidden shouldBe false
+      applied(discarded, Auction.decide(discarded, DraftAuction(meetup, op(12))), 12, 12).hidden shouldBe true
+    }
+
     "is born again at the same meetup after a discard, with an empty registry" in {
       val discarded = Auction.apply(holding(scheduled), AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
       val decision = Auction.decide(discarded, DraftAuction(meetup, op(11)))
@@ -195,6 +271,34 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       reborn.state shouldBe AuctionState.Draft
       reborn.meetup shouldBe Some(meetup)
       reborn.lots shouldBe empty
+    }
+
+    "refuses a lot of the discarded birth in the new one, even one removed before the discard" in {
+      val removed = Auction.apply(holding(scheduled), AuctionEnvelope(9, op(9), AuctionEvent.LotRemoved(lot)))
+      val discarded = Auction.apply(removed, AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
+      val reborn = Auction.apply(discarded, AuctionEnvelope(11, op(11), AuctionEvent.AuctionDrafted(meetup)))
+
+      Auction.decide(reborn, AddLot(lot, op(12))) shouldBe Left(AddLotRejected.LotOfDiscardedAuction)
+    }
+
+    "accepts a new lot in the birth after a discard" in {
+      val discarded = Auction.apply(holding(scheduled), AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
+      val reborn = Auction.apply(discarded, AuctionEnvelope(11, op(11), AuctionEvent.AuctionDrafted(meetup)))
+      val fresh = LotId(new UUID(5L, 2L))
+
+      Auction.decide(reborn, AddLot(fresh, op(12))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.LotAdded(fresh)))
+    }
+
+    "accepts a lot of the new birth again after it was removed" in {
+      val discarded = Auction.apply(holding(scheduled), AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
+      val reborn = Auction.apply(discarded, AuctionEnvelope(11, op(11), AuctionEvent.AuctionDrafted(meetup)))
+      val fresh = LotId(new UUID(5L, 2L))
+      val added = Auction.apply(reborn, AuctionEnvelope(12, op(12), AuctionEvent.LotAdded(fresh)))
+      val removed = Auction.apply(added, AuctionEnvelope(13, op(13), AuctionEvent.LotRemoved(fresh)))
+
+      Auction.decide(removed, AddLot(fresh, op(14))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.LotAdded(fresh)))
     }
 
     "refuses scheduling before it is born" in {
@@ -365,6 +469,34 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       applied(onBreak, Auction.decide(onBreak, FreezeFinalLineup(List(lot), op(8)), Some(Set(lot))).toOption.get, 8, 8)
 
     def inFinal: Auction = applied(frozen, Auction.decide(frozen, StartFinal(op(9))).toOption.get, 9, 9)
+
+    val person = LotFixtures.participant(3)
+
+    // ADR-072, п. 4 и «Открыто» (PER-658): фазу лота, дедлайн и участника судит лот, а аукцион — реестр и состав финала.
+    "sends the lot a removal from the online trading until the lineup freezes, and refuses a lot of the frozen lineup" in {
+      def remove(auction: Auction, of: LotId) = Auction.decide(auction, RemoveLotParticipant(of, person, 4, op(20)))
+      val removal = RemoveParticipant(person, op(20), 4)
+
+      List(trading, settling, onBreak).foreach(auction => remove(auction, lot) shouldBe Right(removal))
+      remove(frozen, lot) shouldBe Left(ParticipantRemovalRejected.LineupFrozen)
+      remove(frozen, other) shouldBe Right(removal)
+      remove(inFinal, lot) shouldBe Left(ParticipantRemovalRejected.LineupFrozen)
+      val active = inFinal.copy(state = AuctionState.Final(config(), op(5), List(lot), List(lot), Nil))
+      remove(active, lot) shouldBe Right(removal)
+      Auction.decide(onBreak, PreviewLotParticipantRemoval(lot, person)) shouldBe Right(person)
+      Auction.decide(frozen, PreviewLotParticipantRemoval(lot, person)) shouldBe
+        Left(ParticipantRemovalRejected.LineupFrozen)
+    }
+
+    "refuses a removal before prebidding, outside the registry, and once the auction is over" in {
+      def remove(auction: Auction) = Auction.decide(auction, RemoveLotParticipant(lot, person, 4, op(20)))
+      val cancelled = applied(trading, Auction.decide(trading, CancelAuction(op(6))).toOption.get, 6, 6)
+
+      remove(holding(scheduled)) shouldBe Left(ParticipantRemovalRejected.NotInPrebidding)
+      remove(started) shouldBe Left(ParticipantRemovalRejected.LotNotInAuction)
+      remove(Auction.initial) shouldBe Left(ParticipantRemovalRejected.AuctionNotFound)
+      remove(cancelled) shouldBe Left(ParticipantRemovalRejected.ByLot(RemoveParticipantRejected.LotNotOpen))
+    }
 
     "waits for the common deadline of the config and then settles" in {
       Auction.decide(trading, EndPrebidding(op(6), closesAt.minusMillis(1))) shouldBe
@@ -585,6 +717,34 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Right(AuctionDecision.Accepted(AuctionEvent.AuctionCancelled))
     }
 
+    "inherits a cancelled meetup: discards before trading, cancels while trading and leaves the rest untouched" in {
+      val inherit = ApplyMeetupCancelled(op(50))
+      Auction.decide(Auction.initial, inherit, None) shouldBe AuctionDecision.Unchanged
+      List(born, scheduled).foreach { auction =>
+        Auction.decide(auction, inherit, None) shouldBe AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded)
+      }
+      List(trading, settling, frozen, inFinal, active).foreach { auction =>
+        Auction.decide(auction, inherit, None) shouldBe AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
+      }
+      Auction.decide(onBreak, inherit, Some(Set(lot))) shouldBe AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
+      // Уже кончившиеся торги отмена сходки не трогает, как и отмена администратором.
+      Auction.decide(onBreak, inherit, Some(Set.empty)) shouldBe AuctionDecision.Unchanged
+      Auction.decide(completed, inherit, None) shouldBe AuctionDecision.Unchanged
+      Auction.decide(finished, inherit, None) shouldBe AuctionDecision.Unchanged
+      Auction.decide(cancelled(trading, 6), inherit, None) shouldBe AuctionDecision.Unchanged
+    }
+
+    "answers a repeated meetup cancellation with the original envelope, even after the discard emptied the auction" in {
+      val inherit = ApplyMeetupCancelled(op(50))
+      val discarded = applied(scheduled, Auction.decide(scheduled, inherit, None), 3, 50)
+      discarded.state shouldBe AuctionState.Initial
+      Auction.decide(discarded, inherit, None) shouldBe
+        AuctionDecision.Repeated(AuctionEnvelope(3, op(50), AuctionEvent.AuctionDiscarded))
+      val gone = applied(trading, Auction.decide(trading, inherit, None), 6, 50)
+      Auction.decide(gone, inherit, None) shouldBe
+        AuctionDecision.Repeated(AuctionEnvelope(6, op(50), AuctionEvent.AuctionCancelled))
+    }
+
     "sends no closing to a lot of a cancelled auction, though its withdrawal may not have reached the lot" in {
       Auction.decide(cancelled(active, 11), CloseAuctionLot(lot, op(40))) shouldBe
         Left(CloseAuctionLotRejected.LotNotOpen)
@@ -638,6 +798,113 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.decide(first, CancelAuction(op(30))) shouldBe Right(
         AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
       )
+    }
+  }
+
+  // ADR-040, дополнение 2026-10-19: ориентировочное время финала — подпись, а не условие торгов.
+  "estimated time of the final" should {
+
+    "sets, changes and clears the estimated time of the final before the final starts" in {
+      val set = Auction.decide(scheduled, SetFinalTime(Some(finalAt), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt)))
+      val withTime = applied(scheduled, set.toOption.get, 10, 10)
+      withTime.finalAt shouldBe Some(finalAt)
+
+      val changed = Auction.decide(withTime, SetFinalTime(Some(finalAt.plusSeconds(3600)), op(11)))
+      changed shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt.plusSeconds(3600))))
+      applied(withTime, changed.toOption.get, 11, 11).finalAt shouldBe Some(finalAt.plusSeconds(3600))
+
+      val cleared = Auction.decide(withTime, SetFinalTime(None, op(12)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeCleared))
+      applied(withTime, cleared.toOption.get, 12, 12).finalAt shouldBe None
+    }
+
+    "sets the estimated time while the online trading is going on" in {
+      Auction.decide(started, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt)))
+    }
+
+    "refuses the estimated time once the final has started and once the auction is over" in {
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      Auction.decide(inFinal, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.FinalAlreadyStarted)
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      Auction.decide(finished, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionAlreadyFinished)
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      Auction.decide(cancelled, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionAlreadyCancelled)
+      Auction.decide(Auction.initial, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val set = applied(scheduled, Auction.decide(scheduled, SetFinalTime(Some(finalAt), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.FinalTimeSet(finalAt))))
+    }
+  }
+
+  // PER-322: текст «как оплатить и получить» — не условие торгов, живёт в любом рождённом аукционе.
+  "payment instructions" should {
+
+    val text = PaymentInstructions.parse("Перевод на карту до срока").get
+
+    "sets, changes and clears the text before the trading" in {
+      val set = Auction.decide(scheduled, SetPaymentInstructions(Some(text), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsSet(text)))
+      val withText = applied(scheduled, set.toOption.get, 10, 10)
+      withText.paymentInstructions shouldBe Some(text)
+      withText.state shouldBe scheduled.state
+
+      val cleared = Auction.decide(withText, SetPaymentInstructions(None, op(11)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsCleared))
+      applied(withText, cleared.toOption.get, 11, 11).paymentInstructions shouldBe None
+    }
+
+    "sets the text after the end and after the cancellation of the auction: invoices outlive both" in {
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      List(started, inFinal, finished, cancelled).foreach { auction =>
+        val decided = Auction.decide(auction, SetPaymentInstructions(Some(text), op(10)))
+        decided shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsSet(text)))
+        applied(auction, decided.toOption.get, 10, 10).paymentInstructions shouldBe Some(text)
+      }
+    }
+
+    "refuses the text of an auction that does not exist" in {
+      Auction.decide(Auction.initial, SetPaymentInstructions(Some(text), op(10))) shouldBe
+        Left(PaymentInstructionsRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val set =
+        applied(scheduled, Auction.decide(scheduled, SetPaymentInstructions(Some(text), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetPaymentInstructions(None, op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.PaymentInstructionsSet(text))))
+    }
+
+    "forgets the text when the auction is discarded before the trading" in {
+      val withText = scheduled.copy(paymentInstructions = Some(text))
+      Auction.apply(withText, AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded)).paymentInstructions shouldBe
+        None
+    }
+  }
+
+  "payment instructions text" should {
+
+    "keeps line breaks and strips the edges" in {
+      PaymentInstructions.parse("  Карта\nСамовывоз  ").map(_.value) shouldBe Some("Карта\nСамовывоз")
+    }
+
+    "refuses a blank text and a text over the limit, counting characters rather than UTF-16 units" in {
+      PaymentInstructions.parse(" \n ") shouldBe None
+      PaymentInstructions.parse("я" * PaymentInstructions.MaxLength).map(_.value.length) shouldBe
+        Some(PaymentInstructions.MaxLength)
+      PaymentInstructions.parse("я" * (PaymentInstructions.MaxLength + 1)) shouldBe None
+      // Эмодзи вне BMP — две единицы UTF-16, но один знак.
+      PaymentInstructions.parse("😀" * PaymentInstructions.MaxLength) shouldBe defined
     }
   }
 }

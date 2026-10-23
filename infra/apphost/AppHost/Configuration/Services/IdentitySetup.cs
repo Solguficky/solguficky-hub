@@ -86,6 +86,7 @@ internal static class IdentitySetup
                 context,
                 AppHostNames.Resources.HubBot,
                 AppHostNames.Resources.AuctionBot,
+                AppHostNames.Resources.SupportBot,
                 AppHostNames.Resources.Meetups,
                 AppHostNames.Resources.Notifications,
                 AppHostNames.Resources.Auction)

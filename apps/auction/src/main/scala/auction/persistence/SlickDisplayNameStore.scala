@@ -8,6 +8,7 @@ import auction.naming.ChosenName
 import auction.naming.DisplayNameStore
 import auction.naming.StoredName
 import auction.naming.TelegramUsername
+import auction.watch.AuctionChanges
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
 import org.postgresql.util.PSQLException
@@ -29,6 +30,8 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
 
   private val AliasIndex = "auction_display_name_alias_key"
 
+  private type NameRow = (String, Option[String], Option[String], Option[String], Boolean)
+
   def choose(auction: AuctionId, participant: ParticipantId, name: ChosenName): Future[ChooseResult] = {
     val (username, alias, key) = name match {
       case ChosenName.Telegram(value) => (Some(value.value), None, None)
@@ -41,7 +44,7 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
                ON CONFLICT (auction_id, participant_id) DO UPDATE
                SET telegram_username = EXCLUDED.telegram_username, alias = EXCLUDED.alias, alias_key = EXCLUDED.alias_key
                WHERE NOT auction_display_name.frozen""".flatMap {
-          case 1 => DBIO.successful(ChooseResult.Written)
+          case 1 => announce(auction).map(_ => ChooseResult.Written)
           // Ноль строк значит, что строка есть и заморожена. Если её уже нет, «заморожено» соврало бы.
           case _ =>
             select(auction, Set(participant)).flatMap { rows =>
@@ -62,6 +65,14 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
       }
   }
 
+  /**
+   * Имя входит в снимок экрана зала (ADR-040, дополнение 2026-10-19), а проекции его не пишут: записанный выбор
+   * объявляет аукцион тем же сигналом, что проекции и карточка лота, иначе открытый экран смены имени не увидит.
+   * Заморозка сигнала не даёт: текст имени она не меняет.
+   */
+  private def announce(auction: AuctionId): DBIO[Unit] =
+    sql"""SELECT pg_notify(${AuctionChanges.Channel}, ${auction.value.toString})""".as[String].map(_ => ())
+
   def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean] =
     database
       .run(
@@ -73,17 +84,26 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
   def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] =
     if (participants.isEmpty) Future.successful(Map.empty) else database.run(select(auction, participants))
 
+  def all(auction: AuctionId): Future[Map[ParticipantId, StoredName]] =
+    database.run(
+      sql"""SELECT participant_id::text, telegram_username, alias, alias_key, frozen FROM auction_display_name
+            WHERE auction_id = ${auction.value.toString}::uuid""".as[NameRow].map(rows(auction))
+    )
+
   // UUID приходят типом, а не текстом вызывающего, поэтому литерал массива собирается из их канонической формы.
   private def select(auction: AuctionId, participants: Set[ParticipantId]) = {
     val ids = participants.map(_.value.toString).mkString("{", ",", "}")
     sql"""SELECT participant_id::text, telegram_username, alias, alias_key, frozen FROM auction_display_name
           WHERE auction_id = ${auction.value.toString}::uuid AND participant_id = ANY($ids::uuid[])"""
-      .as[(String, Option[String], Option[String], Option[String], Boolean)]
-      .map(_.map { (id, username, alias, key, frozen) =>
-        val participant = ParticipantId(UUID.fromString(id))
-        participant -> StoredName(restored(auction, participant, username, alias, key), frozen)
-      }.toMap)
+      .as[NameRow]
+      .map(rows(auction))
   }
+
+  private def rows(auction: AuctionId)(found: Seq[NameRow]): Map[ParticipantId, StoredName] =
+    found.map { (id, username, alias, key, frozen) =>
+      val participant = ParticipantId(UUID.fromString(id))
+      participant -> StoredName(restored(auction, participant, username, alias, key), frozen)
+    }.toMap
 
   private def violates(error: PSQLException, constraint: String): Boolean =
     error.getSQLState == "23505" && Option(error.getServerErrorMessage).exists(_.getConstraint == constraint)

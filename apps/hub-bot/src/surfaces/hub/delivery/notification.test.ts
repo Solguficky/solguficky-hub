@@ -12,9 +12,12 @@ import {
 import {
   AccessGrantedSchema,
   AccessRequestedSchema,
+  AuctionFinalLineupSchema,
+  AuctionFinalStartedSchema,
   CircleChangedSchema,
   CommunityAnnouncementSchema,
   LotActivityKind,
+  LotSetCollectedSchema,
   MeetupAspect,
   type MeetupCard,
   MeetupPublishedSchema,
@@ -23,6 +26,8 @@ import {
   NotificationSchema,
   OrganizerMessageSchema,
   PresetGrantedSchema,
+  ReleaseSummarySchema,
+  StepWindowStartedSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -213,6 +218,16 @@ describe("decodeNotification", () => {
         value: { lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0" },
       },
     ],
+    [
+      "lotLeadRestored",
+      {
+        case: "lotLeadRestored",
+        value: {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          currentPrice: { minorUnits: 150_000n, currency: "RUB" },
+        },
+      },
+    ],
   ] as const)(
     "decodes the auction branch %s for the hub recipient",
     (name, type) => {
@@ -236,6 +251,7 @@ describe("decodeNotification", () => {
               lotProxyRaised: "lot-proxy-raised",
               lotPurchased: "lot-purchased",
               lotReminder: "lot-reminder",
+              lotLeadRestored: "lot-lead-restored",
             }[name],
           },
         },
@@ -271,6 +287,97 @@ describe("decodeNotification", () => {
     expect(decoded).toMatchObject({
       kind: "ok",
       notification: { content: { kind: "lot-activity-digest" } },
+    });
+  });
+
+  // Анонс финала (PER-478) участнику доставляет бот хаба, как вести о лотах
+  // (ADR-064, п. 16): без разбора ветка ушла бы в отказ `unrendered_type`.
+  it("decodes the final lineup and the started final for a community member", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    const fact = (type: Notification["type"]) =>
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type,
+          }),
+        ),
+      );
+    expect(
+      fact({
+        case: "auctionFinalLineup",
+        value: create(AuctionFinalLineupSchema, {
+          auctionId,
+          lineup: [{ lotId, price: { minorUnits: 50_000n, currency: "RUB" } }],
+          yourLotIds: [lotId],
+        }),
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "final-lineup", auctionId, yourLotIds: [lotId] },
+      },
+    });
+    expect(
+      fact({
+        case: "auctionFinalStarted",
+        value: create(AuctionFinalStartedSchema, { auctionId }),
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "final-started", auctionId } },
+    });
+  });
+
+  // Начало окна «Счастливых часов» (PER-616) участнику доставляет бот хаба,
+  // как вести о лотах: без разбора ветка ушла бы в отказ `unrendered_type`.
+  it("decodes the start of a window for a community member", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-10-21T19:00:00Z",
+            type: {
+              case: "stepWindowStarted",
+              value: create(StepWindowStartedSchema, {
+                auctionId,
+                startsAt: "2026-10-21T19:00:00Z",
+                lots: [
+                  {
+                    lotId,
+                    until: "2026-10-21T21:00:00Z",
+                    step: { minorUnits: 50_000n, currency: "RUB" },
+                  },
+                ],
+              }),
+            },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "step-window-started",
+          auctionId,
+          lots: [
+            {
+              lotId,
+              until: "2026-10-21T21:00:00Z",
+              step: { minorUnits: 50_000, currency: "RUB" },
+            },
+          ],
+        },
+      },
     });
   });
 
@@ -316,6 +423,132 @@ describe("decodeNotification", () => {
       expect(
         raffle({ auctionId, ticket: 13, winningTicket: 7, ticketCount: 12 }),
       ).toMatchObject({ kind: "malformed" });
+    });
+  });
+
+  // Собранный сет (PER-687) доставляется ботом круга получателя.
+  it("decodes a collected set with its screen anchor", () => {
+    const anchor = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "lotSetCollected",
+            value: create(LotSetCollectedSchema, {
+              setName: "Сервиз",
+              lotCount: 3,
+              lotId: anchor,
+            }),
+          };
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-set-collected",
+          setName: "Сервиз",
+          lotCount: 3,
+          lotId: anchor,
+        },
+      },
+    });
+  });
+
+  // Итоги прогнозов (PER-568) участнику доставляет бот хаба.
+  it("decodes prediction results as the thin notice", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type: { case: "predictionResults", value: { auctionId } },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "prediction-results", auctionId },
+      },
+    });
+  });
+
+  // Извещение об отмене аукциона (PER-606) участнику доставляет бот хаба.
+  it("decodes a cancelled auction with the purchases of the recipient", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type: {
+              case: "auctionCancelled",
+              value: {
+                auctionId,
+                meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+              },
+            },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "auction-cancelled", auctionId, purchases: [] },
+      },
+    });
+  });
+
+  // Вести о новом аукционе и об открытии торгов (PER-646) участнику доставляет
+  // бот хаба; гостю те же ветки приходят в боте аукциона.
+  it("decodes a published auction and the opening of its trading", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const decode = (type: "auctionPublished" | "auctionTradingOpened") =>
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type:
+              type === "auctionPublished"
+                ? {
+                    case: "auctionPublished",
+                    value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+                  }
+                : {
+                    case: "auctionTradingOpened",
+                    value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+                  },
+          }),
+        ),
+      );
+
+    expect(decode("auctionPublished")).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "new-auction", auctionId, meetupTitle: "Пятничная" },
+      },
+    });
+    expect(decode("auctionTradingOpened")).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "trading-opened",
+          auctionId,
+          meetupTitle: "Пятничная",
+        },
+      },
     });
   });
 
@@ -608,6 +841,63 @@ describe("decodeNotification", () => {
       });
     });
 
+    const withCursor = (applicationId: string, createdAt: string) =>
+      published((message) => {
+        message.type = {
+          case: "accessRequested",
+          value: create(AccessRequestedSchema, {
+            queue: ApplicationQueue.COMMUNITY,
+            applicationId,
+            createdAt,
+          }),
+        };
+      });
+
+    // Курсор заявки — то, по чему бот прочитает её карточку (PER-634).
+    it("decodes the application cursor", () => {
+      expect(
+        decodeNotification(
+          withCursor(
+            "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903",
+            "2026-10-12T18:05:07.040Z",
+          ),
+        ),
+      ).toMatchObject({
+        kind: "ok",
+        notification: {
+          content: {
+            kind: "access-requested",
+            queue: "community",
+            application: {
+              applicationId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903",
+              createdAtMs: Date.UTC(2026, 9, 12, 18, 5, 7, 40),
+            },
+          },
+        },
+      });
+    });
+
+    // Факт старше курсора или с неразборчивым курсором остаётся поводом:
+    // модератор теряет тело заявки, но не весть о ней.
+    it.each([
+      ["", ""],
+      ["0198F2A4-7C1E-7D3A-9B21-4F8E12AB3903", "2026-10-12T18:05:07.040Z"],
+      ["not-a-uuid", "2026-10-12T18:05:07.040Z"],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", ""],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "yesterday"],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "2026-10-12T18:05:07Z"],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "2026-10-12T21:05:07.040+03:00"],
+    ])("decodes a request without a readable cursor (%s, %s)", (id, at) => {
+      const decoded = decodeNotification(withCursor(id, at));
+      expect(decoded).toMatchObject({
+        kind: "ok",
+        notification: { content: { kind: "access-requested" } },
+      });
+      expect(
+        decoded.kind === "ok" && "application" in decoded.notification.content,
+      ).toBe(false);
+    });
+
     // Без очереди некуда вести модератора: это дефект издателя, а не повод
     // звать администратора.
     it("rejects a request without a queue", () => {
@@ -679,5 +969,33 @@ describe("decodeNotification", () => {
         );
       },
     );
+  });
+
+  it("decodes a release summary as record ids without their text", () => {
+    const summaryId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "releaseSummary",
+            value: create(ReleaseSummarySchema, {
+              summaryId,
+              summarizedAt: "2026-10-14T12:00:00Z",
+              recordIds: ["known"],
+            }),
+          };
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "release-summary",
+          summaryId,
+          summarizedAt: "2026-10-14T12:00:00Z",
+          recordIds: ["known"],
+        },
+      },
+    });
   });
 });

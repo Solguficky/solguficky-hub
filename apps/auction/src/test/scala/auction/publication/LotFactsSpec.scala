@@ -27,7 +27,8 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
   }
 
   private def facts(events: LotEvent*): List[(AppliedEvent, Option[Fact])] =
-    applied(events*).map(step => step -> LotFacts.fact(step))
+    val steps = applied(events*)
+    steps.zip(None :: steps.map(step => Some(step.row))).map((step, before) => step -> LotFacts.fact(step, before))
 
   private def message(fact: Option[Fact]): bus.LotEvent =
     bus.LotEvent.parseFrom(fact.getOrElse(fail("expected a published fact")).payload)
@@ -61,6 +62,18 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       (trading.deadline, trading.extensionsUsed) shouldBe (Some(deadline.plusSeconds(120).toString), 1)
     }
 
+    // ADR-072, п. 5: снимок после снятия и прежний лидер, как у ставки; кого сняли, факт не называет.
+    "publish the removal of a participant with the leader before it and the lot it left in the state" in {
+      val removed = LotEvent.ParticipantRemoved(participant(2), money(10000), None, None)
+      val (_, fact) = facts(lotDrafted, lotScheduled, opened, placed, removed).last
+
+      fact.map(_.subject) shouldBe Some("events.auction.participant_removed")
+      val body = message(fact)
+      body.getParticipantRemoved.previousLeaderId shouldBe Some(participant(2).value.toString)
+      (body.getState.getTrading.leaderId, body.getState.getTrading.getCurrentPrice.minorUnits) shouldBe (None, 10000L)
+      bus.ParticipantRemoved.scalaDescriptor.fields.map(_.name) shouldBe Seq("previous_leader_id")
+    }
+
     "publish the hold and the resume but keep the mark off the bus" in {
       val held = LotEvent.LotHeldForFinal(deadline)
       val steps = facts(lotDrafted, lotScheduled, opened, placed, LotEvent.LotMarkedForFinal, held, LotEvent.LotResumed)
@@ -71,8 +84,9 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
         Some("events.auction.lot_resumed")
       )
       message(steps(5)._2).getState.status.isHeld shouldBe true
-      val live = message(steps(6)._2).getState.getTrading
-      (live.phase, live.deadline) shouldBe (model.LotPhase.LOT_PHASE_LIVE, None)
+      val liveState = message(steps(6)._2).getState
+      (liveState.getTrading.phase, liveState.getTrading.deadline) shouldBe (model.LotPhase.LOT_PHASE_LIVE, None)
+      liveState.stepWindows shouldBe empty
     }
 
     "publish the withdrawal with the reason of the cancelled auction in the state of the lot" in {
@@ -81,6 +95,22 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
 
       fact.map(_.subject) shouldBe Some("events.auction.lot_withdrawn")
       message(fact).getState.status.withdrawn shouldBe Some(model.WithdrawnReason.WITHDRAWN_REASON_AUCTION_CANCELLED)
+    }
+
+    "publish a launched window on step_window_added with every window of the lot in the state" in {
+      val launched = StepWindow(
+        java.time.Instant.parse("2026-10-06T12:00:00Z"),
+        java.time.Instant.parse("2026-10-06T13:00:00Z"),
+        money(50)
+      )
+      val (_, fact) = facts(lotDrafted, lotScheduled, openedWithWindows, LotEvent.StepWindowAdded(launched)).last
+
+      fact.map(_.subject) shouldBe Some("events.auction.step_window_added")
+      message(fact).occasion.isStepWindowAdded shouldBe true
+      message(fact).getState.stepWindows.map(window => (window.from, window.until)) shouldBe List(
+        "2026-10-05T12:00:00Z" -> "2026-10-05T14:00:00Z",
+        "2026-10-06T12:00:00Z" -> "2026-10-06T13:00:00Z"
+      )
     }
 
     "publish the ask of the auctioneer with the ask in the state of the lot" in {
@@ -135,6 +165,53 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       trading.status.trading.flatMap(_.leadingBidId) shouldBe Some(bid(1).value.toString)
     }
 
+    "publish the windows the lot recorded at opening with the opened state" in {
+      val windows = message(facts(lotDrafted, lotScheduled, openedWithWindows).last._2).getState.stepWindows
+
+      windows shouldBe Seq(
+        bus.StepWindow(
+          from = "2026-10-05T12:00:00Z",
+          until = "2026-10-05T14:00:00Z",
+          step = Some(model.Money(100, "RUB"))
+        )
+      )
+    }
+
+    "publish no windows for a lot opened without one" in {
+      message(facts(lotDrafted, lotScheduled, opened).last._2).getState.stepWindows shouldBe empty
+    }
+
+    "publish the recorded windows by ascending start" in {
+      val earlier = stepWindow("12:00", "14:00", step = 10)
+      val later = stepWindow("15:00", "16:00", step = 20)
+      val openedWithBoth = Lot
+        .decide(lotIn(LotState.Scheduled(lotScheduled.schedule)), openLot(3).copy(stepWindows = List(later, earlier)))
+        .toOption
+        .collect { case Decision.Accepted(event: LotEvent.LotOpened, _) => event }
+        .getOrElse(fail("expected the lot to open"))
+
+      val windows = message(facts(lotDrafted, lotScheduled, openedWithBoth).last._2).getState.stepWindows
+      windows.map(window => (window.from, window.step.map(_.minorUnits))) shouldBe Seq(
+        ("2026-10-07T12:00:00Z", Some(10L)),
+        ("2026-10-07T15:00:00Z", Some(20L))
+      )
+    }
+
+    "leave out the window of another currency the lot did not record" in {
+      val own = stepWindow("12:00", "14:00", step = 10)
+      val foreign = stepWindow("15:00", "16:00", step = 20, currency = eur)
+      val inOwnCurrency = Lot
+        .decide(lotIn(LotState.Scheduled(lotScheduled.schedule)), openLot(3).copy(stepWindows = List(foreign, own)))
+        .toOption
+        .collect { case Decision.Accepted(event: LotEvent.LotOpened, _) => event }
+        .getOrElse(fail("expected the lot to open"))
+
+      val windows = message(facts(lotDrafted, lotScheduled, inOwnCurrency).last._2).getState.stepWindows
+      windows.map(window => (window.from, window.until, window.step)) shouldBe Seq(
+        ("2026-10-07T12:00:00Z", "2026-10-07T14:00:00Z", Some(model.Money(10, "RUB")))
+      )
+    }
+
     "say who led before the bid and how the bid was placed" in {
       val manual = message(facts(lotDrafted, lotScheduled, opened, placed).last._2).getBidPlaced
       manual.previousLeaderId shouldBe Some(participant(1).value.toString)
@@ -165,6 +242,6 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       List(lotDrafted, lotScheduled, opened).zipWithIndex.map((event, index) => (index + 1L, stored(index + 1, event)))
     val numbered = opening :+ (4L, LotJournal.store(uuid(4), transaction(4, initiator), event))
     val steps = LotView.replay(None, lotId, numbered).fold(defect => fail(defect.toString), done => done)
-    message(LotFacts.fact(steps.last)).getBidPlaced
+    message(LotFacts.fact(steps.last, steps.init.lastOption.map(_.row))).getBidPlaced
   }
 }

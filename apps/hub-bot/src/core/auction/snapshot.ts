@@ -5,10 +5,12 @@ import {
   type Money as WireMoney,
 } from "../../../gen/auction/v1/auction_pb.js";
 import type {
+  LotSetMembership,
   LotSnapshot,
   LotStepWindow,
 } from "../../../gen/auction/v1/auction_service_pb.js";
 import type {
+  LotSetView,
   LotStatusView,
   LotView,
   Money,
@@ -40,6 +42,7 @@ export async function lotOrMissing(
 
 export function lotViewOf(snapshot: LotSnapshot): LotView {
   const step = snapshot.config?.stepPolicy?.policy;
+  const antiSnipe = snapshot.config?.antiSnipe;
   return {
     lotId: snapshot.id,
     auctionId: snapshot.auctionId,
@@ -74,7 +77,32 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
     ...(snapshot.viewerProxyLimit === undefined
       ? {}
       : { viewerProxyLimit: moneyOf(snapshot.viewerProxyLimit) }),
+    ...(snapshot.lotSet === undefined
+      ? {}
+      : { lotSet: lotSetOf(snapshot.lotSet) }),
+    ...(antiSnipe === undefined
+      ? {}
+      : {
+          antiSnipe: {
+            windowSeconds: Number(antiSnipe.windowSeconds),
+            maxExtensions: antiSnipe.maxExtensions,
+          },
+        }),
     status: statusOf(snapshot.status),
+  };
+}
+
+// Сет лота (ADR-073): название, состав по порядку организатора и собравший
+// по отображаемому имени. Имя собравшего приходит вместе с ним и до итога
+// сета отсутствует вовсе — Auction записывает собравшего один раз, когда
+// последний лот сета пришёл к терминальному исходу.
+function lotSetOf(set: LotSetMembership): LotSetView {
+  return {
+    name: set.name,
+    lotIds: [...set.lotIds],
+    ...(set.collectorName === undefined
+      ? {}
+      : { collectorName: set.collectorName.text }),
   };
 }
 
@@ -100,6 +128,7 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
         ...(status.value.deadline === undefined
           ? {}
           : { deadline: status.value.deadline }),
+        extensionsUsed: status.value.extensionsUsed,
         phase: phaseOf(status.value.phase),
         // Ask не выше цены уже ничего не объявляет: следующую цену считает
         // шаг (П-01), и карточка о нём молчит.

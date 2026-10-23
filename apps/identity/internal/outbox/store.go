@@ -36,7 +36,8 @@ WHERE published_at IS NULL`
 SELECT event_id, identity_id, version, occasion, blocked, occurred_at, COALESCE(traceparent, ''),
        COALESCE(circle, ''), array_to_string(COALESCE(presets, '{}'), ','),
        array_to_string(COALESCE(rights, '{}'), ','), COALESCE(access_right, ''),
-       COALESCE(preset, ''), COALESCE(previous_circle, ''), COALESCE(queue, '')
+       COALESCE(preset, ''), COALESCE(previous_circle, ''), COALESCE(queue, ''),
+       COALESCE(application_id::text, ''), application_created_at
 FROM identity_outbox
 WHERE published_at IS NULL
 ORDER BY position
@@ -111,13 +112,16 @@ func ReadQueue(ctx context.Context, conn *sql.Conn, limit int) (Backlog, []Recor
 			occasion string
 			presets  string
 			rights   string
+			created  sql.NullTime
 		)
 		if err := rows.Scan(&record.EventID, &record.IdentityID, &record.Version, &occasion,
 			&record.Blocked, &record.OccurredAt, &record.TraceParent, &record.Circle, &presets,
-			&rights, &record.Right, &record.Preset, &record.PreviousCircle, &record.Queue); err != nil {
+			&rights, &record.Right, &record.Preset, &record.PreviousCircle, &record.Queue,
+			&record.ApplicationID, &created); err != nil {
 			return Backlog{}, nil, fmt.Errorf("scan pending: %w", err)
 		}
 		record.Occasion = Occasion(occasion)
+		record.ApplicationCreatedAt = created.Time
 		if presets != "" {
 			record.Presets = strings.Split(presets, ",")
 		}

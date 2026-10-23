@@ -35,19 +35,28 @@ service AuctionService {
   rpc ListLotHistory(ListLotHistoryRequest) returns (ListLotHistoryResponse);
   rpc ChooseDisplayName(ChooseDisplayNameRequest) returns (ChooseDisplayNameResponse);
   rpc GetDisplayNames(GetDisplayNamesRequest) returns (GetDisplayNamesResponse);
+  rpc ListAuctionNames(ListAuctionNamesRequest) returns (ListAuctionNamesResponse);
   rpc GetFaqAcknowledgement(GetFaqAcknowledgementRequest) returns (FaqAcknowledgement);
   rpc AcknowledgeFaq(AcknowledgeFaqRequest) returns (FaqAcknowledgement);
   rpc GetLotImage(GetLotImageRequest) returns (LotImage);
   rpc DraftAuction(DraftAuctionRequest) returns (DraftAuctionResponse);
   rpc AddLot(AddLotRequest) returns (AddLotResponse);
   rpc RemoveLot(RemoveLotRequest) returns (RemoveLotResponse);
+  rpc SaveLotSet(SaveLotSetRequest) returns (SaveLotSetResponse);
+  rpc DeleteLotSet(DeleteLotSetRequest) returns (DeleteLotSetResponse);
   rpc ScheduleLot(ScheduleLotRequest) returns (ScheduleLotResponse);
   rpc ScheduleAuction(ScheduleAuctionRequest) returns (ScheduleAuctionResponse);
   rpc StartPrebidding(StartPrebiddingRequest) returns (StartPrebiddingResponse);
   rpc DiscardAuction(DiscardAuctionRequest) returns (DiscardAuctionResponse);
+  rpc PublishAuction(PublishAuctionRequest) returns (PublishAuctionResponse);
+  rpc HideAuction(HideAuctionRequest) returns (HideAuctionResponse);
   rpc CancelAuction(CancelAuctionRequest) returns (CancelAuctionResponse);
+  rpc SetFinalTime(SetFinalTimeRequest) returns (SetFinalTimeResponse);
   rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
   rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
+  rpc PreviewParticipantRemoval(PreviewParticipantRemovalRequest) returns (PreviewParticipantRemovalResponse);
+  rpc RemoveParticipant(RemoveParticipantRequest) returns (RemoveParticipantResponse);
+  rpc LaunchStepWindow(LaunchStepWindowRequest) returns (LaunchStepWindowResponse);
   rpc FreezeFinalLineup(FreezeFinalLineupRequest) returns (FreezeFinalLineupResponse);
   rpc StartFinal(StartFinalRequest) returns (StartFinalResponse);
   rpc StartNextLot(StartNextLotRequest) returns (StartNextLotResponse);
@@ -56,6 +65,7 @@ service AuctionService {
   rpc WatchAuction(WatchAuctionRequest) returns (stream AuctionWatch);
   rpc GetAuctionConsole(GetAuctionConsoleRequest) returns (GetAuctionConsoleResponse);
   rpc GetAuctionLotStatistics(GetAuctionLotStatisticsRequest) returns (GetAuctionLotStatisticsResponse);
+  rpc GetAuctionDaySummary(GetAuctionDaySummaryRequest) returns (GetAuctionDaySummaryResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
   rpc GetAuction(GetAuctionRequest) returns (GetAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
@@ -71,6 +81,7 @@ service AuctionService {
   rpc ChooseFulfillment(ChooseFulfillmentRequest) returns (ChooseFulfillmentResponse);
   rpc ListMyInvoices(ListMyInvoicesRequest) returns (ListMyInvoicesResponse);
   rpc ListAuctionInvoices(ListAuctionInvoicesRequest) returns (ListAuctionInvoicesResponse);
+  rpc SetPaymentInstructions(SetPaymentInstructionsRequest) returns (SetPaymentInstructionsResponse);
 }
 
 message Viewer {
@@ -146,8 +157,17 @@ message PlaceBidRefusal {
     NotMeetupAdministrator not_meetup_administrator = 8;
     MeetupNotFound meetup_not_found = 9;
     ParticipantCannotBid participant_cannot_bid = 10;
+
+    // The participant was removed from this lot; for a floor bid, the participant it names.
+    ParticipantRemovedFromLot participant_removed_from_lot = 11;
+
+    // Online manual bids only: the amount is above the lot's ceiling.
+    BidAboveMaximum bid_above_maximum = 12;
   }
 }
+
+// Who removed the participant from the lot and why is deliberately not carried.
+message ParticipantRemovedFromLot {}
 
 // The participant named by a floor bid does not hold place_bids.
 message ParticipantCannotBid {}
@@ -189,6 +209,7 @@ message SetProxyLimitRefusal {
     ProxyDisabledForLot proxy_disabled_for_lot = 3;
     CurrencyMismatch currency_mismatch = 4;
     DisplayNameNotChosen display_name_not_chosen = 5;
+    ParticipantRemovedFromLot participant_removed_from_lot = 6;
   }
 }
 
@@ -231,6 +252,12 @@ message LotOnHold {
 message BidBelowMinimum {
   // The lowest amount the lot accepts now.
   Money min_required = 1;
+}
+
+// The manual online bid is above the highest amount the lot accepts now.
+message BidAboveMaximum {
+  // The highest amount the lot accepts for this bid.
+  Money maximum = 1;
 }
 
 // Live final only: a bid is accepted exactly at the next price.
@@ -362,10 +389,13 @@ message EditLotCardRefusal {
     CardNotFound card_not_found = 3;
     ImageTooLarge image_too_large = 4;
     UnsupportedImage unsupported_image = 5;
+    CardClosed card_closed = 6;
   }
 }
 
 message NotAdmin {}
+
+message CardClosed {}
 
 message EmptyTitle {}
 
@@ -472,6 +502,33 @@ message LotSnapshot {
   // will put in force. Unset when there is none, in the live final, and when the
   // lot is not trading.
   LotStepWindow next_window = 18;
+
+  // The collectible set the lot belongs to. Unset when the lot is in no set, and
+  // when its set has fewer than two lots: such a set is not shown to participants.
+  // Number 19 is not used: auction.v1.LotState carries the windows of the lot
+  // under it.
+  LotSetMembership lot_set = 20;
+}
+
+// A collectible set of lots of one auction and its outcome.
+message LotSetMembership {
+  // Canonical lowercase UUIDv7 with hyphens: the id the organizer gave the set.
+  string lot_set_id = 1;
+
+  // The name of the set as the organizer typed it.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: every lot of the set in the
+  // order of the organizer, the lot of this snapshot among them.
+  repeated string lot_ids = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the participant every lot of the
+  // set was sold to. Absent until the last lot of the set ends, and absent for
+  // good when a lot of the set was not sold or was sold to someone else.
+  optional string collector_id = 4;
+
+  // How the collector is shown in the auction. Set together with collector_id.
+  DisplayName collector_name = 5;
 }
 
 // A window of reduced bid step of one lot: the half-open interval [from, until).
@@ -521,11 +578,15 @@ message LotHistoryEntry {
   // not know: new kinds may be added.
   oneof kind {
     HistoryBid bid = 3;
+    HistoryRemoval removal = 4;
   }
 }
 
 // An accepted bid as BidPlaced recorded it. A folded chain of proxy bids is one
 // entry with the final amount. The proxy limit is never carried.
+//
+// A bid of a participant later removed from the lot keeps its entry, with removed
+// set.
 message HistoryBid {
   // Canonical lowercase UUIDv7 with hyphens.
   string bid_id = 1;
@@ -541,6 +602,21 @@ message HistoryBid {
     ManualBid manual = 4;
     ProxyBid proxy = 5;
   }
+
+  // True when the bidder was removed from the lot after this bid. False is the
+  // value of every bid of a participant who was not removed.
+  bool removed = 6;
+}
+
+// The removal of a participant from the lot. Who was removed is told by the bids
+// marked removed; who removed them and why is deliberately not carried.
+message HistoryRemoval {
+  // The price the lot went on with. Never higher than the price before.
+  Money price = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the leader the lot went on with.
+  // Absent when nobody was left to lead - absent, not an empty string.
+  optional string leader_id = 2;
 }
 
 message ChooseDisplayNameRequest {
@@ -623,6 +699,27 @@ message GetDisplayNamesResponse {
   map<string, DisplayName> names = 1;
 }
 
+message ListAuctionNamesRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
+  string auction_id = 2;
+}
+
+message ListAuctionNamesResponse {
+  // Empty when nobody chose a name in the auction; an empty list is not an
+  // error.
+  repeated AuctionName names = 1;
+}
+
+message AuctionName {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string participant_id = 1;
+
+  // The chosen name, ready to show as is; never a placeholder.
+  DisplayName name = 2;
+}
+
 message GetFaqAcknowledgementRequest {
   Viewer viewer = 1;
 }
@@ -695,6 +792,7 @@ message DraftAuctionRefusal {
   oneof reason {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
   }
 }
 
@@ -729,6 +827,7 @@ message AddLotRefusal {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
     LotsFrozen lots_frozen = 3;
+    MeetupCancelled meetup_cancelled = 4;
   }
 }
 
@@ -763,14 +862,124 @@ message RemoveLotRefusal {
     MeetupNotFound meetup_not_found = 2;
     LotsFrozen lots_frozen = 3;
     LotNotInAuction lot_not_in_auction = 4;
+    MeetupCancelled meetup_cancelled = 5;
   }
 }
+
+message SaveLotSetRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens. The same id
+  // replaces the set as a whole: name and lots.
+  string lot_set_id = 3;
+
+  // The name of the set as the organizer typed it.
+  string name = 4;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots in the order of the
+  // set. A repeated id counts once.
+  repeated string lot_ids = 5;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 6;
+}
+
+message SaveLotSetResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotSetSaved accepted = 1;
+    SaveLotSetRefusal refused = 2;
+  }
+}
+
+message LotSetSaved {}
+
+message SaveLotSetRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    LotsFrozen lots_frozen = 4;
+    LotSetNameEmpty name_empty = 5;
+    LotSetLotNotInAuction lot_not_in_auction = 6;
+    LotInAnotherSet lot_in_another_set = 7;
+  }
+}
+
+message DeleteLotSetRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_set_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message DeleteLotSetResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotSetDeleted accepted = 1;
+    DeleteLotSetRefusal refused = 2;
+  }
+}
+
+message LotSetDeleted {}
+
+message DeleteLotSetRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    LotsFrozen lots_frozen = 4;
+    LotSetNotFound lot_set_not_found = 5;
+  }
+}
+
+// The name of the set is empty or only spaces.
+message LotSetNameEmpty {}
+
+// A lot of the request is not in the registry of the auction.
+message LotSetLotNotInAuction {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot in the order of
+  // the request.
+  string lot_id = 1;
+}
+
+// A lot of the request is already in another set of the auction.
+message LotInAnotherSet {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot in the order of
+  // the request.
+  string lot_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the set that holds it.
+  string lot_set_id = 2;
+}
+
+// The auction has no set with this id.
+message LotSetNotFound {}
 
 // The meetup did not confirm the viewer as its administrator.
 message NotMeetupAdministrator {}
 
 // The meetup does not exist for the viewer. Only an administrator learns it.
 message MeetupNotFound {}
+
+// The meetup of the auction is cancelled.
+message MeetupCancelled {}
+
+// The meetup of the auction is hidden from publication.
+message MeetupHidden {}
 
 // The registry of the auction and the trading conditions of its lots are frozen:
 // prebidding has started.
@@ -824,6 +1033,7 @@ message ScheduleLotRefusal {
     SchedulingClosed scheduling_closed = 5;
     StepPolicyInvalid step_policy_invalid = 6;
     CurrencyMismatch currency_mismatch = 7;
+    MeetupCancelled meetup_cancelled = 8;
   }
 }
 
@@ -868,6 +1078,7 @@ message ScheduleAuctionRefusal {
     MeetupNotFound meetup_not_found = 2;
     ConfigInvalid config_invalid = 3;
     AuctionAlreadyStarted auction_already_started = 4;
+    MeetupCancelled meetup_cancelled = 5;
   }
 }
 
@@ -912,8 +1123,28 @@ message ConfigInvalid {
 
     // online_phase.raffle_closes_at is not before closes_at.
     RaffleClosesAtNotBeforeClosesAt raffle_closes_at_not_before_closes_at = 11;
+
+    // online_phase.raffle_prize is set while raffle_closes_at is not.
+    RafflePrizeWithoutRaffle raffle_prize_without_raffle = 12;
+
+    // online_phase.raffle_prize is empty or blank.
+    RafflePrizeBlank raffle_prize_blank = 13;
+
+    // online_phase.raffle_prize is longer than 200 characters.
+    RafflePrizeTooLong raffle_prize_too_long = 14;
+
+    // payment_term_seconds is shorter than one day or longer than thirty days.
+    PaymentTermOutOfRange payment_term_out_of_range = 15;
   }
 }
+
+message PaymentTermOutOfRange {}
+
+message RafflePrizeWithoutRaffle {}
+
+message RafflePrizeBlank {}
+
+message RafflePrizeTooLong {}
 
 message RaffleClosesAtNotAfterOpensAt {}
 
@@ -984,6 +1215,8 @@ message StartPrebiddingRefusal {
     MeetupNotFound meetup_not_found = 2;
     AuctionNotScheduled auction_not_scheduled = 3;
     AnotherAuctionActive another_auction_active = 4;
+    MeetupCancelled meetup_cancelled = 5;
+    MeetupHidden meetup_hidden = 6;
   }
 }
 
@@ -1028,6 +1261,59 @@ message DiscardAuctionRefusal {
   }
 }
 
+// Shows the auction to participants: see AuctionSnapshot.hidden.
+message PublishAuctionRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message PublishAuctionResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionVisibilityAccepted accepted = 1;
+    AuctionVisibilityRefusal refused = 2;
+  }
+}
+
+// Hides the auction from participants again: see AuctionSnapshot.hidden.
+message HideAuctionRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message HideAuctionResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionVisibilityAccepted accepted = 1;
+    AuctionVisibilityRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionSnapshot.hidden tells the visibility.
+message AuctionVisibilityAccepted {}
+
+message AuctionVisibilityRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    AuctionAlreadyStarted auction_already_started = 4;
+  }
+}
+
 message CancelAuctionRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
   Viewer viewer = 1;
@@ -1068,6 +1354,54 @@ message AuctionNotStarted {}
 // The auction is finished: there is nothing left to cancel.
 message AuctionAlreadyFinished {}
 
+// The estimated start of the live final: an announcement of the broadcast, not
+// a trading condition. It opens and closes nothing (ADR-040, addition
+// 2026-10-19).
+message SetFinalTimeRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // RFC 3339 instant in UTC: when the final is estimated to start. Unset takes
+  // the announcement back. The time may be set and changed until the final
+  // starts, and never after it.
+  optional string final_at = 4;
+}
+
+message SetFinalTimeResponse {
+  // Exactly one is set.
+  oneof outcome {
+    FinalTimeAccepted accepted = 1;
+    FinalTimeRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionSnapshot.final_at tells the time.
+message FinalTimeAccepted {}
+
+message FinalTimeRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    FinalAlreadyStarted final_already_started = 4;
+    AuctionAlreadyFinished auction_already_finished = 5;
+    AuctionAlreadyCancelled auction_already_cancelled = 6;
+  }
+}
+
+// The live final has started: the announcement is over.
+message FinalAlreadyStarted {}
+
+// The auction was cancelled: its final will not start.
+message AuctionAlreadyCancelled {}
+
 message SelectForFinalRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
   Viewer viewer = 1;
@@ -1105,6 +1439,7 @@ message SelectForFinalRefusal {
     AlreadyMarkedForFinal already_marked_for_final = 7;
     DeadlinePassed deadline_passed = 8;
     SelectionNotApplicable selection_not_applicable = 9;
+    MeetupCancelled meetup_cancelled = 10;
   }
 }
 
@@ -1143,11 +1478,215 @@ message DeselectForFinalRefusal {
     NotInOnlinePhase not_in_online_phase = 6;
     NotMarkedForFinal not_marked_for_final = 7;
     DeadlinePassed deadline_passed = 8;
+    MeetupCancelled meetup_cancelled = 9;
   }
 }
 
 // The auction is not in prebidding: the lots are not trading online yet.
 message NotInPrebidding {}
+
+message PreviewParticipantRemovalRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot in the registry of the auction.
+  string lot_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the participant to remove, the same
+  // id leader_id and HistoryBid.participant_id carry.
+  string participant_id = 4;
+}
+
+message PreviewParticipantRemovalResponse {
+  // Exactly one is set. A preview never carries lot_changed.
+  oneof outcome {
+    ParticipantRemovalPreview preview = 1;
+    ParticipantRemovalRefusal refused = 2;
+  }
+}
+
+// What the lot would be after the removal, not recorded. Meant for
+// RemoveParticipantRequest.expected_version through version.
+message ParticipantRemovalPreview {
+  // The price after the removal. Never higher than the current price.
+  Money price = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the leader after the removal. Absent
+  // when nobody else is left to lead - absent, not an empty string.
+  optional string leader_id = 2;
+
+  // RFC 3339 instant in UTC: the deadline the removal extends the trading to.
+  // Absent when the removal does not extend it.
+  optional string extended_deadline = 3;
+
+  // The LotSnapshot.version the preview was decided at. Always 1 or more.
+  int64 version = 4;
+}
+
+message RemoveParticipantRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot in the registry of the auction.
+  string lot_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the participant to remove.
+  string participant_id = 4;
+
+  // ParticipantRemovalPreview.version the administrator confirmed. Required: 0 is
+  // not a value.
+  int64 expected_version = 5;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 6;
+}
+
+message RemoveParticipantResponse {
+  // Exactly one is set.
+  oneof outcome {
+    ParticipantRemovalAccepted accepted = 1;
+    ParticipantRemovalRefusal refused = 2;
+  }
+}
+
+message ParticipantRemovalAccepted {
+  // The LotSnapshot.version from which GetLot shows the whole removal: the new
+  // leader and price and the extension it triggered. On a repeat of the same
+  // op_id it may be higher than that.
+  int64 lot_version = 1;
+}
+
+// Who asked for the removal and why is deliberately not carried by any refusal.
+message ParticipantRemovalRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    LotNotInAuction lot_not_in_auction = 4;
+    NotInPrebidding not_in_prebidding = 5;
+    LineupFrozen lineup_frozen = 6;
+    LotNotOpen lot_not_open = 7;
+    NotInOnlinePhase not_in_online_phase = 8;
+    DeadlinePassed deadline_passed = 9;
+    NotALotParticipant not_a_lot_participant = 10;
+    ParticipantAlreadyRemoved participant_already_removed = 11;
+    LotChanged lot_changed = 12;
+  }
+}
+
+// The lineup of the final is frozen: a lot held for it keeps its price and leader.
+message LineupFrozen {}
+
+// The participant has neither an accepted bid nor a proxy limit on the lot, not
+// even a limit they withdrew themselves.
+message NotALotParticipant {}
+
+message ParticipantAlreadyRemoved {}
+
+// expected_version is no longer the version of the lot.
+message LotChanged {}
+
+message LaunchStepWindowRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // RFC 3339 instant in UTC: the first instant of the window. Unset starts the
+  // window at the instant the server decides the command; it is then absent, not
+  // empty.
+  optional string from = 3;
+
+  // RFC 3339 instant in UTC: the first instant after the window. Required.
+  string until = 4;
+
+  // The bid step inside the window, in the currency of the lots. Required.
+  Money step = 5;
+
+  // Canonical lowercase UUIDv7 with hyphens, each the id of a lot in the registry
+  // of the auction the window applies to. Repeats are one lot.
+  repeated string lot_ids = 6;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 7;
+}
+
+message LaunchStepWindowResponse {
+  // Exactly one is set.
+  oneof outcome {
+    StepWindowLaunchAccepted accepted = 1;
+    LaunchStepWindowRefusal refused = 2;
+  }
+}
+
+// The window as the auction recorded it. A repeated op_id answers with the same
+// instants.
+message StepWindowLaunchAccepted {
+  // RFC 3339 instant in UTC: the first instant of the window - the one in the
+  // request, or the instant the server decided the command when it was unset.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+}
+
+message LaunchStepWindowRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    StepWindowInPast step_window_in_past = 5;
+    LaunchedStepWindowOutsideOnlinePhase step_window_outside_online_phase = 6;
+    LaunchedStepWindowStepInvalid step_window_step_invalid = 7;
+    LaunchedStepWindowLotsEmpty step_window_lots_empty = 8;
+    StepWindowLotNotInAuction lot_not_in_auction = 9;
+    StepWindowLotNotOpen lot_not_open = 10;
+    LaunchedStepWindowsOverlap step_windows_overlap = 11;
+  }
+}
+
+// The refusals of a launch carry no window index, unlike their namesakes in
+// ConfigInvalid: a launch names one window.
+message StepWindowInPast {}
+
+message LaunchedStepWindowOutsideOnlinePhase {}
+
+message LaunchedStepWindowStepInvalid {}
+
+message LaunchedStepWindowLotsEmpty {}
+
+message StepWindowLotNotInAuction {
+  // Canonical lowercase UUIDv7 with hyphens: the first lot of lot_ids, in request
+  // order, that is not in the registry of the auction.
+  string lot_id = 1;
+}
+
+message StepWindowLotNotOpen {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot of lot_ids, in
+  // request order.
+  string lot_id = 1;
+}
+
+message LaunchedStepWindowsOverlap {
+  // Canonical lowercase UUIDv7 with hyphens: a lot the two windows share.
+  string lot_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the window the launch meets.
+  string from = 2;
+
+  // RFC 3339 instant in UTC: the first instant after the window the launch meets.
+  string until = 3;
+}
 
 // The lot is already in the live final.
 message NotInOnlinePhase {}
@@ -1196,6 +1735,7 @@ message FreezeFinalLineupRefusal {
     NotInBreak not_in_break = 3;
     LineupEmpty lineup_empty = 4;
     LineupMismatch lineup_mismatch = 5;
+    MeetupCancelled meetup_cancelled = 6;
   }
 }
 
@@ -1241,6 +1781,7 @@ message StartFinalRefusal {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
     LineupNotFrozen lineup_not_frozen = 3;
+    MeetupCancelled meetup_cancelled = 4;
   }
 }
 
@@ -1281,6 +1822,7 @@ message StartNextLotRefusal {
     NotInFinal not_in_final = 3;
     AnotherLotActive another_lot_active = 4;
     LineupExhausted lineup_exhausted = 5;
+    MeetupCancelled meetup_cancelled = 6;
   }
 }
 
@@ -1334,6 +1876,7 @@ message AdvanceAskRefusal {
     LotNotOpen lot_not_open = 4;
     AskBelowCurrentPrice ask_below_current_price = 5;
     CurrencyMismatch currency_mismatch = 6;
+    MeetupCancelled meetup_cancelled = 7;
   }
 }
 
@@ -1383,6 +1926,7 @@ message CloseLotRefusal {
     LotNotInAuction lot_not_in_auction = 3;
     LotNotOpen lot_not_open = 4;
     DeadlineNotReached deadline_not_reached = 5;
+    MeetupCancelled meetup_cancelled = 6;
   }
 }
 
@@ -1448,6 +1992,31 @@ message AuctionConsole {
   // Every lot of the registry, in no particular order. The registry is not paged:
   // the administrator enters its lots one by one.
   repeated ConsoleLot lots = 2;
+
+  // The windows of reduced bid step launched during the online phase, in the
+  // order they were launched. The windows of the configuration are in
+  // auction.config.step_windows. Empty is a real value: no window was launched.
+  repeated AuctionStepWindow launched_step_windows = 3;
+
+  // Every collectible set of the auction, in the order of lot_set_id. Incomplete
+  // sets of fewer than two lots and empty sets are here too, unlike in
+  // LotSnapshot.lot_set. The sets are read with the auction and may name a lot
+  // that lots does not list yet. Empty is a real value: the auction has no set.
+  repeated ConsoleLotSet lot_sets = 4;
+}
+
+// A collectible set of lots as the administrator of the auction defined it. The
+// outcome is deliberately absent: it is in LotSnapshot.lot_set of its lots.
+message ConsoleLotSet {
+  // Canonical lowercase UUIDv7 with hyphens: the id the organizer gave the set.
+  string lot_set_id = 1;
+
+  // The name of the set as the organizer typed it. Never empty.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots of the set in the
+  // order of the organizer. Empty is a real value: a set not yet filled.
+  repeated string lot_ids = 3;
 }
 
 message ConsoleLot {
@@ -1507,6 +2076,75 @@ message LotStatistics {
   // RFC 3339 instant in UTC of the last BidPlaced in journal sequence order,
   // whether manual or proxy. Unset when no bid exists, not an empty string.
   optional string last_bid_at = 5;
+
+  // Leader changes over the life of the lot. 0 is a real value.
+  int64 leader_change_count = 6;
+
+  // Leader changes in the longest run where the lead passed back and forth
+  // between the same two people, over the life of the lot: A to B to A is 2.
+  // Who the two are is not returned. 0 means no leader change yet.
+  int64 longest_duel = 7;
+}
+
+message GetAuctionDaySummaryRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string from = 3;
+
+  // RFC 3339 instant in UTC: the first instant after the window, strictly after
+  // from. The window is half-open: a bid at from is inside it, a bid at until is not.
+  string until = 4;
+}
+
+message GetAuctionDaySummaryResponse {
+  // Exactly one is set. The refusal is shared with the administrator's console.
+  oneof outcome {
+    AuctionDaySummary summary = 1;
+    GetAuctionConsoleRefusal refused = 2;
+  }
+}
+
+// The trading of one window, as the meetup administrator reads it for the daily
+// digest. Aggregates of that window only; the lifetime counters of a lot are read
+// with GetAuctionLotStatistics.
+message AuctionDaySummary {
+  // Every lot of the registry, without pagination or a meaningful order.
+  // The caller ranks the complete list.
+  repeated DayLotStatistics lots = 1;
+}
+
+// Aggregates of one window only: no participant ids, display names or proxy limit amounts.
+message DayLotStatistics {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // Accepted BidPlaced facts inside the window, manual and proxy alike.
+  // A folded proxy chain counts once; 0 means the lot took no accepted bid in the
+  // window. Refused commands do not count; 0 is a real value.
+  int64 bid_count = 2;
+
+  // Highest price the lot reached in the window, in the lot's currency. Unset when
+  // the lot took no accepted bid in the window, not an empty message.
+  Money max_price = 3;
+
+  // max_price minus the price the lot had when the window opened: the price of its
+  // last accepted bid before the window, or its starting price when there was none.
+  // Absolute difference, in the lot's currency, not a percentage. Unset when the lot
+  // took no accepted bid in the window or had no price before the window; a zero
+  // difference is a real value.
+  Money growth = 4;
+
+  // LotStatistics.leader_change_count inside the window only. 0 is a real value.
+  int64 leader_change_count = 5;
+
+  // LotStatistics.longest_duel inside the window only. 0 means no leader change
+  // in the window.
+  int64 longest_duel = 6;
 }
 
 message GetMeetupAuctionRequest {
@@ -1518,7 +2156,8 @@ message GetMeetupAuctionRequest {
 
 message GetMeetupAuctionResponse {
   // Unset when the meetup has no auction: absent, not an error. A draft is
-  // returned here, unlike in ListAuctions.
+  // returned here, unlike in ListAuctions. A hidden auction is unset for a
+  // viewer it is hidden from: see AuctionSnapshot.hidden.
   AuctionSnapshot auction = 1;
 }
 
@@ -1532,7 +2171,8 @@ message GetAuctionRequest {
 message GetAuctionResponse {
   // Unset when there is no such auction for this caller: absent, not an error.
   // Whether a draft is returned depends on the caller, see
-  // docs/architecture/integration.md, section "Auction gRPC".
+  // docs/architecture/integration.md, section "Auction gRPC". A hidden auction
+  // is unset for a viewer it is hidden from: see AuctionSnapshot.hidden.
   AuctionSnapshot auction = 1;
 }
 
@@ -1584,6 +2224,18 @@ message AuctionSnapshot {
   // Canonical lowercase UUIDv7 with hyphens: the registry of the auction. The
   // order carries no meaning.
   repeated string lot_ids = 3;
+
+  // Set when the auction is hidden from participants. Such a snapshot reaches
+  // only a viewer the auction is not hidden from; for anyone else the auction is
+  // absent, see docs/architecture/integration.md, section "Auction gRPC". Never
+  // set once prebidding has started.
+  bool hidden = 5;
+
+  // RFC 3339 instant in UTC: when the final is estimated to start. It is an
+  // announcement of the broadcast, not a trading condition: it opens and closes
+  // nothing (ADR-040, addition 2026-10-19). Unset when the administrator has
+  // not set it.
+  optional string final_at = 6;
 
   // Where the auction is. Exactly one is set.
   oneof status {
@@ -1713,6 +2365,10 @@ message Raffle {
   // RFC 3339 instant in UTC: when the draw was made. Unset with every status
   // but DRAWN: NO_TICKETS reveals the seed without a draw.
   optional string drawn_at = 10;
+
+  // The prize of the raffle as the organizer wrote it. Unset when the raffle has
+  // no prize and when the raffle is not held: there are no terms to read it from.
+  optional string raffle_prize = 11;
 }
 
 enum RaffleStatus {
@@ -1973,6 +2629,7 @@ message SettlePredictionResultsManuallyRefusal {
   oneof reason {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
   }
 }
 
@@ -2089,6 +2746,13 @@ message ListMyInvoicesResponse {
   // sale, and a lot is sold to at most one bid at a time - and a total is summed
   // from the whole of it. Empty when the viewer won nothing.
   repeated InvoiceSnapshot invoices = 1;
+
+  // How to pay and how to receive the lots, as the administrator wrote it for
+  // the whole auction: free text, read at the moment of the call, so an edit
+  // reaches invoices raised before it. Unset when the administrator has not
+  // written it. The text is not payee details in a structure: see
+  // SetPaymentInstructionsRequest.
+  optional string payment_instructions = 2;
 }
 
 message ListAuctionInvoicesRequest {
@@ -2111,6 +2775,9 @@ message AuctionInvoices {
   // Every invoice of the auction, in no meaningful order. There are no pages, for
   // the reason ListMyInvoicesResponse gives. Empty when no lot is sold.
   repeated InvoiceSnapshot invoices = 1;
+
+  // The text winners read: see ListMyInvoicesResponse.payment_instructions.
+  optional string payment_instructions = 2;
 }
 
 message ListAuctionInvoicesRefusal {
@@ -2153,5 +2820,46 @@ message InvoiceSnapshot {
     InvoiceState.AwaitingPayment awaiting_payment = 10;
     InvoiceState.Paid paid = 11;
     InvoiceState.HandedOver handed_over = 12;
+  }
+}
+
+// How to pay and how to receive the lots of an auction: free text the
+// administrator writes for every winner of the auction. Money does not pass
+// through the platform, and the text is not payee details in a structure: the
+// platform neither reads nor checks it.
+message SetPaymentInstructionsRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // The text as the winners read it, line breaks kept. Unset takes the text
+  // back. Set but blank, or longer than 1000 characters, is INVALID_ARGUMENT.
+  // The text may be set and changed in every state of the auction, after its
+  // end and after its cancellation too: invoices outlive both.
+  optional string text = 4;
+}
+
+message SetPaymentInstructionsResponse {
+  // Exactly one is set.
+  oneof outcome {
+    PaymentInstructionsAccepted accepted = 1;
+    PaymentInstructionsRefusal refused = 2;
+  }
+}
+
+// Carries nothing: ListMyInvoicesResponse.payment_instructions tells the text.
+message PaymentInstructionsAccepted {}
+
+message PaymentInstructionsRefusal {
+  // Exactly one is set. There is no MeetupCancelled: the sold lots of a
+  // cancelled meetup still await payment.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
   }
 }

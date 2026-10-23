@@ -34,6 +34,12 @@ public static class AppHostNames
 
         // Бот аукциона (ADR-044).
         public const string AuctionBot = "auction-bot";
+
+        // Бот поддержки (ADR-068).
+        public const string SupportBot = "support-bot";
+
+        // Публичный вход к экрану зала, только в чарте (ADR-071).
+        public const string Cloudflared = "cloudflared";
     }
 
     /// <summary>

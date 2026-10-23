@@ -19,6 +19,8 @@ object StatisticsMapping {
       bidCount = view.bidCount,
       uniqueParticipantCount = view.participantCount,
       priceGrowth = view.priceGrowth.map(LotValues.money),
-      lastBidAt = view.lastBidAt.map(LotValues.instant)
+      lastBidAt = view.lastBidAt.map(LotValues.instant),
+      leaderChangeCount = view.contest.leaderChanges,
+      longestDuel = view.contest.longestDuel
     )
 }

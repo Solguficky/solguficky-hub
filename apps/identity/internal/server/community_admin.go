@@ -16,32 +16,34 @@ import (
 // Список полный: держатели наборов входят в него в своём круге (решение
 // владельца 14 октября 2026 года, PER-618), но карточку их отдаёт отказом
 // «держит набор», а понизить или заблокировать их отсюда нельзя (п. 8) — их
-// ведёт экран администраторов. admit_bidders набора admin записью не
-// хранится, поэтому auction_moderation у держателя набора ложно, и фильтр
-// модераторов показывает только тех, у кого запись отзывает
-// RevokeAuctionModeration.
+// ведёт экран администраторов. granted — записи, которые снимет RevokeRight:
+// право, пришедшее с кругом или набором, туда не входит, поэтому admit_bidders
+// и run_auctions набора admin в нём нет.
 // Круг у человека один или никакого (п. 1): индекс identity_circles_one_active.
 const communityMemberColumnsSQL = `
 SELECT p.id, p.username, p.telegram_user_id, p.created_at, p.blocked,
        (SELECT c.circle FROM identity_circles c
         WHERE c.identity_id = p.id AND c.revoked_at IS NULL) AS circle,
-       EXISTS (SELECT 1 FROM identity_rights r
-               WHERE r.identity_id = p.id AND r.access_right = 'admit_bidders'
-                 AND r.revoked_at IS NULL) AS moderation,
+       ARRAY(SELECT r.access_right FROM identity_rights r
+             WHERE r.identity_id = p.id AND r.revoked_at IS NULL
+               AND NOT r.access_right = ANY (identity_carried_rights(p.id))
+             ORDER BY r.access_right) AS granted,
        cardinality(identity_active_presets(p.id)) > 0 AS holds_preset
 FROM profiles p`
 
-// Фильтр $1: пустая строка — весь список, как до фильтров, включая людей без
-// круга; имя круга — его держатели; moderators — держатели записи с кругом.
+// Фильтры: $1 — пустая строка, весь список, как до фильтров, включая людей без
+// круга, или имя круга — его держатели; $2 — пустая строка или право, которое
+// у человека записью.
 const listCommunityMembersSQL = `
-SELECT id, username, telegram_user_id, circle, moderation
+SELECT id, username, telegram_user_id, circle, array_to_string(granted, ',')
 FROM (` + communityMemberColumnsSQL + `) m
 WHERE NOT m.blocked
-  AND ($1 = '' OR m.circle = $1 OR ($1 = 'moderators' AND m.circle IS NOT NULL AND m.moderation))
+  AND ($1 = '' OR m.circle = $1)
+  AND ($2 = '' OR $2 = ANY (m.granted))
 ORDER BY m.created_at, m.id`
 
 const getCommunityMemberSQL = `
-SELECT id, username, telegram_user_id, circle, moderation, blocked, holds_preset
+SELECT id, username, telegram_user_id, circle, array_to_string(granted, ','), blocked, holds_preset
 FROM (` + communityMemberColumnsSQL + ` WHERE p.id = $1) m`
 
 // communityFilterValue — значение фильтра для listCommunityMembersSQL.
@@ -55,22 +57,37 @@ func communityFilterValue(filter identityv1.CommunityFilter) (string, error) {
 		return circleMember, nil
 	case identityv1.CommunityFilter_COMMUNITY_FILTER_GUESTS:
 		return circleGuest, nil
-	case identityv1.CommunityFilter_COMMUNITY_FILTER_AUCTION_MODERATORS:
-		return "moderators", nil
 	default:
 		return "", status.Error(codes.InvalidArgument, "community filter is unknown")
 	}
 }
 
-// communityMember собирает человека списка из строки выборки.
-func communityMember(id string, username sql.NullString, telegramUserID int64, circle sql.NullString, moderation bool) *identityv1.CommunityMember {
+// grantedRightFilterValue — право фильтра для listCommunityMembersSQL; пустая
+// строка — фильтра нет. Незнакомое значение и право, которое записью не
+// бывает, отвечают отказом, как у GrantRight: пустой список тут неотличим от
+// «держателей нет».
+func grantedRightFilterValue(right identityv1.AccessRight) (string, error) {
+	if right == identityv1.AccessRight_ACCESS_RIGHT_UNSPECIFIED {
+		return "", nil
+	}
+	name, _, err := recordOf(right)
+	return name, err
+}
+
+// communityMember собирает человека списка из строки выборки; granted — записи
+// через запятую.
+func communityMember(id string, username sql.NullString, telegramUserID int64, circle sql.NullString, granted string) *identityv1.CommunityMember {
 	value, _ := circleValue(circle.String)
 	member := &identityv1.CommunityMember{
-		IdentityId:        id,
-		Admitted:          value == identityv1.Circle_CIRCLE_MEMBER,
-		TelegramUserId:    telegramUserID,
-		Circle:            value,
-		AuctionModeration: moderation,
+		IdentityId:     id,
+		Admitted:       value == identityv1.Circle_CIRCLE_MEMBER,
+		TelegramUserId: telegramUserID,
+		Circle:         value,
+	}
+	for _, name := range splitList(granted) {
+		if right, ok := accessRight(name); ok {
+			member.GrantedRights = append(member.GrantedRights, right)
+		}
 	}
 	if username.Valid {
 		member.TelegramUsername = &username.String
@@ -97,21 +114,24 @@ func (s identityService) ListCommunityMembers(ctx context.Context, req *identity
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, listCommunityMembersSQL, filter)
+	grantedRight, err := grantedRightFilterValue(req.GetGrantedRight())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, listCommunityMembersSQL, filter, grantedRight)
 	if err != nil {
 		return nil, internal("list community members", err)
 	}
 	defer func() { _ = rows.Close() }()
 	response := &identityv1.ListCommunityMembersResponse{}
 	for rows.Next() {
-		var id string
+		var id, granted string
 		var username, circle sql.NullString
 		var telegramUserID int64
-		var moderation bool
-		if err := rows.Scan(&id, &username, &telegramUserID, &circle, &moderation); err != nil {
+		if err := rows.Scan(&id, &username, &telegramUserID, &circle, &granted); err != nil {
 			return nil, internal("scan community member", err)
 		}
-		response.Members = append(response.Members, communityMember(id, username, telegramUserID, circle, moderation))
+		response.Members = append(response.Members, communityMember(id, username, telegramUserID, circle, granted))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, internal("iterate community members", err)
@@ -142,12 +162,12 @@ func (s identityService) GetCommunityMember(ctx context.Context, req *identityv1
 		}
 		return nil, err
 	}
-	var id string
+	var id, granted string
 	var username, circle sql.NullString
 	var telegramUserID int64
-	var moderation, blocked, holdsPreset bool
+	var blocked, holdsPreset bool
 	err = s.db.QueryRowContext(ctx, getCommunityMemberSQL, identityID).
-		Scan(&id, &username, &telegramUserID, &circle, &moderation, &blocked, &holdsPreset)
+		Scan(&id, &username, &telegramUserID, &circle, &granted, &blocked, &holdsPreset)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		return refused(&identityv1.GetCommunityMemberRefusal{Reason: &identityv1.GetCommunityMemberRefusal_IdentityUnknown{
@@ -165,7 +185,7 @@ func (s identityService) GetCommunityMember(ctx context.Context, req *identityv1
 		}}), nil
 	}
 	return &identityv1.GetCommunityMemberResponse{Outcome: &identityv1.GetCommunityMemberResponse_Found{
-		Found: communityMember(id, username, telegramUserID, circle, moderation),
+		Found: communityMember(id, username, telegramUserID, circle, granted),
 	}}, nil
 }
 

@@ -1,10 +1,13 @@
 import { GrammyError, HttpError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
+import { inspectCall } from "../../../../testkit/screen-lint.js";
 import { encodeAuctionCallback } from "../../../auction-ui/index.js";
+import { renderFinalNotice } from "../../../core/notifications/final-notice.js";
 import {
   createLotNoticeRender,
   type LotNotice,
 } from "../../../core/notifications/lot-notice.js";
+import { renderStepWindowNotice } from "../../../core/notifications/step-window-notice.js";
 import type {
   MeetupAspect,
   MeetupLifecycle,
@@ -70,9 +73,13 @@ function buttons(content: OutgoingNotification): unknown[] {
 // своими следами (PER-598).
 async function lotNotice(notice: LotNotice) {
   const rendered = await createLotNoticeRender({
-    reads: { holdsPlaceBids: async () => true, lotTitle: async () => "Кружка" },
+    reads: {
+      holdsPlaceBids: async () => true,
+      lotInfo: async () => ({ title: "Кружка" }),
+    },
     onTitleMissing: () => {},
     frequencyButton: true,
+    timeZone: "Europe/Moscow",
   })(notice, { recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd" });
   if (rendered.kind !== "ready") throw new Error("the notice must render");
   return renderNotification({ kind: "lot-notice", view: rendered.message });
@@ -95,21 +102,142 @@ function grammyError(code: number, retryAfter?: number): GrammyError {
 }
 
 describe("renderNotification", () => {
+  // Анонс финала (PER-478): свой лот — ряд с его названием, след на карточку
+  // лота аукционного дерева; у старта финала клавиатуры нет.
+  it("traces the own lot of the final lineup and sends the started final bare", () => {
+    const view = renderFinalNotice(
+      {
+        kind: "final-lineup",
+        auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        lineup: [{ lotId, price: { minorUnits: 50_000, currency: "RUB" } }],
+        yourLotIds: [lotId],
+      },
+      { lots: new Map([[lotId, { title: "Кружка" }]]) },
+    );
+    const lineup = renderNotification({ kind: "lot-notice", view });
+    expect(lineup.text.split("\n")[0]).toBe(
+      "Твой лот в финале аукциона. Состав финала:",
+    );
+    expect(lineup.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Кружка",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "lot", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+    const started = renderNotification({
+      kind: "lot-notice",
+      view: renderFinalNotice(
+        {
+          kind: "final-started",
+          auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        },
+        { lots: new Map() },
+      ),
+    });
+    expect(started).toEqual({
+      text: "Начался финал аукциона.",
+      keyboard: undefined,
+    });
+  });
+
+  // Начало окна «Счастливых часов» (PER-616): ряд на каждый лот окна, след на
+  // карточку лота аукционного дерева.
+  function windowView() {
+    return renderStepWindowNotice(
+      {
+        kind: "step-window-started",
+        auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        lots: [
+          {
+            lotId,
+            until: "2026-10-21T21:00:00Z",
+            step: { minorUnits: 50_000, currency: "RUB" },
+          },
+        ],
+      },
+      { lots: new Map([[lotId, { title: "Кружка" }]]), timeZone: "UTC" },
+    );
+  }
+
+  it("traces the card of every lot of the window", () => {
+    const message = renderNotification({
+      kind: "lot-notice",
+      view: windowView(),
+    });
+    expect(message.text.split("\n")[0]).toBe("Счастливые часы начались:");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Кружка",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "lot", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  // Линтер дизайн-кода: весть идёт мимо адаптера экранов, и без метки
+  // каталога линтер её не увидел бы.
+  it("passes the screen linter", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: { kind: "lot-notice", view: windowView() },
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
+  });
+
   // Итог розыгрыша (PER-620): победителю своя фраза, остальным — номер
   // выигравшего билета и свой; кнопка следа ведёт на экран итога.
+  it("tells a community member that prediction results are ready", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const message = renderNotification({
+      kind: "prediction-results",
+      auctionId,
+    });
+    expect(message.text).toBe("Итоги твоих прогнозов подведены.");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К итогам",
+          callback_data: `v1:t:${encodeAuctionCallback({
+            kind: "prediction-results",
+            auctionId,
+          }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
   it("tells the winner and the others the raffle result with a traced button", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
-    const result = (ticket: number) =>
+    const result = (ticket: number, prize?: string) =>
       renderNotification({
         kind: "raffle-result",
         auctionId,
         ticket,
         winningTicket: 7,
         ticketCount: 12,
+        ...(prize === undefined ? {} : { prize }),
       });
 
     expect(result(7).text).toBe(
       "Твой билет №7 из 12 выиграл розыгрыш среди участников.",
+    );
+    // Приз розыгрыша (PER-649): победитель видит его и следующий шаг.
+    expect(result(7, "сертификат на 5000 ₽").text).toBe(
+      "Твой билет №7 из 12 выиграл розыгрыш среди участников: приз — сертификат на 5000 ₽, а организатор напишет тебе, как его получить.",
     );
     expect(result(3).text).toBe(
       "Розыгрыш среди участников проведён: выиграл билет №7 из 12, твой — №3.",
@@ -119,6 +247,89 @@ describe("renderNotification", () => {
         {
           text: "К розыгрышу",
           callback_data: `v1:t:${encodeAuctionCallback({ kind: "raffle", auctionId }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  // Собранный сет (PER-687): весть простым текстом, имя организатора — как
+  // есть, а след открывает существующий экран состава новым сообщением.
+  it("names and counts the collected set with one traced button", () => {
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: "<Сервиз & чашки>",
+      lotCount: 3,
+      lotId,
+    });
+
+    expect(message.text).toBe(
+      "Ты собрал сет «<Сервиз & чашки>»: в нём 3 лота.",
+    );
+    expect(message.format).toBeUndefined();
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К сету",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "set", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  it("passes the screen linter with organizer text in plain text", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: {
+        kind: "lot-set-collected",
+        setName: "<Сервиз & чашки>",
+        lotCount: 3,
+        lotId,
+      },
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
+  });
+
+  it("keeps a long set name within Telegram's text limit", () => {
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: '"'.repeat(1_000),
+      lotCount: 3,
+      lotId,
+    });
+
+    expect(message.text.length).toBeLessThanOrEqual(telegramTextLimit);
+  });
+
+  // Извещение об отмене аукциона (PER-606): покупателю — строка о покупке,
+  // кнопка следа — корень аукциона новым сообщением.
+  it("tells about a cancelled auction with a traced button to its root", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const message = renderNotification({
+      kind: "auction-cancelled",
+      auctionId,
+      purchases: [{ minorUnits: 150_000, currency: "RUB" }],
+    });
+
+    expect(message.text).toContain(
+      "Аукцион отменили: торги по лотам остановлены, ставки больше не действуют.",
+    );
+    expect(message.text).toContain("Твоя покупка за");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К аукциону",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "root", auctionId }).slice("v1:".length)}`,
         },
       ],
     ]);
@@ -134,9 +345,11 @@ describe("renderNotification", () => {
       currentPrice: { minorUnits: 150_000, currency: "RUB" },
     });
 
+    // Название жирным, после «перебили» (№71 прогона 14 октября 2026 года).
     expect(rendered.text).toBe(
-      "Твою ставку на «Кружка» перебили. Текущая цена — 1 500 ₽.",
+      "Твою ставку перебили: <b>Кружка</b>, цена 1 500 ₽.",
     );
+    expect(rendered.format).toBe("HTML");
     const button = rendered.keyboard?.inline_keyboard[0]?.[0];
     expect(button?.text).toBe("К лоту");
     expect(button).toMatchObject({
@@ -170,7 +383,7 @@ describe("renderNotification", () => {
       price: { minorUnits: 150_000, currency: "RUB" },
     });
     expect(rendered.text).toBe(
-      "Лот «Кружка» твой за 1 500 ₽. Как оплатить и забрать — напишет организатор аукциона.",
+      "Лот <b>Кружка</b> твой за 1 500 ₽. Счёт и как оплатить — в «Моих счетах» аукциона.",
     );
     expect(rendered.keyboard?.inline_keyboard).toEqual([
       [expect.objectContaining({ text: "К лоту" })],
@@ -225,7 +438,7 @@ describe("renderNotification", () => {
       }),
     );
     expect(message.text).toBe(
-      "Новая сходка: Настолки у Лёши\n12.08.2026 19:00\nМесто: Циферблат",
+      "Новая сходка: Настолки у Лёши\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
     const rows = message.keyboard?.inline_keyboard ?? [];
     expect(rows[0]?.[0]).toMatchObject({ text: "Открыть сходку" });
@@ -242,14 +455,14 @@ describe("renderNotification", () => {
   it("does not promise a precision the meetup does not have", () => {
     const text = (when: MeetupWhen) =>
       renderNotification(content(when, { venue: "" })).text.split("\n")[1];
-    expect(text({ kind: "no-date" })).toBe("Дата пока не назначена");
+    expect(text({ kind: "no-date" })).toBe("📅 Когда: дата пока не назначена");
     expect(
       text({
         kind: "day",
         tentative: true,
         date: { year: 2026, month: 8, day: 12 },
       }),
-    ).toBe("Предварительно: 12.08.2026");
+    ).toBe("📅 Когда: предварительно 12 августа, ср");
     expect(
       text({
         kind: "interval",
@@ -257,7 +470,7 @@ describe("renderNotification", () => {
         start: { year: 2026, month: 8, day: 12, hours: 19, minutes: 0 },
         end: { year: 2026, month: 8, day: 12, hours: 22, minutes: 30 },
       }),
-    ).toBe("12.08.2026 19:00–22:30");
+    ).toBe("📅 Когда: 12 августа, ср, 19:00–22:30");
     expect(
       text({
         kind: "interval",
@@ -265,14 +478,30 @@ describe("renderNotification", () => {
         start: { year: 2026, month: 8, day: 12, hours: 22, minutes: 0 },
         end: { year: 2026, month: 8, day: 13, hours: 2, minutes: 0 },
       }),
-    ).toBe("12.08.2026 22:00–13.08.2026 02:00");
+    ).toBe("📅 Когда: 12 августа, ср, 22:00–13 августа, чт, 02:00");
+  });
+
+  // Прогон 14.10, №60: дата читается, как на карточке, — чужой год назван.
+  it("names the year of a meetup outside the current community year", () => {
+    const message = renderNotification(
+      content({
+        kind: "day-start",
+        tentative: false,
+        at: { year: 2026, month: 8, day: 12, hours: 19, minutes: 0 },
+      }),
+      undefined,
+      { year: 2025, month: 12, day: 30 },
+    );
+    expect(message.text.split("\n")[1]).toBe(
+      "📅 Когда: 12 августа 2026, ср, 19:00",
+    );
   });
 
   it("omits an empty venue line", () => {
     const message = renderNotification(
       content({ kind: "no-date" }, { venue: " " }),
     );
-    expect(message.text).not.toContain("Место");
+    expect(message.text).not.toContain("Где");
   });
 
   it("keeps the disable button within the 64-byte budget", () => {
@@ -306,7 +535,7 @@ describe("reminder notification", () => {
   it("names the meetup, when and where, and offers to stop reminders", () => {
     const message = renderNotification({ kind: "meetup-reminder", meetup });
     expect(message.text).toBe(
-      "Напоминание: Настолки у Лёши\n12.08.2026 19:00\nМесто: Циферблат",
+      "Напоминание: Настолки у Лёши\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
     const rows = message.keyboard?.inline_keyboard ?? [];
     expect(rows[0]?.[0]).toMatchObject({
@@ -324,7 +553,7 @@ describe("reminder notification", () => {
 describe("change notification", () => {
   it("says what changed and shows the current values", () => {
     expect(renderNotification(changed(["venue", "schedule"])).text).toBe(
-      "Изменения в сходке: Настолки у Лёши\nИзменилось: место, дата и время\n12.08.2026 19:00\nМесто: Циферблат",
+      "Изменения в сходке: Настолки у Лёши\nИзменилось: место, дата и время\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
   });
 
@@ -342,11 +571,22 @@ describe("change notification", () => {
     );
   });
 
+  // Прогон 14.10, №105: изменений у отменённой сходки не будет — выключать
+  // их нечего, под отменой одна «Открыть сходку».
+  it("offers only to open a cancelled meetup", () => {
+    expect(buttons(changed(["lifecycle"], "cancelled"))).toEqual([
+      expect.objectContaining({
+        text: "Открыть сходку",
+        callback_data: "v1:t:view:AZjypHwefTqbIU-OEqs0zw",
+      }),
+    ]);
+  });
+
   it("keeps other changes next to the new state", () => {
     expect(
       renderNotification(changed(["lifecycle", "title"], "held")).text,
     ).toBe(
-      "Сходка состоялась: Настолки у Лёши\nИзменилось: название\n12.08.2026 19:00\nМесто: Циферблат",
+      "Сходка состоялась: Настолки у Лёши\nИзменилось: название\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
   });
 
@@ -423,7 +663,7 @@ describe("unpublished notification", () => {
   it("names the meetup without a way to open it", () => {
     const message = renderNotification({ kind: "meetup-unpublished", meetup });
     expect(message.text).toBe(
-      "Сходка снята с публикации: Настолки у Лёши\n12.08.2026 19:00",
+      "Сходка снята с публикации: Настолки у Лёши\n📅 Когда: 12 августа, ср, 19:00",
     );
     expect(message.keyboard).toBeUndefined();
   });
@@ -469,10 +709,14 @@ describe("organizer message", () => {
 });
 
 describe("access request", () => {
-  const stop = expect.objectContaining({
-    text: "Не присылать запросы доступа",
-    callback_data: "v1:notify:off:access",
-  });
+  const stop = (queue: "community" | "auction") =>
+    expect.objectContaining({
+      text:
+        queue === "auction"
+          ? "Не присылать запросы в аукцион"
+          : "Не присылать запросы в сообщество",
+      callback_data: `v1:notify:off:access-${queue}`,
+    });
 
   it("names the hub request, leads to its queue and offers to stop requests", () => {
     const content: OutgoingNotification = {
@@ -487,14 +731,14 @@ describe("access request", () => {
         text: "Открыть заявки",
         callback_data: "v1:t:cm:q",
       }),
-      stop,
+      stop("community"),
     ]);
   });
 
   // Очередь хаба допускает в участники: аукционную заявку ведут в очередь
-  // аукциона, где допуск выдаёт право ставить (PER-534). Категория у обеих
-  // очередей одна, и выключатель стоит под обеими.
-  it("leads the auction request to the auction queue, not the hub one", () => {
+  // аукциона, где допуск выдаёт право ставить (PER-534). Выключатель называет
+  // ту очередь, из которой заявка пришла (PER-635).
+  it("leads the auction request to the auction queue and stops only that queue", () => {
     const content: OutgoingNotification = {
       kind: "access-requested",
       queue: "auction",
@@ -507,8 +751,140 @@ describe("access request", () => {
         text: "Открыть заявки",
         callback_data: "v1:t:aq:q",
       }),
-      stop,
+      stop("auction"),
     ]);
+  });
+});
+
+describe("access request with the application", () => {
+  const stop = (queue: "community" | "auction") =>
+    expect.objectContaining({
+      text:
+        queue === "auction"
+          ? "Не присылать запросы в аукцион"
+          : "Не присылать запросы в сообщество",
+      callback_data: `v1:notify:off:access-${queue}`,
+    });
+  const applicationId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903";
+  const createdAtMs = Date.UTC(2026, 9, 12, 18, 5, 7, 40);
+
+  // Тело заявки — те же строки, что карточка очереди, а решение — те же
+  // данные кнопок с пометкой следа: экран исхода придёт новым сообщением.
+  it("shows the application with admit and decline of the queue card", () => {
+    const content: OutgoingNotification = {
+      kind: "access-request-card",
+      queue: "community",
+      application: {
+        applicationId,
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3904",
+        telegramUserId: 7110n,
+        telegramUsername: "alice_b",
+        firstName: "Алиса <3",
+        circle: "member",
+        source: { kind: "channel", label: "Ярмарка" },
+        createdAtMs,
+      },
+      shownAtMs: createdAtMs + 5 * 60_000,
+    };
+    const message = renderNotification(content);
+
+    expect(message.format).toBe("HTML");
+    expect(message.text).toBe(
+      [
+        "Новая заявка на доступ в сообщество",
+        "",
+        "Алиса &lt;3 (@alice_b)",
+        "Пришёл: канал «Ярмарка» · 5 минут назад",
+      ].join("\n"),
+    );
+    const data = `AZjypHwefTqbIU-OEqs5Aw:${createdAtMs.toString(36)}`;
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({ callback_data: `v1:t:cm:qa:${data}` }),
+      expect.objectContaining({ callback_data: `v1:t:cm:qd:${data}` }),
+      expect.objectContaining({
+        text: "Профиль ↗",
+        url: "https://t.me/alice_b",
+      }),
+      stop("community"),
+    ]);
+  });
+
+  it("names the auction queue in the decision buttons", () => {
+    const content: OutgoingNotification = {
+      kind: "access-request-card",
+      queue: "auction",
+      application: {
+        applicationId,
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3904",
+        telegramUserId: 7110n,
+        circle: "public",
+        source: { kind: "none" },
+        createdAtMs,
+      },
+      shownAtMs: createdAtMs,
+    };
+    expect(renderNotification(content).text).toContain(
+      "Новая заявка на участие в аукционе",
+    );
+    expect(
+      buttons(content).map(
+        (button) => (button as { callback_data?: string }).callback_data,
+      ),
+    ).toEqual([
+      expect.stringMatching(/^v1:t:aq:qa:/),
+      expect.stringMatching(/^v1:t:aq:qd:/),
+      "v1:notify:off:access-auction",
+    ]);
+  });
+
+  // Заявку решили до доставки: решать нечего, остальные — в очереди.
+  it("says a decided application was decided and leads to the queue", () => {
+    const content: OutgoingNotification = {
+      kind: "access-request-decided",
+      queue: "community",
+    };
+    const message = renderNotification(content);
+    expect(message.text).toBe(
+      "Новая заявка на доступ в сообщество\n\nЭту заявку уже решили.",
+    );
+    expect(message.format).toBeUndefined();
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({
+        text: "Открыть заявки",
+        callback_data: "v1:t:cm:q",
+      }),
+      stop("community"),
+    ]);
+  });
+
+  it("sends the card as HTML", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const sender = createNotificationSender({
+      sendMessage,
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 7110n,
+      message: {
+        kind: "access-request-card",
+        queue: "community",
+        application: {
+          applicationId,
+          identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3904",
+          telegramUserId: 7110n,
+          circle: "member",
+          source: { kind: "none" },
+          createdAtMs,
+        },
+        shownAtMs: createdAtMs,
+      },
+    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      7110,
+      expect.any(String),
+      expect.objectContaining({ parse_mode: "HTML" }),
+    );
   });
 });
 
@@ -530,18 +906,22 @@ describe("access granted", () => {
 });
 
 describe("preset granted", () => {
-  it("names the administrator rights and leads to the meetups by a trace button", () => {
+  // Прогон 14.10, №48: факт не несёт прежних прав, и у мейнтейнера
+  // «Управление» было и до набора — текст говорит, что есть, а не что
+  // появилось, и ведёт в «Управление».
+  it("names the administrator rights and leads to the management by a trace button", () => {
     const content: OutgoingNotification = {
       kind: "preset-granted",
       preset: "admin",
     };
     expect(renderNotification(content).text).toBe(
-      "Тебе выданы права администратора сообщества. В меню команд появилось «Управление» — /manage.",
+      "Тебе выданы права администратора сообщества: заявки, состав и сходки. Они собраны в «Управлении» — кнопка ниже или команда /manage.",
     );
+    expect(renderNotification(content).text).not.toContain("появил");
     expect(buttons(content)).toEqual([
       expect.objectContaining({
-        text: "Сходки",
-        callback_data: "v1:t:nav:hub",
+        text: "Управление",
+        callback_data: "v1:t:manage:menu",
       }),
     ]);
   });
@@ -659,5 +1039,30 @@ describe("notification sender", () => {
     expect(
       classifySendFailure(new HttpError("network", new Error("reset"))).kind,
     ).toBe("unavailable");
+  });
+
+  it("renders a release summary from the image lines and the mute button", () => {
+    const summaryId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+    const message = renderNotification({
+      kind: "release-note",
+      day: "14 октября",
+      lines: ["Под сводкой аукциона теперь кнопка на каждый лот."],
+      hidden: 2,
+      summaryId,
+    });
+    expect(message.text).toBe(
+      "<b>Новое в боте · 14 октября</b>\n\n• Под сводкой аукциона теперь кнопка на каждый лот.\n…и ещё записей: 2 — в «Что нового».",
+    );
+    expect(message.format).toBe("HTML");
+    const rows = message.keyboard?.inline_keyboard ?? [];
+    const open = rows[0]?.[0];
+    expect(open?.text).toBe("Что нового");
+    expect(rows[1]?.[0]).toMatchObject({
+      text: "Не присылать новое в боте",
+      callback_data: "v1:notify:off:release",
+    });
+    const data =
+      open !== undefined && "callback_data" in open ? open.callback_data : "";
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
   });
 });

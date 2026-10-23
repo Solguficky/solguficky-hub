@@ -98,7 +98,7 @@ describe("сценарий первого среза", () => {
     expect(member.buttons()).toContain("Сходки");
     expect(member.buttons()).not.toContain("Управление");
     await member.presses("Сходки");
-    expect(member.buttons()).toContain("Архив");
+    expect(member.buttons()).toContain("🗂 Архив");
     await member.says("/manage");
     expect(member.sees()).toBe("Управление сходками доступно администратору.");
   });
@@ -117,12 +117,15 @@ describe("сценарий первого среза", () => {
     await person.says("/start");
     await person.says("/manage");
     await person.presses("Сходки и объявления");
+    // Сходка рождается ответом на вопрос о названии (прогон 14.10), и сам
+    // вопрос бот без права не задаёт — поэтому набор снимается после вопроса.
+    await person.presses("Создать сходку");
     const personId = await direct.identityOf(telegramUserId);
     await direct.revokeAdmin(personId);
 
-    // Группа осталась в чате, а кнопку внутри неё бот не сторожит: право решает
+    // Вопрос остался в чате, а ответ на него бот не сторожит: право решает
     // Meetups, и отказ звучит без имени сервиса.
-    await person.presses("Создать сходку");
+    await person.says("Без права");
 
     expect(person.sees()).toBe("Это действие тебе недоступно.");
     expect(await direct.journalOf(personId)).toEqual({

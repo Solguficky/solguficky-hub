@@ -10,6 +10,9 @@ import type { BotCommand } from "../../../core/menu-commands.js";
 const menu = { command: "menu", description: "Меню" } as const;
 const meetups = { command: "meetups", description: "Сходки" } as const;
 const next = { command: "next", description: "Ближайшая сходка" } as const;
+// «События» — в списке всегда (PER-669): без идущих событий команда открывает
+// раздел с пустым состоянием, а кнопки в меню нет.
+const events = { command: "events", description: "События" } as const;
 const settings = { command: "settings", description: "Настройки" } as const;
 const manage = { command: "manage", description: "Управление" } as const;
 const help = { command: "help", description: "Помощь" } as const;
@@ -19,6 +22,7 @@ export const botCommands = [
   menu,
   meetups,
   next,
+  events,
   settings,
   help,
 ] as const satisfies readonly BotCommand[];
@@ -32,6 +36,7 @@ export const managerCommands = [
   menu,
   meetups,
   next,
+  events,
   settings,
   manage,
   help,

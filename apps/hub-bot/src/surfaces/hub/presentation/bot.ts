@@ -32,7 +32,10 @@ import {
   liveCardOf,
   liveEditFailure,
 } from "../../../core/auction/live-cards.js";
-import { reportLiveEditFailure } from "../../../core/auction/live-failures.js";
+import {
+  reportLiveConsoleFailure,
+  reportLiveEditFailure,
+} from "../../../core/auction/live-failures.js";
 import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -45,6 +48,8 @@ import {
   applyLabel,
   createHintedAlbums,
   strayHintText,
+  supportBotLink,
+  supportLabel,
   withSourceCode,
 } from "../../../core/entry.js";
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
@@ -70,6 +75,7 @@ import {
   hubAccessText,
   hubWelcome,
 } from "../application/hub-access.js";
+import { isSold, lotCurrency } from "../application/lot-form.js";
 import {
   type CommunityToday,
   formatLocalMoment,
@@ -83,6 +89,7 @@ import type {
   ExecuteRequest,
   ExecuteResult,
   FinalAskError,
+  FinalTimeAskError,
   FormField,
   LotAmount,
   LotAskError,
@@ -91,15 +98,18 @@ import type {
   MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
+  PaymentTextAskError,
   Person,
   PublishMomentRetry,
   RaffleAskError,
+  RafflePrizeAskError,
   TradingHolder,
   WeekAskError,
   WindowAskError,
 } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
+import { cursorAtApplication } from "../identity/application-cursor.js";
 import {
   type AccessRequester,
   type Administrator,
@@ -108,16 +118,18 @@ import {
   type ApplicationCursor,
   type ApplicationModerator,
   type ApplicationQueueRead,
-  type AuctionModerationAdministrator,
   type CommunityAdministrator,
   type CommunityMemberResult,
   type CommunitySnapshot,
-  type GrantModerationResult,
+  type GrantRecordResult,
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
+  type ParticipantUsernameResolver,
   type ReconsiderResult,
+  type RecordRight,
   type RefusedApplication,
+  type RightRecordAdministrator,
   type SourceChannel,
   type SourceChannelAdministrator,
   type TelegramRecipientResolver,
@@ -146,9 +158,22 @@ import {
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
+import {
+  createLiveConsoles,
+  type LiveConsoleEntry,
+  type LiveConsoleRead,
+  type LiveConsoles,
+} from "./live-console.js";
+import {
+  createLiveFloors,
+  type LiveFloorEntry,
+  type LiveFloors,
+} from "./live-floor.js";
+import type { LiveScreenRead } from "./live-screens.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
+  isTypedText,
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationHtml,
   parseMaterialConfirmation,
@@ -169,22 +194,35 @@ import {
   type CardCursor,
   type CommunityPlace,
   consoleAskData,
+  consoleFinalTimeData,
+  consoleInvoiceMarkData,
+  consoleInvoicesData,
+  consolePaymentTextData,
   consoleRaffleData,
+  consoleRafflePrizeData,
+  consoleSetAskData,
+  consoleSetsData,
   consoleViewData,
   consoleWeekData,
   consoleWindowAskData,
+  consoleWindowLaunchData,
   consoleWindowsData,
   defaultConsoleSort,
+  floorData,
+  floorPickData,
+  floorSearchData,
   lotAskData,
   lotFormData,
   lotNewData,
   lotSkipData,
   lotStepModeData,
+  type NewMeetupOrigin,
   type NotifiedMeetupCategory,
   type PublishOrigin,
   parseCallback,
   type QuestionStep,
   questionData,
+  removalPickData,
   traceCallback,
   type WhenMode,
 } from "./parse-callback.js";
@@ -203,6 +241,7 @@ import {
   toAdministrators,
 } from "./screens/administrators.js";
 import {
+  admittedNote,
   applicationCardScreen,
   applicationQueueEndScreen,
   decisionToast,
@@ -215,17 +254,26 @@ import {
 } from "./screens/auction.js";
 import {
   auctionDiscardedText,
+  type ConsoleScreenView,
+  cancelConfirmScreen,
   closeConfirmScreen,
   closedScreen,
+  consoleMeetupCancelledText,
   consoleMissingText,
   consoleScreen,
   discardConfirmScreen,
   finalAskErrorText,
   finalAskText,
+  finalTimeAskErrorText,
+  finalTimeQuestionText,
   finalToast,
+  launchQuestionText,
+  launchScreen,
   lineupConfirmScreen,
   lineupOrderScreen,
   raffleAskErrorText,
+  rafflePrizeAskErrorText,
+  rafflePrizeQuestionText,
   raffleQuestionText,
   weekAskError,
   weekConfirmScreen,
@@ -236,7 +284,18 @@ import {
   windowScreen,
   windowsScreen,
 } from "./screens/auction-console.js";
+import { daySummaryScreen } from "./screens/auction-day-summary.js";
 import { auctionFaqScreen } from "./screens/auction-faq.js";
+import {
+  invoiceMarkConfirmScreen,
+  invoiceMarkOutcomeScreen,
+  invoiceMissingScreen,
+  invoiceScreen,
+  invoicesLabel,
+  invoicesScreen,
+  paymentTextAskErrorText,
+  paymentTextPrompt,
+} from "./screens/auction-invoices.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -245,14 +304,31 @@ import {
   communityMemberRefusalText,
   communityMemberScreen,
   communityScreen,
+  demoteMemberConfirmScreen,
   firstCommunityPlace,
 } from "./screens/community.js";
 import {
+  eventsScreen,
+  type HubEvent,
+  isAuctionEvent,
+} from "./screens/events.js";
+import {
   auctionEnabledScreen,
   extensionsScreen,
+  settingsAuctionScreen,
   settingsExtensionsScreen,
 } from "./screens/extensions.js";
 import {
+  type FloorScreenView,
+  floorConfirmScreen,
+  floorLeaderToast,
+  floorScreen,
+  floorSearchQuestionText,
+  floorTitle,
+} from "./screens/floor-bids.js";
+import {
+  type AuctionEntry,
+  auctionEntryOf,
   cancelLabel,
   confirmKeyboard,
   escapeHtml,
@@ -260,11 +336,14 @@ import {
   heading,
   outcomeText,
   type Parent,
+  plural,
+  readableMoment,
   refusalText,
   retryLabel,
   screenText,
   toCard,
   toCommunity,
+  toEvents,
   toExtensions,
   toManage,
   toMaterials,
@@ -287,6 +366,14 @@ import {
   toLots,
 } from "./screens/lot-form.js";
 import {
+  lotSetAskErrorText,
+  lotSetDeleteConfirmScreen,
+  lotSetLotToast,
+  lotSetPrompt,
+  lotSetScreen,
+  lotSetsScreen,
+} from "./screens/lot-sets.js";
+import {
   archiveScreen,
   cardScreen,
   draftScreen,
@@ -308,9 +395,9 @@ import {
   canManageMeetups,
   canManageMembers,
   canOpenManagement,
+  canRunAuctions,
   commandsFor,
   helpScreen,
-  type ManageGroup,
   manageGroupScreen,
   manageGroups,
   manageItemParent,
@@ -319,14 +406,26 @@ import {
   settingsScreen,
 } from "./screens/menu.js";
 import {
+  accessRequestCategories,
+  auctionNotificationsChangeData,
+  auctionNotificationsData,
   auctionNotificationsScreen,
   categoryLabels,
-  finalAnnouncementsData,
   globalNotificationsScreen,
   meetupNotificationsScreen,
   toggleToast,
 } from "./screens/notifications.js";
+import {
+  removalConfirmScreen,
+  removalOutcomeScreen,
+  removalPeopleScreen,
+} from "./screens/participant-removal.js";
 import { reconsiderConfirmScreen, refusedScreen } from "./screens/refused.js";
+import {
+  releaseEmptyScreen,
+  releasePostData,
+  releasePostScreen,
+} from "./screens/release-notes.js";
 import {
   datePresetsScreen,
   scheduleTypePrompt,
@@ -364,9 +463,10 @@ export type BotRuntime = {
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
     Partial<ApplicationModerator> &
-    Partial<AuctionModerationAdministrator> &
+    Partial<RightRecordAdministrator> &
     Partial<AdministratorManager> &
     Partial<OrganizerResolver> &
+    Partial<ParticipantUsernameResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
   tracing: Tracing;
@@ -375,6 +475,9 @@ export type BotRuntime = {
   // Имя бота аукциона без «@»: экран каналов собирает по нему вторую ссылку
   // `s_<код>`. Нет — экран отдаёт только ссылку в бот хаба.
   auctionBotUsername?: string;
+  // Имя бота поддержки без «@»: «Помощь» и кадр ожидания допуска несут
+  // ссылку «Написать в поддержку ↗» (PER-625). Нет — ни ряда, ни кнопки.
+  supportBotUsername?: string;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -444,20 +547,36 @@ const materialForbiddenText = "Это действие доступно орга
 // Отказ сервиса по праву человек видит без имени сервиса: ему не нужно знать,
 // кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
 const forbiddenText = "Это действие тебе недоступно.";
+// Отменённая сходка аукциона не получает (ADR-047, дополнение 2026-10-12).
+const auctionMeetupCancelledText =
+  "Сходку отменили. Аукцион у неё не включить.";
 // Категорию запросов доступа сервис показывает и даёт менять только
 // модератору очереди. Нажатие из старого уведомления или экрана настроек после
 // потери права получает `PERMISSION_DENIED`, и ответ называет причину, а не
 // одно «недоступно».
 const accessRequestsForbiddenText =
-  "Запросы доступа настраивает только администратор.";
+  "Запросы доступа настраивает только тот, кто решает заявки этой очереди.";
 const managementForbiddenText = "Управление сходками доступно администратору.";
 const communityForbiddenText =
   "Управлять составом сообщества может только администратор.";
 const refusedForbiddenText =
   "Пересматривать отказы может только администратор.";
 const auctionQueueForbiddenText = "Заявки в аукцион решает модератор аукциона.";
-const moderatorsForbiddenText =
-  "Выдавать модерацию аукциона может тот, кто управляет составом.";
+// Тексты записей прав с карточки человека (PER-547, PER-654).
+const recordTexts: Readonly<
+  Record<RecordRight, { granted: string; revoked: string; forbidden: string }>
+> = {
+  "admit-bidders": {
+    granted: "Модерация выдана.",
+    revoked: "Модерация отозвана.",
+    forbidden: "Выдавать модерацию аукциона может тот, кто управляет составом.",
+  },
+  "run-auctions": {
+    granted: "Ведение аукциона выдано.",
+    revoked: "Ведение аукциона снято.",
+    forbidden: "Выдавать ведение аукциона может тот, кто управляет составом.",
+  },
+};
 const administratorsForbiddenText =
   "Назначать и снимать администраторов может только мейнтейнер.";
 const channelSavedListFailedText =
@@ -489,7 +608,8 @@ type ProductUseCase =
   | "view_auction"
   | "enable_auction"
   | "manage_lot"
-  | "manage_auction";
+  | "manage_auction"
+  | "view_release_notes";
 // Сбой Auction на ответе формы лота: вопрос остаётся открытым, и тот же ответ
 // можно прислать ещё раз.
 const lotSaveRetryText =
@@ -533,6 +653,8 @@ type PendingQuestion = {
   mode: "create" | "edit";
   field: FormField;
   meetupId: string;
+  // Вопрос о названии новой сходки и откуда он задан (`fn`, `fg`).
+  fresh?: NewMeetupOrigin;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -629,10 +751,50 @@ type PendingConsoleRaffle = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о призе розыгрыша на пульте (PER-649). Шаг — аукцион — лежит в кнопке
+// вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePrize = {
+  kind: "console-raffle-prize";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос об ориентировочном времени финала на пульте (PER-663). Шаг — аукцион —
+// лежит в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleFinalTime = {
+  kind: "console-final-time";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о тексте «Как оплатить и получить» на «Счетах» (PER-322). Шаг —
+// аукцион — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePaymentText = {
+  kind: "console-payment-text";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
   kind: "console-window";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о запуске окна по ходу торгов (PER-615). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleLaunch = {
+  kind: "console-launch";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о названии нового сета лотов (PER-509). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleSet = {
+  kind: "console-set";
   auctionId: string;
   telegramUserId: number;
   expiresAt: number;
@@ -643,6 +805,14 @@ type PendingFinalAsk = {
   kind: "final-ask";
   auctionId: string;
   position: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос «Другой человек…» «Ставок зала» (PER-565). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingFloorSearch = {
+  kind: "floor-search";
+  auctionId: string;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -660,8 +830,63 @@ type HubPendingInput =
   | PendingLot
   | PendingConsoleWeek
   | PendingConsoleRaffle
+  | PendingConsolePrize
+  | PendingConsoleFinalTime
+  | PendingConsolePaymentText
   | PendingConsoleWindow
-  | PendingFinalAsk;
+  | PendingConsoleLaunch
+  | PendingConsoleSet
+  | PendingFinalAsk
+  | PendingFloorSearch;
+
+// Вопрос пульта: вид ожидания — намерение и строка журнала о чужом ответе.
+// Обе классификации по одному виду, и таблица держит их рядом: новая ветка
+// не должна расходиться с прежней (PER-663).
+const consoleQuestionIntents = {
+  "console-week": {
+    intent: "schedule-auction-week",
+    foreign: "foreign auction week answer ignored",
+  },
+  "console-raffle": {
+    intent: "set-auction-raffle",
+    foreign: "foreign auction raffle answer ignored",
+  },
+  "console-raffle-prize": {
+    intent: "set-auction-raffle-prize",
+    foreign: "foreign raffle prize answer ignored",
+  },
+  "console-final-time": {
+    intent: "set-auction-final-time",
+    foreign: "foreign final time answer ignored",
+  },
+  "console-payment-text": {
+    intent: "set-auction-payment-text",
+    foreign: "foreign payment text answer ignored",
+  },
+  "console-window": {
+    intent: "add-step-window",
+    foreign: "foreign step window answer ignored",
+  },
+  "console-launch": {
+    intent: "add-step-window-launch",
+    foreign: "foreign step window launch answer ignored",
+  },
+  "console-set": {
+    intent: "add-lot-set",
+    foreign: "foreign lot set answer ignored",
+  },
+} as const;
+
+type ConsoleQuestionPending = Extract<
+  PendingInput,
+  { kind: keyof typeof consoleQuestionIntents }
+>;
+
+function isConsoleQuestion(
+  pending: PendingInput,
+): pending is ConsoleQuestionPending {
+  return pending.kind in consoleQuestionIntents;
+}
 
 type UpdateContext = ShellContext & {
   // Ожидание этого update: ответ на нажатие, индикатор и бюджет сервисов.
@@ -686,6 +911,13 @@ type UpdateContext = ShellContext & {
   // карточку заново: без неё нажатие под карточкой её из реестра снимает.
   liveCards?: LiveCards;
   liveShown?: boolean;
+  // Открытые пульты ведущего (PER-566) и отметка, что этот update показал
+  // пульт финала: без неё нажатие под пультом его из реестра снимает.
+  liveConsoles?: LiveConsoles;
+  liveConsoleShown?: boolean;
+  // То же у «Ставок зала» помощника (PER-565).
+  liveFloors?: LiveFloors;
+  liveFloorShown?: boolean;
 };
 
 type BoundaryOutcome =
@@ -741,17 +973,56 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
           edit: (card, body) =>
             editLiveLotCard(bot.api, { card, body, runtime, lotPhotos }),
         });
+  const liveConsoles =
+    runtime.live === undefined
+      ? undefined
+      : createLiveConsoles({
+          watches: runtime.live.watches,
+          limiter: runtime.live.limiter,
+          read: (entry) => readLiveConsole(runtime, entry),
+          edit: (entry, screen) =>
+            editLiveConsole(bot.api, runtime, entry, screen),
+        });
+  const liveFloors =
+    runtime.live === undefined
+      ? undefined
+      : createLiveFloors({
+          watches: runtime.live.watches,
+          limiter: runtime.live.limiter,
+          read: (entry) => readLiveFloor(runtime, entry),
+          edit: (entry, screen) =>
+            editLiveConsole(bot.api, runtime, entry, screen),
+        });
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
+    if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
+    if (liveFloors !== undefined) ctx.liveFloors = liveFloors;
     await next();
     // Нажатие под карточкой финала показало другой экран — меню, сходку,
     // вопрос: правка по потоку вернула бы карточку поверх него (PER-336).
     const pressed = ctx.callbackQuery?.message;
     if (liveCards !== undefined && pressed !== undefined && !ctx.liveShown) {
       liveCards.shown(pressed.chat.id, pressed.message_id, undefined);
+    }
+    // То же у пульта ведущего (PER-566): исход команды или другой экран в
+    // сообщении пульта снимает его с правки по потоку.
+    if (
+      liveConsoles !== undefined &&
+      pressed !== undefined &&
+      !ctx.liveConsoleShown
+    ) {
+      liveConsoles.shown(pressed.chat.id, pressed.message_id, undefined);
+    }
+    // И у «Ставок зала» (PER-565).
+    if (
+      liveFloors !== undefined &&
+      pressed !== undefined &&
+      !ctx.liveFloorShown
+    ) {
+      liveFloors.shown(pressed.chat.id, pressed.message_id, undefined);
     }
     // Команды кнопки меню клиента — по правам, на каждом действии, где
     // личность разрешена, а не только на `/start` (PER-592): держателю права
@@ -990,7 +1261,9 @@ async function handleMessage(
             ctx,
             questions,
             pending,
-            "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.",
+            isTypedText(ctx.message)
+              ? "Текст сам по себе не материал: перешли сообщение из канала или чата, фото или документ."
+              : "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.",
             replyId,
           );
           outcome = {
@@ -1129,11 +1402,44 @@ async function handleMessage(
       // сходку, исчезнувшую за время набора, отклонит Notifications на отправке.
       // Вопрос снимается только после кадров: упавшая отправка оставляет его
       // ждать того же ответа.
+      const preview = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "preview-broadcast",
+        audience,
+        ...rpcCall(ctx, useCase),
+      });
+      if (preview.kind !== "broadcast-audience") {
+        await showFrame(
+          ctx,
+          "broadcast-result",
+          previewFailureText(preview, audience),
+          broadcastExit(audience),
+          "new",
+        );
+        await answered(
+          preview.kind === "dependency-rejected" &&
+            (preview.reason === "timeout" || preview.reason === "unavailable")
+            ? preview
+            : undefined,
+        );
+        outcome = {
+          ...screenBoundary(preview, {
+            ok: ["broadcast-audience"],
+            okMessage: "broadcast confirmation sent",
+            rejectedMessage: "broadcast preview rejected",
+            useCase,
+            ...(meetupId === undefined ? {} : { meetupId }),
+          }),
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
       await sendBroadcastConfirmation(
         ctx,
         audience,
         checked.body,
         pending.meetupTitle,
+        preview.recipientCount,
       );
       await answered();
       outcome = {
@@ -1256,21 +1562,16 @@ async function handleMessage(
     }
     if (
       replyId !== undefined &&
-      (pending?.kind === "console-week" ||
-        pending?.kind === "console-raffle" ||
-        pending?.kind === "console-window") &&
+      pending !== undefined &&
+      isConsoleQuestion(pending) &&
       ctx.message?.text !== undefined
     ) {
       useCase = "manage_auction";
+      const question = consoleQuestionIntents[pending.kind];
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
           level: "info",
-          message:
-            pending.kind === "console-week"
-              ? "foreign auction week answer ignored"
-              : pending.kind === "console-raffle"
-                ? "foreign auction raffle answer ignored"
-                : "foreign step window answer ignored",
+          message: question.foreign,
           result: "ok",
           use_case: useCase,
         };
@@ -1292,9 +1593,9 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      // Вопрос задаётся только администратору, но старый вопрос остаётся в
-      // чате: отказ приходит до Auction, как у формы лота.
-      if (!canManageMeetups(identity.person)) {
+      // Вопрос задаётся только держателю права вести аукцион, но старый
+      // вопрос остаётся в чате: отказ приходит до Auction, как у формы лота.
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseConsole(ctx, identity.person);
         return;
@@ -1303,20 +1604,25 @@ async function handleMessage(
       // помещается, а сроки Auction заменяет целиком, и повтор даёт тот же итог.
       // Повтор ответа об окне добавил бы второе такое же окно, но оно
       // пересекается с первым по всем лотам, и Auction его отклонит.
-      const result = await runtime.dispatcher.execute({
+      const answer = {
         identity: identity.person,
-        intent:
-          pending.kind === "console-week"
-            ? "schedule-auction-week"
-            : pending.kind === "console-raffle"
-              ? "set-auction-raffle"
-              : "add-step-window",
         auctionId: pending.auctionId,
         value: ctx.message.text,
         opId: createUuidV7(),
         ...rpcCall(ctx, useCase),
-      });
-      outcome = await renderConsoleResult(ctx, runtime, result, {
+      };
+      const result = await runtime.dispatcher.execute(
+        pending.kind === "console-set"
+          ? // Идентификатор сета выбирает вызывающий (ADR-073): он рождается
+            // на ответ, как ключ команды. Повтор ответа заведёт второй пустой
+            // сет с тем же названием — его видно и можно удалить.
+            { ...answer, intent: "add-lot-set", lotSetId: createUuidV7() }
+          : { ...answer, intent: consoleQuestionIntents[pending.kind].intent },
+      );
+      // Текст оплаты (PER-322) отвечает сводкой счетов, а не пультом.
+      outcome = await (pending.kind === "console-payment-text"
+        ? renderInvoicesResult
+        : renderConsoleResult)(ctx, runtime, result, {
         person: identity.person,
         questions,
         replyId,
@@ -1324,7 +1630,12 @@ async function handleMessage(
       if (
         result.kind !== "auction-week-ask" &&
         result.kind !== "auction-raffle-ask" &&
-        result.kind !== "step-window-ask"
+        result.kind !== "auction-raffle-prize-ask" &&
+        result.kind !== "auction-final-time-ask" &&
+        result.kind !== "payment-text-ask" &&
+        result.kind !== "step-window-ask" &&
+        result.kind !== "step-window-launch-ask" &&
+        result.kind !== "lot-set-ask"
       ) {
         await answered(result);
       }
@@ -1361,7 +1672,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!canManageMeetups(identity.person)) {
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseConsole(ctx, identity.person);
         return;
@@ -1384,6 +1695,60 @@ async function handleMessage(
         replyId,
       });
       if (result.kind !== "final-ask") await answered(result);
+      return;
+    }
+    // «Другой человек…» (PER-565): ответ — имя или его часть; найденные —
+    // экран с людьми, «Никого не нашлось» — экран с исходом.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "floor-search" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_auction";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign floor search answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!canRunAuctions(identity.person)) {
+        await answered();
+        outcome = await refuseConsole(ctx, identity.person);
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "view-floor-bids",
+        auctionId: pending.auctionId,
+        page: 0,
+        search: ctx.message.text,
+        ...rpcCall(ctx, useCase),
+      });
+      outcome = await renderFloorResult(ctx, runtime, result, {
+        person: identity.person,
+        questions,
+        replyId,
+      });
+      await answered(result);
       return;
     }
     if (
@@ -1418,7 +1783,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!canManageMeetups(identity.person)) {
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -1464,11 +1829,11 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      // Вопрос формы задаётся только администратору, но старый вопрос остаётся
-      // в чате, и шаг его кнопки можно прислать и чужой. Отказ приходит до
-      // Auction: иначе цена прошла бы разбор и человек получил бы второй
-      // вопрос вместо отказа.
-      if (!canManageMeetups(identity.person)) {
+      // Вопрос формы задаётся только держателю права вести аукцион, но старый
+      // вопрос остаётся в чате, и шаг его кнопки можно прислать и чужой.
+      // Отказ приходит до Auction: иначе цена прошла бы разбор и человек
+      // получил бы второй вопрос вместо отказа.
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -1562,7 +1927,10 @@ async function handleMessage(
       }
       await answered();
       await showScreen(ctx, {
-        ...appointConfirmScreen(username),
+        ...appointConfirmScreen(
+          username,
+          ctx.from?.username?.toLowerCase() === username.toLowerCase(),
+        ),
         delivery: "new",
       });
       outcome = {
@@ -1666,6 +2034,7 @@ async function handleMessage(
         field: pending.field,
         value: ctx.message.text,
         meetupId: pending.meetupId,
+        ...(pending.fresh === undefined ? {} : { fresh: true as const }),
         ...rpcCall(ctx, useCase),
       });
       await renderFormResult(
@@ -1673,6 +2042,8 @@ async function handleMessage(
         result,
         questions,
         runtime.presentation ?? "rich",
+        "status",
+        pending.fresh,
       );
       await answered(result);
       outcome = screenBoundary(result, {
@@ -1684,6 +2055,7 @@ async function handleMessage(
           "meetup-updated",
           "edit-unavailable",
           "confirm-past-schedule",
+          "meetup-exists",
         ],
         okMessage: "meetup form answer handled",
         rejectedMessage: "meetup form answer rejected",
@@ -1707,8 +2079,14 @@ async function handleMessage(
         pending.kind === "lot" ||
         pending.kind === "console-week" ||
         pending.kind === "console-raffle" ||
+        pending.kind === "console-raffle-prize" ||
+        pending.kind === "console-final-time" ||
+        pending.kind === "console-payment-text" ||
         pending.kind === "console-window" ||
-        pending.kind === "final-ask") &&
+        pending.kind === "console-launch" ||
+        pending.kind === "console-set" ||
+        pending.kind === "final-ask" ||
+        pending.kind === "floor-search") &&
       ctx.message?.text === undefined
     ) {
       useCase =
@@ -1721,8 +2099,14 @@ async function handleMessage(
             ? "manage_lot"
             : pending.kind === "console-week" ||
                 pending.kind === "console-raffle" ||
+                pending.kind === "console-raffle-prize" ||
+                pending.kind === "console-final-time" ||
+                pending.kind === "console-payment-text" ||
                 pending.kind === "console-window" ||
-                pending.kind === "final-ask"
+                pending.kind === "console-launch" ||
+                pending.kind === "console-set" ||
+                pending.kind === "final-ask" ||
+                pending.kind === "floor-search"
               ? "manage_auction"
               : pending.kind === "meetup" && pending.mode === "create"
                 ? "create_meetup"
@@ -1878,7 +2262,7 @@ async function handleMessage(
     } else {
       // Вход без ссылки на сходку открывает корневое меню: из него видно
       // всё, что доступно человеку (PER-592).
-      outcome = await openMenu(ctx, person, useCase);
+      outcome = await openMenu(ctx, runtime, person, useCase);
     }
   } catch (cause) {
     if (isScreenDeliveryFailure(cause)) {
@@ -1921,6 +2305,8 @@ async function handleCallback(
       // перед parser аукционного дерева и открываем карточку новым сообщением.
       const traced = data.startsWith("v1:t:auc:");
       const auctionData = traced ? `v1:${data.slice("v1:t:".length)}` : data;
+      // Вход из «Событий» (PER-669) — домен `aue`; дерево разбирает `auc`.
+      const treeData = auctionEntryOf(auctionData).data;
       if (traced) ctx.fresh = true;
       useCase = "view_auction";
       const pressedId = ctx.callbackQuery?.message?.message_id;
@@ -1928,14 +2314,14 @@ async function handleCallback(
       // новым сообщением; не дал Telegram удалить — правится на месте.
       // «Как это работает» под вопросом лимита задаёт его заново тем же
       // путём: нажатый вопрос удаляется, новый приходит следом (PER-517).
-      if (isAuctionQuestion(data) || replacesAuctionQuestion(data)) {
+      if (isAuctionQuestion(treeData) || replacesAuctionQuestion(treeData)) {
         if (pressedId !== undefined) {
           questions.delete(questionKey(ctx.chat?.id, pressedId));
         }
         const deleted = await deletePressed(ctx);
         // Вопрос под «Как это работает», который Telegram удалить не дал,
         // остаётся живым: клавиатура с шагом в «Отмене» с него не снимается.
-        ctx.pressedGone = deleted || replacesAuctionQuestion(data);
+        ctx.pressedGone = deleted || replacesAuctionQuestion(treeData);
         ctx.fresh = ctx.pressedGone;
       }
       await dropOpenQuestions(ctx, questions, pressedId);
@@ -2005,7 +2391,12 @@ async function handleCallback(
     }
     if (action.kind === "auction-faq") {
       useCase = "view_auction";
-      outcome = await handleAuctionFaqCallback(ctx, runtime, action.auction);
+      outcome = await handleAuctionFaqCallback(
+        ctx,
+        runtime,
+        action.auction,
+        action.viaEvents === true,
+      );
       return;
     }
     useCase = callbackUseCase(action.kind);
@@ -2071,8 +2462,8 @@ async function handleCallback(
       };
       return;
     }
-    // Форма лота (PER-319): входы в неё видит только держатель права
-    // администрировать аукцион — по нему Auction пускает в каталог, — но старая
+    // Форма лота (PER-319): входы в неё видит только держатель права вести
+    // аукцион — по нему Auction пускает в каталог (PER-652), — но старая
     // кнопка остаётся в чате. Вопрос отказал бы лишь после набора ответа, а
     // экран правки без права ничего сделать не даёт, поэтому отказ приходит
     // здесь. Право на сами команды решают Auction и Meetups.
@@ -2083,7 +2474,7 @@ async function handleCallback(
       action.kind === "lot-step-mode" ||
       action.kind === "lot-skip"
     ) {
-      outcome = canManageMeetups(person)
+      outcome = canRunAuctions(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
         : await refuseLotForm(ctx, person);
       return;
@@ -2091,7 +2482,7 @@ async function handleCallback(
     // Лот глазами участника (PER-512) — экран формы и тот же отказ без права:
     // поддельная кнопка не открывает лот до Auction.
     if (action.kind === "lot-view") {
-      outcome = canManageMeetups(person)
+      outcome = canRunAuctions(person)
         ? await handleLotPreviewCallback(
             ctx,
             runtime,
@@ -2102,19 +2493,26 @@ async function handleCallback(
         : await refuseLotForm(ctx, person);
       return;
     }
-    // Пульт аукциона (PER-320): вход видит только администратор, старая
-    // кнопка получает отказ до Auction. Право на чтение и команды решает
+    // Пульт аукциона (PER-320): вход видит только держатель права вести
+    // аукцион (PER-654), старая кнопка получает отказ до Auction. Право на чтение и команды решает
     // Auction у Meetups и отвечает своим отказом.
     if (
       action.kind === "console-view" ||
       action.kind === "console-week" ||
       action.kind === "console-raffle" ||
       action.kind === "console-raffle-remove" ||
+      action.kind === "console-raffle-prize" ||
+      action.kind === "console-raffle-prize-remove" ||
+      action.kind === "console-final-time" ||
+      action.kind === "console-final-time-remove" ||
       action.kind === "console-final" ||
+      action.kind === "console-visibility" ||
       action.kind === "console-open" ||
       action.kind === "console-confirm" ||
       action.kind === "console-discard" ||
       action.kind === "console-discard-confirm" ||
+      action.kind === "console-cancel" ||
+      action.kind === "console-cancel-confirm" ||
       action.kind === "console-mark" ||
       action.kind === "console-lineup" ||
       action.kind === "console-lineup-confirm" ||
@@ -2124,13 +2522,66 @@ async function handleCallback(
       action.kind === "console-close" ||
       action.kind === "console-close-confirm" ||
       action.kind === "console-windows" ||
+      action.kind === "console-day-summary" ||
       action.kind === "console-window" ||
       action.kind === "console-window-ask" ||
       action.kind === "console-window-lot" ||
-      action.kind === "console-window-remove"
+      action.kind === "console-window-remove" ||
+      action.kind === "console-window-launch" ||
+      action.kind === "console-window-launch-lot" ||
+      action.kind === "console-window-launch-go" ||
+      action.kind === "console-window-launch-page" ||
+      action.kind === "console-sets" ||
+      action.kind === "console-set-ask" ||
+      action.kind === "console-set" ||
+      action.kind === "console-set-lot" ||
+      action.kind === "console-set-delete" ||
+      action.kind === "console-set-delete-confirm"
     ) {
-      outcome = canManageMeetups(person)
+      outcome = canRunAuctions(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // «Ставки зала» (PER-565): вход видит только держатель права вести
+    // аукцион, подделанная кнопка получает отказ до Auction (ADR-070 п. 6).
+    if (
+      action.kind === "console-floor" ||
+      action.kind === "console-floor-search" ||
+      action.kind === "console-floor-pick" ||
+      action.kind === "console-floor-confirm" ||
+      action.kind === "console-floor-leader"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleFloorCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Снятие участника с лота (PER-659): ряд на «Ставках» видит только
+    // держатель права вести аукцион, подделанная кнопка получает отказ до
+    // Auction.
+    if (
+      action.kind === "console-removal" ||
+      action.kind === "console-removal-pick" ||
+      action.kind === "console-removal-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleRemovalCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Счета аукциона (PER-321): ряд «Счета» пульта видит только держатель
+    // права вести аукцион, подделанная кнопка получает отказ до Auction.
+    if (
+      action.kind === "console-invoices" ||
+      action.kind === "console-invoice" ||
+      action.kind === "console-invoice-mark" ||
+      action.kind === "console-invoice-mark-confirm" ||
+      action.kind === "console-payment-text" ||
+      action.kind === "console-payment-text-remove"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleInvoicesCallback(ctx, runtime, questions, person, action)
         : await refuseConsole(ctx, person);
       return;
     }
@@ -2490,7 +2941,8 @@ async function handleCallback(
     // Identity и отказывает значением ответа (PER-547).
     if (
       action.kind === "community-member" ||
-      action.kind === "ask-block-member"
+      action.kind === "ask-block-member" ||
+      action.kind === "ask-demote-member"
     ) {
       const result = await renderCommunityMember(
         ctx,
@@ -2498,7 +2950,11 @@ async function handleCallback(
         person,
         tokenToUuid(action.token),
         action.place,
-        action.kind === "ask-block-member" ? "close-access" : "card",
+        action.kind === "community-member"
+          ? "card"
+          : action.kind === "ask-block-member"
+            ? "close-access"
+            : "demote",
       );
       outcome = memberOutcome(result, person.identityId);
       return;
@@ -2519,6 +2975,7 @@ async function handleCallback(
             action.page,
             communityToday(ctx),
             canManageMembers(person),
+            manageItemParent("applications"),
           ),
         );
       } else {
@@ -2537,6 +2994,7 @@ async function handleCallback(
               action.page,
               communityToday(ctx),
               canManageMembers(person),
+              manageItemParent("applications"),
             ),
           );
         } else {
@@ -2580,35 +3038,34 @@ async function handleCallback(
       outcome = adminOutcome(result, person.identityId);
       return;
     }
-    if (
-      action.kind === "grant-moderation" ||
-      action.kind === "revoke-moderation"
-    ) {
+    if (action.kind === "grant-record" || action.kind === "revoke-record") {
       const identityId = tokenToUuid(action.token);
-      const moderation = runtime.identity;
-      const result: GrantModerationResult =
-        action.kind === "grant-moderation"
-          ? moderation.grantAuctionModeration === undefined
+      const records = runtime.identity;
+      const result: GrantRecordResult =
+        action.kind === "grant-record"
+          ? records.grantRightRecord === undefined
             ? {
                 kind: "unavailable",
-                cause: new Error("auction moderation is not configured"),
+                cause: new Error("right records are not configured"),
               }
-            : await moderation.grantAuctionModeration(
+            : await records.grantRightRecord(
                 person,
                 identityId,
+                action.right,
                 rpcCall(ctx, "manage_community"),
               )
-          : moderation.revokeAuctionModeration === undefined
+          : records.revokeRightRecord === undefined
             ? {
                 kind: "unavailable",
-                cause: new Error("auction moderation is not configured"),
+                cause: new Error("right records are not configured"),
               }
-            : await moderation.revokeAuctionModeration(
+            : await records.revokeRightRecord(
                 person,
                 identityId,
+                action.right,
                 rpcCall(ctx, "manage_community"),
               );
-      await waiting.answer(moderationToast(action.kind, result));
+      await waiting.answer(recordToast(action.kind, action.right, result));
       // После команды карточка перечитывается из Identity: она показывает то,
       // что сохранилось, а не то, что нажали.
       await renderCommunityMember(
@@ -2692,7 +3149,7 @@ async function handleCallback(
         outcome = adminOutcome(result, person.identityId);
         return;
       }
-      const shown = appointOutcome(result);
+      const shown = appointOutcome(result, person.identityId);
       const subject = `@${action.username}`;
       await showScreen(
         ctx,
@@ -2831,13 +3288,7 @@ async function handleCallback(
           // Заявку решил другой администратор, пока карточка висела: исход
           // назовёт только решение, а вопрос о нём уже не к месту.
           await waiting.answer("Эту заявку уже решили.");
-          await showApplicationQueue(
-            ctx,
-            person,
-            action.queue,
-            result.value,
-            true,
-          );
+          await showApplicationQueue(ctx, action.queue, result.value, true);
         }
       }
       outcome = adminOutcome(result, person.identityId);
@@ -2851,6 +3302,25 @@ async function handleCallback(
         action.kind === "admit-application"
           ? runtime.identity.admitApplication
           : runtime.identity.declineApplication;
+      // Ответ решения не называет человека, поэтому допуск читает карточку до
+      // решения: экран после него называет допущенного (прогон 14.10, №51).
+      // Чтение не прошло или заявка уже другая — строки нет, решение идёт.
+      const before =
+        action.kind === "admit-application" && decide !== undefined
+          ? await readApplicationQueue(
+              ctx,
+              runtime,
+              person,
+              action.queue,
+              queueCursor(action.cursor, "at"),
+            )
+          : undefined;
+      const admitted =
+        before?.kind === "ok" &&
+        before.value.card?.application.applicationId ===
+          tokenToUuid(action.cursor.token)
+          ? before.value.card.application
+          : undefined;
       const result =
         decide === undefined
           ? {
@@ -2881,6 +3351,12 @@ async function handleCallback(
         person,
         action.queue,
         queueCursor(action.cursor, result.kind === "ok" ? "after" : "at"),
+        result.kind === "ok" &&
+          !result.value.already &&
+          result.value.outcome === "admitted" &&
+          admitted !== undefined
+          ? admittedNote(admitted)
+          : undefined,
       );
       outcome = adminOutcome(result, person.identityId);
       return;
@@ -2967,6 +3443,37 @@ async function handleCallback(
       outcome = adminOutcome(result, person.identityId);
       return;
     }
+    // Понижение до гостя (PER-642): Identity одной транзакцией меняет круг,
+    // пишет заявку `declined` и событие `circle_changed`, по которому человеку
+    // уходит весть о смене круга. Карточка перечитывается и показывает итог:
+    // она говорит то, что сохранилось, а не то, что нажали.
+    if (action.kind === "demote-member") {
+      const identityId = tokenToUuid(action.token);
+      const result =
+        runtime.identity.demote === undefined
+          ? {
+              kind: "unavailable" as const,
+              cause: new Error("community administration is not configured"),
+            }
+          : await runtime.identity.demote(
+              person,
+              identityId,
+              rpcCall(ctx, "manage_community"),
+            );
+      const demoted = result.kind === "ok" && result.value;
+      await waiting.answer(demoteToast(result));
+      await renderCommunityMember(
+        ctx,
+        runtime,
+        person,
+        identityId,
+        action.place,
+        "card",
+        demoted ? demotedNotice : undefined,
+      );
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
     if (action.kind === "settings") {
       await showScreen(ctx, settingsScreen());
       outcome = {
@@ -2981,25 +3488,48 @@ async function handleCallback(
       outcome = await openHelp(ctx, runtime, person, useCase);
       return;
     }
-    // «Расширения» в «Настройках» (PER-605): Notifications экран не зовёт —
-    // частоту читает экран аукциона за ним. Идущий аукцион для пункта «Имя в
-    // аукционе» (PER-595) читается у Auction; отказ убирает пункт, а не
-    // роняет экран: частота от него не зависит.
+    if (action.kind === "release-notes") {
+      outcome = await openReleaseNotes(ctx, runtime, person, action, useCase);
+      return;
+    }
+    // «Расширения» в «Настройках» (PER-605): только список расширений (№74),
+    // ни Notifications, ни Auction экран не зовёт.
     if (action.kind === "settings-extensions") {
-      const current =
-        runtime.auction === undefined
-          ? undefined
-          : await runtime.auction.currentAuction(person, rpcCall(ctx, useCase));
       await showScreen(
         ctx,
-        settingsExtensionsScreen(
-          runtime.auction !== undefined,
-          current?.kind === "ok" ? current.auctionId : undefined,
-        ),
+        settingsExtensionsScreen(runtime.auction !== undefined),
       );
       outcome = {
         level: "info",
         message: "settings extensions sent",
+        result: "ok",
+        use_case: useCase,
+      };
+      return;
+    }
+    // «Аукцион» в «Расширениях» настроек (№74): Notifications экран не зовёт —
+    // настройки читает экран «Уведомления» за ним. Идущий аукцион для пункта
+    // «Имя в аукционе» (PER-595) читается у Auction; отказ убирает пункт, а не
+    // роняет экран: уведомления от него не зависят. Кнопка из сборки с
+    // Auction в сборке без него открывает пустые «Расширения».
+    if (action.kind === "settings-auction") {
+      if (runtime.auction === undefined) {
+        await showScreen(ctx, settingsExtensionsScreen(false));
+      } else {
+        const current = await runtime.auction.currentAuction(
+          person,
+          rpcCall(ctx, useCase),
+        );
+        await showScreen(
+          ctx,
+          settingsAuctionScreen(
+            current.kind === "ok" ? current.auctionId : undefined,
+          ),
+        );
+      }
+      outcome = {
+        level: "info",
+        message: "settings auction sent",
         result: "ok",
         use_case: useCase,
       };
@@ -3019,9 +3549,13 @@ async function handleCallback(
       outcome = await openNextMeetup(ctx, runtime, person, useCase);
       return;
     }
+    if (action.kind === "events") {
+      outcome = await openEvents(ctx, runtime, person, useCase);
+      return;
+    }
     // «‹ Меню» и прежние кнопки «Меню» открывают корневое меню (PER-592).
     if (action.kind === "home") {
-      outcome = await openMenu(ctx, person, useCase);
+      outcome = await openMenu(ctx, runtime, person, useCase);
       return;
     }
     if (action.kind === "hub" || action.kind === "outdated") {
@@ -3088,6 +3622,9 @@ async function handleCallback(
         identity: person,
         intent: "view-meetup",
         meetupId,
+        ...(action.kind === "manage-cancel"
+          ? { withCancelConsequence: true as const }
+          : {}),
         ...rpcCall(ctx, useCase),
       });
       if (current.kind !== "meetup-card") {
@@ -3280,6 +3817,9 @@ async function handleCallback(
             action: stateActionByCallback[action.kind],
             meetup,
             back: `v1:manage:status:${token}`,
+            ...(current.cancelConsequence === undefined
+              ? {}
+              : { consequence: current.cancelConsequence }),
           }),
         );
       }
@@ -3459,7 +3999,7 @@ async function handleCallback(
         intent: "list-visible-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderHiddenMeetupList(ctx, person, result, action.page);
+      await renderHiddenMeetupList(ctx, result, action.page);
       outcome = screenBoundary(result, {
         ok: ["meetup-list"],
         okMessage: "hidden meetup list sent",
@@ -3620,14 +4160,7 @@ async function handleCallback(
       return;
     }
     if (action.kind === "manage-menu") {
-      await showScreen(
-        ctx,
-        manageScreen(
-          person,
-          uuidToToken(createUuidV7()),
-          await manageCounts(ctx, runtime, person),
-        ),
-      );
+      await showScreen(ctx, manageScreen(person));
       outcome = {
         level: "info",
         message: "manage menu sent",
@@ -3643,7 +4176,9 @@ async function handleCallback(
           person,
           action.group,
           uuidToToken(createUuidV7()),
-          await manageCounts(ctx, runtime, person, action.group),
+          action.group === "applications"
+            ? await readApplicationCounts(ctx, runtime, person)
+            : undefined,
         ),
       );
       outcome = {
@@ -3654,27 +4189,30 @@ async function handleCallback(
       };
       return;
     }
+    // «Создать сходку» Meetups не зовёт: она задаёт вопрос о названии, а
+    // черновик рождается ответом (прогон 14.10, №14 и №54). Id будущей сходки
+    // едет в вопросе, поэтому ответ после рестарта создаёт ту же сходку.
     if (action.kind === "create-meetup") {
-      const meetupId = tokenToUuid(action.token);
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: "create-meetup",
-        meetupId,
-        ...rpcCall(ctx, useCase),
-      });
-      await renderFormResult(
+      await askQuestion(
         ctx,
-        result,
         questions,
-        runtime.presentation ?? "rich",
+        {
+          kind: "meetup",
+          mode: "create",
+          field: "title",
+          meetupId: tokenToUuid(action.token),
+          fresh: action.from ?? "manage",
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        formPrompts.title,
       );
-      outcome = screenBoundary(result, {
-        ok: ["ask", "draft", "published"],
-        okMessage: "meetup form step sent",
-        rejectedMessage: "meetup form step rejected",
-        useCase,
-        meetupId,
-      });
+      outcome = {
+        level: "info",
+        message: "meetup title requested",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
       return;
     }
     if (
@@ -3768,8 +4306,8 @@ async function handleCallback(
       });
       return;
     }
-    // Настройки уведомлений аукциона (PER-552, PER-539): частота «перебили»
-    // и анонс финала. Выбор — целевое значение, и экран с подтверждением
+    // Настройки уведомлений аукциона (PER-552, PER-539, PER-645): частота
+    // «перебили», «перебили» в живом финале и анонс финала. Выбор — целевое значение, и экран с подтверждением
     // показывают то, что ответил Notifications. Подтверждение уходит до показа
     // экрана: показ ответил бы на нажатие сам. «Частота уведомлений» под вестью
     // о торгах открывает тот же экран новым сообщением (`v1:t:`), а повтор
@@ -3777,14 +4315,23 @@ async function handleCallback(
     if (
       action.kind === "notify-outbid" ||
       action.kind === "notify-set-outbid" ||
-      action.kind === "notify-set-final"
+      action.kind === "notify-set-final" ||
+      action.kind === "notify-set-live" ||
+      action.kind === "notify-set-news"
     ) {
       const change: AuctionNotificationChange | undefined =
         action.kind === "notify-set-outbid"
           ? { kind: "frequency", frequency: action.frequency }
           : action.kind === "notify-set-final"
             ? { kind: "final", enabled: action.enabled }
-            : undefined;
+            : action.kind === "notify-set-live"
+              ? { kind: "live", enabled: action.enabled }
+              : action.kind === "notify-set-news"
+                ? { kind: "announcements", enabled: action.enabled }
+                : undefined;
+      // Из вести экран открывается без возврата в дерево настроек (№73
+      // прогона 14 октября 2026 года): след прежних вестей ведёт туда же.
+      const detached = action.trace === true || action.detached === true;
       const result = await runtime.dispatcher.execute(
         change === undefined
           ? {
@@ -3805,7 +4352,10 @@ async function handleCallback(
             auctionNotificationsToast(change, result.settings),
           );
         }
-        await showScreen(ctx, auctionNotificationsScreen(result.settings));
+        await showScreen(
+          ctx,
+          auctionNotificationsScreen(result.settings, detached),
+        );
       } else {
         // Отвергнутый выбор не повторяется: экран устарел, и повтор
         // перечитывает его, а не шлёт то же значение.
@@ -3815,10 +4365,8 @@ async function handleCallback(
           ctx,
           result,
           change === undefined || stale
-            ? "v1:notify:outbid"
-            : change.kind === "frequency"
-              ? `v1:notify:outbid:${change.frequency}`
-              : finalAnnouncementsData(change.enabled),
+            ? auctionNotificationsData(detached)
+            : auctionNotificationsChangeData(change, detached),
         );
       }
       outcome = screenBoundary(result, {
@@ -4021,8 +4569,12 @@ async function handleCallback(
       });
       return;
     }
-    if (action.kind === "manage-meetups") {
-      outcome = await enableAuction(ctx, runtime, person, action.token);
+    // «Включить аукцион» видит только держатель права вести аукцион, но старая
+    // кнопка остаётся в чате: отказ приходит до Auction (PER-654).
+    if (action.kind === "enable-auction") {
+      outcome = canRunAuctions(person)
+        ? await enableAuction(ctx, runtime, person, action.token)
+        : await refuseEnableAuction(ctx, person, action.token);
       return;
     }
     const _exhaustive: never = action;
@@ -4294,9 +4846,9 @@ function materialForbiddenOutcome(
   };
 }
 
-// Кадры рассылки. Числа получателей в них нет намеренно: `BroadcastAccepted`
-// подтверждает приём, а не доставку (docs/architecture/integration.md), и кадр
-// называет круг адресатов словами, а не цифрой, которую прочли бы как «дошло».
+// Кадры рассылки. Число — сколько человек получит сообщение сейчас. Пока
+// предпросмотр его не назвал, кадра отправки нет: `BroadcastAccepted`
+// подтверждает приём, а не доставку.
 const broadcastForbiddenText: Record<BroadcastAudience["kind"], string> = {
   meetup: "Писать подписчикам может только организатор сходки.",
   community: "Объявления сообществу доступны администратору.",
@@ -4346,6 +4898,31 @@ function broadcastForbiddenOutcome(
   };
 }
 
+function broadcastCountLine(recipientCount: number): string {
+  return recipientCount === 0
+    ? "Сообщение никто не получит."
+    : `Его получит ${plural(recipientCount, ["человек", "человека", "человек"])}.`;
+}
+
+function previewFailureText(
+  result: ExecuteResult,
+  audience: BroadcastAudience,
+): string {
+  if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
+    return `${broadcastForbiddenText[audience.kind]} Ничего не отправлено.`;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "invalid") {
+    return "Сообщение не принято. Ничего не отправлено.";
+  }
+  if (
+    result.kind === "dependency-rejected" &&
+    (result.reason === "timeout" || result.reason === "unavailable")
+  ) {
+    return "Не получилось узнать, сколько человек получит сообщение. Это на моей стороне. Ничего не отправлено.\n\nПришли текст ещё раз ответом на вопрос.";
+  }
+  return "Не получилось узнать, сколько человек получит сообщение. Это на моей стороне. Ничего не отправлено.";
+}
+
 // Предпросмотр — сам текст отдельным сообщением, без заголовка и разметки:
 // ровно тот текст автора, что уйдёт получателям (заголовок и кнопки канал
 // добавит при доставке), и ровно то, что кнопка подтверждения потом прочтёт
@@ -4355,6 +4932,7 @@ async function sendBroadcastConfirmation(
   audience: BroadcastAudience,
   body: string,
   meetupTitle: string | undefined,
+  recipientCount: number,
 ): Promise<void> {
   const preview = await ctx.reply(body);
   const broadcastToken = uuidToToken(createUuidV7());
@@ -4371,7 +4949,7 @@ async function sendBroadcastConfirmation(
       ? "Отправить подписчикам?"
       : "Отправить объявление?";
   await ctx.reply(
-    `${heading(question)}\n\n${escapeHtml(recipients)}\n\n${broadcastIrreversibleText}`,
+    `${heading(question)}\n\n${escapeHtml(recipients)}\n\n${escapeHtml(broadcastCountLine(recipientCount))}\n\n${broadcastIrreversibleText}`,
     {
       reply_parameters: { message_id: preview.message_id },
       parse_mode: "HTML",
@@ -4500,7 +5078,7 @@ async function renderCommunity(
     ctx,
     communityScreen(result.value, view, {
       notice,
-      parent: manageItemParent(actor, "members"),
+      parent: manageItemParent("members"),
       viewerId: actor.identityId,
     }),
   );
@@ -4515,7 +5093,8 @@ async function renderCommunityMember(
   actor: Person,
   identityId: string,
   place: CommunityPlace,
-  screen: "card" | "close-access",
+  screen: "card" | "close-access" | "demote",
+  notice?: string,
 ): Promise<CommunityMemberResult> {
   const result: CommunityMemberResult =
     runtime.identity.communityMember === undefined
@@ -4543,8 +5122,10 @@ async function renderCommunityMember(
   await showScreen(
     ctx,
     screen === "card"
-      ? communityMemberScreen(result.value, place)
-      : closeAccessConfirmScreen(result.value, place),
+      ? communityMemberScreen(result.value, place, notice)
+      : screen === "close-access"
+        ? closeAccessConfirmScreen(result.value, place)
+        : demoteMemberConfirmScreen(result.value, place),
   );
   return result;
 }
@@ -4586,6 +5167,10 @@ function managementRefusal(
         : managementForbiddenText;
     case "ask-allowed-username":
       return canManageMembers(person) ? undefined : communityForbiddenText;
+    // Вопрос о названии новой сходки Meetups не спрашивает: сходка рождается
+    // ответом, поэтому без права он не задаётся.
+    case "create-meetup":
+      return canManageMeetups(person) ? undefined : managementForbiddenText;
     // Вопрос о нике Identity не спрашивает, поэтому без права он не задаётся.
     // Список, назначение и снятие бот пропускает: право решает Identity и
     // отвечает отказом значением (PER-521).
@@ -4644,23 +5229,42 @@ function forbiddenToast(queue: ApplicationQueue): string {
   return queueTexts[queue].toast;
 }
 
-function moderationToast(
-  kind: "grant-moderation" | "revoke-moderation",
-  result: GrantModerationResult,
+function recordToast(
+  kind: "grant-record" | "revoke-record",
+  right: RecordRight,
+  result: GrantRecordResult,
 ): string {
+  const texts = recordTexts[right];
   switch (result.kind) {
     case "ok":
       return !result.value
         ? "Состояние уже было актуальным."
-        : kind === "grant-moderation"
-          ? "Модерация выдана."
-          : "Модерация отозвана.";
+        : kind === "grant-record"
+          ? texts.granted
+          : texts.revoked;
     case "not-member":
       return "Выдать нельзя: человек не участник сообщества.";
     case "forbidden":
-      return moderatorsForbiddenText;
+      return texts.forbidden;
     case "invalid":
       return "Изменение не сохранилось. Список перечитан заново.";
+    default:
+      return "Не получилось сохранить. Попробуй ещё раз.";
+  }
+}
+
+// Итог понижения до гостя (PER-642). Ответ на нажатие называет то же, что и
+// строка карточки: понижение — смена круга, и человеку о ней ещё придёт весть.
+const demotedNotice = "Понижен до гостя.";
+
+function demoteToast(result: IdentityAdminResult<boolean>): string {
+  switch (result.kind) {
+    case "ok":
+      return result.value ? demotedNotice : "Состояние уже было актуальным.";
+    case "forbidden":
+      return "Это может только администратор.";
+    case "invalid":
+      return "Изменение не сохранилось. Экран перечитан заново.";
     default:
       return "Не получилось сохранить. Попробуй ещё раз.";
   }
@@ -4696,7 +5300,7 @@ async function renderAdministrators(
     administratorsScreen(
       result.value,
       actor.identityId,
-      manageItemParent(actor, "members"),
+      manageItemParent("members"),
     ),
   );
   return result;
@@ -4770,7 +5374,7 @@ async function renderRefused(
       page,
       communityToday(ctx),
       canManageMembers(actor),
-      manageItemParent(actor, "applications"),
+      manageItemParent("applications"),
     ),
   );
 }
@@ -4823,7 +5427,7 @@ async function renderSourceChannels(
           : { auction: runtime.auctionBotUsername }),
       },
       notice,
-      manageItemParent(actor, "members"),
+      manageItemParent("members"),
     ),
   );
   return result;
@@ -4841,27 +5445,16 @@ function sourceChannelsForbiddenOutcome(person: Person): BoundaryOutcome {
   };
 }
 
-// Курсор очереди из кнопки. `after` — следующая заявка за этой. `at` — эта же,
-// если она ещё открыта: тот же момент и предшествующий UUID, и сравнение
-// «(момент, id) больше курсора» начинает ровно с неё. Момент на миллисекунду
-// раньше тут не годится: у двух заявок одной миллисекунды он вернул бы первую.
+// Курсор очереди из кнопки. `after` — следующая заявка за этой, `at` — эта же,
+// если она ещё открыта (`cursorAtApplication`).
 function queueCursor(
   cursor: CardCursor,
   from: "after" | "at",
 ): ApplicationCursor {
   const applicationId = tokenToUuid(cursor.token);
-  return {
-    createdAtMs: cursor.createdAtMs,
-    applicationId:
-      from === "after" ? applicationId : previousUuid(applicationId),
-  };
-}
-
-function previousUuid(uuid: string): string {
-  const value = BigInt(`0x${uuid.replaceAll("-", "")}`);
-  // Нулевого UUIDv7 не бывает; на нём курсор просто начнёт с момента.
-  const hex = (value === 0n ? 0n : value - 1n).toString(16).padStart(32, "0");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return from === "after"
+    ? { createdAtMs: cursor.createdAtMs, applicationId }
+    : cursorAtApplication({ applicationId, createdAtMs: cursor.createdAtMs });
 }
 
 function readApplicationQueue(
@@ -4919,26 +5512,6 @@ async function readApplicationCounts(
   return { queue, refused };
 }
 
-// Числа нужны, только когда экран показывает пункты группы заявок: «Управление»
-// с одной видимой группой либо сама группа «Заявки и отказы». Экран групп их не
-// несёт, и тогда чтения не идут.
-function manageCounts(
-  ctx: UpdateContext,
-  runtime: BotRuntime,
-  person: Person,
-  group?: ManageGroup,
-): Promise<ApplicationCounts | undefined> {
-  if (group !== undefined) {
-    return group === "applications"
-      ? readApplicationCounts(ctx, runtime, person)
-      : Promise.resolve(undefined);
-  }
-  const visible = manageGroups(person);
-  return visible.length === 1 && visible[0] === "applications"
-    ? readApplicationCounts(ctx, runtime, person)
-    : Promise.resolve(undefined);
-}
-
 // Карточка открывается из управления, туда и возвращает отказ.
 function showApplicationRefusal(
   ctx: UpdateContext,
@@ -4954,17 +5527,24 @@ function showApplicationRefusal(
 
 async function showApplicationQueue(
   ctx: UpdateContext,
-  actor: Person,
   queue: ApplicationQueue,
   read: ApplicationQueueRead,
   afterCursor: boolean,
+  note?: string,
 ): Promise<void> {
-  const parent = manageItemParent(actor, "applications");
+  const parent = manageItemParent("applications");
   await showScreen(
     ctx,
     read.card === undefined
-      ? applicationQueueEndScreen(queue, read.total, afterCursor, parent)
-      : applicationCardScreen(queue, read.card, read.total, Date.now(), parent),
+      ? applicationQueueEndScreen(queue, read.total, afterCursor, parent, note)
+      : applicationCardScreen(
+          queue,
+          read.card,
+          read.total,
+          Date.now(),
+          parent,
+          note,
+        ),
   );
 }
 
@@ -4974,6 +5554,7 @@ async function renderApplicationCard(
   actor: Person,
   queue: ApplicationQueue,
   after: ApplicationCursor | undefined,
+  note?: string,
 ): Promise<IdentityAdminResult<ApplicationQueueRead>> {
   const result = await readApplicationQueue(ctx, runtime, actor, queue, after);
   if (result.kind !== "ok") {
@@ -4982,10 +5563,10 @@ async function renderApplicationCard(
   }
   await showApplicationQueue(
     ctx,
-    actor,
     queue,
     result.value,
     after !== undefined,
+    note,
   );
   return result;
 }
@@ -5028,15 +5609,48 @@ function adminOutcome(
   };
 }
 
+// Итог точечной правки называет поле и новое значение, как сроки недели на
+// пульте (прогон 14.10, №56). Описание длинное — оно только называется.
+function changedField(
+  result: Extract<ExecuteResult, { kind: "meetup-updated" }>,
+  today: CommunityDay,
+): string | undefined {
+  const { meetup } = result;
+  switch (result.field) {
+    case undefined:
+      return undefined;
+    case "title":
+      return `Название: ${meetup.title}.`;
+    case "venue":
+      return `Место: ${meetup.venue}.`;
+    case "schedule":
+      return meetup.schedule === undefined
+        ? undefined
+        : `Дата и время: ${readableMoment(meetup.schedule, today)}.`;
+    case "description":
+      return "Описание обновлено.";
+    default: {
+      const _exhaustive: never = result.field;
+      return _exhaustive;
+    }
+  }
+}
+
 async function renderMeetupList(
   ctx: UpdateContext,
+  person: Person,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   page = 0,
 ): Promise<void> {
   if (result.kind === "meetup-list") {
     await showScreen(
       ctx,
-      meetupsScreen(result.meetups, page, communityToday(ctx)),
+      meetupsScreen(
+        result.meetups,
+        page,
+        communityToday(ctx),
+        canManageMeetups(person) ? uuidToToken(createUuidV7()) : undefined,
+      ),
     );
     return;
   }
@@ -5060,7 +5674,6 @@ async function renderMeetupListFailure(
 
 async function renderHiddenMeetupList(
   ctx: UpdateContext,
-  person: Person,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   page = 0,
 ): Promise<void> {
@@ -5071,7 +5684,7 @@ async function renderHiddenMeetupList(
         result.meetups,
         page,
         communityToday(ctx),
-        manageItemParent(person, "meetups"),
+        manageItemParent("meetups"),
       ),
     );
     return;
@@ -5106,7 +5719,7 @@ async function renderArchiveList(
 // и выход последним рядом. Тексты кадров ошибок по смыслу не меняются.
 async function showFrame(
   ctx: UpdateContext,
-  id: "refusal" | "broadcast-result" | "no-access",
+  id: "refusal" | "broadcast-result" | "no-access" | "no-access-support",
   text: string,
   keyboard: InlineKeyboard,
   delivery?: "new",
@@ -5185,7 +5798,7 @@ async function openNavScreen(
         intent: "list-visible-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderMeetupList(ctx, result, page);
+      await renderMeetupList(ctx, person, result, page);
       return screenBoundary(result, {
         ok: ["meetup-list"],
         okMessage: "meetup list sent",
@@ -5241,6 +5854,7 @@ const commandUseCase: Record<SectionCommand, ProductUseCase> = {
   menu: "find_meetup",
   meetups: "find_meetup",
   next: "view_meetup",
+  events: "view_auction",
   settings: "manage_notifications",
   manage: "create_meetup",
   help: "find_meetup",
@@ -5252,6 +5866,7 @@ const commandRetry: Record<SectionCommand, string> = {
   menu: toMenu.data,
   meetups: "v1:nav:hub",
   next: "v1:nav:next",
+  events: toEvents.data,
   settings: "v1:nav:settings",
   manage: "v1:manage:menu",
   help: "v1:nav:help",
@@ -5287,11 +5902,13 @@ async function handleSectionCommand(
   const person = identity.person;
   switch (command) {
     case "menu":
-      return openMenu(ctx, person, useCase);
+      return openMenu(ctx, runtime, person, useCase);
     case "meetups":
       return openNavScreen(ctx, runtime, person, "hub", useCase);
     case "next":
       return openNextMeetup(ctx, runtime, person, useCase);
+    case "events":
+      return openEvents(ctx, runtime, person, useCase);
     case "settings":
       await showScreen(ctx, settingsScreen());
       return {
@@ -5315,14 +5932,7 @@ async function handleSectionCommand(
           error: "management_forbidden",
         };
       }
-      await showScreen(
-        ctx,
-        manageScreen(
-          person,
-          uuidToToken(createUuidV7()),
-          await manageCounts(ctx, runtime, person),
-        ),
-      );
+      await showScreen(ctx, manageScreen(person));
       return {
         level: "info",
         message: "manage menu sent",
@@ -5340,13 +5950,110 @@ async function handleSectionCommand(
 // вход без ссылки на сходку, «‹ Меню» с разделов и прежние кнопки «Меню».
 async function openMenu(
   ctx: UpdateContext,
+  runtime: BotRuntime,
   person: Person,
   useCase: ProductUseCase,
 ): Promise<BoundaryOutcome> {
-  await showScreen(ctx, menuScreen(person));
+  // Меню — горячий путь `/start` и «‹ Меню»: медленный Auction его не держит,
+  // а события после срока пропадают, как при отказе (PER-669).
+  const events = await within(
+    currentEvents(ctx, runtime, person, useCase),
+    menuEventsBudgetMs,
+    { kind: "unavailable" as const },
+  );
+  await showScreen(
+    ctx,
+    menuScreen(person, {
+      events: events.kind === "ok" ? events.events : [],
+      timeZone: runtime.communityTimeZone ?? "UTC",
+      today: communityToday(ctx),
+    }),
+  );
   return {
     level: "info",
-    message: "menu sent",
+    message:
+      events.kind === "ok" ? "menu sent" : "menu sent; events unavailable",
+    result: "ok",
+    use_case: useCase,
+  };
+}
+
+// Идущие события расширений (PER-669): сегодня — аукцион сообщества в онлайн-
+// торгах, итогах, перерыве или финале. Торги открыты не больше чем у одного
+// аукциона (PER-603), поэтому событие аукциона — одно. Отказ Auction меню не
+// роняет: кнопка и строка событий пропадают, а запись границы называет
+// деградацию.
+async function currentEvents(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  useCase: ProductUseCase,
+): Promise<{ kind: "ok"; events: HubEvent[] } | { kind: "unavailable" }> {
+  if (runtime.auction === undefined) return { kind: "ok", events: [] };
+  const current = await runtime.auction.currentAuction(
+    person,
+    rpcCall(ctx, useCase),
+  );
+  if (current.kind !== "ok") return { kind: "unavailable" };
+  const { auctionId, auction } = current;
+  return auctionId === undefined ||
+    auction === undefined ||
+    !isAuctionEvent(auction)
+    ? { kind: "ok", events: [] }
+    : { kind: "ok", events: [{ kind: "auction", auctionId, auction }] };
+}
+
+const menuEventsBudgetMs = 1_500;
+
+// Ответ работы или запасной, если работа не успела к сроку или отказала.
+async function within<T>(
+  work: Promise<T>,
+  ms: number,
+  fallback: T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([work.catch(() => fallback), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// «События» (PER-669) — раздел под меню. Отказ Auction — кадр сбоя с
+// «Повторить»: раздел только из событий и состоит.
+async function openEvents(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const events = await currentEvents(ctx, runtime, person, useCase);
+  if (events.kind === "unavailable") {
+    await showRefusal(ctx, unavailableText, exitRetry(toEvents.data));
+    return {
+      level: "error",
+      message: "events rejected",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    };
+  }
+  await showScreen(
+    ctx,
+    eventsScreen(
+      events.events,
+      runtime.communityTimeZone ?? "UTC",
+      communityToday(ctx),
+    ),
+  );
+  return {
+    level: "info",
+    message: "events sent",
     result: "ok",
     use_case: useCase,
   };
@@ -5409,9 +6116,16 @@ async function applyForHub(
   }
   ctx.commandsPerson = entry.person;
   if (entry.access !== "admitted") {
-    return denyHubAccess(ctx, entry.access, entry.person, useCase, true);
+    return denyHubAccess(
+      ctx,
+      runtime,
+      entry.access,
+      entry.person,
+      useCase,
+      true,
+    );
   }
-  return openMenu(ctx, entry.person, useCase);
+  return openMenu(ctx, runtime, entry.person, useCase);
 }
 
 /**
@@ -5460,13 +6174,66 @@ async function openHelp(
       useCase,
     );
   }
-  await showScreen(ctx, helpScreen(person, result.text));
+  await showScreen(
+    ctx,
+    helpScreen(person, result.text, runtime.supportBotUsername),
+  );
   return {
     level: "info",
     message: "help sent",
     result: "ok",
     use_case: useCase,
   };
+}
+
+async function openReleaseNotes(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  action: { token?: string; part?: number },
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const summaryId =
+    action.token === undefined ? undefined : tokenToUuid(action.token);
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-release-notes",
+    ...(summaryId === undefined ? {} : { summaryId }),
+    ...(action.part === undefined ? {} : { part: action.part }),
+    ...rpcCall(ctx, useCase),
+  });
+  const retry = releasePostData(
+    summaryId === undefined ? undefined : { summaryId, part: action.part ?? 1 },
+  );
+  if (result.kind === "release-post") {
+    const screen = releasePostScreen(
+      result,
+      communityToday(ctx),
+      runtime.communityTimeZone ?? "UTC",
+    );
+    if (screen === undefined) {
+      await showRefusal(ctx, unavailableText, exitRetry(retry));
+      return {
+        level: "error",
+        message: "release notes rejected",
+        result: "error",
+        use_case: useCase,
+        error_category: "invariant",
+        error: "release summary date",
+      };
+    }
+    await showScreen(ctx, screen);
+  } else if (result.kind === "release-empty") {
+    await showScreen(ctx, releaseEmptyScreen());
+  } else {
+    await showRefusal(ctx, unavailableText, exitRetry(retry));
+  }
+  return screenBoundary(result, {
+    ok: ["release-post", "release-empty"],
+    okMessage: "release notes sent",
+    rejectedMessage: "release notes rejected",
+    useCase,
+  });
 }
 
 /**
@@ -5509,7 +6276,7 @@ async function openNextMeetup(
       ? nextMeetupOf(list.meetups, communityToday(ctx))
       : undefined;
   if (nearest === undefined) {
-    await renderMeetupList(ctx, list);
+    await renderMeetupList(ctx, person, list);
     return screenBoundary(list, {
       ok: ["meetup-list"],
       okMessage: "meetup list sent",
@@ -5643,6 +6410,35 @@ function feedAuctionOf(body: AuctionScreenBody): string | undefined {
   return feed?.auctionId;
 }
 
+// Настоящий аккаунт победителя проданного лота (PER-648). Identity отдаёт его
+// только держателю права вести аукцион, и остальным вызов не делается: экран
+// всё равно остался бы с псевдонимом. Имя, которое уже является ником, тоже
+// спрашивается: снимок ника в аукционе заморожен и может разойтись с
+// Telegram, а организатору нужен свежий аккаунт. Отказ, недоступность и
+// проданного лота без имени — поля нет, карточка показывает то, что дал
+// Auction.
+async function soldWinnerUsername(
+  runtime: BotRuntime,
+  viewer: Viewer,
+  body: AuctionScreenBody,
+): Promise<string | undefined> {
+  const resolve = runtime.identity.resolveParticipantUsername;
+  if (resolve === undefined || !canRunAuctions(viewer)) return undefined;
+  const lot = body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "lot" }> =>
+      block.kind === "lot",
+  );
+  const winnerId =
+    lot?.status.kind === "sold" ? lot.status.winnerId : undefined;
+  if (winnerId === undefined || lot?.participantName === undefined) {
+    return undefined;
+  }
+  const result = await resolve({ identityId: viewer.identityId }, winnerId);
+  return result.kind === "resolved" && result.telegramUsername !== ""
+    ? result.telegramUsername
+    : undefined;
+}
+
 // «Добавить лот» в ленте — пока онлайн-неделя не открыта (PER-468). Статус
 // аукциона лента пакета не несёт, его знает пульт, поэтому для ленты
 // администратора бот читает пульт тем же бюджетом действия. Отказ и
@@ -5693,7 +6489,7 @@ async function openMeetupExtensions(
       extensionsScreen({
         meetup: result.meetup,
         auction: result.auction,
-        manageable: canManageMeetups(person),
+        manageable: canRunAuctions(person),
       }),
     );
   } else {
@@ -5722,9 +6518,9 @@ async function openMeetupExtensions(
   });
 }
 
-// «Включить аукцион» в меню «Расширения» сходки (PER-307, PER-605). Право
-// решает Auction, спрашивая Meetups; край кнопку только показывает
-// администратору. Ключ команды рождается на нажатие, а аукцион сходки один при
+// «Включить аукцион» в меню «Расширения» сходки (PER-307, PER-605). Край
+// показывает и пропускает кнопку держателю права вести аукцион (PER-654), а
+// команду решает Auction, спрашивая Meetups. Ключ команды рождается на нажатие, а аукцион сходки один при
 // любом их числе: повторное нажатие отвечает тем же аукционом.
 async function enableAuction(
   ctx: UpdateContext,
@@ -5765,7 +6561,12 @@ async function enableAuction(
     };
   }
   if (result.kind === "auction-refused") {
-    await showRefusal(ctx, forbiddenText, exitToExtensions(token));
+    const cancelled = result.reason === "meetup-cancelled";
+    await showRefusal(
+      ctx,
+      cancelled ? auctionMeetupCancelledText : forbiddenText,
+      exitToExtensions(token),
+    );
     return {
       level: "warn",
       message: "auction enabling rejected",
@@ -5773,8 +6574,8 @@ async function enableAuction(
       use_case: useCase,
       meetup_id: meetupId,
       identity_id: person.identityId,
-      error_category: "authorization",
-      error: "not_meetup_administrator",
+      error_category: cancelled ? "invariant" : "authorization",
+      error: cancelled ? "meetup_cancelled" : "not_meetup_administrator",
     };
   }
   if (result.kind === "meetup-not-found") {
@@ -5886,6 +6687,15 @@ async function handleLotFormCallback(
     });
     return sent("lot step requested");
   }
+  // Рядов полей у проданного лота нет; старая кнопка получает отказ до
+  // вопроса (решение владельца 15 октября 2026 года).
+  if (isSold(result.lot.terms)) {
+    return showLotFailure(
+      ctx,
+      { kind: "lot-refused", reason: "lot-sold", lotId },
+      { person },
+    );
+  }
   // Ряд цены на экране правки стоит, пока условия открыты; старая кнопка под
   // лотом в торгах получает отказ до вопроса, а не после двух ответов.
   if (action.field === "price" && result.lot.terms.kind === "closed") {
@@ -5895,7 +6705,7 @@ async function handleLotFormCallback(
       { person },
     );
   }
-  // Фото, как и тексты, меняется и после старта торгов (ADR-057). Кнопка
+  // Фото, как и тексты, меняется и после старта торгов до продажи (ADR-057). Кнопка
   // цепочки нового лота (PER-618) — «Ввести заново» под ней — задаёт вопрос
   // цепочки.
   await askLotQuestion(ctx, questions, {
@@ -6370,7 +7180,25 @@ async function showLotFailure(
   };
 }
 
-// Кнопка или ответ формы лота от человека без права вести сходки.
+// «Включить аукцион» от человека без права вести аукцион (PER-654).
+async function refuseEnableAuction(
+  ctx: UpdateContext,
+  person: Person,
+  token: string,
+): Promise<BoundaryOutcome> {
+  await showRefusal(ctx, forbiddenText, exitToExtensions(token));
+  return {
+    level: "warn",
+    message: "auction enabling rejected",
+    result: "error",
+    use_case: "enable_auction",
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "enable_auction_forbidden",
+  };
+}
+
+// Кнопка или ответ формы лота от человека без права вести аукцион.
 async function refuseLotForm(
   ctx: UpdateContext,
   person: Person,
@@ -6404,11 +7232,18 @@ async function handleConsoleCallback(
         | "console-week"
         | "console-raffle"
         | "console-raffle-remove"
+        | "console-raffle-prize"
+        | "console-raffle-prize-remove"
         | "console-final"
+        | "console-final-time"
+        | "console-final-time-remove"
+        | "console-visibility"
         | "console-open"
         | "console-confirm"
         | "console-discard"
         | "console-discard-confirm"
+        | "console-cancel"
+        | "console-cancel-confirm"
         | "console-mark"
         | "console-lineup"
         | "console-lineup-confirm"
@@ -6418,10 +7253,21 @@ async function handleConsoleCallback(
         | "console-close"
         | "console-close-confirm"
         | "console-windows"
+        | "console-day-summary"
         | "console-window"
         | "console-window-ask"
         | "console-window-lot"
-        | "console-window-remove";
+        | "console-window-remove"
+        | "console-window-launch"
+        | "console-window-launch-lot"
+        | "console-window-launch-go"
+        | "console-window-launch-page"
+        | "console-sets"
+        | "console-set-ask"
+        | "console-set"
+        | "console-set-lot"
+        | "console-set-delete"
+        | "console-set-delete-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -6476,12 +7322,56 @@ async function handleConsoleCallback(
           opId: createUuidV7(),
         }),
       );
+    // Приз розыгрыша (PER-649): живёт рядом с моментом, поэтому и вопрос, и
+    // снятие решает юзкейс по прочитанной конфигурации.
+    case "console-raffle-prize":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-raffle-prize",
+        }),
+      );
+    case "console-raffle-prize-remove":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-auction-raffle-prize",
+          opId: createUuidV7(),
+        }),
+      );
     case "console-final":
       return render(
         await runtime.dispatcher.execute({
           ...call,
           intent: "set-auction-final",
           final: action.final,
+          opId: createUuidV7(),
+        }),
+      );
+    // Ориентировочное время финала (PER-663): вопрос спрашивает момент, а
+    // снятие идёт без вопроса — ключ рождается на нажатие, потому что
+    // выставление и снятие под одним ключом — разные события Auction.
+    case "console-final-time":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-final-time",
+        }),
+      );
+    case "console-final-time-remove":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-auction-final-time",
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-visibility":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-auction-visibility",
+          published: action.published,
           opId: createUuidV7(),
         }),
       );
@@ -6518,6 +7408,24 @@ async function handleConsoleCallback(
         await runtime.dispatcher.execute({
           ...call,
           intent: "discard-auction",
+          opId: tokenToUuid(action.op),
+        }),
+      );
+    case "console-cancel":
+      // Подтверждение либо пульт с причиной решает юзкейс; ключ отмены
+      // рождается здесь и уедет в «Да».
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-auction-cancel",
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-cancel-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "cancel-auction",
           opId: tokenToUuid(action.op),
         }),
       );
@@ -6601,6 +7509,13 @@ async function handleConsoleCallback(
           intent: "view-step-windows",
         }),
       );
+    case "console-day-summary":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-day-summary",
+        }),
+      );
     case "console-window":
       return render(
         await runtime.dispatcher.execute({
@@ -6634,6 +7549,91 @@ async function handleConsoleCallback(
           ...call,
           intent: "remove-step-window",
           window: action.window,
+          opId: createUuidV7(),
+        }),
+      );
+    // Сеты лотов (PER-509). Ключ команды рождается на нажатие: кнопка лота
+    // несёт целевое состояние, и повтор даёт тот же итог; «Да» удаления
+    // называет сет номером и отпечатком, и ключ в 64 байта не помещается.
+    case "console-sets":
+      return render(
+        await runtime.dispatcher.execute({ ...call, intent: "view-lot-sets" }),
+      );
+    case "console-set-ask":
+      return render(
+        await runtime.dispatcher.execute({ ...call, intent: "ask-lot-set" }),
+      );
+    case "console-set":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-set",
+          set: action.set,
+          page: action.page,
+        }),
+      );
+    case "console-set-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-lot-set-lot",
+          set: action.set,
+          lotId: tokenToUuid(action.lot),
+          selected: action.selected,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-set-delete":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-lot-set-delete",
+          set: action.set,
+        }),
+      );
+    case "console-set-delete-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "delete-lot-set",
+          set: action.set,
+          opId: createUuidV7(),
+        }),
+      );
+    // Запуск окна сниженного шага по ходу торгов (PER-615). Ключ команды
+    // рождается на нажатии «Запустить окно»: черновик едет в кнопке, и 64
+    // байта на ключ не остаётся.
+    case "console-window-launch":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-step-window-launch",
+        }),
+      );
+    case "console-window-launch-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-step-window-launch-lot",
+          draft: action.draft,
+          lot: action.lot,
+        }),
+      );
+    case "console-window-launch-page":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-step-window-launch",
+          draft: action.draft,
+          page: action.page,
+        }),
+      );
+    case "console-window-launch-go":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "launch-step-window",
+          draft: action.draft,
           opId: createUuidV7(),
         }),
       );
@@ -6722,18 +7722,36 @@ async function renderConsoleResult(
         result.holder === undefined
           ? undefined
           : await withMeetupTitle(ctx, runtime, context.person, result.holder);
-      await showScreen(
-        ctx,
-        consoleScreen({
-          console: result.console,
-          ...(result.note === undefined ? {} : { note: result.note }),
-          ...(holder === undefined ? {} : { holder }),
-          page: context.page ?? 0,
-          sort: context.sort ?? defaultConsoleSort,
-          timeZone,
-          today: communityToday(ctx),
-        }),
-      );
+      const view: ConsoleScreenView = {
+        console: result.console,
+        ...(result.note === undefined ? {} : { note: result.note }),
+        ...(result.noteLot === undefined ? {} : { noteLot: result.noteLot }),
+        ...(holder === undefined ? {} : { holder }),
+        page: context.page ?? 0,
+        sort: context.sort ?? defaultConsoleSort,
+        timeZone,
+        today: communityToday(ctx),
+      };
+      const sent = await showScreen(ctx, consoleScreen(view));
+      // Пульт финала (PER-566): сообщение, в котором он оказался, правится
+      // дальше по потоку аукциона. Без нового сообщения пульт остался в
+      // нажатом — тот же экран или правка без ответа.
+      const chatId = ctx.chat?.id;
+      const pressed = ctx.callbackQuery?.message;
+      const messageId =
+        sent?.message_id ??
+        (ctx.fresh === true ? undefined : pressed?.message_id);
+      if (
+        ctx.liveConsoles !== undefined &&
+        chatId !== undefined &&
+        messageId !== undefined
+      ) {
+        const kept = ctx.liveConsoles.shown(chatId, messageId, {
+          person: context.person,
+          view,
+        });
+        if (messageId === pressed?.message_id) ctx.liveConsoleShown = kept;
+      }
       return handled(
         result.note === undefined
           ? "auction console sent"
@@ -6750,12 +7768,16 @@ async function renderConsoleResult(
           idle: result.idle,
           timeZone,
           today: communityToday(ctx),
+          ...(result.early === undefined ? {} : { early: result.early }),
         }),
       );
       return handled("auction week confirmation sent");
     case "auction-discard-confirm":
       await showScreen(ctx, discardConfirmScreen(result));
       return handled("auction discard confirmation sent");
+    case "auction-cancel-confirm":
+      await showScreen(ctx, cancelConfirmScreen(result));
+      return handled("auction cancel confirmation sent");
     case "auction-discarded": {
       // Возврат — к сходке, у которой был аукцион: там снова «Включить
       // аукцион». После рестарта бот сходку может не знать.
@@ -6798,12 +7820,52 @@ async function renderConsoleResult(
           ? "auction raffle requested"
           : "auction raffle asked again",
       );
+    case "auction-raffle-prize-ask":
+      await askConsolePrize(ctx, context.questions, {
+        auctionId: result.auctionId,
+        prize: result.prize,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "raffle prize requested"
+          : "raffle prize asked again",
+      );
+    case "auction-final-time-ask":
+      await askConsoleFinalTime(ctx, context.questions, {
+        auctionId: result.auctionId,
+        timeZone,
+        finalAt: result.finalAt,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "auction final time requested"
+          : "auction final time asked again",
+      );
+    case "auction-day-summary":
+      await showScreen(
+        ctx,
+        daySummaryScreen({
+          auctionId: result.auctionId,
+          day: result.day,
+          today: communityToday(ctx),
+          lots: result.lots,
+          ...(runtime.auctionBotUsername === undefined
+            ? {}
+            : { auctionBotUsername: runtime.auctionBotUsername }),
+        }),
+      );
+      return handled("auction day summary sent");
     case "step-windows":
       await showScreen(
         ctx,
         windowsScreen({
           console: result.console,
           note: result.note,
+          launch: result.launch,
           timeZone,
           today: communityToday(ctx),
         }),
@@ -6812,6 +7874,37 @@ async function renderConsoleResult(
         result.note === undefined
           ? "step windows sent"
           : `step windows sent: ${result.note.kind}`,
+      );
+    case "step-window-launch":
+      // Переключатель лота подтверждает себя всплывающим текстом, как окно.
+      if (result.toggled !== undefined) {
+        await ctx.waiting?.answer(windowLotToast(result.toggled.selected));
+      }
+      await showScreen(
+        ctx,
+        launchScreen({
+          console: result.console,
+          draft: result.draft,
+          at: result.at,
+          timeZone,
+          today: communityToday(ctx),
+        }),
+      );
+      return handled("step window launch sent");
+    case "step-window-launch-ask":
+      await askConsoleLaunch(ctx, context.questions, {
+        auctionId: result.auctionId,
+        timeZone,
+        week: result.week,
+        error: result.error,
+        lot: result.lot,
+        other: result.other,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "step window launch requested"
+          : "step window launch asked again",
       );
     case "step-window":
       // Переключатель лота подтверждает себя всплывающим текстом, как финал.
@@ -6829,6 +7922,50 @@ async function renderConsoleResult(
         }),
       );
       return handled("step window sent");
+    case "lot-sets":
+      await showScreen(
+        ctx,
+        lotSetsScreen({ console: result.console, note: result.note }),
+      );
+      return handled(
+        result.note === undefined
+          ? "lot sets sent"
+          : `lot sets sent: ${result.note.kind}`,
+      );
+    case "lot-set":
+      // Переключатель лота подтверждает себя всплывающим текстом, как окно.
+      if (result.toggled !== undefined) {
+        await ctx.waiting?.answer(lotSetLotToast(result.toggled.selected));
+      }
+      await showScreen(
+        ctx,
+        lotSetScreen({
+          console: result.console,
+          index: result.index,
+          at: result.at,
+        }),
+      );
+      return handled("lot set sent");
+    case "lot-set-delete-confirm":
+      await showScreen(
+        ctx,
+        lotSetDeleteConfirmScreen({
+          console: result.console,
+          index: result.index,
+        }),
+      );
+      return handled("lot set delete confirmation sent");
+    case "lot-set-ask":
+      await askConsoleSet(ctx, context.questions, {
+        auctionId: result.auctionId,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "lot set name requested"
+          : "lot set name asked again",
+      );
     case "step-window-ask":
       await askConsoleWindow(ctx, context.questions, {
         auctionId: result.auctionId,
@@ -6881,7 +8018,9 @@ async function renderConsoleResult(
         ctx,
         result.reason === "not-administrator"
           ? forbiddenText
-          : consoleMissingText,
+          : result.reason === "meetup-cancelled"
+            ? consoleMeetupCancelledText
+            : consoleMissingText,
         exitToMeetups(),
       );
       return {
@@ -6893,7 +8032,9 @@ async function renderConsoleResult(
         error_category:
           result.reason === "not-administrator"
             ? "authorization"
-            : "visibility",
+            : result.reason === "auction-not-found"
+              ? "visibility"
+              : "invariant",
         error: result.reason.replaceAll("-", "_"),
       };
     default: {
@@ -6994,6 +8135,78 @@ function askConsoleRaffle(
   );
 }
 
+// Вопрос об ориентировочном времени финала (PER-663): момент в формате ввода
+// хаба, текущее время — в подсказке.
+function askConsoleFinalTime(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    timeZone: string;
+    finalAt?: string | undefined;
+    error?: FinalTimeAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-final-time",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      finalTimeAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    finalTimeQuestionText(ask.timeZone, ask.finalAt),
+    ask.replaces,
+  );
+}
+
+// Вопрос о призе розыгрыша (PER-649): приз одной строкой, текущий — в подсказке.
+function askConsolePrize(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    prize?: string | undefined;
+    error?: RafflePrizeAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-raffle-prize",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      rafflePrizeAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    rafflePrizeQuestionText(ask.prize),
+    ask.replaces,
+  );
+}
+
 function askConsoleWindow(
   ctx: UpdateContext,
   questions: Map<string, PendingInput>,
@@ -7030,6 +8243,78 @@ function askConsoleWindow(
   );
 }
 
+// Вопрос о названии нового сета лотов (PER-509): название одной строкой.
+function askConsoleSet(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    error?: "name-empty" | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-set",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      lotSetAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(ctx, questions, pending, lotSetPrompt, ask.replaces);
+}
+
+// Вопрос о запуске окна по ходу торгов (PER-615): отказ приходит текстом
+// формы — тем же, что у планирования окна.
+function askConsoleLaunch(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    timeZone: string;
+    week?: AuctionWeek | undefined;
+    error?: WindowAskError | undefined;
+    lot?: string | undefined;
+    other?: { from: string; until: string } | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-launch",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      windowAskErrorText(ask.error, {
+        timeZone: ask.timeZone,
+        week: ask.week,
+        lot: ask.lot,
+        other: ask.other,
+      }),
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    launchQuestionText(ask.timeZone, ask.week),
+    ask.replaces,
+  );
+}
+
 function askFinalPrice(
   ctx: UpdateContext,
   questions: Map<string, PendingInput>,
@@ -7062,7 +8347,7 @@ function askFinalPrice(
   return askQuestion(ctx, questions, pending, finalAskText(ask), ask.replaces);
 }
 
-// Кнопка или ответ пульта от человека без права вести сходки.
+// Кнопка или ответ пульта от человека без права вести аукцион.
 async function refuseConsole(
   ctx: UpdateContext,
   person: Person,
@@ -7079,15 +8364,461 @@ async function refuseConsole(
   };
 }
 
+// Снятие участника с лота (PER-659, ADR-072). Сюда доходит только держатель
+// права вести аукцион; право на снятие решает Auction у Meetups. Лот,
+// человек и номер лота едут в кнопке, ключ снятия рождается на нажатие «Да».
+async function handleRemovalCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-removal"
+        | "console-removal-pick"
+        | "console-removal-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const call = { identity: person, ...rpcCall(ctx, useCase) };
+  // «Повторить» после сбоя на «Да» ведёт к предпросмотру, а не к снятию:
+  // снятие, ответ на которое потерялся, могло пройти.
+  const retry =
+    action.kind === "console-removal-confirm"
+      ? removalPickData(action.lot, action.person)
+      : ctx.callbackQuery?.data;
+  const lotId = tokenToUuid(action.lot);
+  const result = await runtime.dispatcher.execute(
+    action.kind === "console-removal"
+      ? { ...call, intent: "view-lot-removal", lotId, page: action.page }
+      : action.kind === "console-removal-pick"
+        ? {
+            ...call,
+            intent: "prepare-participant-removal",
+            target: { lotId, participantId: tokenToUuid(action.person) },
+          }
+        : {
+            ...call,
+            intent: "remove-participant",
+            target: { lotId, participantId: tokenToUuid(action.person) },
+            version: action.version,
+            opId: createUuidV7(),
+          },
+  );
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  const clock = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: communityToday(ctx),
+  };
+  switch (result.kind) {
+    case "removal-people":
+      await showScreen(ctx, removalPeopleScreen(result));
+      return handled("lot removal people sent");
+    case "removal-confirm":
+      await showScreen(ctx, removalConfirmScreen({ ...result, ...clock }));
+      return handled(
+        result.changed === true
+          ? "participant removal confirmation restarted"
+          : "participant removal confirmation sent",
+      );
+    case "removal-outcome":
+      await showScreen(ctx, removalOutcomeScreen({ ...result, ...clock }));
+      return handled(
+        result.note.kind === "refused"
+          ? `participant removal refused: ${result.note.reason}`
+          : result.note.kind === "removed"
+            ? "participant removed"
+            : "lot removal without participants",
+      );
+    default:
+      return renderConsoleResult(ctx, runtime, result, {
+        person,
+        questions,
+        retry,
+      });
+  }
+}
+
+// Счета аукциона (PER-321). Сюда доходит только держатель права вести
+// аукцион; право на чтение и отметку решает Auction. Своего состояния нет:
+// аукцион и счёт едут в кнопке, а ключ отметки рождается на нажатие «Да».
+async function handleInvoicesCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-invoices"
+        | "console-invoice"
+        | "console-invoice-mark"
+        | "console-invoice-mark-confirm"
+        | "console-payment-text"
+        | "console-payment-text-remove";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const call = {
+    identity: person,
+    ...rpcCall(ctx, useCase),
+    auctionId: tokenToUuid(action.auction),
+  };
+  // «Повторить» после сбоя на «Да» ведёт к подтверждению, а не к отметке:
+  // отметка, ответ на которую потерялся, могла пройти.
+  const retry =
+    action.kind === "console-invoice-mark-confirm"
+      ? consoleInvoiceMarkData(action.auction, action.invoice, action.mark)
+      : ctx.callbackQuery?.data;
+  const request = (): ExecuteRequest => {
+    switch (action.kind) {
+      case "console-invoices":
+        return { ...call, intent: "view-auction-invoices", page: action.page };
+      case "console-invoice":
+        return {
+          ...call,
+          intent: "view-auction-invoice",
+          invoiceId: tokenToUuid(action.invoice),
+        };
+      case "console-invoice-mark":
+        return {
+          ...call,
+          intent: "prepare-invoice-mark",
+          invoiceId: tokenToUuid(action.invoice),
+          mark: action.mark,
+        };
+      case "console-invoice-mark-confirm":
+        return {
+          ...call,
+          intent: "mark-invoice",
+          invoiceId: tokenToUuid(action.invoice),
+          mark: action.mark,
+          opId: createUuidV7(),
+        };
+      // Текст оплаты (PER-322): вопрос спрашивает текст, а снятие идёт без
+      // вопроса — ключ рождается на нажатие.
+      case "console-payment-text":
+        return { ...call, intent: "ask-auction-payment-text" };
+      case "console-payment-text-remove":
+        return {
+          ...call,
+          intent: "remove-auction-payment-text",
+          opId: createUuidV7(),
+        };
+      default: {
+        const _exhaustive: never = action;
+        return _exhaustive;
+      }
+    }
+  };
+  const result = await runtime.dispatcher.execute(request());
+  return renderInvoicesResult(ctx, runtime, result, {
+    person,
+    questions,
+    retry,
+  });
+}
+
+// Экраны счетов (PER-321) и вопрос о тексте оплаты (PER-322); остальное —
+// исходы пульта: отказы и сбои рисуются, как у его команд.
+async function renderInvoicesResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  const clock = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: communityToday(ctx),
+  };
+  switch (result.kind) {
+    case "auction-invoices":
+      await showScreen(ctx, invoicesScreen({ ...result, ...clock }));
+      return handled(
+        result.note === undefined
+          ? "auction invoices sent"
+          : `auction invoices sent: ${result.note}`,
+      );
+    case "auction-invoice":
+      await showScreen(ctx, invoiceScreen({ ...result, ...clock }));
+      return handled("auction invoice sent");
+    case "invoice-mark-confirm":
+      await showScreen(ctx, invoiceMarkConfirmScreen(result));
+      return handled(`invoice ${result.mark} confirmation sent`);
+    case "invoice-mark-outcome":
+      await showScreen(ctx, invoiceMarkOutcomeScreen(result));
+      return handled(`invoice ${result.mark}: ${result.note}`);
+    case "invoice-missing":
+      await showScreen(ctx, invoiceMissingScreen(result.auctionId));
+      return handled("invoice not found");
+    case "payment-text-ask":
+      await askConsolePaymentText(ctx, context.questions, {
+        auctionId: result.auctionId,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "payment text requested"
+          : "payment text asked again",
+      );
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
+// Вопрос о тексте «Как оплатить и получить» (PER-322): свободный текст в
+// несколько строк; текущий текст — на экране «Счета» над вопросом.
+function askConsolePaymentText(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    error?: PaymentTextAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-payment-text",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      paymentTextAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(ctx, questions, pending, paymentTextPrompt, ask.replaces);
+}
+
+// «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
+// права вести аукцион; право на чтение и ставку решает Auction. Своего
+// состояния нет: лот, человек и цена едут в кнопке, а ключ ставки рождается
+// на нажатие «Да».
+async function handleFloorCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-floor"
+        | "console-floor-search"
+        | "console-floor-pick"
+        | "console-floor-confirm"
+        | "console-floor-leader";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const call = { identity: person, ...rpcCall(ctx, useCase) };
+  // «Повторить» после сбоя на «Да» ведёт к подтверждению, а не к ставке:
+  // ставка, ответ на которую потерялся, могла пройти (ADR-070 п. 5).
+  const retry =
+    action.kind === "console-floor-confirm"
+      ? floorPickData(action.lot, action.person, action.minorUnits)
+      : ctx.callbackQuery?.data;
+  const render = (result: ExecuteResult) =>
+    renderFloorResult(ctx, runtime, result, { person, questions, retry });
+  switch (action.kind) {
+    case "console-floor":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-floor-bids",
+          auctionId: tokenToUuid(action.auction),
+          page: action.page,
+        }),
+      );
+    case "console-floor-search":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-floor-search",
+          auctionId: tokenToUuid(action.auction),
+        }),
+      );
+    // Лидер — на своём месте с пометкой (решение владельца 20.10.2026):
+    // нажатие отвечает подсказкой, экран остаётся, Auction не зовётся.
+    case "console-floor-leader":
+      await ctx.waiting?.answer(floorLeaderToast);
+      ctx.liveFloorShown = true;
+      return {
+        level: "info",
+        message: "floor leader press answered",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
+    case "console-floor-pick":
+    case "console-floor-confirm": {
+      const target = {
+        lotId: tokenToUuid(action.lot),
+        participantId: tokenToUuid(action.person),
+        amount: { minorUnits: action.minorUnits, currency: lotCurrency },
+      };
+      return render(
+        await runtime.dispatcher.execute(
+          action.kind === "console-floor-pick"
+            ? { ...call, intent: "prepare-floor-bid", target }
+            : {
+                ...call,
+                intent: "place-floor-bid",
+                target,
+                opId: createUuidV7(),
+              },
+        ),
+      );
+    }
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Исход «Ставок зала»: экран людей, подтверждение, вопрос об имени либо кадр
+// отказа пульта — отказы у экрана те же, что у пульта.
+async function renderFloorResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  switch (result.kind) {
+    case "floor-bids": {
+      const view: FloorScreenView = {
+        floor: result.floor,
+        page: result.page,
+        ...(result.note === undefined ? {} : { note: result.note }),
+        ...(result.search === undefined ? {} : { search: result.search }),
+        ...(result.stale === true ? { stale: true } : {}),
+      };
+      const sent = await showScreen(ctx, floorScreen(view));
+      // Экран правится дальше по потоку аукциона, как пульт ведущего.
+      const chatId = ctx.chat?.id;
+      const pressed = ctx.callbackQuery?.message;
+      const messageId =
+        sent?.message_id ??
+        (ctx.fresh === true ? undefined : pressed?.message_id);
+      if (
+        ctx.liveFloors !== undefined &&
+        chatId !== undefined &&
+        messageId !== undefined
+      ) {
+        const kept = ctx.liveFloors.shown(chatId, messageId, {
+          person: context.person,
+          view,
+        });
+        if (messageId === pressed?.message_id) ctx.liveFloorShown = kept;
+      }
+      return handled(
+        result.note === undefined
+          ? "floor bids sent"
+          : `floor bids sent: ${result.note.kind}`,
+      );
+    }
+    case "floor-confirm":
+      await showScreen(ctx, floorConfirmScreen(result));
+      return handled("floor bid confirmation sent");
+    case "floor-search-ask":
+      await askQuestion(
+        ctx,
+        context.questions,
+        {
+          kind: "floor-search",
+          auctionId: result.auctionId,
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        escapeHtml(floorSearchQuestionText),
+        context.replyId,
+      );
+      return handled("floor search requested");
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
+// Чтение «Ставок зала» вне update (PER-565): тот же юзкейс, что у «Обновить»,
+// правами помощника, открывшего экран, с той же страницей людей.
+async function readLiveFloor(
+  runtime: BotRuntime,
+  entry: LiveFloorEntry,
+): Promise<LiveScreenRead<FloorScreenView>> {
+  const result = await runtime.dispatcher.execute({
+    identity: entry.person,
+    auctionId: entry.auctionId,
+    intent: "view-floor-bids",
+    page: entry.view.page,
+    requestId: createUuidV7(),
+    useCase: "manage_auction",
+  });
+  switch (result.kind) {
+    case "floor-bids":
+      return {
+        kind: "view",
+        view: { floor: result.floor, page: result.page },
+      };
+    case "auction-console-refused":
+      return { kind: "refused" };
+    default:
+      reportLiveConsoleFailure(runtime.logger, result.kind);
+      return { kind: "failed" };
+  }
+}
+
 // FAQ аукциона — экран оболочки хаба. Кнопка несёт аукцион, чтобы возврат не
 // зависел от памяти процесса и повторно проходил общий шлюз аукционного дерева.
 async function handleAuctionFaqCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
   auction: string,
+  fromEvents: boolean,
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "view_auction";
-  const data = auctionFaqData(auction);
+  const data = auctionFaqData(auction, fromEvents);
   const identity = await resolvePerson(ctx, runtime, useCase, data);
   if (identity.kind === "failed") return identity.outcome;
   const denied = await denyHubAccessIfNeeded(
@@ -7099,7 +8830,10 @@ async function handleAuctionFaqCallback(
   );
   if (denied !== undefined) return denied;
 
-  await showScreen(ctx, auctionFaqScreen(runtime.faq ?? defaultFaq, auction));
+  await showScreen(
+    ctx,
+    auctionFaqScreen(runtime.faq ?? defaultFaq, auction, fromEvents),
+  );
   return {
     level: "info",
     message: "auction FAQ screen sent",
@@ -7125,6 +8859,9 @@ async function handleAuctionCallback(
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "view_auction";
   const identity = await resolvePerson(ctx, runtime, useCase, data);
+  // Вход из «Событий» (PER-669): дерево разбирает кнопку без отметки, а
+  // готовый экран её получает обратно — повтор после сбоя идёт исходной.
+  const { data: treeData, entry } = auctionEntryOf(data);
   if (identity.kind === "failed") return identity.outcome;
   const denied = await denyHubAccessIfNeeded(
     ctx,
@@ -7152,10 +8889,10 @@ async function handleAuctionCallback(
   const { answer } = delivery;
   const input: AuctionUpdate["input"] =
     answer === undefined
-      ? { kind: "callback", data }
+      ? { kind: "callback", data: treeData }
       : {
           kind: "reply",
-          data,
+          data: treeData,
           ...(answer.text === undefined ? {} : { text: answer.text }),
         };
   let result: AuctionResult;
@@ -7186,15 +8923,16 @@ async function handleAuctionCallback(
     });
   } catch (cause) {
     // Лот, которого Auction не знает или который смотрящему не виден, —
-    // NOT_FOUND у `GetLot`, им начинаются и карточка, и хронология. Лента на
-    // аукцион, которого нет, отвечает пустой страницей, так что её отказ —
-    // всегда сбой.
-    const parsed = parseAuctionCallback(data);
+    // NOT_FOUND у `GetLot`, им начинаются карточка, хронология и экран сета.
+    // Лента на аукцион, которого нет, отвечает пустой страницей, так что её
+    // отказ — всегда сбой.
+    const parsed = parseAuctionCallback(treeData);
     const notFound =
       cause instanceof ConnectError &&
       cause.code === Code.NotFound &&
       parsed.ok &&
       (parsed.intent.kind === "lot" ||
+        parsed.intent.kind === "set" ||
         parsed.intent.kind === "history" ||
         parsed.intent.kind === "follow" ||
         parsed.intent.kind === "unfollow");
@@ -7225,11 +8963,12 @@ async function handleAuctionCallback(
       // Политика хаба уже пропустила человека, поэтому отказ шлюза — расхождение
       // кругов, а не штатный путь; кадр тот же, что у политики хаба.
       const access = result.reason === "blocked" ? "blocked" : "pending";
+      const frame = noAccessFrame(runtime, access);
       await showFrame(
         ctx,
-        "no-access",
+        frame.id,
         hubAccessText(access, person.identityId, ctx.from?.username),
-        new InlineKeyboard(),
+        frame.keyboard,
       );
       return hubAccessOutcome(access, person.identityId, useCase);
     }
@@ -7255,24 +8994,31 @@ async function handleAuctionCallback(
       return unexpectedOutcome(String(_exhaustive), undefined, useCase);
     }
   }
-  const canManage = canManageMeetups(person);
+  const canManage = canRunAuctions(person);
   // Статус нужен только ряду «Добавить лот»; читается он у пульта, который
-  // Auction отдаёт администратору сходки.
+  // Auction отдаёт держателю права вести аукцион.
   const feedAuctionId = canManage ? feedAuctionOf(result.body) : undefined;
   const canAddLots =
     feedAuctionId === undefined
       ? undefined
       : await auctionAcceptsLots(ctx, runtime, person, feedAuctionId);
+  const winnerUsername = await soldWinnerUsername(
+    runtime,
+    viewerOf(person),
+    result.body,
+  );
   const view: AuctionView = {
     body: result.body,
-    rootParent: rootParentOf(ctx, result.body),
+    rootParent: rootParentOf(ctx, result.body, entry),
+    entry,
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: communityToday(ctx),
-    // Пульт и входы в форму лота видит держатель права вести сходки — того
-    // же, что правка сходки и «Включить аукцион» (RFC-016).
+    // Пульт и входы в форму лота видит держатель права вести аукцион — того
+    // же, что «Включить аукцион» (ADR-070, RFC-016).
     canManage,
     ...(canAddLots === undefined ? {} : { canAddLots }),
+    ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
   const shown = auctionScreen(view);
   if (shown.asks === true) {
@@ -7331,12 +9077,19 @@ async function handleAuctionCallback(
   };
 }
 
-// Родитель корня аукциона: меню «Расширения» его сходки, если бот её видел,
-// иначе «Сходки» (ADR-030, дополнение 2026-10-04; PER-605). Остальные экраны
+// Родитель корня аукциона: «События», если аукцион открыт из них (PER-669),
+// иначе меню «Расширения» его сходки, если бот её видел, иначе «Сходки»
+// (ADR-030, дополнение 2026-10-04; PER-605). Остальные экраны
 // аукциона возвращают в корень сами: ему хватает идентификатора аукциона.
-function rootParentOf(ctx: UpdateContext, body: AuctionScreenBody): Parent {
+function rootParentOf(
+  ctx: UpdateContext,
+  body: AuctionScreenBody,
+  entry: AuctionEntry,
+): Parent {
   for (const block of body.blocks) {
     if (block.kind !== "root") continue;
+    // Открыт из «Событий» — туда и возвращает (PER-669).
+    if (entry === "events") return toEvents;
     const meetupId = ctx.auctionParents?.meetupOf(block.auctionId);
     return meetupId === undefined
       ? toMeetups
@@ -7455,6 +9208,62 @@ async function deliverAuctionScreen(
   }
 }
 
+// Чтение пульта ведущего вне update (PER-566): тот же юзкейс, что у
+// «Обновить», правами ведущего, открывшего пульт. Страница и сортировка — те,
+// что он видит.
+async function readLiveConsole(
+  runtime: BotRuntime,
+  entry: LiveConsoleEntry,
+): Promise<LiveConsoleRead> {
+  const result = await runtime.dispatcher.execute({
+    identity: entry.person,
+    auctionId: entry.auctionId,
+    intent: "view-auction-console",
+    requestId: createUuidV7(),
+    useCase: "manage_auction",
+  });
+  switch (result.kind) {
+    case "auction-console":
+      return {
+        kind: "console",
+        view: {
+          console: result.console,
+          page: entry.view.page,
+          sort: entry.view.sort,
+          timeZone: runtime.communityTimeZone ?? "UTC",
+          today: (runtime.today ?? utcToday)(),
+        },
+      };
+    case "auction-console-refused":
+      return { kind: "refused" };
+    default:
+      reportLiveConsoleFailure(runtime.logger, result.kind);
+      return { kind: "failed" };
+  }
+}
+
+// Правка пульта ведущего вне update (PER-566): отказы Telegram разбираются
+// так же, как у карточки финала.
+async function editLiveConsole(
+  api: Bot<UpdateContext>["api"],
+  runtime: BotRuntime,
+  entry: { chatId: number; messageId: number },
+  screen: ShownScreen,
+): Promise<LiveEditOutcome> {
+  try {
+    await api.editMessageText(entry.chatId, entry.messageId, screen.text, {
+      ...screenMark(screen.id),
+      reply_markup: screen.keyboard,
+      ...(screen.format === "HTML" ? { parse_mode: "HTML" as const } : {}),
+    });
+    return { kind: "done" };
+  } catch (cause) {
+    return liveEditFailure(cause, (error) =>
+      reportLiveEditFailure(runtime.logger, error),
+    );
+  }
+}
+
 // Правка карточки финала вне update (PER-336): та же оболочка, что у показа
 // по нажатию. Фото — только из кэша `file_id`: загрузка байтов на каждой цене
 // залпа съела бы и время, и лимит; без записи в кэше карточка правится без
@@ -7470,13 +9279,19 @@ async function editLiveLotCard(
   },
 ): Promise<LiveEditOutcome> {
   const { card, runtime } = input;
+  const winnerUsername = await soldWinnerUsername(
+    runtime,
+    card.viewer,
+    input.body,
+  );
   const view: AuctionView = {
     body: input.body,
     rootParent: toMeetups,
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
-    canManage: canManageMeetups(card.viewer),
+    canManage: canRunAuctions(card.viewer),
+    ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
   const shown = auctionScreen(view);
   const key = shown.image;
@@ -7657,7 +9472,9 @@ async function renderNotificationSettings(
 }
 
 function categoryForbiddenText(category: NotificationCategory): string {
-  return category === "access" ? accessRequestsForbiddenText : forbiddenText;
+  return accessRequestCategories.includes(category)
+    ? accessRequestsForbiddenText
+    : forbiddenText;
 }
 
 // Настройка у сходки сильнее общей, а снять её одной кнопкой контракт не даёт:
@@ -7777,6 +9594,20 @@ async function renderStateResult(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   presentation: "rich" | "plain",
 ): Promise<void> {
+  // Отмена — исход своим экраном «Сходка отменена» с возвратом к карточке:
+  // перерисованная карточка не говорила, что отмена прошла (прогон 14.10,
+  // №103). Остальные смены состояния видны на самой карточке.
+  if (result.kind === "meetup-state-changed" && result.action === "cancel") {
+    await renderMeetupCard(
+      ctx,
+      cardFrom(result),
+      true,
+      presentation,
+      true,
+      "Сходка отменена.",
+    );
+    return;
+  }
   if (result.kind === "published" || result.kind === "meetup-state-changed") {
     await renderMeetupCard(ctx, cardFrom(result), true, presentation, true);
     return;
@@ -7829,7 +9660,37 @@ async function denyHubAccessIfNeeded(
   if (access === "admitted") {
     return undefined;
   }
-  return denyHubAccess(ctx, access, identity.person, useCase, edit, sourceCode);
+  return denyHubAccess(
+    ctx,
+    runtime,
+    access,
+    identity.person,
+    useCase,
+    edit,
+    sourceCode,
+  );
+}
+
+// Кадр ожидания допуска с адресом бота поддержки несёт одну кнопку-ссылку
+// (PER-625, ADR-068): «?start=hub» говорит боту поддержки, откуда человек.
+// Без адреса, а также у отказа и блокировки клавиатуры нет.
+function noAccessFrame(
+  runtime: BotRuntime,
+  access: Exclude<HubAccess, "admitted" | "unapplied">,
+): {
+  id: "no-access" | "no-access-support";
+  keyboard: InlineKeyboard;
+} {
+  if (access !== "pending" || runtime.supportBotUsername === undefined) {
+    return { id: "no-access", keyboard: new InlineKeyboard() };
+  }
+  return {
+    id: "no-access-support",
+    keyboard: new InlineKeyboard().url(
+      supportLabel,
+      supportBotLink(runtime.supportBotUsername, "hub"),
+    ),
+  };
 }
 
 // Кадр отказа хаба без выхода: гостю намёк на бот аукциона не нужен, он там
@@ -7837,6 +9698,7 @@ async function denyHubAccessIfNeeded(
 // личности не знает, — приветствие с кнопкой «Подать заявку» (PER-592).
 async function denyHubAccess(
   ctx: UpdateContext,
+  runtime: BotRuntime,
   access: Exclude<HubAccess, "admitted">,
   person: Person,
   useCase: ProductUseCase | undefined,
@@ -7860,11 +9722,12 @@ async function denyHubAccess(
     return hubAccessOutcome(access, person.identityId, useCase);
   }
   const text = hubAccessText(access, person.identityId, ctx.from?.username);
+  const frame = noAccessFrame(runtime, access);
   await showFrame(
     ctx,
-    "no-access",
+    frame.id,
     text,
-    new InlineKeyboard(),
+    frame.keyboard,
     edit ? undefined : "new",
   );
   return hubAccessOutcome(access, person.identityId, useCase);
@@ -7939,6 +9802,8 @@ async function renderFormResult(
   presentation: "rich" | "plain",
   // Экран, с которого назначают публикацию: нужен только вопросу о её моменте.
   origin: PublishOrigin = "status",
+  // Вопрос о названии новой сходки: повтор вопроса сохраняет, откуда он задан.
+  fresh?: NewMeetupOrigin,
 ): Promise<void> {
   // Дату по нажатию выбирают кнопками на экране без режима ответа. Вопрос
   // текстом остаётся ответу на вопрос: человек уже пишет, и ему нужен формат.
@@ -7972,6 +9837,11 @@ async function renderFormResult(
       mode: result.kind === "edit-ask" ? "edit" : "create",
       field: result.field,
       meetupId: result.meetup.id,
+      ...(fresh === undefined ||
+      result.kind !== "ask" ||
+      result.field !== "title"
+        ? {}
+        : { fresh }),
       telegramUserId: ctx.from?.id ?? 0,
     };
     // Непринятый ответ — свой экран (PER-472): формат поля покажет вопрос за
@@ -8078,10 +9948,30 @@ async function renderFormResult(
       true,
       presentation,
       true,
-      result.archived === true
-        ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Сходках»."
-        : "Изменение сохранено.",
+      [
+        "Изменение сохранено.",
+        changedField(result, communityToday(ctx)),
+        result.archived === true
+          ? "Дата сходки уже прошла, поэтому она в архиве, а не в «Сходках»."
+          : undefined,
+      ]
+        .filter((part) => part !== undefined)
+        .join(" "),
     );
+    return;
+  }
+  // Старая кнопка «Создать сходку» несёт id уже созданной сходки: её ответ
+  // ничего не переименовывает, а показывает, что сходка уже есть.
+  if (result.kind === "meetup-exists") {
+    await showScreen(ctx, {
+      id: "outcome",
+      text: outcomeText(
+        "Эта сходка уже создана. Новую создаёт свежая кнопка «Создать сходку».",
+        meetupTitleLabel(result.meetup.title),
+      ),
+      keyboard: exitToCard(uuidToToken(result.meetup.id)),
+      format: "HTML",
+    });
     return;
   }
   if (result.kind === "edit-unavailable") {
@@ -8254,6 +10144,7 @@ function stepOf(pending: PendingBody): QuestionStep {
         mode: pending.mode,
         token: uuidToToken(pending.meetupId),
         field: pending.field,
+        ...(pending.fresh === undefined ? {} : { fresh: pending.fresh }),
       };
     case "publish-moment":
       return {
@@ -8290,9 +10181,34 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-raffle-prize":
+      return {
+        kind: "console-raffle-prize",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "console-final-time":
+      return {
+        kind: "console-final-time",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "console-payment-text":
+      return {
+        kind: "console-payment-text",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-window":
       return {
         kind: "console-window",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "console-launch":
+      return {
+        kind: "console-launch",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "console-set":
+      return {
+        kind: "console-set",
         auction: uuidToToken(pending.auctionId),
       };
     case "final-ask":
@@ -8301,6 +10217,8 @@ function stepOf(pending: PendingBody): QuestionStep {
         auction: uuidToToken(pending.auctionId),
         position: pending.position,
       };
+    case "floor-search":
+      return { kind: "floor-search", auction: uuidToToken(pending.auctionId) };
     default: {
       const _exhaustive: never = pending;
       return _exhaustive;
@@ -8389,6 +10307,7 @@ function pendingOf(
         mode: step.mode,
         field: step.field,
         meetupId: tokenToUuid(step.token),
+        ...(step.fresh === undefined ? {} : { fresh: step.fresh }),
         telegramUserId,
         expiresAt,
       };
@@ -8453,9 +10372,44 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-raffle-prize":
+      return {
+        kind: "console-raffle-prize",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-final-time":
+      return {
+        kind: "console-final-time",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-payment-text":
+      return {
+        kind: "console-payment-text",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "console-window":
       return {
         kind: "console-window",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-launch":
+      return {
+        kind: "console-launch",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-set":
+      return {
+        kind: "console-set",
         auctionId: tokenToUuid(step.auction),
         telegramUserId,
         expiresAt,
@@ -8465,6 +10419,13 @@ function pendingOf(
         kind: "final-ask",
         auctionId: tokenToUuid(step.auction),
         position: step.position,
+        telegramUserId,
+        expiresAt,
+      };
+    case "floor-search":
+      return {
+        kind: "floor-search",
+        auctionId: tokenToUuid(step.auction),
         telegramUserId,
         expiresAt,
       };
@@ -8487,7 +10448,15 @@ type ScreenAction =
 function cancelTarget(step: QuestionStep): ScreenAction {
   switch (step.kind) {
     case "field":
-      // Вопрос формы создания задан с черновика, точечной правки — с карточки.
+      // Вопрос о названии новой сходки задан до черновика — из «Сходок» или
+      // из группы «Сходки и объявления», туда «Отмена» и ведёт: черновика
+      // нет (прогон 14.10, №14). Остальные вопросы формы создания заданы с
+      // черновика, точечной правки — с карточки.
+      if (step.fresh !== undefined) {
+        return step.fresh === "meetups"
+          ? { kind: "hub" }
+          : { kind: "manage-group", group: "meetups" };
+      }
       return step.mode === "create"
         ? { kind: "manage-draft", token: step.token }
         : { kind: "view-meetup", token: step.token };
@@ -8520,8 +10489,11 @@ function cancelTarget(step: QuestionStep): ScreenAction {
       return { kind: "lot-form", lot: step.lot };
     case "console-week":
     case "console-raffle":
+    case "console-raffle-prize":
+    case "console-final-time":
     case "final-ask":
-      // Вопросы о сроках, о розыгрыше и о цене заданы с пульта аукциона.
+      // Вопросы о сроках, о розыгрыше, о призе, о времени финала и о цене
+      // заданы с пульта аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -8531,6 +10503,17 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-window":
       // Вопрос о новом окне задан со «Счастливых часов».
       return { kind: "console-windows", auction: step.auction };
+    case "floor-search":
+      return { kind: "console-floor", auction: step.auction, page: 0 };
+    case "console-launch":
+      // Вопрос о запуске окна задан со «Счастливых часов».
+      return { kind: "console-windows", auction: step.auction };
+    case "console-set":
+      // Вопрос о названии сета задан с «Сетов».
+      return { kind: "console-sets", auction: step.auction };
+    case "console-payment-text":
+      // Вопрос о тексте оплаты задан со «Счетов».
+      return { kind: "console-invoices", auction: step.auction, page: 0 };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -8647,6 +10630,11 @@ async function refuseAnswer(
 function reopenData(step: QuestionStep): string {
   switch (step.kind) {
     case "field":
+      // Сходки по вопросу «Создать сходку» ещё может не быть: «Ввести заново»
+      // задаёт тот же вопрос с тем же id (прогон 14.10, №14).
+      if (step.fresh !== undefined) {
+        return `v1:manage:new:${step.token}${step.fresh === "meetups" ? ":s" : ""}`;
+      }
       return step.mode === "create"
         ? `v1:manage:draft:${step.token}:${step.field}`
         : `v1:manage:field:${step.token}:${step.field}`;
@@ -8684,10 +10672,22 @@ function reopenData(step: QuestionStep): string {
       return consoleWeekData(step.auction);
     case "console-raffle":
       return consoleRaffleData(step.auction);
+    case "console-raffle-prize":
+      return consoleRafflePrizeData(step.auction);
+    case "console-final-time":
+      return consoleFinalTimeData(step.auction);
+    case "console-payment-text":
+      return consolePaymentTextData(step.auction);
     case "console-window":
       return consoleWindowAskData(step.auction);
+    case "console-launch":
+      return consoleWindowLaunchData(step.auction);
+    case "console-set":
+      return consoleSetAskData(step.auction);
     case "final-ask":
       return consoleAskData(step.auction, step.position);
+    case "floor-search":
+      return floorSearchData(step.auction);
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -8699,6 +10699,11 @@ function reopenData(step: QuestionStep): string {
 function answerParent(step: QuestionStep): Parent {
   switch (step.kind) {
     case "field":
+      if (step.fresh !== undefined) {
+        return step.fresh === "meetups"
+          ? toMeetups
+          : manageItemParent("meetups");
+      }
       return step.mode === "create"
         ? { name: "Сходка", data: `v1:manage:draft:${step.token}` }
         : toCard(step.token);
@@ -8727,12 +10732,28 @@ function answerParent(step: QuestionStep): Parent {
       return toLot(tokenToUuid(step.lot));
     case "console-week":
     case "console-raffle":
+    case "console-raffle-prize":
+    case "console-final-time":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
     case "console-window":
       return {
         name: "Счастливые часы",
         data: consoleWindowsData(step.auction),
+      };
+    case "floor-search":
+      return { name: floorTitle, data: floorData(step.auction) };
+    case "console-launch":
+      return {
+        name: "Счастливые часы",
+        data: consoleWindowsData(step.auction),
+      };
+    case "console-set":
+      return { name: "Сеты", data: consoleSetsData(step.auction) };
+    case "console-payment-text":
+      return {
+        name: invoicesLabel,
+        data: consoleInvoicesData(step.auction),
       };
     default: {
       const _exhaustive: never = step;
@@ -8783,7 +10804,11 @@ function auctionQuestionOf(replied: unknown): string | undefined {
   return parsed.data.reply_markup.inline_keyboard
     .flat()
     .map((button) => button.callback_data)
-    .find((data): data is string => isAuctionQuestion(data));
+    .find(
+      (data): data is string =>
+        typeof data === "string" &&
+        isAuctionQuestion(auctionEntryOf(data).data),
+    );
 }
 
 /** Момент публикации выбирают в режимах `p` и `d`; остальные — дата сходки. */
@@ -8908,9 +10933,12 @@ function callbackUseCase(
     | "apply"
     | "settings"
     | "settings-extensions"
+    | "settings-auction"
     | "meetup-extensions"
     | "help"
+    | "release-notes"
     | "next"
+    | "events"
     | "manage-group"
     | "hub"
     | "archive"
@@ -8924,12 +10952,14 @@ function callbackUseCase(
     | "community-member"
     | "ask-block-member"
     | "block-member"
+    | "ask-demote-member"
+    | "demote-member"
     | "remove-allowed-username"
     | "refused-applications"
     | "ask-reconsider"
     | "reconsider"
-    | "grant-moderation"
-    | "revoke-moderation"
+    | "grant-record"
+    | "revoke-record"
     | "administrators"
     | "ask-appoint-administrator"
     | "confirm-appoint-administrator"
@@ -8948,7 +10978,7 @@ function callbackUseCase(
     | "manage-field"
     | "manage-draft"
     | "manage-status"
-    | "manage-meetups"
+    | "enable-auction"
     | "lot-new"
     | "lot-form"
     | "lot-view"
@@ -8959,11 +10989,18 @@ function callbackUseCase(
     | "console-week"
     | "console-raffle"
     | "console-raffle-remove"
+    | "console-raffle-prize"
+    | "console-raffle-prize-remove"
     | "console-final"
+    | "console-final-time"
+    | "console-final-time-remove"
+    | "console-visibility"
     | "console-open"
     | "console-confirm"
     | "console-discard"
     | "console-discard-confirm"
+    | "console-cancel"
+    | "console-cancel-confirm"
     | "console-mark"
     | "console-lineup"
     | "console-lineup-confirm"
@@ -8972,11 +11009,36 @@ function callbackUseCase(
     | "console-ask"
     | "console-close"
     | "console-close-confirm"
+    | "console-floor"
+    | "console-floor-search"
+    | "console-floor-pick"
+    | "console-floor-confirm"
+    | "console-floor-leader"
+    | "console-removal"
+    | "console-removal-pick"
+    | "console-removal-confirm"
     | "console-windows"
+    | "console-day-summary"
+    | "console-invoices"
+    | "console-invoice"
+    | "console-invoice-mark"
+    | "console-invoice-mark-confirm"
+    | "console-payment-text"
+    | "console-payment-text-remove"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
     | "console-window-remove"
+    | "console-window-launch"
+    | "console-window-launch-lot"
+    | "console-window-launch-go"
+    | "console-window-launch-page"
+    | "console-sets"
+    | "console-set-ask"
+    | "console-set"
+    | "console-set-lot"
+    | "console-set-delete"
+    | "console-set-delete-confirm"
     | "manage-publish"
     | "manage-confirm-publish"
     | "manage-unpublish"
@@ -8988,6 +11050,8 @@ function callbackUseCase(
     | "notify-outbid"
     | "notify-set-outbid"
     | "notify-set-final"
+    | "notify-set-live"
+    | "notify-set-news"
     | "notify-disable-global"
     | "notify-disable-meetup"
     | "notify-settings"
@@ -9077,9 +11141,11 @@ function callbackUseCase(
     case "community-member":
     case "ask-block-member":
     case "block-member":
+    case "ask-demote-member":
+    case "demote-member":
     case "remove-allowed-username":
-    case "grant-moderation":
-    case "revoke-moderation":
+    case "grant-record":
+    case "revoke-record":
     case "administrators":
     case "ask-appoint-administrator":
     case "confirm-appoint-administrator":
@@ -9089,18 +11155,21 @@ function callbackUseCase(
       return "manage_community";
     case "settings":
     case "settings-extensions":
+    case "settings-auction":
     case "notify-global":
     case "notify-set-global":
     case "notify-outbid":
     case "notify-set-outbid":
     case "notify-set-final":
+    case "notify-set-live":
+    case "notify-set-news":
     case "notify-disable-global":
     case "notify-disable-meetup":
     case "notify-settings":
     case "notify-subscription":
     case "notify-set-meetup":
       return "manage_notifications";
-    case "manage-meetups":
+    case "enable-auction":
       return "enable_auction";
     case "lot-new":
     case "lot-form":
@@ -9113,11 +11182,16 @@ function callbackUseCase(
     case "console-week":
     case "console-raffle":
     case "console-raffle-remove":
+    case "console-raffle-prize":
+    case "console-raffle-prize-remove":
     case "console-final":
+    case "console-visibility":
     case "console-open":
     case "console-confirm":
     case "console-discard":
     case "console-discard-confirm":
+    case "console-cancel":
+    case "console-cancel-confirm":
     case "console-mark":
     case "console-lineup":
     case "console-lineup-confirm":
@@ -9126,21 +11200,53 @@ function callbackUseCase(
     case "console-ask":
     case "console-close":
     case "console-close-confirm":
+    case "console-floor":
+    case "console-floor-search":
+    case "console-floor-pick":
+    case "console-floor-confirm":
+    case "console-floor-leader":
+    case "console-removal":
+    case "console-removal-pick":
+    case "console-removal-confirm":
     case "console-windows":
+    case "console-day-summary":
+    case "console-invoices":
+    case "console-invoice":
+    case "console-invoice-mark":
+    case "console-invoice-mark-confirm":
+    case "console-payment-text":
+    case "console-payment-text-remove":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":
     case "console-window-remove":
+    case "console-window-launch":
+    case "console-window-launch-lot":
+    case "console-window-launch-go":
+    case "console-window-launch-page":
+    case "console-final-time":
+    case "console-final-time-remove":
+    case "console-sets":
+    case "console-set-ask":
+    case "console-set":
+    case "console-set-lot":
+    case "console-set-delete":
+    case "console-set-delete-confirm":
       return "manage_auction";
     case "home":
     case "apply":
     case "help":
+      return "find_meetup";
+    case "release-notes":
+      return "view_release_notes";
     case "hub":
     case "archive":
     case "outdated":
       return "find_meetup";
     case "next":
       return "view_meetup";
+    case "events":
+      return "view_auction";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

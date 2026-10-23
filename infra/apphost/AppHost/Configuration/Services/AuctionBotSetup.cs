@@ -33,6 +33,7 @@ internal static class AuctionBotSetup
         return Wire(
             context,
             environment,
+            SupportBotLink.Local(configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.AuctionBot));
     }
 
@@ -48,15 +49,21 @@ internal static class AuctionBotSetup
         Wire(
                 context,
                 TelegramEnvironment.Production,
+                SupportBotLink.Published(context.Builder),
                 context.Builder.AddContainer(AppHostNames.Resources.AuctionBot, AppHostNames.Resources.HubBot))
             .AsClusterWorkload(Cluster);
 
     private static IResourceBuilder<T> Wire<T>(
         ServiceGraphContext context,
         TelegramEnvironment environment,
+        SupportBotLink? support,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
+        // Вход в бот поддержки из ожидания допуска и «Задать вопрос ↗» FAQ
+        // (ADR-068, п. 2).
+        support?.UsernameAndQuestionUrl(bot);
+
         var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
 
         return bot
@@ -87,33 +94,21 @@ internal static class AuctionBotSetup
     /// Отсутствующий токен или токен бота хаба останавливают сборку графа до
     /// старта поллеров (ADR-044). Пустой параметр Aspire спросил бы в дашборде
     /// уже после старта остальных ресурсов, а повтор токена Telegram показал бы
-    /// только конфликтом polling у обоих ботов.
-    ///
-    /// Сравнение идёт со значениями из конфигурации в любом профиле, а не только
-    /// в графе, который владеет обоими ботами: user-secrets AppHost общие, и
-    /// профиль <c>auction-bot</c>, поднятый рядом с <c>hub</c>, иначе повтора
-    /// не увидел бы. Параметр бота хаба при этом не объявляется. Причина отказа
-    /// называет параметры, но не значения: токен — секрет.
+    /// только конфликтом polling у обоих ботов (<see cref="BotTokens"/>).
+    /// Повтор токена бота поддержки ловит сам бот поддержки.
     /// </summary>
     internal static void RequireOwnToken(IConfiguration configuration, TelegramEnvironment environment)
     {
         var name = environment.AuctionBotTokenParameter;
-        var value = configuration[$"Parameters:{name}"]?.Trim();
-        if (string.IsNullOrEmpty(value))
-        {
-            throw new InvalidOperationException(
-                $"Parameter '{name}' of '{AppHostNames.Resources.AuctionBot}' is not set. " +
-                $"Set it with `dotnet user-secrets set Parameters:{name} <token>` in infra/apphost/AppHost.");
-        }
+        var value = BotTokens.Value(configuration, name) ?? throw new InvalidOperationException(
+            $"Parameter '{name}' of '{AppHostNames.Resources.AuctionBot}' is not set. " +
+            $"Set it with `dotnet user-secrets set Parameters:{name} <token>` in infra/apphost/AppHost.");
 
-        foreach (var hub in TelegramEnvironment.HubBotTokenParameters)
-        {
-            if (string.Equals(configuration[$"Parameters:{hub}"]?.Trim(), value, StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    $"Parameter '{name}' of '{AppHostNames.Resources.AuctionBot}' repeats '{hub}'. " +
-                    "Each bot needs its own token: two pollers on one token conflict.");
-            }
-        }
+        BotTokens.RequireDistinct(
+            configuration,
+            AppHostNames.Resources.AuctionBot,
+            name,
+            value,
+            TelegramEnvironment.HubBotTokenParameters);
     }
 }

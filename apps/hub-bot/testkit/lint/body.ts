@@ -16,7 +16,11 @@ export type BodyViolation = {
 };
 
 export type BodyRules = {
-  /** Ряд из двух кнопок, который тело допускает: листание. */
+  /**
+   * Ряд из двух кнопок и больше, который тело допускает: листание. Шире
+   * двух — только ряд, который правило называет (листание лотов с
+   * «Обновить» посередине, PER-669).
+   */
   pair: (row: readonly BodyButton[]) => boolean;
   /** Потолок рядов тела; оболочка добавит к нему свой ряд навигации. */
   maxRows: number;
@@ -36,7 +40,7 @@ export function inspectBody(
     });
   }
   for (const row of keyboard) {
-    if (row.length > 2 || (row.length === 2 && !rules.pair(row))) {
+    if (row.length > 3 || (row.length >= 2 && !rules.pair(row))) {
       found.push({
         rule: "rows",
         detail: `ряд ${row.map((button) => button.action).join(" | ")} вне правил тела`,

@@ -39,6 +39,25 @@ public class OutbidFrequenciesTests
             .Window.ShouldBe(TimeSpan.FromMinutes(minutes));
     }
 
+    [Fact]
+    public void When_LiveFinalNeverTouched_Expect_Suppressed()
+    {
+        OutbidFrequencies.DecideLiveFinal(null).ShouldBeOfType<OutbidDecision.Suppress>();
+    }
+
+    [Fact]
+    public void When_LiveFinalOff_Expect_Suppressed()
+    {
+        OutbidFrequencies.DecideLiveFinal(false).ShouldBeOfType<OutbidDecision.Suppress>();
+    }
+
+    [Fact]
+    public void When_LiveFinalOn_Expect_SentAtOnce()
+    {
+        // В живом финале частота не участвует: окно сводки там не открывается.
+        OutbidFrequencies.DecideLiveFinal(true).ShouldBeOfType<OutbidDecision.Send>();
+    }
+
     [Theory]
     [MemberData(nameof(Known))]
     public void When_EveryContractValueStored_Expect_SameValueRead(OutbidFrequency frequency)

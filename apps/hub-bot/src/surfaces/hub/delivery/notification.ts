@@ -24,13 +24,43 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionAnnouncementNotice,
+  newAuctionNoticeOf,
+  tradingOpenedNoticeOf,
+} from "../../../core/notifications/auction-announcement-notice.js";
+import {
+  type AuctionCancelledNotice,
+  auctionCancelledNoticeOf,
+} from "../../../core/notifications/auction-cancelled-notice.js";
+import {
+  type FinalNotice,
+  finalNoticeOf,
+} from "../../../core/notifications/final-notice.js";
+import {
+  type InvoiceNotice,
+  invoiceNoticeOf,
+} from "../../../core/notifications/invoice-notice.js";
+import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type LotSetNotice,
+  lotSetNoticeOf,
+} from "../../../core/notifications/lot-set-notice.js";
+import {
+  type PredictionResultsNotice,
+  predictionResultsNoticeOf,
+} from "../../../core/notifications/prediction-results-notice.js";
+import {
   type RaffleNotice,
   raffleNoticeOf,
 } from "../../../core/notifications/raffle-notice.js";
+import {
+  type StepWindowNotice,
+  stepWindowNoticeOf,
+} from "../../../core/notifications/step-window-notice.js";
+import type { ApplicationCursor } from "../identity/port.js";
 
 export type LocalDate = { year: number; month: number; day: number };
 export type LocalDateTime = LocalDate & { hours: number; minutes: number };
@@ -96,8 +126,13 @@ export type RenderableContent =
   | { kind: "organizer-message"; meetup: NotifiedMeetup; body: string }
   | { kind: "community-announcement"; body: string }
   // Заявку на доступ получает администратор. Заявителя контракт не несёт: кто
-  // просит, модератор видит в очереди, куда ведёт сообщение.
-  | { kind: "access-requested"; queue: ApplicationQueue }
+  // просит, бот читает при доставке из очереди правами получателя по курсору
+  // заявки (PER-634). Курсора нет у факта, который старше него.
+  | {
+      kind: "access-requested";
+      queue: ApplicationQueue;
+      application?: SubmittedApplication;
+    }
   // Допуск в хаб получает сам заявитель (PER-442). Очередь здесь всегда
   // сообщества: допуск в аукцион доставляет бот аукциона.
   | { kind: "access-granted" }
@@ -108,15 +143,43 @@ export type RenderableContent =
   // перебитие, ответ автоставки, покупку и сводку — те же, что у бота аукциона
   // (PER-598).
   | LotNotice
+  // Анонс состава и старта финала (PER-478) — тот же, что у бота аукциона.
+  | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
   | RaffleNotice
+  // Напоминания о неоплаченном счёте (PER-330) с кнопкой на счёт (PER-322) —
+  // те же, что у бота аукциона.
+  | InvoiceNotice
+  | PredictionResultsNotice
+  // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота
+  // аукциона.
+  | AuctionCancelledNotice
+  // Начало окна «Счастливых часов» на отмеченных лотах (PER-616) — то же,
+  // что у бота аукциона.
+  | StepWindowNotice
+  // Вести о новом аукционе и об открытии торгов (PER-646) — те же, что у бота
+  // аукциона.
+  | AuctionAnnouncementNotice
+  // Собранный сет (PER-687): одно сообщение собравшему, состав по следу на
+  // существующий экран сета.
+  | LotSetNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
-  | { kind: "circle-demoted" };
+  | { kind: "circle-demoted" }
+  | {
+      kind: "release-summary";
+      summaryId: string;
+      summarizedAt: string;
+      recordIds: readonly string[];
+    };
 
 // Очереди, в которые ставят заявку: сообщество и аукцион.
 export type ApplicationQueue = "community" | "auction";
+
+// Курсор заявки, о которой оповещение: идентификатор и момент создания, по
+// которым Identity отдаёт её карточку из очереди.
+export type SubmittedApplication = ApplicationCursor;
 
 export type NotificationContent = RenderableContent | OtherBranch;
 
@@ -208,9 +271,14 @@ function toContent(message: Notification): NotificationContent | undefined {
     }
     case "accessRequested": {
       const queue = toQueue(type.value.queue);
-      return queue === undefined
-        ? undefined
-        : { kind: "access-requested", queue };
+      if (queue === undefined) return undefined;
+      const application = toSubmittedApplication(
+        type.value.applicationId,
+        type.value.createdAt,
+      );
+      return application === undefined
+        ? { kind: "access-requested", queue }
+        : { kind: "access-requested", queue, application };
     }
     // Допуск доставляет бот той поверхности, куда подана заявка: хаб — заявку
     // в сообщество, а допуск в аукцион для него чужой, как ветки торгов.
@@ -245,12 +313,50 @@ function toContent(message: Notification): NotificationContent | undefined {
     }
     case "lotOutbid":
     case "lotProxyRaised":
+    case "lotLeadRestored":
     case "lotPurchased":
     case "lotActivityDigest":
     case "lotReminder":
+    case "lotDeadlineClose":
+    case "auctionFinalLotNext":
       return lotNoticeOf(type);
+    case "auctionFinalLineup":
+    case "auctionFinalStarted":
+      return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "invoiceReminder":
+      return invoiceNoticeOf("invoice-reminder", type.value);
+    case "invoiceDueReminder":
+      return invoiceNoticeOf("invoice-due-reminder", type.value);
+    case "lotSetCollected":
+      return lotSetNoticeOf(type.value);
+    // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
+    // факт несёт, разбор их не читает: они остаются на экране.
+    case "predictionResults":
+      return predictionResultsNoticeOf(type.value);
+    case "auctionCancelled":
+      return auctionCancelledNoticeOf(type.value);
+    // Начало окна «Счастливых часов» (PER-616): ветка своя, разбор общий —
+    // право получателя и названия лотов читает общий рендер вести.
+    case "stepWindowStarted":
+      return stepWindowNoticeOf(type.value);
+    case "auctionPublished":
+      return newAuctionNoticeOf(type.value);
+    case "auctionTradingOpened":
+      return tradingOpenedNoticeOf(type.value);
+    case "releaseSummary": {
+      const { summaryId, summarizedAt, recordIds } = type.value;
+      if (summaryId === "" || summarizedAt === "" || recordIds.length === 0) {
+        return undefined;
+      }
+      return {
+        kind: "release-summary",
+        summaryId,
+        summarizedAt,
+        recordIds,
+      };
+    }
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }
@@ -391,6 +497,28 @@ function toDateTime(
     minutes: value.time.minutes,
   };
 }
+
+// Курсор заявки из факта. Пустой — факт старше курсора, неразборчивый —
+// дефект издателя; оба читаются отсутствием: оповещение теряет только тело
+// заявки, а повод остаётся.
+function toSubmittedApplication(
+  applicationId: string,
+  createdAt: string,
+): SubmittedApplication | undefined {
+  if (!canonicalUuid.test(applicationId)) return undefined;
+  if (!applicationInstant.test(createdAt)) return undefined;
+  const createdAtMs = Date.parse(createdAt);
+  return Number.isFinite(createdAtMs)
+    ? { applicationId, createdAtMs }
+    : undefined;
+}
+
+const canonicalUuid =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// Вид момента заявки по контракту — UTC с ровно миллисекундами. Иной вид —
+// дефект издателя: курсор из него встал бы не на заявку, и открытая заявка
+// показалась бы решённой.
+const applicationInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // Незнакомая или пустая очередь — дефект издателя.
 function toQueue(value: WireQueue): ApplicationQueue | undefined {

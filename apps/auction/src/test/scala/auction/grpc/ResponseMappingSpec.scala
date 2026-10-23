@@ -6,7 +6,15 @@ import auction.aggregate.CancellationRefusal
 import auction.aggregate.DiscardRefusal
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
+import auction.aggregate.ParticipantRemovalRefusal
 import auction.aggregate.SchedulingRefusal
+import auction.aggregate.RemovalRefusal
+import auction.aggregate.FinalChoiceRefusal
+import auction.aggregate.LineupRefusal
+import auction.aggregate.FinalStartRefusal
+import auction.aggregate.NextLotRefusal
+import auction.aggregate.AskRefusal
+import auction.aggregate.ClosingRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.ImageVersion
 import auction.catalog.LotCard
@@ -19,6 +27,7 @@ import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.LotFixtures.*
 import auction.lot.PlaceBidRejected
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.StepPolicyInvalid
@@ -52,6 +61,11 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         wire.PlaceBidRefusal.Reason.BidBelowMinimum(wire.BidBelowMinimum(Some(MoneyMessage(110, "RUB"))))
     }
 
+    "carries the maximum price in an above-ceiling refusal" in {
+      refused(PlaceBidRejected.BidAboveMaximum(money(550))) shouldBe
+        wire.PlaceBidRefusal.Reason.BidAboveMaximum(wire.BidAboveMaximum(Some(MoneyMessage(550, "RUB"))))
+    }
+
     "carries the expected price in a not-at-next-price refusal" in {
       refused(PlaceBidRejected.BidNotAtNextPrice(money(120))).bidNotAtNextPrice.flatMap(_.expected) shouldBe
         Some(MoneyMessage(120, "RUB"))
@@ -62,6 +76,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       refused(PlaceBidRejected.LotOnHold(money(300))).isLotOnHold shouldBe true
       refused(PlaceBidRejected.CurrencyMismatch).isCurrencyMismatch shouldBe true
       refused(PlaceBidRejected.BidderIsLeader(money(110))).isBidderIsLeader shouldBe true
+      refused(PlaceBidRejected.ParticipantRemovedFromLot).isParticipantRemovedFromLot shouldBe true
     }
 
     "carries the current price in on-hold and leader refusals and the lowest limit in a low-limit refusal" in {
@@ -94,6 +109,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       limitRefused(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(150))).isProxyBelowCurrentPrice shouldBe true
       limitRefused(SetProxyLimitRejected.ProxyDisabledForLot).isProxyDisabledForLot shouldBe true
       limitRefused(SetProxyLimitRejected.CurrencyMismatch).isCurrencyMismatch shouldBe true
+      limitRefused(SetProxyLimitRejected.ParticipantRemovedFromLot).isParticipantRemovedFromLot shouldBe true
       ResponseMapping
         .withdrawProxyLimit(Left(WithdrawProxyLimitRejected.NoActiveProxyLimit))
         .value
@@ -143,6 +159,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         .isUnsupportedImage shouldBe true
       ResponseMapping.editLotCard(Left(CatalogRefusal.UnsupportedImage)).getRefused.reason.isUnsupportedImage shouldBe
         true
+      ResponseMapping.editLotCard(Left(CatalogRefusal.CardClosed)).getRefused.reason.isCardClosed shouldBe true
     }
 
     "answers accepted conditions of a lot without data and every refusal of the right, the auction and the lot as a value" in {
@@ -205,6 +222,82 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       val holder = auction.lot.AuctionId(java.util.UUID.fromString("0190f2a0-0000-7000-8000-000000000021"))
       reason(OpeningRefusal.AnotherAuctionActive(holder)).anotherAuctionActive.map(_.auctionId) shouldBe
         Some("0190f2a0-0000-7000-8000-000000000021")
+      reason(OpeningRefusal.Denied(Denial.MeetupCancelled)).isMeetupCancelled shouldBe true
+      reason(OpeningRefusal.Denied(Denial.MeetupHidden)).isMeetupHidden shouldBe true
+    }
+
+    "answers a manual settlement of a cancelled meetup with a named refusal" in {
+      ResponseMapping
+        .settleResultsDenied(Denial.MeetupCancelled)
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+    }
+
+    "answers a command of a cancelled meetup with a named refusal in every command the gate closes" in {
+      ResponseMapping.draftAuction(Left(Denial.MeetupCancelled)).value.getRefused.reason.isMeetupCancelled shouldBe true
+      ResponseMapping.addLot(Left(Denial.MeetupCancelled)).value.getRefused.reason.isMeetupCancelled shouldBe true
+      ResponseMapping
+        .removeLot(Left(RemovalRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .scheduleAuction(Left(SchedulingRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .scheduleLot(Left(LotSchedulingRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .selectForFinal(Left(FinalChoiceRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .deselectForFinal(Left(FinalChoiceRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .freezeFinalLineup(Left(LineupRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .startFinal(Left(FinalStartRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .startNextLot(Left(NextLotRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .advanceAsk(Left(AskRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .closeLot(Left(ClosingRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
     }
 
     "answers a discard without data and every refusal of the right and of the state as a value" in {
@@ -253,6 +346,48 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         Status.Code.UNAVAILABLE
       ResponseMapping.startPrebidding(Left(OpeningRefusal.Denied(Denial.AuctionNotFound))).left.value.getCode shouldBe
         Status.Code.NOT_FOUND
+    }
+
+    // PER-658: снятие отвечает номером лота, предпросмотр — итогом, а отказы — значениями, кроме сбоев.
+    "answers a removal with the lot version, a preview with its outcome, and the refusals as values" in {
+      ResponseMapping.removeParticipant(Right(14)).value.getAccepted.lotVersion shouldBe 14
+      val removed: LotEvent.ParticipantRemoved =
+        LotEvent.ParticipantRemoved(participant(1), money(21000), Some(participant(2)), Some(bid(9)))
+      val preview = ResponseMapping
+        .previewParticipantRemoval(Right(LotEntity.RemovalPreview(removed, Some(deadline), 12)))
+        .value
+        .getPreview
+      (preview.getPrice.minorUnits, preview.leaderId, preview.extendedDeadline, preview.version) shouldBe
+        (21000L, Some(participant(2).value.toString), Some(deadline.toString), 12L)
+      for (
+        refusal <- List(
+          ParticipantRemovalRefusal.LineupFrozen,
+          ParticipantRemovalRefusal.NotInPrebidding,
+          ParticipantRemovalRefusal.LotNotInAuction,
+          ParticipantRemovalRefusal.Denied(Denial.NotAdministrator),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotChanged),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.NotALotParticipant),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.ParticipantAlreadyRemoved),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.DeadlinePassed)
+        )
+      ) {
+        ResponseMapping.removeParticipant(Left(refusal)).value.getRefused.reason.isDefined shouldBe true
+        ResponseMapping.previewParticipantRemoval(Left(refusal)).value.getRefused.reason.isDefined shouldBe true
+      }
+      ResponseMapping
+        .removeParticipant(Left(ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotChanged)))
+        .value
+        .getRefused
+        .reason
+        .isLotChanged shouldBe true
+      ResponseMapping
+        .removeParticipant(Left(ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.OpIdTaken)))
+        .left
+        .map(_.getCode) shouldBe Left(Status.Code.ALREADY_EXISTS)
+      ResponseMapping
+        .removeParticipant(Left(ParticipantRemovalRefusal.Denied(Denial.Unavailable)))
+        .left
+        .map(_.getCode) shouldBe Left(Status.Code.UNAVAILABLE)
     }
 
     "answers an image read with the stored bytes, their type and their own version" in {

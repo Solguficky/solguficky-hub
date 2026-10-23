@@ -109,6 +109,75 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
       AuctionConfig.parse(configInput(open, closingPolicy = ClosingPolicy.ByAuctioneer)).isRight shouldBe true
     }
 
+    "accepts a raffle prize with the raffle and names it, up to the limit of the message" in {
+      val raffle = opensAt.plusSeconds(3600)
+      val prize = "сертификат в книжный на 5000 ₽"
+      val config = AuctionConfig.parse(
+        configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(prize))))
+      )
+      config.map(_.rafflePrize) shouldBe Right(Some(prize))
+      val atLimit = "я" * AuctionConfig.MaxRafflePrize
+      val accepted =
+        AuctionConfig.parse(configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(atLimit)))))
+      accepted.map(_.rafflePrize) shouldBe Right(Some(atLimit))
+    }
+
+    "refuses a raffle prize without a raffle" in {
+      AuctionConfig.parse(configInput(Some(week.copy(rafflePrize = Some("кружка"))))) shouldBe
+        Left(ConfigInvalid.RafflePrizeWithoutRaffle)
+    }
+
+    "refuses a blank raffle prize" in {
+      val raffle = opensAt.plusSeconds(3600)
+      for (blank <- List("", " ", "  \t "))
+        AuctionConfig.parse(
+          configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(blank))))
+        ) shouldBe Left(ConfigInvalid.RafflePrizeBlank)
+    }
+
+    "refuses a raffle prize longer than the limit of the message" in {
+      val raffle = opensAt.plusSeconds(3600)
+      val tooLong = "я" * (AuctionConfig.MaxRafflePrize + 1)
+      AuctionConfig.parse(
+        configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(tooLong))))
+      ) shouldBe Left(ConfigInvalid.RafflePrizeTooLong)
+    }
+
+    // Предел приза — предел платформы, а не значения: смена константы не делает записанный журнал нечитаемым.
+    "reads a journal row whose raffle prize is longer than the limit" in {
+      val raffle = opensAt.plusSeconds(3600)
+      val stored = "я" * (AuctionConfig.MaxRafflePrize + 1)
+      val phase = OnlinePhase(opensAt, Some(closesAt), closesLots = true, Some(raffle), Some(stored))
+      AuctionConfig
+        .of(Some(phase), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, Nil, AuctionConfig.PlatformPaymentTerm)
+        .map(_.rafflePrize) shouldBe Right(Some(stored))
+    }
+
+    "fills in the payment term of the platform when the organizer set none and keeps the one they set" in {
+      AuctionConfig.parse(configInput()).map(_.paymentTerm) shouldBe Right(java.time.Duration.ofDays(7))
+      AuctionConfig
+        .parse(configInput().copy(paymentTerm = Some(java.time.Duration.ofDays(3))))
+        .map(_.paymentTerm) shouldBe
+        Right(java.time.Duration.ofDays(3))
+    }
+
+    "accepts a payment term from one day to thirty days and refuses one outside" in {
+      def termed(term: java.time.Duration) = AuctionConfig.parse(configInput().copy(paymentTerm = Some(term)))
+      termed(AuctionConfig.MinPaymentTerm).isRight shouldBe true
+      termed(AuctionConfig.MaxPaymentTerm).isRight shouldBe true
+      termed(AuctionConfig.MinPaymentTerm.minusSeconds(1)) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+      termed(AuctionConfig.MaxPaymentTerm.plusSeconds(1)) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+      termed(java.time.Duration.ZERO) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+      termed(java.time.Duration.ofSeconds(-1)) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+    }
+
+    // Границы срока — платформы, а не значения: журнал с записанным сверх них читается.
+    "reads a journal row whose payment term lies outside the bounds" in {
+      AuctionConfig
+        .of(Some(week), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, Nil, java.time.Duration.ofDays(90))
+        .map(_.paymentTerm) shouldBe Right(java.time.Duration.ofDays(90))
+    }
+
     "refuses a number of final blocks outside zero and one" in {
       for (blocks <- List(-1, 2))
         AuctionConfig.parse(configInput(finalBlocks = blocks)) shouldBe Left(ConfigInvalid.FinalBlocksOutOfRange)
@@ -187,7 +256,14 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
     "restores a window without lot defaults regardless of the currency of the platform" in {
       val euro = window(1, 2, Set(lotA)).copy(step = Money(1, CurrencyCode("EUR")))
       AuctionConfig
-        .of(Some(week), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, List(euro))
+        .of(
+          Some(week),
+          1,
+          ClosingPolicy.Mixed(onlineByDeadline = true),
+          None,
+          List(euro),
+          AuctionConfig.PlatformPaymentTerm
+        )
         .isRight shouldBe true
     }
 
