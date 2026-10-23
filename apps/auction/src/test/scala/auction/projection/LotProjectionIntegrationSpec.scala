@@ -533,7 +533,12 @@ final class LotProjectionIntegrationSpec
       val set = UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000031")
       withNode(database) { node =>
         val (first, second) = (tradingLot(node), tradingLot(node))
-        eventually(version(database, second) shouldBe Some(3L))
+        // Проекции лотов идут независимо: строка второго лота не значит, что первый уже в read model, а сет ищется по
+        // первому.
+        eventually {
+          version(database, first) shouldBe Some(3L)
+          version(database, second) shouldBe Some(3L)
+        }
         val name = auction.aggregate.LotSetName("Красный сет").toOption.get
         val events = List(
           AuctionEvent.AuctionDrafted(auction.aggregate.MeetupId(UUID.randomUUID())),
