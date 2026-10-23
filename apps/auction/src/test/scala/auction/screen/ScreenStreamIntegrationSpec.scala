@@ -65,7 +65,9 @@ final class ScreenStreamIntegrationSpec
         val startedAt = System.nanoTime()
         node.bid(lot, next, participant(2))
         (System.nanoTime() - startedAt).nanos should be <= 1.second
-        val raised = active.state(_.at("/lot/price/amount").asLong == next.minorUnits, within = 1.second)
+        // Первая ставка лота вправе равняться стартовой цене (PER-618), и цена `next` есть уже в кадре до ставки. Ставка
+        // видна по строке хронологии, а не по цене.
+        val raised = active.state(_.at("/lot/bids/0/amount/amount").asLong == next.minorUnits, within = 1.second)
 
         raised.at("/lot/bids/0/channel").asText shouldBe "online"
         active.cancel()
