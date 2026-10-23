@@ -136,6 +136,7 @@ import auction.projection.FinalBids
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.HistoryRecord
+import auction.projection.LotSetView
 import auction.projection.LotSnapshotView
 import auction.projection.LotContest
 import auction.projection.LotStatisticsView
@@ -284,6 +285,15 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private def named: Map[ParticipantId, ChosenName] =
     Map(ViewerId -> ChosenName.Telegram(TelegramUsername.from("vasya").getOrElse(fail("not a username"))))
+
+  /** Хранилище имён, чьё чтение падает: база имён лежит, а торги и read model живы. */
+  private object FailingNames extends DisplayNameStore {
+    private def down = Future.failed(IllegalStateException("database is down for @collector"))
+    def choose(auction: AuctionId, participant: ParticipantId, name: ChosenName) = down
+    def freeze(auction: AuctionId, participant: ParticipantId) = down
+    def find(auction: AuctionId, participants: Set[ParticipantId]) = down
+    def all(auction: AuctionId) = down
+  }
 
   /** Хранилище имён, до которого запрос не должен дойти. */
   private object UntouchableNames extends DisplayNameStore {
@@ -1230,6 +1240,27 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .futureValue
         .raffle shouldBe None
     }
+
+    "reveals a drawn raffle with tickets without names when the ticket names cannot be read" in {
+      val randomness =
+        Randomness.fromHex("d7941e7b5bcaf8742bfc7136d38c5ab8274286629ffe43081dbda1f05d798300").get
+      val drawn = Raffle(
+        RaffleState
+          .Drawn(raffleTerms, Vector(ParticipantId(UUID.fromString(lot)), ViewerId), randomness, Instant.EPOCH),
+        Map.empty
+      )
+      val read = service(
+        Unreachable,
+        raffles = Raffles(drawn),
+        raffleNames = _ => Future.failed(IllegalStateException("database is down"))
+      )
+        .getRaffle(wire.GetRaffleRequest(Some(viewer), raffleAuction))
+        .futureValue
+        .getRaffle
+      read.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_DRAWN
+      read.tickets shouldBe Seq(wire.RaffleTicket(1, None), wire.RaffleTicket(2, None))
+      read.myTicket shouldBe Some(2)
+    }
   }
 
   /** Потоки — единственное, чему в сьюте нужна система: остальное здесь — `Future` без материализации. */
@@ -1330,6 +1361,97 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       message.getActiveLot.getTrading.getCurrentPrice.minorUnits shouldBe 700
       message.getActiveLot.viewerProxyLimit shouldBe None
       message.lineup.flatMap(_.viewerProxyLimit) shouldBe empty
+    }
+  }
+
+  "a lot with a collected set at the grpc boundary" should {
+
+    val collector = participant(2)
+    val collectedLot = UUID.fromString(lot)
+    val setLot = LotSetView(new UUID(6L, 1L), "Красный сет", List(collectedLot), Some(collector.value))
+
+    def withSet(auctionId: UUID) = LotSnapshotView(collectedLot, auctionId, 1, drafted, None, lotSet = Some(setLot))
+
+    // Тестовый аукцион (UUIDv7) скрытым не бывает: тест не трогает строку аукциона.
+    val test = UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000099")
+    val testLots = new Views {
+      override def find(lotId: UUID) = Future.successful(Some(withSet(test)))
+      override def page(auctionId: UUID, after: Option[UUID], limit: Int) =
+        Future.successful(List(withSet(auctionId)))
+    }
+
+    def logged(read: => Unit): List[ILoggingEvent] = {
+      val appender = new ListAppender[ILoggingEvent]()
+      val logger = serviceLogger
+      appender.start()
+      logger.addAppender(appender)
+      try {
+        read
+        appender.list.asScala.toList
+      } finally {
+        logger.detachAppender(appender)
+        appender.stop()
+      }
+    }
+
+    def namesSkipped(events: List[ILoggingEvent]): Unit = {
+      events should have size 1
+      val entry = events.head.getArgumentArray.head.toString
+      entry should include(s"operation=${AuctionGrpcService.CollectorNamesOperation}")
+      entry should include("result=error")
+      entry should include("error_category=dependency_unavailable")
+      entry should include("error=java.lang.IllegalStateException")
+      entry should include("request_id=req-9")
+      entry should not include "database is down"
+      entry should not include "@collector"
+      entry should not include collector.value.toString
+    }
+
+    "answers GetLot with the set and its collector without a name when the name store fails" in {
+      val events = logged {
+        val read = service(Unreachable, views = testLots, names = FailingNames)
+          .within(Correlation(Some("req-9"), Some("get_lot")))
+          .getLot(wire.GetLotRequest(Some(viewer), lot))
+          .futureValue
+        read.getLotSet.collectorId shouldBe Some(collector.value.toString)
+        read.getLotSet.collectorName shouldBe None
+      }
+      namesSkipped(events)
+    }
+
+    "answers ListAuctionLots with the set and its collector without a name when the name store fails" in {
+      val events = logged {
+        val read = service(Unreachable, views = testLots, names = FailingNames)
+          .within(Correlation(Some("req-9"), Some("list_auction_lots")))
+          .listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), test.toString))
+          .futureValue
+        read.lots.map(_.getLotSet.collectorId) shouldBe Seq(Some(collector.value.toString))
+        read.lots.map(_.getLotSet.collectorName) shouldBe Seq(None)
+      }
+      namesSkipped(events)
+    }
+
+    "sends the WatchAuction message with the collector without a name when the name store fails" in {
+      val state = AuctionState.Final(
+        AuctionFixtures.config(),
+        LotFixtures.op(9),
+        List(LotId(collectedLot)),
+        List(LotId(collectedLot)),
+        Nil
+      )
+      val view = AuctionWatchView(watchedIn(state, Set(LotId(collectedLot))), List(withSet(watchedAuction)))
+      val events = logged {
+        val message = watching(
+          service(Unreachable, names = FailingNames, watchViews = _ => Future.successful(Some(view)))
+            .within(Correlation(Some("req-9"), Some("watch_auction")))
+            .watchAuction(watch)
+        ).pull().futureValue.getOrElse(fail("the stream sent nothing"))
+        message.lineup.map(_.getLotSet.collectorId) shouldBe Seq(Some(collector.value.toString))
+        message.lineup.map(_.getLotSet.collectorName) shouldBe Seq(None)
+        message.getActiveLot.getLotSet.collectorName shouldBe None
+      }
+      // Активный лот и состав — одно чтение имён на сообщение.
+      namesSkipped(events)
     }
   }
 
