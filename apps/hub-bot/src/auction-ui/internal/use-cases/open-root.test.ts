@@ -165,15 +165,22 @@ describe("root predictions entry", () => {
     });
   });
 
-  it("propagates prediction read failures to the boundary", async () => {
-    await expect(
-      openRoot({
-        auction: auctionOf(async () => {
-          throw new Error("predictions unavailable");
-        }),
-        viewer: VIEWER,
-        auctionId: AUCTION_ID,
+  // PER-703: держатель `run_auctions` без `place_bids` получает от Auction
+  // `PERMISSION_DENIED` на прогнозы, а корень ему открыт.
+  it("opens the root without predictions when their read is refused", async () => {
+    const body = await openRoot({
+      auction: auctionOf(async () => {
+        throw new Error("predictions unavailable");
       }),
-    ).rejects.toThrow("predictions unavailable");
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+    });
+
+    expect(body.blocks).toEqual([
+      { kind: "root", auctionId: AUCTION_ID, auction: SUMMARY },
+    ]);
+    expect(body.keyboard.flat().map((button) => button.action)).toEqual([
+      "root.lots",
+    ]);
   });
 });
