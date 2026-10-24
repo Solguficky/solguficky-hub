@@ -83,10 +83,14 @@ export type NewLotId = string & { readonly __newLot: true };
 // `chain` — вопрос задан цепочкой нового лота (PER-618): после названия форма
 // сама спрашивает цену, шаг и фото по порядку. Признак едет в кнопке вопроса
 // и переживает рестарт; юзкейс его не читает — следующий шаг выбирает край.
+//
+// `set` — правка всего сета лота (PER-716): «Все лоты сета» выбраны до
+// вопроса, и признак едет в кнопке, как `chain`. С цепочкой он не бывает: у
+// нового лота сета нет.
 export type LotQuestion =
   | { kind: "new"; auctionId: string; lotId: NewLotId }
-  | { kind: "text"; field: LotTextField; lotId: string }
-  | { kind: "price"; lotId: string; chain?: true }
+  | { kind: "text"; field: LotTextField; lotId: string; set?: true }
+  | { kind: "price"; lotId: string; chain?: true; set?: true }
   // Способ шага выбирается до вопроса о нём (PER-491): один шаг или пороги.
   | {
       kind: "step";
@@ -94,8 +98,12 @@ export type LotQuestion =
       priceRubles: number;
       mode: LotStepMode;
       chain?: true;
+      set?: true;
     }
-  | { kind: "image"; lotId: string; chain?: true };
+  | { kind: "image"; lotId: string; chain?: true; set?: true }
+  // Сколько всего лотов будет вместе с этим (PER-716): копии с той же
+  // карточкой, ценой и шагом, собранные в сет.
+  | { kind: "copies"; lotId: string };
 
 // Почему вопрос формы лота задан заново.
 export type LotAskError =
@@ -124,7 +132,9 @@ export type LotAskError =
   | "photo-unavailable"
   // Фото сменилось после подтверждения «Убрать фото» (PER-715): ничего не
   // снято, решают заново.
-  | "photo-changed";
+  | "photo-changed"
+  // Число лотов для копий — не целое от 2 до 20 (PER-716).
+  | "copies-count";
 
 // Способ задать шаг (PER-491): один на все цены либо по ценовым порогам.
 export type LotStepMode = "single" | "tiered";
@@ -161,7 +171,32 @@ export type LotFormView = {
   // снять фото, которое сменилось после подтверждения.
   imagePrint?: string;
   terms: LotTermsView;
+  // Реестр аукциона лота (PER-716): открыт ли он и сет лота. Его несёт только
+  // экран правки, прочитанный вместе с пультом; нет — пульт не прочитан, и
+  // экран не предлагает ни копий, ни удаления, ни правки сета.
+  registry?: LotRegistryView;
 };
+
+// `open` — онлайн-торги не открыты: лоты добавляются и снимаются. `set` — сет,
+// в который лот входит, с числом его лотов; неполный сет тоже.
+export type LotRegistryView = {
+  open: boolean;
+  set?: { name: string; size: number };
+};
+
+// Почему правка сета не дошла до лота (PER-716): лот продан или закрыт без
+// продажи, торги по лоту начались, лота нет в реестре, Auction не ответил или
+// отказал иначе.
+export type LotSetMiss =
+  | "sold"
+  | "card-closed"
+  | "terms-closed"
+  | "not-in-auction"
+  | "unavailable"
+  | "refused";
+
+// Поле, которое правка сета разносит по лотам.
+export type LotSetField = LotTextField | "image" | "price";
 
 export type LotRefusal =
   // Auction или Meetups не подтвердили администратора сходки.
@@ -179,7 +214,13 @@ export type LotRefusal =
   // Лот сняли с аукциона, пока форма была открыта.
   | "lot-not-in-auction"
   // Сходку отменили: аукцион наследует отмену (ADR-047, дополнение 2026-10-12).
-  | "meetup-cancelled";
+  | "meetup-cancelled"
+  // Копии собираются в сет, а лот уже в сете (PER-716).
+  | "lot-in-set"
+  // Сетов у аукциона столько, сколько держит экран сетов (PER-716).
+  | "set-limit"
+  // Торги начались: лот из аукциона уже не снять (PER-716).
+  | "removal-frozen";
 // `unschedule` снимает назначенную публикацию: это не ось видимости, но
 // механика та же — отдельное действие с подтверждением и повтором по версии.
 export type MeetupStateAction = "unpublish" | "cancel" | "hold" | "unschedule";
@@ -353,11 +394,14 @@ export type LotFormRequest =
   // Предпросмотр лота глазами участника (PER-512): снимок целиком, его тело
   // строит аукционное дерево.
   | (LotFormCall & { intent: "view-lot-preview"; lotId: string })
+  // `set` — правка всего сета лота (PER-716); ключ рождает край, и из него
+  // выводятся ключи команд каждого лота.
   | (LotFormCall & {
       intent: "set-lot-text";
       lotId: string;
       field: LotTextField;
       value: string;
+      set?: true;
     })
   // Цена проверяется до вопроса о шаге: иначе отказ пришёл бы после второго
   // ответа. В Auction она уходит вместе с шагом.
@@ -370,6 +414,7 @@ export type LotFormRequest =
       mode: LotStepMode;
       value: string;
       opId: string;
+      set?: true;
     })
   // Новая цена с прежним шагом лота (PER-714): «Оставить шаг» на экране выбора
   // способа шага. Шаг юзкейс берёт из чтения лота.
@@ -378,13 +423,32 @@ export type LotFormRequest =
       lotId: string;
       priceRubles: number;
       opId: string;
+      set?: true;
     })
   // Фото уже скачано у Telegram краем: юзкейс получает только байты.
   | (LotFormCall & {
       intent: "set-lot-image";
       lotId: string;
       image: Uint8Array;
+      set?: true;
     })
+  // «Повторить для оставшихся» (PER-716): поле лота разносится по его сету
+  // заново — значение берётся у самого лота, правка которого уже прошла.
+  | (LotFormCall & {
+      intent: "retry-lot-set";
+      lotId: string;
+      field: LotSetField;
+      opId: string;
+    })
+  // Копии лота (PER-716): ответ — сколько всего лотов будет вместе с ним.
+  | (LotFormCall & {
+      intent: "copy-lot";
+      lotId: string;
+      value: string;
+      opId: string;
+    })
+  // «Да, удалить лот» (PER-716): лот уходит из реестра и из своего сета.
+  | (LotFormCall & { intent: "remove-lot"; lotId: string; opId: string })
   // Снятие фото лота (PER-715): «Да» под подтверждением «Убрать фото?».
   | (LotFormCall & {
       intent: "remove-lot-image";
@@ -1380,12 +1444,34 @@ export type ExecuteResult =
       // границей 0, когда такой ввод форма приняла бы (PER-709).
       suggestedTiers?: LotTierView[];
     }
-  // Отказ Auction, который человеку показывают, а не повторяют.
+  // Отказ Auction, который человеку показывают, а не повторяют. `setName` —
+  // сет, в котором лот уже лежит, у отказа `lot-in-set` (PER-716).
   | {
       kind: "lot-refused";
       reason: LotRefusal;
       lotId?: string;
       auctionId?: string;
+      setName?: string;
+    }
+  // Копии заведены и собраны в сет (PER-716): `lot` — исходный лот с новым
+  // названием, `total` — лотов в сете вместе с ним, `name` — имя сета.
+  | { kind: "lot-copies"; lot: LotFormView; total: number; name: string }
+  // Правка сета разнесена (PER-716): до скольких лотов дошла и какие лоты, с
+  // причиной, остались без неё.
+  | {
+      kind: "lot-set-applied";
+      lot: LotFormView;
+      field: LotSetField;
+      applied: number;
+      total: number;
+      missed: readonly { title: string; reason: LotSetMiss }[];
+    }
+  // Лот снят из реестра (PER-716). `already` — снятие прошло раньше.
+  | {
+      kind: "lot-removed";
+      auctionId: string;
+      title?: string;
+      already?: true;
     }
   // Пульт аукциона (PER-320). `note` — исход команды первой строкой. После
   // команды пульт собран из чтения Auction и принятой команды: чтения

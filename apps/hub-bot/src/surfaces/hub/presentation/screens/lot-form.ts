@@ -1,22 +1,36 @@
 import { InlineKeyboard } from "grammy";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import { marked, pictogram } from "../../../../core/pictograms.js";
-import { isSold, keptStep, lotCurrency } from "../../application/lot-form.js";
+import {
+  isSold,
+  keptStep,
+  lotCurrency,
+  maxLotCopies,
+  minLotCopies,
+  numberedTitle,
+} from "../../application/lot-form.js";
 import type {
   LotAskError,
   LotFormView,
   LotQuestion,
   LotRefusal,
+  LotSetField,
+  LotSetMiss,
   LotTermsView,
   LotTierView,
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   lotAskData,
+  lotCopyData,
   lotFormData,
   lotImageRemoveConfirmData,
   lotKeepStepData,
   lotPreviewData,
+  lotRemoveConfirmData,
+  lotRemoveData,
+  lotScopeData,
+  lotSetRetryData,
   lotStepModeData,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
@@ -26,6 +40,7 @@ import {
   nextRow,
   outcomeText,
   type Parent,
+  removeLabel,
   screenText,
   subjectLine,
   withNav,
@@ -186,18 +201,21 @@ export function lotStepModeScreen(
   lot: LotFormView,
   priceRubles: number,
   chain?: boolean,
+  // Правка цены всех лотов сета (PER-716): признак едет дальше в кнопках.
+  set?: boolean,
 ): ShownScreen {
   const token = uuidToToken(lot.lotId);
+  const scope = set === true ? "set" : chain;
   // Бинарная пара выбора — одним рядом (дизайн-код, «Клавиатура»).
   const keyboard = new InlineKeyboard()
-    .text("Один шаг", lotStepModeData(token, priceRubles, "single", chain))
-    .text("По порогам", lotStepModeData(token, priceRubles, "tiered", chain));
+    .text("Один шаг", lotStepModeData(token, priceRubles, "single", scope))
+    .text("По порогам", lotStepModeData(token, priceRubles, "tiered", scope));
   // Правка цены у лота с шагом (PER-714): прежний шаг оставляется одним
   // нажатием, а уход возвратом цену не сохраняет — экран говорит это до ухода.
   // В цепочке нового лота прежнего шага нет.
   const kept = chain === true ? undefined : keptStepLabel(lot.terms);
   if (kept !== undefined) {
-    keyboard.row().text(kept, lotKeepStepData(token, priceRubles));
+    keyboard.row().text(kept, lotKeepStepData(token, priceRubles, set));
   }
   return {
     id: "lot-step-mode",
@@ -250,22 +268,27 @@ export function lotSavedScreen(lot: LotFormView, outcome: string): ShownScreen {
 export function lotFormScreen(lot: LotFormView): ShownScreen {
   const token = uuidToToken(lot.lotId);
   const sold = isSold(lot.terms);
+  const set = lot.registry?.set;
+  // Поле лота полного сета сначала спрашивает, только ли этот лот править
+  // или все лоты сета (PER-716).
+  const field = (name: "title" | "description" | "image" | "price") =>
+    set !== undefined && set.size >= 2
+      ? lotScopeData(token, name)
+      : lotAskData(token, name);
   const fields: [label: string, data: string][] = [
     ...(sold
       ? []
       : ([
-          [marked(pictogram.title, "Название"), lotAskData(token, "title")],
-          [
-            marked(pictogram.description, "Описание"),
-            lotAskData(token, "description"),
-          ],
-          [marked(pictogram.photo, "Фото"), lotAskData(token, "image")],
+          [marked(pictogram.title, "Название"), field("title")],
+          [marked(pictogram.description, "Описание"), field("description")],
+          [marked(pictogram.photo, "Фото"), field("image")],
         ] satisfies [string, string][])),
     ...(lot.terms.kind === "closed"
       ? []
-      : ([
-          [marked(pictogram.price, "Цена и шаг"), lotAskData(token, "price")],
-        ] satisfies [string, string][])),
+      : ([[marked(pictogram.price, "Цена и шаг"), field("price")]] satisfies [
+          string,
+          string,
+        ][])),
   ];
   const keyboard = new InlineKeyboard();
   fields.forEach(([label, data], index) => {
@@ -275,6 +298,13 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
   // Предпросмотр (PER-512) — и после старта торгов: участник видит ту же
   // карточку, только с ценой.
   nextRow(keyboard).text("Глазами участника", lotPreviewData(token));
+  // Копии и удаление (PER-716) — пока реестр открыт, то есть до онлайн-недели.
+  // Копии собираются в сет, поэтому у лота, который уже в сете, их нет.
+  if (lot.registry?.open === true) {
+    if (set === undefined)
+      keyboard.row().text("Копировать", lotCopyData(token));
+    keyboard.row().text(removeLabel("Удалить лот"), lotRemoveData(token));
+  }
   return {
     id: "lot-form",
     text: screenText(
@@ -284,6 +314,7 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
         `Описание: ${lot.description === "" ? "нет" : truncate(lot.description, descriptionLimit)}`,
         `Фото: ${lot.hasImage ? "есть" : "нет"}`,
         ...termsLines(lot.terms),
+        ...(set === undefined ? [] : [`Сет: ${set.name}, лотов: ${set.size}`]),
       ]
         .map(escapeHtml)
         .join("\n"),
@@ -317,6 +348,7 @@ const lotAskErrors: Record<LotAskError, string> = {
   "photo-unavailable": "Не получилось получить фото у Telegram.",
   "photo-changed":
     "Фото уже сменилось. Ничего не убрано: посмотри новое фото и реши заново.",
+  "copies-count": `Нужно целое число от ${minLotCopies} до ${maxLotCopies}.`,
 };
 
 /**
@@ -382,6 +414,8 @@ function prompt(question: LotQuestion): string {
       return question.chain === true
         ? "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота. Нет фото под рукой — «Пропустить», его можно добавить потом."
         : "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
+    case "copies":
+      return `Сколько всего нужно таких лотов вместе с этим? Целое число от ${minLotCopies} до ${maxLotCopies}. Копии получат то же описание, фото, цену и шаг, все лоты назовутся «название | N из M» и соберутся в сет.`;
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -421,6 +455,8 @@ function current(
           : money(lot.terms.step);
     case "image":
       return lot.hasImage ? "фото есть, новое его заменит" : "нет";
+    case "copies":
+      return undefined;
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -442,8 +478,13 @@ export function lotQuestionText(
   const chained =
     question.kind !== "new" &&
     question.kind !== "text" &&
+    question.kind !== "copies" &&
     question.chain === true;
   const now = chained ? undefined : current(question, lot);
+  const set =
+    question.kind !== "new" &&
+    question.kind !== "copies" &&
+    question.set === true;
   return [
     ...(lead === undefined ? [] : [lead]),
     ...(question.kind === "step"
@@ -451,6 +492,8 @@ export function lotQuestionText(
       : []),
     ...(now === undefined ? [] : [`Сейчас: ${now}`]),
     prompt(question),
+    // Правка всех лотов сета (PER-716): вопрос говорит, куда уйдёт ответ.
+    ...(set ? [setScopeNote(question, lot)] : []),
   ].join("\n");
 }
 
@@ -467,4 +510,178 @@ export const lotRefusalText: Record<
   "auction-not-found": "Аукцион не найден. Открой сходку заново.",
   "lot-not-in-auction": "Лот сняли с аукциона. Цену и шаг ему задать нельзя.",
   "meetup-cancelled": "Сходку отменили. Лоты её аукциона больше не меняются.",
+  "lot-in-set": "Лот уже в сете. Копии заводятся только у лота вне сета.",
+  // Предел — десять сетов: его держит экран сетов (`lotSetLimit`).
+  "set-limit":
+    "Сетов в аукционе уже десять. Копии собираются в новый сет, а места для него нет.",
+  "removal-frozen": "Торги уже начались. Удалить лот из аукциона нельзя.",
 };
+
+/** Строка вопроса правки всех лотов сета (PER-716). */
+function setScopeNote(
+  question: Exclude<LotQuestion, { kind: "new" | "copies" }>,
+  lot: LotFormView | undefined,
+): string {
+  const size = lot?.registry?.set?.size;
+  const all = size === undefined ? "все лоты сета" : `все лоты сета (${size})`;
+  return question.kind === "text" && question.field === "title"
+    ? `Новое название получат ${all}, номер «| N из M» бот допишет сам.`
+    : question.kind === "price" || question.kind === "step"
+      ? `Цену и шаг получат ${all}, где торги ещё не начались.`
+      : `Изменение получат ${all}.`;
+}
+
+// Поле в подписи выбора: что именно правится у одного лота или у всех.
+const scopeFieldWord: Record<LotSetField, string> = {
+  title: "Название",
+  description: "Описание",
+  image: "Фото",
+  price: "Цену и шаг",
+};
+
+/**
+ * Выбор «Только этот лот» или «Все лоты сета (M)» перед вопросом поля лота
+ * сета (PER-716). Бинарная пара выбора — одним рядом; возврат — в форму.
+ */
+export function lotScopeScreen(
+  lot: LotFormView,
+  set: { name: string; size: number },
+  field: LotSetField,
+): ShownScreen {
+  const token = uuidToToken(lot.lotId);
+  return {
+    id: "lot-scope",
+    text: screenText(
+      "Какие лоты изменить?",
+      subjectLine(lot.title ?? untitled),
+      escapeHtml(
+        `Лот входит в сет «${set.name}». ${scopeFieldWord[field]} можно изменить только у этого лота или у всех лотов сета сразу.`,
+      ),
+    ),
+    keyboard: withNav(
+      new InlineKeyboard()
+        .text("Только этот лот", lotAskData(token, field))
+        .text(`Все лоты сета (${set.size})`, lotAskData(token, field, "set")),
+      { name: "Изменить лот", data: lotFormData(token) },
+    ),
+    format: "HTML",
+  };
+}
+
+const missWords: Record<LotSetMiss, string> = {
+  sold: "лот продан",
+  "card-closed": "лот закрыт",
+  "terms-closed": "торги по лоту начались",
+  "not-in-auction": "лота нет в аукционе",
+  unavailable: "аукцион не ответил",
+  refused: "аукцион отказал",
+};
+
+/**
+ * Исход правки всех лотов сета (PER-716): до скольких лотов она дошла и, если
+ * не до всех, какие остались и почему. «Повторить для оставшихся» разносит
+ * значение заново: лоты, где оно уже такое, команды не получают.
+ */
+export function lotSetAppliedScreen(
+  lot: LotFormView,
+  outcome: {
+    field: LotSetField;
+    applied: number;
+    total: number;
+    missed: readonly { title: string; reason: LotSetMiss }[];
+  },
+): ShownScreen {
+  const token = uuidToToken(lot.lotId);
+  const keyboard = new InlineKeyboard();
+  if (outcome.missed.length > 0) {
+    keyboard
+      .text("Повторить для оставшихся", lotSetRetryData(token, outcome.field))
+      .row();
+  }
+  keyboard.text("Изменить лот", lotFormData(token));
+  const missed = outcome.missed
+    .map((each) => `«${each.title}» — ${missWords[each.reason]}`)
+    .join("; ");
+  return {
+    id: "outcome",
+    text: outcomeText(
+      outcome.missed.length === 0
+        ? `Применено к ${outcome.applied} из ${outcome.total}.`
+        : `Применено к ${outcome.applied} из ${outcome.total}. Не применено: ${missed}.`,
+      lot.title,
+    ),
+    keyboard: withNav(keyboard, toLot(lot.lotId)),
+    format: "HTML",
+  };
+}
+
+/**
+ * Исход копий (PER-716): сколько лотов в сете и как они названы. Возврат — в
+ * ленту, где копии стоят за исходным лотом.
+ */
+export function lotCopiesScreen(
+  lot: LotFormView,
+  copies: { total: number; name: string },
+): ShownScreen {
+  return {
+    id: "outcome",
+    text: outcomeText(
+      `Лоты скопированы. В сете ${copies.total} лотов: от «${numberedTitle(copies.name, 1, copies.total)}» до «${numberedTitle(copies.name, copies.total, copies.total)}». Описание, фото, цена и шаг у всех одни.`,
+      copies.name,
+    ),
+    keyboard: withNav(
+      new InlineKeyboard().text(
+        "Изменить лот",
+        lotFormData(uuidToToken(lot.lotId)),
+      ),
+      toLots(lot.auctionId),
+    ),
+    format: "HTML",
+  };
+}
+
+/**
+ * Подтверждение удаления лота (PER-716). Вернуть лот бот не умеет — его
+ * заводят заново, — поэтому «Да» красное. «Нет» возвращает в форму.
+ */
+export function lotRemoveConfirmScreen(lot: LotFormView): ShownScreen {
+  const token = uuidToToken(lot.lotId);
+  return {
+    id: "lot-remove-confirm",
+    text: screenText(
+      "Удалить лот?",
+      subjectLine(lot.title ?? untitled),
+      escapeHtml(
+        lot.registry?.set === undefined
+          ? "Лот уйдёт из ленты аукциона. Вернуть его нельзя, только завести заново."
+          : `Лот уйдёт из ленты аукциона и из сета «${lot.registry.set.name}». Вернуть его нельзя, только завести заново.`,
+      ),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, удалить лот",
+      yesData: lotRemoveConfirmData(token),
+      noData: lotFormData(token),
+      irreversible: true,
+    }),
+    format: "HTML",
+  };
+}
+
+/** Исход удаления лота (PER-716) с возвратом в ленту аукциона. */
+export function lotRemovedScreen(removed: {
+  auctionId: string;
+  title?: string;
+  already?: true;
+}): ShownScreen {
+  return {
+    id: "outcome",
+    text: outcomeText(
+      removed.already === true
+        ? "Лот уже удалён. В ленте аукциона его нет."
+        : "Лот удалён. Его больше нет ни в ленте аукциона, ни в сете.",
+      removed.title,
+    ),
+    keyboard: withNav(new InlineKeyboard(), toLots(removed.auctionId)),
+    format: "HTML",
+  };
+}

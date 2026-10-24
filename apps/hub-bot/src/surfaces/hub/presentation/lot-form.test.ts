@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { InputFile } from "grammy";
 import type { Update } from "grammy/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -14,8 +15,10 @@ import {
 import { createDispatcher } from "../application/dispatcher.js";
 import { fingerprint } from "../application/fingerprint.js";
 import { lotReadWindowMs } from "../application/lot-form.js";
+import type { ConsoleAuctionStatus, LotSet } from "../application/types.js";
 import type {
   AddLotResult,
+  AuctionConsoles,
   AuctionScreens,
   LotAdministration,
   LotCardResult,
@@ -79,9 +82,11 @@ function fakeAuction(
     schedule?: () => ScheduleLotResult | undefined;
     // Предел изображения Auction в байтах; по умолчанию — 1 МиБ, как у него.
     imageLimit?: number;
-    edit?: () => LotCardResult | undefined;
+    edit?: (card: { lotId: string }) => LotCardResult | undefined;
     // Сколько первых чтений после `AddLot` read model ещё не знает лот.
     readLag?: number;
+    // Пульт аукциона (PER-716): статус и сеты. Нет — форма пульта не видит.
+    console?: { status?: ConsoleAuctionStatus; sets?: LotSet[] };
   } = {},
 ) {
   const lagging = new Map<string, number>();
@@ -92,6 +97,16 @@ function fakeAuction(
     (options.lots ?? []).map((lot) => [lot.lotId, lot]),
   );
   const cards = new Map<string, { title: string; description: string }>();
+  // Реестр аукциона: лоты ленты. Снятый лот Auction ещё читает, но в ленте и
+  // в реестре его нет.
+  const registry = new Set<string>(
+    (options.lots ?? []).map((lot) => lot.lotId),
+  );
+  const status = options.console?.status ?? "draft";
+  const open = status === "draft" || status === "scheduled";
+  const sets = new Map<string, LotSet>(
+    (options.console?.sets ?? []).map((set) => [set.lotSetId, set]),
+  );
   const commands: { method: string; args: unknown }[] = [];
   const notUsed = async (): Promise<never> => {
     throw new Error("not used");
@@ -110,7 +125,7 @@ function fakeAuction(
     },
     async editLotCard(_person, card) {
       commands.push({ method: "editLotCard", args: card });
-      const refused = options.edit?.();
+      const refused = options.edit?.(card);
       if (refused !== undefined && refused.kind !== "ok") return refused;
       const lot = lots.get(card.lotId);
       if (lot === undefined) return { kind: "card-not-found" };
@@ -121,7 +136,8 @@ function fakeAuction(
       if (image !== undefined) {
         images.set(card.lotId, {
           content: image,
-          version: `img-${images.size + 1}`,
+          // Версия фото у Auction — SHA-256 содержимого.
+          version: createHash("sha256").update(image).digest("hex"),
         });
       }
       if (card.removeImage === true) images.delete(card.lotId);
@@ -142,6 +158,8 @@ function fakeAuction(
       commands.push({ method: "addLot", args: added });
       const refused = options.add?.();
       if (refused !== undefined) return refused;
+      if (!open) return { kind: "lots-frozen" };
+      registry.add(added.lotId);
       const card = cards.get(added.lotId);
       lots.set(added.lotId, {
         lotId: added.lotId,
@@ -178,6 +196,26 @@ function fakeAuction(
       const lot = lots.get(lotId);
       return lot === undefined ? { kind: "not-found" } : { kind: "ok", lot };
     },
+    async removeLot(_person, removed) {
+      commands.push({ method: "removeLot", args: removed });
+      if (!open) return { kind: "lots-frozen" };
+      if (!registry.delete(removed.lotId))
+        return { kind: "lot-not-in-auction" };
+      // Снятый лот уходит и из сета (ADR-073, п. 3).
+      for (const [id, set] of sets) {
+        sets.set(id, {
+          ...set,
+          lotIds: set.lotIds.filter((lotId) => lotId !== removed.lotId),
+        });
+      }
+      return { kind: "ok" };
+    },
+    async getLotImage(_person, lotId) {
+      const stored = images.get(lotId);
+      return stored === undefined
+        ? { kind: "not-found" }
+        : { kind: "ok", content: stored.content, version: stored.version };
+    },
     currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
       return {
@@ -189,7 +227,7 @@ function fakeAuction(
             return lot;
           },
           listAuctionLots: async () => ({
-            lots: [...lots.values()],
+            lots: [...lots.values()].filter((lot) => registry.has(lot.lotId)),
             nextPageToken: "",
           }),
           listLotHistory: async () => ({ entries: [], nextPageToken: "" }),
@@ -231,11 +269,47 @@ function fakeAuction(
       };
     },
   };
+  // Пульт для формы (PER-716): реестр и сеты из одного состояния с лотами.
+  const consoles: Pick<AuctionConsoles, "getAuctionConsole" | "saveLotSet"> = {
+    async getAuctionConsole() {
+      return {
+        kind: "ok",
+        console: {
+          auctionId,
+          status,
+          hidden: false,
+          launchedWindows: [],
+          lots: [...registry].flatMap((lotId) => {
+            const lot = lots.get(lotId);
+            return lot === undefined
+              ? []
+              : [{ lot, bidCount: 0, markedForFinal: false, overdue: false }];
+          }),
+          lotSets: [...sets.values()].sort((a, b) =>
+            a.lotSetId < b.lotSetId ? -1 : 1,
+          ),
+        },
+      };
+    },
+    async saveLotSet(_person, set) {
+      commands.push({ method: "saveLotSet", args: set });
+      if (!open) return { kind: "lots-frozen" };
+      sets.set(set.lotSetId, {
+        lotSetId: set.lotSetId,
+        name: set.name,
+        lotIds: [...set.lotIds],
+      });
+      return { kind: "ok" };
+    },
+  };
   return {
     port,
     lots,
     images,
     commands,
+    registry,
+    sets,
+    consoles: options.console === undefined ? undefined : consoles,
     methods: () => commands.map((command) => command.method),
   };
 }
@@ -259,6 +333,13 @@ function harness(
       undefined,
       auction.port,
       auction.port,
+      auction.consoles === undefined
+        ? undefined
+        : {
+            // Форме нужны только чтение пульта и сохранение сета.
+            auctions: auction.consoles as AuctionConsoles,
+            timeZone: "Europe/Moscow",
+          },
     ),
     calls,
     undefined,
@@ -1861,5 +1942,369 @@ describe("new lot chain", () => {
     expect(last(calls).text).toBe(
       ["<b>Цена и шаг сохранены</b>", "<b>Кружка с совой</b>"].join("\n\n"),
     );
+  });
+});
+
+// Копии лота, правка всего сета и удаление лота (PER-716). Форма читает пульт
+// аукциона: реестр открыт до онлайн-недели, а сет копий — обычный сет
+// (ADR-073). Бот между шагами пересоздаётся: всё, что нужно следующему шагу,
+// едет в кнопке.
+describe("lot copies, set edits and removal", () => {
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 7, 7, 7]);
+  const version = createHash("sha256").update(jpeg).digest("hex");
+  const photo = {
+    photo: [
+      { file_id: "large", file_unique_id: "l", width: 1280, height: 1280 },
+    ],
+  };
+  const setLots = [
+    "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b01",
+    "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b02",
+    "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b03",
+  ] as const;
+  const vaseSet: LotSet = {
+    lotSetId: "0198f2a4-7c1e-7d3a-9b21-0000000005e7",
+    name: "Ваза",
+    lotIds: [...setLots],
+  };
+  const vase = (lotId: string, index: number): LotView => ({
+    lotId,
+    auctionId,
+    version: 2,
+    card: { title: `Ваза | ${index + 1} из 3`, description: "Синяя." },
+    proxyEnabled: false,
+    fixedStep: rub(10_000),
+    status: { kind: "scheduled", startingPrice: rub(50_000) },
+  });
+
+  // Бот заново на каждый шаг — над тем же Auction и той же историей чата.
+  function steps(
+    auction: ReturnType<typeof fakeAuction>,
+    telegram = fakeTelegramFiles(),
+  ) {
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls, { telegram });
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+    return { calls, next };
+  }
+
+  const cardOf = (auction: ReturnType<typeof fakeAuction>, lotId: string) =>
+    auction.lots.get(lotId)?.card;
+
+  it("copies a lot without a set into seven lots with one card, price and step, numbered and gathered into a set", async () => {
+    const auction = fakeAuction({
+      lots: [
+        {
+          ...scheduled,
+          card: {
+            title: "Кружка с совой",
+            description: "Ручная роспись.",
+            image: { version },
+          },
+        },
+      ],
+      console: {},
+    });
+    auction.images.set(existingLot, { content: jpeg, version });
+    const { calls, next } = steps(auction);
+
+    await next(() => press(`v1:lot:form:${uuidToToken(existingLot)}`));
+    const form = last(calls);
+    expect(labels(form).slice(-3)).toEqual([
+      ["Копировать"],
+      ["🗑 Удалить лот"],
+      ["‹ Лот"],
+    ]);
+    await next(() => press(dataOf(form, "Копировать")));
+    const asked = question(calls).payload;
+    expect(asked.text).toContain("Целое число от 2 до 20");
+    expect(dataOf(asked, "Отмена")).toBe(
+      `v1:q:lc:${uuidToToken(existingLot)}:42`,
+    );
+    await next((history) => answer(history, "7"));
+
+    const inSet = [...auction.sets.values()];
+    expect(inSet).toHaveLength(1);
+    const [set] = inSet;
+    if (set === undefined) throw new Error("no set");
+    expect(set.name).toBe("Кружка с совой");
+    expect(set.lotIds).toHaveLength(7);
+    expect(set.lotIds[0]).toBe(existingLot);
+    expect(new Set(set.lotIds).size).toBe(7);
+    set.lotIds.forEach((lotId, index) => {
+      expect(auction.registry.has(lotId)).toBe(true);
+      const lot = auction.lots.get(lotId);
+      expect(lot?.card).toEqual({
+        title: `Кружка с совой | ${index + 1} из 7`,
+        description: "Ручная роспись.",
+        image: { version },
+      });
+      expect(lot?.status).toEqual({
+        kind: "scheduled",
+        startingPrice: rub(50_000),
+      });
+      expect(lot?.fixedStep).toEqual(rub(10_000));
+    });
+    const outcome = last(calls);
+    expect(plain(outcome)).toContain("Лоты скопированы");
+    expect(plain(outcome)).toContain(
+      "от «Кружка с совой | 1 из 7» до «Кружка с совой | 7 из 7»",
+    );
+    expect(labels(outcome)).toEqual([["Изменить лот"], ["‹ Лоты"]]);
+
+    // Тот же ответ ещё раз — повтор: ни лотов, ни сета второй раз.
+    const before = auction.commands.length;
+    await next((history) => answer(history, "7"));
+    expect(
+      auction.commands
+        .slice(before)
+        .filter((command) =>
+          ["createLotCard", "addLot", "saveLotSet"].includes(command.method),
+        ),
+    ).toEqual([]);
+    expect(auction.registry.size).toBe(7);
+  });
+
+  it("asks the count again when it is not a whole number from 2 to 20", async () => {
+    const auction = fakeAuction({ lots: [scheduled], console: {} });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:cp:${uuidToToken(existingLot)}`));
+    for (const wrong of ["1", "21", "семь"]) {
+      await bot.handleUpdate(answer(calls, wrong));
+      await reasked(bot, calls, "Нужно целое число от 2 до 20.");
+    }
+    expect(auction.methods()).toEqual([]);
+  });
+
+  it("refuses to copy a lot that is already in a set, naming the set", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:form:${uuidToToken(setLots[0])}`));
+    expect(labels(last(calls)).flat()).not.toContain("Копировать");
+    expect(last(calls).text).toContain("Сет: Ваза, лотов: 3");
+    await bot.handleUpdate(press(`v1:lot:cp:${uuidToToken(setLots[0])}`));
+    expect(plain(last(calls))).toContain(
+      "Лот уже в сете «Ваза». Копии заводятся только у лота вне сета.",
+    );
+    expect(auction.methods()).toEqual([]);
+  });
+
+  it("asks whether to change one lot or the whole set and renames every lot of the set by its place", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    const { calls, next } = steps(auction);
+
+    await next(() => press(`v1:lot:form:${uuidToToken(setLots[1])}`));
+    await next(() => press(dataOf(last(calls), "🔖 Название")));
+    const scope = last(calls);
+    expect(plain(scope).split("\n")[0]).toBe("Какие лоты изменить?");
+    expect(labels(scope)).toEqual([
+      ["Только этот лот", "Все лоты сета (3)"],
+      ["‹ Изменить лот"],
+    ]);
+    await next(() => press(dataOf(scope, "Все лоты сета (3)")));
+    const asked = question(calls).payload;
+    expect(asked.text).toContain(
+      "Новое название получат все лоты сета (3), номер «| N из M» бот допишет сам.",
+    );
+    expect(dataOf(asked, "Отмена")).toBe(
+      `v1:q:st:${uuidToToken(setLots[1])}:42`,
+    );
+    await next((history) => answer(history, "Кувшин"));
+
+    expect(setLots.map((lotId) => cardOf(auction, lotId)?.title)).toEqual([
+      "Кувшин | 1 из 3",
+      "Кувшин | 2 из 3",
+      "Кувшин | 3 из 3",
+    ]);
+    const outcome = last(calls);
+    expect(plain(outcome).split("\n")[0]).toBe("Применено к 3 из 3");
+    expect(labels(outcome)).toEqual([["Изменить лот"], ["‹ Лот"]]);
+  });
+
+  it("changes the description, the photo, the price and the step of every lot of the set, and of one lot on «Только этот лот»", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    const { calls, next } = steps(auction, fakeTelegramFiles({ large: jpeg }));
+    const token = uuidToToken(setLots[0]);
+
+    await next(() => press(`v1:lot:ask:${token}:description:s`));
+    await next((history) => answer(history, "Синяя, без сколов."));
+    expect(setLots.map((lotId) => cardOf(auction, lotId)?.description)).toEqual(
+      ["Синяя, без сколов.", "Синяя, без сколов.", "Синяя, без сколов."],
+    );
+
+    await next(() => press(`v1:lot:ask:${token}:image:s`));
+    expect(dataOf(question(calls).payload, "Отмена")).toBe(
+      `v1:q:si:${token}:42`,
+    );
+    await next((history) => reply(history, photo));
+    expect(setLots.map((lotId) => cardOf(auction, lotId)?.image)).toEqual([
+      { version },
+      { version },
+      { version },
+    ]);
+    expect(plain(last(calls)).split("\n")[0]).toBe("Применено к 3 из 3");
+
+    await next(() => press(`v1:lot:ask:${token}:price:s`));
+    await next((history) => answer(history, "700"));
+    const mode = last(calls);
+    expect(dataOf(mode, "Один шаг")).toBe(`v1:lot:sm:${token}:700:single:s`);
+    await next(() => press(dataOf(mode, "Один шаг")));
+    await next((history) => answer(history, "50"));
+    for (const lotId of setLots) {
+      expect(auction.lots.get(lotId)?.status).toEqual({
+        kind: "scheduled",
+        startingPrice: rub(70_000),
+      });
+      expect(auction.lots.get(lotId)?.fixedStep).toEqual(rub(5_000));
+    }
+    expect(plain(last(calls)).split("\n")[0]).toBe("Применено к 3 из 3");
+
+    // «Только этот лот» — правка одного лота, как вне сета.
+    await next(() => press(`v1:lot:sc:${token}:description`));
+    await next(() => press(dataOf(last(calls), "Только этот лот")));
+    const before = auction.commands.length;
+    await next((history) => answer(history, "Только первая."));
+    expect(auction.commands.slice(before)).toEqual([
+      {
+        method: "editLotCard",
+        args: {
+          lotId: setLots[0],
+          title: "Ваза | 1 из 3",
+          description: "Только первая.",
+        },
+      },
+    ]);
+    expect(plain(last(calls)).split("\n")[0]).toBe("Изменение сохранено");
+  });
+
+  it("names the lots Auction refused and applies the edit to them on «Повторить для оставшихся»", async () => {
+    let closed = true;
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+      edit: (card) =>
+        closed && card.lotId === setLots[2]
+          ? { kind: "card-closed" }
+          : undefined,
+    });
+    const { calls, next } = steps(auction);
+
+    await next(() =>
+      press(`v1:lot:ask:${uuidToToken(setLots[0])}:description:s`),
+    );
+    await next((history) => answer(history, "Синяя ваза."));
+
+    const outcome = last(calls);
+    expect(plain(outcome)).toBe(
+      [
+        "Применено к 2 из 3",
+        "Ваза | 1 из 3",
+        "Не применено: «Ваза | 3 из 3» — лот закрыт.",
+      ].join("\n\n"),
+    );
+    expect(labels(outcome)).toEqual([
+      ["Повторить для оставшихся"],
+      ["Изменить лот"],
+      ["‹ Лот"],
+    ]);
+
+    closed = false;
+    const before = auction.commands.length;
+    await next(() => press(dataOf(outcome, "Повторить для оставшихся")));
+    // Повтор правит только лот, где значения ещё нет.
+    expect(auction.commands.slice(before)).toEqual([
+      {
+        method: "editLotCard",
+        args: {
+          lotId: setLots[2],
+          title: "Ваза | 3 из 3",
+          description: "Синяя ваза.",
+        },
+      },
+    ]);
+    expect(plain(last(calls)).split("\n")[0]).toBe("Применено к 3 из 3");
+  });
+
+  it("removes a lot after the confirmation over a restart, out of the feed and the set, and renumbers the rest on a set rename", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    const { calls, next } = steps(auction);
+
+    await next(() => press(`v1:lot:form:${uuidToToken(setLots[1])}`));
+    await next(() => press(dataOf(last(calls), "🗑 Удалить лот")));
+    const confirm = last(calls);
+    expect(plain(confirm).split("\n")[0]).toBe("Удалить лот?");
+    expect(labels(confirm)).toEqual([["✔️ Да, удалить лот", "✖️ Нет"]]);
+    await next(() => press(dataOf(confirm, "✔️ Да, удалить лот")));
+
+    expect(auction.commands.at(-1)).toMatchObject({
+      method: "removeLot",
+      args: { auctionId, lotId: setLots[1] },
+    });
+    const outcome = last(calls);
+    expect(plain(outcome).split("\n")[0]).toBe("Лот удалён");
+    expect(labels(outcome)).toEqual([["‹ Лоты"]]);
+    expect(auction.registry.has(setLots[1])).toBe(false);
+    expect(auction.sets.get(vaseSet.lotSetId)?.lotIds).toEqual([
+      setLots[0],
+      setLots[2],
+    ]);
+    const feed = await auction.port
+      .screenPorts({})
+      .auction.listAuctionLots({ auctionId } as never);
+    expect(feed.lots.map((lot) => lot.lotId)).toEqual([setLots[0], setLots[2]]);
+
+    await next(() => press(`v1:lot:ask:${uuidToToken(setLots[2])}:title:s`));
+    await next((history) => answer(history, "Ваза"));
+    expect(cardOf(auction, setLots[0])?.title).toBe("Ваза | 1 из 2");
+    expect(cardOf(auction, setLots[2])?.title).toBe("Ваза | 2 из 2");
+  });
+
+  it("shows neither copies nor removal once the online week is open and answers forged presses with the refusal of the form", async () => {
+    const auction = fakeAuction({
+      lots: [scheduled],
+      console: { status: "prebidding" },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    const token = uuidToToken(existingLot);
+
+    await bot.handleUpdate(press(`v1:lot:form:${token}`));
+    const form = labels(last(calls)).flat();
+    expect(form).not.toContain("Копировать");
+    expect(form).not.toContain("🗑 Удалить лот");
+
+    await bot.handleUpdate(press(`v1:lot:dy:${token}`));
+    expect(auction.methods()).toEqual(["removeLot"]);
+    expect(plain(last(calls))).toContain(
+      "Торги уже начались. Удалить лот из аукциона нельзя.",
+    );
+    await bot.handleUpdate(press(`v1:lot:cp:${token}`));
+    expect(plain(last(calls))).toContain(
+      "Торги уже начались. Добавить лот в этот аукцион нельзя.",
+    );
+    await bot.handleUpdate(press(`v1:lot:dl:${token}`));
+    expect(plain(last(calls))).toContain(
+      "Торги уже начались. Удалить лот из аукциона нельзя.",
+    );
+    expect(auction.methods()).toEqual(["removeLot"]);
   });
 });

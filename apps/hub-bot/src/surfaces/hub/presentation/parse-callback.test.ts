@@ -3,6 +3,7 @@ import { maxLotRubles } from "../application/lot-form.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
   auctionFaqData,
+  type CallbackAction,
   cardCursorData,
   consoleAskData,
   consoleCloseConfirmData,
@@ -42,12 +43,17 @@ import {
   consoleWindowRemoveData,
   consoleWindowsData,
   lotAskData,
+  lotCopyData,
   lotFormData,
   lotImageRemoveConfirmData,
   lotImageRemoveData,
   lotKeepStepData,
   lotNewData,
   lotPreviewData,
+  lotRemoveConfirmData,
+  lotRemoveData,
+  lotScopeData,
+  lotSetRetryData,
   lotSkipData,
   lotStepModeData,
   parseCallback,
@@ -1236,6 +1242,97 @@ describe("lot form callbacks", () => {
       lot,
       price: maxLotRubles,
     });
+  });
+
+  it("reads the copy, set and removal buttons of the lot form back within 64 bytes", () => {
+    const cases: readonly (readonly [string, CallbackAction])[] = [
+      [lotCopyData(lot), { kind: "lot-copy", lot }],
+      [lotRemoveData(lot), { kind: "lot-remove", lot }],
+      [lotRemoveConfirmData(lot), { kind: "lot-remove-confirm", lot }],
+      [
+        lotScopeData(lot, "description"),
+        { kind: "lot-scope", lot, field: "description" },
+      ],
+      [
+        lotSetRetryData(lot, "description"),
+        { kind: "lot-set-retry", lot, field: "description" },
+      ],
+      [
+        lotAskData(lot, "description", "set"),
+        { kind: "lot-ask", lot, field: "description", set: true },
+      ],
+      [
+        lotAskData(lot, "title", "set"),
+        { kind: "lot-ask", lot, field: "title", set: true },
+      ],
+      [
+        lotStepModeData(lot, maxLotRubles, "tiered", "set"),
+        {
+          kind: "lot-step-mode",
+          lot,
+          price: maxLotRubles,
+          mode: "tiered",
+          set: true,
+        },
+      ],
+      [
+        lotKeepStepData(lot, maxLotRubles, true),
+        { kind: "lot-keep-step", lot, price: maxLotRubles, set: true },
+      ],
+    ];
+    for (const [data, expected] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(expected);
+    }
+    for (const broken of [
+      `v1:lot:cp:${lot}:extra`,
+      `v1:lot:sc:${lot}:step`,
+      `v1:lot:sr:${lot}`,
+      `v1:lot:sk:${lot}:700:c`,
+      `v1:lot:ask:${lot}:title:s:s`,
+    ]) {
+      expect(parseCallback(broken)).toEqual({ kind: "malformed" });
+    }
+  });
+
+  it("carries the step of the copy and whole-set questions in the cancel button within 64 bytes", () => {
+    const steps: readonly (readonly [string, QuestionStep])[] = [
+      [`v1:q:lc:${lot}`, { kind: "lot-copies", lot }],
+      [`v1:q:st:${lot}`, { kind: "lot-text", lot, field: "title", set: true }],
+      [
+        `v1:q:sd:${lot}`,
+        { kind: "lot-text", lot, field: "description", set: true },
+      ],
+      [`v1:q:sp:${lot}`, { kind: "lot-price", lot, set: true }],
+      [`v1:q:si:${lot}`, { kind: "lot-image", lot, set: true }],
+      [
+        `v1:q:ss:${lot}:${maxLotRubles}`,
+        {
+          kind: "lot-step",
+          lot,
+          price: maxLotRubles,
+          mode: "single",
+          set: true,
+        },
+      ],
+      [
+        `v1:q:sy:${lot}:${maxLotRubles}`,
+        {
+          kind: "lot-step",
+          lot,
+          price: maxLotRubles,
+          mode: "tiered",
+          set: true,
+        },
+      ],
+    ];
+    const askedBy = 9007199254740991;
+    for (const [data, step] of steps) {
+      const asked = `${data}:${askedBy}`;
+      expect(questionData(step, askedBy)).toBe(asked);
+      expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+      expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+    }
   });
 
   it("rejects a lot callback with a broken token, field, price or shape", () => {

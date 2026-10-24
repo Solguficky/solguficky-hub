@@ -46,7 +46,10 @@ export function createDispatcher(
   },
   releaseNotes?: ReleaseNotes,
 ): Dispatcher {
-  const lotForm = lots === undefined ? undefined : createLotForm(lots);
+  // Форма лота читает пульт аукциона (PER-716): реестр и сеты нужны копиям,
+  // удалению и правке всего сета; без пульта она — форма одного лота.
+  const lotForm =
+    lots === undefined ? undefined : createLotForm(lots, consoles?.auctions);
   const auctionConsole =
     consoles === undefined
       ? undefined
@@ -269,6 +272,9 @@ export function createDispatcher(
         case "keep-lot-step":
         case "set-lot-image":
         case "remove-lot-image":
+        case "retry-lot-set":
+        case "copy-lot":
+        case "remove-lot":
           return lotForm === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);

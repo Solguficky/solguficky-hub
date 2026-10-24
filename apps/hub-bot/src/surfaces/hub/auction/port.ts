@@ -121,6 +121,25 @@ export type LotReadResult =
   | { kind: "not-found" }
   | AuctionFailure;
 
+// Снятие лота из реестра до онлайн-торгов (PER-716). `lot-not-in-auction` —
+// лота в реестре уже нет: снятие прошло раньше.
+export type RemoveLotResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "lots-frozen" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Байты фото лота для копий (PER-716): копия получает то же фото, а Auction
+// держит его версией содержимого.
+export type LotImageResult =
+  | { kind: "ok"; content: Uint8Array; version: string }
+  | { kind: "not-found" }
+  | AuctionFailure;
+
 export type LotCardText = { lotId: string; title: string; description: string };
 
 // Шаг ставки условий лота (PER-491): один на все цены либо по ценовым порогам.
@@ -172,6 +191,16 @@ export type LotAdministration = {
     lotId: string,
     meta?: RpcMetadata,
   ): Promise<LotReadResult>;
+  removeLot(
+    person: Person,
+    lot: { auctionId: string; lotId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<RemoveLotResult>;
+  getLotImage(
+    person: Person,
+    lotId: string,
+    meta?: RpcMetadata,
+  ): Promise<LotImageResult>;
 };
 
 // Пульт аукциона администратора (PER-320): чтение пульта, сроки недели и
