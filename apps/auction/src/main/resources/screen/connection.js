@@ -1,5 +1,6 @@
-// Логика подключения экрана зала без DOM, таймеров и сети: разбор SSE, переходы состояния и пауза повтора.
-// Таблица «Потеря актуальности» ADR-040 живёт здесь, а `screen.js` только исполняет её по событиям сети.
+// Логика подключения экрана зала без DOM, таймеров и сети: разбор SSE, переходы состояния и пауза повтора, — и
+// подпись времени финала. Таблица «Потеря актуальности» ADR-040 живёт здесь, а `screen.js` только исполняет её по
+// событиям сети и рисует.
 
 /** Схема `data`, которую страница умеет рисовать (поле `schema`, integration.md, «Экран зала»). */
 export const SCHEMA = 1;
@@ -102,4 +103,26 @@ export const MAX_RETRY_MS = 30000;
 export function retryDelay(attempt, random) {
   const base = Math.min(1000 * 2 ** Math.min(attempt, 15), MAX_RETRY_MS);
   return base + Math.floor((random * base) / 2);
+}
+
+/**
+ * Пояс сообщества. Страница его ни от кого не получает: поток отдаёт момент без пояса, а Auction пояса не знает. Это
+ * тот же пояс, что AppHost раздаёт ботам и Meetups (`CommunityTime.Zone`).
+ */
+export const COMMUNITY_TIME_ZONE = "Europe/Moscow";
+
+/**
+ * Подпись ориентировочного времени финала (`final_at`, ADR-040, дополнение 2026-10-19) по времени сообщества:
+ * «Финал в 19:00» в тот же день, что `now`, иначе «Финал 24 октября в 19:00». Без времени или с моментом, который не
+ * разбирается, — «Финал скоро». `now` — мгновение в миллисекундах.
+ */
+export function finaleText(finalAt, now, timeZone = COMMUNITY_TIME_ZONE) {
+  if (typeof finalAt !== "string") return "Финал скоро";
+  const at = new Date(finalAt);
+  if (Number.isNaN(at.getTime())) return "Финал скоро";
+  const time = new Intl.DateTimeFormat("ru-RU", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  const day = new Intl.DateTimeFormat("ru-RU", { timeZone, year: "numeric", month: "numeric", day: "numeric" });
+  if (day.format(at) === day.format(new Date(now))) return `Финал в ${time.format(at)}`;
+  const date = new Intl.DateTimeFormat("ru-RU", { timeZone, day: "numeric", month: "long" });
+  return `Финал ${date.format(at)} в ${time.format(at)}`;
 }

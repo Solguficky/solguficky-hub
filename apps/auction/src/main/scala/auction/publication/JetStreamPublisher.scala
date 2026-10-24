@@ -1,5 +1,6 @@
 package auction.publication
 
+import auction.telemetry.NatsClientLog
 import io.nats.client.Connection
 import io.nats.client.JetStream
 import io.nats.client.JetStreamOptions
@@ -52,13 +53,7 @@ final class JetStreamPublisher(url: String, ackTimeout: FiniteDuration) extends 
       case Some(open) => open.jetStream(jetStreamOptions)
       case None if closed => throw new IllegalStateException("fact publisher is closed")
       case None =>
-        val opened = Nats.connect(
-          new Options.Builder()
-            .server(url)
-            .connectionTimeout(Duration.ofSeconds(2))
-            .maxReconnects(-1)
-            .build()
-        )
+        val opened = Nats.connect(JetStreamPublisher.options(url))
         connection = Some(opened)
         opened.jetStream(jetStreamOptions)
     }
@@ -66,4 +61,13 @@ final class JetStreamPublisher(url: String, ackTimeout: FiniteDuration) extends 
 
 object JetStreamPublisher {
   val Stream: String = "AUCTION_EVENTS"
+
+  /** Настройки соединения релея; события клиента идут в лог сервиса через `NatsClientLog`. */
+  private[publication] def options(url: String): Options =
+    new Options.Builder()
+      .server(url)
+      .connectionTimeout(Duration.ofSeconds(2))
+      .maxReconnects(-1)
+      .errorListener(NatsClientLog(OutboxRelay.Operation))
+      .build()
 }

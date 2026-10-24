@@ -90,4 +90,36 @@ describe("auctionSummaryOf", () => {
   ])("refuses %s", (_name, fields) => {
     expect(() => auctionSummaryOf(snapshot(fields))).toThrow();
   });
+
+  // Момент Auction обещает в RFC 3339 (PER-688): мягкий `Date.parse` взял бы
+  // и дату без времени, и дату словами, и выдуманный срок попал бы в текст.
+  const withPhase = (opensAt: string, closesAt: string) =>
+    snapshot({
+      config: {
+        finalBlocks: 1,
+        onlinePhase: { opensAt, closesAt, closesLots: true },
+      },
+    });
+
+  it.each(["2026-10-21", "Oct 21, 2026"])(
+    "refuses the instant %s",
+    (instant) => {
+      expect(() =>
+        auctionSummaryOf(withPhase(instant, "2026-10-17T21:00:00Z")),
+      ).toThrow("auction online phase start is not an instant");
+      expect(() =>
+        auctionSummaryOf(withPhase("2026-10-10T16:00:00Z", instant)),
+      ).toThrow("auction online phase end is not an instant");
+    },
+  );
+
+  it.each(["2026-10-21T21:00:00Z", "2026-10-21T21:00:00.123456Z"])(
+    "accepts the instant %s",
+    (instant) => {
+      expect(auctionSummaryOf(withPhase(instant, instant))).toMatchObject({
+        opensAt: instant,
+        closesAt: instant,
+      });
+    },
+  );
 });

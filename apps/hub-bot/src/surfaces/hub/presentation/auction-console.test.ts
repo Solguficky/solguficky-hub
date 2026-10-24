@@ -104,6 +104,9 @@ const forgedAuctionPresses = {
   "lot-ask": `v1:lot:ask:${uuidToToken(vaseId)}:title`,
   "lot-step-mode": `v1:lot:sm:${uuidToToken(vaseId)}:100:single`,
   "lot-skip": `v1:lot:skip:${uuidToToken(vaseId)}`,
+  "lot-keep-step": `v1:lot:sk:${uuidToToken(vaseId)}:100`,
+  "lot-image-remove": `v1:lot:rm:${uuidToToken(vaseId)}`,
+  "lot-image-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
   "console-view": consoleData,
   "console-week": `v1:ac:w:${auctionToken}`,
   "console-raffle": `v1:ac:r:${auctionToken}`,
@@ -293,6 +296,10 @@ function fakeAuction(
     frozenBy?: string;
     // Закрытия по ключу: повтор ключа получает исходный ответ, как в сервисе.
     closures: Map<string, LotClosure>;
+    // Принятые ask по ключу (PER-699): повтор ключа цену второй раз не
+    // поднимает; счётчик — сколько раз цену подняли на деле.
+    asks: Set<string>;
+    raisedAsks: number;
     // Снятые с лотов участники (PER-659).
     removed: Set<string>;
     // Сеты лотов (PER-509) в порядке идентификатора, как их отдаёт Auction.
@@ -316,6 +323,8 @@ function fakeAuction(
       ? {}
       : { lineup: { order: options.lineup } }),
     closures: new Map(),
+    asks: new Set(),
+    raisedAsks: 0,
     removed: new Set(),
     lotSets: [...(options.lotSets ?? [])],
     invoices: [...(options.invoices ?? [])],
@@ -709,6 +718,9 @@ function fakeAuction(
     },
     async advanceAsk(_person, ask) {
       commands.push({ method: "advanceAsk", args: ask });
+      // Окно `op_id` Auction (ADR-047): повтор той же команды получает исходный
+      // ответ и цену второй раз не поднимает.
+      if (state.asks.has(ask.opId)) return { kind: "ok" };
       const lot = lotOf(ask.lotId)?.lot;
       if (lot?.status.kind !== "trading") return { kind: "lot-not-open" };
       if (ask.newAsk.minorUnits <= lot.status.currentPrice.minorUnits) {
@@ -717,6 +729,8 @@ function fakeAuction(
           mustExceed: lot.status.currentPrice,
         };
       }
+      state.asks.add(ask.opId);
+      state.raisedAsks += 1;
       replaceLot(ask.lotId, { ...lot, nextPrice: ask.newAsk });
       return { kind: "ok" };
     },
@@ -2516,6 +2530,9 @@ describe("the raffle line of the console", () => {
       raffle({ status: "no-tickets" }),
       "Розыгрыш: не состоялся, никто не зарегистрировался.",
     ],
+    // Аукцион отменили между чтением пульта и чтением розыгрыша (PER-698):
+    // строка называет отмену, а не роняет пульт.
+    [raffle({ status: "cancelled" }), "Розыгрыш: отменён вместе с аукционом."],
   ] as const)("shows the raffle %# by its status", async (read, line) => {
     const auction = fakeAuction({
       status: "prebidding",
@@ -2596,6 +2613,29 @@ describe("opening the online week", () => {
     expect(last(calls).text).toBe(
       "<b>Онлайн-неделя открыта</b>\n\nСтавки принимаются с этой минуты.",
     );
+  });
+
+  it("warns about the publication only when the week opens a hidden auction", async () => {
+    const publication =
+      "Аукцион сейчас скрыт: с открытием недели участники увидят его и лоты.";
+    const confirmOf = async (hidden: boolean) => {
+      const auction = fakeAuction({
+        status: "scheduled",
+        week: { ...week, final: true },
+        lots: [priced],
+        hidden,
+      });
+      const { bot, calls } = harness("admin", auction);
+      await bot.init();
+      await bot.handleUpdate(press(consoleData));
+      await bot.handleUpdate(
+        press(dataOf(last(calls), "Открыть онлайн-неделю")),
+      );
+      return plain(last(calls));
+    };
+
+    expect(await confirmOf(true)).toContain(publication);
+    expect(await confirmOf(false)).not.toContain(publication);
   });
 
   it("shows a refusal of an already opened auction as an open week outcome, not as an error", async () => {
@@ -3160,6 +3200,88 @@ describe("final of the auctioneer", () => {
     expect(second?.args).toEqual(first?.args);
     expect(auction.state.closures.size).toBe(1);
     expect(spaced(last(calls).text ?? "")).toBe(sold);
+  });
+
+  // Повторная доставка того же сообщения Telegram (PER-699): ключ команды —
+  // из самого сообщения, и Auction отвечает исходным исходом, не поднимая
+  // цену второй раз. Новое сообщение с той же ценой — новая команда.
+  describe("repeated answer of the host", () => {
+    async function openAsk() {
+      const auction = frozen();
+      const calls: RecordedCall[] = [];
+      const next = async (update: (history: RecordedCall[]) => Update) => {
+        const { bot } = harness("admin", auction, calls);
+        await bot.init();
+        await bot.handleUpdate(update(calls));
+      };
+      await next(() => press(consoleData));
+      await next((history) => press(dataOf(last(history), "Начать финал")));
+      await next((history) =>
+        press(dataOf(last(history), "Открыть первый лот")),
+      );
+      await next((history) => press(dataOf(last(history), "Поднять цену")));
+      return { auction, calls, next };
+    }
+    // Ключи отправленных `AdvanceAsk`: журнал команд фейка хранит аргументы
+    // без типа, а у этой команды ключ всегда есть.
+    const askKeys = (auction: ReturnType<typeof fakeAuction>) =>
+      auction
+        .sent("advanceAsk")
+        .map((each) => (each.args as { opId: string }).opId);
+
+    it("raises the ask once when the same message of the host is delivered twice at once", async () => {
+      const { auction, calls } = await openAsk();
+      const reply = answer(calls, { text: "1 500" });
+      // Два процесса получили то же сообщение одновременно (повтор доставки
+      // во время выкладки): оба прочитали пульт до команды и оба прошли порог.
+      const one = harness("admin", auction, calls);
+      const other = harness("admin", auction, calls);
+      await Promise.all([one.bot.init(), other.bot.init()]);
+
+      await Promise.all([
+        one.bot.handleUpdate(reply),
+        other.bot.handleUpdate(reply),
+      ]);
+
+      const keys = askKeys(auction);
+      expect(keys).toHaveLength(2);
+      expect(new Set(keys).size).toBe(1);
+      expect(auction.state.raisedAsks).toBe(1);
+    });
+
+    it("refuses a later repeat of the same message before Auction", async () => {
+      const { auction, calls, next } = await openAsk();
+      const reply = answer(calls, { text: "1 500" });
+
+      await next(() => reply);
+      await next(() => reply);
+
+      // Последовательный повтор отсекает порог бота: следующая цена уже 1 500.
+      expect(auction.sent("advanceAsk")).toHaveLength(1);
+      expect(auction.state.raisedAsks).toBe(1);
+    });
+
+    it("sends a new command for a new message of the host with the same price", async () => {
+      const { auction, calls, next } = await openAsk();
+      // Два сообщения ответом на один вопрос: второе — новое, со своим id.
+      const first = answer(calls, { text: "1 500" });
+      const second = answer(calls, { text: "1 500" });
+      // `Update` отдаёт сообщение только для чтения: id правится приведением.
+      (second.message as { message_id: number }).message_id = 11;
+      await next(() => first);
+      // Следующая цена снова 1 300 ₽: иначе 1 500 не прошло бы порог бота, и
+      // второе сообщение не дошло бы до Auction.
+      auction.state.lots = auction.state.lots.map((each) =>
+        each.lot.lotId === vaseId
+          ? { ...each, lot: { ...each.lot, nextPrice: rub(130_000) } }
+          : each,
+      );
+      await next(() => second);
+
+      const keys = askKeys(auction);
+      expect(keys).toHaveLength(2);
+      expect(keys[0]).not.toBe(keys[1]);
+    });
   });
 
   // Лот, выбывший до своей очереди, открытием не считается: первый лот
@@ -3916,6 +4038,30 @@ describe("lot sets", () => {
     };
     return { calls, next };
   }
+
+  // Повтор того же ответа (PER-699): идентификатор сета и ключ команды — из
+  // сообщения, поэтому повтор открывает уже заведённый сет, а не заводит
+  // второй и не шлёт пустой состав поверх лотов, которые в сет уже добавили.
+  it("keeps one set when the same name answer is delivered twice", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced, unpriced, lamp],
+    });
+    const { calls, next } = steps(auction);
+    await next(() => press(rootData));
+    await next((history) => press(dataOf(last(history), "🛠 Сеты")));
+    await next((history) => press(dataOf(last(history), "Новый сет")));
+    const reply = answer(calls, { text: "Кружки" });
+
+    await next(() => reply);
+    await next(() => reply);
+
+    expect(auction.sent("saveLotSet")).toHaveLength(1);
+    expect(auction.state.lotSets.map((set) => set.name)).toEqual(["Кружки"]);
+    // Повтор открыл тот же сет, как и первый ответ.
+    expect(plain(last(calls))).toContain("Кружки");
+  });
 
   it("names a new set, fills it with three lots and survives a restart at every step", async () => {
     const auction = fakeAuction({

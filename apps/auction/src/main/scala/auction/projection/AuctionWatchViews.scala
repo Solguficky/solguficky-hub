@@ -23,7 +23,10 @@ final case class AuctionWatchView(auction: AuctionSnapshotView, lineup: List[Lot
 
 object AuctionWatchView {
 
-  /** Состав, который несёт аукцион: пуст до заморозки, с заморозки — порядок выхода. */
+  /**
+   * Состав, который несёт снимок аукциона: пуст до заморозки, с заморозки — порядок выхода. Снимок `Finished` состава
+   * не несёт, и поток берёт его из `auction_lineup` (PER-712).
+   */
   def lineupOf(auction: Auction): List[LotId] =
     auction.state match {
       case AuctionState.LineupFrozen(_, _, order) => order

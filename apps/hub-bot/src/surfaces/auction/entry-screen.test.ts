@@ -520,6 +520,35 @@ describe("renderEntryScreen", () => {
     );
   });
 
+  // В живом финале кнопки «Автоставка» нет (PER-713): исчерпанный лимит не
+  // советует его поднять, а лимит лидера ниже текущей цены — его ставка рукой
+  // выше лимита — не показан действующим.
+  it("names an exhausted own limit in the live final without advising to raise it", () => {
+    const course = (standing?: "leader") =>
+      plain(
+        lotScreen(
+          {
+            card: { title: "Кружка", description: "" },
+            nextPrice: rub(1550),
+            status: {
+              kind: "trading",
+              currentPrice: rub(1500),
+              leaderId: standing === "leader" ? "viewer" : "p-2",
+              phase: "live",
+            },
+            viewerProxyLimit: rub(1450),
+            ...(standing === undefined ? {} : { standing }),
+          },
+          plainCard,
+        ).text,
+      );
+    for (const text of [course(), course("leader")]) {
+      expect(text).toContain("Автоставка до 1 450 ₽ исчерпана");
+      expect(text).not.toContain("подними лимит");
+      expect(text).not.toContain("Твоя автоставка");
+    }
+  });
+
   // Отказ команды — свой экран исхода (PER-472): исход в заголовке, лот
   // жирным абзацем (PER-594), цена из отказа абзацем, выход — «К лоту».
   it("shows a refused command as its own outcome screen", () => {

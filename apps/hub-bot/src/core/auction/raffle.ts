@@ -24,6 +24,7 @@ const STATUSES: Readonly<Record<number, RaffleStatusView>> = {
   [RaffleStatus.DRAWN]: "drawn",
   [RaffleStatus.NO_TICKETS]: "no-tickets",
   [RaffleStatus.NOT_HELD]: "not-held",
+  [RaffleStatus.CANCELLED]: "cancelled",
 };
 
 export function raffleOf(raffle: Raffle): RaffleView {

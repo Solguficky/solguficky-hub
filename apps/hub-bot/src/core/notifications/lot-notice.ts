@@ -471,7 +471,7 @@ export function renderLotNotice(
     return { text, rows, format: "HTML" };
   }
   const info = lots.get(notice.lotId);
-  const lot = bold(info?.title, TITLE_LIMIT);
+  const lot = named(info?.title, TITLE_LIMIT);
   const lotButton: LotNoticeButton = {
     kind: "lot",
     lotId: notice.lotId,
@@ -503,31 +503,35 @@ function singleText(
   timeZone: string,
   recipientId?: string,
 ): string {
+  // Лот назван словом «лот» и названием в кавычках: склоняется слово, а
+  // название остаётся как есть (PER-708). Без названия остаётся слово.
+  const lotWord = lot === undefined ? "лот" : `лот ${lot}`;
   switch (notice.kind) {
     case "lot-outbid":
-      // Название — после «перебили», а не внутри фразы: так ему не нужен
-      // падеж (№71 прогона 14 октября 2026 года). Лот успел уйти другому —
+      // Название — после «перебили», а не внутри фразы (№71 прогона
+      // 14 октября 2026 года). Лот успел уйти другому —
       // весть называет цену продажи: торга уже нет (№102).
       // Лот мог уйти и самому получателю — он вернул ведение, а весть
       // доставлена поздно: тогда «продан» читался бы как проигрыш, и весть
       // говорит, что лот за ним (как строка сводки).
       if (info?.sold !== undefined) {
         return info.sold.winnerId === recipientId
-          ? `Твою ставку перебивали, но лот твой${lot === undefined ? "" : `: ${lot}`} за ${money(info.sold.price)}.`
-          : `Твою ставку перебили${lot === undefined ? "" : `: ${lot}`}, лот продан за ${money(info.sold.price)}.`;
+          ? `Твою ставку перебивали, но ${lotWord} твой за ${money(info.sold.price)}.`
+          : `Твою ставку перебили: ${lotWord} продан за ${money(info.sold.price)}.`;
       }
-      return `Твою ставку перебили${lot === undefined ? "" : `: ${lot}`}, цена ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
+      return `Твою ставку перебили${lot === undefined ? "" : `: ${lotWord}`}, цена ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
     case "lot-proxy-raised":
-      return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${money(notice.currentPrice)}: лидируешь ты.${deadlineText(info, timeZone)}`;
+      return `Твоя автоставка на ${lotWord} подняла цену до ${money(notice.currentPrice)}: лидируешь ты.${deadlineText(info, timeZone)}`;
     case "lot-lead-restored":
       // Ведение вернулось без ставки получателя: снятие участника — не его
-      // действие, и объяснять ему чужое решение бот не берётся.
-      return `Ты снова ведёшь ${lot ?? "лот"}. Текущая цена — ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
+      // действие, и объяснять ему чужое решение бот не берётся. «Снова» было
+      // бы неправдой тому, кто лот раньше не вёл (PER-708).
+      return `Теперь ${lotWord} ведёшь ты. Текущая цена — ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
     case "lot-purchased":
       // Деньги идут мимо продукта, но счёт и текст организатора «как оплатить
       // и получить» живут в «Моих счетах» корня аукциона (PER-322; пересматривает
       // решение владельца 13 октября 2026 года).
-      return `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(notice.price)}. Счёт и как оплатить — в «Моих счетах» аукциона.`;
+      return `Лот${lot === undefined ? "" : ` ${lot}`} твой за ${money(notice.price)}. Счёт и как оплатить — в «Моих счетах» аукциона.`;
     case "lot-reminder":
       // Напоминание приходит не позже часа до дедлайна — в том числе когда лот
       // открыли с дедлайном ближе часа, — поэтому «час» в тексте был бы
@@ -539,7 +543,7 @@ function singleText(
       // прямо — «скоро» здесь было бы пустым словом.
       return `Дедлайн избранного лота${lot === undefined ? "" : ` ${lot}`}${deadlineTime(info, timeZone)}. Успей сделать ставку.`;
     case "lot-final-next":
-      return `Твой лот следующий: ${lot ?? "лот"}.${minutesText(notice.estimatedMinutes)}`;
+      return `Твой ${lotWord} следующий.${minutesText(notice.estimatedMinutes)}`;
     default: {
       const _exhaustive: never = notice;
       return _exhaustive;
@@ -623,7 +627,8 @@ function digestLine(
   info: LotInfo | undefined,
   recipientId: string | undefined,
 ): string {
-  const lot = bold(info?.title, LINE_TITLE_LIMIT) ?? "Лот";
+  const name = named(info?.title, LINE_TITLE_LIMIT);
+  const lot = name === undefined ? "Лот" : `Лот ${name}`;
   if (info?.sold !== undefined) {
     const sale = money(info.sold.price);
     return info.sold.winnerId === recipientId
@@ -644,9 +649,16 @@ function digestLine(
     : `• ${lot} — перебили, цена ${price}`;
 }
 
-// Название в вести о лоте — жирным и без кавычек (№19 прогона 12 октября,
-// №71 прогона 14 октября 2026 года). Обрезка — до экранирования: предел
-// считается в знаках, которые человек увидит.
+// Название в вести о лоте — в кавычках после слова «лот», само название
+// жирным (PER-708; жирный — №19 прогона 12 октября, №71 прогона 14 октября
+// 2026 года). Свои кавычки названия не трогаются, как в анонсе финала.
+function named(title: string | undefined, limit: number): string | undefined {
+  const name = bold(title, limit);
+  return name === undefined ? undefined : `«${name}»`;
+}
+
+// Название жирным. Обрезка — до экранирования: предел считается в знаках,
+// которые человек увидит.
 export function bold(
   title: string | undefined,
   limit: number,

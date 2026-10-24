@@ -49,7 +49,7 @@ const titled = (title: string, id = lotId) => new Map([[id, { title }]]);
 describe("renderNotification", () => {
   it("names the lot and the current price of an outbid", () => {
     expect(renderNotification(outbid, titled("Кружка")).text).toBe(
-      `Твою ставку перебили: <b>Кружка</b>, цена 1${nbsp}500${nbsp}₽.`,
+      `Твою ставку перебили: лот «<b>Кружка</b>», цена 1${nbsp}500${nbsp}₽.`,
     );
   });
 
@@ -58,7 +58,7 @@ describe("renderNotification", () => {
   it("tells the leader the proxy answered and leads, with the lot button", () => {
     const message = renderNotification(raised, titled("Кружка"));
     expect(message.text).toBe(
-      `Твоя автоставка на <b>Кружка</b> подняла цену до 1${nbsp}600${nbsp}₽: лидируешь ты.`,
+      `Твоя автоставка на лот «<b>Кружка</b>» подняла цену до 1${nbsp}600${nbsp}₽: лидируешь ты.`,
     );
     expect(message.rows).toEqual([
       [{ text: "К лоту", callback_data: traceLotCallback(lotId) }],
@@ -68,7 +68,7 @@ describe("renderNotification", () => {
   // Запись 37 прогона 12.10: покупка называет лот и следующий шаг.
   it("names the lot, the sale price and the next step of a purchase", () => {
     expect(renderNotification(purchased, titled("Кружка")).text).toBe(
-      `Лот <b>Кружка</b> твой за 1${nbsp}500,50${nbsp}₽. Счёт и как оплатить — в «Моих счетах» аукциона.`,
+      `Лот «<b>Кружка</b>» твой за 1${nbsp}500,50${nbsp}₽. Счёт и как оплатить — в «Моих счетах» аукциона.`,
     );
   });
 
@@ -203,8 +203,8 @@ describe("activity digest", () => {
       [
         "Сводка по твоим ставкам:",
         "",
-        `• <b>Кружка</b> — перебили, цена 1${nbsp}500${nbsp}₽`,
-        `• <b>Плакат</b> — автоставка подняла цену до 900${nbsp}₽, лот за тобой`,
+        `• Лот «<b>Кружка</b>» — перебили, цена 1${nbsp}500${nbsp}₽`,
+        `• Лот «<b>Плакат</b>» — автоставка подняла цену до 900${nbsp}₽, лот за тобой`,
       ].join("\n"),
     );
     expect(notificationMarkup(rendered.message)).toEqual({
@@ -233,7 +233,7 @@ describe("activity digest", () => {
     const rendered = await render(digest, { recipientId });
     if (rendered.kind !== "ready") throw new Error("the digest must render");
     expect(rendered.message.text).toContain("• Лот — перебили");
-    expect(rendered.message.text).toContain("• <b>Плакат</b> —");
+    expect(rendered.message.text).toContain("• Лот «<b>Плакат</b>» —");
     // Кнопки к лоту, который Auction не отдаёт, нет: она упёрлась бы в тот же
     // отказ.
     expect(rendered.message.rows?.[0]?.[0]?.text).toBe("Плакат");

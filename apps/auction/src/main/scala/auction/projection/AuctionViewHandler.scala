@@ -94,7 +94,9 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
           (previous -- after.lots).foreach(deleteLot(connection, auctionId, _))
           // Состав финала только добавляется: заморозка у аукциона одна, а снимок `Finished` состав уже не несёт.
           val previousLineup = before.fold(Set.empty[UUID])(_.lineup)
-          (after.lineup -- previousLineup).foreach(insertLineup(connection, auctionId, _))
+          after.order.zipWithIndex
+            .filterNot((lot, _) => previousLineup.contains(lot))
+            .foreach((lot, position) => insertLineup(connection, auctionId, lot, position))
           if (before.fold(List.empty[StoredLotSet])(_.sets) != after.sets)
             replaceSets(connection, auctionId, after.sets)
           AuctionChanges.announce(connection, auctionId)
@@ -176,15 +178,20 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
     }
   }
 
-  /** Лот состава финала (PER-608): строка нужна статистике после `Finished`, когда снимок состав уже не несёт. */
-  private def insertLineup(connection: Connection, auctionId: UUID, lotId: UUID): Unit =
+  /**
+   * Лот состава финала (PER-608): строка нужна статистике и потоку `WatchAuction` после `Finished`, когда снимок состав
+   * уже не несёт, а место в составе — порядку выхода в потоке (PER-712).
+   */
+  private def insertLineup(connection: Connection, auctionId: UUID, lotId: UUID, position: Int): Unit =
     Using.resource(
       connection.prepareStatement(
-        "INSERT INTO auction_lineup (auction_id, lot_id) VALUES (?, ?) ON CONFLICT (auction_id, lot_id) DO NOTHING"
+        "INSERT INTO auction_lineup (auction_id, lot_id, position) VALUES (?, ?, ?) " +
+          "ON CONFLICT (auction_id, lot_id) DO UPDATE SET position = EXCLUDED.position"
       )
     ) { statement =>
       statement.setObject(1, auctionId)
       statement.setObject(2, lotId)
+      statement.setInt(3, position)
       statement.executeUpdate()
     }
 }

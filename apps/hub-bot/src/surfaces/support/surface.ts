@@ -9,6 +9,7 @@ import { countFailure } from "../../core/failures.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { createBot } from "./bot.js";
 import { readSupportConfig } from "./config.js";
+import { checkOperatorGroup } from "./group.js";
 import { createIdentityClient } from "./identity.js";
 import {
   createPairStore,
@@ -60,6 +61,14 @@ export const supportSurface: SurfaceDefinition = ({
       bot,
       commands: [],
       async startDelivery(options): Promise<NatsDelivery> {
+        // Группа операторов проверяется здесь же, до поллера: группа без тем
+        // или бот без права на них иначе всплыли бы только на первом
+        // сообщении человека.
+        const group = await checkOperatorGroup(bot.api, groupId);
+        if (!group.ok) {
+          options.logger.error(group.error);
+          throw new Error(group.error);
+        }
         // Переподключение без предела, как у доставки: рестарт NATS не должен
         // останавливать бота, а пара нужна на каждом сообщении.
         const nats: NatsConnection = await connect({

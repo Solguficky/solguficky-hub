@@ -18,11 +18,12 @@ import { hasRaffle } from "./open-feed.js";
 // оболочка поверхности.
 //
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
-// Отказ чтения аукциона и прогнозов бросается, как у ленты; отказ чтения
-// розыгрыша убирает его кнопку, а не роняет корень. Прогнозы читаются
-// параллельно аукциону, но их отказ учитывается, только когда аукцион есть:
-// удалённому Auction отвечает на прогнозы `NOT_FOUND`, а корень должен
-// сказать «не найден».
+// Отказ чтения аукциона бросается, как у ленты; отказ чтения розыгрыша,
+// прогнозов и счетов убирает их кнопку, а не роняет корень. Прогнозы Auction
+// отдаёт только держателю `place_bids` (ADR-067), а хаб пускает в корень и
+// без него — держателя `run_auctions` — и `PERMISSION_DENIED` здесь обычен
+// (PER-703); удалённому аукциону на прогнозы приходит `NOT_FOUND`, и корень
+// говорит «не найден» по чтению аукциона.
 export async function openRoot(input: {
   auction: AuctionPort;
   favorites?: FavoritesPort;
@@ -30,22 +31,17 @@ export async function openRoot(input: {
   auctionId: string;
 }): Promise<AuctionScreenBody> {
   const raffleRead = hasRaffle(input);
-  const predictionRead = predictionEntryRound(input).then(
-    (round) => ({ ok: true as const, round }),
-    (error: unknown) => ({ ok: false as const, error }),
-  );
+  const predictionRead = predictionEntryRound(input).catch(() => undefined);
   const invoicesRead = hasInvoices(input);
   const auction = await input.auction.getAuction({
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
-  const [raffle, predictions, invoices] = await Promise.all([
+  const [raffle, predictionRound, invoices] = await Promise.all([
     raffleRead,
     predictionRead,
     invoicesRead,
   ]);
-  if (auction !== undefined && !predictions.ok) throw predictions.error;
-  const predictionRound = predictions.ok ? predictions.round : undefined;
   if (auction === undefined) {
     return {
       blocks: [{ kind: "root", auctionId: input.auctionId }],
@@ -141,8 +137,7 @@ export async function openRoot(input: {
 }
 
 // Вход показывается, пока можно отправлять прогноз, и остаётся после закрытия,
-// если участнику есть что перечитать. Ошибка чтения уходит на границу, чтобы
-// она не скрыла ни сбой зависимости, ни дефект ответа.
+// если участнику есть что перечитать.
 async function predictionEntryRound(input: {
   auction: AuctionPort;
   viewer: Viewer;

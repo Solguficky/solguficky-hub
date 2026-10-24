@@ -217,7 +217,9 @@ export type ContractAuction = {
   registrations?: readonly RaffleOutcome<RaffleRegistrationRefusal>[];
   cancellations?: readonly RaffleOutcome<RaffleCancellationRefusal>[];
   // Свои прогнозы по раундам; нет — этот намерение не должен их читать.
-  predictions?: readonly PredictionRoundView[];
+  // `forbidden` — `GetMyPredictions` отказывает `PERMISSION_DENIED`, как
+  // смотрящему без права `place_bids` (PER-703); `unavailable` — иной отказ.
+  predictions?: readonly PredictionRoundView[] | "forbidden" | "unavailable";
   // Ответы отправки прогноза по порядку вызовов.
   predictionSubmissions?: readonly PredictionOutcome[];
   // Счета смотрящего и текст организатора (PER-322). Нет — `ListMyInvoices`
@@ -1630,9 +1632,11 @@ const pending = (command: "bid" | "proxy", amount: number) => ({
   amount,
 });
 
+// `final` — выбор имени после «Поставить» карточки финала (PER-713):
+// отложенная ставка несёт метку и после имени уходит сразу.
 const nameChoiceBody = (
   amount: number,
-  extra: { username?: string } = {},
+  extra: { username?: string; final?: true } = {},
 ): AuctionScreenBody => ({
   blocks: [
     {
@@ -1654,7 +1658,10 @@ const nameChoiceBody = (
                 kind: "username",
                 lotId: CONTRACT_LOT.lotId,
                 page: 2,
-                pending: pending("bid", amount),
+                pending: {
+                  ...pending("bid", amount),
+                  ...(extra.final === undefined ? {} : { final: extra.final }),
+                },
               }),
             },
           ],
@@ -1667,7 +1674,10 @@ const nameChoiceBody = (
           question: "alias",
           lotId: CONTRACT_LOT.lotId,
           page: 2,
-          pending: pending("bid", amount),
+          pending: {
+            ...pending("bid", amount),
+            ...(extra.final === undefined ? {} : { final: extra.final }),
+          },
         }),
       },
     ],
@@ -2810,12 +2820,70 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       bids: [{ kind: "refused", refusal: { kind: "display-name-not-chosen" } }],
     },
     auctionCalls: [LOT_CALL, bidCall(125000)],
-    body: nameChoiceBody(125000, { username: "owl_fan" }),
+    body: nameChoiceBody(125000, { username: "owl_fan", final: true }),
   },
-  // Имя выбрано — назад на карточку финала, а не к подтверждению: ставку
-  // человек делает сам, по цене, которая действует сейчас.
+  // Имя выбрано (PER-713): «Поставить» уже нажато, и ставка уходит сразу, если
+  // цена кнопки всё ещё следующая, — второго нажатия нет, подтверждения тоже.
   {
-    intent: "final: name chosen returns to the card",
+    intent: "final: name chosen places the pending bid",
+    callbackData: callback({
+      kind: "username",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+      pending: { ...pending("bid", 125000), final: true },
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...LIVE_AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      after: [LIVE_LOT_AFTER_BID],
+      lagging: true,
+    },
+    auctionCalls: [
+      LOT_CALL,
+      chooseCall({ kind: "username", username: "owl_fan" }),
+      bidCall(125000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      namesCall(CONTRACT_VIEWER.identityId),
+    ],
+    body: liveBody({
+      lot: LIVE_LOT_AFTER_BID,
+      participantName: "@me",
+      finalBid: { kind: "accepted", amount: rub(1250) },
+    }),
+  },
+  // Цена ушла, пока выбирали имя: ставкой она не становится — карточка с
+  // новой ценой на кнопке и строкой «цена изменилась», команда не уходит.
+  {
+    intent: "final: name chosen after the price moved",
+    callbackData: callback({
+      kind: "username",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+      pending: { ...pending("bid", 120000), final: true },
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...LIVE_AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      chooseCall({ kind: "username", username: "owl_fan" }),
+      namesCall(LEADER_ID),
+    ],
+    body: liveBody({
+      lot: LIVE_LOT,
+      participantName: "@owl",
+      button: 125000,
+      finalBid: { kind: "price-changed", next: rub(1250) },
+    }),
+  },
+  // Ставка онлайн-недели, чьё имя выбрали уже в финале: её «Да» ещё не было,
+  // и выход лота в финал её не подтверждает — карточка финала без ставки.
+  {
+    intent: "final: name chosen for a week bid returns to the card",
     callbackData: callback({
       kind: "username",
       lotId: CONTRACT_LOT.lotId,
@@ -2880,6 +2948,13 @@ const DRAWN_RAFFLE: RaffleView = {
   },
 };
 
+// Аукцион отменили до жеребьёвки (PER-698): отпечаток остался, seed не
+// раскроется, регистрации нет.
+const CANCELLED_RAFFLE: RaffleView = {
+  ...REGISTERED_RAFFLE,
+  status: "cancelled",
+};
+
 const raffleCallback = (auctionId = CONTRACT_AUCTION_ID) =>
   callback({ kind: "raffle", auctionId });
 
@@ -2938,9 +3013,12 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
               },
             ],
           ];
-  // «Как проверить честность» (PER-618) — пока у розыгрыша есть отпечаток.
+  // «Как проверить честность» (PER-618) — пока у розыгрыша есть отпечаток;
+  // у отменённого seed не раскроется, и проверять нечего (PER-698).
   const proof =
-    raffle === undefined || raffle.status === "not-held"
+    raffle === undefined ||
+    raffle.status === "not-held" ||
+    raffle.status === "cancelled"
       ? []
       : [
           [
@@ -3094,6 +3172,34 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
     body: raffleScreen(undefined),
   },
+  // Отменённый вместе с аукционом розыгрыш (PER-698) — экран отмены с
+  // возвратом в корень, без регистрации и без проверки, а не кадр сбоя.
+  {
+    intent: "raffle: cancelled",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: CANCELLED_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(CANCELLED_RAFFLE),
+  },
+  // Кнопка регистрации висела до отмены: отказ перечитывает розыгрыш, и
+  // экран говорит об отмене.
+  {
+    intent: "raffle: register after the cancellation",
+    callbackData: callback({
+      kind: "raffle-register",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: {
+      ...AUCTION,
+      raffle: CANCELLED_RAFFLE,
+      registrations: [{ kind: "refused", refusal: "registration-closed" }],
+    },
+    auctionCalls: [
+      raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
+      raffleCall(CONTRACT_AUCTION_ID),
+    ],
+    body: raffleScreen(CANCELLED_RAFFLE),
+  },
   // Техника розыгрыша — отдельным экраном (PER-618): до жеребьёвки отпечаток
   // и раунд, после — раскрытие и пересчёт; что показать, решает оболочка.
   {
@@ -3109,6 +3215,14 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     auction: { ...AUCTION, raffle: DRAWN_RAFFLE },
     auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
     body: raffleProofScreen(DRAWN_RAFFLE),
+  },
+  // Кнопка проверки висела до отмены: экран проверки говорит об отмене.
+  {
+    intent: "raffle: proof of a cancelled raffle",
+    callbackData: raffleProofCallback,
+    auction: { ...AUCTION, raffle: CANCELLED_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleProofScreen(CANCELLED_RAFFLE),
   },
   // Кнопка устарела: розыгрыша нет — экран говорит это, а не падает.
   {
@@ -3354,6 +3468,40 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
       ],
     },
   },
+  // Корень отменённого аукциона (PER-698): «Розыгрыш» остаётся и ведёт в
+  // экран отмены, а не в сбой.
+  {
+    intent: "root: cancelled auction keeps the raffle",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: { ...CONTRACT_SUMMARY, stage: "cancelled" },
+      raffle: CANCELLED_RAFFLE,
+    },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: { ...CONTRACT_SUMMARY, stage: "cancelled" },
+        },
+      ],
+      keyboard: [
+        [
+          ...rootLotsRow,
+          {
+            action: "root.raffle",
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
+          },
+        ],
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+      ],
+    },
+  },
   {
     intent: "root: raffle read refused",
     callbackData: rootCallback(CONTRACT_AUCTION_ID),
@@ -3370,6 +3518,28 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
       keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID)],
     },
   },
+  // Корень открывается и смотрящему, которому Auction прогнозы не отдаёт
+  // (PER-703): хаб пускает в корень держателя `run_auctions` без `place_bids`,
+  // и `GetMyPredictions` отвечает ему `PERMISSION_DENIED`. Отказ чтения
+  // прогнозов, как у розыгрыша, убирает только кнопку «Прогнозы».
+  ...(["forbidden", "unavailable"] as const).map(
+    (refusal): AuctionContractCase => ({
+      intent: `root: predictions read ${refusal}`,
+      callbackData: rootCallback(CONTRACT_AUCTION_ID),
+      auction: { ...AUCTION, summary: CONTRACT_SUMMARY, predictions: refusal },
+      auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+      body: {
+        blocks: [
+          {
+            kind: "root",
+            auctionId: CONTRACT_AUCTION_ID,
+            auction: CONTRACT_SUMMARY,
+          },
+        ],
+        keyboard: [rootLotsRow],
+      },
+    }),
+  ),
   // У процесса с Notifications в корне — «Избранное» (PER-644): вход в
   // список только отсюда, аукцион в кнопке — возврат.
   {
@@ -4474,6 +4644,51 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       notice: "unanswered",
     }),
   },
+  // Имя спрашивается до ответа (PER-703), как перед ставкой (PER-595): после
+  // выбора имени отказ `display-name-not-chosen` терял введённый ответ — кнопки
+  // выбора имени несут номинацию, а не значение. Свои ответы раунда значат, что
+  // имя уже выбрано, и Auction за ним не зовут; отказ чтения имени вопрос не
+  // прячет — страховкой остаётся отказ отправки.
+  {
+    intent: "predictions: ask for the name before the answer",
+    callbackData: callback({
+      kind: "prediction-edit",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+      ownName: "none",
+    },
+    auctionCalls: [predictionReadCall(CONTRACT_AUCTION_ID), OWN_NAME_CALL],
+    body: predictionNameChoiceBody({
+      round: "final",
+      nomination: "final-total-bids",
+      username: "owl_fan",
+    }),
+  },
+  {
+    intent: "predictions: own name read refused still asks the answer",
+    callbackData: callback({
+      kind: "prediction-edit",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+      ownName: "unavailable",
+    },
+    auctionCalls: [predictionReadCall(CONTRACT_AUCTION_ID), OWN_NAME_CALL],
+    body: predictionNumberQuestionBody({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+  },
   {
     intent: "predictions: ask for a name without losing the nomination",
     callbackData: predictionQuestionCallback({
@@ -4648,6 +4863,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [
       chooseCall({ kind: "alias", alias: "Сова" }),
       predictionReadCall(CONTRACT_AUCTION_ID),
+      OWN_NAME_CALL,
     ],
     body: predictionNumberQuestionBody({
       round: "catalog",
@@ -5616,8 +5832,13 @@ export function spyPorts(
   const registrations = [...(snapshot.registrations ?? [])];
   const cancellations = [...(snapshot.cancellations ?? [])];
   const predictionSubmissions = [...(snapshot.predictionSubmissions ?? [])];
-  let predictionRounds =
-    snapshot.predictions === undefined ? undefined : [...snapshot.predictions];
+  const predictionsRefusal =
+    typeof snapshot.predictions === "string" ? snapshot.predictions : undefined;
+  let predictionRounds: PredictionRoundView[] | undefined =
+    snapshot.predictions === undefined ||
+    typeof snapshot.predictions === "string"
+      ? undefined
+      : [...snapshot.predictions];
   const fulfillments = [...(snapshot.fulfillments ?? [])];
   let invoices = snapshot.invoices;
   const { followed, explainer } = snapshot;
@@ -5732,6 +5953,12 @@ export function spyPorts(
       },
       async getMyPredictions(request) {
         calls.push({ port: "auction", method: "getMyPredictions", request });
+        if (predictionsRefusal === "forbidden") {
+          throw new Error("predictions forbidden: PERMISSION_DENIED");
+        }
+        if (predictionsRefusal === "unavailable") {
+          throw new Error("predictions unavailable");
+        }
         if (predictionRounds === undefined) {
           throw new Error("predictions are not expected");
         }

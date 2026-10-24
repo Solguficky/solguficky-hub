@@ -24,7 +24,10 @@ final case class AuctionViewRow(auctionId: UUID, meetupId: UUID, stored: StoredA
    * Состав финала, замороженный `FinalLineupFrozen` (PER-608): пусто до заморозки и после `Finished` — снимок
    * последнего состав не несёт, поэтому строку `auction_lineup` обработчик пишет на заморозке и уже не удаляет.
    */
-  def lineup: Set[UUID] = stored.order.fold(Set.empty[UUID])(_.toSet)
+  def lineup: Set[UUID] = order.toSet
+
+  /** Тот же состав в порядке выхода (PER-712): место лота в `auction_lineup`. */
+  def order: List[UUID] = stored.order.getOrElse(Nil)
 
   /** Сеты лотов аукциона (ADR-073) в форме snapshot: определение и итог. */
   def sets: List[StoredLotSet] = stored.sets.getOrElse(Nil)

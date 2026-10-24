@@ -1284,7 +1284,8 @@ function statusGroups(
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
         ...(showsStep(block) ? stepLines(block, view) : []),
         // Свой лимит смотрящего: чужих Auction не отдаёт. Исчерпанный лимит
-        // так и назван (PER-631, №81).
+        // так и назван (PER-631, №81), в живом финале — без совета поднять
+        // его (PER-713).
         ...(block.viewerProxyLimit === undefined
           ? []
           : [

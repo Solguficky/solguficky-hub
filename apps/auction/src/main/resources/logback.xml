@@ -19,6 +19,13 @@
     </encoder>
   </appender>
 
+  <!--
+    Уровень кода сервиса — AUCTION_LOG_LEVEL, корень остаётся INFO: на DEBUG
+    grpc-java пишет каждый кадр HTTP/2, а Netty и пул соединений — свою кухню,
+    и квоту источника съели бы библиотеки, а не сервис (ADR-053, дополнение 2026-10-15).
+  -->
+  <logger name="auction" level="${AUCTION_LOG_LEVEL:-INFO}"/>
+
   <root level="INFO">
     <appender-ref ref="JSON"/>
   </root>

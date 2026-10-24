@@ -55,6 +55,28 @@ const receipt = [{ type: "emoji", emoji: "👌" }] as const;
 // не растёт с числом тех, кто открыл бота и ничего не написал.
 const sourceLimit = 10_000;
 
+// Тема, заведённая без записанной пары, ждёт в памяти процесса следующего
+// сообщения человека: бот дописывает её пару, а не заводит вторую тему. Тот
+// же предел — память не растёт с числом сбоев KV. Рестарт тему забывает.
+const unpairedLimit = 10_000;
+
+type Unpaired = { thread: number; source: Source | undefined };
+
+// Запись в отображение с пределом: самая старая уходит первой.
+function remember<V>(
+  map: Map<number, V>,
+  key: number,
+  value: V,
+  limit: number,
+) {
+  map.delete(key);
+  map.set(key, value);
+  if (map.size > limit) {
+    const oldest = map.keys().next().value;
+    if (oldest !== undefined) map.delete(oldest);
+  }
+}
+
 // Текст после метки `/start` не читается: команда — приветствие, а не реплика.
 const startCommand = /^\/start(?:@\S+)?(?:\s+(\S+))?(?:\s|$)/;
 
@@ -110,6 +132,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   const limiter = options.limiter ?? createRateLimiter();
   const now = options.now ?? (() => new Date());
   const sources = new Map<number, Source>();
+  const unpaired = new Map<number, Unpaired>();
 
   const frame = (ctx: UpdateContext, operation: string): LogFields => ({
     operation,
@@ -202,12 +225,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     if (start !== null && start !== undefined) {
       const source = sourceOf(start[1]);
       if (source !== undefined) {
-        sources.delete(user.id);
-        sources.set(user.id, source);
-        if (sources.size > sourceLimit) {
-          const oldest = sources.keys().next().value;
-          if (oldest !== undefined) sources.delete(oldest);
-        }
+        remember(sources, user.id, source, sourceLimit);
       }
       // Тему `/start` не заводит: его видит каждый, кто открыл бота.
       try {
@@ -281,7 +299,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     // Метку источника бот помнит до первого сообщения, а не до темы: иначе
     // она пережила бы месяцы переписки и попала в карточку темы, заведённой
     // взамен удалённой.
-    const source = sources.get(user.id);
+    let source = sources.get(user.id);
     sources.delete(user.id);
 
     let pairs: PairStore;
@@ -293,23 +311,39 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       await notDelivered("store-unavailable", cause);
       return;
     }
+    // Пара на месте — забытая тема больше не нужна.
+    if (thread !== undefined) unpaired.delete(user.id);
 
     // Новая тема: сначала пара, потом карточка и копия (ADR-068, п. 8).
-    // Карточка — снимок на момент заведения темы.
+    // Карточка — снимок на момент заведения темы. Тема, чья пара не
+    // записалась, заводится один раз: дальше бот дописывает её пару, а
+    // карточку и метку источника она получает вместе с парой.
     const openTopic = async (): Promise<
-      { thread: number } | { cause: unknown }
+      { thread: number; reused: boolean } | { cause: unknown }
     > => {
+      const waiting = unpaired.get(user.id);
       let opened: number;
+      if (waiting === undefined) {
+        try {
+          const topic = await ctx.api.createForumTopic(
+            groupId,
+            topicName(personOf(user)),
+          );
+          opened = topic.message_thread_id;
+        } catch (cause) {
+          return { cause };
+        }
+      } else {
+        opened = waiting.thread;
+        source = waiting.source ?? source;
+      }
       try {
-        const topic = await ctx.api.createForumTopic(
-          groupId,
-          topicName(personOf(user)),
-        );
-        opened = topic.message_thread_id;
         await pairs.bind(user.id, opened);
       } catch (cause) {
+        remember(unpaired, user.id, { thread: opened, source }, unpairedLimit);
         return { cause };
       }
+      unpaired.delete(user.id);
       try {
         await ctx.api.sendMessage(
           groupId,
@@ -325,10 +359,12 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       } catch (cause) {
         sideFailed(ctx, "topic_card", cause);
       }
-      return { thread: opened };
+      return { thread: opened, reused: waiting !== undefined };
     };
 
     let fresh = false;
+    // Тему, заведённую раньше без пары, оператор мог успеть удалить.
+    let reused = false;
     if (thread === undefined) {
       const opened = await openTopic();
       if ("cause" in opened) {
@@ -337,6 +373,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       }
       thread = opened.thread;
       fresh = true;
+      reused = opened.reused;
     }
 
     const copyInto = (into: number) =>
@@ -356,7 +393,11 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       copied = reopened === "ok" ? await copyInto(target) : reopened;
     }
     // Удалённая тема снимает пару, и бот заводит новую — один раз.
-    if (copied !== "ok" && copied.refusal === "topic-missing" && !fresh) {
+    if (
+      copied !== "ok" &&
+      copied.refusal === "topic-missing" &&
+      (!fresh || reused)
+    ) {
       try {
         await pairs.unbind(user.id, thread);
       } catch (cause) {

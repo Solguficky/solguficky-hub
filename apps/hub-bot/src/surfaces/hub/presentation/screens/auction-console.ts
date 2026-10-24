@@ -335,6 +335,8 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
       return "Розыгрыш: не состоялся, никто не зарегистрировался.";
     case "not-held":
       return "Розыгрыш: не проводился, неделя открылась после закрытия регистрации.";
+    case "cancelled":
+      return "Розыгрыш: отменён вместе с аукционом.";
     default: {
       const _exhaustive: never = raffle.status;
       return _exhaustive;
@@ -997,6 +999,13 @@ export function weekConfirmScreen(confirm: {
         : escapeHtml(
             `Без цены и шага останутся без торгов: ${lotsLabel(confirm.idle)}.`,
           ),
+      // Открытие публикует скрытый аукцион (PER-609), и подтверждение
+      // говорит об этом заранее (PER-707). У опубликованного строки нет.
+      confirm.console.hidden
+        ? escapeHtml(
+            "Аукцион сейчас скрыт: с открытием недели участники увидят его и лоты.",
+          )
+        : undefined,
       escapeHtml(
         "Отменить открытие нельзя: сроки, финал и состав лотов после него не меняются.",
       ),

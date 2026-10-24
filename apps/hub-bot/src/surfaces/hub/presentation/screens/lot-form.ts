@@ -1,28 +1,33 @@
 import { InlineKeyboard } from "grammy";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import { marked, pictogram } from "../../../../core/pictograms.js";
-import { isSold, lotCurrency } from "../../application/lot-form.js";
+import { isSold, keptStep, lotCurrency } from "../../application/lot-form.js";
 import type {
   LotAskError,
   LotFormView,
   LotQuestion,
   LotRefusal,
   LotTermsView,
+  LotTierView,
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   lotAskData,
   lotFormData,
+  lotImageRemoveConfirmData,
+  lotKeepStepData,
   lotPreviewData,
   lotStepModeData,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import {
+  confirmKeyboard,
   escapeHtml,
   nextRow,
   outcomeText,
   type Parent,
   screenText,
+  subjectLine,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -62,13 +67,15 @@ export function toLots(auctionId: string): Parent {
 }
 
 export const lotSavedNote: Record<
-  "created" | "text" | "terms" | "image" | "ready",
+  "created" | "text" | "terms" | "image" | "image-removed" | "ready",
   string
 > = {
   created: "Лот добавлен. Задай цену и шаг: без них он не выйдет на торги.",
   text: "Изменение сохранено.",
   terms: "Цена и шаг сохранены.",
   image: "Фото сохранено.",
+  // Фото снято (PER-715).
+  "image-removed": "Фото убрано.",
   // Конец цепочки нового лота (PER-618): фото принято или пропущено.
   ready: "Лот готов. Описание — по желанию: его добавляет «Изменить лот».",
 };
@@ -84,6 +91,37 @@ export const lotChainLead = {
 
 /** «Пропустить» под вопросом о фото в цепочке нового лота (PER-618). */
 export const skipPhotoLabel = "Пропустить";
+
+/** «Убрать фото» под вопросом о фото лота с фото (PER-715). */
+export const removePhotoLabel = marked(pictogram.remove, "Убрать фото");
+
+/**
+ * Подтверждение снятия фото (PER-715). Вернуть фото бот не может — его
+ * присылают заново, — поэтому «Да» красное, как у «Убрать материал». «Нет»
+ * задаёт вопрос о фото заново: подтверждение открыто с него.
+ */
+export function lotImageRemoveConfirmScreen(
+  lot: LotFormView & { imagePrint: string },
+): ShownScreen {
+  const token = uuidToToken(lot.lotId);
+  return {
+    id: "lot-image-remove-confirm",
+    text: screenText(
+      "Убрать фото?",
+      subjectLine(lot.title ?? untitled),
+      escapeHtml(
+        "Участники увидят карточку лота без фото. Вернуть его можно, только прислав фото заново.",
+      ),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, убрать фото",
+      yesData: lotImageRemoveConfirmData(token, lot.imagePrint),
+      noData: lotAskData(token, "image"),
+      irreversible: true,
+    }),
+    format: "HTML",
+  };
+}
 
 function stepTermsLines(
   terms: Extract<LotTermsView, { kind: "set" }>,
@@ -123,6 +161,22 @@ function termsLines(terms: LotTermsView): string[] {
   }
 }
 
+/** Предупреждение на выборе способа шага при правке цены (PER-714). */
+export const unsavedPriceNote =
+  "Цена сохранится только вместе с шагом: «‹ Изменить лот» её не сохранит.";
+
+/**
+ * Подпись «Оставить шаг» по прежнему шагу лота (PER-714) — тому же, что
+ * сохранит команда; шага нет — оставлять нечего, и кнопки нет.
+ */
+function keptStepLabel(terms: LotTermsView): string | undefined {
+  const step = keptStep(terms);
+  if (step === undefined) return undefined;
+  return step.policy.kind === "tiered"
+    ? "Оставить пороги шага"
+    : `Оставить шаг ${money(step.policy.step)}`;
+}
+
 /**
  * Экран выбора способа шага (PER-491): цена уже принята, шаг ещё нет. Кнопка
  * несёт цену, чтобы вопрос о шаге задавался и после рестарта, а в цепочке
@@ -138,6 +192,13 @@ export function lotStepModeScreen(
   const keyboard = new InlineKeyboard()
     .text("Один шаг", lotStepModeData(token, priceRubles, "single", chain))
     .text("По порогам", lotStepModeData(token, priceRubles, "tiered", chain));
+  // Правка цены у лота с шагом (PER-714): прежний шаг оставляется одним
+  // нажатием, а уход возвратом цену не сохраняет — экран говорит это до ухода.
+  // В цепочке нового лота прежнего шага нет.
+  const kept = chain === true ? undefined : keptStepLabel(lot.terms);
+  if (kept !== undefined) {
+    keyboard.row().text(kept, lotKeepStepData(token, priceRubles));
+  }
   return {
     id: "lot-step-mode",
     text: screenText(
@@ -147,6 +208,7 @@ export function lotStepModeScreen(
         "Как задать шаг?",
         "Один шаг — на столько поднимается ставка при любой цене.",
         "По порогам — шаг растёт вместе с ценой.",
+        ...(chain === true ? [] : [unsavedPriceNote]),
       ]
         .map(escapeHtml)
         .join("\n"),
@@ -231,20 +293,30 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
   };
 }
 
+// Образец порогов: тот же у вопроса и у отказов, чтобы человек видел один ввод.
+const tiersExample = "0 — 100\n5000 — 250";
+// Отказ на пороги не с нуля: обычно человек начал со стартовой цены.
+const fromZeroReason =
+  "Первый порог — 0. Пороги считаются по цене лота от 0, а не от стартовой цены.";
+
 const lotAskErrors: Record<LotAskError, string> = {
   "empty-title": "Название не может быть пустым.",
   "empty-description": "Описание не может быть пустым.",
   "amount-format": "Нужно целое число рублей. Только цифры, без копеек.",
   "amount-range": "Сумма — от 1 до 9 999 999 рублей.",
   "step-format":
-    "Порог — строка «от суммы — шаг», целыми рублями. Например: 0 — 100.",
-  "step-order": "Пороги идут по возрастанию, и первый начинается с 0.",
+    "Это не порог. Каждая строка — «от цены — шаг» целыми рублями. Например: 0 — 100.",
+  "step-start": `${fromZeroReason} Например:\n${tiersExample}`,
+  "step-order": `Цены порогов не по возрастанию. Каждый следующий порог — с цены выше прежнего. Например:\n${tiersExample}`,
+  "step-decreasing": `Шаг не может уменьшаться. С ростом цены шаг остаётся прежним или растёт. Например:\n${tiersExample}`,
   "step-refused": "Аукцион отклонил такой шаг. Проверь шаг и пришли заново.",
   "image-too-large": "Фото слишком большое, аукцион его не принял.",
   "unsupported-image": "Аукцион не узнал в этом файле изображение.",
   "photo-needed": "Нужна фотография, а не текст, файл или стикер.",
   "photo-album": "Нужна одна фотография, альбом не подходит.",
   "photo-unavailable": "Не получилось получить фото у Telegram.",
+  "photo-changed":
+    "Фото уже сменилось. Ничего не убрано: посмотри новое фото и реши заново.",
 };
 
 /**
@@ -260,14 +332,32 @@ export function imageLimitText(maxBytes: number): string {
   return `${Math.max(1, Math.round(maxBytes / 1024))} КБ`;
 }
 
+// Пороги так, как их вводят: целые рубли без разрядов и знака валюты.
+function tiersInput(tiers: LotTierView[]): string {
+  return tiers
+    .map(
+      (tier) =>
+        `${tier.lowerBound.minorUnits / 100} — ${tier.step.minorUnits / 100}`,
+    )
+    .join("\n");
+}
+
 /** Причина отказа ответу на вопрос формы лота: заголовок экрана исхода. */
 export function lotAskErrorText(
   error: LotAskError,
-  maxImageBytes?: number,
+  details: {
+    maxImageBytes?: number | undefined;
+    suggestedTiers?: LotTierView[] | undefined;
+  } = {},
 ): string {
-  return error === "image-too-large" && maxImageBytes !== undefined
-    ? `Фото больше ${imageLimitText(maxImageBytes)}, аукцион его не принял.`
-    : lotAskErrors[error];
+  if (error === "image-too-large" && details.maxImageBytes !== undefined) {
+    return `Фото больше ${imageLimitText(details.maxImageBytes)}, аукцион его не принял.`;
+  }
+  // Исправленный ввод вместо образца (PER-709): человек видит свои же строки.
+  if (error === "step-start" && details.suggestedTiers !== undefined) {
+    return `${fromZeroReason} Пришли так:\n${tiersInput(details.suggestedTiers)}`;
+  }
+  return lotAskErrors[error];
 }
 
 const rublesOf = (amount: number) =>
@@ -287,7 +377,7 @@ function prompt(question: LotQuestion): string {
     case "step":
       return question.mode === "single"
         ? "Шаг ставки в рублях, целым числом: на столько новая ставка обязана быть выше текущей цены. Например: 100"
-        : "Пороги шага строками «от суммы — шаг». Первый — от 0, дальше границы возрастают, шаг растёт. Например:\n0 — 100\n5000 — 250";
+        : `Пороги шага — строками «от цены — шаг». Цена считается от 0, а не от стартовой: первый порог всегда 0. Дальше цены растут, а шаг не уменьшается. Например:\n${tiersExample}\nДо 5 000 ₽ шаг 100 ₽, с 5 000 ₽ — 250 ₽.`;
     case "image":
       return question.chain === true
         ? "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота. Нет фото под рукой — «Пропустить», его можно добавить потом."

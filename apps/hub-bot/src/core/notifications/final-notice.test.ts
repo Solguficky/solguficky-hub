@@ -10,8 +10,10 @@ import {
   type FinalNotice,
   finalNoticeOf,
   LINEUP_LOT_LIMIT,
+  LINEUP_LOT_TTL_MS,
   renderFinalNotice,
 } from "./final-notice.js";
+import type { LotNoticeReads } from "./lot-notice.js";
 
 const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
 const lot = (n: number) =>
@@ -31,7 +33,9 @@ const lineupFact = (yourLotIds: string[] = [], lots = [1, 2]) => ({
   }),
 });
 
-const lineup = (yourLotIds: string[] = []): FinalNotice => ({
+const lineup = (
+  yourLotIds: string[] = [],
+): Extract<FinalNotice, { kind: "final-lineup" }> => ({
   kind: "final-lineup",
   auctionId,
   lineup: [
@@ -250,6 +254,87 @@ describe("createFinalNoticeRender", () => {
       kind: "ineligible",
     });
     expect(lotInfo).not.toHaveBeenCalled();
+  });
+
+  // Лоты состава одни на всех (PER-704): рассылка читает каждый лот один раз,
+  // а не на каждого получателя. Право спрашивается у каждого.
+  const ofThree = (yourLotIds: string[] = []): FinalNotice => ({
+    ...lineup(yourLotIds),
+    lineup: [1, 2, 3].map((n) => ({ lotId: lot(n), price: rub(n * 1_000) })),
+  });
+  const recipients = Array.from({ length: 10 }, (_, n) => lot(100 + n));
+  const broadcast = (lotInfo: LotNoticeReads["lotInfo"]) => {
+    let clock = 0;
+    const holdsPlaceBids = vi.fn(async () => true);
+    const render = createFinalNoticeRender({
+      reads: { holdsPlaceBids, lotInfo },
+      onTitleMissing: () => {},
+      now: () => clock,
+    });
+    return {
+      render,
+      holdsPlaceBids,
+      tick: (ms: number) => {
+        clock += ms;
+      },
+    };
+  };
+  const textOf = async (result: Promise<unknown>) => {
+    const settled = (await result) as {
+      kind: string;
+      message?: { text: string };
+    };
+    if (settled.kind !== "ready" || settled.message === undefined) {
+      throw new Error(`not ready: ${settled.kind}`);
+    }
+    return settled.message.text;
+  };
+
+  it("reads each lot of the lineup once for ten recipients", async () => {
+    const lotInfo = vi.fn(async () => ({ title: "Банка" }));
+    const { render, holdsPlaceBids } = broadcast(lotInfo);
+
+    for (const recipientId of recipients) {
+      await render(ofThree([lot(2)]), { recipientId, requestId: "r" });
+    }
+
+    expect(lotInfo).toHaveBeenCalledTimes(3);
+    expect(holdsPlaceBids).toHaveBeenCalledTimes(10);
+  });
+
+  it("reads a renamed lot again once the broadcast is over", async () => {
+    let title = "Банка";
+    const lotInfo = vi.fn(async () => ({ title }));
+    const { render, tick } = broadcast(lotInfo);
+    await render(ofThree(), context);
+
+    title = "Кружка";
+    tick(LINEUP_LOT_TTL_MS);
+    const text = await textOf(render(ofThree(), context));
+
+    expect(lotInfo).toHaveBeenCalledTimes(6);
+    expect(text).toContain("«Кружка»");
+    expect(text).not.toContain("«Банка»");
+  });
+
+  // Отказ и лот без названия — карточка ещё не в read model — не
+  // запоминаются: следующий получатель читает лот сам.
+  it("does not remember a refused read or a lot without a title", async () => {
+    let answer: "refuse" | "untitled" | "titled" = "refuse";
+    const lotInfo = vi.fn(async () => {
+      if (answer === "refuse") throw permanent;
+      return { title: answer === "untitled" ? "" : "Банка" };
+    });
+    const { render } = broadcast(lotInfo);
+    await render(lineup(), context);
+    answer = "untitled";
+    await render(lineup(), context);
+
+    answer = "titled";
+    const text = await textOf(render(lineup(), context));
+
+    expect(lotInfo).toHaveBeenCalledTimes(6);
+    expect(text).toContain("«Банка»");
   });
 
   it("keeps the line of a refused lot and logs the refusal", async () => {

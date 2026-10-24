@@ -103,10 +103,14 @@ export type LotAskError =
   | "empty-description"
   | "amount-format"
   | "amount-range"
-  // Порог не разобран: не строка «от суммы — шаг» либо сумма не число формы.
+  // Порог не разобран: не строка «от цены — шаг» либо сумма не число формы.
   | "step-format"
-  // Пороги не начинаются с нуля либо идут не по возрастанию.
+  // Первый порог не с нуля: обычно стартовая цена вместо 0.
+  | "step-start"
+  // Цены порогов идут не по возрастанию.
   | "step-order"
+  // Шаг следующего порога меньше прежнего (PER-709): правило формы, не Auction.
+  | "step-decreasing"
   // Auction отклонил политику шага целиком.
   | "step-refused"
   // Отказы Auction на фото: больше его предела либо не изображение.
@@ -117,7 +121,10 @@ export type LotAskError =
   // Альбом: лоту нужна одна фотография.
   | "photo-album"
   // Telegram не отдал файл фотографии: её можно прислать ещё раз.
-  | "photo-unavailable";
+  | "photo-unavailable"
+  // Фото сменилось после подтверждения «Убрать фото» (PER-715): ничего не
+  // снято, решают заново.
+  | "photo-changed";
 
 // Способ задать шаг (PER-491): один на все цены либо по ценовым порогам.
 export type LotStepMode = "single" | "tiered";
@@ -150,6 +157,9 @@ export type LotFormView = {
   title?: string;
   description: string;
   hasImage: boolean;
+  // Отпечаток версии фото (PER-715): «Да, убрать фото» несёт его, чтобы не
+  // снять фото, которое сменилось после подтверждения.
+  imagePrint?: string;
   terms: LotTermsView;
 };
 
@@ -361,11 +371,26 @@ export type LotFormRequest =
       value: string;
       opId: string;
     })
+  // Новая цена с прежним шагом лота (PER-714): «Оставить шаг» на экране выбора
+  // способа шага. Шаг юзкейс берёт из чтения лота.
+  | (LotFormCall & {
+      intent: "keep-lot-step";
+      lotId: string;
+      priceRubles: number;
+      opId: string;
+    })
   // Фото уже скачано у Telegram краем: юзкейс получает только байты.
   | (LotFormCall & {
       intent: "set-lot-image";
       lotId: string;
       image: Uint8Array;
+    })
+  // Снятие фото лота (PER-715): «Да» под подтверждением «Убрать фото?».
+  | (LotFormCall & {
+      intent: "remove-lot-image";
+      lotId: string;
+      // Отпечаток фото, которое подтвердили снять.
+      imagePrint: string;
     });
 
 // Пульт аукциона администратора (PER-320). Пульт — экран хаба, а не тело
@@ -1335,7 +1360,7 @@ export type ExecuteResult =
   | {
       kind: "lot-form";
       lot: LotFormView;
-      saved?: "created" | "text" | "terms" | "image";
+      saved?: "created" | "text" | "terms" | "image" | "image-removed";
     }
   // Предпросмотр лота (PER-512): снимок, прочитанный правом администратора.
   | { kind: "lot-preview"; lot: LotView }
@@ -1351,6 +1376,9 @@ export type ExecuteResult =
       error?: LotAskError;
       // Предел Auction в байтах, когда фото его превысило.
       maxImageBytes?: number;
+      // Исправленные пороги к отказу `step-start`: те же строки с первой
+      // границей 0, когда такой ввод форма приняла бы (PER-709).
+      suggestedTiers?: LotTierView[];
     }
   // Отказ Auction, который человеку показывают, а не повторяют.
   | {

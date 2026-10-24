@@ -374,12 +374,34 @@ final class AuctionGrpcService(
           }
     }
 
-  /** Имена собравших сеты лотов (ADR-073, п. 7): лоты без собранного сета запроса к именам не делают. */
+  /**
+   * Имена собравших сеты лотов (ADR-073, п. 7): лоты без собранного сета запроса к именам не делают. Имя — украшение
+   * снимка, поле в контракте необязательно, поэтому сбой хранилища имён не роняет ни чтение лота, ни ленту, ни поток:
+   * снимок уходит без имени собравшего, а сбой пишется событием. Собравшего событие не называет — хватает аукциона и
+   * `request_id`, — а сообщения исключения в нём нет, как в записи операции.
+   */
   private def collectorNames(
       auctionId: UUID,
       views: Iterable[LotSnapshotView]
   ): Future[Map[ParticipantId, DisplayName]] =
-    names.names(AuctionId(auctionId), SnapshotMapping.collectors(views))
+    Future
+      .delegate(names.names(AuctionId(auctionId), SnapshotMapping.collectors(views)))
+      .recover { case NonFatal(cause) =>
+        AuctionGrpcService.logger.warn(
+          "collector names unavailable",
+          StructuredArguments.entries(
+            (Map[String, Any](
+              "operation" -> AuctionGrpcService.CollectorNamesOperation,
+              "result" -> "error",
+              "error_category" -> "dependency_unavailable",
+              "error" -> cause.getClass.getName,
+              "auction_id" -> auctionId.toString
+            ) ++ correlation.requestId.filter(_.nonEmpty).map("request_id" -> _) ++
+              correlation.useCase.filter(_.nonEmpty).map("use_case" -> _)).asJava
+          )
+        )
+        Map.empty
+      }
 
   /** Выбор имени в аукционе (ADR-059). Отказ выбора — значение ответа, как отказ торгов. */
   def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] =
@@ -1101,11 +1123,30 @@ final class AuctionGrpcService(
         }
     }
 
-  /** Имена снимка читаются только у зафиксированного пула: до него списка билетов нет. */
+  /**
+   * Имена снимка читаются только у зафиксированного пула: до него списка билетов нет. Имя билета — украшение, и билет
+   * без имени снимок уже знает (имя стёрто), поэтому сбой чтения имён отдаёт билеты без имён и пишется событием, а не
+   * роняет ответ — и чтение, и ответ на принятую команду.
+   */
   private def view(auction: AuctionId, participant: ParticipantId, raffle: Raffle): Future[Option[wire.Raffle]] = {
     val names = raffle.state match {
       case RaffleState.Fixed(_, _) | RaffleState.Drawn(_, _, _, _) =>
-        raffleNames(auction)
+        Future.delegate(raffleNames(auction)).recover { case NonFatal(cause) =>
+          AuctionGrpcService.logger.warn(
+            "raffle ticket names unavailable",
+            StructuredArguments.entries(
+              (Map[String, Any](
+                "operation" -> AuctionGrpcService.RaffleNamesOperation,
+                "result" -> "error",
+                "error_category" -> "dependency_unavailable",
+                "error" -> cause.getClass.getName,
+                "auction_id" -> auction.value.toString
+              ) ++ correlation.requestId.filter(_.nonEmpty).map("request_id" -> _) ++
+                correlation.useCase.filter(_.nonEmpty).map("use_case" -> _)).asJava
+            )
+          )
+          Map.empty[Int, String]
+        }
       case _ => Future.successful(Map.empty[Int, String])
     }
     names.map(known =>
@@ -1184,7 +1225,8 @@ final class AuctionGrpcService(
    * Поток аукциона (PER-335): каждое сообщение — состояние целиком из read model, первое — при подписке, следующие —
    * после коммита проекции, тронувшего аукцион или лот в нём. Право — то же, что у чтения лота: поток несёт снимки
    * лотов. Аукциона нет в read model — `NOT_FOUND`, и сразу, и когда его удалили посреди потока. После сообщения, где
-   * аукцион завершён, или отменён и лоты состава сняты, поток закрывается: изменений у него больше не будет.
+   * аукцион завершён или отменён и ни один лот состава не торгуется и не удержан, поток закрывается: изменений у него
+   * больше не будет, а состав завершённого несёт исходы лотов (PER-712).
    *
    * Чтение идёт по одному на подписчика и только по его спросу: медленный клиент получает свежее состояние, а не
    * очередь, и ставки не ждут ни его, ни поток. Повод, после которого состояние не изменилось, сообщения не даёт.
@@ -1352,15 +1394,16 @@ object AuctionGrpcService {
   val NoChanges: AuctionChanges = _ => Source.single(())
 
   /**
-   * Последнее сообщение потока: аукцион закончен — или отменён, и ни один лот состава уже не торгуется и не удержан.
-   * Лоты отменённого аукциона снимаются после `AuctionCancelled` своими событиями, и поток ждёт их, чтобы последнее
-   * сообщение несло состав, каким он остался.
+   * Последнее сообщение потока: аукцион закончен или отменён, и ни один лот состава уже не торгуется и не удержан. Лоты
+   * отменённого аукциона снимаются после `AuctionCancelled` своими событиями, а продажа последнего лота финала и
+   * `AuctionFinished` идут разными проекциями (PER-712), и поток ждёт read model лотов, чтобы последнее сообщение несло
+   * состав с исходами.
    */
   private[grpc] def terminal(message: wire.AuctionWatch): Boolean = {
     val status = message.getAuction.status
-    status.isFinished || (status.isCancelled && message.lineup.forall(lot =>
+    (status.isFinished || status.isCancelled) && message.lineup.forall(lot =>
       !lot.status.isTrading && !lot.status.isHeld
-    ))
+    )
   }
 
   /** Сообщение потока проходит, только если отличается от предыдущего отправленного. */
@@ -1383,6 +1426,12 @@ object AuctionGrpcService {
 
   /** Событие списка имён аукциона, собранного без ответа Identity о праве человека. */
   val AuctionNamesRightOperation: String = "auction.names.right_unconfirmed"
+
+  /** Событие снимка лота, отданного без имени собравшего сет: хранилище имён не ответило. */
+  val CollectorNamesOperation: String = "auction.lot_set.collector_names_unavailable"
+
+  /** Событие снимка розыгрыша, отданного с билетами без имён: снимок имён не прочитался. */
+  val RaffleNamesOperation: String = "auction.raffle.ticket_names_unavailable"
 
   private val logger = LoggerFactory.getLogger(classOf[AuctionGrpcService])
 
