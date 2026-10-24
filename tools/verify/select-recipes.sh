@@ -38,7 +38,7 @@ workflow=${VERIFY_SELECT_WORKFLOW:-$root/.github/workflows/ci.yml}
 # here fails the selection: a new CI job without local recipes is a decision,
 # not a default. `contour` is not part of `verify` and is skipped on purpose.
 always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready"
-groups="contracts identity hub-bot community-site-api bot-console auction-seed apphost meetups notifications auction nats-tester"
+groups="contracts identity hub-bot community-site-api bot-console auction-seed apphost meetups notifications auction nats-tester gate-observer"
 skipped_filters="contour"
 # Groups that run only in CI unless --full. Each name is also the id of the
 # CI job a delivery waits for, so a name without such a job fails the
@@ -58,6 +58,7 @@ recipes_of() {
         notifications) echo "notifications-contracts-check notifications-build notifications-test" ;;
         auction) echo "auction-verify" ;;
         nats-tester) echo "nats-tester-check" ;;
+        gate-observer) echo "gate-observer-check" ;;
     esac
 }
 
