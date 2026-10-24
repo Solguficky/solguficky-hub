@@ -265,7 +265,9 @@ function winnerLine(raffle: RaffleView): string {
 function drawnAtLine(raffle: RaffleView, options: RaffleTextOptions): string[] {
   if (raffle.drawnAt === undefined) return [];
   const moment = escapeHtml(options.moment(raffle.drawnAt));
-  return [raffle.drawnByHand === true ? `Итог: ${moment}` : `Жеребьёвка: ${moment}`];
+  return [
+    raffle.drawnByHand === true ? `Итог: ${moment}` : `Жеребьёвка: ${moment}`,
+  ];
 }
 
 function revealLines(raffle: RaffleView): string {

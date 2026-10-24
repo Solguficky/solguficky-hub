@@ -122,6 +122,11 @@ const LineupOrderSchema = z
       ? []
       : [...raw].map((each) => Number.parseInt(each, 36)),
   );
+// Номер билета розыгрыша в кнопке (PER-727): с единицы, без ведущих нулей.
+const TicketSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,8}$/)
+  .transform(Number);
 const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
 export const defaultConsoleSort: ConsoleSort = {
   metric: "bids",
@@ -460,6 +465,12 @@ type PlainAction =
   // Текст «Как оплатить и получить» на «Счетах» (PER-322): вопрос и снятие.
   | { kind: "console-payment-text"; auction: string }
   | { kind: "console-payment-text-remove"; auction: string }
+  // Итог розыгрыша вручную (PER-727): список билетов со страницей, вопрос о
+  // номере, подтверждение по номеру и «Да»; ключ рождается на нажатие «Да».
+  | { kind: "console-raffle-winner"; auction: string; page: number }
+  | { kind: "console-raffle-winner-ask"; auction: string }
+  | { kind: "console-raffle-winner-pick"; auction: string; ticket: number }
+  | { kind: "console-raffle-winner-confirm"; auction: string; ticket: number }
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -737,6 +748,9 @@ export type QuestionStep =
   // Текст «Как оплатить и получить» (PER-322): аукцион; ответ заменяет текст
   // целиком, и читать ему нечего.
   | { kind: "console-payment-text"; auction: string }
+  // Номер выигравшего билета (PER-727): аукцион, а пул ответ читает у Auction
+  // заново.
+  | { kind: "console-raffle-winner"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
@@ -946,6 +960,32 @@ export function consolePaymentTextData(auction: string): string {
 /** «Убрать текст оплаты»: текст снимается без подтверждения. */
 export function consolePaymentTextRemoveData(auction: string): string {
   return `v1:ac:ix:${auction}`;
+}
+
+/** «Итог розыгрыша» (PER-727): список билетов; первая страница — без номера. */
+export function consoleRaffleWinnerData(auction: string, page = 0): string {
+  return page === 0 ? `v1:ac:rw:${auction}` : `v1:ac:rw:${auction}:${page}`;
+}
+
+/** «Ввести победителя»: вопрос о номере выигравшего билета. */
+export function consoleRaffleWinnerAskData(auction: string): string {
+  return `v1:ac:ra:${auction}`;
+}
+
+/** Подтверждение победителя по номеру билета: «Повторить» после сбоя «Да». */
+export function consoleRaffleWinnerPickData(
+  auction: string,
+  ticket: number,
+): string {
+  return `v1:ac:rc:${auction}:${ticket}`;
+}
+
+/** «Да» итога: аукцион и номер, до 42 байт; ключ рождается на нажатие. */
+export function consoleRaffleWinnerConfirmData(
+  auction: string,
+  ticket: number,
+): string {
+  return `v1:ac:ry:${auction}:${ticket}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1369,6 +1409,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ft:${step.auction}`;
     case "console-payment-text":
       return `v1:q:ai:${step.auction}`;
+    case "console-raffle-winner":
+      return `v1:q:rw:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
@@ -1906,7 +1948,9 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:tw:<аукцион>:<сет>:<отпечаток>[:<страница>]`,
 // `v1:ac:<ts|td>:<аукцион>:<сет>:<отпечаток>:<лот>` и
 // `v1:ac:<tx|ty>:<аукцион>:<сет>:<отпечаток>`. Розыгрыш (PER-593):
-// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. Видимость (PER-673):
+// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`, итог вручную (PER-727):
+// `v1:ac:rw:<аукцион>[:<страница>]`, `v1:ac:ra:<аукцион>` и
+// `v1:ac:<rc|ry>:<аукцион>:<билет>`. Видимость (PER-673):
 // `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
@@ -1970,6 +2014,35 @@ function parseConsole(parts: readonly string[]): CallbackAction {
             invoice: invoice.data,
           }
         : { kind: "malformed" };
+    }
+    // Итог розыгрыша вручную (PER-727): список `rw` со страницей, вопрос `ra`,
+    // подтверждение `rc` и «Да» `ry` с номером билета.
+    case "rw": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? {
+            kind: "console-raffle-winner",
+            auction: auction.data,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "ra":
+      return parts.length === 4
+        ? { kind: "console-raffle-winner-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "rc":
+    case "ry": {
+      const ticket = TicketSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !ticket.success) return { kind: "malformed" };
+      return {
+        kind:
+          parts[2] === "rc"
+            ? "console-raffle-winner-pick"
+            : "console-raffle-winner-confirm",
+        auction: auction.data,
+        ticket: ticket.data,
+      };
     }
     // Текст «Как оплатить и получить» (PER-322): вопрос `it` и снятие `ix`.
     case "it":
@@ -2398,6 +2471,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-final-time", auction: token.data };
       case "ai":
         return { kind: "console-payment-text", auction: token.data };
+      case "rw":
+        return { kind: "console-raffle-winner", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":

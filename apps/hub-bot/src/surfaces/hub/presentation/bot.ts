@@ -109,6 +109,7 @@ import type {
   PublishMomentRetry,
   RaffleAskError,
   RafflePrizeAskError,
+  RaffleWinnerAskError,
   TradingHolder,
   WeekAskError,
   WindowAskError,
@@ -205,6 +206,9 @@ import {
   consolePaymentTextData,
   consoleRaffleData,
   consoleRafflePrizeData,
+  consoleRaffleWinnerAskData,
+  consoleRaffleWinnerData,
+  consoleRaffleWinnerPickData,
   consoleSetAskData,
   consoleSetsData,
   consoleViewData,
@@ -298,6 +302,14 @@ import {
   paymentTextAskErrorText,
   paymentTextPrompt,
 } from "./screens/auction-invoices.js";
+import {
+  raffleWinnerAskErrorText,
+  raffleWinnerConfirmScreen,
+  raffleWinnerLabel,
+  raffleWinnerOutcomeScreen,
+  raffleWinnerQuestionText,
+  raffleWinnerScreen,
+} from "./screens/auction-raffle-winner.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -787,6 +799,14 @@ type PendingConsolePaymentText = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о номере выигравшего билета (PER-727). Шаг — аукцион — лежит в
+// кнопке вопроса, а пул ответ читает заново, и после рестарта тоже.
+type PendingConsoleRaffleWinner = {
+  kind: "console-raffle-winner";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
@@ -845,6 +865,7 @@ type HubPendingInput =
   | PendingConsolePrize
   | PendingConsoleFinalTime
   | PendingConsolePaymentText
+  | PendingConsoleRaffleWinner
   | PendingConsoleWindow
   | PendingConsoleLaunch
   | PendingConsoleSet
@@ -874,6 +895,10 @@ const consoleQuestionIntents = {
   "console-payment-text": {
     intent: "set-auction-payment-text",
     foreign: "foreign payment text answer ignored",
+  },
+  "console-raffle-winner": {
+    intent: "pick-raffle-winner",
+    foreign: "foreign raffle winner answer ignored",
   },
   "console-window": {
     intent: "add-step-window",
@@ -1643,10 +1668,13 @@ async function handleMessage(
             }
           : { ...answer, intent: consoleQuestionIntents[pending.kind].intent },
       );
-      // Текст оплаты (PER-322) отвечает сводкой счетов, а не пультом.
+      // Текст оплаты (PER-322) отвечает сводкой счетов, а номер победителя
+      // (PER-727) — подтверждением итога, а не пультом.
       outcome = await (pending.kind === "console-payment-text"
         ? renderInvoicesResult
-        : renderConsoleResult)(ctx, runtime, result, {
+        : pending.kind === "console-raffle-winner"
+          ? renderRaffleWinnerResult
+          : renderConsoleResult)(ctx, runtime, result, {
         person: identity.person,
         questions,
         replyId,
@@ -1657,6 +1685,7 @@ async function handleMessage(
         result.kind !== "auction-raffle-prize-ask" &&
         result.kind !== "auction-final-time-ask" &&
         result.kind !== "payment-text-ask" &&
+        result.kind !== "raffle-winner-ask" &&
         result.kind !== "step-window-ask" &&
         result.kind !== "step-window-launch-ask" &&
         result.kind !== "lot-set-ask"
@@ -2106,6 +2135,7 @@ async function handleMessage(
         pending.kind === "console-raffle-prize" ||
         pending.kind === "console-final-time" ||
         pending.kind === "console-payment-text" ||
+        pending.kind === "console-raffle-winner" ||
         pending.kind === "console-window" ||
         pending.kind === "console-launch" ||
         pending.kind === "console-set" ||
@@ -2126,6 +2156,7 @@ async function handleMessage(
                 pending.kind === "console-raffle-prize" ||
                 pending.kind === "console-final-time" ||
                 pending.kind === "console-payment-text" ||
+                pending.kind === "console-raffle-winner" ||
                 pending.kind === "console-window" ||
                 pending.kind === "console-launch" ||
                 pending.kind === "console-set" ||
@@ -2620,6 +2651,26 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleInvoicesCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Итог розыгрыша вручную (PER-727): ряд «Итог розыгрыша» пульта видит
+    // только держатель права вести аукцион, подделанная кнопка получает отказ
+    // до Auction.
+    if (
+      action.kind === "console-raffle-winner" ||
+      action.kind === "console-raffle-winner-ask" ||
+      action.kind === "console-raffle-winner-pick" ||
+      action.kind === "console-raffle-winner-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleRaffleWinnerCallback(
+            ctx,
+            runtime,
+            questions,
+            person,
+            action,
+          )
         : await refuseConsole(ctx, person);
       return;
     }
@@ -9004,6 +9055,154 @@ function askConsolePaymentText(
   return askQuestion(ctx, questions, pending, paymentTextPrompt, ask.replaces);
 }
 
+// Итог розыгрыша вручную (PER-727). Сюда доходит только держатель права
+// вести аукцион; право на назначение решает Auction у Meetups. Своего
+// состояния нет: аукцион и номер билета едут в кнопке, а ключ итога рождается
+// на нажатие «Да».
+async function handleRaffleWinnerCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-raffle-winner"
+        | "console-raffle-winner-ask"
+        | "console-raffle-winner-pick"
+        | "console-raffle-winner-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const call = {
+    identity: person,
+    ...rpcCall(ctx, useCase),
+    auctionId: tokenToUuid(action.auction),
+  };
+  // «Повторить» после сбоя на «Да» ведёт к подтверждению, а не к итогу:
+  // итог, ответ на который потерялся, мог пройти.
+  const retry =
+    action.kind === "console-raffle-winner-confirm"
+      ? consoleRaffleWinnerPickData(action.auction, action.ticket)
+      : ctx.callbackQuery?.data;
+  const request = (): ExecuteRequest => {
+    switch (action.kind) {
+      case "console-raffle-winner":
+        return { ...call, intent: "view-raffle-winner", page: action.page };
+      case "console-raffle-winner-ask":
+        return { ...call, intent: "ask-raffle-winner" };
+      case "console-raffle-winner-pick":
+        return {
+          ...call,
+          intent: "prepare-raffle-winner",
+          ticket: action.ticket,
+        };
+      case "console-raffle-winner-confirm":
+        return {
+          ...call,
+          intent: "assign-raffle-winner",
+          ticket: action.ticket,
+          opId: createUuidV7(),
+        };
+      default: {
+        const _exhaustive: never = action;
+        return _exhaustive;
+      }
+    }
+  };
+  const result = await runtime.dispatcher.execute(request());
+  return renderRaffleWinnerResult(ctx, runtime, result, {
+    person,
+    questions,
+    retry,
+  });
+}
+
+// Экраны итога розыгрыша (PER-727); остальное — исходы пульта: отказы и сбои
+// рисуются, как у его команд.
+async function renderRaffleWinnerResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  switch (result.kind) {
+    case "raffle-winner":
+      await showScreen(ctx, raffleWinnerScreen(result));
+      return handled("raffle winner screen sent");
+    case "raffle-winner-ask":
+      await askRaffleWinner(ctx, context.questions, {
+        auctionId: result.auctionId,
+        tickets: result.tickets,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "raffle winner requested"
+          : "raffle winner asked again",
+      );
+    case "raffle-winner-confirm":
+      await showScreen(ctx, raffleWinnerConfirmScreen(result));
+      return handled("raffle winner confirmation sent");
+    case "raffle-winner-outcome":
+      await showScreen(ctx, raffleWinnerOutcomeScreen(result));
+      return handled(`raffle winner: ${result.note}`);
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
+// Вопрос о номере выигравшего билета (PER-727): диапазон — число билетов
+// пула, прочитанного перед вопросом.
+function askRaffleWinner(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    tickets: number;
+    error?: RaffleWinnerAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-raffle-winner",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      raffleWinnerAskErrorText(ask.error, ask.tickets),
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    raffleWinnerQuestionText(ask.tickets),
+    ask.replaces,
+  );
+}
+
 // «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
 // права вести аукцион; право на чтение и ставку решает Auction. Своего
 // состояния нет: лот, человек и цена едут в кнопке, а ключ ставки рождается
@@ -10654,6 +10853,11 @@ function stepOf(pending: PendingBody): QuestionStep {
       };
     case "floor-search":
       return { kind: "floor-search", auction: uuidToToken(pending.auctionId) };
+    case "console-raffle-winner":
+      return {
+        kind: "console-raffle-winner",
+        auction: uuidToToken(pending.auctionId),
+      };
     default: {
       const _exhaustive: never = pending;
       return _exhaustive;
@@ -10896,6 +11100,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-raffle-winner":
+      return {
+        kind: "console-raffle-winner",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10982,6 +11193,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-payment-text":
       // Вопрос о тексте оплаты задан со «Счетов».
       return { kind: "console-invoices", auction: step.auction, page: 0 };
+    case "console-raffle-winner":
+      // Вопрос о номере победителя задан с «Итога розыгрыша».
+      return { kind: "console-raffle-winner", auction: step.auction, page: 0 };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -11158,6 +11372,8 @@ function reopenData(step: QuestionStep): string {
       return consoleAskData(step.auction, step.position);
     case "floor-search":
       return floorSearchData(step.auction);
+    case "console-raffle-winner":
+      return consoleRaffleWinnerAskData(step.auction);
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -11225,6 +11441,11 @@ function answerParent(step: QuestionStep): Parent {
       return {
         name: invoicesLabel,
         data: consoleInvoicesData(step.auction),
+      };
+    case "console-raffle-winner":
+      return {
+        name: raffleWinnerLabel,
+        data: consoleRaffleWinnerData(step.auction),
       };
     default: {
       const _exhaustive: never = step;
@@ -11519,6 +11740,10 @@ function callbackUseCase(
     | "console-invoice-mark-confirm"
     | "console-payment-text"
     | "console-payment-text-remove"
+    | "console-raffle-winner"
+    | "console-raffle-winner-ask"
+    | "console-raffle-winner-pick"
+    | "console-raffle-winner-confirm"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
@@ -11719,6 +11944,10 @@ function callbackUseCase(
     case "console-invoice-mark-confirm":
     case "console-payment-text":
     case "console-payment-text-remove":
+    case "console-raffle-winner":
+    case "console-raffle-winner-ask":
+    case "console-raffle-winner-pick":
+    case "console-raffle-winner-confirm":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":

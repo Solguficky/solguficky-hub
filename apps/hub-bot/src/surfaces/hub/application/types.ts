@@ -2,6 +2,7 @@ import type {
   AccessRight,
   AuctionSummaryView,
   LotView,
+  RaffleTicketView,
   RaffleView,
 } from "../../../auction-ui/index.js";
 import type {
@@ -370,7 +371,8 @@ export type ExecuteRequest =
   | FloorBidsRequest
   | ParticipantRemovalRequest
   | LotSetsRequest
-  | AuctionInvoicesRequest;
+  | AuctionInvoicesRequest
+  | RaffleWinnerRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -1212,6 +1214,33 @@ export type AuctionInvoicesRequest =
       opId: string;
     });
 
+// Итог розыгрыша вручную (PER-727; ADR-066, дополнение 2026-10-24): экран
+// списка билетов со страницей, вопрос о номере, ответ на него, подтверждение
+// по номеру из кнопки и «Да» с ключом, рождённым на нажатие.
+export type RaffleWinnerRequest =
+  | (AuctionConsoleCall & { intent: "view-raffle-winner"; page: number })
+  | (AuctionConsoleCall & { intent: "ask-raffle-winner" })
+  | (AuctionConsoleCall & { intent: "pick-raffle-winner"; value: string })
+  | (AuctionConsoleCall & { intent: "prepare-raffle-winner"; ticket: number })
+  | (AuctionConsoleCall & {
+      intent: "assign-raffle-winner";
+      ticket: number;
+      opId: string;
+    });
+
+// Непринятый ответ о номере победителя: не номер или вне пула.
+export type RaffleWinnerAskError = "winner-format" | "winner-range";
+
+// Исход итога розыгрыша — свой экран. `already-drawn` называет выигравший
+// билет, `not-in-pool` — число билетов пула; `not-awaiting` — розыгрыш итога
+// не ждёт, `no-raffle` — розыгрыша у аукциона нет.
+export type RaffleWinnerOutcome =
+  | { note: "assigned"; ticket: RaffleTicketView }
+  | { note: "already-drawn"; ticket: RaffleTicketView }
+  | { note: "not-in-pool"; tickets: number }
+  | { note: "not-awaiting" }
+  | { note: "no-raffle" };
+
 // Непринятый ответ о тексте оплаты (PER-322): пустой после обрезки краёв или
 // длиннее предела Auction.
 export type PaymentTextAskError =
@@ -1603,6 +1632,26 @@ export type ExecuteResult =
       paymentInstructions?: string;
       note?: PaymentTextNote;
     }
+  // Итог розыгрыша вручную (PER-727): список билетов, вопрос о номере с
+  // числом билетов пула, подтверждение и исход.
+  | {
+      kind: "raffle-winner";
+      auctionId: string;
+      raffle: RaffleView;
+      page: number;
+    }
+  | {
+      kind: "raffle-winner-ask";
+      auctionId: string;
+      tickets: number;
+      error?: RaffleWinnerAskError;
+    }
+  | {
+      kind: "raffle-winner-confirm";
+      auctionId: string;
+      ticket: RaffleTicketView;
+    }
+  | ({ kind: "raffle-winner-outcome"; auctionId: string } & RaffleWinnerOutcome)
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
   | { kind: "payment-text-ask"; auctionId: string; error?: PaymentTextAskError }
   | { kind: "auction-invoice"; invoice: InvoiceRow }
