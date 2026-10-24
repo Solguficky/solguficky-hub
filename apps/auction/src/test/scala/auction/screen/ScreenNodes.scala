@@ -101,6 +101,10 @@ trait ScreenNodes { self: Suite & Matchers & ScalaFutures & Eventually & Postgre
         .futureValue
         .isRight shouldBe true
 
+    /** Администратор выставляет, меняет или снимает ориентировочное время финала (PER-663). */
+    def finalTime(auction: AuctionId, at: Option[Instant]): Unit =
+      commands.setFinalTime(auction, at, newOp(), person).futureValue shouldBe Right(())
+
     /** Ведущий закрывает лот финала; за последним лотом состава аукцион завершается (PER-607). */
     def close(auction: AuctionId, lot: LotId): Unit =
       commands.closeLot(auction, lot, newOp(), person).futureValue.isRight shouldBe true
@@ -143,12 +147,16 @@ trait ScreenNodes { self: Suite & Matchers & ScalaFutures & Eventually & Postgre
     } finally kit.shutdownTestKit()
   }
 
-  /** Аукцион в живом финале с одним лотом состава — тем же путём, что `AuctionWatchIntegrationSpec`. */
-  protected def liveFinal(node: Node): (AuctionId, LotId) = {
-    val auction = node.commands
+  /** Аукцион-черновик: экран показывает его как предстоящий с финалом. */
+  protected def drafted(node: Node): AuctionId =
+    node.commands
       .draft(MeetupId(newId()), newOp(), person)
       .futureValue
       .fold(denial => fail(s"the auction was not drafted: $denial"), _.auctionId)
+
+  /** Аукцион в живом финале с одним лотом состава — тем же путём, что `AuctionWatchIntegrationSpec`. */
+  protected def liveFinal(node: Node): (AuctionId, LotId) = {
+    val auction = drafted(node)
     val finalist = LotId(newId())
     node.commands.addLot(auction, finalist, newOp(), person).futureValue shouldBe Right(())
     node.sharding

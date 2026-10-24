@@ -19,6 +19,7 @@ import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Instant
 import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -27,9 +28,9 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /**
- * Страница экрана зала (PER-485) в настоящем Chromium против настоящего узла: первое открытие, обрыв и восстановление.
- * Между браузером и узлом — `StallingProxy`: обрыв зала — замолкшая сеть, а не закрытое соединение, и замечает его
- * только сторож тишины страницы.
+ * Страница экрана зала (PER-485) в настоящем Chromium против настоящего узла: первое открытие, обрыв и восстановление,
+ * и подпись времени финала (PER-701). Между браузером и узлом — `StallingProxy`: обрыв зала — замолкшая сеть, а не
+ * закрытое соединение, и замечает его только сторож тишины страницы.
  *
  * Сьют называется `*BrowserSpec` и идёт только под `AUCTION_BROWSER_TESTS=1`: ему нужны Docker и скачанный Chromium той
  * версии, что у Playwright в `build.sbt`.
@@ -134,6 +135,35 @@ final class ScreenPageBrowserSpec
           chromium.close()
           proxy.close()
         }
+      }
+    }
+
+    "write the final time in the community zone and follow its change and removal without a reload" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val auction = drafted(node)
+        val chromium = browser()
+        try {
+          val page = chromium.newPage()
+          // Часы страницы стоят: подпись «в тот же день» зависит от сегодняшней даты в поясе сообщества.
+          page.clock().setFixedTime(Instant.parse("2026-10-23T12:00:00Z").toEpochMilli)
+          page.navigate(s"http://127.0.0.1:${node.port}/screen/${auction.value}")
+          val finale = page.locator(".finale")
+
+          awaitStatus(page, "live")
+          assertThat(finale).hasText("Финал скоро")
+
+          node.finalTime(auction, Some(Instant.parse("2026-10-23T16:00:00Z")))
+          assertThat(finale).hasText("Финал в 19:00")
+
+          // Смена на другой день — тот же экран, без перезагрузки: подпись берёт дату.
+          node.finalTime(auction, Some(Instant.parse("2026-10-24T19:30:00Z")))
+          assertThat(finale).hasText("Финал 24 октября в 22:30")
+
+          node.finalTime(auction, None)
+          assertThat(finale).hasText("Финал скоро")
+        } finally chromium.close()
       }
     }
   }
