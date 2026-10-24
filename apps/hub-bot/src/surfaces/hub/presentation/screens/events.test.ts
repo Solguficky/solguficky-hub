@@ -66,7 +66,9 @@ describe("auction entry from the events", () => {
 
 describe("eventsScreen", () => {
   // Аукцион — событие от онлайн-торгов до конца финала (PER-669).
-  it("counts the auction as an event from the online trading to the end of the final", () => {
+  // Опубликованный запланированный аукцион — тоже событие (решение владельца
+  // 24.10.2026); скрытый — нет.
+  it("counts the auction as an event from its publication to the end of the final", () => {
     const going = (
       [
         "draft",
@@ -80,12 +82,19 @@ describe("eventsScreen", () => {
       ] as const
     ).filter((stage) => isAuctionEvent(summary(stage)));
     expect(going).toEqual([
+      "scheduled",
       "prebidding",
       "settling",
       "on-break",
       "lineup-frozen",
       "in-final",
     ]);
+  });
+
+  it("leaves a hidden scheduled auction out of the events", () => {
+    expect(isAuctionEvent({ ...summary("scheduled"), hidden: true })).toBe(
+      false,
+    );
   });
 
   it("lists a going auction with its entry and returns to the menu", () => {
