@@ -16,6 +16,7 @@ import auction.lot.LotFixtures.placeBid
 import auction.lot.LotFixtures.scheduleLot
 import auction.lot.OpId
 import auction.lot.ParticipantId
+import auction.lot.PlaceBidRejected
 import auction.lot.ScheduleLotRejected
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
@@ -187,7 +188,10 @@ final class PredictionsIntegrationSpec
         (auction, lot)
       }
       onDatabase(database) { node =>
-        eventually(bid(node, lot, opN = 71).futureValue shouldBe a[Right[?, ?]])
+        // Лидер, поставивший до рестарта, получает свой отказ лота в торгах, а не `LotNotOpen`: лот открыт.
+        eventually(bid(node, lot, opN = 71).futureValue should matchPattern {
+          case Left(PlaceBidRejected.BidderIsLeader(_)) =>
+        })
         Thread.sleep(500)
         node.predictions.mine(auction, person).futureValue.game.catalog shouldBe RoundStatus.Closed
         node.predictions.submit(auction, SubmitForecast(person, guess, newOp())).futureValue shouldBe
