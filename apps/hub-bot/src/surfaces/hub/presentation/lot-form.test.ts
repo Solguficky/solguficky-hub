@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { InputFile } from "grammy";
 import type { Update } from "grammy/types";
+import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createHarness,
@@ -27,11 +28,13 @@ import type {
   ScheduleLotResult,
 } from "../auction/port.js";
 import type { IdentityResolver } from "../identity/port.js";
+import { getFileTimeoutMs } from "./bot.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { newLotIdOf } from "./new-lot-id.js";
 import { type LotFormField, lotAskData } from "./parse-callback.js";
 import { money } from "./screens/auction.js";
 import type { FileDownload, TelegramFiles } from "./telegram-files.js";
+import { actionBudgetMs } from "./waiting.js";
 
 // Форма лота администратора в боте хаба (PER-319): входы в ленте и под
 // карточкой лота, вопросы и экран правки. Auction подменён одним состоянием на
@@ -86,6 +89,12 @@ function fakeAuction(
     edit?: (card: { lotId: string }) => LotCardResult | undefined;
     // Отказ команды фото; `undefined` — команда принята.
     photo?: () => LotPhotoResult | undefined;
+    // Сколько первых принятых фото теряют ответ: Auction фото добавил, а бот
+    // ответа не дождался (PER-728).
+    lostPhotoAnswers?: number;
+    // Бюджет действия, как у настоящего клиента: вызов после дедлайна не
+    // уходит в Auction и отказывает таймаутом (PER-728).
+    budget?: true;
     // Сколько первых чтений после `AddLot` read model ещё не знает лот.
     readLag?: number;
     // Пульт аукциона (PER-716): статус и сеты. Нет — форма пульта не видит.
@@ -93,6 +102,15 @@ function fakeAuction(
   } = {},
 ) {
   const lagging = new Map<string, number>();
+  let lostPhotoAnswers = options.lostPhotoAnswers ?? 0;
+  const overBudget = (meta?: RpcMetadata) =>
+    options.budget === true &&
+    meta?.deadlineAt !== undefined &&
+    meta.deadlineAt <= Date.now();
+  const budgetSpent = {
+    kind: "timeout",
+    cause: new Error("the action budget is exhausted"),
+  } as const;
   const imageLimit = options.imageLimit ?? 1024 * 1024;
   // Обложка лота у Auction до списка фото (PER-721): карточка несёт только
   // `image`, байты отдаёт `GetLotImage`.
@@ -184,7 +202,8 @@ function fakeAuction(
       syncCard(card.lotId);
       return { kind: "ok" };
     },
-    async addLotPhoto(_person, added) {
+    async addLotPhoto(_person, added, meta) {
+      if (overBudget(meta)) return budgetSpent;
       commands.push({ method: "addLotPhoto", args: added });
       const refused = options.photo?.();
       if (refused !== undefined) return refused;
@@ -208,6 +227,10 @@ function fakeAuction(
         },
       ]);
       syncCard(added.lotId);
+      if (lostPhotoAnswers > 0) {
+        lostPhotoAnswers -= 1;
+        return { kind: "timeout", cause: new Error("deadline exceeded") };
+      }
       return { kind: "ok", photos: refs(added.lotId) };
     },
     async removeLotPhoto(_person, removed) {
@@ -256,7 +279,8 @@ function fakeAuction(
       });
       return { kind: "ok" };
     },
-    async getLot(_person, lotId) {
+    async getLot(_person, lotId, meta) {
+      if (overBudget(meta)) return budgetSpent;
       const behind = lagging.get(lotId) ?? 0;
       if (behind > 0) {
         lagging.set(lotId, behind - 1);
@@ -455,10 +479,13 @@ function harness(
 }
 
 // Файлы Telegram: `getFile` отвечает путём по `file_id`, а скачивание по пути
-// отдаёт байты. Файл, которого тест не завёл, `getFile` не знает.
+// отдаёт байты. Файл, которого тест не завёл, `getFile` не знает. `delays` —
+// задержки ответов `getFile` по порядку вызовов (PER-728), `Infinity` — ответа
+// нет вовсе.
 function fakeTelegramFiles(
   stored: Record<string, Uint8Array> = {},
   download?: (path: string) => FileDownload,
+  delays: number[] = [],
 ) {
   const downloads: string[] = [];
   const files: TelegramFiles = {
@@ -478,7 +505,7 @@ function fakeTelegramFiles(
   const respond = (method: string, payload: unknown) => {
     if (method !== "getFile") return undefined;
     const fileId = (payload as { file_id: string }).file_id;
-    return fileId in stored
+    const answer = fileId in stored
       ? {
           file_id: fileId,
           file_unique_id: `u-${fileId}`,
@@ -489,6 +516,13 @@ function fakeTelegramFiles(
           error_code: 400,
           description: "Bad Request: invalid file_id",
         };
+    const delay = delays.shift() ?? 0;
+    if (delay === 0) return answer;
+    return new Promise((resolve) => {
+      if (delay !== Number.POSITIVE_INFINITY) {
+        setTimeout(() => resolve(answer), delay);
+      }
+    });
   };
   return { files, respond, downloads };
 }
@@ -1687,6 +1721,151 @@ describe("lot form photos", () => {
 
     expect(auction.methods()).toEqual(["addLotPhoto"]);
     expect(last(calls).text).toContain("Фото добавлено");
+  });
+});
+
+// Медленный Telegram и Auction на ответе фото (PER-728): у `getFile` свой срок
+// и один повтор, бюджет Auction считается после скачивания, а сбой на любом
+// шаге оставляет вопрос о фото открытым с причиной, без кадра сбоя.
+describe("lot photo answer under a slow Telegram", () => {
+  const lot = uuidToToken(existingLot);
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const photo = {
+    photo: [
+      { file_id: "large", file_unique_id: "l", width: 1280, height: 1280 },
+    ],
+  };
+  const photoQuestion =
+    "Пришли фото лота ответом на это сообщение — одно или альбомом. Фото встанут в конец, у лота их бывает до 10.";
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Ответ фото идёт, пока часы двигает тест.
+  async function answerWithin(
+    bot: { handleUpdate: (update: Update) => Promise<void> },
+    update: Update,
+    ms: number,
+  ) {
+    vi.useFakeTimers();
+    const handled = bot.handleUpdate(update);
+    await vi.advanceTimersByTimeAsync(ms);
+    await handled;
+    vi.useRealTimers();
+  }
+
+  it("asks getFile again after its own deadline and adds the photo", async () => {
+    const auction = fakeAuction({ lots: [scheduled], budget: true });
+    const telegram = fakeTelegramFiles({ large: jpeg }, undefined, [
+      Number.POSITIVE_INFINITY,
+    ]);
+    const { bot, calls, records } = harness("admin", auction, [], {
+      telegram,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+    await answerWithin(bot, reply(calls, photo), getFileTimeoutMs + 1);
+
+    expect(calls.filter((call) => call.method === "getFile")).toHaveLength(2);
+    expect(auction.methods()).toEqual(["addLotPhoto"]);
+    expect(last(calls).text).toContain("Фото добавлено");
+    expect(records.at(-1)?.fields).toMatchObject({ result: "ok" });
+  });
+
+  it("keeps the photo question open with a reason when getFile is slow twice", async () => {
+    const auction = fakeAuction({ lots: [scheduled], budget: true });
+    const telegram = fakeTelegramFiles({ large: jpeg }, undefined, [
+      Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
+    ]);
+    const { bot, calls, records } = harness("admin", auction, [], {
+      telegram,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+    await answerWithin(bot, reply(calls, photo), 2 * getFileTimeoutMs + 1);
+
+    expect(calls.filter((call) => call.method === "getFile")).toHaveLength(2);
+    expect(auction.commands).toEqual([]);
+    const answered = records.at(-1);
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Лот"]]);
+    expect(plain(last(calls))).toContain("Пришли фото ещё раз.");
+    const again = await reasked(
+      bot,
+      calls,
+      "Не получилось получить фото у Telegram.",
+    );
+    expect(again.text).toBe(["Сейчас: нет", photoQuestion].join("\n"));
+    expect(answered?.fields).toMatchObject({
+      result: "error",
+      error_category: "timeout",
+      use_case: "manage_lot",
+    });
+  });
+
+  it("does not let a slow getFile within its deadline spend the budget of AddLotPhoto", async () => {
+    const auction = fakeAuction({ lots: [scheduled], budget: true });
+    const slow = getFileTimeoutMs - 100;
+    expect(slow).toBeGreaterThan(actionBudgetMs - 100);
+    const telegram = fakeTelegramFiles({ large: jpeg }, undefined, [slow]);
+    const { bot, calls } = harness("admin", auction, [], { telegram });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+    await answerWithin(bot, reply(calls, photo), slow);
+
+    expect(calls.filter((call) => call.method === "getFile")).toHaveLength(1);
+    expect(auction.methods()).toEqual(["addLotPhoto"]);
+    expect(last(calls).text).toContain("Фото добавлено");
+  });
+
+  it("keeps the photo question open when AddLotPhoto times out, and the same photo again adds no second one", async () => {
+    const auction = fakeAuction({ lots: [scheduled], lostPhotoAnswers: 1 });
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const { bot, calls, records } = harness("admin", auction, [], {
+      telegram,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+    await bot.handleUpdate(reply(calls, photo));
+
+    const answered = records.at(-1);
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Лот"]]);
+    expect(plain(last(calls))).toContain("Пришли фото ещё раз.");
+    expect(answered?.fields).toMatchObject({
+      result: "error",
+      error_category: "timeout",
+      use_case: "manage_lot",
+    });
+    await reasked(bot, calls, "Не получилось сохранить фото.");
+
+    await bot.handleUpdate(reply(calls, photo));
+
+    expect(auction.methods()).toEqual(["addLotPhoto", "addLotPhoto"]);
+    expect(auction.commands[0]?.args).toEqual(auction.commands[1]?.args);
+    expect(auction.photos.get(existingLot)).toHaveLength(1);
+    expect(plain(last(calls))).toContain("Фото у лота: 1 из 10.");
+  });
+
+  it("keeps the photo question of the chain in the chain when AddLotPhoto times out", async () => {
+    const auction = fakeAuction({ lots: [scheduled], lostPhotoAnswers: 1 });
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const { bot, calls } = harness("admin", auction, [], { telegram });
+    await bot.init();
+    await bot.handleUpdate(press(lotAskData(lot, "image", true)));
+    const step = dataOf(question(calls).payload, "Отмена");
+
+    await bot.handleUpdate(reply(calls, photo));
+    await reasked(bot, calls, "Не получилось сохранить фото.");
+
+    expect(dataOf(question(calls).payload, "Отмена")).toBe(step);
+    await bot.handleUpdate(reply(calls, photo));
+    expect(auction.photos.get(existingLot)).toHaveLength(1);
+    expect(plain(last(calls))).toContain("Лот готов");
   });
 });
 

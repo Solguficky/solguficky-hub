@@ -464,7 +464,7 @@ import {
   type FileDownload,
   type TelegramFiles,
 } from "./telegram-files.js";
-import { startWaiting, type Waiting } from "./waiting.js";
+import { actionBudgetMs, startWaiting, type Waiting } from "./waiting.js";
 
 // Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
 // инфраструктуру (ADR-046). Значения совпадают с опцией grammY, чтобы между
@@ -7349,7 +7349,9 @@ async function renderLotAnswer(
 // Ответ на вопрос о фото лота (PER-452). Фото скачивается здесь, на краю: путь
 // файла даёт `getFile`, байты — порт скачивания, а юзкейс получает только
 // байты. Не фото и альбом — тот же вопрос с причиной, без Auction. Telegram
-// файл не отдал — тоже: фото можно прислать ещё раз, лот не менялся.
+// файл не отдал или Auction не ответил вовремя — тоже (PER-728): фото можно
+// прислать ещё раз, а повтор второго фото не заводит — `photoId` выводится из
+// лота и байтов.
 async function answerLotPhoto(
   ctx: UpdateContext,
   runtime: BotRuntime,
@@ -7401,6 +7403,8 @@ async function answerLotPhoto(
     }
     return askAgain("photo-needed", "lot photo answer asked again");
   }
+  // Скачивание — тоже ожидание человека: «печатает…» идёт с него.
+  ctx.waiting?.begin();
   const downloaded = await downloadPhoto(ctx, photos.files, input.fileId);
   if (downloaded.kind === "failed") {
     refuseAlbum();
@@ -7427,8 +7431,28 @@ async function answerLotPhoto(
     photoId: lotPhotoIdOf(answer.question.lotId, downloaded.bytes),
     image: downloaded.bytes,
     ...setScope(answer.question.set),
-    ...rpcCall(ctx, useCase),
+    ...afterTelegram(rpcCall(ctx, useCase)),
   });
+  if (retryable(result)) {
+    refuseAlbum();
+    await askLotQuestion(ctx, questions, {
+      question: answer.question,
+      error: "photo-not-saved",
+      replaces: answer.replyId,
+    });
+    return {
+      level: "warn",
+      message: "lot photo not saved",
+      result: "error",
+      use_case: useCase,
+      ...identity,
+      error_category:
+        result.kind === "dependency-rejected" && result.reason === "timeout"
+          ? "timeout"
+          : "dependency_unavailable",
+      error: "add_lot_photo_failed",
+    };
+  }
   // Исход добавления — один экран на альбом: следующий снимок правит экран
   // предыдущего, и число фото растёт на месте. У правки всего сета (PER-716)
   // исход — «Применено к K из M»; исход с непрошедшими лотами приходит своим
@@ -7476,32 +7500,92 @@ async function answerLotPhoto(
   return outcome;
 }
 
+/** Свой срок `getFile` у ответа фото (PER-728): обычно Telegram отвечает за доли секунды. */
+export const getFileTimeoutMs = 5_000;
+
 // Путь файла у Telegram, затем байты. Отказ `getFile` — тоже отказ скачивания:
-// человеку он говорит одно и то же.
+// человеку он говорит одно и то же. Залипший или сетевой отказ `getFile`
+// повторяется один раз (PER-728): Telegram эпизодически отвечает на него за
+// 6–12 секунд, а повтор обычно проходит сразу. Отказ Telegram по самому файлу
+// повтор не исправит.
 async function downloadPhoto(
   ctx: UpdateContext,
   files: TelegramFiles,
   fileId: string,
 ): Promise<FileDownload> {
-  let path: string | undefined;
-  try {
-    path = (await ctx.api.getFile(fileId)).file_path;
-  } catch (cause) {
-    return {
-      kind: "failed",
-      reason: "unavailable",
-      cause: new Error(
-        `getFile failed: ${cause instanceof GrammyError ? cause.description : "unknown"}`,
-      ),
-    };
+  let path = await filePathOf(ctx, fileId);
+  if (path.kind === "failed" && path.again) {
+    path = await filePathOf(ctx, fileId);
   }
-  return path === undefined
-    ? {
-        kind: "failed",
-        reason: "unavailable",
-        cause: new Error("getFile answered without file_path"),
-      }
-    : files.download(path);
+  if (path.kind === "failed") return path.failure;
+  return files.download(path.path);
+}
+
+type FilePath =
+  | { kind: "ok"; path: string }
+  | {
+      kind: "failed";
+      again: boolean;
+      failure: Extract<FileDownload, { kind: "failed" }>;
+    };
+
+async function filePathOf(
+  ctx: UpdateContext,
+  fileId: string,
+): Promise<FilePath> {
+  const failed = (
+    again: boolean,
+    reason: "timeout" | "unavailable",
+    message: string,
+  ): FilePath => ({
+    kind: "failed",
+    again,
+    failure: { kind: "failed", reason, cause: new Error(message) },
+  });
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  // Срок держит свой таймер, а не только сигнал: ответ, который транспорт не
+  // оборвал по сигналу, ожидание всё равно не держит.
+  const expired = new Promise<"expired">((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve("expired");
+    }, getFileTimeoutMs);
+  });
+  try {
+    const file = await Promise.race([
+      ctx.api.getFile(fileId, controller.signal),
+      expired,
+    ]);
+    if (file === "expired") {
+      return failed(true, "timeout", `getFile timed out after ${getFileTimeoutMs} ms`);
+    }
+    return file.file_path === undefined
+      ? failed(false, "unavailable", "getFile answered without file_path")
+      : { kind: "ok", path: file.file_path };
+  } catch (cause) {
+    if (controller.signal.aborted) {
+      return failed(true, "timeout", `getFile timed out after ${getFileTimeoutMs} ms`);
+    }
+    return cause instanceof GrammyError
+      ? failed(false, "unavailable", `getFile failed: ${cause.description}`)
+      : failed(
+          true,
+          "unavailable",
+          `getFile failed: ${cause instanceof HttpError ? "network" : "unknown"}`,
+        );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Бюджет действия у ответа фото отсчитывается после скачивания (PER-728):
+// вызовы Telegram в бюджет сервисов не входят (дизайн-код, «Ожидание»), и
+// медленный `getFile` не съедает дедлайн `AddLotPhoto`.
+function afterTelegram(call: RpcMetadata): RpcMetadata {
+  return call.deadlineAt === undefined
+    ? call
+    : { ...call, deadlineAt: Date.now() + actionBudgetMs };
 }
 
 // Отказ формы лота: кадр с выходом туда, где видно текущее состояние. Сбой
