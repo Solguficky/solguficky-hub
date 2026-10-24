@@ -431,17 +431,19 @@ export function renderEntryScreen(
         format: "html",
         text: renderFaqText(faq),
         keyboard: [
-          [
-            faq.detailsUrl === undefined
-              ? {
-                  text: "Прочитать подробнее",
-                  callback_data: entryCallback("details"),
-                }
-              : {
-                  text: `Прочитать подробнее${linkSign}`,
-                  url: faq.detailsUrl,
-                },
-          ],
+          // «Прочитать подробнее» — только со ссылкой организатора: полный
+          // текст FAQ уже в сообщении, а без адреса кнопка вела бы в кадр
+          // «ссылки нет» (решение владельца 24.10.2026).
+          ...(faq.detailsUrl === undefined
+            ? []
+            : [
+                [
+                  {
+                    text: `Прочитать подробнее${linkSign}`,
+                    url: faq.detailsUrl,
+                  },
+                ],
+              ]),
           [
             faq.questionUrl === undefined
               ? {
