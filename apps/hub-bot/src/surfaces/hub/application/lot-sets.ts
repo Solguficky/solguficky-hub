@@ -199,6 +199,16 @@ export function createLotSets(consoles: AuctionConsoles) {
     if (current.kind === "refused") return current.result;
     const { console } = current;
     if (!acceptsLots(console.status)) return noted(console, { kind: "frozen" });
+    // Повтор того же ответа (PER-699): идентификатор сета выведен из сообщения,
+    // и сет с ним уже заведён — открывается он сам, без команды. Пустой состав
+    // второй раз не уходит в Auction и не стирает лоты, которые в сет уже
+    // добавили, а предел сетов повтор не задевает.
+    const existing = console.lotSets.findIndex(
+      (each) => each.lotSetId === request.lotSetId,
+    );
+    if (existing !== -1) {
+      return { kind: "lot-set", console, index: existing, at: { page: 0 } };
+    }
     if (console.lotSets.length >= lotSetLimit) {
       return noted(console, { kind: "limit" });
     }

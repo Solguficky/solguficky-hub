@@ -61,7 +61,7 @@ import {
 } from "../../../core/notifications/outbid.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
-import { createUuidV7 } from "../../../core/uuid-v7.js";
+import { createUuidV7, uuidV7Of } from "../../../core/uuid-v7.js";
 import { acceptsLots } from "../application/auction-console.js";
 import {
   broadcastBodyLimit,
@@ -1604,23 +1604,35 @@ async function handleMessage(
         outcome = await refuseConsole(ctx, identity.person);
         return;
       }
-      // Ключ команды рождается на каждый ответ: в кнопку вопроса он не
-      // помещается, а сроки Auction заменяет целиком, и повтор даёт тот же итог.
-      // Повтор ответа об окне добавил бы второе такое же окно, но оно
-      // пересекается с первым по всем лотам, и Auction его отклонит.
+      // Ключ команды выводится из самого ответа (PER-699): повторная доставка
+      // того же сообщения Telegram приходит в Auction повтором команды и
+      // получает исходный ответ. Новое сообщение с тем же текстом — новая
+      // команда. Исключение — окно «Счастливых часов»: окна бот собирает из
+      // прочитанного пульта и дописывает новое, поэтому поздний повтор
+      // прислал бы окно дважды, а Auction ответил бы на тот же ключ исходным
+      // «принято», не сверяя состав, — и бот нарисовал бы окно, которого нет.
+      // Со своим ключом такой повтор честно получает отказ «пересекается».
+      // Ответ о запуске окна команды не шлёт: её ключ рождается на «Да».
       const answer = {
         identity: identity.person,
         auctionId: pending.auctionId,
         value: ctx.message.text,
-        opId: createUuidV7(),
+        opId:
+          pending.kind === "console-window"
+            ? createUuidV7()
+            : answerOpId(ctx.message, pending.kind),
         ...rpcCall(ctx, useCase),
       };
       const result = await runtime.dispatcher.execute(
         pending.kind === "console-set"
-          ? // Идентификатор сета выбирает вызывающий (ADR-073): он рождается
-            // на ответ, как ключ команды. Повтор ответа заведёт второй пустой
-            // сет с тем же названием — его видно и можно удалить.
-            { ...answer, intent: "add-lot-set", lotSetId: createUuidV7() }
+          ? // Идентификатор сета выбирает вызывающий (ADR-073): он выводится
+            // из ответа, как ключ команды, поэтому повтор того же сообщения
+            // сохраняет тот же сет, а не заводит второй.
+            {
+              ...answer,
+              intent: "add-lot-set",
+              lotSetId: answerOpId(ctx.message, "console-set-id"),
+            }
           : { ...answer, intent: consoleQuestionIntents[pending.kind].intent },
       );
       // Текст оплаты (PER-322) отвечает сводкой счетов, а не пультом.
@@ -1681,16 +1693,16 @@ async function handleMessage(
         outcome = await refuseConsole(ctx, identity.person);
         return;
       }
-      // Ключ команды рождается на каждый ответ: в кнопку вопроса он не
-      // помещается. Повтор ответа — новая цена того же лота, а не вторая
-      // продажа: ask продажи не создаёт.
+      // Ключ команды выводится из самого ответа (PER-699): повторная доставка
+      // того же сообщения не поднимает ask второй раз — Auction отвечает
+      // исходным исходом. Новое сообщение с той же ценой — новая команда.
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
         intent: "advance-final-ask",
         auctionId: pending.auctionId,
         position: pending.position,
         value: ctx.message.text,
-        opId: createUuidV7(),
+        opId: answerOpId(ctx.message, "final-ask"),
         ...rpcCall(ctx, useCase),
       });
       outcome = await renderConsoleResult(ctx, runtime, result, {
@@ -11380,6 +11392,30 @@ function callbackUseCase(
       return _exhaustive;
     }
   }
+}
+
+// Назначения ключей из ответа: вид вопроса пульта, цена ведущего и
+// идентификатор нового сета — у одного сообщения бывает и ключ команды, и id.
+type AnswerKeyPurpose =
+  | ConsoleQuestionPending["kind"]
+  | "final-ask"
+  | "console-set-id";
+
+/**
+ * `op_id` ответа на вопрос из самого сообщения Telegram (PER-699): чат,
+ * `message_id` и назначение ключа. Повторная доставка того же сообщения даёт
+ * тот же ключ, и Auction отвечает исходным исходом (ADR-047, окно `op_id`), а
+ * новое сообщение — новый. Назначение разводит ключи разных команд одного
+ * сообщения, а время UUIDv7 — дата сообщения, она у повтора та же.
+ */
+function answerOpId(
+  message: { chat: { id: number }; message_id: number; date: number },
+  purpose: AnswerKeyPurpose,
+): string {
+  return uuidV7Of(
+    `hub-bot:${purpose}:${message.chat.id}:${message.message_id}`,
+    message.date * 1000,
+  );
 }
 
 function questionKey(chatId: number | undefined, messageId: number): string {
