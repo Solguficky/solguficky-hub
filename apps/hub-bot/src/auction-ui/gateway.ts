@@ -62,7 +62,11 @@ export type AuctionResult =
 
 // Политика поверхности по правам, которые вывел Identity (ADR-064, RFC-016):
 // хаб требует `access-hub`, бот аукциона — `place-bids` и отсутствие
-// `access-hub`. Ни круга, ни набора шлюз не знает. `undefined` — пустить.
+// `access-hub`. Исключение — администратор (право `manage-members`, его даёт
+// только набор `admin`): он входит и в бот аукциона, чтобы проверять, как бот
+// ведёт себя у гостя (решение владельца 24.10.2026, пересматривает ADR-064,
+// п. 2 для администратора). Ни круга, ни набора шлюз не знает. `undefined` —
+// пустить.
 function refusal(
   surface: AuctionSurface["kind"],
   rights: readonly AccessRight[],
@@ -71,7 +75,8 @@ function refusal(
     case "hub":
       return rights.includes("access-hub") ? undefined : "not-admitted";
     case "auction":
-      if (rights.includes("access-hub")) return "in-community";
+      if (rights.includes("access-hub") && !rights.includes("manage-members"))
+        return "in-community";
       return rights.includes("place-bids") ? undefined : "not-admitted";
     default: {
       const _exhaustive: never = surface;
