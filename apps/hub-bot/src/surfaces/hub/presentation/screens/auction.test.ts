@@ -1262,7 +1262,8 @@ describe("lot set in the hub shell", () => {
     expect(plain(screen.text)).toContain("И ещё 2.");
   });
 
-  it("marks a lot of the set in the feed", () => {
+  // Решение владельца 24.10.2026: сет называет карточка, а не подпись ленты.
+  it("leaves the set out of the feed label", () => {
     const { screen } = auctionScreen({
       ...view([]),
       body: {
@@ -1291,6 +1292,6 @@ describe("lot set in the hub shell", () => {
     const rows = screen.keyboard.inline_keyboard.map((row) =>
       row.map((button) => plain(button.text)),
     );
-    expect(rows[0]).toEqual(["Носки · старт 500 ₽ · Сет «Лесные дары»"]);
+    expect(rows[0]).toEqual(["Носки · старт 500 ₽"]);
   });
 });
