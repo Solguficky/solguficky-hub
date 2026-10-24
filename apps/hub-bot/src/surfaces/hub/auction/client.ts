@@ -4,6 +4,7 @@ import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
+  type Http2SessionOptions,
 } from "@connectrpc/connect-node";
 import {
   BidSource,
@@ -53,6 +54,7 @@ import {
 } from "../../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../../core/auction/snapshot.js";
 import {
+  AUCTION_KEEPALIVE,
   type AuctionWatchSource,
   watchSourceOf,
 } from "../../../core/auction/watch.js";
@@ -224,10 +226,14 @@ export function createAuctionClient(
     timeoutMs = 3_000,
     onNamesRefused,
     onRaffleRefused,
+    keepalive = AUCTION_KEEPALIVE,
   }: RpcClientOptions &
-    Pick<AuctionAdapterOptions, "onNamesRefused" | "onRaffleRefused">,
+    Pick<AuctionAdapterOptions, "onNamesRefused" | "onRaffleRefused"> & {
+      // Keepalive соединения; тесты сжимают его до долей секунды.
+      keepalive?: Http2SessionOptions;
+    },
 ): AuctionClient & LotInfoReader {
-  const sessionManager = new Http2SessionManager(baseUrl);
+  const sessionManager = new Http2SessionManager(baseUrl, keepalive);
   const rpc = createClient(
     AuctionService,
     createGrpcTransport({
