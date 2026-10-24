@@ -362,16 +362,93 @@ describe("person relay", () => {
     expect(payloadOf(calls, "copyMessage")).toMatchObject({ chat_id: anya.id });
   });
 
-  // Тема от сбоя между двумя записями отвечает человеку, но не перетягивает
-  // его сообщения обратно к себе.
+  // Сбой записи пары не заводит человеку вторую тему: следующее сообщение
+  // дописывает пару уже заведённой темы, и карточка в ней одна.
+  it("opens one topic when the pair write fails on the first message", async () => {
+    let failPerson = true;
+    const kv = createMemoryKv(
+      (op, key) => failPerson && op === "put" && key.startsWith("person."),
+    );
+    const { bot, calls, pairs } = createSupportHarness({ kv });
+    await bot.handleUpdate(fromPerson({ text: "/start auction" }) as never);
+    await bot.handleUpdate(fromPerson({ text: "Привет" }) as never);
+    expect(calls.at(-1)?.payload).toMatchObject({ text: notDeliveredText });
+    failPerson = false;
+    calls.length = 0;
+    await bot.handleUpdate(fromPerson({ text: "Ещё раз" }) as never);
+    expect(methods(calls)).toEqual([
+      "sendMessage",
+      "copyMessage",
+      "setMessageReaction",
+    ]);
+    // Карточка помнит метку первого сообщения: тема заведена им.
+    expect(calls[0]?.payload).toMatchObject({
+      chat_id: supportGroupId,
+      message_thread_id: 1,
+      text: "Аня · @anya\nКруг: участник\nОткуда: бот аукциона\n14 октября",
+    });
+    expect(calls[1]?.payload).toMatchObject({ message_thread_id: 1 });
+    await expect(pairs.threadOf(anya.id)).resolves.toBe(1);
+    await expect(pairs.personOf(1)).resolves.toBe(anya.id);
+  });
+
+  it("opens one topic when KV fails both writes on the first message", async () => {
+    let failing = true;
+    const kv = createMemoryKv((op) => failing && op === "put");
+    const { bot, calls } = createSupportHarness({ kv });
+    await bot.handleUpdate(fromPerson({ text: "Привет" }) as never);
+    await bot.handleUpdate(fromPerson({ text: "Привет?" }) as never);
+    failing = false;
+    await bot.handleUpdate(fromPerson({ text: "Есть кто?" }) as never);
+    expect(
+      methods(calls).filter((method) => method === "createForumTopic"),
+    ).toHaveLength(1);
+    expect(payloadOf(calls.slice(-3), "copyMessage")).toMatchObject({
+      message_thread_id: 1,
+    });
+  });
+
+  it("opens a new topic when the unpaired one was deleted meanwhile", async () => {
+    let failPerson = true;
+    const kv = createMemoryKv(
+      (op, key) => failPerson && op === "put" && key.startsWith("person."),
+    );
+    const { bot, calls, pairs } = createSupportHarness({
+      kv,
+      respond: (method, payload) =>
+        method === "copyMessage" &&
+        (payload as { message_thread_id?: number }).message_thread_id === 1
+          ? refusal(400, "Bad Request: message thread not found")
+          : undefined,
+    });
+    await bot.handleUpdate(fromPerson({ text: "Привет" }) as never);
+    failPerson = false;
+    calls.length = 0;
+    await bot.handleUpdate(fromPerson({ text: "Ещё раз" }) as never);
+    expect(methods(calls)).toEqual([
+      "sendMessage",
+      "copyMessage",
+      "createForumTopic",
+      "sendMessage",
+      "copyMessage",
+      "setMessageReaction",
+    ]);
+    await expect(pairs.threadOf(anya.id)).resolves.toBe(2);
+    await expect(pairs.personOf(1)).resolves.toBeUndefined();
+  });
+
+  // Тема от сбоя между двумя записями, которую процесс забыл рестартом,
+  // отвечает человеку, но не перетягивает его сообщения обратно к себе.
   it("keeps the person in the new topic after an answer in the half-paired one", async () => {
     let failPerson = true;
     const kv = createMemoryKv(
       (op, key) => failPerson && op === "put" && key.startsWith("person."),
     );
-    const { bot, calls } = createSupportHarness({ kv });
-    await bot.handleUpdate(fromPerson({ text: "Привет" }) as never);
+    await createSupportHarness({ kv }).bot.handleUpdate(
+      fromPerson({ text: "Привет" }) as never,
+    );
     failPerson = false;
+    const { bot, calls } = createSupportHarness({ kv, firstThread: 1 });
     await bot.handleUpdate(fromPerson({ text: "Ещё раз" }) as never);
     expect(payloadOf(calls.slice(-2), "copyMessage")).toMatchObject({
       message_thread_id: 2,
