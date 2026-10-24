@@ -95,6 +95,11 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       assigned.reveal shouldBe Some(RaffleReveal(seed, None, Some(1)))
       assigned.reveal.flatMap(_.winningTicket) shouldBe Some(1)
       view(RaffleState.Drawn(terms, tickets, randomness, assignedAt)).get.byHand shouldBe false
+      // До фиксации пула режим называет настройка сервиса: тот, который запишет закрытие.
+      val ahead =
+        RaffleView.of(raffle(RaffleState.Open(terms, tickets)), person(1), closesAt.minusSeconds(1), Map.empty, true)
+      ahead.map(_.byHand) shouldBe Some(true)
+      view(RaffleState.Open(terms, tickets)).get.byHand shouldBe false
     }
 
     "shows a cancelled raffle with the registration of the viewer, without tickets and never with the seed" in {

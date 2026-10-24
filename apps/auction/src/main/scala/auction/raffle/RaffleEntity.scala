@@ -311,7 +311,7 @@ object RaffleEntity {
                           "raffle pool fixed",
                           StructuredArguments.keyValue("auction_id", auctionId),
                           StructuredArguments.keyValue("tickets", fixed.size),
-                          StructuredArguments.keyValue("draw", "beacon"),
+                          StructuredArguments.keyValue("draw", "automatic"),
                           StructuredArguments.keyValue("excluded", Raffle.excluded(answers).size),
                           StructuredArguments.keyValue("unverified", answers.count(_._2.isEmpty))
                         )

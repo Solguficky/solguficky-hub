@@ -40,7 +40,11 @@ export function raffleRegisteredParagraphs(
   const closes =
     raffle === undefined
       ? "Номер билета появится, когда регистрация закроется."
-      : `Номер билета появится, когда регистрация закроется — ${escapeHtml(options.moment(raffle.closesAt))}. Итог — через пару минут после этого.`;
+      : `Номер билета появится, когда регистрация закроется — ${escapeHtml(options.moment(raffle.closesAt))}. ${
+          raffle.drawnByHand === true
+            ? "Победителя выберут организаторы по списку билетов."
+            : "Итог — через пару минут после этого."
+        }`;
   return [closes, "Отменить регистрацию можно до её закрытия."];
 }
 
@@ -52,6 +56,11 @@ export const raffleProofLabel = "Как проверить честность";
 // Строка экрана участника до жеребьёвки вместо отпечатка: техника — на экране
 // проверки, а здесь только то, что она есть.
 const provableLine = "Итог проверяемый: как его проверить — по кнопке ниже.";
+
+// Ручной итог (PER-727) маяка не берёт, и кнопки проверки под ним нет.
+function provableLines(raffle: RaffleView): string[] {
+  return raffle.drawnByHand === true ? [] : [provableLine];
+}
 
 /** Абзацы тела экрана под заголовком, уже экранированные. */
 export function raffleParagraphs(
@@ -65,11 +74,13 @@ export function raffleParagraphs(
       return [
         rules,
         ...prizeLine(raffle),
-        `Регистрация до ${closesAt}. Итог — через пару минут после закрытия регистрации.`,
+        raffle.drawnByHand === true
+          ? `Регистрация до ${closesAt}. Победителя выберут организаторы по списку билетов после закрытия регистрации.`
+          : `Регистрация до ${closesAt}. Итог — через пару минут после закрытия регистрации.`,
         raffle.registered
           ? "<b>Ты зарегистрирован.</b> Отменить регистрацию можно до её закрытия."
           : "Ты пока не зарегистрирован.",
-        provableLine,
+        ...provableLines(raffle),
       ];
     case "closing":
       return [
@@ -78,7 +89,7 @@ export function raffleParagraphs(
         raffle.registered
           ? "Ты зарегистрирован: номер билета появится, когда пул зафиксируют."
           : "Ты не зарегистрирован.",
-        provableLine,
+        ...provableLines(raffle),
       ];
     case "awaiting-beacon":
       return [
@@ -136,6 +147,11 @@ export function raffleProofParagraphs(
   switch (raffle.status) {
     case "open":
     case "closing":
+      if (raffle.drawnByHand === true) {
+        return [
+          "Победителя выберут организаторы по списку билетов: маяк drand в этом розыгрыше не участвует.",
+        ];
+      }
       return [
         commitmentLines(raffle),
         "Seed раскроется после жеребьёвки: по нему любой пересчитает итог сам.",

@@ -34,6 +34,7 @@ import auction.prediction.PredictionRound
 import auction.prediction.SubmitForecast
 import auction.projection.LotSnapshotView
 import auction.projection.LotViews
+import auction.raffle.AssignRejected
 import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
 import auction.raffle.Raffle
@@ -93,7 +94,8 @@ final class AuctionGrpcService(
     notes: OperationNotes = OperationNotes.discarded,
     finalBids: FinalBids = FinalBids.empty,
     invoices: InvoiceGateway = InvoiceGateway.none,
-    invoiceViews: InvoiceViews = InvoiceViews.none
+    invoiceViews: InvoiceViews = InvoiceViews.none,
+    raffleByHand: Boolean = false
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -1034,20 +1036,31 @@ final class AuctionGrpcService(
 
   /**
    * Ручной итог розыгрыша (ADR-066, дополнение 2026-10-24, PER-727): форма, затем право вести аукцион у Meetups с
-   * воротами отменённой сходки, как у ручной отметки итогов прогнозов, затем розыгрыш. Номер билета и итог судит
-   * розыгрыш; ответ — розыгрыш глазами администратора.
+   * воротами отменённой сходки, как у ручной отметки итогов прогнозов, затем розыгрыш. Повтор своего `op_id` отвечает
+   * раньше права, как у отметок счёта (ADR-047): принятый итог не превращается в отказ сходки или `UNAVAILABLE`. Номер
+   * билета и итог судит розыгрыш; ответ — розыгрыш глазами администратора.
    */
   def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest): Future[wire.AssignRaffleWinnerResponse] =
     RequestMapping.assignRaffleWinner(in) match {
       case Left(error) => invalid(error)
       case Right(command) =>
-        val query = ConsoleQuery(command.auctionId, command.acting)
-        administered(query, ResponseMapping.assignWinnerDenied, MeetupGate.NotCancelled) { _ =>
-          raffles
-            .assign(command.auctionId, AssignWinner(command.ticket, command.opId))
-            .recoverWith(awaited)
-            .flatMap(outcome => viewed(command.auctionId, command.acting.participant, outcome))
-            .flatMap(outcome => RaffleMapping.assign(outcome).fold(refuse, Future.successful))
+        val assign = AssignWinner(command.ticket, command.opId)
+        def answer(outcome: Either[AssignRejected, Raffle]) =
+          viewed(command.auctionId, command.acting.participant, outcome)
+            .flatMap(viewedOutcome => RaffleMapping.assign(viewedOutcome).fold(refuse, Future.successful))
+        raffles.get(command.auctionId).recoverWith(awaited).flatMap { raffle =>
+          raffle.seen.get(command.opId) match {
+            case Some(_) =>
+              Raffle.decide(raffle, assign, clock.instant()) match {
+                case Left(rejected) => answer(Left(rejected))
+                case Right(_) => answer(Right(raffle))
+              }
+            case None =>
+              val query = ConsoleQuery(command.auctionId, command.acting)
+              administered(query, ResponseMapping.assignWinnerDenied, MeetupGate.NotCancelled) { _ =>
+                raffles.assign(command.auctionId, assign).recoverWith(awaited).flatMap(answer)
+              }
+          }
         }
     }
 
@@ -1210,7 +1223,9 @@ final class AuctionGrpcService(
       case _ => Future.successful(Map.empty[Int, String])
     }
     names.map(known =>
-      RaffleView.of(raffle, participant, clock.instant(), known).map(RaffleMapping.raffle(auction.value, _))
+      RaffleView
+        .of(raffle, participant, clock.instant(), known, raffleByHand)
+        .map(RaffleMapping.raffle(auction.value, _))
     )
   }
 

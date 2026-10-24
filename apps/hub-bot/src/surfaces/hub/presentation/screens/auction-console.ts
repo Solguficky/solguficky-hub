@@ -902,13 +902,13 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       consoleDiscardData(auction),
     );
   }
-  // Счета (PER-321): лоты продаются с общего дедлайна онлайн-недели, и с него
-  // же у аукциона появляются счета. Отменённый аукцион их сохраняет: проданный
-  // лот остаётся проданным.
   // Итог розыгрыша вручную (PER-727): ряд стоит, пока пул ждёт победителя.
   if (console.raffle?.status === "awaiting-winner") {
     nextRow(keyboard).text(raffleWinnerLabel, consoleRaffleWinnerData(auction));
   }
+  // Счета (PER-321): лоты продаются с общего дедлайна онлайн-недели, и с него
+  // же у аукциона появляются счета. Отменённый аукцион их сохраняет: проданный
+  // лот остаётся проданным.
   if (invoicesShown(console)) {
     nextRow(keyboard).text(invoicesLabel, consoleInvoicesData(auction));
   }

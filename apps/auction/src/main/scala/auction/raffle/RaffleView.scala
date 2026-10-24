@@ -58,9 +58,16 @@ object RaffleView {
 
   /**
    * `names` — снимок «номер — имя» на момент фиксации; номер без имени — имя стёрто или снимок ещё не записан.
-   * Розыгрыша нет — `None`.
+   * Розыгрыша нет — `None`. `byHandAhead` — настройка сервиса сейчас: до фиксации пула режим ещё не записан, и открытый
+   * розыгрыш называет тот, который зафиксирует закрытие, если настройка до него не сменится (PER-727).
    */
-  def of(raffle: Raffle, viewer: ParticipantId, now: Instant, names: Map[Int, String]): Option[RaffleView] = {
+  def of(
+      raffle: Raffle,
+      viewer: ParticipantId,
+      now: Instant,
+      names: Map[Int, String],
+      byHandAhead: Boolean = false
+  ): Option[RaffleView] = {
     def numbered(tickets: Vector[ParticipantId]): Vector[RaffleTicketView] =
       tickets.indices.map(index => RaffleTicketView(index + 1, names.get(index + 1))).toVector
 
@@ -102,7 +109,8 @@ object RaffleView {
             tickets = Vector.empty,
             myTicket = None,
             reveal = None,
-            prize = terms.prize
+            prize = terms.prize,
+            byHand = byHandAhead
           )
         )
       case RaffleState.Fixed(terms, tickets) if tickets.isEmpty =>

@@ -242,6 +242,17 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       Raffle.decide(drawn, AssignWinner(1, op(70)), assignedAt) shouldBe Left(AssignRejected.AlreadyDrawn(1))
     }
 
+    "reads a draw a rolled back image made over a pool waiting for the winner by hand as the draw" in {
+      val drawnAt = closesAt.plusSeconds(61)
+      step(waiting, op(91), RaffleEvent.RaffleDrawn(randomness, drawnAt)).state shouldBe
+        RaffleState.Drawn(
+          RaffleTerms(closesAt, seed, Quicknet.roundFor(closesAt)),
+          Vector(person(1), person(2)),
+          randomness,
+          drawnAt
+        )
+    }
+
     "is cancelled with the auction while it waits and kept once assigned" in {
       val cancelledAt = closesAt.plusSeconds(30)
       Raffle.decide(waiting, CancelRaffle(op(80)), cancelledAt) shouldBe

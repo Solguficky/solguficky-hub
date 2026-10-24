@@ -41,12 +41,12 @@ import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service.AddLotPhotoRequest
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AdvanceAskRequest
+import auction.v1.auction_service.AssignRaffleWinnerRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
-import auction.v1.auction_service.AssignRaffleWinnerRequest
 import auction.v1.auction_service.GetRaffleRequest
 import auction.v1.auction_service.HideAuctionRequest
 import auction.v1.auction_service.RegisterForRaffleRequest

@@ -537,7 +537,8 @@ object AuctionNode {
       changes: AuctionChanges,
       clock: Clock = Clock.systemUTC(),
       overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace,
-      invoices: InvoiceGateway = InvoiceGateway.none
+      invoices: InvoiceGateway = InvoiceGateway.none,
+      raffleByHand: Boolean = false
   ): HttpRequest => Future[HttpResponse] = {
     given ActorSystem[?] = system
     import system.executionContext
@@ -567,7 +568,8 @@ object AuctionNode {
       placeBidsRight = placeBidsRight,
       finalBids = SlickFinalBids(system),
       invoices = invoices,
-      invoiceViews = SlickInvoiceViews(system)
+      invoiceViews = SlickInvoiceViews(system),
+      raffleByHand = raffleByHand
     )
     GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
   }

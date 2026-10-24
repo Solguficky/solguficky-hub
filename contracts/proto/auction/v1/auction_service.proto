@@ -2472,7 +2472,8 @@ message Raffle {
 
   // Whether the winner is assigned by an administrator instead of drawn from
   // the beacon. The service decides it when registration closes, by its own
-  // setting, and the decision never changes. With it the pool waits with
+  // setting, and the decision never changes; with OPEN and CLOSING it tells
+  // the setting at the moment of the read. With it the pool waits with
   // AWAITING_WINNER, and the reveal of DRAWN carries the seed and
   // winning_ticket but no randomness and no value: there is nothing to
   // recompute.

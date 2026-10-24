@@ -303,6 +303,10 @@ object Raffle {
         RaffleState.Drawn(terms, tickets, randomness, at)
       case (RaffleState.AwaitingWinner(terms, tickets), RaffleEvent.WinnerAssigned(ticket, at)) =>
         RaffleState.Assigned(terms, tickets, ticket, at)
+      // Ядро жеребьёвку ручному пулу не даёт, но журнал — факт: образ, откаченный до PER-727, читает такой пул ждущим
+      // маяка и может провести жеребьёвку. Возврат на новый образ поднимает её итог, а не роняет розыгрыш.
+      case (RaffleState.AwaitingWinner(terms, tickets), RaffleEvent.RaffleDrawn(randomness, at)) =>
+        RaffleState.Drawn(terms, tickets, randomness, at)
       case (RaffleState.AwaitingWinner(terms, tickets), RaffleEvent.RaffleCancelled(at)) =>
         RaffleState.Cancelled(terms, tickets, at)
       case (RaffleState.Open(terms, entries), RaffleEvent.RaffleCancelled(at)) =>

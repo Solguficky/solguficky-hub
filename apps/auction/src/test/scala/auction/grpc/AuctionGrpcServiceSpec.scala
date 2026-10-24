@@ -169,6 +169,8 @@ import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
 import auction.raffle.Draw
 import auction.raffle.Raffle
+import auction.raffle.RaffleEnvelope
+import auction.raffle.RaffleEvent
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleState
 import auction.raffle.RaffleTerms
@@ -1198,6 +1200,27 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       accepted.getReveal.randomness shouldBe ""
       accepted.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, Some("Сова*")))
       raffles.reached shouldBe Vector(AssignWinner(2, OpId(UUID.fromString(raffleOp))))
+    }
+
+    "answers a repeat of its op_id with the raffle before the meetup is asked and leaves the raffle untouched" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val op = OpId(UUID.fromString(raffleOp))
+      val assigned = Raffle(
+        RaffleState.Assigned(raffleTerms, Vector(ViewerId), 1, Instant.EPOCH),
+        Map(op -> RaffleEnvelope(4, op, RaffleEvent.WinnerAssigned(1, Instant.EPOCH)))
+      )
+      val raffles = Raffles(assigned)
+      val grpc = service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = raffles)
+      grpc
+        .assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 1, raffleOp))
+        .futureValue
+        .getAccepted
+        .getReveal
+        .winningTicket shouldBe Some(1)
+      statusOf(
+        grpc.assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 2, raffleOp))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+      raffles.reached shouldBe empty
     }
 
     "refuses the winner by hand to a viewer whom the meetup does not confirm and leaves the raffle untouched" in {

@@ -48,6 +48,7 @@ just aspire auction
 | `AUCTION_MEETUPS_GRPC_URL` | нет | адрес gRPC Meetups, `http://<хост>:<порт>`, для проверки права администратора сходки; без него команды администратора аукциону отвечают `UNAVAILABLE` |
 | `AUCTION_IDENTITY_GRPC_URL` | нет | адрес gRPC Identity, `http://<хост>:<порт>`, для проверки права `place_bids` кандидатов розыгрыша при закрытии регистрации (ADR-066); тот же собственный токен `AUCTION_SERVICE_TOKEN`; без адреса пул фиксируется без исключений |
 | `AUCTION_RAFFLE_BEACON_URLS` | нет | зеркала маяка drand через запятую, не меньше двух разных; по умолчанию четыре публичных зеркала `quicknet`; значение раунда принимается при согласии двух |
+| `AUCTION_RAFFLE_DRAW` | `automatic` | кто подводит итог розыгрыша: `automatic` — жеребьёвка по маяку, `manual` — администратор в пульте ([ADR-066, дополнение 2026-10-24](../../docs/decisions/ADR-066-auction-raffle-commit-reveal-with-beacon.md#дополнение-2026-10-24-ручной-итог-по-настройке-сервиса)); читается в момент закрытия регистрации, иное значение — отказ старта |
 | `AUCTION_SERVICE_TOKEN` | нет, обязательна при адресе Meetups или Identity | собственный токен Auction как вызывающего Meetups и Identity; не совпадает ни с одним токеном вызывающих |
 | `AUCTION_DATABASE_JDBC_URL` | нет, обязательна | JDBC URL базы Auction без учётных данных, `jdbc:postgresql://<хост>:<порт>/auction` |
 | `AUCTION_DATABASE_USER` | нет, обязательна | пользователь базы |

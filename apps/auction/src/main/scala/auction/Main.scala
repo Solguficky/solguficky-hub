@@ -262,7 +262,8 @@ object Main {
           changes,
           clock,
           overdueGrace,
-          invoices
+          invoices,
+          raffle.byHand
         )
       )
       .onComplete(bound("grpc", system))
