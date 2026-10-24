@@ -32,6 +32,7 @@ import auction.projection.FinalBids
 import auction.prediction.PredictionGateway
 import auction.prediction.PredictionRound
 import auction.prediction.SubmitForecast
+import auction.prediction.SubmitRejected
 import auction.projection.LotSnapshotView
 import auction.projection.LotViews
 import auction.raffle.CancelRegistration
@@ -1006,6 +1007,18 @@ final class AuctionGrpcService(
         val participant = command.acting.participant
         auctions.current(command.auctionId).recoverWith(awaited).flatMap {
           case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          // Общий дедлайн закрывает раунд каталога в свой момент (ADR-067, дополнение 2026-10-24), а не когда entity
+          // прогнозов подтвердит закрытие: отправка в этом зазоре — отказ, а повтор принятой — исходный ответ.
+          case Some(auction) if catalogDeadlinePassed(auction, forecast.round) =>
+            predictions
+              .recall(command.auctionId, participant, forecast.round, command.opId)
+              .recoverWith(awaited)
+              .flatMap {
+                case Some(Right(accepted)) => Future.successful(PredictionMapping.accepted(accepted))
+                case Some(Left(rejected)) => PredictionMapping.refused(rejected).fold(refuse, Future.successful)
+                case None =>
+                  PredictionMapping.refused(SubmitRejected.RoundClosed).fold(refuse, Future.successful)
+              }
           case Some(auction) =>
             roundLots(auction, forecast.round).flatMap(forecast.foreignLot) match {
               // Повтор принятой отправки получает исходный ответ, даже если её лот с тех пор сняли из реестра.
@@ -1098,9 +1111,23 @@ final class AuctionGrpcService(
     }
 
   /**
-   * Лоты раунда, пока он может быть открыт: каталог — реестр запланированного аукциона и аукциона, открывшего торги,
-   * пока прогнозы не подтвердили закрытие раунда, финал — замороженный состав (ADR-067, п. 4). В остальных фазах
-   * `None`: раунд закрыт или не открыт, и это скажет игра.
+   * Прошёл ли общий дедлайн, закрывающий раунд каталога: по часам у аукциона в онлайн-торгах, по фазе — после них.
+   * Отменённый отвечает отказом прогнозов, а не дедлайна.
+   */
+  private def catalogDeadlinePassed(auction: Auction, round: PredictionRound): Boolean =
+    round == PredictionRound.Catalog && (auction.state match {
+      case AuctionState.Prebidding(config, _) => config.lotDeadline.exists(!clock.instant().isBefore(_))
+      case AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) |
+          AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) =>
+        true
+      case AuctionState.Initial | AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Cancelled(_, _, _) =>
+        false
+    })
+
+  /**
+   * Лоты раунда, пока он может быть открыт: каталог — реестр запланированного аукциона и аукциона в онлайн-торгах до
+   * общего дедлайна, финал — замороженный состав (ADR-067, п. 4). В остальных фазах `None`: раунд закрыт или не открыт,
+   * и это скажет игра.
    */
   private def roundLots(auction: Auction, round: PredictionRound): Option[Set[LotId]] =
     (round, auction.state) match {

@@ -10,7 +10,6 @@ import auction.lot.Envelope
 import auction.lot.LotState
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
-import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLotRejected
@@ -132,16 +131,14 @@ enum OpeningRejected {
  * Прогнозы (ADR-067, п. 4) entity ведёт по своим фактам так, чтобы после падения между двумя шагами оставалось «ещё не
  * сделано, кто-то повторит», а не «сделано не то, и никто не исправит». Раунд каталога открывается после
  * `AuctionScheduled`, раунд финала — после `FinalLineupFrozen`, игра отменяется после `AuctionCancelled`; каждое с
- * переспросом на тике и после recovery, пока прогнозы не ответят. Раунд каталога закрывается после записи
- * `PrebiddingStarted`, и `OpenLot` лоты не получают, пока прогнозы не подтвердили закрытие: вопросы к лотам и таймеры
- * их дедлайнов идут как обычно, а придержанные команды entity отправляет по подтверждению, — ставка до закрытия раунда
- * получает `LotNotOpen`. Общий дедлайн ждёт того же подтверждения, пока торги не начались: иначе они кончились бы, не
- * начавшись. Решает это чистый [[PredictionSteps]]. Пока стирание прогнозов в пути, остальные команды лежат в stash, а
- * ответы прогнозов на шаги, ушедшие до удаления, знания нового аукциона не трогают. Раунд финала закрывается до записи
- * `FinalStarted`, а прогнозы удаляются до записи `AuctionDiscarded`: после этих событий повторять было бы некому — лоты
- * состава возвращаются в торги только в финале, а удалённый аукцион ничего не переспрашивает. Прогнозы не ответили —
- * ответа на команду нет, и повтор с тем же `op_id` дописывает её, как у `StartNextLot`. Знание «прогнозы ответили»
- * несохраняемо, как знание о лотах: все команды прогнозов идемпотентны.
+ * переспросом на тике и после recovery, пока прогнозы не ответят. Раунд каталога открыт всю онлайн-неделю и закрывается
+ * после записи `PrebiddingDeadlineReached` — в момент общего дедлайна (ADR-067, дополнение 2026-10-24): открытие торгов
+ * и лотов закрытия не ждёт. Решает это чистый [[PredictionSteps]]. Пока стирание прогнозов в пути, остальные команды
+ * лежат в stash, а ответы прогнозов на шаги, ушедшие до удаления, знания нового аукциона не трогают. Раунд финала
+ * закрывается до записи `FinalStarted`, а прогнозы удаляются до записи `AuctionDiscarded`: после этих событий повторять
+ * было бы некому — лоты состава возвращаются в торги только в финале, а удалённый аукцион ничего не переспрашивает.
+ * Прогнозы не ответили — ответа на команду нет, и повтор с тем же `op_id` дописывает её, как у `StartNextLot`. Знание
+ * «прогнозы ответили» несохраняемо, как знание о лотах: все команды прогнозов идемпотентны.
  *
  * Итоги прогнозов (ADR-067, п. 8, PER-490) entity просит у отдельной entity портом [[AuctionResults]]: `Settle` уходит
  * там же, где записан `AuctionFinished`, и в конце онлайн-торгов без финалистов, а повтор — на тике переспроса и после
@@ -578,19 +575,11 @@ object AuctionEntity {
         // иначе старт торгов, принятый между стиранием и записью, остался бы с пустыми прогнозами.
         var wiping = false
 
-        // `OpenLot`, придержанные до закрытия раунда каталога. Несохраняемы, как знание о лотах: рестарт строит их
-        // заново тем же опросом.
-        var heldOpenings = Vector.empty[(LotId, OpenLot)]
-
         def follow(step: (LotRoster, List[LotInstruction])): Unit = {
           val (known, instructions) = step
           roster = known
           instructions.foreach {
             case LotInstruction.Ask(lot) => context.pipeToSelf(lots.stateOf(lot))(LotObserved(lot, _))
-            // Раунд каталога ещё открыт: лот остаётся в знании «открывается», а команду придерживает entity до
-            // подтверждения закрытия.
-            case LotInstruction.Open(lot, command) if PredictionSteps.holdsOpening(progress) =>
-              heldOpenings :+= lot -> command
             case LotInstruction.Open(lot, command) => context.pipeToSelf(lots.open(lot, command))(LotAnswered(lot, _))
             case LotInstruction.Arm(lot, deadline) =>
               // Дедлайн, истёкший за время простоя, даёт нулевую задержку: лот закрывается сразу (ADR-045).
@@ -1046,9 +1035,6 @@ object AuctionEntity {
                     followSets(after.auction)
                 }
               }
-            // Общий дедлайн ждёт закрытия раунда каталога, пока торги не начались, и спрашивается снова через тик.
-            case PrebiddingDue if PredictionSteps.holdsDeadline(state.auction, progress, roster) =>
-              Effect.none.thenRun(_ => timers.startSingleTimer(PrebiddingKey, PrebiddingDue, recheckEvery))
             case PrebiddingDue =>
               state.auction.state.started match {
                 case None => Effect.none
@@ -1062,6 +1048,8 @@ object AuctionEntity {
                     case Right(decision) =>
                       record(state.auction, decision, end.opId, Initiator.Scheduler, clock, newId) { (auction, _) =>
                         follow(LotRoster.settling(auction, (roster, Nil)))
+                        // Общий дедлайн закрывает раунд каталога (ADR-067, дополнение 2026-10-24).
+                        followPredictions(auction)
                       }
                   }
               }
@@ -1194,22 +1182,8 @@ object AuctionEntity {
             // Ответ на шаг, ушедший до записанного удаления, — о прежнем аукционе: знание нового он не трогает.
             case PredictionAnswered(_, sent, _) if sent != generation => Effect.none
             case PredictionAnswered(step, _, Success(_)) =>
-              // Переспрос мог послать шаг второй раз, пока первый был в пути: придержанные лоты пускает только первый.
-              val before = progress
               progress = PredictionSteps.answered(progress, step)
-              val held = heldOpenings
-              if (!PredictionSteps.holdsOpening(progress)) heldOpenings = Vector.empty
-              Effect.none.thenRun { after =>
-                if (PredictionSteps.releases(after.auction, before, step))
-                  after.auction.state match {
-                    // Торги идут: придержанные лоты открываются, и общий дедлайн, ждавший их, взводится заново.
-                    case AuctionState.Prebidding(_, _) =>
-                      held.foreach((lot, command) => context.pipeToSelf(lots.open(lot, command))(LotAnswered(lot, _)))
-                      armPrebidding(after.auction)
-                    // Торги кончились раньше подтверждения: открывать поздно, и опрос отметит лоты неоткрытыми.
-                    case _ => follow(LotRoster.survey(after.auction))
-                  }
-              }
+              Effect.none
             case PredictionAnswered(_, _, Failure(failure)) =>
               Effect.none.thenRun(_ => warnPredictions("predictions did not answer the auction", failure))
             // Снимок исходов отстал от продаж: подсчёт не начался, и следующий тик спросит снова — без записи.

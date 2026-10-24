@@ -65,13 +65,15 @@ async function roundView(
   return found;
 }
 
-async function opensAt(
+// Раунд каталога закрывается общим дедлайном онлайн-торгов (ADR-067,
+// дополнение 2026-10-24), и экран называет этот момент.
+async function closesAt(
   context: PredictionContext,
   auctionId: string,
 ): Promise<string | undefined> {
   return (
     await context.auction.getAuction({ viewer: context.viewer, auctionId })
-  )?.opensAt;
+  )?.closesAt;
 }
 
 async function predictionLotDetails(
@@ -135,10 +137,10 @@ export async function openPrediction(
       | "unanswered";
   },
 ): Promise<AuctionScreenBody> {
-  const [round, openAt] = await Promise.all([
+  const [round, closeAt] = await Promise.all([
     roundView(context, input.auctionId, input.round),
     input.round === "catalog"
-      ? opensAt(context, input.auctionId)
+      ? closesAt(context, input.auctionId)
       : Promise.resolve(undefined),
   ]);
   // Отказ Auction является авторитетным даже если чтение состояния отстаёт.
@@ -176,7 +178,7 @@ export async function openPrediction(
         ...(lotDetails.staleNominations.length === 0
           ? {}
           : { staleNominations: lotDetails.staleNominations }),
-        ...(openAt === undefined ? {} : { opensAt: openAt }),
+        ...(closeAt === undefined ? {} : { closesAt: closeAt }),
         ...(input.notice === undefined ? {} : { notice: input.notice }),
       },
     ],

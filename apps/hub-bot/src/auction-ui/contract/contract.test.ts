@@ -309,6 +309,7 @@ describe("auction contract self-check", () => {
       "bid: accepted, not extended",
       "bid: accepted, no extensions left",
       "predictions: root opens the active final round",
+      "predictions: root offers the catalog round during online trading",
       "predictions: open catalog round with only own answers",
       "predictions: mark a removed catalog lot in the open forecast",
       "predictions: switch to unopened final round",

@@ -5,7 +5,6 @@ import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.configInput
 import auction.catalog.LotId
 import auction.entity.AuctionGateway
-import auction.entity.AuctionPredictions
 import auction.entity.Initiator
 import auction.entity.LotEntity
 import auction.entity.LotGateway
@@ -17,7 +16,6 @@ import auction.lot.LotFixtures.placeBid
 import auction.lot.LotFixtures.scheduleLot
 import auction.lot.OpId
 import auction.lot.ParticipantId
-import auction.lot.PlaceBidRejected
 import auction.lot.ScheduleLotRejected
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
@@ -40,7 +38,6 @@ import java.time.temporal.ChronoUnit
 import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
-import scala.concurrent.Promise
 import scala.concurrent.duration.*
 import scala.util.Using
 
@@ -78,11 +75,8 @@ final class PredictionsIntegrationSpec
       store: SlickPredictionStore
   )
 
-  /**
-   * Узел на уже размеченной базе. `deaf` — прогнозы, чьё закрытие раунда записывается, а ответ аукциону теряется:
-   * рестарт между закрытием раунда и открытием лотов.
-   */
-  private def onDatabase[A](database: DatabaseSettings, deaf: Boolean = false)(use: Node => A): A = {
+  /** Узел на уже размеченной базе. */
+  private def onDatabase[A](database: DatabaseSettings)(use: Node => A): A = {
     val kit = ActorTestKit(s"auction-predictions-${UUID.randomUUID()}", nodeConfig(database))
     try {
       given ExecutionContext = kit.system.executionContext
@@ -90,15 +84,7 @@ final class PredictionsIntegrationSpec
       val sharding = AuctionNode.join(kit.system)
       val store = SlickPredictionStore(kit.system)
       AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-      val real = AuctionNode.registerPredictions(sharding, clock, UuidV7.generator(clock), store, 10.seconds)
-      val predictions =
-        if (!deaf) real
-        else
-          new AuctionPredictions {
-            export real.{cancel, discard, open}
-            def close(auctionId: String, round: PredictionRound): Future[Done] =
-              real.close(auctionId, round).flatMap(_ => Promise[Done]().future)
-          }
+      val predictions = AuctionNode.registerPredictions(sharding, clock, UuidV7.generator(clock), store, 10.seconds)
       AuctionNode.registerAuctions(
         kit.system,
         sharding,
@@ -116,7 +102,7 @@ final class PredictionsIntegrationSpec
   private def newOp(): OpId = OpId(UuidV7.generator(Clock.systemUTC())())
 
   /** Запланированный аукцион сходки с лотом в реестре, у которого есть условия торгов. */
-  private def scheduled(node: Node): (AuctionId, LotId) = {
+  private def scheduled(node: Node, phase: OnlinePhase = week): (AuctionId, LotId) = {
     val auction = node.commands
       .draft(MeetupId(UUID.randomUUID()), newOp(), person)
       .futureValue
@@ -128,7 +114,7 @@ final class PredictionsIntegrationSpec
       .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(scheduleLot(opN = 2), Initiator.Operator(person), _))
       .futureValue
       .isRight shouldBe true
-    node.commands.schedule(auction, configInput(Some(week)), newOp(), person).futureValue shouldBe Right(())
+    node.commands.schedule(auction, configInput(Some(phase)), newOp(), person).futureValue shouldBe Right(())
     (auction, lot)
   }
 
@@ -137,6 +123,9 @@ final class PredictionsIntegrationSpec
 
   private val guess =
     Forecast.parse(PredictionRound.Catalog, List(Nomination.TotalBids -> Answer.Number(120))).toOption.get
+
+  private val changed =
+    Forecast.parse(PredictionRound.Catalog, List(Nomination.TotalBids -> Answer.Number(150))).toOption.get
 
   private def journalMentions(database: DatabaseSettings, auction: AuctionId, text: String): Int =
     withConnection(database) { connection =>
@@ -156,20 +145,49 @@ final class PredictionsIntegrationSpec
 
   "predictions" should {
 
-    "keep the lots closed while the catalog round is open, also across a restart between its closing and the lots" in {
+    "accept and change a catalog prediction through the online week and refuse it after the common deadline" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
-      val (auction, lot) = onDatabase(database, deaf = true) { node =>
-        val (auction, lot) = scheduled(node)
+      onDatabase(database) { node =>
+        val shortWeek = OnlinePhase(
+          Instant.now().minusSeconds(3600),
+          Some(Instant.now().plusSeconds(15).truncatedTo(ChronoUnit.SECONDS)),
+          closesLots = true
+        )
+        val (auction, lot) = scheduled(node, shortWeek)
         eventually(node.predictions.mine(auction, person).futureValue.game.catalog shouldBe RoundStatus.Open)
         node.commands.startPrebidding(auction, newOp(), person).futureValue shouldBe Right(())
+        eventually(bid(node, lot, opN = 70).futureValue shouldBe a[Right[?, ?]])
+        node.predictions.submit(auction, SubmitForecast(person, guess, newOp())).futureValue shouldBe Right(guess)
+        node.predictions.submit(auction, SubmitForecast(person, changed, newOp())).futureValue shouldBe Right(changed)
+        val during = node.predictions.mine(auction, person).futureValue
+        during.game.catalog shouldBe RoundStatus.Open
+        during.forecasts shouldBe Map(PredictionRound.Catalog -> changed)
         eventually(node.predictions.mine(auction, person).futureValue.game.catalog shouldBe RoundStatus.Closed)
-        Thread.sleep(500)
-        bid(node, lot, opN = 70).futureValue shouldBe Left(PlaceBidRejected.LotNotOpen)
+        node.predictions.submit(auction, SubmitForecast(person, guess, newOp())).futureValue shouldBe
+          Left(SubmitRejected.RoundClosed)
+        node.predictions.mine(auction, person).futureValue.forecasts shouldBe Map(PredictionRound.Catalog -> changed)
+      }
+    }
+
+    "not reopen a catalog round closed by the former rule at the opening, also across a restart" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val (auction, lot) = onDatabase(database) { node =>
+        val (auction, lot) = scheduled(node)
+        eventually(node.predictions.mine(auction, person).futureValue.game.catalog shouldBe RoundStatus.Open)
+        node.sharding
+          .entityRefFor(PredictionEntity.TypeKey, auction.value.toString)
+          .ask[Done](PredictionEntity.Close(PredictionRound.Catalog, _))
+          .futureValue
+        node.commands.startPrebidding(auction, newOp(), person).futureValue shouldBe Right(())
+        eventually(bid(node, lot, opN = 70).futureValue shouldBe a[Right[?, ?]])
         (auction, lot)
       }
       onDatabase(database) { node =>
         eventually(bid(node, lot, opN = 71).futureValue shouldBe a[Right[?, ?]])
+        Thread.sleep(500)
+        node.predictions.mine(auction, person).futureValue.game.catalog shouldBe RoundStatus.Closed
         node.predictions.submit(auction, SubmitForecast(person, guess, newOp())).futureValue shouldBe
           Left(SubmitRejected.RoundClosed)
       }

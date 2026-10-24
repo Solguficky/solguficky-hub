@@ -587,36 +587,42 @@ final class AuctionEntitySpec
 
   "auction entity" should {
 
-    "opens the catalog round after scheduling and sends no lot an opening until the predictions confirm its closing" in {
+    "opens the catalog round after scheduling, opens lots without waiting for it and closes it at the common deadline" in {
       val predictions = Predictions()
       val closed = Promise[org.apache.pekko.Done]()
       predictions.closing = _ => closed.future
       entity = entityOf(lots, predictions = predictions)
       val opening = scheduledWith(lot)
       eventually(predictions.count("open Catalog") shouldBe 1)
+      time.instant0 = closesAt.minusSeconds(60)
       start(opening).reply.isRight shouldBe true
-      eventually(predictions.count("close Catalog") shouldBe 1)
-      eventually(lots.asked should contain(lot))
-      Thread.sleep(200)
-      lots.opens shouldBe empty
-      closed.success(org.apache.pekko.Done)
       eventually(roster.active shouldBe Set(lot))
       lots.opens.map(_._1) shouldBe Vector(lot)
+      predictions.count("close Catalog") shouldBe 0
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(predictions.count("close Catalog") should be >= 1)
+      entity.getState().auction.state.started.isDefined shouldBe true
+      entity.getState().auction.state should not be a[AuctionState.Prebidding]
+      closed.success(org.apache.pekko.Done)
     }
 
-    "asks to close the catalog round again on the tick and after a restart and opens no lot until it answers" in {
+    "asks to close the catalog round after the common deadline again on the tick and after a restart" in {
       val predictions = Predictions()
       predictions.closing = _ => Promise[org.apache.pekko.Done]().future
       entity = entityOf(lots, recheckEvery = 50.millis, predictions = predictions)
       val opening = scheduledWith(lot)
+      time.instant0 = closesAt.minusSeconds(60)
       start(opening).reply.isRight shouldBe true
-      eventually(predictions.count("close Catalog") should be >= 2)
-      entity.restart()
-      Thread.sleep(200)
-      lots.opens shouldBe empty
-      predictions.closing = _ => Future.successful(org.apache.pekko.Done)
       eventually(roster.active shouldBe Set(lot))
-      lots.opens.map(_._1) shouldBe Vector(lot)
+      Thread.sleep(200)
+      predictions.count("close Catalog") shouldBe 0
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(predictions.count("close Catalog") should be >= 2)
+      val asked = predictions.count("close Catalog")
+      entity.restart()
+      eventually(predictions.count("close Catalog") should be > asked)
     }
 
     "erases the predictions before the discard is written and answers nothing while they are silent" in {
