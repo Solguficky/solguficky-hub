@@ -294,6 +294,8 @@ export function createDispatcher(
         case "ask-auction-raffle-prize":
         case "set-auction-raffle-prize":
         case "remove-auction-raffle-prize":
+        case "ask-auction-payment-term":
+        case "set-auction-payment-term":
         case "set-auction-final":
         case "set-auction-visibility":
         case "ask-auction-final-time":

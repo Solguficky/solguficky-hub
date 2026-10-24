@@ -15,7 +15,6 @@ import {
   setLabel,
   setLotLabel,
   setLotLine,
-  setMark,
   setMoreLine,
 } from "../../../../auction-set.js";
 import {
@@ -561,15 +560,12 @@ function feedLabel(
       const title = item.title ?? untitled;
       const finalLabel =
         final === undefined ? null : finalFeedLabel(item, final, title);
-      // Отметка принадлежности к сету (ADR-073, п. 7): лот сета помечен в
-      // подписи, а название сета карточка называет.
-      const mark =
-        item.setName === undefined ? undefined : setMark(item.setName);
+      // Сет в подписи ленты не называется (решение владельца 24.10.2026,
+      // пересматривает ADR-073, п. 7): отметка съедала название, и одинаковые
+      // лоты сета нельзя было различить. Сет называет карточка лота.
       return finalLabel === null
-        ? lotButton(item, title, mark)
-        : buttonText(
-            mark === undefined ? finalLabel : `${finalLabel} · ${mark}`,
-          );
+        ? lotButton(item, title)
+        : buttonText(finalLabel);
     }
     case "feed.prev":
       return "←";
@@ -1075,10 +1071,8 @@ function favoriteState(status: LotStatusView, view: AuctionView): string {
 // Кнопка лота ленты и избранного: название, обрезанное под хвост с ценой,
 // отметкой лидера (прогон 14.10, №83) и, в ленте, отметкой сета, в пределе
 // подписи.
-function lotButton(item: FeedItem, title: string, mark?: string): string {
-  const tail = `${lotButtonTail(item, priceLabel(item.status))}${
-    mark === undefined ? "" : ` · ${mark}`
-  }`;
+function lotButton(item: FeedItem, title: string): string {
+  const tail = lotButtonTail(item, priceLabel(item.status));
   return buttonText(
     `${truncate(title, Math.max(1, BUTTON_LIMIT - tail.length))}${tail}`,
   );

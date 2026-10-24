@@ -371,7 +371,9 @@ export type AuctionBlock =
       answers: readonly PredictionAnswer[];
       lotNames: Readonly<Record<string, string>>;
       staleNominations?: readonly PredictionNomination[];
-      opensAt?: string;
+      // Общий дедлайн онлайн-торгов: в этот момент закрывается раунд каталога
+      // (ADR-067, дополнение 2026-10-24).
+      closesAt?: string;
       currency?: string;
       notice?:
         | "lot-not-in-round"

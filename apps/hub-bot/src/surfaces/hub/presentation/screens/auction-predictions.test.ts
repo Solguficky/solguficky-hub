@@ -63,7 +63,9 @@ describe("prediction screens in the hub shell", () => {
     );
 
     expect(shown.id).toBe("predictions");
-    expect(shown.text).toContain("закроются при открытии онлайн-торгов");
+    expect(shown.text).toContain(
+      "раунд закроется в момент общего дедлайна торгов",
+    );
     expect(shown.text).toContain("Кружка");
     expect(plain(shown.text)).toContain("12 345,67 ₽");
     expect(shown.text).not.toContain("чужой прогноз");
