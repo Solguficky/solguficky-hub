@@ -120,6 +120,9 @@ function adapter(rpc: {
   listMyInvoices?: Call;
   chooseFulfillment?: Call;
   removeLot?: Call;
+  getLotPhoto?: Call;
+  addLotPhoto?: Call;
+  removeLotPhoto?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -146,6 +149,9 @@ function adapter(rpc: {
     getPredictionResults: notUsed,
     submitPrediction: notUsed,
     getLotImage: notUsed,
+    getLotPhoto: (rpc.getLotPhoto ?? notUsed) as never,
+    addLotPhoto: (rpc.addLotPhoto ?? notUsed) as never,
+    removeLotPhoto: (rpc.removeLotPhoto ?? notUsed) as never,
     getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,
     getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
     getAuctionDaySummary: (rpc.getAuctionDaySummary ?? notUsed) as never,

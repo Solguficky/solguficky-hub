@@ -4,10 +4,12 @@ import auction.AuctionNode
 import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.configInput
 import auction.catalog.CardEdit
+import auction.catalog.CardInsertion
 import auction.catalog.ImageChange
 import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.catalog.NewCard
+import auction.catalog.PhotoId
 import auction.entity.Initiator
 import auction.entity.LotEntity
 import auction.entity.LotGateway
@@ -154,10 +156,13 @@ final class AuctionWatchIntegrationSpec
       try {
         val store = SlickLotCatalogStore(kit.system)
         val title = LotTitle("Солегуф").fold(refusal => fail(s"title refused: $refusal"), valid => valid)
-        store.insertIfAbsent(NewCard(lot, title, "описание", None)).futureValue shouldBe None
+        val photo = PhotoId(UUID.randomUUID())
+        store
+          .insertIfAbsent(NewCard(lot, title, "описание", None, photo))
+          .futureValue shouldBe a[CardInsertion.Inserted]
         queue.next(2.seconds) shouldBe Some(())
 
-        store.update(CardEdit(lot, title, "новое описание", ImageChange.Keep)).futureValue should not be empty
+        store.update(CardEdit(lot, title, "новое описание", ImageChange.Keep, photo)).futureValue should not be empty
         queue.next(2.seconds) shouldBe Some(())
       } finally kit.shutdownTestKit()
     }

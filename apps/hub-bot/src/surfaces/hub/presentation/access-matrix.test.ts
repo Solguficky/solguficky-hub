@@ -118,6 +118,7 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
           // Байты фото доступу не нужны: карточка уходит без изображения.
           image: {
             getLotImage: () => Promise.reject(new Error("no image here")),
+            getLotPhoto: () => Promise.reject(new Error("no image here")),
           },
         }),
       },

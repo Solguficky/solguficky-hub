@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
+import { maxLotPhotos } from "../../../../core/auction/lot-photos.js";
 import { marked, pictogram } from "../../../../core/pictograms.js";
 import {
   isSold,
@@ -24,8 +25,10 @@ import {
   lotAskData,
   lotCopyData,
   lotFormData,
-  lotImageRemoveConfirmData,
   lotKeepStepData,
+  lotPhotoRemoveConfirmData,
+  lotPhotoRemoveData,
+  lotPhotosData,
   lotPreviewData,
   lotRemoveConfirmData,
   lotRemoveData,
@@ -43,6 +46,7 @@ import {
   removeLabel,
   screenText,
   subjectLine,
+  submenuText,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -54,7 +58,8 @@ import type { ShownScreen } from "./show.js";
 // где человек сам выбирает, что поменять. Цена и шаг — один ряд: Auction
 // принимает их только парой.
 // Фото (PER-452) меняется, как тексты, и после старта торгов: это каталог, а не
-// условия торгов (ADR-057).
+// условия торгов (ADR-057). Фото у лота — список до десяти (PER-721): экран
+// «Фото лота» добавляет фото в конец и убирает любое.
 
 const untitled = "Лот без названия";
 // Заголовок карточки держит тот же предел; описание на экране правки — только
@@ -82,18 +87,37 @@ export function toLots(auctionId: string): Parent {
 }
 
 export const lotSavedNote: Record<
-  "created" | "text" | "terms" | "image" | "image-removed" | "ready",
+  "created" | "text" | "terms" | "ready",
   string
 > = {
   created: "Лот добавлен. Задай цену и шаг: без них он не выйдет на торги.",
   text: "Изменение сохранено.",
   terms: "Цена и шаг сохранены.",
-  image: "Фото сохранено.",
-  // Фото снято (PER-715).
-  "image-removed": "Фото убрано.",
   // Конец цепочки нового лота (PER-618): фото принято или пропущено.
   ready: "Лот готов. Описание — по желанию: его добавляет «Изменить лот».",
 };
+
+/** Исход команды фото: добавлено, убрано или снимать было нечего. */
+export type PhotoSaved = "photo-added" | "photo-removed" | "photo-missing";
+
+/** Предел фото у лота (PER-721): тот же держит Auction, общий у обоих ботов. */
+export const lotPhotoLimit = maxLotPhotos;
+
+/**
+ * Исход команды фото (PER-715, PER-721) с числом фото после неё: число берётся
+ * из ответа Auction, а не из отстающего чтения.
+ */
+export function photoSavedNote(saved: PhotoSaved, count: number): string {
+  const done =
+    saved === "photo-added"
+      ? "Фото добавлено."
+      : saved === "photo-removed"
+        ? "Фото убрано."
+        : "Этого фото у лота уже нет.";
+  return count === 0
+    ? `${done} У лота нет фото.`
+    : `${done} Фото у лота: ${count} из ${lotPhotoLimit}.`;
+}
 
 /**
  * Строки над вопросом цепочки нового лота (PER-618): что уже сделано. Они
@@ -107,31 +131,108 @@ export const lotChainLead = {
 /** «Пропустить» под вопросом о фото в цепочке нового лота (PER-618). */
 export const skipPhotoLabel = "Пропустить";
 
-/** «Убрать фото» под вопросом о фото лота с фото (PER-715). */
-export const removePhotoLabel = marked(pictogram.remove, "Убрать фото");
+/**
+ * «Добавить фото» на экране «Фото лота» (PER-721): экран формы админский
+ * целиком, и знака у кнопки нет (`pictogram.admin`).
+ */
+export const addPhotoLabel = "Добавить фото";
+
+/** «Убрать фото N» на экране «Фото лота» (PER-715, PER-721). */
+export function removePhotoLabel(index: number): string {
+  return marked(pictogram.remove, `Убрать фото ${index}`);
+}
+
+function photoCountLine(count: number): string {
+  return count === 0
+    ? "Фото пока нет."
+    : `Фото: ${count} из ${lotPhotoLimit}. Первое — обложка: оно открывает карточку и стоит на экране зала.`;
+}
 
 /**
- * Подтверждение снятия фото (PER-715). Вернуть фото бот не может — его
- * присылают заново, — поэтому «Да» красное, как у «Убрать материал». «Нет»
- * задаёт вопрос о фото заново: подтверждение открыто с него.
+ * Экран «Фото лота» (PER-721): сколько фото, «Добавить фото» и «Убрать фото N»
+ * по порядку показа. Участник листает их каруселью в карточке; посмотреть
+ * их можно «Глазами участника». У лота с пределом фото добавить нечего: строка
+ * говорит, что сначала нужно убрать одно.
  */
-export function lotImageRemoveConfirmScreen(
-  lot: LotFormView & { imagePrint: string },
+export function lotPhotosScreen(lot: LotFormView): ShownScreen {
+  const token = uuidToToken(lot.lotId);
+  const count = lot.photos.length;
+  const full = count >= lotPhotoLimit;
+  const keyboard = new InlineKeyboard();
+  // У лота полного сета «Добавить фото» сначала спрашивает, только ли этот
+  // лот или все лоты сета (PER-716): фото встанет в конец каждого.
+  const set = lot.registry?.set;
+  if (!full) {
+    keyboard.text(
+      addPhotoLabel,
+      set !== undefined && set.size >= 2
+        ? lotScopeData(token, "image")
+        : lotAskData(token, "image"),
+    );
+  }
+  lot.photos.forEach((_, index) => {
+    nextRow(keyboard).text(
+      removePhotoLabel(index + 1),
+      lotPhotoRemoveData(token, index + 1),
+    );
+  });
+  return {
+    id: "lot-photos",
+    text: submenuText(
+      "Фото лота",
+      truncate(lot.title ?? untitled, titleLimit),
+      escapeHtml(
+        [
+          photoCountLine(count),
+          ...(full
+            ? [
+                `Больше ${lotPhotoLimit} фото у лота не бывает: чтобы добавить новое, убери одно.`,
+              ]
+            : []),
+        ].join("\n"),
+      ),
+    ),
+    keyboard: withNav(keyboard, {
+      name: "Изменить лот",
+      data: lotFormData(token),
+    }),
+    format: "HTML",
+  };
+}
+
+/**
+ * Подтверждение снятия фото (PER-715, PER-721). Вернуть фото бот не может — его
+ * присылают заново, — поэтому «Да» красное, как у «Убрать материал». «Нет»
+ * возвращает на экран фото: подтверждение открыто с него.
+ */
+export function lotPhotoRemoveConfirmScreen(
+  lot: LotFormView,
+  index: number,
+  print: string,
 ): ShownScreen {
   const token = uuidToToken(lot.lotId);
+  const count = lot.photos.length;
   return {
     id: "lot-image-remove-confirm",
     text: screenText(
       "Убрать фото?",
       subjectLine(lot.title ?? untitled),
       escapeHtml(
-        "Участники увидят карточку лота без фото. Вернуть его можно, только прислав фото заново.",
+        [
+          `Фото ${index} из ${count}.`,
+          count === 1
+            ? "Участники увидят карточку лота без фото."
+            : index === 1
+              ? "Участники больше не увидят его в карточке, обложкой станет следующее фото."
+              : "Участники больше не увидят его в карточке лота.",
+          "Вернуть его можно, только прислав фото заново.",
+        ].join(" "),
       ),
     ),
     keyboard: confirmKeyboard({
       yes: "Да, убрать фото",
-      yesData: lotImageRemoveConfirmData(token, lot.imagePrint),
-      noData: lotAskData(token, "image"),
+      yesData: lotPhotoRemoveConfirmData(token, print),
+      noData: lotPhotosData(token),
       irreversible: true,
     }),
     format: "HTML",
@@ -241,6 +342,28 @@ export function lotStepModeScreen(
 }
 
 /**
+ * Исход команды фото (PER-721): исход в заголовке, число фото абзацем, «Фото лота»
+ * — к следующему фото одним нажатием, «‹ Лот» — к карточке.
+ */
+export function lotPhotoSavedScreen(
+  lot: LotFormView,
+  saved: PhotoSaved,
+): ShownScreen {
+  return {
+    id: "outcome",
+    text: outcomeText(photoSavedNote(saved, lot.photos.length), lot.title),
+    keyboard: withNav(
+      new InlineKeyboard().text(
+        "Фото лота",
+        lotPhotosData(uuidToToken(lot.lotId)),
+      ),
+      toLot(lot.lotId),
+    ),
+    format: "HTML",
+  };
+}
+
+/**
  * Исход правки лота — свой экран (PER-472): исход в заголовке, название лота
  * жирным. «Изменить лот» возвращает к правке одним нажатием, «‹ Лот» — к
  * карточке.
@@ -281,7 +404,7 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
       : ([
           [marked(pictogram.title, "Название"), field("title")],
           [marked(pictogram.description, "Описание"), field("description")],
-          [marked(pictogram.photo, "Фото"), field("image")],
+          [marked(pictogram.photo, "Фото"), lotPhotosData(token)],
         ] satisfies [string, string][])),
     ...(lot.terms.kind === "closed"
       ? []
@@ -313,7 +436,7 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
       [
         `Название: ${truncate(lot.title ?? untitled, titleLimit)}`,
         `Описание: ${lot.description === "" ? "нет" : truncate(lot.description, descriptionLimit)}`,
-        `Фото: ${lot.hasImage ? "есть" : "нет"}`,
+        `Фото: ${lot.photos.length === 0 ? "нет" : lot.photos.length}`,
         ...termsLines(lot.terms),
         ...(set === undefined ? [] : [`Сет: ${set.name}, лотов: ${set.size}`]),
       ]
@@ -345,10 +468,7 @@ const lotAskErrors: Record<LotAskError, string> = {
   "image-too-large": "Фото слишком большое, аукцион его не принял.",
   "unsupported-image": "Аукцион не узнал в этом файле изображение.",
   "photo-needed": "Нужна фотография, а не текст, файл или стикер.",
-  "photo-album": "Нужна одна фотография, альбом не подходит.",
   "photo-unavailable": "Не получилось получить фото у Telegram.",
-  "photo-changed":
-    "Фото уже сменилось. Ничего не убрано: посмотри новое фото и реши заново.",
   "copies-count": `Нужно целое число от ${minLotCopies} до ${maxLotCopies}.`,
 };
 
@@ -413,10 +533,11 @@ function prompt(question: LotQuestion): string {
         : `Пороги шага — строками «от цены — шаг». Цена считается от 0, а не от стартовой: первый порог всегда 0. Дальше цены растут, а шаг не уменьшается. Например:\n${tiersExample}\nДо 5 000 ₽ шаг 100 ₽, с 5 000 ₽ — 250 ₽.`;
     case "image":
       return question.chain === true
-        ? "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота. Нет фото под рукой — «Пропустить», его можно добавить потом."
-        : "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
+        ? "Пришли фото лота ответом на это сообщение — одно или альбомом. Их увидят участники на карточке лота, первое — обложка. Нет фото под рукой — «Пропустить», их можно добавить потом."
+        : `Пришли фото лота ответом на это сообщение — одно или альбомом. Фото встанут в конец, у лота их бывает до ${lotPhotoLimit}.`;
+
     case "copies":
-      return `Сколько всего нужно таких лотов вместе с этим? Целое число от ${minLotCopies} до ${maxLotCopies}. Копии получат то же описание, фото, цену и шаг, все лоты назовутся «название | N из M» и соберутся в сет.`;
+      return `Сколько всего нужно таких лотов вместе с этим? Целое число от ${minLotCopies} до ${maxLotCopies}. Копии получат то же описание, все фото, цену и шаг, все лоты назовутся «название | N из M» и соберутся в сет.`;
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -455,7 +576,9 @@ function current(
           ? undefined
           : money(lot.terms.step);
     case "image":
-      return lot.hasImage ? "фото есть, новое его заменит" : "нет";
+      return lot.photos.length === 0
+        ? "нет"
+        : `фото ${lot.photos.length} из ${lotPhotoLimit}, новое встанет в конец`;
     case "copies":
       return undefined;
     default: {
@@ -521,6 +644,7 @@ export const lotRefusalText: Record<
   "set-limit":
     "Сетов в аукционе уже десять. Копии собираются в новый сет, а места для него нет.",
   "removal-frozen": "Торги уже начались. Удалить лот из аукциона нельзя.",
+  "photo-limit": photoLimitText(lotPhotoLimit),
 };
 
 /** Строка вопроса правки всех лотов сета (PER-716). */
@@ -534,7 +658,9 @@ function setScopeNote(
     ? `Новое название получат ${all}, номер «| N из M» бот допишет сам.`
     : question.kind === "price" || question.kind === "step"
       ? `Цену и шаг получат ${all}, где торги ещё не начались.`
-      : `Изменение получат ${all}.`;
+      : question.kind === "image"
+        ? `Фото встанет в конец у каждого лота сета${size === undefined ? "" : ` (${size})`}, где фото меньше ${lotPhotoLimit}.`
+        : `Изменение получат ${all}.`;
 }
 
 // Поле в подписи выбора: что именно правится у одного лота или у всех.
@@ -561,7 +687,9 @@ export function lotScopeScreen(
       "Какие лоты изменить?",
       subjectLine(lot.title ?? untitled),
       escapeHtml(
-        `Лот входит в сет «${set.name}». ${scopeFieldWord[field]} можно изменить только у этого лота или у всех лотов сета сразу.`,
+        field === "image"
+          ? `Лот входит в сет «${set.name}». Фото можно добавить только этому лоту или всем лотам сета сразу — в конец их фото.`
+          : `Лот входит в сет «${set.name}». ${scopeFieldWord[field]} можно изменить только у этого лота или у всех лотов сета сразу.`,
       ),
     ),
     keyboard: withNav(
@@ -582,6 +710,7 @@ const missWords: Record<LotSetMiss, string> = {
   sold: "лот продан",
   "card-closed": "лот закрыт",
   "terms-closed": "торги по лоту начались",
+  "photo-limit": "у лота предел фото",
   "not-in-auction": "лота нет в аукционе",
   unavailable: "аукцион не ответил",
   refused: "аукцион отказал",
@@ -702,4 +831,12 @@ export function lotRemovedScreen(removed: {
     keyboard: withNav(new InlineKeyboard(), toLots(removed.auctionId)),
     format: "HTML",
   };
+}
+
+/**
+ * Отказ на фото сверх предела (PER-721). Число — из отказа Auction, как у
+ * предела размера: предел держит он.
+ */
+export function photoLimitText(maxPhotos: number): string {
+  return `У лота уже ${maxPhotos} фото — больше не бывает. Чтобы добавить новое, убери одно в «Фото лота».`;
 }

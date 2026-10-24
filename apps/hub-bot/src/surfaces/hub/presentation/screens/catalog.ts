@@ -386,6 +386,16 @@ export const screenCatalog = {
     parent: "lot-form",
     backName: "Шаг ставки",
   },
+  // Фото лота (PER-721): список до десяти, «Добавить фото» и «Убрать фото N».
+  // Родитель — форма лота, возврат в неё.
+  "lot-photos": {
+    class: "screen",
+    nav: "tree",
+    title: "Фото лота",
+    parent: "lot-form",
+    backName: "Фото лота",
+    subject: true,
+  },
   // Снятие фото лота (PER-715): фото бот вернуть не может, поэтому «Да»
   // красное, как у «Убрать материал».
   "lot-image-remove-confirm": {

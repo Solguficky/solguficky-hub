@@ -267,6 +267,27 @@ final class AuctionGrpcService(
           .recoverWith(awaited)
     }
 
+  /** Фото в конец списка (ADR-057, дополнение 2026-10-24): правило правки то же, что у карточки. */
+  def addLotPhoto(in: wire.AddLotPhotoRequest): Future[wire.AddLotPhotoResponse] =
+    RequestMapping.addLotPhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        catalog
+          .addPhoto(command.viewer, command.lotId, command.photoId, command.photo)
+          .map(ResponseMapping.addLotPhoto)
+          .recoverWith(awaited)
+    }
+
+  def removeLotPhoto(in: wire.RemoveLotPhotoRequest): Future[wire.RemoveLotPhotoResponse] =
+    RequestMapping.removeLotPhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        catalog
+          .removePhoto(command.viewer, command.lotId, command.photoId)
+          .map(ResponseMapping.removeLotPhoto)
+          .recoverWith(awaited)
+    }
+
   def setProxyLimit(in: wire.SetProxyLimitRequest): Future[wire.SetProxyLimitResponse] =
     RequestMapping.setProxyLimit(in) match {
       case Left(error) => invalid(error)
@@ -524,6 +545,24 @@ final class AuctionGrpcService(
           .flatMap {
             case Some(image) => Future.successful(ResponseMapping.lotImage(image))
             case None => refuse(Status.NOT_FOUND.withDescription("lot image not found"))
+          }
+    }
+
+  /** Байты одного фото лота (ADR-057, дополнение 2026-10-24). Видимость и `NOT_FOUND` — те же, что у `GetLotImage`. */
+  def getLotPhoto(in: wire.GetLotPhotoRequest): Future[wire.LotImage] =
+    RequestMapping.getLotPhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        lotConcealed(query.lotId, query.acting.viewer)
+          .flatMap {
+            case true => Future.successful(None)
+            case false => views.photo(query.lotId, query.photoId)
+          }
+          .flatMap {
+            case Some(image) => Future.successful(ResponseMapping.lotImage(image))
+            case None => refuse(Status.NOT_FOUND.withDescription("lot photo not found"))
           }
     }
 
