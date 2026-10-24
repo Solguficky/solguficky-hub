@@ -603,6 +603,11 @@ export function createAuctionAdapter(
                 step: wireMoney(window.step),
                 lotIds: [...window.lotIds],
               })),
+              // Срок оплаты счёта едет по той же причине (PER-722): без него
+              // Auction вернул бы срок платформы.
+              ...(week.paymentTermSeconds === undefined
+                ? {}
+                : { paymentTermSeconds: BigInt(week.paymentTermSeconds) }),
             },
           },
           options(meta),
@@ -1729,8 +1734,8 @@ function moneyOf(value: { minorUnits: bigint; currency: string }): Money {
   return { minorUnits, currency: value.currency };
 }
 
-// Конфигурацию собирает бот: конец позже начала, окна «Счастливых часов» и
-// момент розыгрыша задаёт человек, а остальные отказы — дефект сборки, а не
+// Конфигурацию собирает бот: конец позже начала, окна «Счастливых часов»,
+// момент розыгрыша и срок оплаты задаёт человек, а остальные отказы — дефект сборки, а не
 // ответ человеку.
 // Окно без `closes_at` бот не соберёт: сроки недели он шлёт всегда.
 function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
@@ -1761,6 +1766,9 @@ function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
       return { kind: "raffle-prize-blank" };
     case "rafflePrizeTooLong":
       return { kind: "raffle-prize-too-long" };
+    // Срок оплаты счёта (PER-722): правило то же, что проверяет бот.
+    case "paymentTermOutOfRange":
+      return { kind: "payment-term-out-of-range" };
     default:
       return defect(
         `schedule auction refused the configuration: ${reason.case ?? "no reason"}`,

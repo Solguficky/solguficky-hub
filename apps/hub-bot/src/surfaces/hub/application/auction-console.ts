@@ -32,6 +32,7 @@ import type {
   LaunchDraft,
   LineupPick,
   LotAmount,
+  PaymentTermAskError,
   Person,
   RaffleAskError,
   RafflePrizeAskError,
@@ -217,6 +218,37 @@ export function parsePrize(raw: string): RafflePrizeResult {
     return { kind: "rejected", error: "prize-too-long" };
   }
   return { kind: "ok", prize };
+}
+
+export type PaymentTermResult =
+  | { kind: "ok"; seconds: number }
+  | { kind: "rejected"; error: PaymentTermAskError };
+
+/** Пределы срока оплаты в днях — те же, что у Auction (ADR-047). */
+export const paymentTermDays = { min: 1, max: 30 } as const;
+
+const daySeconds = 24 * 60 * 60;
+
+/**
+ * Срок оплаты счёта (PER-722) — целое число дней от 1 до 30: «1», «7», «30».
+ * Слово «дн.» или «дней» после числа не мешает. Дробь, ноль и число вне
+ * предела не принимаются: срок называют участникам в днях.
+ */
+export function parsePaymentTerm(raw: string): PaymentTermResult {
+  const match = /^(\d{1,3})(?:\s*(?:дн\.?|дня|дней|день))?$/iu.exec(raw.trim());
+  if (match === null) {
+    return { kind: "rejected", error: "payment-term-format" };
+  }
+  const days = Number(match[1]);
+  if (days < paymentTermDays.min || days > paymentTermDays.max) {
+    return { kind: "rejected", error: "payment-term-range" };
+  }
+  return { kind: "ok", seconds: days * daySeconds };
+}
+
+/** Срок оплаты в целых днях, как его называет пульт; доли дня — вверх. */
+export function paymentTermInDays(seconds: number): number {
+  return Math.ceil(seconds / daySeconds);
 }
 
 export type WindowResult =
@@ -988,6 +1020,8 @@ export function createAuctionConsole(
     const windows = console.week?.windows ?? [];
     const raffleClosesAt = console.week?.raffleClosesAt;
     const rafflePrize = console.week?.rafflePrize;
+    // Срок оплаты едет так же (PER-722): без него Auction вернул бы семь дней.
+    const paymentTermSeconds = console.week?.paymentTermSeconds;
     const scheduled = await consoles.scheduleAuction(
       request.identity,
       {
@@ -999,6 +1033,7 @@ export function createAuctionConsole(
         windows,
         raffleClosesAt,
         rafflePrize,
+        paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -1016,6 +1051,9 @@ export function createAuctionConsole(
               windows,
               ...(raffleClosesAt === undefined ? {} : { raffleClosesAt }),
               ...(rafflePrize === undefined ? {} : { rafflePrize }),
+              ...(paymentTermSeconds === undefined
+                ? {}
+                : { paymentTermSeconds }),
             },
           },
           note: "week-saved",
@@ -1041,6 +1079,7 @@ export function createAuctionConsole(
       case "raffle-prize-without-raffle":
       case "raffle-prize-blank":
       case "raffle-prize-too-long":
+      case "payment-term-out-of-range":
         return storedRefused(scheduled);
       case "already-started":
         return after(request, "week-frozen");
@@ -1089,6 +1128,7 @@ export function createAuctionConsole(
         windows: week.windows,
         raffleClosesAt: week.raffleClosesAt,
         rafflePrize: week.rafflePrize,
+        paymentTermSeconds: week.paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -1109,6 +1149,7 @@ export function createAuctionConsole(
       case "raffle-prize-without-raffle":
       case "raffle-prize-blank":
       case "raffle-prize-too-long":
+      case "payment-term-out-of-range":
         return storedRefused(scheduled);
       case "not-administrator":
       case "meetup-not-found":
@@ -2036,6 +2077,7 @@ export function createAuctionConsole(
         windows,
         raffleClosesAt: week.raffleClosesAt,
         rafflePrize: week.rafflePrize,
+        paymentTermSeconds: week.paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -2066,6 +2108,7 @@ export function createAuctionConsole(
       case "raffle-prize-without-raffle":
       case "raffle-prize-blank":
       case "raffle-prize-too-long":
+      case "payment-term-out-of-range":
         return storedRefused(scheduled);
       case "meetup-cancelled":
         return meetupCancelled;
@@ -2107,6 +2150,7 @@ export function createAuctionConsole(
         windows: week.windows,
         raffleClosesAt,
         rafflePrize,
+        paymentTermSeconds: week.paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -2206,6 +2250,73 @@ export function createAuctionConsole(
           "raffle-removed",
         )
       : windowsRefused(request, scheduled);
+  }
+
+  // Срок оплаты счёта (PER-722) — часть той же конфигурации: команда отдаёт
+  // её целиком с новым сроком. Вопрос называет текущий срок в днях.
+  const paymentTermAsked = (week: ScheduledWeek, auctionId: string) => ({
+    kind: "auction-payment-term-ask" as const,
+    auctionId,
+    ...(week.paymentTermSeconds === undefined
+      ? {}
+      : { days: paymentTermInDays(week.paymentTermSeconds) }),
+  });
+
+  async function askPaymentTerm(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "ask-auction-payment-term" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    return paymentTermAsked(found.week, request.auctionId);
+  }
+
+  async function setPaymentTerm(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-auction-payment-term" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    const asked = paymentTermAsked(week, request.auctionId);
+    const parsed = parsePaymentTerm(request.value);
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    const scheduled = await consoles.scheduleAuction(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        opensAt: week.opensAt,
+        closesAt: week.closesAt,
+        final: week.final,
+        windows: week.windows,
+        raffleClosesAt: week.raffleClosesAt,
+        rafflePrize: week.rafflePrize,
+        paymentTermSeconds: parsed.seconds,
+      },
+      rpcMeta(request),
+    );
+    switch (scheduled.kind) {
+      // Чтение отстаёт от команды: принятый срок накладывается на прочитанное.
+      case "ok":
+        return {
+          kind: "auction-console",
+          console: {
+            ...console,
+            week: { ...week, paymentTermSeconds: parsed.seconds },
+          },
+          note: "payment-term-saved",
+        };
+      // Предел бот проверил сам: отказ Auction — тот же ответ человеку.
+      case "payment-term-out-of-range":
+        return { ...asked, error: "payment-term-range" };
+      default:
+        return windowsRefused(request, scheduled);
+    }
   }
 
   // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
@@ -2929,6 +3040,10 @@ export function createAuctionConsole(
         return setRafflePrize(request);
       case "remove-auction-raffle-prize":
         return removeRafflePrize(request);
+      case "ask-auction-payment-term":
+        return askPaymentTerm(request);
+      case "set-auction-payment-term":
+        return setPaymentTerm(request);
       case "set-auction-final":
         return setFinal(request);
       case "set-auction-visibility":
