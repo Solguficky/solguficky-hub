@@ -574,6 +574,10 @@ export function lotScopeScreen(
   };
 }
 
+// Сколько непрошедших лотов исход называет поимённо и как длинно.
+const missedShown = 5;
+const missedTitleLimit = 80;
+
 const missWords: Record<LotSetMiss, string> = {
   sold: "лот продан",
   "card-closed": "лот закрыт",
@@ -605,9 +609,17 @@ export function lotSetAppliedScreen(
       .row();
   }
   keyboard.text("Изменить лот", lotFormData(token));
-  const missed = outcome.missed
-    .map((each) => `«${each.title}» — ${missWords[each.reason]}`)
+  // Список держит предел сообщения Telegram: до пяти лотов с укороченными
+  // названиями, остальные — числом; «Повторить» дойдёт и до них.
+  const named = outcome.missed
+    .slice(0, missedShown)
+    .map(
+      (each) =>
+        `«${truncate(each.title, missedTitleLimit)}» — ${missWords[each.reason]}`,
+    )
     .join("; ");
+  const rest = outcome.missed.length - missedShown;
+  const missed = rest > 0 ? `${named}; и ещё ${rest}` : named;
   return {
     id: "outcome",
     text: outcomeText(

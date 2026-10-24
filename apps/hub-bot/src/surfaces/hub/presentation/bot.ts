@@ -7156,7 +7156,9 @@ function askLotQuestion(
             text: skipPhotoLabel,
             data: lotSkipData(uuidToToken(ask.question.lotId)),
           }
-        : ask.lot?.hasImage === true
+        : // Снятие фото — правка одного лота: на вопросе правки всего сета
+          // (PER-716) его нет, иначе обещание «получат все лоты» не сдержано.
+          ask.lot?.hasImage === true && ask.question.set !== true
           ? {
               text: removePhotoLabel,
               data: lotImageRemoveData(uuidToToken(ask.question.lotId)),

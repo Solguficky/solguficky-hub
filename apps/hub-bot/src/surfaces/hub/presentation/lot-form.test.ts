@@ -2267,6 +2267,62 @@ describe("lot copies, set edits and removal", () => {
     expect(plain(last(calls)).split("\n")[0]).toBe("Применено к 3 из 3");
   });
 
+  it("offers no photo removal on the photo question of the whole set", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map((lotId, index) => ({
+        ...vase(lotId, index),
+        card: {
+          title: `Ваза | ${index + 1} из 3`,
+          description: "Синяя.",
+          image: { version },
+        },
+      })),
+      console: { sets: [vaseSet] },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    const token = uuidToToken(setLots[0]);
+
+    await bot.handleUpdate(press(`v1:lot:ask:${token}:image:s`));
+    expect(labels(question(calls).payload).flat()).not.toContain(
+      "🗑 Убрать фото",
+    );
+    await bot.handleUpdate(press(`v1:lot:ask:${token}:image`));
+    expect(labels(question(calls).payload).flat()).toContain("🗑 Убрать фото");
+  });
+
+  it("names at most five refused lots with short titles and counts the rest", async () => {
+    const long = "Очень длинное название лота ".repeat(10).trim();
+    const lotIds = Array.from(
+      { length: 8 },
+      (_, index) => `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1c0${index}`,
+    );
+    const auction = fakeAuction({
+      lots: lotIds.map((lotId, index) => ({
+        ...vase(lotId, index),
+        card: { title: `${long} | ${index + 1} из 8`, description: "Синяя." },
+      })),
+      console: {
+        sets: [{ lotSetId: vaseSet.lotSetId, name: "Ваза", lotIds }],
+      },
+      edit: (card) =>
+        card.lotId === lotIds[0] ? undefined : { kind: "card-closed" },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(
+      press(`v1:lot:ask:${uuidToToken(lotIds[0] ?? "")}:description:s`),
+    );
+    await bot.handleUpdate(answer(calls, "Синяя ваза."));
+
+    const text = plain(last(calls));
+    expect(text.split("\n")[0]).toBe("Применено к 1 из 8");
+    expect(text.match(/ — лот закрыт/g)).toHaveLength(5);
+    expect(text).toContain("; и ещё 2.");
+    expect(text.length).toBeLessThan(1500);
+  });
+
   it("removes a lot after the confirmation over a restart, out of the feed and the set, and renumbers the rest on a set rename", async () => {
     const auction = fakeAuction({
       lots: setLots.map(vase),
