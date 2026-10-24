@@ -3,6 +3,7 @@ import { createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
+  type Http2SessionOptions,
 } from "@connectrpc/connect-node";
 import {
   AuctionService,
@@ -53,6 +54,7 @@ import {
 } from "../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../core/auction/snapshot.js";
 import {
+  AUCTION_KEEPALIVE,
   type AuctionWatchSource,
   watchSourceOf,
 } from "../../core/auction/watch.js";
@@ -634,9 +636,14 @@ export function createClients(options: {
   onFavoritesRefused?: (cause: unknown, requestId: string) => void;
   onProxyExplainerRefused?: (cause: unknown, requestId: string) => void;
   onRaffleRefused?: (cause: unknown, requestId: string) => void;
+  // Keepalive соединения с Auction; тесты сжимают его до долей секунды.
+  auctionKeepalive?: Http2SessionOptions;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
-  const auctionSession = new Http2SessionManager(options.auctionUrl);
+  const auctionSession = new Http2SessionManager(
+    options.auctionUrl,
+    options.auctionKeepalive ?? AUCTION_KEEPALIVE,
+  );
   const notificationsSession =
     options.notificationsUrl === undefined
       ? undefined

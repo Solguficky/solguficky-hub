@@ -4,6 +4,7 @@ import {
   Code,
   ConnectError,
 } from "@connectrpc/connect";
+import type { Http2SessionOptions } from "@connectrpc/connect-node";
 import type {
   AuctionService,
   AuctionWatch,
@@ -108,6 +109,23 @@ export type WatchFailure = "stream" | "listener";
 // закрыться за секунды; дальше пауза растёт, чтобы недоступный Auction не
 // получал залп попыток от каждого бота.
 export const WATCH_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+
+// Keepalive соединения с Auction (PER-705). Полуоткрытое соединение — сеть
+// замолкла, а не закрылась — поток сам не рвёт: TCP молчит, и карточки финала,
+// пульт ведущего и «Ставки зала» стоят на старом состоянии. Поэтому соединение
+// пингует клиент: PING уходит, когда по потоку `pingIntervalMs` не пришло ни
+// байта, и без ответа за `pingTimeoutMs` соединение закрывается, а поток
+// переподключается с пометкой `interrupted`. Худший срок обнаружения — их
+// сумма, 15 секунд: заметно дольше паузы между ставками зала, но не дольше
+// одного шага финала. PING у пустого соединения не идёт (`pingIdleConnection`
+// выключен), а вызов после паузы длиннее интервала проверяет соединение одним
+// PING перед запросом. Сервер Auction на pekko-http частоту PING клиента не
+// ограничивает (`too_many_pings` у него нет) — иначе интервал меньше пяти
+// минут, порога gRPC по умолчанию, был бы нельзя.
+export const AUCTION_KEEPALIVE: Http2SessionOptions = {
+  pingIntervalMs: 10_000,
+  pingTimeoutMs: 5_000,
+};
 
 export type Sleep = (ms: number, signal: AbortSignal) => Promise<void>;
 

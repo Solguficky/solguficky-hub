@@ -1,11 +1,14 @@
 package auction.grpc
 
+import auction.testkit.StallingProxy
 import auction.v1.auction_service as wire
 import ch.qos.logback.classic.Logger as LogbackLogger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.typesafe.config.ConfigFactory
 import io.grpc.Status
+import org.apache.pekko.Done
+import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.grpc.GrpcClientSettings
@@ -20,11 +23,15 @@ import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
 import org.apache.pekko.http.scaladsl.model.MediaType
 import org.apache.pekko.http.scaladsl.model.headers.RawHeader
+import org.apache.pekko.stream.scaladsl.Keep
 import org.apache.pekko.stream.scaladsl.Sink
 import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Tcp
 import org.apache.pekko.util.ByteString
 
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicLong
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.concurrent.Eventually
@@ -56,7 +63,13 @@ final class GrpcBoundarySpec
   private val kit = ActorTestKit(
     "grpc-boundary",
     ConfigFactory
-      .parseString("pekko.actor.provider = local")
+      // Keepalive HTTP/2 (PER-705) сжат до долей секунды: сервер пингует после
+      // 300 мс тишины, клиент pekko-http — после 100 мс.
+      .parseString("""
+        pekko.actor.provider = local
+        pekko.http.server.http2 { ping-interval = 300ms, ping-timeout = 300ms }
+        pekko.http.client.http2 { ping-interval = 100ms, ping-timeout = 100ms }
+      """)
       .withFallback(ConfigFactory.load())
   )
 
@@ -68,6 +81,9 @@ final class GrpcBoundarySpec
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)
+
+  /** Конец каждого открытого потока `open` в порядке открытия: по нему видно, что сервер поток отпустил. */
+  private val watchEnds = ConcurrentLinkedQueue[Future[Done]]()
 
   /** Заглушка сервиса: ставка принимается, чтение падает неожиданно, остальное не вызывается. */
   private object Stub extends wire.AuctionService {
@@ -88,7 +104,14 @@ final class GrpcBoundarySpec
     def advanceAsk(in: wire.AdvanceAskRequest) = unused
     def closeLot(in: wire.CloseLotRequest) = unused
     def watchAuction(in: wire.WatchAuctionRequest) =
-      if (in.auctionId == "open") Source.single(wire.AuctionWatch()).concat(Source.never)
+      if (in.auctionId == "open")
+        Source
+          .single(wire.AuctionWatch())
+          .concat(Source.never)
+          .watchTermination() { (_, done) =>
+            watchEnds.add(done)
+            NotUsed
+          }
       else Source.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest) = unused
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest) = unused
@@ -398,6 +421,72 @@ final class GrpcBoundarySpec
       val written = record
       written("result") shouldBe "error"
       written("grpc_code") should not be "OK"
+    }
+  }
+
+  private def openWatch(through: wire.AuctionServiceClient): (Future[Done], Future[Done]) = {
+    val opened = watchEnds.size
+    val stream = through
+      .watchAuction()
+      .addHeader("authorization", "Bearer hub")
+      .invoke(wire.WatchAuctionRequest(auctionId = "open"))
+      .runWith(Sink.ignore)
+    eventually(watchEnds.size shouldBe opened + 1)
+    (stream, watchEnds.asScala.last)
+  }
+
+  // Полуоткрытое соединение (PER-705): клиент пропал, а сеть замолкла, не закрывшись.
+  "grpc boundary keepalive" should {
+
+    "releases a watch whose client went silent once its ping goes unanswered" in {
+      val proxy = StallingProxy(binding.localAddress.getPort)
+      val silent = wire.AuctionServiceClient(
+        GrpcClientSettings.connectToServiceAt("127.0.0.1", proxy.port).withTls(false)
+      )
+      try {
+        val (_, released) = openWatch(silent)
+        proxy.silence()
+        // Отказ соединения отменяет поток: его конец может прийти и отказом, важно, что пришёл.
+        eventually(released.isCompleted shouldBe true)
+      } finally {
+        silent.close().futureValue
+        proxy.close()
+      }
+    }
+
+    "keeps a watch open under the pings of a client far more frequent than the hub bot's" in {
+      // Ответы сервера клиенту: PING ACK — 17 байт кадра. Свой PING сервер шлёт только после 300 мс тишины в обе
+      // стороны, а клиент пингует после 100 мс, поэтому байты ответа за паузу — ответы на PING клиента.
+      val answered = AtomicLong(0)
+      val relay = Tcp(kit.system)
+        .bind("127.0.0.1", 0)
+        .toMat(Sink.foreach { incoming =>
+          incoming.handleWith(
+            Tcp(kit.system).outgoingConnection("127.0.0.1", binding.localAddress.getPort).map { chunk =>
+              answered.addAndGet(chunk.length.toLong)
+              chunk
+            }
+          )
+        })(Keep.left)
+        .run()
+        .futureValue
+      val pinging = wire.AuctionServiceClient(
+        GrpcClientSettings
+          .connectToServiceAt("127.0.0.1", relay.localAddress.getPort)
+          .withTls(false)
+          .withBackend("pekko-http")
+      )
+      try {
+        val (stream, released) = openWatch(pinging)
+        val before = answered.get
+        Thread.sleep(2000)
+        (answered.get - before) should be >= 10L * 17
+        stream.isCompleted shouldBe false
+        released.isCompleted shouldBe false
+      } finally {
+        pinging.close().futureValue
+        relay.unbind().futureValue
+      }
     }
   }
 }
