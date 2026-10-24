@@ -2068,6 +2068,32 @@ describe("lot copies, set edits and removal", () => {
     expect(auction.registry.size).toBe(7);
   });
 
+  it("removes the extra copies of an earlier answer when the count is answered again smaller", async () => {
+    const auction = fakeAuction({ lots: [scheduled], console: {} });
+    const { next } = steps(auction);
+
+    await next(() => press(`v1:lot:cp:${uuidToToken(existingLot)}`));
+    await next((history) => answer(history, "5"));
+    expect(auction.registry.size).toBe(5);
+    // Прошлый ответ оборвался до сета: его нет, а копии остались.
+    auction.sets.clear();
+    await next((history) => answer(history, "3"));
+
+    expect(auction.registry.size).toBe(3);
+    const [set] = [...auction.sets.values()];
+    expect(set?.lotIds).toHaveLength(3);
+    expect(
+      set?.lotIds.map((lotId) => auction.lots.get(lotId)?.card?.title),
+    ).toEqual([
+      "Кружка с совой | 1 из 3",
+      "Кружка с совой | 2 из 3",
+      "Кружка с совой | 3 из 3",
+    ]);
+    expect(
+      auction.methods().filter((method) => method === "removeLot"),
+    ).toHaveLength(2);
+  });
+
   it("asks the count again when it is not a whole number from 2 to 20", async () => {
     const auction = fakeAuction({ lots: [scheduled], console: {} });
     const { bot, calls } = harness("admin", auction);

@@ -390,7 +390,9 @@ export type LotFormRequest =
       title: string;
       opId: string;
     })
-  | (LotFormCall & { intent: "view-lot-form"; lotId: string })
+  // `registry` — экрану нужен реестр аукциона (PER-716): копии, удаление и
+  // правка сета. Остальным нажатиям пульт не читается.
+  | (LotFormCall & { intent: "view-lot-form"; lotId: string; registry?: true })
   // Предпросмотр лота глазами участника (PER-512): снимок целиком, его тело
   // строит аукционное дерево.
   | (LotFormCall & { intent: "view-lot-preview"; lotId: string })

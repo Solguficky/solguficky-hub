@@ -361,6 +361,7 @@ import {
   lotCopiesScreen,
   lotFormScreen,
   lotImageRemoveConfirmScreen,
+  lotInSetText,
   lotQuestionText,
   lotRefusalText,
   lotRemoveConfirmScreen,
@@ -6812,10 +6813,20 @@ async function handleLotFormCallback(
   }
   // Способ шага выбран (PER-491): цена уже принята и едет в кнопке, поэтому
   // лот читать не нужно — спрашивается сам шаг.
+  // Реестр аукциона (PER-716) читается только там, где он нужен экрану:
+  // форме, выбору правки сета, копиям, удалению и вопросу правки сета.
+  const needsRegistry =
+    action.kind === "lot-form" ||
+    action.kind === "lot-scope" ||
+    action.kind === "lot-copy" ||
+    action.kind === "lot-remove" ||
+    ((action.kind === "lot-ask" || action.kind === "lot-step-mode") &&
+      action.set === true);
   const result = await runtime.dispatcher.execute({
     identity: person,
     intent: "view-lot-form",
     lotId,
+    ...(needsRegistry ? { registry: true as const } : {}),
     ...rpcCall(ctx, useCase),
   });
   if (result.kind !== "lot-form") {
@@ -7459,7 +7470,7 @@ async function showLotFailure(
       result.reason === "not-administrator"
         ? forbiddenText
         : result.reason === "lot-in-set" && result.setName !== undefined
-          ? `Лот уже в сете «${result.setName}». Копии заводятся только у лота вне сета.`
+          ? lotInSetText(result.setName)
           : lotRefusalText[result.reason],
       exit,
     );

@@ -10,6 +10,7 @@ import type {
   LotCardResult,
   LotReadResult,
   LotStepPolicyInput,
+  RemoveLotResult,
   SaveLotSetResult,
   ScheduleLotResult,
 } from "../auction/port.js";
@@ -212,6 +213,10 @@ export function keptStep(terms: LotTermsView): KeptStep | undefined {
   }
   return undefined;
 }
+
+// Сколько копий заводится одновременно: Auction и Meetups за ним держат
+// несколько вызовов сразу, а бюджет действия — пять секунд на всё.
+const copyConcurrency = 4;
 
 /** Сколько всего лотов могут дать копии вместе с исходным (PER-716). */
 export const minLotCopies = 2;
@@ -989,14 +994,17 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
     }
   }
 
-  // Экран правки читает и реестр: открыт ли он и сет лота (PER-716). Пульт не
-  // прочитался — экран остаётся экраном одного лота, без копий и удаления.
+  // Экран правки читает и реестр, когда он нужен: открыт ли он и сет лота
+  // (PER-716). Пульт не прочитался — экран остаётся экраном одного лота, без
+  // копий и удаления.
   async function viewForm(
     request: Extract<LotFormRequest, { intent: "view-lot-form" }>,
   ): Promise<ExecuteResult> {
     const current = await read(request);
     if (current.kind === "refused") return current.result;
-    if (sets === undefined) return { kind: "lot-form", lot: current.lot };
+    if (sets === undefined || request.registry !== true) {
+      return { kind: "lot-form", lot: current.lot };
+    }
     const console = await readConsole(request, current.lot.auctionId);
     return {
       kind: "lot-form",
@@ -1300,7 +1308,8 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       | Exclude<LotCardResult, { kind: "ok" }>
       | Exclude<AddLotResult, { kind: "ok" }>
       | Exclude<ScheduleLotResult, { kind: "ok" }>
-      | Exclude<SaveLotSetResult, { kind: "ok" }>,
+      | Exclude<SaveLotSetResult, { kind: "ok" }>
+      | Exclude<RemoveLotResult, { kind: "ok" }>,
     lotId: string,
   ): ExecuteResult {
     switch (result.kind) {
@@ -1388,11 +1397,38 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       console.lots.map((each) => [each.lot.lotId, each.lot]),
     );
     const sourceImage = card.image?.version;
+    const positions = Array.from(
+      { length: total - 1 },
+      (_, index) => index + 2,
+    );
+    const lotIds = [
+      request.lotId,
+      ...positions.map((position) => lotCopyId(request.lotId, position)),
+    ];
+    // Фото исходного лота читается один раз и только если копии его ещё нет.
     let image: Uint8Array | undefined;
-    const lotIds = [request.lotId];
-    for (let position = 2; position <= total; position += 1) {
+    if (
+      sourceImage !== undefined &&
+      lotIds
+        .slice(1)
+        .some(
+          (lotId) => snapshots.get(lotId)?.card?.image?.version !== sourceImage,
+        )
+    ) {
+      const fetched = await lots.getLotImage(
+        request.identity,
+        request.lotId,
+        rpcMeta(request),
+      );
+      if (fetched.kind === "ok") image = fetched.content;
+      else if (fetched.kind !== "not-found") return failed(fetched);
+    }
+    // Одна копия — до четырёх команд по порядку: карточка, реестр, фото,
+    // условия. Отказ — исход всего ответа.
+    const ensureCopy = async (
+      position: number,
+    ): Promise<ExecuteResult | undefined> => {
       const lotId = lotCopyId(request.lotId, position);
-      lotIds.push(lotId);
       const lot = snapshots.get(lotId);
       const title = numberedTitle(base, position, total);
       let textSame =
@@ -1418,25 +1454,16 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
         );
         if (added.kind !== "ok") return copyRefused(added, request.lotId);
       }
-      const imageNeeded =
-        sourceImage !== undefined && lot?.card?.image?.version !== sourceImage;
-      if (imageNeeded && image === undefined) {
-        const fetched = await lots.getLotImage(
-          request.identity,
-          request.lotId,
-          rpcMeta(request),
-        );
-        if (fetched.kind === "ok") image = fetched.content;
-        else if (fetched.kind !== "not-found") return failed(fetched);
-      }
-      if (!textSame || (imageNeeded && image !== undefined)) {
+      const withImage =
+        image !== undefined && lot?.card?.image?.version !== sourceImage;
+      if (!textSame || withImage) {
         const edited = await lots.editLotCard(
           request.identity,
           {
             lotId,
             title,
             description: card.description,
-            ...(imageNeeded && image !== undefined ? { image } : {}),
+            ...(withImage && image !== undefined ? { image } : {}),
           },
           rpcMeta(request),
         );
@@ -1462,6 +1489,32 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
         if (scheduled.kind !== "ok") {
           return copyRefused(scheduled, request.lotId);
         }
+      }
+      return undefined;
+    };
+    // Копии идут по несколько сразу: двадцать копий по одной не уложились бы
+    // в бюджет действия. Не уложились и так — сбой оставляет вопрос открытым,
+    // и повторный ответ дозаводит недостающее.
+    for (let from = 0; from < positions.length; from += copyConcurrency) {
+      const refused = (
+        await Promise.all(
+          positions.slice(from, from + copyConcurrency).map(ensureCopy),
+        )
+      ).find((each) => each !== undefined);
+      if (refused !== undefined) return refused;
+    }
+    // Прошлый ответ просил больше лотов: лишние копии уходят из реестра, иначе
+    // участники увидели бы их в ленте вне сета.
+    for (let position = total + 1; position <= maxLotCopies; position += 1) {
+      const lotId = lotCopyId(request.lotId, position);
+      if (!snapshots.has(lotId)) continue;
+      const removed = await lots.removeLot(
+        request.identity,
+        { auctionId, lotId, opId: opIdFor(request.opId, `remove:${lotId}`) },
+        rpcMeta(request),
+      );
+      if (removed.kind !== "ok" && removed.kind !== "lot-not-in-auction") {
+        return copyRefused(removed, request.lotId);
       }
     }
     const firstTitle = numberedTitle(base, 1, total);
@@ -1495,6 +1548,19 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
         },
         rpcMeta(request),
       );
+      // Копию переложили в другой сет, пока сета копий не было: тот же отказ,
+      // что у лота в сете, с именем того сета.
+      if (saved.kind === "lot-in-another-set") {
+        const holder = console.lotSets.find(
+          (each) => each.lotSetId === saved.lotSetId,
+        );
+        return {
+          kind: "lot-refused",
+          reason: "lot-in-set",
+          lotId: request.lotId,
+          ...(holder === undefined ? {} : { setName: holder.name }),
+        };
+      }
       if (saved.kind !== "ok") return copyRefused(saved, request.lotId);
     }
     return {

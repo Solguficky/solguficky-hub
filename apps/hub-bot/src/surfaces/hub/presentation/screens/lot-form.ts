@@ -301,8 +301,9 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
   // Копии и удаление (PER-716) — пока реестр открыт, то есть до онлайн-недели.
   // Копии собираются в сет, поэтому у лота, который уже в сете, их нет.
   if (lot.registry?.open === true) {
-    if (set === undefined)
+    if (set === undefined) {
       keyboard.row().text("Копировать", lotCopyData(token));
+    }
     keyboard.row().text(removeLabel("Удалить лот"), lotRemoveData(token));
   }
   return {
@@ -497,6 +498,11 @@ export function lotQuestionText(
   ].join("\n");
 }
 
+/** Отказ копий лоту, который уже в сете, с именем сета (PER-716). */
+export function lotInSetText(setName: string): string {
+  return `Лот уже в сете «${setName}». Копии заводятся только у лота вне сета.`;
+}
+
 /** Текст кадра отказа; отказ по праву несёт общий текст хаба. */
 export const lotRefusalText: Record<
   Exclude<LotRefusal, "not-administrator">,
@@ -678,7 +684,7 @@ export function lotRemovedScreen(removed: {
     text: outcomeText(
       removed.already === true
         ? "Лот уже удалён. В ленте аукциона его нет."
-        : "Лот удалён. Его больше нет ни в ленте аукциона, ни в сете.",
+        : "Лот удалён. В ленте аукциона его больше нет.",
       removed.title,
     ),
     keyboard: withNav(new InlineKeyboard(), toLots(removed.auctionId)),
