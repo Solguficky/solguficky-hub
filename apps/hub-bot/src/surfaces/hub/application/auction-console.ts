@@ -15,6 +15,7 @@ import type {
 } from "../auction/port.js";
 import { communityDay, communityInstant } from "../community-time.js";
 import type { ParticipantUsernameResolver } from "../identity/port.js";
+import { fingerprint } from "./fingerprint.js";
 import { lotCurrency, parseRubles } from "./lot-form.js";
 import type {
   AuctionConsoleRequest,
@@ -265,7 +266,7 @@ export function parseWindow(
  * отпечаток отличает прежнее окно от того, что встало на его место.
  */
 export function windowPrint(window: StepWindow): string {
-  return print(
+  return fingerprint(
     `${window.from}|${window.until}|${window.step.minorUnits}|${window.step.currency}`,
   );
 }
@@ -276,7 +277,7 @@ export function windowPrint(window: StepWindow): string {
  * отпечаток отличает прежний сет от того, что встал на его место.
  */
 export function lotSetPrint(lotSetId: string): string {
-  return print(lotSetId);
+  return fingerprint(lotSetId);
 }
 
 /**
@@ -404,16 +405,6 @@ function parseEnd(raw: string, timeZone: string, now: Date): EndResult {
   return { kind: "ok", until };
 }
 
-// Пять знаков base36 от строки (FNV-1a): отпечаток для кнопки пульта.
-function print(source: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < source.length; index += 1) {
-    hash ^= source.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return (hash % 36 ** 5).toString(36).padStart(5, "0");
-}
-
 // Сколько окон держит пульт: ряд на окно, «Добавить окно» и выход
 // укладываются в двенадцать рядов экрана, а строки окон — в одно сообщение.
 export const windowLimit = 8;
@@ -446,7 +437,7 @@ export function heldLots(console: AuctionConsoleView): ConsoleLot[] {
 
 /** Отпечаток набора удержанных лотов: номера в кнопке указывают в него. */
 export function lineupPrint(held: readonly ConsoleLot[]): string {
-  return print(held.map((each) => each.lot.lotId).join("|"));
+  return fingerprint(held.map((each) => each.lot.lotId).join("|"));
 }
 
 /** Номера кнопки годятся для этого набора: каждый в нём и не повторяется. */

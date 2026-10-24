@@ -104,6 +104,9 @@ const forgedAuctionPresses = {
   "lot-ask": `v1:lot:ask:${uuidToToken(vaseId)}:title`,
   "lot-step-mode": `v1:lot:sm:${uuidToToken(vaseId)}:100:single`,
   "lot-skip": `v1:lot:skip:${uuidToToken(vaseId)}`,
+  "lot-keep-step": `v1:lot:sk:${uuidToToken(vaseId)}:100`,
+  "lot-image-remove": `v1:lot:rm:${uuidToToken(vaseId)}`,
+  "lot-image-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
   "console-view": consoleData,
   "console-week": `v1:ac:w:${auctionToken}`,
   "console-raffle": `v1:ac:r:${auctionToken}`,
@@ -2596,6 +2599,29 @@ describe("opening the online week", () => {
     expect(last(calls).text).toBe(
       "<b>Онлайн-неделя открыта</b>\n\nСтавки принимаются с этой минуты.",
     );
+  });
+
+  it("warns about the publication only when the week opens a hidden auction", async () => {
+    const publication =
+      "Аукцион сейчас скрыт: с открытием недели участники увидят его и лоты.";
+    const confirmOf = async (hidden: boolean) => {
+      const auction = fakeAuction({
+        status: "scheduled",
+        week: { ...week, final: true },
+        lots: [priced],
+        hidden,
+      });
+      const { bot, calls } = harness("admin", auction);
+      await bot.init();
+      await bot.handleUpdate(press(consoleData));
+      await bot.handleUpdate(
+        press(dataOf(last(calls), "Открыть онлайн-неделю")),
+      );
+      return plain(last(calls));
+    };
+
+    expect(await confirmOf(true)).toContain(publication);
+    expect(await confirmOf(false)).not.toContain(publication);
   });
 
   it("shows a refusal of an already opened auction as an open week outcome, not as an error", async () => {

@@ -424,20 +424,22 @@ export function createAuctionAdapter(
       }
     },
     async editLotCard(person, card, meta) {
-      const { image, ...text } = card;
+      const { image, removeImage, ...text } = card;
       try {
         const response = await rpc.editLotCard(
           {
             viewer: wireViewer(viewerOf(person)),
             ...text,
-            ...(image === undefined
-              ? {}
-              : {
-                  imageChange: {
-                    case: "replaceImage",
-                    value: { content: image },
-                  },
-                }),
+            ...(removeImage === true
+              ? { imageChange: { case: "removeImage", value: {} } }
+              : image === undefined
+                ? {}
+                : {
+                    imageChange: {
+                      case: "replaceImage",
+                      value: { content: image },
+                    },
+                  }),
           },
           options(meta),
         );
