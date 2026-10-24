@@ -803,12 +803,12 @@ const predictionViews = (
     answers: each === round ? answers : [],
   }));
 
-const PREDICTION_OPENS_AT = "2026-10-26T16:00:00Z";
+const PREDICTION_CLOSES_AT = "2026-11-01T18:00:00Z";
 
 const PREDICTION_SUMMARY: AuctionSummaryView = {
   auctionId: CONTRACT_AUCTION_ID,
   stage: "prebidding",
-  opensAt: PREDICTION_OPENS_AT,
+  closesAt: PREDICTION_CLOSES_AT,
   final: true,
 };
 
@@ -877,7 +877,7 @@ function predictionBody(
   status: PredictionRoundStatus,
   answers: readonly PredictionAnswer[],
   options: {
-    opensAt?: string;
+    closesAt?: string;
     lotNames?: Readonly<Record<string, string>>;
     notice?:
       | "lot-not-in-round"
@@ -899,7 +899,9 @@ function predictionBody(
         ...(options.staleNominations === undefined
           ? {}
           : { staleNominations: options.staleNominations }),
-        ...(options.opensAt === undefined ? {} : { opensAt: options.opensAt }),
+        ...(options.closesAt === undefined
+          ? {}
+          : { closesAt: options.closesAt }),
         ...(options.notice === undefined ? {} : { notice: options.notice }),
       },
     ],
@@ -4099,6 +4101,27 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     },
   },
   {
+    // Раунд каталога открыт всю онлайн-неделю (ADR-067, дополнение 2026-10-24).
+    intent: "predictions: root offers the catalog round during online trading",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "open"),
+    },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: PREDICTION_SUMMARY,
+        },
+      ],
+      keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID)],
+    },
+  },
+  {
     intent: "predictions: open catalog round with only own answers",
     callbackData: callback({
       kind: "prediction",
@@ -4123,7 +4146,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       "open",
       [CATALOG_LOT_ANSWER, CATALOG_MONEY_ANSWER],
       {
-        opensAt: PREDICTION_OPENS_AT,
+        closesAt: PREDICTION_CLOSES_AT,
         lotNames: { [CONTRACT_LOT.lotId]: "Кружка с совой" },
       },
     ),
@@ -4148,7 +4171,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionFindLotCall(WITHDRAWN_LOT.lotId),
     ],
     body: predictionBody("catalog", "open", [CATALOG_STALE_LOT_ANSWER], {
-      opensAt: PREDICTION_OPENS_AT,
+      closesAt: PREDICTION_CLOSES_AT,
       staleNominations: ["catalog-most-expensive-lot"],
     }),
   },
@@ -4183,7 +4206,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionSummaryCall,
     ],
     body: predictionBody("catalog", "closed", [CATALOG_MONEY_ANSWER], {
-      opensAt: PREDICTION_OPENS_AT,
+      closesAt: PREDICTION_CLOSES_AT,
     }),
   },
   {
@@ -4421,7 +4444,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
         },
       ],
       {
-        opensAt: PREDICTION_OPENS_AT,
+        closesAt: PREDICTION_CLOSES_AT,
         lotNames: { [CONTRACT_LOT.lotId]: "Кружка с совой" },
       },
     ),
@@ -4471,7 +4494,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionSummaryCall,
     ],
     body: predictionBody("catalog", "open", [CATALOG_MONEY_ANSWER], {
-      opensAt: PREDICTION_OPENS_AT,
+      closesAt: PREDICTION_CLOSES_AT,
       notice: "stale-answer-removed",
     }),
   },
