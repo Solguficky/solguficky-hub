@@ -4,6 +4,7 @@ import type {
   AddLotResult,
   LotAdministration,
   LotCardResult,
+  LotPhotoResult,
   LotReadResult,
   ScheduleLotResult,
 } from "../auction/port.js";
@@ -44,10 +45,27 @@ const drafted: LotView = {
   status: { kind: "draft" },
 };
 
+const photoId = "0198f2a4-7c1e-7d3a-9b21-00000000f001";
+const firstPhoto = "0198f2a4-7c1e-7d3a-9b21-00000000f011";
+const secondPhoto = "0198f2a4-7c1e-7d3a-9b21-00000000f012";
+const withPhotos: LotView = {
+  ...drafted,
+  card: {
+    title: "Ваза",
+    description: "Синяя.",
+    image: { version: "img-1" },
+    photos: [
+      { photoId: firstPhoto, version: "img-1" },
+      { photoId: secondPhoto, version: "img-2" },
+    ],
+  },
+};
+
 function fakeLots(
   answers: {
     create?: LotCardResult;
     edit?: LotCardResult;
+    photo?: LotPhotoResult;
     add?: AddLotResult;
     schedule?: ScheduleLotResult;
     read?: LotReadResult;
@@ -68,6 +86,19 @@ function fakeLots(
       calls.push({ method: "editLotCard", args: card });
       return answers.edit ?? { kind: "ok" };
     },
+    async addLotPhoto(_person, photo) {
+      calls.push({ method: "addLotPhoto", args: photo });
+      return (
+        answers.photo ?? {
+          kind: "ok",
+          photos: [{ photoId: photo.photoId, version: "img-new" }],
+        }
+      );
+    },
+    async removeLotPhoto(_person, photo) {
+      calls.push({ method: "removeLotPhoto", args: photo });
+      return answers.photo ?? { kind: "ok", photos: [] };
+    },
     async addLot(_person, lot) {
       calls.push({ method: "addLot", args: lot });
       return answers.add ?? { kind: "ok" };
@@ -87,6 +118,10 @@ function fakeLots(
     },
     async getLotImage(_person, id) {
       calls.push({ method: "getLotImage", args: id });
+      return { kind: "not-found" };
+    },
+    async getLotPhoto(_person, photo) {
+      calls.push({ method: "getLotPhoto", args: photo });
       return { kind: "not-found" };
     },
   };
@@ -202,7 +237,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза",
         description: "",
-        hasImage: false,
+        photos: [],
         terms: { kind: "unset" },
       },
       saved: "created",
@@ -274,7 +309,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза синяя",
         description: "Синяя.",
-        hasImage: false,
+        photos: [],
         terms: {
           kind: "set",
           startingPrice: { minorUnits: 150_000, currency: "RUB" },
@@ -385,7 +420,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза",
         description: "Синяя.",
-        hasImage: false,
+        photos: [],
         terms: {
           kind: "set",
           startingPrice: { minorUnits: 150_000, currency: "RUB" },
@@ -435,20 +470,21 @@ describe("lot form", () => {
 
       const result = dispatcher.execute({
         identity: admin,
-        intent: "set-lot-image",
+        intent: "add-lot-photo",
         lotId,
+        photoId,
         image: new Uint8Array([1, 2, 3]),
       });
       await vi.advanceTimersByTimeAsync(lotReadWindowMs);
 
       await expect(result).resolves.toMatchObject({
         kind: "lot-form",
-        saved: "image",
+        saved: "photo-added",
       });
       expect(calls.map((call) => call.method)).toEqual([
         "getLot",
         "getLot",
-        "editLotCard",
+        "addLotPhoto",
       ]);
     });
 
@@ -482,8 +518,9 @@ describe("lot form", () => {
 
       const result = dispatcher.execute({
         identity: admin,
-        intent: "set-lot-image",
+        intent: "add-lot-photo",
         lotId,
+        photoId,
         image: new Uint8Array([1, 2, 3]),
         deadlineAt,
       });
@@ -559,29 +596,66 @@ describe("lot form", () => {
     });
   });
 
-  it("replaces the image of the card and resends both texts as they are stored", async () => {
-    const { dispatcher, calls } = fakeLots();
+  it("adds a photo to the end and counts the photos from the answer of Auction", async () => {
+    const { dispatcher, calls } = fakeLots({
+      photo: {
+        kind: "ok",
+        photos: [
+          { photoId: "01929b7e-0000-7000-8000-000000000001", version: "img-1" },
+          { photoId, version: "img-2" },
+        ],
+      },
+    });
     const image = new Uint8Array([0xff, 0xd8, 0xff]);
 
     const result = await dispatcher.execute({
       identity: admin,
-      intent: "set-lot-image",
+      intent: "add-lot-photo",
       lotId,
+      photoId,
       image,
     });
 
     expect(calls.at(-1)).toEqual({
-      method: "editLotCard",
-      args: { lotId, title: "Ваза", description: "Синяя.", image },
+      method: "addLotPhoto",
+      args: { lotId, photoId, image },
     });
     expect(result).toMatchObject({
       kind: "lot-form",
-      lot: { hasImage: true },
-      saved: "image",
+      lot: {
+        photos: [
+          { print: fingerprint("01929b7e-0000-7000-8000-000000000001") },
+          { print: fingerprint(photoId), photoId },
+        ],
+      },
+      saved: "photo-added",
     });
   });
 
-  it("removes the image of the card and resends both texts as they are stored", async () => {
+  it("removes the confirmed photo by its id", async () => {
+    const { dispatcher, calls } = fakeLots({
+      read: { kind: "ok", lot: withPhotos },
+    });
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "remove-lot-photo",
+      lotId,
+      photoPrint: fingerprint(secondPhoto),
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "removeLotPhoto",
+      args: { lotId, photoId: secondPhoto },
+    });
+    expect(result).toMatchObject({
+      kind: "lot-form",
+      lot: { photos: [] },
+      saved: "photo-removed",
+    });
+  });
+
+  it("removes the cover of an Auction without the photo list by a card edit with both texts", async () => {
     const { dispatcher, calls } = fakeLots({
       read: {
         kind: "ok",
@@ -598,9 +672,9 @@ describe("lot form", () => {
 
     const result = await dispatcher.execute({
       identity: admin,
-      intent: "remove-lot-image",
+      intent: "remove-lot-photo",
       lotId,
-      imagePrint: fingerprint("img-1"),
+      photoPrint: fingerprint("img-1"),
     });
 
     expect(calls.at(-1)).toEqual({
@@ -609,70 +683,55 @@ describe("lot form", () => {
     });
     expect(result).toMatchObject({
       kind: "lot-form",
-      lot: { hasImage: false },
-      saved: "image-removed",
+      lot: { photos: [] },
+      saved: "photo-removed",
     });
   });
 
-  it("removes nothing when the photo changed after the confirmation and asks about the photo again", async () => {
+  it("sends no command when the confirmed photo is already gone and says so", async () => {
     const { dispatcher, methods } = fakeLots({
-      read: {
-        kind: "ok",
-        lot: {
-          ...drafted,
-          card: {
-            title: "Ваза",
-            description: "Синяя.",
-            image: { version: "img-2" },
-          },
-        },
-      },
+      read: { kind: "ok", lot: withPhotos },
     });
 
     await expect(
       dispatcher.execute({
         identity: admin,
-        intent: "remove-lot-image",
+        intent: "remove-lot-photo",
         lotId,
-        imagePrint: fingerprint("img-1"),
-      }),
-    ).resolves.toMatchObject({
-      kind: "lot-ask",
-      question: { kind: "image", lotId },
-      error: "photo-changed",
-    });
-    expect(methods()).toEqual(["getLot"]);
-  });
-
-  it("sends no command when the photo is already gone and answers it as removed", async () => {
-    const { dispatcher, methods } = fakeLots();
-
-    await expect(
-      dispatcher.execute({
-        identity: admin,
-        intent: "remove-lot-image",
-        lotId,
-        imagePrint: fingerprint("img-1"),
+        photoPrint: fingerprint("gone"),
       }),
     ).resolves.toMatchObject({
       kind: "lot-form",
-      lot: { hasImage: false },
-      saved: "image-removed",
+      lot: { photos: [{ photoId: firstPhoto }, { photoId: secondPhoto }] },
+      saved: "photo-missing",
     });
     expect(methods()).toEqual(["getLot"]);
   });
 
-  it("refuses to remove the image of a sold lot before Auction", async () => {
+  it("removes the cover under a confirmation sent before the photo list by the print of its version", async () => {
+    const { dispatcher, calls } = fakeLots({
+      read: { kind: "ok", lot: withPhotos },
+    });
+
+    await dispatcher.execute({
+      identity: admin,
+      intent: "remove-lot-photo",
+      lotId,
+      photoPrint: fingerprint("img-1"),
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "removeLotPhoto",
+      args: { lotId, photoId: firstPhoto },
+    });
+  });
+
+  it("refuses to remove a photo of a sold lot before Auction", async () => {
     const { dispatcher, methods } = fakeLots({
       read: {
         kind: "ok",
         lot: {
-          ...drafted,
-          card: {
-            title: "Ваза",
-            description: "Синяя.",
-            image: { version: "img-1" },
-          },
+          ...withPhotos,
           status: {
             kind: "sold",
             winnerId: admin.identityId,
@@ -685,12 +744,33 @@ describe("lot form", () => {
     await expect(
       dispatcher.execute({
         identity: admin,
-        intent: "remove-lot-image",
+        intent: "remove-lot-photo",
         lotId,
-        imagePrint: fingerprint("img-1"),
+        photoPrint: fingerprint(firstPhoto),
       }),
     ).resolves.toMatchObject({ kind: "lot-refused", reason: "lot-sold" });
     expect(methods()).toEqual(["getLot"]);
+  });
+
+  it("refuses the photo over the limit of Auction with the limit frame", async () => {
+    const { dispatcher } = fakeLots({
+      photo: { kind: "photo-limit", maxPhotos: 10 },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "add-lot-photo",
+        lotId,
+        photoId,
+        image: new Uint8Array([1]),
+      }),
+    ).resolves.toEqual({
+      kind: "lot-refused",
+      reason: "photo-limit",
+      lotId,
+      maxPhotos: 10,
+    });
   });
 
   it.each([
@@ -702,19 +782,20 @@ describe("lot form", () => {
   ])(
     "asks for the photo again when Auction refuses it with %o",
     async (refusal, expected) => {
-      const { dispatcher } = fakeLots({ edit: refusal });
+      const { dispatcher } = fakeLots({ photo: refusal });
 
       await expect(
         dispatcher.execute({
           identity: admin,
-          intent: "set-lot-image",
+          intent: "add-lot-photo",
           lotId,
+          photoId,
           image: new Uint8Array([1]),
         }),
       ).resolves.toEqual({
         kind: "lot-ask",
         question: { kind: "image", lotId },
-        lot: expect.objectContaining({ lotId, hasImage: false }),
+        lot: expect.objectContaining({ lotId, photos: [] }),
         ...expected,
       });
     },

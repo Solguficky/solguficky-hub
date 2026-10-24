@@ -98,6 +98,12 @@ const WindowIndexSchema = z
   .regex(/^(0|[1-9]\d?)$/)
   .transform(Number);
 const WindowPrintSchema = z.string().regex(/^[0-9a-z]{5}$/);
+// Место фото лота на экране «Фото лота» (PER-721): с единицы, не больше
+// десяти — предела фото у лота.
+const PhotoIndexSchema = z
+  .string()
+  .regex(/^(?:[1-9]|10)$/)
+  .transform(Number);
 // Номер лота запускаемого окна в кнопке пульта (PER-615): номер в
 // отсортированном реестре с нуля — знак base36, шестидесяти четырёх лотов
 // хватает с запасом.
@@ -358,7 +364,13 @@ type PlainAction =
   // лоты сета.
   | { kind: "lot-scope"; lot: string; field: LotFormField }
   // «Повторить для оставшихся» (PER-716): поле разносится по сету заново.
-  | { kind: "lot-set-retry"; lot: string; field: LotFormField }
+  | {
+      kind: "lot-set-retry";
+      lot: string;
+      field: LotFormField;
+      // Отпечаток версии фото у повтора фото сета (PER-721).
+      print?: string;
+    }
   // «Копировать» (PER-716): вопрос, сколько всего лотов.
   | { kind: "lot-copy"; lot: string }
   // «Удалить лот» и «Да» его подтверждения (PER-716).
@@ -379,10 +391,14 @@ type PlainAction =
   | { kind: "lot-keep-step"; lot: string; price: number; set?: true }
   // «Пропустить» под вопросом о фото в цепочке нового лота (PER-618).
   | { kind: "lot-skip"; lot: string }
-  // «Убрать фото» под вопросом о фото и «Да» его подтверждения (PER-715).
-  | { kind: "lot-image-remove"; lot: string }
-  // «Да» несёт отпечаток версии фото: снимается то, что подтвердили.
-  | { kind: "lot-image-remove-confirm"; lot: string; print: string }
+  // Экран «Фото лота» (PER-721). `fromQuestion` — прежняя «Убрать фото» под
+  // вопросом о фото (PER-715): вопрос уходит, как от «Отмены».
+  | { kind: "lot-photos"; lot: string; fromQuestion?: true }
+  // «Убрать фото N» на экране фото и «Да» его подтверждения (PER-715,
+  // PER-721): номер — место фото в списке на экране, а «Да» несёт отпечаток
+  // самого фото: снимается то, что подтвердили.
+  | { kind: "lot-photo-remove"; lot: string; index: number }
+  | { kind: "lot-photo-remove-confirm"; lot: string; print: string }
   // «Глазами участника» на экране правки (PER-512): карточка лота без кнопок.
   | { kind: "lot-view"; lot: string }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
@@ -787,9 +803,18 @@ export function lotScopeData(lot: string, field: LotFormField): string {
   return `v1:lot:sc:${lot}:${field}`;
 }
 
-/** «Повторить для оставшихся» под исходом правки сета (PER-716). */
-export function lotSetRetryData(lot: string, field: LotFormField): string {
-  return `v1:lot:sr:${lot}:${field}`;
+/**
+ * «Повторить для оставшихся» под исходом правки сета (PER-716). У фото
+ * (PER-721) хвост — отпечаток версии разнесённого фото.
+ */
+export function lotSetRetryData(
+  lot: string,
+  field: LotFormField,
+  print?: string,
+): string {
+  return print === undefined
+    ? `v1:lot:sr:${lot}:${field}`
+    : `v1:lot:sr:${lot}:${field}:${print}`;
 }
 
 /** «Копировать» на экране правки лота (PER-716). */
@@ -812,13 +837,18 @@ export function lotSkipData(lot: string): string {
   return `v1:lot:skip:${lot}`;
 }
 
-/** «Убрать фото» под вопросом о фото лота с фото (PER-715). */
-export function lotImageRemoveData(lot: string): string {
-  return `v1:lot:rm:${lot}`;
+/** Экран «Фото лота» (PER-721). */
+export function lotPhotosData(lot: string): string {
+  return `v1:lot:ph:${lot}`;
 }
 
-/** «Да, убрать фото» под подтверждением (PER-715). */
-export function lotImageRemoveConfirmData(lot: string, print: string): string {
+/** «Убрать фото N» на экране фото лота (PER-721); номер — с единицы. */
+export function lotPhotoRemoveData(lot: string, index: number): string {
+  return `v1:lot:rm:${lot}:${index}`;
+}
+
+/** «Да, убрать фото» под подтверждением (PER-715): отпечаток фото. */
+export function lotPhotoRemoveConfirmData(lot: string, print: string): string {
   return `v1:lot:ry:${lot}:${print}`;
 }
 
@@ -1742,11 +1772,13 @@ export function parseCallback(raw: unknown): CallbackAction {
 // Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>`,
 // `v1:lot:view:<лот>`, `v1:lot:ask:<лот>:<поле>[:c|:s]`,
 // `v1:lot:sm:<лот>:<цена>:<способ>[:c|:s]`, `v1:lot:sk:<лот>:<цена>[:s]`,
-// `v1:lot:skip:<лот>`, `v1:lot:rm:<лот>` и `v1:lot:ry:<лот>:<отпечаток фото>`
-// («Убрать фото» и его «Да», PER-715); `:c` — кнопка цепочки нового лота
-// (PER-618). Копии, сет и удаление (PER-716): `v1:lot:cp:<лот>`,
-// `v1:lot:sc:<лот>:<поле>`, `v1:lot:sr:<лот>:<поле>`, `v1:lot:dl:<лот>` и
-// `v1:lot:dy:<лот>`; `:s` — правка всех лотов сета.
+// `v1:lot:skip:<лот>`, `v1:lot:ph:<лот>` (экран «Фото лота», PER-721),
+// `v1:lot:rm:<лот>:<номер>` и `v1:lot:ry:<лот>:<отпечаток фото>` («Убрать
+// фото N» и его «Да», PER-715, PER-721) и прежняя `v1:lot:rm:<лот>`, которая
+// открывает экран фото; `:c` — кнопка цепочки нового лота (PER-618). Копии,
+// сет и удаление (PER-716): `v1:lot:cp:<лот>`, `v1:lot:sc:<лот>:<поле>`,
+// `v1:lot:sr:<лот>:<поле>`, `v1:lot:dl:<лот>` и `v1:lot:dy:<лот>`; `:s` —
+// правка всех лотов сета.
 function parseLot(parts: readonly string[]): CallbackAction {
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return { kind: "malformed" };
@@ -1771,6 +1803,17 @@ function parseLot(parts: readonly string[]): CallbackAction {
   if (parts.length === 4 && parts[2] === "dy") {
     return { kind: "lot-remove-confirm", lot: token.data };
   }
+  if (parts.length === 6 && parts[2] === "sr" && parts[4] === "image") {
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    return print.success
+      ? {
+          kind: "lot-set-retry",
+          lot: token.data,
+          field: "image",
+          print: print.data,
+        }
+      : { kind: "malformed" };
+  }
   if (parts.length === 5 && (parts[2] === "sc" || parts[2] === "sr")) {
     const field = LotFormFieldSchema.safeParse(parts[4]);
     if (!field.success) return { kind: "malformed" };
@@ -1792,13 +1835,23 @@ function parseLot(parts: readonly string[]): CallbackAction {
       ? { kind: "lot-keep-step", lot: token.data, price: price.data, ...set }
       : { kind: "malformed" };
   }
+  if (parts.length === 4 && parts[2] === "ph") {
+    return { kind: "lot-photos", lot: token.data };
+  }
+  // «Убрать фото» под вопросом о фото до PER-721: открывает экран фото.
   if (parts.length === 4 && parts[2] === "rm") {
-    return { kind: "lot-image-remove", lot: token.data };
+    return { kind: "lot-photos", lot: token.data, fromQuestion: true };
+  }
+  if (parts.length === 5 && parts[2] === "rm") {
+    const index = PhotoIndexSchema.safeParse(parts[4]);
+    return index.success
+      ? { kind: "lot-photo-remove", lot: token.data, index: index.data }
+      : { kind: "malformed" };
   }
   if (parts.length === 5 && parts[2] === "ry") {
     const print = WindowPrintSchema.safeParse(parts[4]);
     return print.success
-      ? { kind: "lot-image-remove-confirm", lot: token.data, print: print.data }
+      ? { kind: "lot-photo-remove-confirm", lot: token.data, print: print.data }
       : { kind: "malformed" };
   }
   // Хвост цепочки — только `c` и только у цены и фото: у названия и описания

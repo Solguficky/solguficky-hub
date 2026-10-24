@@ -56,6 +56,14 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
             ...(snapshot.card.image === undefined
               ? {}
               : { image: { version: snapshot.card.image.version } }),
+            ...(snapshot.card.photos.length === 0
+              ? {}
+              : {
+                  photos: snapshot.card.photos.map((photo) => ({
+                    photoId: photo.photoId,
+                    version: photo.version,
+                  })),
+                }),
           },
         }),
     ...(snapshot.nextPrice === undefined

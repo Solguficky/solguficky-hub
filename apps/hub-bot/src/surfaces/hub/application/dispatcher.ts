@@ -270,8 +270,8 @@ export function createDispatcher(
         case "check-lot-price":
         case "set-lot-terms":
         case "keep-lot-step":
-        case "set-lot-image":
-        case "remove-lot-image":
+        case "add-lot-photo":
+        case "remove-lot-photo":
         case "retry-lot-set":
         case "copy-lot":
         case "remove-lot":
