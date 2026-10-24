@@ -343,6 +343,13 @@ const lotSubject = (title: string | undefined) =>
 // Строка списка в теле (дизайн-код, «Списки»): маркер, затем поля через «—».
 const bullet = (line: string) => `• ${line}`;
 
+// Слово организаторов на корневом меню бота аукциона (решение владельца
+// 24.10.2026): абзацы текста, без разметки; ники уходят как есть.
+export const auctionMenuIntro = [
+  "@solguficky_auction_bot — бот для проведения бустигуфиковских аукционов.\nКнопки меню помогут открыть каталог лотов, сделать ставку, посмотреть свои ставки и заглянуть в FAQ.",
+  "Данный бот разработан: @anticnvm\nАвторы лотов: @Nilda97 @NyanQT314 @myasko18 @DrScarecrow @Neptunini\nОтдельная благодарность: @po_darya",
+] as const;
+
 export function renderEntryScreen(
   screen: AuctionEntryScreen,
   options: RenderOptions,
@@ -350,14 +357,13 @@ export function renderEntryScreen(
   const faq = options.faq ?? defaultFaq;
   switch (screen.kind) {
     // Корневое меню: разделы кнопками в порядке списка команд, возврата нет.
+    // Под заголовком — слово организаторов о боте (решение владельца
+    // 24.10.2026), а не служебная строка о разделах.
     case "menu":
       return {
         id: "menu",
         format: "html",
-        text: screenText(
-          menuTitle,
-          "Разделы бота. Те же разделы — в кнопке меню рядом с полем ввода.",
-        ),
+        text: screenText(menuTitle, ...auctionMenuIntro),
         keyboard: [
           [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
           [{ text: settingsTitle, callback_data: entryCallback("settings") }],
