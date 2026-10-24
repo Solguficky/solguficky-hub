@@ -895,6 +895,67 @@ describe("lot form", () => {
     expect(methods()).toEqual(["getLot"]);
   });
 
+  // Черновой лот и пороги без строк: Auction пустые пороги не примет, и
+  // оставлять нечего.
+  it.each([
+    ["a draft lot", drafted],
+    [
+      "empty thresholds",
+      {
+        ...drafted,
+        tiers: [],
+        status: {
+          kind: "scheduled",
+          startingPrice: { minorUnits: 150_000, currency: "RUB" },
+        },
+      } satisfies LotView,
+    ],
+  ])(
+    "asks the step mode again for %s with no step to keep and sends no command",
+    async (_, lot) => {
+      const { dispatcher, methods } = fakeLots({ read: { kind: "ok", lot } });
+
+      await expect(
+        dispatcher.execute({
+          identity: admin,
+          intent: "keep-lot-step",
+          lotId,
+          priceRubles: 2500,
+          opId,
+        }),
+      ).resolves.toMatchObject({ kind: "lot-step-mode", priceRubles: 2500 });
+      expect(methods()).toEqual(["getLot"]);
+    },
+  );
+
+  it("refuses to keep the step once the trading of the lot has begun", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          fixedStep: { minorUnits: 10_000, currency: "RUB" },
+          status: {
+            kind: "trading",
+            currentPrice: { minorUnits: 150_000, currency: "RUB" },
+            phase: "online",
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "keep-lot-step",
+        lotId,
+        priceRubles: 2500,
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-refused", reason: "terms-closed" });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
   it.each([
     [{ kind: "lots-frozen" } as const, "terms-closed"],
     [{ kind: "scheduling-closed" } as const, "terms-closed"],

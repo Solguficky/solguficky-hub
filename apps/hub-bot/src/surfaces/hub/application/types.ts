@@ -365,6 +365,14 @@ export type LotFormRequest =
       value: string;
       opId: string;
     })
+  // Новая цена с прежним шагом лота (PER-714): «Оставить шаг» на экране выбора
+  // способа шага. Шаг юзкейс берёт из чтения лота.
+  | (LotFormCall & {
+      intent: "keep-lot-step";
+      lotId: string;
+      priceRubles: number;
+      opId: string;
+    })
   // Фото уже скачано у Telegram краем: юзкейс получает только байты.
   | (LotFormCall & {
       intent: "set-lot-image";

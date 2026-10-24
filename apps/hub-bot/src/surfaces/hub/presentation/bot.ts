@@ -2473,7 +2473,8 @@ async function handleCallback(
       action.kind === "lot-form" ||
       action.kind === "lot-ask" ||
       action.kind === "lot-step-mode" ||
-      action.kind === "lot-skip"
+      action.kind === "lot-skip" ||
+      action.kind === "lot-keep-step"
     ) {
       outcome = canRunAuctions(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
@@ -6618,7 +6619,15 @@ async function handleLotFormCallback(
   person: Person,
   action: Extract<
     CallbackAction,
-    { kind: "lot-new" | "lot-form" | "lot-ask" | "lot-step-mode" | "lot-skip" }
+    {
+      kind:
+        | "lot-new"
+        | "lot-form"
+        | "lot-ask"
+        | "lot-step-mode"
+        | "lot-skip"
+        | "lot-keep-step";
+    }
   >,
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "manage_lot";
@@ -6639,9 +6648,45 @@ async function handleLotFormCallback(
     });
     return sent("lot title requested");
   }
+  const lotId = tokenToUuid(action.lot);
+  // «Оставить шаг» (PER-714): новая цена из кнопки с прежним шагом лота одной
+  // командой. Лот читает юзкейс: шаг берётся из чтения. Ключ рождается на
+  // нажатие, как у ответа на вопрос о шаге: условия Auction заменяет целиком,
+  // и повтор даёт тот же итог.
+  if (action.kind === "lot-keep-step") {
+    const kept = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "keep-lot-step",
+      lotId,
+      priceRubles: action.price,
+      opId: createUuidV7(),
+      ...rpcCall(ctx, useCase),
+    });
+    if (kept.kind === "lot-form") {
+      await showScreen(ctx, lotSavedScreen(kept.lot, lotSavedNote.terms));
+      return sent("lot price saved with the kept step");
+    }
+    // Шага у лота в чтении нет — снова выбор способа с той же ценой.
+    if (kept.kind === "lot-step-mode") {
+      await showScreen(ctx, lotStepModeScreen(kept.lot, kept.priceRubles));
+      return sent("lot step mode requested again");
+    }
+    // Auction не принял прежний шаг с новой ценой — вопрос о шаге с причиной.
+    if (kept.kind === "lot-ask") {
+      await askLotQuestion(ctx, questions, {
+        question: kept.question,
+        lot: kept.lot,
+        error: kept.error,
+      });
+      return sent("lot step asked after the kept step was refused");
+    }
+    return showLotFailure(ctx, kept, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
   // Способ шага выбран (PER-491): цена уже принята и едет в кнопке, поэтому
   // лот читать не нужно — спрашивается сам шаг.
-  const lotId = tokenToUuid(action.lot);
   const result = await runtime.dispatcher.execute({
     identity: person,
     intent: "view-lot-form",
@@ -10988,6 +11033,7 @@ function callbackUseCase(
     | "lot-ask"
     | "lot-step-mode"
     | "lot-skip"
+    | "lot-keep-step"
     | "console-view"
     | "console-week"
     | "console-raffle"
@@ -11180,6 +11226,7 @@ function callbackUseCase(
     case "lot-ask":
     case "lot-step-mode":
     case "lot-skip":
+    case "lot-keep-step":
       return "manage_lot";
     case "console-view":
     case "console-week":

@@ -1,7 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import { marked, pictogram } from "../../../../core/pictograms.js";
-import { isSold, lotCurrency } from "../../application/lot-form.js";
+import { isSold, keptStep, lotCurrency } from "../../application/lot-form.js";
 import type {
   LotAskError,
   LotFormView,
@@ -14,6 +14,7 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import {
   lotAskData,
   lotFormData,
+  lotKeepStepData,
   lotPreviewData,
   lotStepModeData,
 } from "../parse-callback.js";
@@ -124,6 +125,22 @@ function termsLines(terms: LotTermsView): string[] {
   }
 }
 
+/** Предупреждение на выборе способа шага при правке цены (PER-714). */
+export const unsavedPriceNote =
+  "Цена сохранится только вместе с шагом: «‹ Изменить лот» её не сохранит.";
+
+/**
+ * Подпись «Оставить шаг» по прежнему шагу лота (PER-714) — тому же, что
+ * сохранит команда; шага нет — оставлять нечего, и кнопки нет.
+ */
+function keptStepLabel(terms: LotTermsView): string | undefined {
+  const step = keptStep(terms);
+  if (step === undefined) return undefined;
+  return step.policy.kind === "tiered"
+    ? "Оставить пороги шага"
+    : `Оставить шаг ${money(step.policy.step)}`;
+}
+
 /**
  * Экран выбора способа шага (PER-491): цена уже принята, шаг ещё нет. Кнопка
  * несёт цену, чтобы вопрос о шаге задавался и после рестарта, а в цепочке
@@ -139,6 +156,13 @@ export function lotStepModeScreen(
   const keyboard = new InlineKeyboard()
     .text("Один шаг", lotStepModeData(token, priceRubles, "single", chain))
     .text("По порогам", lotStepModeData(token, priceRubles, "tiered", chain));
+  // Правка цены у лота с шагом (PER-714): прежний шаг оставляется одним
+  // нажатием, а уход возвратом цену не сохраняет — экран говорит это до ухода.
+  // В цепочке нового лота прежнего шага нет.
+  const kept = chain === true ? undefined : keptStepLabel(lot.terms);
+  if (kept !== undefined) {
+    keyboard.row().text(kept, lotKeepStepData(token, priceRubles));
+  }
   return {
     id: "lot-step-mode",
     text: screenText(
@@ -148,6 +172,7 @@ export function lotStepModeScreen(
         "Как задать шаг?",
         "Один шаг — на столько поднимается ставка при любой цене.",
         "По порогам — шаг растёт вместе с ценой.",
+        ...(chain === true ? [] : [unsavedPriceNote]),
       ]
         .map(escapeHtml)
         .join("\n"),

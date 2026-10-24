@@ -86,7 +86,7 @@ type StepParse =
   | {
       kind: "ok";
       policy: LotStepPolicyInput;
-      terms: { step: LotAmount } | { tiers: LotTierView[] };
+      terms: { step: LotAmount } | { tiers: readonly LotTierView[] };
     }
   | { kind: "rejected"; reason: LotAskError; suggestion?: LotTierView[] };
 
@@ -168,6 +168,39 @@ function parseStep(mode: LotStepMode, raw: string): StepParse {
   }
   if (order !== "ordered") return { kind: "rejected", reason: order };
   return { kind: "ok", policy: { kind: "tiered", tiers }, terms: { tiers } };
+}
+
+/** Шаг, который сохраняется вместе с ценой: из ответа или прежний у лота. */
+export type KeptStep = Extract<StepParse, { kind: "ok" }>;
+
+/**
+ * Прежний шаг лота для «Оставить шаг» (PER-714): один шаг или пороги из
+ * чтения. Одно правило у кнопки экрана и у команды, чтобы подпись и
+ * сохранённый шаг не разошлись. Шага в чтении нет — снимок нёс политику,
+ * которой форма не знает, или пустые пороги, которые Auction не примет, — и
+ * оставлять нечего.
+ */
+export function keptStep(terms: LotTermsView): KeptStep | undefined {
+  if (terms.kind !== "set") return undefined;
+  if (terms.tiers !== undefined && terms.tiers.length > 0) {
+    return {
+      kind: "ok",
+      policy: { kind: "tiered", tiers: terms.tiers },
+      terms: { tiers: terms.tiers },
+    };
+  }
+  if (terms.step !== undefined) {
+    return {
+      kind: "ok",
+      policy: { kind: "fixed", step: terms.step },
+      terms: { step: terms.step },
+    };
+  }
+  return undefined;
+}
+
+function termsClosed(lotId: string): ExecuteResult {
+  return { kind: "lot-refused", reason: "terms-closed", lotId };
 }
 
 function termsOf(lot: LotView): LotTermsView {
@@ -591,12 +624,7 @@ export function createLotForm(lots: LotAdministration) {
   ): Promise<ExecuteResult> {
     const current = await read(request);
     if (current.kind === "refused") return current.result;
-    const closed: ExecuteResult = {
-      kind: "lot-refused",
-      reason: "terms-closed",
-      lotId: request.lotId,
-    };
-    if (current.lot.terms.kind === "closed") return closed;
+    if (current.lot.terms.kind === "closed") return termsClosed(request.lotId);
     const question: LotQuestion = {
       kind: "step",
       lotId: request.lotId,
@@ -615,12 +643,52 @@ export function createLotForm(lots: LotAdministration) {
           : { suggestedTiers: step.suggestion }),
       };
     }
+    return schedule(request, current.lot, step, question);
+  }
+
+  // Новая цена с прежним шагом лота (PER-714). Шаг берётся из чтения, а не из
+  // кнопки: пороги в 64 байта не помещаются, а сохраняется тот шаг, что у лота
+  // сейчас. Шага у лота нет — снова выбор способа: кнопку старого экрана могли
+  // нажать после того, как шаг пропал из чтения.
+  async function keepStep(
+    request: Extract<LotFormRequest, { intent: "keep-lot-step" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { terms } = current.lot;
+    if (terms.kind === "closed") return termsClosed(request.lotId);
+    const step = keptStep(terms);
+    if (step === undefined) {
+      return {
+        kind: "lot-step-mode",
+        lot: current.lot,
+        priceRubles: request.priceRubles,
+      };
+    }
+    return schedule(request, current.lot, step, {
+      kind: "step",
+      lotId: request.lotId,
+      priceRubles: request.priceRubles,
+      mode: step.policy.kind === "fixed" ? "single" : "tiered",
+    });
+  }
+
+  // Условия торгов в Auction: цена и шаг одной командой `ScheduleLot`.
+  async function schedule(
+    request: Extract<
+      LotFormRequest,
+      { intent: "set-lot-terms" | "keep-lot-step" }
+    >,
+    lot: LotFormView,
+    step: KeptStep,
+    question: LotQuestion,
+  ): Promise<ExecuteResult> {
     const startingPrice = rubles(request.priceRubles);
     const scheduled = await lots.scheduleLot(
       request.identity,
       {
         // Аукцион лота называет сам лот: кнопке вопроса он не нужен.
-        auctionId: current.lot.auctionId,
+        auctionId: lot.auctionId,
         lotId: request.lotId,
         opId: request.opId,
         startingPrice,
@@ -633,19 +701,19 @@ export function createLotForm(lots: LotAdministration) {
         return {
           kind: "lot-form",
           lot: {
-            ...current.lot,
+            ...lot,
             terms: { kind: "set", startingPrice, ...step.terms },
           },
           saved: "terms",
         };
       case "lots-frozen":
       case "scheduling-closed":
-        return closed;
+        return termsClosed(request.lotId);
       case "step-policy-invalid":
         return {
           kind: "lot-ask",
           question,
-          lot: current.lot,
+          lot,
           error: "step-refused",
         };
       case "lot-not-in-auction":
@@ -705,6 +773,8 @@ export function createLotForm(lots: LotAdministration) {
         return checkPrice(request);
       case "set-lot-terms":
         return setTerms(request);
+      case "keep-lot-step":
+        return keepStep(request);
       case "set-lot-image":
         return setImage(request);
       default: {

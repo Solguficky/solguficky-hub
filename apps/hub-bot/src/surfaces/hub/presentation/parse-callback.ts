@@ -356,6 +356,9 @@ type PlainAction =
       mode: LotStepMode;
       chain?: true;
     }
+  // «Оставить шаг» на выборе способа шага (PER-714): новая цена едет в кнопке,
+  // шаг юзкейс берёт у лота.
+  | { kind: "lot-keep-step"; lot: string; price: number }
   // «Пропустить» под вопросом о фото в цепочке нового лота (PER-618).
   | { kind: "lot-skip"; lot: string }
   // «Глазами участника» на экране правки (PER-512): карточка лота без кнопок.
@@ -770,6 +773,15 @@ export function lotStepModeData(
   chain?: boolean,
 ): string {
   return `v1:lot:sm:${lot}:${price}:${mode}${chain === true ? chainMark : ""}`;
+}
+
+/**
+ * «Оставить шаг» (PER-714): новая цена с прежним шагом лота одним нажатием.
+ * Цена едет в кнопке, как у выбора способа; цепочки у кнопки нет — у нового
+ * лота прежнего шага нет.
+ */
+export function lotKeepStepData(lot: string, price: number): string {
+  return `v1:lot:sk:${lot}:${price}`;
 }
 
 // Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самые длинные —
@@ -1656,8 +1668,8 @@ export function parseCallback(raw: unknown): CallbackAction {
 
 // Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>`,
 // `v1:lot:view:<лот>`, `v1:lot:ask:<лот>:<поле>[:c]`,
-// `v1:lot:sm:<лот>:<цена>:<способ>[:c]` и `v1:lot:skip:<лот>`; `:c` — кнопка
-// цепочки нового лота (PER-618).
+// `v1:lot:sm:<лот>:<цена>:<способ>[:c]`, `v1:lot:sk:<лот>:<цена>` и
+// `v1:lot:skip:<лот>`; `:c` — кнопка цепочки нового лота (PER-618).
 function parseLot(parts: readonly string[]): CallbackAction {
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return { kind: "malformed" };
@@ -1672,6 +1684,12 @@ function parseLot(parts: readonly string[]): CallbackAction {
   }
   if (parts.length === 4 && parts[2] === "skip") {
     return { kind: "lot-skip", lot: token.data };
+  }
+  if (parts.length === 5 && parts[2] === "sk") {
+    const price = RublesSchema.safeParse(parts[4]);
+    return price.success
+      ? { kind: "lot-keep-step", lot: token.data, price: price.data }
+      : { kind: "malformed" };
   }
   // Хвост цепочки — только `c` и только у цены и фото: у названия и описания
   // цепочки нет.

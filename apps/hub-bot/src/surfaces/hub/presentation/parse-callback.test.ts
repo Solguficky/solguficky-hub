@@ -43,6 +43,7 @@ import {
   consoleWindowsData,
   lotAskData,
   lotFormData,
+  lotKeepStepData,
   lotNewData,
   lotPreviewData,
   lotSkipData,
@@ -1220,6 +1221,16 @@ describe("lot form callbacks", () => {
     }
   });
 
+  it("reads the kept step button with the largest price back from its data", () => {
+    const data = lotKeepStepData(lot, maxLotRubles);
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+    expect(parseCallback(data)).toEqual({
+      kind: "lot-keep-step",
+      lot,
+      price: maxLotRubles,
+    });
+  });
+
   it("rejects a lot callback with a broken token, field, price or shape", () => {
     for (const data of [
       "v1:lot",
@@ -1236,6 +1247,11 @@ describe("lot form callbacks", () => {
       `v1:lot:sm:${lot}:700:single:x`,
       `v1:lot:sm:${lot}:700:single:c:c`,
       `v1:lot:skip:${lot}:extra`,
+      // «Оставить шаг» (PER-714): цена обязательна, цепочки нет.
+      `v1:lot:sk:${lot}`,
+      `v1:lot:sk:${lot}:0`,
+      `v1:lot:sk:${lot}:${maxLotRubles + 1}`,
+      `v1:lot:sk:${lot}:700:c`,
       `v1:lot:drop:${lot}`,
       `v1:q:ln:${auction}`,
       `v1:q:ln:${auction}:short`,
