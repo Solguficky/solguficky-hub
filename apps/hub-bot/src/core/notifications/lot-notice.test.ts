@@ -192,16 +192,16 @@ describe("renderLotNotice", () => {
         { lots, frequencyButton: false, timeZone },
       ).text.split("\n")[2] ?? "";
     expect(line("outbid", false)).toBe(
-      `• <b>Кружка</b> — перебили, цена 950${nbsp}₽`,
+      `• Лот «<b>Кружка</b>» — перебили, цена 950${nbsp}₽`,
     );
     expect(line("outbid", true)).toBe(
-      `• <b>Кружка</b> — перебивали, но лот за тобой: 950${nbsp}₽`,
+      `• Лот «<b>Кружка</b>» — перебивали, но лот за тобой: 950${nbsp}₽`,
     );
     expect(line("proxy-raised", true)).toBe(
-      `• <b>Кружка</b> — автоставка подняла цену до 950${nbsp}₽, лот за тобой`,
+      `• Лот «<b>Кружка</b>» — автоставка подняла цену до 950${nbsp}₽, лот за тобой`,
     );
     expect(line("proxy-raised", false)).toBe(
-      `• <b>Кружка</b> — перебили, цена 950${nbsp}₽, автоставка отвечала`,
+      `• Лот «<b>Кружка</b>» — перебили, цена 950${nbsp}₽, автоставка отвечала`,
     );
   });
 
@@ -234,7 +234,7 @@ describe("renderLotNotice", () => {
       [
         "Сводка по твоим ставкам:",
         "",
-        `• <b>Кружка</b> — перебили, цена 900${nbsp}₽, автоставка отвечала`,
+        `• Лот «<b>Кружка</b>» — перебили, цена 900${nbsp}₽, автоставка отвечала`,
       ].join("\n"),
     );
     expect(view.format).toBe("HTML");
@@ -266,10 +266,10 @@ describe("renderLotNotice", () => {
         },
       ).text.split("\n")[2];
     expect(line(lotOf(7))).toBe(
-      `• <b>Футболка</b> — продан за 2${nbsp}100${nbsp}₽`,
+      `• Лот «<b>Футболка</b>» — продан за 2${nbsp}100${nbsp}₽`,
     );
     expect(line(me)).toBe(
-      `• <b>Футболка</b> — ✅ твой лот за 2${nbsp}100${nbsp}₽`,
+      `• Лот «<b>Футболка</b>» — ✅ твой лот за 2${nbsp}100${nbsp}₽`,
     );
   });
 
@@ -285,7 +285,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      `Твою ставку перебили: <b>&lt;i&gt;Кружка&lt;/i&gt; &amp; ложка</b>, цена 950${nbsp}₽.`,
+      `Твою ставку перебили: лот «<b>&lt;i&gt;Кружка&lt;/i&gt; &amp; ложка</b>», цена 950${nbsp}₽.`,
     );
     expect(view.format).toBe("HTML");
   });
@@ -308,7 +308,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      `Твою ставку перебили: <b>Футболка</b>, лот продан за 2${nbsp}100${nbsp}₽.`,
+      `Твою ставку перебили: лот «<b>Футболка</b>» продан за 2${nbsp}100${nbsp}₽.`,
     );
   });
 
@@ -331,7 +331,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      `Твою ставку перебивали, но лот твой: <b>Футболка</b> за 2${nbsp}100${nbsp}₽.`,
+      `Твою ставку перебивали, но лот «<b>Футболка</b>» твой за 2${nbsp}100${nbsp}₽.`,
     );
   });
 
@@ -373,7 +373,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      `Твою ставку перебили: <b>Кружка</b>, цена 950${nbsp}₽. Торг до 22:45.`,
+      `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽. Торг до 22:45.`,
     );
   });
 
@@ -421,9 +421,66 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      `Ты снова ведёшь <b>Кружка</b>. Текущая цена — 950${nbsp}₽. Торг до 22:45.`,
+      `Теперь лот «<b>Кружка</b>» ведёшь ты. Текущая цена — 950${nbsp}₽. Торг до 22:45.`,
     );
     expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
+  });
+
+  // Лот назван словом «лот» и названием в кавычках, чтобы название не
+  // склонялось; свои кавычки названия остаются, как в анонсе финала, а
+  // возврат ведения не говорит «снова» (PER-708).
+  it("names the lot with the word and the title in quotes", () => {
+    const lotId = lotOf(7);
+    const lots = new Map([[lotId, lot("Футболка «Солегуфики» XL")]]);
+    const render = (notice: LotNotice) =>
+      renderLotNotice(notice, { lots, frequencyButton: false, timeZone }).text;
+    const name = "лот «<b>Футболка «Солегуфики» XL</b>»";
+    expect(
+      render({ kind: "lot-proxy-raised", lotId, currentPrice: rub(950) }),
+    ).toBe(
+      `Твоя автоставка на ${name} подняла цену до 950${nbsp}₽: лидируешь ты.`,
+    );
+    expect(render({ kind: "lot-outbid", lotId, currentPrice: rub(950) })).toBe(
+      `Твою ставку перебили: ${name}, цена 950${nbsp}₽.`,
+    );
+    expect(
+      render({ kind: "lot-lead-restored", lotId, currentPrice: rub(950) }),
+    ).toBe(`Теперь ${name} ведёшь ты. Текущая цена — 950${nbsp}₽.`);
+    expect(
+      render({
+        kind: "lot-activity-digest",
+        lines: [
+          {
+            lotId,
+            kind: "outbid",
+            currentPrice: rub(950),
+            recipientLeads: false,
+          },
+        ],
+      }).split("\n")[2],
+    ).toBe(
+      `• Лот «<b>Футболка «Солегуфики» XL</b>» — перебили, цена 950${nbsp}₽`,
+    );
+  });
+
+  // Без названия во фразе остаётся слово «лот».
+  it("keeps the word when the title is unknown", () => {
+    const lotId = lotOf(8);
+    const render = (notice: LotNotice) =>
+      renderLotNotice(notice, {
+        lots: new Map(),
+        frequencyButton: false,
+        timeZone,
+      }).text;
+    expect(
+      render({ kind: "lot-lead-restored", lotId, currentPrice: rub(950) }),
+    ).toBe(`Теперь лот ведёшь ты. Текущая цена — 950${nbsp}₽.`);
+    expect(
+      render({ kind: "lot-proxy-raised", lotId, currentPrice: rub(950) }),
+    ).toBe(`Твоя автоставка на лот подняла цену до 950${nbsp}₽: лидируешь ты.`);
+    expect(render({ kind: "lot-final-next", lotId, estimatedMinutes: 0 })).toBe(
+      "Твой лот следующий.",
+    );
   });
 
   // Напоминание о дедлайне выключается снятием отметки (ADR-063, п.5), а не
@@ -439,7 +496,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      "Скоро дедлайн у избранного лота <b>Кружка</b> — до 22:45. Успей сделать ставку.",
+      "Скоро дедлайн у избранного лота «<b>Кружка</b>» — до 22:45. Успей сделать ставку.",
     );
     expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
@@ -457,7 +514,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      "Дедлайн избранного лота <b>Кружка</b> — до 22:45. Успей сделать ставку.",
+      "Дедлайн избранного лота «<b>Кружка</b>» — до 22:45. Успей сделать ставку.",
     );
     expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
@@ -474,7 +531,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      "Твой лот следующий: <b>Кружка</b>. Примерно через 7 минут.",
+      "Твой лот «<b>Кружка</b>» следующий. Примерно через 7 минут.",
     );
     expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
