@@ -2288,7 +2288,7 @@ describe("events of the hub", () => {
   it("hides the events from the menu while nothing goes and keeps /events with an empty state", async () => {
     const auction = fakeAuction({
       existing: true,
-      current: going("scheduled"),
+      current: going("draft"),
     });
     const { bot, calls } = harness("member", auction, {
       presentation: "plain",
