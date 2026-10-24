@@ -14,17 +14,20 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import {
   lotAskData,
   lotFormData,
+  lotImageRemoveConfirmData,
   lotKeepStepData,
   lotPreviewData,
   lotStepModeData,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import {
+  confirmKeyboard,
   escapeHtml,
   nextRow,
   outcomeText,
   type Parent,
   screenText,
+  subjectLine,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -64,13 +67,15 @@ export function toLots(auctionId: string): Parent {
 }
 
 export const lotSavedNote: Record<
-  "created" | "text" | "terms" | "image" | "ready",
+  "created" | "text" | "terms" | "image" | "image-removed" | "ready",
   string
 > = {
   created: "Лот добавлен. Задай цену и шаг: без них он не выйдет на торги.",
   text: "Изменение сохранено.",
   terms: "Цена и шаг сохранены.",
   image: "Фото сохранено.",
+  // Фото снято (PER-715).
+  "image-removed": "Фото убрано.",
   // Конец цепочки нового лота (PER-618): фото принято или пропущено.
   ready: "Лот готов. Описание — по желанию: его добавляет «Изменить лот».",
 };
@@ -86,6 +91,37 @@ export const lotChainLead = {
 
 /** «Пропустить» под вопросом о фото в цепочке нового лота (PER-618). */
 export const skipPhotoLabel = "Пропустить";
+
+/** «Убрать фото» под вопросом о фото лота с фото (PER-715). */
+export const removePhotoLabel = marked(pictogram.remove, "Убрать фото");
+
+/**
+ * Подтверждение снятия фото (PER-715). Вернуть фото бот не может — его
+ * присылают заново, — поэтому «Да» красное, как у «Убрать материал». «Нет»
+ * задаёт вопрос о фото заново: подтверждение открыто с него.
+ */
+export function lotImageRemoveConfirmScreen(
+  lot: LotFormView & { imagePrint: string },
+): ShownScreen {
+  const token = uuidToToken(lot.lotId);
+  return {
+    id: "lot-image-remove-confirm",
+    text: screenText(
+      "Убрать фото?",
+      subjectLine(lot.title ?? untitled),
+      escapeHtml(
+        "Участники увидят карточку лота без фото. Вернуть его можно, только прислав фото заново.",
+      ),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, убрать фото",
+      yesData: lotImageRemoveConfirmData(token, lot.imagePrint),
+      noData: lotAskData(token, "image"),
+      irreversible: true,
+    }),
+    format: "HTML",
+  };
+}
 
 function stepTermsLines(
   terms: Extract<LotTermsView, { kind: "set" }>,
@@ -279,6 +315,8 @@ const lotAskErrors: Record<LotAskError, string> = {
   "photo-needed": "Нужна фотография, а не текст, файл или стикер.",
   "photo-album": "Нужна одна фотография, альбом не подходит.",
   "photo-unavailable": "Не получилось получить фото у Telegram.",
+  "photo-changed":
+    "Фото уже сменилось. Ничего не убрано: посмотри новое фото и реши заново.",
 };
 
 /**

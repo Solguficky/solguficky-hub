@@ -320,6 +320,27 @@ describe("auction adapter of the lot form", () => {
     expect(editLotCard).toHaveBeenCalledWith(sent, expect.anything());
   });
 
+  it("sends the removal of the image as remove_image with both texts", async () => {
+    const editLotCard = vi.fn(async () =>
+      create(EditLotCardResponseSchema, {
+        outcome: { case: "accepted", value: { title: "Ваза" } },
+      }),
+    );
+    const lots = adapter({ editLotCard });
+
+    await expect(
+      lots.editLotCard(admin, { ...card, removeImage: true }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(editLotCard).toHaveBeenCalledWith(
+      {
+        ...card,
+        viewer: wireAdmin,
+        imageChange: { case: "removeImage", value: {} },
+      },
+      expect.anything(),
+    );
+  });
+
   it.each([
     ["notAdmin", { kind: "not-admin" }],
     ["emptyTitle", { kind: "empty-title" }],

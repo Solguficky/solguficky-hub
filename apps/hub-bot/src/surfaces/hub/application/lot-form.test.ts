@@ -8,6 +8,7 @@ import type {
   ScheduleLotResult,
 } from "../auction/port.js";
 import { createDispatcher } from "./dispatcher.js";
+import { fingerprint } from "./fingerprint.js";
 import { lotReadWindowMs, parseRubles } from "./lot-form.js";
 import type { NewLotId } from "./types.js";
 
@@ -524,6 +525,118 @@ describe("lot form", () => {
       lot: { hasImage: true },
       saved: "image",
     });
+  });
+
+  it("removes the image of the card and resends both texts as they are stored", async () => {
+    const { dispatcher, calls } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          card: {
+            title: "Ваза",
+            description: "Синяя.",
+            image: { version: "img-1" },
+          },
+        },
+      },
+    });
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "remove-lot-image",
+      lotId,
+      imagePrint: fingerprint("img-1"),
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "editLotCard",
+      args: { lotId, title: "Ваза", description: "Синяя.", removeImage: true },
+    });
+    expect(result).toMatchObject({
+      kind: "lot-form",
+      lot: { hasImage: false },
+      saved: "image-removed",
+    });
+  });
+
+  it("removes nothing when the photo changed after the confirmation and asks about the photo again", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          card: {
+            title: "Ваза",
+            description: "Синяя.",
+            image: { version: "img-2" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-image",
+        lotId,
+        imagePrint: fingerprint("img-1"),
+      }),
+    ).resolves.toMatchObject({
+      kind: "lot-ask",
+      question: { kind: "image", lotId },
+      error: "photo-changed",
+    });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  it("sends no command when the photo is already gone and answers it as removed", async () => {
+    const { dispatcher, methods } = fakeLots();
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-image",
+        lotId,
+        imagePrint: fingerprint("img-1"),
+      }),
+    ).resolves.toMatchObject({
+      kind: "lot-form",
+      lot: { hasImage: false },
+      saved: "image-removed",
+    });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  it("refuses to remove the image of a sold lot before Auction", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          card: {
+            title: "Ваза",
+            description: "Синяя.",
+            image: { version: "img-1" },
+          },
+          status: {
+            kind: "sold",
+            winnerId: admin.identityId,
+            price: { minorUnits: 90_000, currency: "RUB" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-image",
+        lotId,
+        imagePrint: fingerprint("img-1"),
+      }),
+    ).resolves.toMatchObject({ kind: "lot-refused", reason: "lot-sold" });
+    expect(methods()).toEqual(["getLot"]);
   });
 
   it.each([

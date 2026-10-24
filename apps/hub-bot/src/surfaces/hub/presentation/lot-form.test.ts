@@ -12,6 +12,7 @@ import {
   type Money,
 } from "../../../auction-ui/index.js";
 import { createDispatcher } from "../application/dispatcher.js";
+import { fingerprint } from "../application/fingerprint.js";
 import { lotReadWindowMs } from "../application/lot-form.js";
 import type {
   AddLotResult,
@@ -123,6 +124,7 @@ function fakeAuction(
           version: `img-${images.size + 1}`,
         });
       }
+      if (card.removeImage === true) images.delete(card.lotId);
       const stored = images.get(card.lotId);
       lots.set(card.lotId, {
         ...lot,
@@ -1407,6 +1409,184 @@ describe("lot form photo question", () => {
 
     expect(auction.methods()).toEqual(["editLotCard"]);
     expect(last(calls).text).toContain("<b>Фото сохранено</b>");
+  });
+});
+
+// Снятие фото лота (PER-715, решение владельца 24 октября 2026 года): у лота с
+// фото вопрос о фото даёт «Убрать фото» с подтверждением, а «Да» — правку
+// карточки с `remove_image`.
+describe("lot photo removal", () => {
+  const lot = uuidToToken(existingLot);
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const withPhoto: LotView = {
+    ...scheduled,
+    card: {
+      title: "Кружка с совой",
+      description: "Ручная роспись.",
+      image: { version: "img-1" },
+    },
+  };
+  const auctionWithPhoto = (edit?: () => LotCardResult | undefined) => {
+    const auction = fakeAuction({
+      lots: [withPhoto],
+      ...(edit === undefined ? {} : { edit }),
+    });
+    auction.images.set(existingLot, { content: jpeg, version: "img-1" });
+    return auction;
+  };
+
+  it("removes the photo of a lot after the confirmation over a restart and shows the lot without it", async () => {
+    const auction = auctionWithPhoto();
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(`v1:lot:ask:${lot}:image`));
+    const asked = question(calls).payload;
+    expect(labels(asked)).toEqual([["🗑 Убрать фото"], ["Отмена"]]);
+
+    await next((history) =>
+      press(dataOf(question(history).payload, "🗑 Убрать фото")),
+    );
+    const confirm = last(calls);
+    expect(plain(confirm)).toBe(
+      [
+        "Убрать фото?",
+        "Кружка с совой",
+        "Участники увидят карточку лота без фото. Вернуть его можно, только прислав фото заново.",
+      ].join("\n\n"),
+    );
+    expect(labels(confirm)).toEqual([["✔️ Да, убрать фото", "✖️ Нет"]]);
+    expect(auction.commands).toEqual([]);
+
+    await next((history) => press(dataOf(last(history), "✔️ Да, убрать фото")));
+    // Тексты карточки уходят прежними: правка заменяет оба.
+    expect(auction.commands).toEqual([
+      {
+        method: "editLotCard",
+        args: {
+          lotId: existingLot,
+          title: "Кружка с совой",
+          description: "Ручная роспись.",
+          removeImage: true,
+        },
+      },
+    ]);
+    const outcome = last(calls);
+    expect(plain(outcome)).toBe(["Фото убрано", "Кружка с совой"].join("\n\n"));
+    expect(labels(outcome)).toEqual([["Изменить лот"], ["‹ Лот"]]);
+
+    await next(() => press(dataOf(outcome, "Изменить лот")));
+    expect(last(calls).text).toContain("Фото: нет");
+  });
+
+  it("shows the lot without the photo to a member's eyes after the removal", async () => {
+    const auction = auctionWithPhoto();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ry:${lot}:${fingerprint("img-1")}`));
+    await bot.handleUpdate(press(`v1:lot:view:${lot}`));
+
+    // Текстом на месте нажатия, без фото: ни `sendPhoto`, ни медиа rich.
+    expect(calls.at(-1)?.method).toBe("editMessageText");
+    expect(last(calls).text).toContain("<b>Кружка с совой</b>");
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("media");
+  });
+
+  it("removes nothing when the photo changed after the confirmation", async () => {
+    const auction = auctionWithPhoto();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(
+      press(dataOf(question(calls).payload, "🗑 Убрать фото")),
+    );
+    const confirm = last(calls);
+    // Пока подтверждение висело, лоту прислали другое фото.
+    auction.images.set(existingLot, { content: jpeg, version: "img-2" });
+    auction.lots.set(existingLot, {
+      ...withPhoto,
+      card: {
+        title: "Кружка с совой",
+        description: "Ручная роспись.",
+        image: { version: "img-2" },
+      },
+    });
+    await bot.handleUpdate(press(dataOf(confirm, "✔️ Да, убрать фото")));
+
+    expect(plain(last(calls))).toBe(
+      [
+        "Фото уже сменилось",
+        "",
+        "Ничего не убрано: посмотри новое фото и реши заново.",
+      ].join("\n"),
+    );
+    expect(auction.commands).toEqual([]);
+  });
+
+  it("refuses to remove the photo of a sold lot with the sold-lot frame", async () => {
+    const auction = fakeAuction({
+      lots: [
+        {
+          ...withPhoto,
+          status: { kind: "sold", winnerId: existingLot, price: rub(90_000) },
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:rm:${lot}`));
+
+    expect(plain(last(calls))).toBe(
+      "Лот продан. Название, описание и фото больше не меняются.",
+    );
+    expect(auction.commands).toEqual([]);
+  });
+
+  it("asks the photo again when the administrator declines the removal", async () => {
+    const auction = auctionWithPhoto();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(
+      press(dataOf(question(calls).payload, "🗑 Убрать фото")),
+    );
+    await bot.handleUpdate(press(dataOf(last(calls), "✖️ Нет")));
+
+    expect(question(calls).payload.text).toContain("Пришли фото лота");
+    expect(auction.commands).toEqual([]);
+  });
+
+  it("offers no removal on the photo question of a lot without a photo", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+    expect(labels(question(calls).payload)).toEqual([["Отмена"]]);
+  });
+
+  it("shows the closed-card frame of the form when Auction refuses the removal", async () => {
+    const auction = auctionWithPhoto(() => ({ kind: "card-closed" }));
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ry:${lot}:${fingerprint("img-1")}`));
+
+    const refusal = last(calls);
+    expect(plain(refusal)).toBe(
+      "Лот закрыт. Название, описание и фото больше не меняются.",
+    );
+    expect(labels(refusal)).toEqual([["‹ Лот"]]);
+    expect(records.every((record) => record.level !== "error")).toBe(true);
   });
 });
 

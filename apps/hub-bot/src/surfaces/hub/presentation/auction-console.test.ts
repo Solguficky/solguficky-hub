@@ -105,6 +105,8 @@ const forgedAuctionPresses = {
   "lot-step-mode": `v1:lot:sm:${uuidToToken(vaseId)}:100:single`,
   "lot-skip": `v1:lot:skip:${uuidToToken(vaseId)}`,
   "lot-keep-step": `v1:lot:sk:${uuidToToken(vaseId)}:100`,
+  "lot-image-remove": `v1:lot:rm:${uuidToToken(vaseId)}`,
+  "lot-image-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
   "console-view": consoleData,
   "console-week": `v1:ac:w:${auctionToken}`,
   "console-raffle": `v1:ac:r:${auctionToken}`,
