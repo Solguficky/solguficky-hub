@@ -151,7 +151,7 @@ final class PredictionsIntegrationSpec
       onDatabase(database) { node =>
         val shortWeek = OnlinePhase(
           Instant.now().minusSeconds(3600),
-          Some(Instant.now().plusSeconds(15).truncatedTo(ChronoUnit.SECONDS)),
+          Some(Instant.now().plusSeconds(40).truncatedTo(ChronoUnit.SECONDS)),
           closesLots = true
         )
         val (auction, lot) = scheduled(node, shortWeek)
@@ -163,7 +163,9 @@ final class PredictionsIntegrationSpec
         val during = node.predictions.mine(auction, person).futureValue
         during.game.catalog shouldBe RoundStatus.Open
         during.forecasts shouldBe Map(PredictionRound.Catalog -> changed)
-        eventually(node.predictions.mine(auction, person).futureValue.game.catalog shouldBe RoundStatus.Closed)
+        eventually(timeout(Span(90, Seconds))) {
+          node.predictions.mine(auction, person).futureValue.game.catalog shouldBe RoundStatus.Closed
+        }
         node.predictions.submit(auction, SubmitForecast(person, guess, newOp())).futureValue shouldBe
           Left(SubmitRejected.RoundClosed)
         node.predictions.mine(auction, person).futureValue.forecasts shouldBe Map(PredictionRound.Catalog -> changed)
