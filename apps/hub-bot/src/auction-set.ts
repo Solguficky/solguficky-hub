@@ -15,11 +15,6 @@ export function setField(name: string): string {
   return `Сет: «${name}»`;
 }
 
-/** Отметка принадлежности к сету в подписи кнопки ленты. */
-export function setMark(name: string): string {
-  return `Сет «${name}»`;
-}
-
 /**
  * Итог сета: кто его собрал. До итога сета этой строки нет — Auction
  * записывает собравшего один раз, когда последний лот сета пришёл к

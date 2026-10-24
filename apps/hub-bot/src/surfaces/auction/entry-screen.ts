@@ -40,7 +40,6 @@ import {
   setLabel,
   setLotLabel,
   setLotLine,
-  setMark,
   setMoreLine,
 } from "../../auction-set.js";
 import {
@@ -1872,13 +1871,9 @@ function renderButton(
       const label =
         (final === undefined ? null : finalFeedLabel(item, final, title)) ??
         `${title}${lotButtonTail(item, priceLabel(item.status))}`;
-      // Отметка принадлежности к сету (ADR-073, п. 7): лот сета помечен в
-      // подписи ленты, а название сета карточка называет.
-      return text(
-        item.setName === undefined
-          ? label
-          : `${label} · ${setMark(item.setName)}`,
-      );
+      // Сет в подписи ленты не называется (решение владельца 24.10.2026,
+      // пересматривает ADR-073, п. 7): сет называет карточка лота.
+      return text(label);
     }
     // Избранное — свой список: отметки сета в нём нет (PER-510).
     case "favorites.open-lot": {

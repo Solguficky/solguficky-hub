@@ -108,3 +108,7 @@
 - Задачи: [PER-506](https://linear.app/anticnvm/issue/per-506) — зонт; [PER-507](https://linear.app/anticnvm/issue/per-507) — решение; [PER-508](https://linear.app/anticnvm/issue/per-508) — сет в Auction и определение собравшего; [PER-509](https://linear.app/anticnvm/issue/per-509) — сет в пульте бота хаба; [PER-510](https://linear.app/anticnvm/issue/per-510) — показ сета и собравшего
 - Другие ADR: [ADR-057](ADR-057-auction-lot-catalog-as-state.md) — каталог лота; [ADR-047](ADR-047-auction-trading-domain-vocabulary-and-event-form.md) — реестр и словарь; [ADR-059](ADR-059-auction-participant-display-name.md) — имя в аукционе; [ADR-066](ADR-066-auction-raffle-commit-reveal-with-beacon.md) и [ADR-067](ADR-067-auction-predictions-two-rounds.md) — адресные итоги и отдельные entity; [ADR-072](ADR-072-auction-participant-removal-from-lot.md) — снятие участника с лота
 - Сервисы: [Auction](../services/auction.md), [Notifications](../services/notifications.md)
+
+## Дополнение 2026-10-24: сет не называется в подписи ленты
+
+Решение владельца по прогону прода 24 октября 2026 года. Отметка `· Сет «<название>»` в подписи кнопки ленты снята у обоих ботов: с ней название лота обрезалось, и одинаковые лоты сета (`<название> | N из M`, [PER-716](https://linear.app/anticnvm/issue/per-716)) в ленте не различались. Сет по-прежнему называют карточка лота (поле `Сет: «<название>»`, строка собравшего) и экран «Лоты сета»; правило «собрал» и личное сообщение не меняются.
