@@ -374,7 +374,7 @@ describe("auction bot", () => {
     });
     await first.bot.handleUpdate(start);
     expect(first.calls[0]?.payload).toMatchObject({
-      text: expect.stringContaining("Что продаём"),
+      text: expect.stringContaining("Как делать ставки"),
     });
     expect(acknowledged).toBe(false);
     const press = (action: "read" | "faq"): Update => ({
@@ -397,7 +397,7 @@ describe("auction bot", () => {
     });
     await restarted.bot.handleUpdate(press("faq"));
     expect(restarted.calls.at(-1)?.payload).toMatchObject({
-      text: expect.stringContaining("Что продаём"),
+      text: expect.stringContaining("Как делать ставки"),
     });
   });
 
@@ -451,7 +451,9 @@ describe("auction bot", () => {
       }),
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Кружка");
-    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("Что продаём");
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
+      "Как делать ставки",
+    );
   });
 
   // Отказ Auction на приходе по ссылке — тот же кадр недоступности с
