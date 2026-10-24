@@ -21,6 +21,7 @@ const STATUSES: Readonly<Record<number, RaffleStatusView>> = {
   [RaffleStatus.OPEN]: "open",
   [RaffleStatus.CLOSING]: "closing",
   [RaffleStatus.AWAITING_BEACON]: "awaiting-beacon",
+  [RaffleStatus.AWAITING_WINNER]: "awaiting-winner",
   [RaffleStatus.DRAWN]: "drawn",
   [RaffleStatus.NO_TICKETS]: "no-tickets",
   [RaffleStatus.NOT_HELD]: "not-held",
@@ -55,6 +56,7 @@ export function raffleOf(raffle: Raffle): RaffleView {
     ...(raffle.rafflePrize === undefined || raffle.rafflePrize.trim() === ""
       ? {}
       : { prize: raffle.rafflePrize }),
+    ...(raffle.drawnByHand ? { drawnByHand: true as const } : {}),
     ...(reveal === undefined
       ? {}
       : {
