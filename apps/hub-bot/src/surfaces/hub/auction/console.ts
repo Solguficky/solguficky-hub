@@ -73,7 +73,20 @@ function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {
       : { rafflePrize: phase.rafflePrize }),
     final: config.finalBlocks > 0,
     windows: config.stepWindows.map(windowOf),
+    // Срок оплаты счёта (PER-722): Auction хранит его в каждой конфигурации,
+    // а без поля команда его не шлёт и Auction подставит срок платформы.
+    ...(config.paymentTermSeconds === undefined
+      ? {}
+      : { paymentTermSeconds: paymentTermOf(config.paymentTermSeconds) }),
   };
+}
+
+function paymentTermOf(seconds: bigint): number {
+  const value = Number(seconds);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error("payment term out of range");
+  }
+  return value;
 }
 
 // Окно «Счастливых часов» (PER-504). Шаг у окна обязателен: Auction без него

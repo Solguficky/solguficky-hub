@@ -411,6 +411,8 @@ type PlainAction =
   // Приз розыгрыша (PER-649): вопрос о призе и его снятие.
   | { kind: "console-raffle-prize"; auction: string }
   | { kind: "console-raffle-prize-remove"; auction: string }
+  // Срок оплаты счёта (PER-722): вопрос о числе дней.
+  | { kind: "console-payment-term"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
   // Ориентировочное время финала (PER-663): вопрос о моменте и снятие
   // анонса.
@@ -740,6 +742,9 @@ export type QuestionStep =
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
+  // Срок оплаты счёта (PER-722): аукцион, а остальную конфигурацию ответ
+  // читает у Auction заново.
+  | { kind: "console-payment-term"; auction: string }
   // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
   // ответ читает у Auction заново.
   | { kind: "console-window"; auction: string }
@@ -926,6 +931,11 @@ export function consoleRafflePrizeData(auction: string): string {
 /** «Убрать приз»: розыгрыш остаётся, победитель получит весть без приза. */
 export function consoleRafflePrizeRemoveData(auction: string): string {
   return `v1:ac:rz:${auction}`;
+}
+
+/** «Срок оплаты»: вопрос о сроке оплаты счёта в днях (PER-722). */
+export function consolePaymentTermData(auction: string): string {
+  return `v1:ac:pt:${auction}`;
 }
 
 /** «Время финала»: вопрос об ориентировочном времени финала (PER-663). */
@@ -1365,6 +1375,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ar:${step.auction}`;
     case "console-raffle-prize":
       return `v1:q:ap:${step.auction}`;
+    case "console-payment-term":
+      return `v1:q:pt:${step.auction}`;
     case "console-final-time":
       return `v1:q:ft:${step.auction}`;
     case "console-payment-text":
@@ -2177,6 +2189,11 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-raffle-prize-remove", auction: auction.data }
         : { kind: "malformed" };
+    // Срок оплаты счёта (PER-722): вопрос о числе дней `pt`.
+    case "pt":
+      return parts.length === 4
+        ? { kind: "console-payment-term", auction: auction.data }
+        : { kind: "malformed" };
     // Ориентировочное время финала (PER-663): вопрос о моменте `ft` и его
     // снятие `fx`.
     case "ft":
@@ -2394,6 +2411,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-raffle", auction: token.data };
       case "ap":
         return { kind: "console-raffle-prize", auction: token.data };
+      case "pt":
+        return { kind: "console-payment-term", auction: token.data };
       case "ft":
         return { kind: "console-final-time", auction: token.data };
       case "ai":

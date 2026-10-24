@@ -6,6 +6,8 @@ import {
   activeLot,
   heldLots,
   launchableLots,
+  paymentTermDays,
+  paymentTermInDays,
   rafflePrizeLimit,
   sortedLots,
   windowLimit,
@@ -25,6 +27,7 @@ import type {
   LaunchDraft,
   LineupPick,
   LotAmount,
+  PaymentTermAskError,
   RaffleAskError,
   RafflePrizeAskError,
   StepWindow,
@@ -56,6 +59,7 @@ import {
   consoleMarkData,
   consoleNextLotData,
   consoleOpenData,
+  consolePaymentTermData,
   consoleRaffleData,
   consoleRafflePrizeData,
   consoleRafflePrizeRemoveData,
@@ -142,7 +146,7 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-not-scheduled":
     "Сначала задай сроки недели. Без них неделю не открыть.",
   "week-frozen":
-    "Онлайн-неделя уже открыта. Сроки, финал, счастливые часы и розыгрыш больше не меняются.",
+    "Онлайн-неделя уже открыта. Сроки, финал, счастливые часы, розыгрыш и срок оплаты больше не меняются.",
   "week-needed": "Сначала задай сроки недели.",
   "raffle-saved": "Момент розыгрыша сохранён.",
   "raffle-removed": "Розыгрыш убран. Неделя пройдёт без него.",
@@ -150,6 +154,7 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "prize-removed": "Приз розыгрыша убран. Победитель получит весть без приза.",
   "prize-without-raffle":
     "Приз задаётся у розыгрыша: сначала нажми «Розыгрыш» и назови момент.",
+  "payment-term-saved": "Срок оплаты счёта сохранён.",
   marked: "Лот отмечен для финала.",
   unmarked: "Отметка финала снята.",
   "already-marked": "Лот уже отмечен для финала.",
@@ -223,6 +228,13 @@ function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
       return week?.rafflePrize === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(`Приз розыгрыша сохранён: ${week.rafflePrize}`);
+    // Срок оплаты (PER-722) называется тем же, чем строкой пульта.
+    case "payment-term-saved":
+      return week?.paymentTermSeconds === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(
+            `Срок оплаты счёта сохранён: ${paymentTermText(week.paymentTermSeconds)}`,
+          );
     // Время финала (PER-663) называется тем же, чем строкой пульта: момент
     // анонса, а не обещание, что финал начнётся ровно тогда.
     case "final-time-saved":
@@ -350,6 +362,18 @@ function rafflePrizeLines(week: AuctionWeek): string[] {
   return week.rafflePrize === undefined ? [] : [`Приз: ${week.rafflePrize}`];
 }
 
+// Срок оплаты счёта (PER-722): сколько дней у победителя лота на оплату от
+// продажи. Auction отдаёт его всегда; без поля строки нет.
+function paymentTermText(seconds: number): string {
+  return `${paymentTermInDays(seconds)} дн.`;
+}
+
+function paymentTermLines(week: AuctionWeek): string[] {
+  return week.paymentTermSeconds === undefined
+    ? []
+    : [`Срок оплаты: ${paymentTermText(week.paymentTermSeconds)}`];
+}
+
 // Розыгрыш после онлайн-торгов: итог виден, пока пульт открыт (PER-618).
 function raffleLines(view: ConsoleScreenView): string[] {
   const week = view.console.week;
@@ -434,6 +458,7 @@ function statusLines(view: ConsoleScreenView): string[] {
             ...windowsLines(view.console),
             raffleLine(week, view),
             ...rafflePrizeLines(week),
+            ...paymentTermLines(week),
           ];
     case "prebidding":
       return [
@@ -448,6 +473,7 @@ function statusLines(view: ConsoleScreenView): string[] {
               ...windowsLines(view.console),
               raffleLine(week, view),
               ...rafflePrizeLines(week),
+              ...paymentTermLines(week),
             ]),
       ];
     case "settling":
@@ -862,7 +888,11 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     nextRow(keyboard)
       .text("Счастливые часы", consoleWindowsData(auction))
       .text("Сводка дня", consoleDaySummaryData(auction));
-    nextRow(keyboard).text("Розыгрыш", consoleRaffleData(auction));
+    // Срок оплаты счёта (PER-722) — парой с «Розыгрышем»: свой ряд вывел бы
+    // пульт с призом за потолок рядов.
+    nextRow(keyboard)
+      .text("Розыгрыш", consoleRaffleData(auction))
+      .text("Срок оплаты", consolePaymentTermData(auction));
     if (week.raffleClosesAt !== undefined) {
       // Приз живёт у розыгрыша (PER-649): без момента кнопки нет — Auction
       // приз без розыгрыша не принимает.
@@ -1473,6 +1503,26 @@ export function rafflePrizeQuestionText(prize: string | undefined): string {
   return [
     ...(prize === undefined ? [] : [`Сейчас: ${prize}`]),
     rafflePrizePrompt,
+  ].join("\n");
+}
+
+/** Причина отказа ответу о сроке оплаты счёта (PER-722). */
+export const paymentTermAskErrorText: Record<PaymentTermAskError, string> = {
+  "payment-term-format":
+    "Не получилось разобрать срок. Нужно целое число дней, например: 1.",
+  "payment-term-range": `Срок оплаты — от ${paymentTermDays.min} до ${paymentTermDays.max} дней.`,
+};
+
+export const paymentTermPrompt = `Сколько дней у победителя лота на оплату счёта от продажи? Целое число от ${paymentTermDays.min} до ${paymentTermDays.max}.\nНапример: 1`;
+
+/**
+ * Вопрос о сроке оплаты счёта (PER-722): текущий срок в том же виде, в каком
+ * его вводят, затем образец.
+ */
+export function paymentTermQuestionText(days: number | undefined): string {
+  return [
+    ...(days === undefined ? [] : [`Сейчас: ${days}`]),
+    paymentTermPrompt,
   ].join("\n");
 }
 

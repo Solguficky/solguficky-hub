@@ -640,6 +640,7 @@ describe("auction console adapter", () => {
     windows: [],
     raffleClosesAt: undefined,
     rafflePrize: undefined,
+    paymentTermSeconds: undefined,
   };
 
   it.each([
@@ -720,6 +721,44 @@ describe("auction console adapter", () => {
         final: true,
       }),
     ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  // Срок оплаты счёта (PER-722): едет секундами в конфигурации, а отказ
+  // Auction о пределе — ответ человеку, а не дефект.
+  it("sends the payment term with the week and reads its refusal", async () => {
+    const scheduleAuction = vi.fn(async (_request: unknown) =>
+      create(ScheduleAuctionResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    await adapter({ scheduleAuction }).scheduleAuction(admin, {
+      ...week,
+      final: false,
+      paymentTermSeconds: 86_400,
+    });
+    const sent = scheduleAuction.mock.calls[0]?.[0] as {
+      config: Record<string, unknown>;
+    };
+    expect(sent.config).toMatchObject({ paymentTermSeconds: 86_400n });
+
+    await expect(
+      adapter({
+        scheduleAuction: async () =>
+          create(ScheduleAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: {
+                reason: {
+                  case: "configInvalid",
+                  value: {
+                    reason: { case: "paymentTermOutOfRange", value: {} },
+                  },
+                },
+              },
+            },
+          }),
+      }).scheduleAuction(admin, { ...week, final: false }),
+    ).resolves.toEqual({ kind: "payment-term-out-of-range" });
   });
 
   it("sends the happy hours windows with the week and reads their refusals by window", async () => {

@@ -320,6 +320,9 @@ export type ScheduleAuctionResult =
   | { kind: "raffle-prize-without-raffle" }
   | { kind: "raffle-prize-blank" }
   | { kind: "raffle-prize-too-long" }
+  // Срок оплаты счёта вне 1–30 дней (PER-722): бот проверяет его сам, и отказ
+  // Auction — тот же ответ человеку.
+  | { kind: "payment-term-out-of-range" }
   | { kind: "already-started" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -435,6 +438,8 @@ export type FinalistResult =
 // Ключ `raffleClosesAt` обязателен по той же причине; `undefined` — неделя без
 // розыгрыша (ADR-066, п. 5). Так же обязателен `rafflePrize` (PER-649): приз
 // лежит рядом с моментом розыгрыша, и команда без него стёрла бы приз молча.
+// И срок оплаты счёта `paymentTermSeconds` (PER-722): команда без него вернула
+// бы срок платформы, семь дней; `undefined` — срок платформы.
 // `lot_defaults` бот не шлёт — их подставляет Auction; правило закрытия
 // выводится из финала.
 export type AuctionWeekConfig = {
@@ -446,6 +451,7 @@ export type AuctionWeekConfig = {
   windows: readonly StepWindow[];
   raffleClosesAt: string | undefined;
   rafflePrize: string | undefined;
+  paymentTermSeconds: number | undefined;
 };
 
 // Запуск окна сниженного шага по ходу торгов (PER-615; ADR-047, дополнение

@@ -104,6 +104,7 @@ import type {
   MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
+  PaymentTermAskError,
   PaymentTextAskError,
   Person,
   PublishMomentRetry,
@@ -202,6 +203,7 @@ import {
   consoleFinalTimeData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
+  consolePaymentTermData,
   consolePaymentTextData,
   consoleRaffleData,
   consoleRafflePrizeData,
@@ -273,6 +275,8 @@ import {
   launchScreen,
   lineupConfirmScreen,
   lineupOrderScreen,
+  paymentTermAskErrorText,
+  paymentTermQuestionText,
   raffleAskErrorText,
   rafflePrizeAskErrorText,
   rafflePrizeQuestionText,
@@ -771,6 +775,14 @@ type PendingConsolePrize = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о сроке оплаты счёта на пульте (PER-722). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePaymentTerm = {
+  kind: "console-payment-term";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос об ориентировочном времени финала на пульте (PER-663). Шаг — аукцион —
 // лежит в кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleFinalTime = {
@@ -843,6 +855,7 @@ type HubPendingInput =
   | PendingConsoleWeek
   | PendingConsoleRaffle
   | PendingConsolePrize
+  | PendingConsolePaymentTerm
   | PendingConsoleFinalTime
   | PendingConsolePaymentText
   | PendingConsoleWindow
@@ -866,6 +879,10 @@ const consoleQuestionIntents = {
   "console-raffle-prize": {
     intent: "set-auction-raffle-prize",
     foreign: "foreign raffle prize answer ignored",
+  },
+  "console-payment-term": {
+    intent: "set-auction-payment-term",
+    foreign: "foreign payment term answer ignored",
   },
   "console-final-time": {
     intent: "set-auction-final-time",
@@ -1655,6 +1672,7 @@ async function handleMessage(
         result.kind !== "auction-week-ask" &&
         result.kind !== "auction-raffle-ask" &&
         result.kind !== "auction-raffle-prize-ask" &&
+        result.kind !== "auction-payment-term-ask" &&
         result.kind !== "auction-final-time-ask" &&
         result.kind !== "payment-text-ask" &&
         result.kind !== "step-window-ask" &&
@@ -2104,6 +2122,7 @@ async function handleMessage(
         pending.kind === "console-week" ||
         pending.kind === "console-raffle" ||
         pending.kind === "console-raffle-prize" ||
+        pending.kind === "console-payment-term" ||
         pending.kind === "console-final-time" ||
         pending.kind === "console-payment-text" ||
         pending.kind === "console-window" ||
@@ -2124,6 +2143,7 @@ async function handleMessage(
             : pending.kind === "console-week" ||
                 pending.kind === "console-raffle" ||
                 pending.kind === "console-raffle-prize" ||
+                pending.kind === "console-payment-term" ||
                 pending.kind === "console-final-time" ||
                 pending.kind === "console-payment-text" ||
                 pending.kind === "console-window" ||
@@ -2541,6 +2561,7 @@ async function handleCallback(
       action.kind === "console-raffle-remove" ||
       action.kind === "console-raffle-prize" ||
       action.kind === "console-raffle-prize-remove" ||
+      action.kind === "console-payment-term" ||
       action.kind === "console-final-time" ||
       action.kind === "console-final-time-remove" ||
       action.kind === "console-final" ||
@@ -7619,6 +7640,7 @@ async function handleConsoleCallback(
         | "console-raffle-remove"
         | "console-raffle-prize"
         | "console-raffle-prize-remove"
+        | "console-payment-term"
         | "console-final"
         | "console-final-time"
         | "console-final-time-remove"
@@ -7722,6 +7744,15 @@ async function handleConsoleCallback(
           ...call,
           intent: "remove-auction-raffle-prize",
           opId: createUuidV7(),
+        }),
+      );
+    // Срок оплаты счёта (PER-722): вопрос решает юзкейс по прочитанной
+    // конфигурации — без сроков недели вопроса нет.
+    case "console-payment-term":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-payment-term",
         }),
       );
     case "console-final":
@@ -8217,6 +8248,18 @@ async function renderConsoleResult(
           ? "raffle prize requested"
           : "raffle prize asked again",
       );
+    case "auction-payment-term-ask":
+      await askConsolePaymentTerm(ctx, context.questions, {
+        auctionId: result.auctionId,
+        days: result.days,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "payment term requested"
+          : "payment term asked again",
+      );
     case "auction-final-time-ask":
       await askConsoleFinalTime(ctx, context.questions, {
         auctionId: result.auctionId,
@@ -8588,6 +8631,42 @@ function askConsolePrize(
     questions,
     pending,
     rafflePrizeQuestionText(ask.prize),
+    ask.replaces,
+  );
+}
+
+// Вопрос о сроке оплаты счёта (PER-722): целое число дней, текущий — в
+// подсказке.
+function askConsolePaymentTerm(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    days?: number | undefined;
+    error?: PaymentTermAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-payment-term",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      paymentTermAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    paymentTermQuestionText(ask.days),
     ask.replaces,
   );
 }
@@ -10621,6 +10700,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle-prize",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-payment-term":
+      return {
+        kind: "console-payment-term",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-final-time":
       return {
         kind: "console-final-time",
@@ -10846,6 +10930,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-payment-term":
+      return {
+        kind: "console-payment-term",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "console-final-time":
       return {
         kind: "console-final-time",
@@ -10958,10 +11049,11 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-payment-term":
     case "console-final-time":
     case "final-ask":
-      // Вопросы о сроках, о розыгрыше, о призе, о времени финала и о цене
-      // заданы с пульта аукциона.
+      // Вопросы о сроках, о розыгрыше, о призе, о сроке оплаты, о времени
+      // финала и о цене заданы с пульта аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -11144,6 +11236,8 @@ function reopenData(step: QuestionStep): string {
       return consoleRaffleData(step.auction);
     case "console-raffle-prize":
       return consoleRafflePrizeData(step.auction);
+    case "console-payment-term":
+      return consolePaymentTermData(step.auction);
     case "console-final-time":
       return consoleFinalTimeData(step.auction);
     case "console-payment-text":
@@ -11204,6 +11298,7 @@ function answerParent(step: QuestionStep): Parent {
     case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-payment-term":
     case "console-final-time":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
@@ -11485,6 +11580,7 @@ function callbackUseCase(
     | "console-raffle-remove"
     | "console-raffle-prize"
     | "console-raffle-prize-remove"
+    | "console-payment-term"
     | "console-final"
     | "console-final-time"
     | "console-final-time-remove"
@@ -11687,6 +11783,7 @@ function callbackUseCase(
     case "console-raffle-remove":
     case "console-raffle-prize":
     case "console-raffle-prize-remove":
+    case "console-payment-term":
     case "console-final":
     case "console-visibility":
     case "console-open":

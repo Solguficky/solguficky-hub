@@ -499,6 +499,9 @@ export type AuctionWeek = {
   // Приз розыгрыша одной строкой (PER-649); нет — приз не объявлен. Лежит рядом
   // с моментом: задаётся до открытия недели и после него не меняется.
   rafflePrize?: string;
+  // Срок оплаты счёта в секундах от продажи (PER-722). Auction хранит его в
+  // каждой конфигурации; нет — снимок его не отдал, и команда его не шлёт.
+  paymentTermSeconds?: number;
 };
 
 // Окно сниженного шага (ADR-047, дополнение 2026-10-08): полуоткрытый
@@ -641,6 +644,8 @@ export type ConsoleNote =
   | "prize-saved"
   | "prize-removed"
   | "prize-without-raffle"
+  // Срок оплаты счёта (PER-722) сохранён.
+  | "payment-term-saved"
   | "marked"
   | "unmarked"
   | "already-marked"
@@ -718,6 +723,10 @@ export type RaffleAskError =
 // не длиннее 200 знаков: пустой приз говорит, что приза не будет, а предел
 // держит и бот, и Auction.
 export type RafflePrizeAskError = "prize-blank" | "prize-too-long";
+
+// Почему вопрос о сроке оплаты счёта задан заново (PER-722). Срок — целое
+// число дней от 1 до 30: тот же предел держит Auction.
+export type PaymentTermAskError = "payment-term-format" | "payment-term-range";
 
 // Почему вопрос об ориентировочном времени финала задан заново (PER-663).
 // Момент лежит в будущем и в поясе сообщества: анонс трансляции не должен
@@ -850,6 +859,14 @@ export type AuctionConsoleRequest =
     })
   | (AuctionConsoleCall & {
       intent: "remove-auction-raffle-prize";
+      opId: string;
+    })
+  // Срок оплаты счёта (PER-722): вопрос о числе дней и ответ, как его написал
+  // человек. Снятия нет: срок у аукциона есть всегда.
+  | (AuctionConsoleCall & { intent: "ask-auction-payment-term" })
+  | (AuctionConsoleCall & {
+      intent: "set-auction-payment-term";
+      value: string;
       opId: string;
     })
   // Кнопка несёт целевое состояние финала, а не переворот.
@@ -1534,6 +1551,14 @@ export type ExecuteResult =
       auctionId: string;
       prize?: string;
       error?: RafflePrizeAskError;
+    }
+  // Вопрос о сроке оплаты счёта (PER-722): первый либо тот же заново, с
+  // причиной. `days` — текущий срок в днях, его вопрос повторяет.
+  | {
+      kind: "auction-payment-term-ask";
+      auctionId: string;
+      days?: number;
+      error?: PaymentTermAskError;
     }
   // Вопрос об ориентировочном времени финала (PER-663): первый либо тот же
   // заново, с причиной. `finalAt` — выставленный анонс, его вопрос повторяет.
