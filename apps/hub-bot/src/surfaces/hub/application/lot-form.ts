@@ -1,20 +1,34 @@
+import { createHash } from "node:crypto";
 import type { LotView } from "../../../auction-ui/index.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
+import { uuidV7Of } from "../../../core/uuid-v7.js";
 import type {
+  AddLotResult,
+  AuctionConsoles,
   AuctionFailure,
   LotAdministration,
   LotCardResult,
   LotReadResult,
   LotStepPolicyInput,
+  RemoveLotResult,
+  SaveLotSetResult,
+  ScheduleLotResult,
 } from "../auction/port.js";
+import { acceptsLots } from "./auction-console.js";
 import { fingerprint } from "./fingerprint.js";
+import { lotSetLimit } from "./lot-sets.js";
 import type {
+  AuctionConsoleSnapshot,
   ExecuteResult,
   LotAmount,
   LotAskError,
   LotFormRequest,
   LotFormView,
   LotQuestion,
+  LotRegistryView,
+  LotSet,
+  LotSetField,
+  LotSetMiss,
   LotStepMode,
   LotTermsView,
   LotTierView,
@@ -200,6 +214,130 @@ export function keptStep(terms: LotTermsView): KeptStep | undefined {
   return undefined;
 }
 
+// Сколько копий заводится одновременно: Auction и Meetups за ним держат
+// несколько вызовов сразу, а бюджет действия — пять секунд на всё.
+const copyConcurrency = 4;
+
+/** Сколько всего лотов могут дать копии вместе с исходным (PER-716). */
+export const minLotCopies = 2;
+export const maxLotCopies = 20;
+
+/** Число лотов из ответа на вопрос о копиях; не целое от 2 до 20 — нет. */
+export function parseLotCopies(raw: string): number | undefined {
+  const digits = raw.trim();
+  if (!/^\d{1,2}$/.test(digits)) return undefined;
+  const count = Number(digits);
+  return count >= minLotCopies && count <= maxLotCopies ? count : undefined;
+}
+
+// Хвост номера лота в сете: «Ваза | 3 из 7». Его пишет бот, а человек мог
+// прислать название уже с хвостом — второй хвост к нему не дописывается.
+const setNumberTail = /\s*\|\s*\d+\s+из\s+\d+\s*$/u;
+
+/** Название без хвоста номера в сете (PER-716): оно же — имя сета копий. */
+export function baseTitle(title: string): string {
+  return title.replace(setNumberTail, "").trim();
+}
+
+/** Название лота сета по его месту: «Ваза | 3 из 7» (PER-716). */
+export function numberedTitle(
+  base: string,
+  position: number,
+  total: number,
+): string {
+  return `${base} | ${position} из ${total}`;
+}
+
+// Время UUIDv7 — первые 48 бит, миллисекунды.
+function uuidTime(uuid: string): number {
+  return Number.parseInt(uuid.replaceAll("-", "").slice(0, 12), 16);
+}
+
+/**
+ * Идентификатор копии лота по месту в сете (PER-716): тот же исходный лот и
+ * место дают тот же лот, поэтому повторный ответ дозаводит копии, а не
+ * рождает новые. Время — исходного лота плюс место: лента упорядочена по
+ * `lot_id`, и копии встают за исходным по порядку.
+ */
+export function lotCopyId(sourceLotId: string, position: number): string {
+  return uuidV7Of(
+    `hub-bot:lot-copy:${sourceLotId}:${position}`,
+    uuidTime(sourceLotId) + position - 1,
+  );
+}
+
+/** Идентификатор сета копий: один на исходный лот (PER-716). */
+export function lotCopySetId(sourceLotId: string): string {
+  return uuidV7Of(`hub-bot:lot-copy-set:${sourceLotId}`, uuidTime(sourceLotId));
+}
+
+// Ключ команды одного лота из ключа ответа: у каждой команды свой, а повтор
+// того же ответа даёт те же.
+function opIdFor(opId: string, purpose: string): string {
+  return uuidV7Of(`${opId}:${purpose}`, uuidTime(opId));
+}
+
+// Версия фото у Auction — SHA-256 содержимого: одинаковое фото у лотов сета
+// узнаётся без повторной загрузки.
+function imageVersion(image: Uint8Array): string {
+  return createHash("sha256").update(image).digest("hex");
+}
+
+// Те же ли условия у лота: цена и шаг, одним шагом или порогами.
+function sameTerms(
+  terms: LotTermsView,
+  startingPrice: LotAmount,
+  step: KeptStep,
+): boolean {
+  if (terms.kind !== "set") return false;
+  if (terms.startingPrice.minorUnits !== startingPrice.minorUnits) return false;
+  if (step.policy.kind === "fixed") {
+    return (
+      terms.tiers === undefined &&
+      terms.step?.minorUnits === step.policy.step.minorUnits
+    );
+  }
+  const tiers = terms.tiers ?? [];
+  return (
+    tiers.length === step.policy.tiers.length &&
+    step.policy.tiers.every(
+      (tier, index) =>
+        tiers[index]?.lowerBound.minorUnits === tier.lowerBound.minorUnits &&
+        tiers[index]?.step.minorUnits === tier.step.minorUnits,
+    )
+  );
+}
+
+// Сет лота для правки сета: только полный — в неполном править вместе нечего.
+function fullSetOf(
+  console: AuctionConsoleSnapshot,
+  lotId: string,
+): LotSet | undefined {
+  const set = console.lotSets.find((each) => each.lotIds.includes(lotId));
+  return set !== undefined && set.lotIds.length >= 2 ? set : undefined;
+}
+
+function registryOf(
+  console: AuctionConsoleSnapshot,
+  lotId: string,
+): LotRegistryView {
+  const set = console.lotSets.find((each) => each.lotIds.includes(lotId));
+  return {
+    open: acceptsLots(console.status),
+    ...(set === undefined
+      ? {}
+      : { set: { name: set.name, size: set.lotIds.length } }),
+  };
+}
+
+// Что правка сета разносит по лотам: значение уже принято у исходного лота.
+type SetEdit =
+  | { field: "title"; base: string }
+  | { field: "description"; description: string }
+  | { field: "image"; image: Uint8Array; version: string }
+  // Ключ правки цены — ключ ответа: из него выводится ключ команды каждого лота.
+  | { field: "price"; startingPrice: LotAmount; step: KeptStep; opId: string };
+
 function termsClosed(lotId: string): ExecuteResult {
   return { kind: "lot-refused", reason: "terms-closed", lotId };
 }
@@ -256,10 +394,22 @@ function failed(failure: AuctionFailure): ExecuteResult {
     : { kind: "dependency-rejected", reason: failure.kind };
 }
 
-export function createLotForm(lots: LotAdministration) {
+/**
+ * Пульт аукциона для формы (PER-716): реестр и сеты — из агрегата аукциона,
+ * того же, по которому Auction проверяет копии и сет.
+ */
+export type LotFormSets = Pick<
+  AuctionConsoles,
+  "getAuctionConsole" | "saveLotSet"
+>;
+
+export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
   type Read =
     | { kind: "ok"; raw: LotView; lot: LotFormView }
     | { kind: "refused"; result: ExecuteResult };
+  type Known = Extract<Read, { kind: "ok" }>;
+  // Место лота в сете для правки «Все лоты сета»: название нумеруется по нему.
+  type Slot = { position: number; total: number };
 
   // Read model Auction отстаёт от команды на сотни миллисекунд, а нажатие поля
   // и ответ на вопрос приходят сразу после «Лот добавлен» (PER-471). Поэтому
@@ -477,15 +627,16 @@ export function createLotForm(lots: LotAdministration) {
 
   async function setText(
     request: Extract<LotFormRequest, { intent: "set-lot-text" }>,
+    current: Known,
+    slot?: Slot,
   ): Promise<ExecuteResult> {
-    const current = await read(request);
-    if (current.kind === "refused") return current.result;
     const sold = soldRefusal(current.lot);
     if (sold !== undefined) return sold;
     const question: LotQuestion = {
       kind: "text",
       field: request.field,
       lotId: request.lotId,
+      ...(request.set === true ? { set: true as const } : {}),
     };
     // Правка заменяет оба текста, а второй берётся из карточки. Лот без
     // карточки форма не заводила, и править в нём нечего.
@@ -508,7 +659,25 @@ export function createLotForm(lots: LotAdministration) {
         error: "empty-description",
       };
     }
-    const title = request.field === "title" ? value : stored.title;
+    // Правка всего сета нумерует название по месту лота (PER-716): пустое
+    // без хвоста — то же пустое название.
+    if (request.field === "title" && slot !== undefined) {
+      const base = baseTitle(value);
+      if (base === "") {
+        return {
+          kind: "lot-ask",
+          question,
+          lot: current.lot,
+          error: "empty-title",
+        };
+      }
+    }
+    const title =
+      request.field !== "title"
+        ? stored.title
+        : slot === undefined
+          ? value
+          : numberedTitle(baseTitle(value), slot.position, slot.total);
     const description =
       request.field === "description" ? value : stored.description;
     const written = await lots.editLotCard(
@@ -549,10 +718,9 @@ export function createLotForm(lots: LotAdministration) {
       LotFormRequest,
       { intent: "set-lot-image" | "remove-lot-image" }
     >,
+    current: Known,
   ): Promise<ExecuteResult> {
     const removing = request.intent === "remove-lot-image";
-    const current = await read(request);
-    if (current.kind === "refused") return current.result;
     const sold = soldRefusal(current.lot);
     if (sold !== undefined) return sold;
     const stored = current.raw.card;
@@ -613,7 +781,13 @@ export function createLotForm(lots: LotAdministration) {
     }
     return cardRefused(
       written,
-      { kind: "image", lotId: request.lotId },
+      {
+        kind: "image",
+        lotId: request.lotId,
+        ...(request.intent === "set-lot-image" && request.set === true
+          ? { set: true as const }
+          : {}),
+      },
       current.lot,
     );
   }
@@ -648,15 +822,15 @@ export function createLotForm(lots: LotAdministration) {
 
   async function setTerms(
     request: Extract<LotFormRequest, { intent: "set-lot-terms" }>,
+    current: Known,
   ): Promise<ExecuteResult> {
-    const current = await read(request);
-    if (current.kind === "refused") return current.result;
     if (current.lot.terms.kind === "closed") return termsClosed(request.lotId);
     const question: LotQuestion = {
       kind: "step",
       lotId: request.lotId,
       priceRubles: request.priceRubles,
       mode: request.mode,
+      ...(request.set === true ? { set: true as const } : {}),
     };
     const step = parseStep(request.mode, request.value);
     if (step.kind === "rejected") {
@@ -679,9 +853,8 @@ export function createLotForm(lots: LotAdministration) {
   // нажать после того, как шаг пропал из чтения.
   async function keepStep(
     request: Extract<LotFormRequest, { intent: "keep-lot-step" }>,
+    current: Known,
   ): Promise<ExecuteResult> {
-    const current = await read(request);
-    if (current.kind === "refused") return current.result;
     const { terms } = current.lot;
     if (terms.kind === "closed") return termsClosed(request.lotId);
     const step = keptStep(terms);
@@ -697,6 +870,7 @@ export function createLotForm(lots: LotAdministration) {
       lotId: request.lotId,
       priceRubles: request.priceRubles,
       mode: step.policy.kind === "fixed" ? "single" : "tiered",
+      ...(request.set === true ? { set: true as const } : {}),
     });
   }
 
@@ -776,35 +950,740 @@ export function createLotForm(lots: LotAdministration) {
     }
   }
 
+  type ConsoleRead =
+    | { kind: "ok"; console: AuctionConsoleSnapshot }
+    | { kind: "refused"; result: ExecuteResult };
+
+  // Пульт аукциона лота: реестр и сеты (PER-716). Без порта пульта форма
+  // реестра не знает — копий, удаления и правки сета у неё нет.
+  async function readConsole(
+    request: LotFormRequest,
+    auctionId: string,
+  ): Promise<ConsoleRead> {
+    if (sets === undefined) {
+      return {
+        kind: "refused",
+        result: { kind: "rejected", reason: "auction-not-configured" },
+      };
+    }
+    const found = await sets.getAuctionConsole(
+      request.identity,
+      auctionId,
+      rpcMeta(request),
+    );
+    switch (found.kind) {
+      case "ok":
+        return found;
+      case "not-administrator":
+      case "meetup-not-found":
+        return {
+          kind: "refused",
+          result: {
+            kind: "lot-refused",
+            reason: "not-administrator",
+            auctionId,
+          },
+        };
+      case "auction-not-found":
+        return {
+          kind: "refused",
+          result: { kind: "lot-refused", reason: "auction-not-found" },
+        };
+      default:
+        return { kind: "refused", result: failed(found) };
+    }
+  }
+
+  // Экран правки читает и реестр, когда он нужен: открыт ли он и сет лота
+  // (PER-716). Пульт не прочитался — экран остаётся экраном одного лота, без
+  // копий и удаления.
+  async function viewForm(
+    request: Extract<LotFormRequest, { intent: "view-lot-form" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    if (sets === undefined || request.registry !== true) {
+      return { kind: "lot-form", lot: current.lot };
+    }
+    const console = await readConsole(request, current.lot.auctionId);
+    return {
+      kind: "lot-form",
+      lot:
+        console.kind === "ok"
+          ? {
+              ...current.lot,
+              registry: registryOf(console.console, request.lotId),
+            }
+          : current.lot,
+    };
+  }
+
+  // Почему правка не дошла до лота сета: отказ команды словами исхода.
+  function missOf(
+    result:
+      | Exclude<LotCardResult, { kind: "ok" }>
+      | Exclude<ScheduleLotResult, { kind: "ok" }>,
+  ): LotSetMiss {
+    switch (result.kind) {
+      case "card-closed":
+        return "card-closed";
+      case "lots-frozen":
+      case "scheduling-closed":
+        return "terms-closed";
+      case "card-not-found":
+      case "lot-not-in-auction":
+        return "not-in-auction";
+      case "timeout":
+      case "unavailable":
+        return "unavailable";
+      default:
+        return "refused";
+    }
+  }
+
+  // Правка одного лота сета значением, уже принятым у исходного. Лот, у
+  // которого значение уже такое, команды не получает: повтор безопасен и
+  // идёт только к оставшимся.
+  async function applyTo(
+    request: LotFormRequest,
+    lot: LotView,
+    edit: SetEdit,
+    slot: Slot,
+  ): Promise<"ok" | LotSetMiss> {
+    const view = viewOf(lot);
+    if (edit.field === "price") {
+      // Условия Auction принимает только до торгов лота.
+      if (view.terms.kind === "closed") return "terms-closed";
+      if (sameTerms(view.terms, edit.startingPrice, edit.step)) return "ok";
+      const scheduled = await lots.scheduleLot(
+        request.identity,
+        {
+          auctionId: lot.auctionId,
+          lotId: lot.lotId,
+          opId: opIdFor(edit.opId, `terms:${lot.lotId}`),
+          startingPrice: edit.startingPrice,
+          stepPolicy: edit.step.policy,
+        },
+        rpcMeta(request),
+      );
+      return scheduled.kind === "ok" ? "ok" : missOf(scheduled);
+    }
+    if (isSold(view.terms)) return "sold";
+    const card = lot.card;
+    if (card === undefined) return "not-in-auction";
+    const title =
+      edit.field === "title"
+        ? numberedTitle(edit.base, slot.position, slot.total)
+        : card.title;
+    const description =
+      edit.field === "description" ? edit.description : card.description;
+    const same =
+      edit.field === "image"
+        ? card.image?.version === edit.version
+        : card.title === title && card.description === description;
+    if (same) return "ok";
+    const written = await lots.editLotCard(
+      request.identity,
+      {
+        lotId: lot.lotId,
+        title,
+        description,
+        ...(edit.field === "image" ? { image: edit.image } : {}),
+      },
+      rpcMeta(request),
+    );
+    return written.kind === "ok" ? "ok" : missOf(written);
+  }
+
+  // Правка сета по лоту за раз (PER-716): лоты по порядку сета, `done` — те,
+  // до которых правка уже дошла. Лот, которого пульт ещё не отдаёт, читается
+  // отдельно: сеты пульт читает с агрегатом, а лоты — с read model.
+  async function spread(
+    request: LotFormRequest,
+    console: AuctionConsoleSnapshot,
+    set: LotSet,
+    edit: SetEdit,
+    done: ReadonlySet<string>,
+  ): Promise<{
+    applied: number;
+    missed: { title: string; reason: LotSetMiss }[];
+  }> {
+    const snapshots = new Map(
+      console.lots.map((each) => [each.lot.lotId, each.lot]),
+    );
+    const total = set.lotIds.length;
+    let applied = 0;
+    const missed: { title: string; reason: LotSetMiss }[] = [];
+    for (const [index, lotId] of set.lotIds.entries()) {
+      if (done.has(lotId)) {
+        applied += 1;
+        continue;
+      }
+      let lot = snapshots.get(lotId);
+      if (lot === undefined) {
+        const found = await lots.getLot(
+          request.identity,
+          lotId,
+          rpcMeta(request),
+        );
+        if (found.kind === "ok") lot = found.lot;
+        else {
+          missed.push({
+            title: `лот ${index + 1} из ${total}`,
+            reason:
+              found.kind === "not-found"
+                ? "not-in-auction"
+                : found.kind === "timeout" || found.kind === "unavailable"
+                  ? "unavailable"
+                  : "refused",
+          });
+          continue;
+        }
+      }
+      const outcome = await applyTo(request, lot, edit, {
+        position: index + 1,
+        total,
+      });
+      if (outcome === "ok") applied += 1;
+      else {
+        missed.push({
+          title: lot.card?.title ?? `лот ${index + 1} из ${total}`,
+          reason: outcome,
+        });
+      }
+    }
+    return { applied, missed };
+  }
+
+  // Правка «Все лоты сета» (PER-716): сначала сам лот — его отказ форма
+  // показывает так же, как у одного лота, — затем остальные лоты сета тем же
+  // значением. Лот вне полного сета правится один: сет могли разобрать, пока
+  // висел вопрос.
+  async function overSet(
+    request: Extract<
+      LotFormRequest,
+      {
+        intent:
+          | "set-lot-text"
+          | "set-lot-image"
+          | "set-lot-terms"
+          | "keep-lot-step";
+      }
+    >,
+    field: LotSetField,
+    single: (current: Known, slot?: Slot) => Promise<ExecuteResult>,
+    editOf: (saved: LotFormView) => SetEdit | undefined,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    if (request.set !== true || sets === undefined) return single(current);
+    const console = await readConsole(request, current.lot.auctionId);
+    if (console.kind === "refused") return console.result;
+    const set = fullSetOf(console.console, request.lotId);
+    if (set === undefined) return single(current);
+    const total = set.lotIds.length;
+    const result = await single(current, {
+      position: set.lotIds.indexOf(request.lotId) + 1,
+      total,
+    });
+    if (result.kind !== "lot-form" || result.saved === undefined) return result;
+    const edit = editOf(result.lot);
+    if (edit === undefined) return result;
+    const { applied, missed } = await spread(
+      request,
+      console.console,
+      set,
+      edit,
+      new Set([request.lotId]),
+    );
+    return {
+      kind: "lot-set-applied",
+      lot: result.lot,
+      field,
+      applied,
+      total,
+      missed,
+    };
+  }
+
+  // Условия, сохранённые у лота, — то, что правка цены разносит по сету.
+  function termsEdit(saved: LotFormView, opId: string): SetEdit | undefined {
+    const step = keptStep(saved.terms);
+    return saved.terms.kind === "set" && step !== undefined
+      ? {
+          field: "price",
+          startingPrice: saved.terms.startingPrice,
+          step,
+          opId,
+        }
+      : undefined;
+  }
+
+  // «Повторить для оставшихся» (PER-716): значение берётся у самого лота —
+  // его правка прошла, — и разносится по сету заново. Лоты, у которых оно
+  // уже такое, команды не получают.
+  async function retrySet(
+    request: Extract<LotFormRequest, { intent: "retry-lot-set" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const console = await readConsole(request, current.lot.auctionId);
+    if (console.kind === "refused") return console.result;
+    const set = fullSetOf(console.console, request.lotId);
+    // Сет разобрали — разносить некуда: экран правки одного лота.
+    if (set === undefined) {
+      return {
+        kind: "lot-form",
+        lot: {
+          ...current.lot,
+          registry: registryOf(console.console, request.lotId),
+        },
+      };
+    }
+    if (request.field !== "price") {
+      const sold = soldRefusal(current.lot);
+      if (sold !== undefined) return sold;
+    }
+    const card = current.raw.card;
+    let edit: SetEdit | undefined;
+    switch (request.field) {
+      case "title":
+        edit =
+          card === undefined
+            ? undefined
+            : { field: "title", base: baseTitle(card.title) || card.title };
+        break;
+      case "description":
+        edit =
+          card === undefined
+            ? undefined
+            : { field: "description", description: card.description };
+        break;
+      case "image": {
+        if (card?.image === undefined) break;
+        const image = await lots.getLotImage(
+          request.identity,
+          request.lotId,
+          rpcMeta(request),
+        );
+        if (image.kind === "not-found") break;
+        if (image.kind !== "ok") return failed(image);
+        edit = { field: "image", image: image.content, version: image.version };
+        break;
+      }
+      case "price":
+        if (current.lot.terms.kind === "closed") {
+          return termsClosed(request.lotId);
+        }
+        edit = termsEdit(current.lot, request.opId);
+        break;
+      default: {
+        const _exhaustive: never = request.field;
+        return _exhaustive;
+      }
+    }
+    // Разносить нечего — у лота нет значения поля: экран правки.
+    if (edit === undefined) return { kind: "lot-form", lot: current.lot };
+    const { applied, missed } = await spread(
+      request,
+      console.console,
+      set,
+      edit,
+      new Set(),
+    );
+    return {
+      kind: "lot-set-applied",
+      lot: current.lot,
+      field: request.field,
+      applied,
+      total: set.lotIds.length,
+      missed,
+    };
+  }
+
+  // Отказ команды копий: реестр закрыли, права нет, сходку отменили. Сбой
+  // Auction оставляет вопрос открытым — повторный ответ дозаводит копии.
+  function copyRefused(
+    result:
+      | Exclude<LotCardResult, { kind: "ok" }>
+      | Exclude<AddLotResult, { kind: "ok" }>
+      | Exclude<ScheduleLotResult, { kind: "ok" }>
+      | Exclude<SaveLotSetResult, { kind: "ok" }>
+      | Exclude<RemoveLotResult, { kind: "ok" }>,
+    lotId: string,
+  ): ExecuteResult {
+    switch (result.kind) {
+      case "timeout":
+      case "unavailable":
+      case "forbidden":
+      case "invalid":
+        return failed(result);
+      case "not-admin":
+      case "not-administrator":
+      case "meetup-not-found":
+        return { kind: "lot-refused", reason: "not-administrator", lotId };
+      case "lots-frozen":
+      case "scheduling-closed":
+        return { kind: "lot-refused", reason: "lots-frozen", lotId };
+      case "meetup-cancelled":
+        return { kind: "lot-refused", reason: "meetup-cancelled", lotId };
+      case "auction-not-found":
+        return { kind: "lot-refused", reason: "auction-not-found" };
+      default:
+        return failed({
+          kind: "invalid",
+          cause: new Error(`lot copy answered ${result.kind}`),
+        });
+    }
+  }
+
+  // Копии лота (PER-716): недостающие лоты с той же карточкой, ценой и
+  // шагом, названия «<название> | N из M» у всех, исходный тоже, и сет из
+  // них. Идентификаторы копий и сета выведены из исходного лота, поэтому
+  // повторный ответ — после сбоя посреди — дозаводит то, чего ещё нет, а то,
+  // что уже такое, команды не получает.
+  async function copy(
+    request: Extract<LotFormRequest, { intent: "copy-lot" }>,
+  ): Promise<ExecuteResult> {
+    const total = parseLotCopies(request.value);
+    const question: LotQuestion = { kind: "copies", lotId: request.lotId };
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    if (total === undefined) {
+      return {
+        kind: "lot-ask",
+        question,
+        lot: current.lot,
+        error: "copies-count",
+      };
+    }
+    const card = current.raw.card;
+    if (card === undefined) {
+      return {
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId: request.lotId,
+      };
+    }
+    const read_ = await readConsole(request, current.lot.auctionId);
+    if (read_.kind === "refused") return read_.result;
+    const { console } = read_;
+    const { auctionId } = current.lot;
+    if (!acceptsLots(console.status)) {
+      return { kind: "lot-refused", reason: "lots-frozen", auctionId };
+    }
+    const setId = lotCopySetId(request.lotId);
+    const holder = console.lotSets.find((each) =>
+      each.lotIds.includes(request.lotId),
+    );
+    // Сет копий этого лота — прошлый ответ: его дозаводит повтор.
+    if (holder !== undefined && holder.lotSetId !== setId) {
+      return {
+        kind: "lot-refused",
+        reason: "lot-in-set",
+        lotId: request.lotId,
+        setName: holder.name,
+      };
+    }
+    if (
+      !console.lotSets.some((each) => each.lotSetId === setId) &&
+      console.lotSets.length >= lotSetLimit
+    ) {
+      return { kind: "lot-refused", reason: "set-limit", auctionId };
+    }
+    const base = baseTitle(card.title) || card.title;
+    const terms = termsEdit(current.lot, request.opId);
+    const snapshots = new Map(
+      console.lots.map((each) => [each.lot.lotId, each.lot]),
+    );
+    const sourceImage = card.image?.version;
+    const positions = Array.from(
+      { length: total - 1 },
+      (_, index) => index + 2,
+    );
+    const lotIds = [
+      request.lotId,
+      ...positions.map((position) => lotCopyId(request.lotId, position)),
+    ];
+    // Фото исходного лота читается один раз и только если копии его ещё нет.
+    let image: Uint8Array | undefined;
+    if (
+      sourceImage !== undefined &&
+      lotIds
+        .slice(1)
+        .some(
+          (lotId) => snapshots.get(lotId)?.card?.image?.version !== sourceImage,
+        )
+    ) {
+      const fetched = await lots.getLotImage(
+        request.identity,
+        request.lotId,
+        rpcMeta(request),
+      );
+      if (fetched.kind === "ok") image = fetched.content;
+      else if (fetched.kind !== "not-found") return failed(fetched);
+    }
+    // Одна копия — до четырёх команд по порядку: карточка, реестр, фото,
+    // условия. Отказ — исход всего ответа.
+    const ensureCopy = async (
+      position: number,
+    ): Promise<ExecuteResult | undefined> => {
+      const lotId = lotCopyId(request.lotId, position);
+      const lot = snapshots.get(lotId);
+      const title = numberedTitle(base, position, total);
+      let textSame =
+        lot?.card?.title === title && lot.card.description === card.description;
+      if (lot?.card === undefined) {
+        const created = await lots.createLotCard(
+          request.identity,
+          { lotId, title, description: card.description },
+          rpcMeta(request),
+        );
+        // Карточка уже есть — прошлый ответ: правка ниже приводит её к нужной.
+        if (created.kind === "ok") textSame = true;
+        else if (created.kind !== "card-conflict") {
+          return copyRefused(created, request.lotId);
+        }
+      }
+      // Лот в реестре — до правки карточки: правка фото идёт уже лоту.
+      if (lot === undefined) {
+        const added = await lots.addLot(
+          request.identity,
+          { auctionId, lotId, opId: opIdFor(request.opId, `add:${lotId}`) },
+          rpcMeta(request),
+        );
+        if (added.kind !== "ok") return copyRefused(added, request.lotId);
+      }
+      const withImage =
+        image !== undefined && lot?.card?.image?.version !== sourceImage;
+      if (!textSame || withImage) {
+        const edited = await lots.editLotCard(
+          request.identity,
+          {
+            lotId,
+            title,
+            description: card.description,
+            ...(withImage && image !== undefined ? { image } : {}),
+          },
+          rpcMeta(request),
+        );
+        if (edited.kind !== "ok") return copyRefused(edited, request.lotId);
+      }
+      if (
+        terms !== undefined &&
+        terms.field === "price" &&
+        (lot === undefined ||
+          !sameTerms(viewOf(lot).terms, terms.startingPrice, terms.step))
+      ) {
+        const scheduled = await lots.scheduleLot(
+          request.identity,
+          {
+            auctionId,
+            lotId,
+            opId: opIdFor(request.opId, `terms:${lotId}`),
+            startingPrice: terms.startingPrice,
+            stepPolicy: terms.step.policy,
+          },
+          rpcMeta(request),
+        );
+        if (scheduled.kind !== "ok") {
+          return copyRefused(scheduled, request.lotId);
+        }
+      }
+      return undefined;
+    };
+    // Копии идут по несколько сразу: двадцать копий по одной не уложились бы
+    // в бюджет действия. Не уложились и так — сбой оставляет вопрос открытым,
+    // и повторный ответ дозаводит недостающее.
+    for (let from = 0; from < positions.length; from += copyConcurrency) {
+      const refused = (
+        await Promise.all(
+          positions.slice(from, from + copyConcurrency).map(ensureCopy),
+        )
+      ).find((each) => each !== undefined);
+      if (refused !== undefined) return refused;
+    }
+    // Прошлый ответ просил больше лотов: лишние копии уходят из реестра, иначе
+    // участники увидели бы их в ленте вне сета.
+    for (let position = total + 1; position <= maxLotCopies; position += 1) {
+      const lotId = lotCopyId(request.lotId, position);
+      if (!snapshots.has(lotId)) continue;
+      const removed = await lots.removeLot(
+        request.identity,
+        { auctionId, lotId, opId: opIdFor(request.opId, `remove:${lotId}`) },
+        rpcMeta(request),
+      );
+      if (removed.kind !== "ok" && removed.kind !== "lot-not-in-auction") {
+        return copyRefused(removed, request.lotId);
+      }
+    }
+    const firstTitle = numberedTitle(base, 1, total);
+    if (card.title !== firstTitle) {
+      const renamed = await lots.editLotCard(
+        request.identity,
+        {
+          lotId: request.lotId,
+          title: firstTitle,
+          description: card.description,
+        },
+        rpcMeta(request),
+      );
+      if (renamed.kind !== "ok") return copyRefused(renamed, request.lotId);
+    }
+    const existing = console.lotSets.find((each) => each.lotSetId === setId);
+    const setSame =
+      existing !== undefined &&
+      existing.name === base &&
+      existing.lotIds.length === lotIds.length &&
+      existing.lotIds.every((lotId, index) => lotId === lotIds[index]);
+    if (!setSame && sets !== undefined) {
+      const saved = await sets.saveLotSet(
+        request.identity,
+        {
+          auctionId,
+          lotSetId: setId,
+          name: base,
+          lotIds,
+          opId: opIdFor(request.opId, "set"),
+        },
+        rpcMeta(request),
+      );
+      // Копию переложили в другой сет, пока сета копий не было: тот же отказ,
+      // что у лота в сете, с именем того сета.
+      if (saved.kind === "lot-in-another-set") {
+        const holder = console.lotSets.find(
+          (each) => each.lotSetId === saved.lotSetId,
+        );
+        return {
+          kind: "lot-refused",
+          reason: "lot-in-set",
+          lotId: request.lotId,
+          ...(holder === undefined ? {} : { setName: holder.name }),
+        };
+      }
+      if (saved.kind !== "ok") return copyRefused(saved, request.lotId);
+    }
+    return {
+      kind: "lot-copies",
+      lot: { ...current.lot, title: firstTitle },
+      total,
+      name: base,
+    };
+  }
+
+  // «Да, удалить лот» (PER-716): лот уходит из реестра, а Auction убирает его
+  // и из сета (ADR-073, п. 3). Лот, которого в реестре уже нет, — то же
+  // удаление, прошедшее раньше.
+  async function removeLot(
+    request: Extract<LotFormRequest, { intent: "remove-lot" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { auctionId, title } = current.lot;
+    const removed = await lots.removeLot(
+      request.identity,
+      { auctionId, lotId: request.lotId, opId: request.opId },
+      rpcMeta(request),
+    );
+    const named = title === undefined ? {} : { title };
+    switch (removed.kind) {
+      case "ok":
+        return { kind: "lot-removed", auctionId, ...named };
+      case "lot-not-in-auction":
+        return { kind: "lot-removed", auctionId, ...named, already: true };
+      case "lots-frozen":
+        return {
+          kind: "lot-refused",
+          reason: "removal-frozen",
+          lotId: request.lotId,
+        };
+      case "not-administrator":
+      case "meetup-not-found":
+        return {
+          kind: "lot-refused",
+          reason: "not-administrator",
+          lotId: request.lotId,
+        };
+      case "meetup-cancelled":
+        return {
+          kind: "lot-refused",
+          reason: "meetup-cancelled",
+          lotId: request.lotId,
+        };
+      case "auction-not-found":
+        return { kind: "lot-refused", reason: "auction-not-found" };
+      default:
+        return failed(removed);
+    }
+  }
+
   return async function lotForm(
     request: LotFormRequest,
   ): Promise<ExecuteResult> {
     switch (request.intent) {
       case "create-lot":
         return create(request);
-      case "view-lot-form": {
-        const current = await read(request);
-        return current.kind === "refused"
-          ? current.result
-          : { kind: "lot-form", lot: current.lot };
-      }
+      case "view-lot-form":
+        return viewForm(request);
       case "view-lot-preview": {
         const current = await read(request);
         return current.kind === "refused"
           ? current.result
           : { kind: "lot-preview", lot: current.raw };
       }
-      case "set-lot-text":
-        return setText(request);
+      // Правка «Все лоты сета» (PER-716) идёт через `overSet`: без признака
+      // сета он правит один лот, как раньше.
+      case "set-lot-text": {
+        const value = request.value.trim();
+        return overSet(
+          request,
+          request.field,
+          (current, slot) => setText(request, current, slot),
+          () =>
+            request.field === "title"
+              ? { field: "title", base: baseTitle(value) }
+              : { field: "description", description: value },
+        );
+      }
       case "check-lot-price":
         return checkPrice(request);
       case "set-lot-terms":
-        return setTerms(request);
+        return overSet(
+          request,
+          "price",
+          (current) => setTerms(request, current),
+          (saved) => termsEdit(saved, request.opId),
+        );
       case "keep-lot-step":
-        return keepStep(request);
+        return overSet(
+          request,
+          "price",
+          (current) => keepStep(request, current),
+          (saved) => termsEdit(saved, request.opId),
+        );
       case "set-lot-image":
-      case "remove-lot-image":
-        return setImage(request);
+        return overSet(
+          request,
+          "image",
+          (current) => setImage(request, current),
+          () => ({
+            field: "image",
+            image: request.image,
+            version: imageVersion(request.image),
+          }),
+        );
+      case "remove-lot-image": {
+        const current = await read(request);
+        return current.kind === "refused"
+          ? current.result
+          : setImage(request, current);
+      }
+      case "retry-lot-set":
+        return retrySet(request);
+      case "copy-lot":
+        return copy(request);
+      case "remove-lot":
+        return removeLot(request);
       default: {
         const _exhaustive: never = request;
         return _exhaustive;

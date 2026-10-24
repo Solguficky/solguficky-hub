@@ -38,6 +38,7 @@ import {
   PublishAuctionResponseSchema,
   RaffleSchema,
   RaffleStatus,
+  RemoveLotResponseSchema,
   SaveLotSetResponseSchema,
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
@@ -118,6 +119,7 @@ function adapter(rpc: {
   setPaymentInstructions?: Call;
   listMyInvoices?: Call;
   chooseFulfillment?: Call;
+  removeLot?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -126,6 +128,7 @@ function adapter(rpc: {
     createLotCard: (rpc.createLotCard ?? notUsed) as never,
     editLotCard: (rpc.editLotCard ?? notUsed) as never,
     addLot: (rpc.addLot ?? notUsed) as never,
+    removeLot: (rpc.removeLot ?? notUsed) as never,
     scheduleLot: (rpc.scheduleLot ?? notUsed) as never,
     getLot: (rpc.getLot ?? notUsed) as never,
     listAuctionLots: (rpc.listAuctionLots ?? notUsed) as never,
@@ -429,6 +432,47 @@ describe("auction adapter of the lot form", () => {
       ).resolves.toEqual(expected);
     },
   );
+
+  it.each([
+    ["notMeetupAdministrator", { kind: "not-administrator" }],
+    ["meetupNotFound", { kind: "meetup-not-found" }],
+    ["meetupCancelled", { kind: "meetup-cancelled" }],
+    ["lotsFrozen", { kind: "lots-frozen" }],
+    ["lotNotInAuction", { kind: "lot-not-in-auction" }],
+  ] as const)(
+    "reads the %s refusal of a removal as a final answer",
+    async (reason, expected) => {
+      const lots = adapter({
+        removeLot: async () => refused(RemoveLotResponseSchema, reason),
+      });
+
+      await expect(
+        lots.removeLot(admin, { auctionId, lotId, opId }),
+      ).resolves.toEqual(expected);
+    },
+  );
+
+  it("sends the removal of a lot with its key and reads an auction without a journal", async () => {
+    const removeLot = vi.fn(async () =>
+      create(RemoveLotResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    const missing = adapter({
+      removeLot: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+
+    await expect(
+      adapter({ removeLot }).removeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(removeLot).toHaveBeenCalledWith(
+      { viewer: wireAdmin, auctionId, lotId, opId },
+      expect.anything(),
+    );
+    await expect(
+      missing.removeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
 
   it("sends the price and one fixed step in minor units", async () => {
     const scheduleLot = vi.fn(async () =>

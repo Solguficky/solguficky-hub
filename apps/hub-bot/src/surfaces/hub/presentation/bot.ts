@@ -213,6 +213,7 @@ import {
   floorPickData,
   floorSearchData,
   lotAskData,
+  lotCopyData,
   lotFormData,
   lotImageRemoveData,
   lotNewData,
@@ -357,12 +358,18 @@ import {
 import {
   lotAskErrorText,
   lotChainLead,
+  lotCopiesScreen,
   lotFormScreen,
   lotImageRemoveConfirmScreen,
+  lotInSetText,
   lotQuestionText,
   lotRefusalText,
+  lotRemoveConfirmScreen,
+  lotRemovedScreen,
   lotSavedNote,
   lotSavedScreen,
+  lotScopeScreen,
+  lotSetAppliedScreen,
   lotStepModeScreen,
   removePhotoLabel,
   skipPhotoLabel,
@@ -2496,7 +2503,12 @@ async function handleCallback(
       action.kind === "lot-skip" ||
       action.kind === "lot-keep-step" ||
       action.kind === "lot-image-remove" ||
-      action.kind === "lot-image-remove-confirm"
+      action.kind === "lot-image-remove-confirm" ||
+      action.kind === "lot-scope" ||
+      action.kind === "lot-set-retry" ||
+      action.kind === "lot-copy" ||
+      action.kind === "lot-remove" ||
+      action.kind === "lot-remove-confirm"
     ) {
       outcome = canRunAuctions(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
@@ -6650,7 +6662,12 @@ async function handleLotFormCallback(
         | "lot-skip"
         | "lot-keep-step"
         | "lot-image-remove"
-        | "lot-image-remove-confirm";
+        | "lot-image-remove-confirm"
+        | "lot-scope"
+        | "lot-set-retry"
+        | "lot-copy"
+        | "lot-remove"
+        | "lot-remove-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -6684,15 +6701,23 @@ async function handleLotFormCallback(
       lotId,
       priceRubles: action.price,
       opId: createUuidV7(),
+      ...setScope(action.set),
       ...rpcCall(ctx, useCase),
     });
     if (kept.kind === "lot-form") {
       await showScreen(ctx, lotSavedScreen(kept.lot, lotSavedNote.terms));
       return sent("lot price saved with the kept step");
     }
+    if (kept.kind === "lot-set-applied") {
+      await showScreen(ctx, lotSetAppliedScreen(kept.lot, kept));
+      return sent("lot set price saved with the kept step");
+    }
     // Шага у лота в чтении нет — снова выбор способа с той же ценой.
     if (kept.kind === "lot-step-mode") {
-      await showScreen(ctx, lotStepModeScreen(kept.lot, kept.priceRubles));
+      await showScreen(
+        ctx,
+        lotStepModeScreen(kept.lot, kept.priceRubles, undefined, action.set),
+      );
       return sent("lot step mode requested again");
     }
     // Auction не принял прежний шаг с новой ценой — вопрос о шаге с причиной.
@@ -6741,12 +6766,67 @@ async function handleLotFormCallback(
       retry: ctx.callbackQuery?.data,
     });
   }
+  // «Да, удалить лот» (PER-716): ключ рождается на нажатие; повтор после
+  // удаления Auction отвечает «лота в реестре нет», и исход тот же.
+  if (action.kind === "lot-remove-confirm") {
+    const removed = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "remove-lot",
+      lotId,
+      opId: createUuidV7(),
+      ...rpcCall(ctx, useCase),
+    });
+    if (removed.kind === "lot-removed") {
+      await showScreen(ctx, lotRemovedScreen(removed));
+      return sent(
+        removed.already === true ? "lot already removed" : "lot removed",
+      );
+    }
+    return showLotFailure(ctx, removed, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
+  // «Повторить для оставшихся» (PER-716): значение поля юзкейс берёт у лота и
+  // разносит по сету заново.
+  if (action.kind === "lot-set-retry") {
+    const retried = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "retry-lot-set",
+      lotId,
+      field: action.field,
+      opId: createUuidV7(),
+      ...rpcCall(ctx, useCase),
+    });
+    if (retried.kind === "lot-set-applied") {
+      await showScreen(ctx, lotSetAppliedScreen(retried.lot, retried));
+      return sent("lot set edit retried");
+    }
+    if (retried.kind === "lot-form") {
+      await showScreen(ctx, lotFormScreen(retried.lot));
+      return sent("lot form sent: nothing to spread over the set");
+    }
+    return showLotFailure(ctx, retried, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
   // Способ шага выбран (PER-491): цена уже принята и едет в кнопке, поэтому
   // лот читать не нужно — спрашивается сам шаг.
+  // Реестр аукциона (PER-716) читается только там, где он нужен экрану:
+  // форме, выбору правки сета, копиям, удалению и вопросу правки сета.
+  const needsRegistry =
+    action.kind === "lot-form" ||
+    action.kind === "lot-scope" ||
+    action.kind === "lot-copy" ||
+    action.kind === "lot-remove" ||
+    ((action.kind === "lot-ask" || action.kind === "lot-step-mode") &&
+      action.set === true);
   const result = await runtime.dispatcher.execute({
     identity: person,
     intent: "view-lot-form",
     lotId,
+    ...(needsRegistry ? { registry: true as const } : {}),
     ...rpcCall(ctx, useCase),
   });
   if (result.kind !== "lot-form") {
@@ -6758,6 +6838,49 @@ async function handleLotFormCallback(
   if (action.kind === "lot-form") {
     await showScreen(ctx, lotFormScreen(result.lot));
     return sent("lot form sent");
+  }
+  const registry = result.lot.registry;
+  // «Копировать» (PER-716): кнопка стоит, пока реестр открыт и лот вне сета,
+  // но старая остаётся в чате. Реестр не прочитан — вопрос задаётся, а
+  // решает ответ.
+  if (action.kind === "lot-copy") {
+    if (registry?.open === false) {
+      return showLotFailure(
+        ctx,
+        { kind: "lot-refused", reason: "lots-frozen", lotId },
+        { person },
+      );
+    }
+    if (registry?.set !== undefined) {
+      return showLotFailure(
+        ctx,
+        {
+          kind: "lot-refused",
+          reason: "lot-in-set",
+          lotId,
+          setName: registry.set.name,
+        },
+        { person },
+      );
+    }
+    await askLotQuestion(ctx, questions, {
+      question: { kind: "copies", lotId },
+      lot: result.lot,
+    });
+    return sent("lot copies count requested");
+  }
+  // «Удалить лот» (PER-716): подтверждение, пока реестр открыт. Подделанное
+  // «Да» после открытия недели получит отказ Auction.
+  if (action.kind === "lot-remove") {
+    if (registry?.open === false) {
+      return showLotFailure(
+        ctx,
+        { kind: "lot-refused", reason: "removal-frozen", lotId },
+        { person },
+      );
+    }
+    await showScreen(ctx, lotRemoveConfirmScreen(result.lot));
+    return sent("lot removal confirmation sent");
   }
   // Фото пропущено — цепочка нового лота кончилась (PER-618): тот же итог,
   // что после принятого фото. Вопрос удалён до чтения, итог — новым
@@ -6806,6 +6929,7 @@ async function handleLotFormCallback(
         priceRubles: action.price,
         mode: action.mode,
         ...chained(action.chain),
+        ...setScope(action.set),
       },
       lot: result.lot,
     });
@@ -6829,16 +6953,38 @@ async function handleLotFormCallback(
       { person },
     );
   }
+  // Поле лота полного сета (PER-716): сначала выбор «Только этот лот» или
+  // «Все лоты сета». Сет разобрали, пока висела кнопка, — вопрос одного лота.
+  if (
+    action.kind === "lot-scope" &&
+    registry?.set !== undefined &&
+    registry.set.size >= 2
+  ) {
+    await showScreen(
+      ctx,
+      lotScopeScreen(result.lot, registry.set, action.field),
+    );
+    return sent("lot edit scope requested");
+  }
+  const tail =
+    action.kind === "lot-ask"
+      ? { ...chained(action.chain), ...setScope(action.set) }
+      : {};
   // Фото, как и тексты, меняется и после старта торгов до продажи (ADR-057). Кнопка
   // цепочки нового лота (PER-618) — «Ввести заново» под ней — задаёт вопрос
   // цепочки.
   await askLotQuestion(ctx, questions, {
     question:
       action.field === "price"
-        ? { kind: "price", lotId, ...chained(action.chain) }
+        ? { kind: "price", lotId, ...tail }
         : action.field === "image"
-          ? { kind: "image", lotId, ...chained(action.chain) }
-          : { kind: "text", field: action.field, lotId },
+          ? { kind: "image", lotId, ...tail }
+          : {
+              kind: "text",
+              field: action.field,
+              lotId,
+              ...setScope(action.kind === "lot-ask" ? action.set : undefined),
+            },
     lot: result.lot,
   });
   return sent("lot field requested");
@@ -6849,26 +6995,52 @@ function chained(chain: boolean | undefined): { chain?: true } {
   return chain === true ? { chain: true } : {};
 }
 
+// Хвост кнопки повтора вопроса формы лота: цепочка (PER-618) или правка
+// всех лотов сета (PER-716).
+function stepScope(step: { chain?: true; set?: true }): boolean | "set" {
+  return step.set === true ? "set" : step.chain === true;
+}
+
+// Признак правки всех лотов сета (PER-716) полем вопроса или запроса.
+function setScope(set: boolean | undefined): { set?: true } {
+  return set === true ? { set: true } : {};
+}
+
 // Идёт ли вопрос цепочкой нового лота (PER-618).
 function inChain(question: LotQuestion): boolean {
   return (
     question.kind !== "new" &&
     question.kind !== "text" &&
+    question.kind !== "copies" &&
     question.chain === true
   );
 }
 
-// Вопрос, который юзкейс вернул заново, остаётся в цепочке, если в ней был
-// отвеченный: юзкейс признак цепочки не читает и не возвращает.
+// Правит ли вопрос все лоты сета (PER-716).
+function inSet(question: LotQuestion): boolean {
+  return (
+    question.kind !== "new" &&
+    question.kind !== "copies" &&
+    question.set === true
+  );
+}
+
+// Вопрос, который юзкейс вернул заново, остаётся в цепочке или в правке сета,
+// если в ней был отвеченный: проверка цены признаков не читает и не
+// возвращает.
 function keepChain(question: LotQuestion, answered: LotQuestion): LotQuestion {
-  if (!inChain(answered)) return question;
+  const chain = inChain(answered);
+  const set = inSet(answered);
+  if (!chain && !set) return question;
   switch (question.kind) {
     case "price":
     case "step":
     case "image":
-      return { ...question, chain: true };
-    case "new":
+      return { ...question, ...chained(chain), ...setScope(set) };
     case "text":
+      return { ...question, ...setScope(set) };
+    case "new":
+    case "copies":
       return question;
     default: {
       const _exhaustive: never = question;
@@ -6984,7 +7156,9 @@ function askLotQuestion(
             text: skipPhotoLabel,
             data: lotSkipData(uuidToToken(ask.question.lotId)),
           }
-        : ask.lot?.hasImage === true
+        : // Снятие фото — правка одного лота: на вопросе правки всего сета
+          // (PER-716) его нет, иначе обещание «получат все лоты» не сдержано.
+          ask.lot?.hasImage === true && ask.question.set !== true
           ? {
               text: removePhotoLabel,
               data: lotImageRemoveData(uuidToToken(ask.question.lotId)),
@@ -7027,6 +7201,7 @@ function lotAnswerRequest(
         lotId: question.lotId,
         field: question.field,
         value,
+        ...setScope(question.set),
       };
     case "price":
       return {
@@ -7042,6 +7217,17 @@ function lotAnswerRequest(
         lotId: question.lotId,
         priceRubles: question.priceRubles,
         mode: question.mode,
+        value,
+        opId: createUuidV7(),
+        ...setScope(question.set),
+      };
+    // Копии (PER-716): лоты и сет выведены из исходного лота, поэтому
+    // повторный ответ после сбоя дозаводит недостающее.
+    case "copies":
+      return {
+        ...call,
+        intent: "copy-lot",
+        lotId: question.lotId,
         value,
         opId: createUuidV7(),
       };
@@ -7090,6 +7276,14 @@ async function renderLotAnswer(
     });
     return handled("lot photo requested in the chain");
   }
+  if (result.kind === "lot-set-applied") {
+    await showScreen(ctx, lotSetAppliedScreen(result.lot, result));
+    return handled("lot set edit applied");
+  }
+  if (result.kind === "lot-copies") {
+    await showScreen(ctx, lotCopiesScreen(result.lot, result));
+    return handled("lot copied into a set");
+  }
   if (result.kind === "lot-form") {
     await showScreen(
       ctx,
@@ -7109,7 +7303,12 @@ async function renderLotAnswer(
   if (result.kind === "lot-step-mode") {
     await showScreen(
       ctx,
-      lotStepModeScreen(result.lot, result.priceRubles, chain),
+      lotStepModeScreen(
+        result.lot,
+        result.priceRubles,
+        chain,
+        inSet(answer.answered),
+      ),
     );
     return handled("lot step mode requested");
   }
@@ -7197,6 +7396,7 @@ async function answerLotPhoto(
     intent: "set-lot-image",
     lotId: answer.question.lotId,
     image: downloaded.bytes,
+    ...setScope(answer.question.set),
     ...rpcCall(ctx, useCase),
   });
   const outcome = await renderLotAnswer(ctx, questions, result, {
@@ -7271,7 +7471,9 @@ async function showLotFailure(
       ctx,
       result.reason === "not-administrator"
         ? forbiddenText
-        : lotRefusalText[result.reason],
+        : result.reason === "lot-in-set" && result.setName !== undefined
+          ? lotInSetText(result.setName)
+          : lotRefusalText[result.reason],
       exit,
     );
     return {
@@ -10371,9 +10573,19 @@ function lotStepOf(question: LotQuestion): QuestionStep {
   const lot = uuidToToken(question.lotId);
   switch (question.kind) {
     case "text":
-      return { kind: "lot-text", lot, field: question.field };
+      return {
+        kind: "lot-text",
+        lot,
+        field: question.field,
+        ...setScope(question.set),
+      };
     case "price":
-      return { kind: "lot-price", lot, ...chained(question.chain) };
+      return {
+        kind: "lot-price",
+        lot,
+        ...chained(question.chain),
+        ...setScope(question.set),
+      };
     case "step":
       return {
         kind: "lot-step",
@@ -10381,9 +10593,17 @@ function lotStepOf(question: LotQuestion): QuestionStep {
         price: question.priceRubles,
         mode: question.mode,
         ...chained(question.chain),
+        ...setScope(question.set),
       };
     case "image":
-      return { kind: "lot-image", lot, ...chained(question.chain) };
+      return {
+        kind: "lot-image",
+        lot,
+        ...chained(question.chain),
+        ...setScope(question.set),
+      };
+    case "copies":
+      return { kind: "lot-copies", lot };
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -10404,9 +10624,14 @@ function lotQuestionOf(
   const lotId = tokenToUuid(step.lot);
   switch (step.kind) {
     case "lot-text":
-      return { kind: "text", field: step.field, lotId };
+      return { kind: "text", field: step.field, lotId, ...setScope(step.set) };
     case "lot-price":
-      return { kind: "price", lotId, ...chained(step.chain) };
+      return {
+        kind: "price",
+        lotId,
+        ...chained(step.chain),
+        ...setScope(step.set),
+      };
     case "lot-step":
       return {
         kind: "step",
@@ -10414,9 +10639,17 @@ function lotQuestionOf(
         priceRubles: step.price,
         mode: step.mode,
         ...chained(step.chain),
+        ...setScope(step.set),
       };
     case "lot-image":
-      return { kind: "image", lotId, ...chained(step.chain) };
+      return {
+        kind: "image",
+        lotId,
+        ...chained(step.chain),
+        ...setScope(step.set),
+      };
+    case "lot-copies":
+      return { kind: "copies", lotId };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10486,6 +10719,7 @@ function pendingOf(
     case "lot-price":
     case "lot-step":
     case "lot-image":
+    case "lot-copies":
       return {
         kind: "lot",
         question: lotQuestionOf(step),
@@ -10620,6 +10854,7 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "lot-price":
     case "lot-step":
     case "lot-image":
+    case "lot-copies":
       return { kind: "lot-form", lot: step.lot };
     case "console-week":
     case "console-raffle":
@@ -10791,17 +11026,19 @@ function reopenData(step: QuestionStep): string {
     case "lot-new":
       return lotNewData(step.auction);
     case "lot-text":
-      return lotAskData(step.lot, step.field);
+      return lotAskData(step.lot, step.field, stepScope(step));
     // Вопрос цепочки нового лота (PER-618) повтор задаёт в цепочке: после
-    // него она идёт дальше.
+    // него она идёт дальше. Вопрос правки сета (PER-716) — тоже для сета.
     case "lot-price":
-      return lotAskData(step.lot, "price", step.chain);
+      return lotAskData(step.lot, "price", stepScope(step));
     // Цена уже в шаге, как в кнопке выбора способа (PER-491): повтор задаёт
     // тот же вопрос о шаге, а не цену заново.
     case "lot-step":
-      return lotStepModeData(step.lot, step.price, step.mode, step.chain);
+      return lotStepModeData(step.lot, step.price, step.mode, stepScope(step));
     case "lot-image":
-      return lotAskData(step.lot, "image", step.chain);
+      return lotAskData(step.lot, "image", stepScope(step));
+    case "lot-copies":
+      return lotCopyData(step.lot);
     case "console-week":
       return consoleWeekData(step.auction);
     case "console-raffle":
@@ -10863,6 +11100,7 @@ function answerParent(step: QuestionStep): Parent {
     case "lot-price":
     case "lot-step":
     case "lot-image":
+    case "lot-copies":
       return toLot(tokenToUuid(step.lot));
     case "console-week":
     case "console-raffle":
@@ -11122,6 +11360,11 @@ function callbackUseCase(
     | "lot-keep-step"
     | "lot-image-remove"
     | "lot-image-remove-confirm"
+    | "lot-scope"
+    | "lot-set-retry"
+    | "lot-copy"
+    | "lot-remove"
+    | "lot-remove-confirm"
     | "console-view"
     | "console-week"
     | "console-raffle"
@@ -11317,6 +11560,11 @@ function callbackUseCase(
     case "lot-keep-step":
     case "lot-image-remove":
     case "lot-image-remove-confirm":
+    case "lot-scope":
+    case "lot-set-retry":
+    case "lot-copy":
+    case "lot-remove":
+    case "lot-remove-confirm":
       return "manage_lot";
     case "console-view":
     case "console-week":

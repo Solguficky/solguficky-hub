@@ -103,12 +103,14 @@ import {
   type LaunchStepWindowResult,
   type LotAdministration,
   type LotCardResult,
+  type LotImageResult,
   type LotParticipant,
   type LotStatisticsReadResult,
   type LotStepPolicyInput,
   type MeetupAuctions,
   type PaymentInstructionsResult,
   type RemovalPreviewResult,
+  type RemoveLotResult,
   type RemoveParticipantResult,
   type SaveLotSetResult,
   type ScheduleAuctionResult,
@@ -131,6 +133,7 @@ type AuctionRpc = Pick<
   | "createLotCard"
   | "editLotCard"
   | "addLot"
+  | "removeLot"
   | "scheduleLot"
   | "getLot"
   | "listAuctionLots"
@@ -463,6 +466,31 @@ export function createAuctionAdapter(
         return addLotResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async removeLot(person, lot, meta) {
+      try {
+        const response = await rpc.removeLot(
+          { viewer: wireViewer(viewerOf(person)), ...lot },
+          options(meta),
+        );
+        return removeLotResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async getLotImage(person, lotId, meta): Promise<LotImageResult> {
+      try {
+        const image = await rpc.getLotImage(
+          { viewer: wireViewer(viewerOf(person)), lotId },
+          options(meta),
+        );
+        return { kind: "ok", content: image.content, version: image.version };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        return toFailure(cause);
       }
     },
     async scheduleLot(person, terms, meta) {
@@ -1457,6 +1485,40 @@ function addLotResult(
       }
     case undefined:
       return defect("add lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function removeLotResult(
+  outcome: Awaited<ReturnType<AuctionRpc["removeLot"]>>["outcome"],
+): RemoveLotResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction" };
+        case undefined:
+          return defect("remove lot refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("remove lot response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

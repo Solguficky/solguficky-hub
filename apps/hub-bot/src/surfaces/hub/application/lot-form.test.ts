@@ -9,7 +9,15 @@ import type {
 } from "../auction/port.js";
 import { createDispatcher } from "./dispatcher.js";
 import { fingerprint } from "./fingerprint.js";
-import { lotReadWindowMs, parseRubles } from "./lot-form.js";
+import {
+  baseTitle,
+  lotCopyId,
+  lotCopySetId,
+  lotReadWindowMs,
+  numberedTitle,
+  parseLotCopies,
+  parseRubles,
+} from "./lot-form.js";
 import type { NewLotId } from "./types.js";
 
 // Форма лота администратора (PER-319) через диспетчер: что уходит в Auction на
@@ -73,6 +81,14 @@ function fakeLots(
       readDeadlines.push(meta?.deadlineAt);
       return reads.shift() ?? answers.read ?? { kind: "ok", lot: drafted };
     },
+    async removeLot(_person, lot) {
+      calls.push({ method: "removeLot", args: lot });
+      return { kind: "ok" };
+    },
+    async getLotImage(_person, id) {
+      calls.push({ method: "getLotImage", args: id });
+      return { kind: "not-found" };
+    },
   };
   const dispatcher = createDispatcher(
     undefined,
@@ -88,6 +104,44 @@ function fakeLots(
     methods: () => calls.map((call) => call.method),
   };
 }
+
+describe("lot copies of the lot form", () => {
+  it.each([
+    ["2", 2],
+    [" 7 ", 7],
+    ["20", 20],
+  ])("reads %j as %d lots in all", (raw, count) => {
+    expect(parseLotCopies(raw)).toBe(count);
+  });
+
+  it.each(["0", "1", "21", "007", "семь", "7.5", ""])(
+    "refuses %j as a count of lots",
+    (raw) => {
+      expect(parseLotCopies(raw)).toBeUndefined();
+    },
+  );
+
+  it("numbers a title by its place in the set and strips a number the title already has", () => {
+    expect(numberedTitle("Ваза", 3, 7)).toBe("Ваза | 3 из 7");
+    expect(baseTitle("Ваза | 3 из 7")).toBe("Ваза");
+    expect(baseTitle("Ваза|3 из 7 ")).toBe("Ваза");
+    expect(baseTitle("Ваза | синяя")).toBe("Ваза | синяя");
+  });
+
+  it("derives the same canonical UUIDv7 for a copy and the set of one lot, ordered after it", () => {
+    const v7 =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const copies = [2, 3, 4].map((position) => lotCopyId(lotId, position));
+    expect(copies.map((copy) => lotCopyId(lotId, 2) === copy)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    for (const id of [...copies, lotCopySetId(lotId)]) expect(id).toMatch(v7);
+    expect([lotId, ...copies]).toEqual([lotId, ...copies].toSorted());
+    expect(lotCopySetId(lotId)).toBe(lotCopySetId(lotId));
+  });
+});
 
 describe("rubles of the lot form", () => {
   it.each([
