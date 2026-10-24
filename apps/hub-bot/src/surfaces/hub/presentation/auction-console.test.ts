@@ -2601,6 +2601,29 @@ describe("opening the online week", () => {
     );
   });
 
+  it("warns about the publication only when the week opens a hidden auction", async () => {
+    const publication =
+      "Аукцион сейчас скрыт: с открытием недели участники увидят его и лоты.";
+    const confirmOf = async (hidden: boolean) => {
+      const auction = fakeAuction({
+        status: "scheduled",
+        week: { ...week, final: true },
+        lots: [priced],
+        hidden,
+      });
+      const { bot, calls } = harness("admin", auction);
+      await bot.init();
+      await bot.handleUpdate(press(consoleData));
+      await bot.handleUpdate(
+        press(dataOf(last(calls), "Открыть онлайн-неделю")),
+      );
+      return plain(last(calls));
+    };
+
+    expect(await confirmOf(true)).toContain(publication);
+    expect(await confirmOf(false)).not.toContain(publication);
+  });
+
   it("shows a refusal of an already opened auction as an open week outcome, not as an error", async () => {
     const auction = fakeAuction({
       status: "scheduled",
