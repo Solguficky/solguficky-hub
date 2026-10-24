@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { InputFile } from "grammy";
 import type { Update } from "grammy/types";
-import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createHarness,
@@ -13,6 +12,7 @@ import {
   type LotView,
   type Money,
 } from "../../../auction-ui/index.js";
+import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import { fingerprint } from "../application/fingerprint.js";
 import { lotPhotoIdOf, lotReadWindowMs } from "../application/lot-form.js";
@@ -484,7 +484,7 @@ function harness(
 // нет вовсе.
 function fakeTelegramFiles(
   stored: Record<string, Uint8Array> = {},
-  download?: (path: string) => FileDownload,
+  download?: (path: string) => FileDownload | Promise<FileDownload>,
   delays: number[] = [],
 ) {
   const downloads: string[] = [];
@@ -505,17 +505,18 @@ function fakeTelegramFiles(
   const respond = (method: string, payload: unknown) => {
     if (method !== "getFile") return undefined;
     const fileId = (payload as { file_id: string }).file_id;
-    const answer = fileId in stored
-      ? {
-          file_id: fileId,
-          file_unique_id: `u-${fileId}`,
-          file_path: `photos/${fileId}`,
-        }
-      : {
-          ok: false,
-          error_code: 400,
-          description: "Bad Request: invalid file_id",
-        };
+    const answer =
+      fileId in stored
+        ? {
+            file_id: fileId,
+            file_unique_id: `u-${fileId}`,
+            file_path: `photos/${fileId}`,
+          }
+        : {
+            ok: false,
+            error_code: 400,
+            description: "Bad Request: invalid file_id",
+          };
     const delay = delays.shift() ?? 0;
     if (delay === 0) return answer;
     return new Promise((resolve) => {
@@ -1808,14 +1809,24 @@ describe("lot photo answer under a slow Telegram", () => {
 
   it("does not let a slow getFile within its deadline spend the budget of AddLotPhoto", async () => {
     const auction = fakeAuction({ lots: [scheduled], budget: true });
-    const slow = getFileTimeoutMs - 100;
-    expect(slow).toBeGreaterThan(actionBudgetMs - 100);
-    const telegram = fakeTelegramFiles({ large: jpeg }, undefined, [slow]);
+    // `getFile` в пределах своего срока и скачивание байтов вместе дольше
+    // бюджета действия: от начала update на Auction не осталось бы ничего.
+    const slow = getFileTimeoutMs - 1_000;
+    const bytes = 1_500;
+    expect(slow + bytes).toBeGreaterThan(actionBudgetMs);
+    const telegram = fakeTelegramFiles(
+      { large: jpeg },
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve({ kind: "ok", bytes: jpeg }), bytes),
+        ),
+      [slow],
+    );
     const { bot, calls } = harness("admin", auction, [], { telegram });
     await bot.init();
     await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
 
-    await answerWithin(bot, reply(calls, photo), slow);
+    await answerWithin(bot, reply(calls, photo), slow + bytes);
 
     expect(calls.filter((call) => call.method === "getFile")).toHaveLength(1);
     expect(auction.methods()).toEqual(["addLotPhoto"]);

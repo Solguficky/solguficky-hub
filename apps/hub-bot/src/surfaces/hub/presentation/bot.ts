@@ -7554,18 +7554,31 @@ async function filePathOf(
   });
   try {
     const file = await Promise.race([
-      ctx.api.getFile(fileId, controller.signal),
+      // Сигнал обрывает и сам запрос: иначе брошенный `getFile` висел бы до
+      // собственного таймаута grammY. Тип сигнала у grammY — из полифилла.
+      ctx.api.getFile(
+        fileId,
+        controller.signal as Parameters<UpdateContext["api"]["getFile"]>[1],
+      ),
       expired,
     ]);
     if (file === "expired") {
-      return failed(true, "timeout", `getFile timed out after ${getFileTimeoutMs} ms`);
+      return failed(
+        true,
+        "timeout",
+        `getFile timed out after ${getFileTimeoutMs} ms`,
+      );
     }
     return file.file_path === undefined
       ? failed(false, "unavailable", "getFile answered without file_path")
       : { kind: "ok", path: file.file_path };
   } catch (cause) {
     if (controller.signal.aborted) {
-      return failed(true, "timeout", `getFile timed out after ${getFileTimeoutMs} ms`);
+      return failed(
+        true,
+        "timeout",
+        `getFile timed out after ${getFileTimeoutMs} ms`,
+      );
     }
     return cause instanceof GrammyError
       ? failed(false, "unavailable", `getFile failed: ${cause.description}`)
