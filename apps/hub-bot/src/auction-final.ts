@@ -65,6 +65,8 @@ export function finalBidLine(
       return `Твоя ставка ${money(outcome.amount)} принята`;
     case "unknown":
       return "Аукцион не ответил: ставка могла пройти, смотри лидера";
+    case "price-changed":
+      return `Цена изменилась: следующая ставка — ${money(outcome.next)}`;
     case "refused": {
       const { refusal } = outcome;
       switch (refusal.kind) {

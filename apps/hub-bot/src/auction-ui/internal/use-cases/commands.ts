@@ -277,7 +277,16 @@ export async function placeFinalBid(
   context: CommandContext,
   intent: { lotId: string; amount: number; page: number },
 ): Promise<AuctionScreenBody> {
-  const lot = await readLot(context, intent.lotId);
+  return placeFinalBidOn(context, await readLot(context, intent.lotId), intent);
+}
+
+// Ставка финала по уже прочитанному лоту: и нажатие «Поставить», и выбранное
+// после него имя (PER-713) идут одним путём.
+async function placeFinalBidOn(
+  context: CommandContext,
+  lot: LotView,
+  intent: { lotId: string; amount: number; page: number },
+): Promise<AuctionScreenBody> {
   const { status } = lot;
   const shown = (shownLot: LotView, finalBid?: FinalBidOutcome) =>
     showLot({
@@ -322,7 +331,7 @@ export async function placeFinalBid(
         return nameChoiceBody(
           context,
           lot,
-          { command: "bid", amount: intent.amount },
+          { command: "bid", amount: intent.amount, final: true },
           intent.page,
         );
       }
@@ -911,9 +920,10 @@ export async function chooseUsername(
 // видит подтверждение с новым `op_id` и жмёт «Да» сам — один раз, потому что
 // имя спрошено до подтверждения (PER-595). Имя, которое уже не поменять, уже
 // выбрано — ставкой из другого окна, пока висел этот экран: команде оно не
-// мешает. В живом финале подтверждения нет (ADR-049): человек возвращается на
-// карточку финала и жмёт «Поставить» на цену, которая действует сейчас
-// (PER-336).
+// мешает. В живом финале подтверждения нет (ADR-049): нажатие «Поставить» уже
+// было, и ставка уходит сразу, если цена кнопки всё ещё следующая (PER-713).
+// Цена ушла, пока выбирали имя, — ставкой она не становится: карточка с новой
+// ценой и строкой «цена изменилась», а жмёт человек уже на неё.
 async function chooseName(
   context: CommandContext,
   lot: LotView,
@@ -931,7 +941,42 @@ async function chooseName(
     return refused(outcome.refusal);
   }
   if (lot.status.kind === "trading" && lot.status.phase === "live") {
-    return showLot({ ...context, lot, page });
+    // Сразу уходит только ставка, начатая кнопкой финала: ставка онлайн-недели
+    // ждала своего «Да», и выход лота в финал её не подтверждает — человек
+    // видит карточку финала и жмёт «Поставить» сам.
+    if (pending.final !== true) return showLot({ ...context, lot, page });
+    // Лидирует уже сам смотрящий — поставил из другого окна, пока висел этот
+    // экран: кнопки ставки у лидера нет, и карточка говорит, что цена его.
+    if (lot.status.leaderId === context.viewer.identityId) {
+      return showLot({
+        ...context,
+        lot,
+        page,
+        finalBid: {
+          kind: "refused",
+          refusal: {
+            kind: "bidder-is-leader",
+            currentPrice: lot.status.currentPrice,
+          },
+        },
+      });
+    }
+    const next = lot.nextPrice;
+    if (next !== undefined && next.minorUnits === pending.amount) {
+      return placeFinalBidOn(context, lot, {
+        lotId: lot.lotId,
+        amount: pending.amount,
+        page,
+      });
+    }
+    const changed: FinalBidOutcome | undefined =
+      next === undefined ? undefined : { kind: "price-changed", next };
+    return showLot({
+      ...context,
+      lot,
+      page,
+      ...(changed === undefined ? {} : { finalBid: changed }),
+    });
   }
   return confirmOrRefuse(context, lot, pending, page, true);
 }

@@ -63,7 +63,14 @@ const MAX_BYTES = 64;
 export type AuctionCommand = "bid" | "proxy";
 
 // Команда, отложенная до выбора имени: её вид и сумма.
-export type PendingCommand = { command: AuctionCommand; amount: number };
+// `final` — ставка, начатая кнопкой «Поставить» карточки финала (PER-713):
+// после выбора имени она уходит сразу, без подтверждения. Ставка онлайн-недели
+// ждёт своего «Да», даже если лот за это время вышел в финал.
+export type PendingCommand = {
+  command: AuctionCommand;
+  amount: number;
+  final?: true;
+};
 
 export type AuctionQuestion = "bid" | "proxy" | "alias";
 
@@ -350,18 +357,24 @@ function commandOf(code: string | undefined): AuctionCommand | undefined {
   return undefined;
 }
 
-// Отложенная команда одним аргументом: код команды и сумма — `bxlc`.
+// Отложенная команда одним аргументом: код команды и сумма — `bxlc`. Ставка
+// финала (PER-713) — свой код `f`: та же ставка, но без подтверждения.
+const FINAL_BID_CODE = "f";
+
 function pendingArgument(pending: PendingCommand): string {
-  return `${COMMAND_CODE[pending.command]}${amountArgument(pending.amount)}`;
+  const code =
+    pending.final === true ? FINAL_BID_CODE : COMMAND_CODE[pending.command];
+  return `${code}${amountArgument(pending.amount)}`;
 }
 
 function pendingOf(raw: string | undefined): PendingCommand | undefined {
   if (raw === undefined) return undefined;
-  const command = commandOf(raw.slice(0, 1));
+  const code = raw.slice(0, 1);
   const amount = amountOf(raw.slice(1));
-  return command === undefined || amount === undefined
-    ? undefined
-    : { command, amount };
+  if (amount === undefined) return undefined;
+  if (code === FINAL_BID_CODE) return { command: "bid", amount, final: true };
+  const command = commandOf(code);
+  return command === undefined ? undefined : { command, amount };
 }
 
 const QUESTION_CODE: Record<AuctionQuestion, string> = {

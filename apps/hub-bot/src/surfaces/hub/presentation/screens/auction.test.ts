@@ -130,6 +130,40 @@ describe("lot card in the hub shell", () => {
     );
   });
 
+  // В живом финале кнопки «Автоставка» нет (PER-713): исчерпанный лимит не
+  // советует его поднять, а лимит лидера ниже текущей цены не показан
+  // действующим.
+  it("names an exhausted own limit in the live final without advising to raise it", () => {
+    const course = (standing?: "leader") =>
+      plain(
+        auctionScreen(
+          view(
+            [
+              lot({
+                card: { title: "Кружка", description: "" },
+                nextPrice: rub(1550),
+                status: {
+                  kind: "trading",
+                  currentPrice: rub(1500),
+                  leaderId: standing === "leader" ? "viewer" : "p-2",
+                  phase: "live",
+                },
+                participantName: "@owl",
+                viewerProxyLimit: rub(1450),
+                ...(standing === undefined ? {} : { standing }),
+              }),
+            ],
+            "plain",
+          ),
+        ).screen.text,
+      );
+    for (const text of [course(), course("leader")]) {
+      expect(text).toContain("Автоставка до 1 450 ₽ исчерпана");
+      expect(text).not.toContain("подними лимит");
+      expect(text).not.toContain("Твоя автоставка");
+    }
+  });
+
   // Без ставок первая ставка — по стартовой цене, а не «по шагу» (PER-631,
   // №82); с лидером — по шагу.
   it("offers the first bid instead of the step on a lot without bids", () => {

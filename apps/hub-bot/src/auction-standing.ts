@@ -65,21 +65,34 @@ export function stepBidLabel(amount: Money, firstBid: boolean): string {
 /**
  * Свой лимит на карточке. Лимит ниже порога следующей ставки у не-лидера
  * больше ничего не сделает (PER-631, №81): строка говорит, что он исчерпан.
+ * В живом финале (PER-713) кнопки «Автоставка» нет, поэтому поднять лимит
+ * строка не советует, а лидеру, который поставил выше своего лимита рукой,
+ * лимит ниже текущей цены тоже показан исчерпанным, а не действующим.
+ * Онлайн-неделя показывает лимит лидера как раньше.
  */
 export function ownProxyLine(lot: {
   viewerProxyLimit: Money;
   nextPrice?: Money;
   standing?: LotStanding;
+  status: LotStatusView;
 }): string {
   const limit = lot.viewerProxyLimit;
+  const { status } = lot;
+  const live = status.kind === "trading" && status.phase === "live";
+  const below = (threshold: Money | undefined) =>
+    threshold !== undefined &&
+    threshold.currency === limit.currency &&
+    limit.minorUnits < threshold.minorUnits;
   const exhausted =
-    lot.standing !== "leader" &&
-    lot.nextPrice !== undefined &&
-    lot.nextPrice.currency === limit.currency &&
-    limit.minorUnits < lot.nextPrice.minorUnits;
-  return exhausted
-    ? `Автоставка до ${money(limit)} исчерпана — подними лимит`
-    : `Твоя автоставка: до ${money(limit)} (видишь только ты)`;
+    lot.standing !== "leader"
+      ? below(lot.nextPrice)
+      : status.kind === "trading" && live && below(status.currentPrice);
+  if (!exhausted) {
+    return `Твоя автоставка: до ${money(limit)} (видишь только ты)`;
+  }
+  return live
+    ? `Автоставка до ${money(limit)} исчерпана`
+    : `Автоставка до ${money(limit)} исчерпана — подними лимит`;
 }
 
 /**
