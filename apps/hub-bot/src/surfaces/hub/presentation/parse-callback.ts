@@ -364,7 +364,13 @@ type PlainAction =
   // лоты сета.
   | { kind: "lot-scope"; lot: string; field: LotFormField }
   // «Повторить для оставшихся» (PER-716): поле разносится по сету заново.
-  | { kind: "lot-set-retry"; lot: string; field: LotFormField }
+  | {
+      kind: "lot-set-retry";
+      lot: string;
+      field: LotFormField;
+      // Отпечаток версии фото у повтора фото сета (PER-721).
+      print?: string;
+    }
   // «Копировать» (PER-716): вопрос, сколько всего лотов.
   | { kind: "lot-copy"; lot: string }
   // «Удалить лот» и «Да» его подтверждения (PER-716).
@@ -797,9 +803,18 @@ export function lotScopeData(lot: string, field: LotFormField): string {
   return `v1:lot:sc:${lot}:${field}`;
 }
 
-/** «Повторить для оставшихся» под исходом правки сета (PER-716). */
-export function lotSetRetryData(lot: string, field: LotFormField): string {
-  return `v1:lot:sr:${lot}:${field}`;
+/**
+ * «Повторить для оставшихся» под исходом правки сета (PER-716). У фото
+ * (PER-721) хвост — отпечаток версии разнесённого фото.
+ */
+export function lotSetRetryData(
+  lot: string,
+  field: LotFormField,
+  print?: string,
+): string {
+  return print === undefined
+    ? `v1:lot:sr:${lot}:${field}`
+    : `v1:lot:sr:${lot}:${field}:${print}`;
 }
 
 /** «Копировать» на экране правки лота (PER-716). */
@@ -1787,6 +1802,17 @@ function parseLot(parts: readonly string[]): CallbackAction {
   }
   if (parts.length === 4 && parts[2] === "dy") {
     return { kind: "lot-remove-confirm", lot: token.data };
+  }
+  if (parts.length === 6 && parts[2] === "sr" && parts[4] === "image") {
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    return print.success
+      ? {
+          kind: "lot-set-retry",
+          lot: token.data,
+          field: "image",
+          print: print.data,
+        }
+      : { kind: "malformed" };
   }
   if (parts.length === 5 && (parts[2] === "sc" || parts[2] === "sr")) {
     const field = LotFormFieldSchema.safeParse(parts[4]);

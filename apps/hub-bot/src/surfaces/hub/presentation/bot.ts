@@ -6791,6 +6791,7 @@ async function handleLotFormCallback(
       intent: "retry-lot-set",
       lotId,
       field: action.field,
+      ...(action.print === undefined ? {} : { photoPrint: action.print }),
       opId: createUuidV7(),
       ...rpcCall(ctx, useCase),
     });
@@ -7409,7 +7410,9 @@ async function answerLotPhoto(
   });
   // Исход добавления — один экран на альбом: следующий снимок правит экран
   // предыдущего, и число фото растёт на месте. У правки всего сета (PER-716)
-  // исход — «Применено к K из M» последнего снимка.
+  // исход — «Применено к K из M»; исход с непрошедшими лотами приходит своим
+  // сообщением и не правится следующим снимком: его «Повторить для
+  // оставшихся» несёт своё фото, и удачный снимок после не прячет его.
   if (
     (result.kind === "lot-form" && result.saved === "photo-added") ||
     result.kind === "lot-set-applied"
@@ -7420,13 +7423,17 @@ async function answerLotPhoto(
         : inChain(answer.question)
           ? lotSavedScreen(result.lot, lotSavedNote.ready)
           : lotPhotoSavedScreen(result.lot, "photo-added");
+    const partial =
+      result.kind === "lot-set-applied" && result.missed.length > 0;
     const before =
-      group === undefined ? undefined : photos.albums.outcomeOf(group);
+      group === undefined || partial
+        ? undefined
+        : photos.albums.outcomeOf(group);
     const shown = await showScreen(
       ctx,
       before === undefined ? screen : { ...screen, editOf: before },
     );
-    if (group !== undefined && shown !== undefined) {
+    if (group !== undefined && shown !== undefined && !partial) {
       photos.albums.rememberOutcome(group, shown.message_id);
     }
     await answer.answered(result);

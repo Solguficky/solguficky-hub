@@ -2554,6 +2554,98 @@ describe("lot copies, set edits and removal", () => {
     expect(plain(last(calls)).split("\n")[0]).toBe("Применено к 3 из 3");
   });
 
+  it("retries the photo the set edit spread, not the last photo of the lot", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    const other = new Uint8Array([0xff, 0xd8, 9]);
+    const sha = (bytes: Uint8Array) =>
+      createHash("sha256").update(bytes).digest("hex");
+    // У исходного лота фото A уже есть, за ним — B.
+    auction.photos.set(setLots[0], [
+      { photoId: lotPhotoIdOf(setLots[0], jpeg), content: jpeg, version },
+      {
+        photoId: lotPhotoIdOf(setLots[0], other),
+        content: other,
+        version: sha(other),
+      },
+    ]);
+    auction.resync(setLots[0]);
+    auction.seedPhotos(setLots[2], 10);
+    const { calls, next } = steps(auction, fakeTelegramFiles({ large: jpeg }));
+    const token = uuidToToken(setLots[0]);
+
+    await next(() => press(`v1:lot:ask:${token}:image:s`));
+    await next((history) => reply(history, photo));
+    const outcome = last(calls);
+    expect(plain(outcome).split("\n")[0]).toBe("Применено к 2 из 3");
+
+    auction.photos.set(
+      setLots[2],
+      auction.photos.get(setLots[2])?.slice(1) ?? [],
+    );
+    auction.resync(setLots[2]);
+    await next(() => press(dataOf(outcome, "Повторить для оставшихся")));
+    expect(auction.photos.get(setLots[2])?.at(-1)?.version).toBe(version);
+    expect(
+      auction.photos
+        .get(setLots[2])
+        ?.some((each) => each.version === sha(other)),
+    ).toBe(false);
+  });
+
+  it("keeps the partial outcome of one album photo when a later photo of the album reaches every lot", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    auction.seedPhotos(setLots[2], 10);
+    const second = new Uint8Array([0xff, 0xd8, 2]);
+    const telegram = fakeTelegramFiles({ a1: jpeg, a2: second });
+    const { bot, calls } = harness("admin", auction, [], { telegram });
+    await bot.init();
+    const token = uuidToToken(setLots[0]);
+    await bot.handleUpdate(press(`v1:lot:ask:${token}:image:s`));
+    const asked = question(calls);
+
+    for (const [index, file] of ["a1", "a2"].entries()) {
+      // Место у третьего лота освобождается ко второму снимку.
+      if (index === 1) {
+        auction.photos.set(
+          setLots[2],
+          auction.photos.get(setLots[2])?.slice(1) ?? [],
+        );
+        auction.resync(setLots[2]);
+      }
+      const update = reply(calls, {
+        photo: [
+          { file_id: file, file_unique_id: file, width: 1280, height: 1280 },
+        ],
+        media_group_id: "album-set",
+      });
+      (
+        update.message as { reply_to_message: { message_id: number } }
+      ).reply_to_message.message_id = asked.messageId;
+      await bot.handleUpdate(update);
+    }
+
+    const outcomes = calls.filter((call) =>
+      ((call.payload as Sent).text ?? "").includes("Применено к"),
+    );
+    // Исход с непрошедшим лотом остаётся своим сообщением с «Повторить».
+    expect(outcomes.map((call) => call.method)).toEqual([
+      "sendMessage",
+      "sendMessage",
+    ]);
+    expect(labels(outcomes[0]?.payload as Sent).flat()).toContain(
+      "Повторить для оставшихся",
+    );
+    expect(plain(outcomes[1]?.payload as Sent).split("\n")[0]).toBe(
+      "Применено к 3 из 3",
+    );
+  });
+
   it("copies every photo of the lot into each copy in the same order", async () => {
     const auction = fakeAuction({
       lots: [

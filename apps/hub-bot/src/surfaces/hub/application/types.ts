@@ -444,6 +444,9 @@ export type LotFormRequest =
       lotId: string;
       field: LotSetField;
       opId: string;
+      // У фото — отпечаток версии фото, которое разносили (PER-721): повтор
+      // добавляет то же фото, а не последнее из галереи.
+      photoPrint?: string;
     })
   // Копии лота (PER-716): ответ — сколько всего лотов будет вместе с ним.
   | (LotFormCall & {
@@ -1478,6 +1481,8 @@ export type ExecuteResult =
       kind: "lot-set-applied";
       lot: LotFormView;
       field: LotSetField;
+      // Отпечаток версии разнесённого фото (PER-721) для «Повторить».
+      photoPrint?: string;
       applied: number;
       total: number;
       missed: readonly { title: string; reason: LotSetMiss }[];

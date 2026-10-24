@@ -1308,6 +1308,9 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       applied,
       total,
       missed,
+      ...(edit.field === "image"
+        ? { photoPrint: fingerprint(edit.version) }
+        : {}),
     };
   }
 
@@ -1364,11 +1367,23 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
             ? undefined
             : { field: "description", description: card.description };
         break;
-      // Фото сета — последнее фото галереи лота (PER-721): его добавила
-      // правка, которую повторяют.
+      // Фото сета (PER-721) — то фото галереи лота, чей отпечаток версии
+      // несёт кнопка повтора; кнопка без отпечатка — последнее фото.
       case "image": {
-        const last = card?.photos?.at(-1);
-        if (last === undefined && card?.image === undefined) break;
+        const last =
+          request.photoPrint === undefined
+            ? card?.photos?.at(-1)
+            : card?.photos?.find(
+                (photo) => fingerprint(photo.version) === request.photoPrint,
+              );
+        if (
+          last === undefined &&
+          (card?.image === undefined ||
+            (request.photoPrint !== undefined &&
+              fingerprint(card.image.version) !== request.photoPrint))
+        ) {
+          break;
+        }
         const image =
           last === undefined
             ? await lots.getLotImage(
@@ -1413,6 +1428,9 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       applied,
       total: set.lotIds.length,
       missed,
+      ...(edit.field === "image"
+        ? { photoPrint: fingerprint(edit.version) }
+        : {}),
     };
   }
 

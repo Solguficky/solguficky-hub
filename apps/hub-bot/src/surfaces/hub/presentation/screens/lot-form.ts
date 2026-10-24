@@ -728,13 +728,17 @@ export function lotSetAppliedScreen(
     applied: number;
     total: number;
     missed: readonly { title: string; reason: LotSetMiss }[];
+    photoPrint?: string;
   },
 ): ShownScreen {
   const token = uuidToToken(lot.lotId);
   const keyboard = new InlineKeyboard();
   if (outcome.missed.length > 0) {
     keyboard
-      .text("Повторить для оставшихся", lotSetRetryData(token, outcome.field))
+      .text(
+        "Повторить для оставшихся",
+        lotSetRetryData(token, outcome.field, outcome.photoPrint),
+      )
       .row();
   }
   keyboard.text("Изменить лот", lotFormData(token));

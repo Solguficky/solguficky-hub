@@ -1266,6 +1266,10 @@ describe("lot form callbacks", () => {
         { kind: "lot-set-retry", lot, field: "description" },
       ],
       [
+        lotSetRetryData(lot, "image", "a1b2c"),
+        { kind: "lot-set-retry", lot, field: "image", print: "a1b2c" },
+      ],
+      [
         lotAskData(lot, "description", "set"),
         { kind: "lot-ask", lot, field: "description", set: true },
       ],
