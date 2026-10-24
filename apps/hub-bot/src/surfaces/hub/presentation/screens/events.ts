@@ -32,8 +32,11 @@ export type HubEvent = {
 };
 
 // Аукцион — событие, пока в нём есть что делать: онлайн-торги, итоги, перерыв
-// и финал. Черновик и запланированный ещё не идут, завершённый уже прошёл.
+// и финал. Запланированный и опубликованный аукцион — тоже: участники видят его
+// до открытия торгов, а прогнозы и розыгрыш уже идут (решение владельца
+// 24.10.2026). Черновик и скрытый ещё не событие, завершённый уже прошёл.
 const eventStages: ReadonlySet<AuctionStageView> = new Set([
+  "scheduled",
   "prebidding",
   "settling",
   "on-break",
@@ -43,7 +46,7 @@ const eventStages: ReadonlySet<AuctionStageView> = new Set([
 
 /** Идёт ли аукцион как событие сообщества. */
 export function isAuctionEvent(auction: AuctionSummaryView): boolean {
-  return eventStages.has(auction.stage);
+  return eventStages.has(auction.stage) && auction.hidden !== true;
 }
 
 export const eventsTitle = "События";
