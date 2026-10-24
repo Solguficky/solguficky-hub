@@ -64,8 +64,8 @@ final case class StoredRaffleTerms(closesAt: Instant, seed: String, round: Long,
 /**
  * Snapshot розыгрыша. `closesAt` заполнен только у непроведённого, `terms` — с открытия, `participants` — регистрации
  * открытого или билеты зафиксированного пула по порядку, `drawn` — только после жеребьёвки, `cancelledAt` — только у
- * отменённого, `assigned` — только у ручного итога (PER-727); оба добавлены в конец, и snapshot прежней формы читает
- * их пустыми. Пул, ждущий администратора, — своё состояние `AwaitingWinner`.
+ * отменённого, `assigned` — только у ручного итога (PER-727); оба добавлены в конец, и snapshot прежней формы читает их
+ * пустыми. Пул, ждущий администратора, — своё состояние `AwaitingWinner`.
  */
 final case class StoredRaffle(
     sequence: Long,

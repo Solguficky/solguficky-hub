@@ -70,8 +70,8 @@ final case class Register(participant: ParticipantId, opId: OpId)
 final case class CancelRegistration(participant: ParticipantId, opId: OpId)
 
 /**
- * Фиксация пула в момент закрытия; `excluded` — регистрации тех, кто к закрытию потерял право, `byHand` — итог
- * подводит администратор, а не маяк (настройка сервиса, ADR-066, дополнение 2026-10-24).
+ * Фиксация пула в момент закрытия; `excluded` — регистрации тех, кто к закрытию потерял право, `byHand` — итог подводит
+ * администратор, а не маяк (настройка сервиса, ADR-066, дополнение 2026-10-24).
  */
 final case class FixPool(excluded: Set[ParticipantId], byHand: Boolean = false)
 
