@@ -127,6 +127,43 @@ describe("auction snapshot for the root", () => {
     ).toThrow("auction online phase start is not an instant");
   });
 
+  // Момент Auction обещает в RFC 3339 (PER-688): мягкий `Date.parse` взял бы
+  // и дату без времени, и дату словами, и выдуманный срок попал бы в текст.
+  describe("instants of the online phase", () => {
+    const withPhase = (opensAt: string, closesAt: string) =>
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          config: create(AuctionConfigSchema, {
+            onlinePhase: create(OnlinePhaseSchema, { opensAt, closesAt }),
+          }),
+          status: {
+            case: "draft",
+            value: create(AuctionState_DraftSchema, {}),
+          },
+        }),
+      );
+
+    it.each(["2026-10-21", "Oct 21, 2026"])("refuses %s", (instant) => {
+      expect(() => withPhase(instant, "2026-10-29T18:00:00Z")).toThrow(
+        "auction online phase start is not an instant",
+      );
+      expect(() => withPhase("2026-10-26T09:00:00Z", instant)).toThrow(
+        "auction online phase end is not an instant",
+      );
+    });
+
+    it.each(["2026-10-21T21:00:00Z", "2026-10-21T21:00:00.123456Z"])(
+      "accepts %s",
+      (instant) => {
+        expect(withPhase(instant, instant)).toMatchObject({
+          opensAt: instant,
+          closesAt: instant,
+        });
+      },
+    );
+  });
+
   // Состав финала (PER-639): лента в финале ставит лоты в порядке зала и
   // выделяет тот, что торгует ведущий.
   it("reads the lineup of a frozen lineup and of a running final", () => {
