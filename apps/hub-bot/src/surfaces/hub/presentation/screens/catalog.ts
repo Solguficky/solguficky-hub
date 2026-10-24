@@ -386,12 +386,37 @@ export const screenCatalog = {
     parent: "lot-form",
     backName: "Шаг ставки",
   },
+  // Фото лота (PER-721): список до десяти, «Добавить фото» и «Убрать фото N».
+  // Родитель — форма лота, возврат в неё.
+  "lot-photos": {
+    class: "screen",
+    nav: "tree",
+    title: "Фото лота",
+    parent: "lot-form",
+    backName: "Фото лота",
+    subject: true,
+  },
   // Снятие фото лота (PER-715): фото бот вернуть не может, поэтому «Да»
   // красное, как у «Убрать материал».
   "lot-image-remove-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Убрать фото?",
+    irreversible: true,
+  },
+  // Поле лота в сете (PER-716): только этот лот или все лоты сета. Пара
+  // выбора одним рядом, возврат — в форму лота.
+  "lot-scope": {
+    class: "screen",
+    nav: "tree",
+    title: "Какие лоты изменить?",
+    parent: "lot-form",
+  },
+  // Удаление лота (PER-716): вернуть лот бот не умеет, поэтому «Да» красное.
+  "lot-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Удалить лот?",
     irreversible: true,
   },
   // Лот глазами участника (PER-512): карточка лота той же вёрсткой, без кнопок

@@ -2,6 +2,7 @@ import type {
   AuctionPort,
   AuctionSummaryView,
   LotImagePort,
+  LotPhotoView,
   LotView,
   Money,
   OperationIdPort,
@@ -92,6 +93,21 @@ export type LotCardResult =
   | { kind: "unsupported-image" }
   | AuctionFailure;
 
+// Исход команды фото лота (PER-721). `ok` несёт фото лота после команды:
+// чтение Auction её ещё могло не увидеть, а форма называет их число.
+// `photo-limit` — у лота уже предел фото, `maxPhotos` — предел, как его назвал
+// Auction. Отказы изображения бывают только у добавления.
+export type LotPhotoResult =
+  | { kind: "ok"; photos: readonly LotPhotoView[] }
+  | { kind: "not-admin" }
+  | { kind: "card-not-found" }
+  | { kind: "card-closed" }
+  | { kind: "image-too-large"; maxBytes: number }
+  | { kind: "unsupported-image" }
+  | { kind: "photo-limit"; maxPhotos: number }
+  | { kind: "photo-conflict" }
+  | AuctionFailure;
+
 export type AddLotResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
@@ -118,6 +134,25 @@ export type ScheduleLotResult =
 
 export type LotReadResult =
   | { kind: "ok"; lot: LotView }
+  | { kind: "not-found" }
+  | AuctionFailure;
+
+// Снятие лота из реестра до онлайн-торгов (PER-716). `lot-not-in-auction` —
+// лота в реестре уже нет: снятие прошло раньше.
+export type RemoveLotResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "lots-frozen" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Байты фото лота для копий (PER-716, PER-721): копия получает те же фото, а
+// Auction держит каждое версией содержимого.
+export type LotImageResult =
+  | { kind: "ok"; content: Uint8Array; version: string }
   | { kind: "not-found" }
   | AuctionFailure;
 
@@ -150,6 +185,19 @@ export type LotAdministration = {
     card: LotCardEdit,
     meta?: RpcMetadata,
   ): Promise<LotCardResult>;
+  // Фото в конец списка (PER-721). `photoId` рождает вызывающий: повтор с ним
+  // Auction узнаёт и второго фото не заводит.
+  addLotPhoto(
+    person: Person,
+    photo: { lotId: string; photoId: string; image: Uint8Array },
+    meta?: RpcMetadata,
+  ): Promise<LotPhotoResult>;
+  // Снятое уже фото — тоже `ok`: снятие идемпотентно.
+  removeLotPhoto(
+    person: Person,
+    photo: { lotId: string; photoId: string },
+    meta?: RpcMetadata,
+  ): Promise<LotPhotoResult>;
   addLot(
     person: Person,
     lot: { auctionId: string; lotId: string; opId: string },
@@ -172,6 +220,22 @@ export type LotAdministration = {
     lotId: string,
     meta?: RpcMetadata,
   ): Promise<LotReadResult>;
+  removeLot(
+    person: Person,
+    lot: { auctionId: string; lotId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<RemoveLotResult>;
+  getLotImage(
+    person: Person,
+    lotId: string,
+    meta?: RpcMetadata,
+  ): Promise<LotImageResult>;
+  // Одно фото галереи лота (PER-721): копии и правка сета берут его байты.
+  getLotPhoto(
+    person: Person,
+    photo: { lotId: string; photoId: string },
+    meta?: RpcMetadata,
+  ): Promise<LotImageResult>;
 };
 
 // Пульт аукциона администратора (PER-320): чтение пульта, сроки недели и
@@ -256,6 +320,9 @@ export type ScheduleAuctionResult =
   | { kind: "raffle-prize-without-raffle" }
   | { kind: "raffle-prize-blank" }
   | { kind: "raffle-prize-too-long" }
+  // Срок оплаты счёта вне 1–30 дней (PER-722): бот проверяет его сам, и отказ
+  // Auction — тот же ответ человеку.
+  | { kind: "payment-term-out-of-range" }
   | { kind: "already-started" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -371,6 +438,8 @@ export type FinalistResult =
 // Ключ `raffleClosesAt` обязателен по той же причине; `undefined` — неделя без
 // розыгрыша (ADR-066, п. 5). Так же обязателен `rafflePrize` (PER-649): приз
 // лежит рядом с моментом розыгрыша, и команда без него стёрла бы приз молча.
+// И срок оплаты счёта `paymentTermSeconds` (PER-722): команда без него вернула
+// бы срок платформы, семь дней; `undefined` — срок платформы.
 // `lot_defaults` бот не шлёт — их подставляет Auction; правило закрытия
 // выводится из финала.
 export type AuctionWeekConfig = {
@@ -382,6 +451,7 @@ export type AuctionWeekConfig = {
   windows: readonly StepWindow[];
   raffleClosesAt: string | undefined;
   rafflePrize: string | undefined;
+  paymentTermSeconds: number | undefined;
 };
 
 // Запуск окна сниженного шага по ходу торгов (PER-615; ADR-047, дополнение

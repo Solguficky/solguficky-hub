@@ -1332,6 +1332,55 @@ final class AuctionGrpcIntegrationSpec
         Some(reread.version) shouldBe replaced.getAccepted.image.map(_.version)
     }
 
+    "adds and removes lot photos through the wire and reads each one back by its id" in withNode { node =>
+      val admin = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS, AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
+      val lotId = tradingLot(node)
+      val cover = IArray.genericWrapArray(TestImages.jpeg(fill = 1)).toArray
+      val second = IArray.genericWrapArray(TestImages.png(fill = 2)).toArray
+      asHubBot(node.client.createLotCard())
+        .invoke(wire.CreateLotCardRequest(Some(admin), lotId.toString, "Лот", "", Some(upload(cover))))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      val photoId = newId()
+
+      val added = asHubBot(node.client.addLotPhoto())
+        .invoke(wire.AddLotPhotoRequest(Some(admin), lotId.toString, photoId, Some(upload(second))))
+        .futureValue
+        .getAccepted
+      added.photos.map(_.photoId).lastOption shouldBe Some(photoId)
+      added.photos.headOption.map(_.version) shouldBe added.image.map(_.version)
+
+      val read = eventually {
+        asHubBot(node.client.getLotPhoto())
+          .invoke(wire.GetLotPhotoRequest(Some(admin), lotId.toString, photoId))
+          .futureValue
+      }
+      read.content.toByteArray shouldBe second
+      read.mediaType shouldBe "image/png"
+      asHubBot(node.client.getLot())
+        .invoke(wire.GetLotRequest(Some(admin), lotId.toString))
+        .futureValue
+        .card
+        .map(_.photos) shouldBe Some(added.photos)
+
+      val coverId = added.photos.headOption.map(_.photoId).getOrElse(fail("no cover"))
+      val removed = asHubBot(node.client.removeLotPhoto())
+        .invoke(wire.RemoveLotPhotoRequest(Some(admin), lotId.toString, coverId))
+        .futureValue
+        .getAccepted
+      removed.photos.map(_.photoId) shouldBe Seq(photoId)
+      removed.image.map(_.version) shouldBe Some(read.version)
+      statusOf(
+        asHubBot(node.client.getLotPhoto()).invoke(wire.GetLotPhotoRequest(Some(admin), lotId.toString, coverId))
+      ) shouldBe Status.Code.NOT_FOUND
+      asHubBot(node.client.getLotImage())
+        .invoke(wire.GetLotImageRequest(Some(admin), lotId.toString))
+        .futureValue
+        .content
+        .toByteArray shouldBe second
+    }
+
     "answers NOT_FOUND through GetLotImage for a lot without an image and for one the read model does not hold" in
       withNode { node =>
         val reader = viewer(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)

@@ -169,7 +169,10 @@ function makeBot(
           date: 0,
           chat: privateChat,
           rich_message: {
-            blocks: rich.media === undefined ? [] : [photoBlock],
+            // Блок на каждое фото, в порядке `media` (PER-721).
+            blocks: (rich.media ?? []).map((_, index) =>
+              index === 0 ? photoBlock : photoBlockAt(index),
+            ),
           },
         } as never,
       });
@@ -197,10 +200,25 @@ const photoBlock = {
   ],
 };
 
+// Блок фото карусели не первым: `file_id` у него свой.
+const photoBlockAt = (index: number) => ({
+  type: "photo",
+  photo: [
+    { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
+    {
+      file_id: `large-${index + 1}`,
+      file_unique_id: "l",
+      width: 800,
+      height: 800,
+    },
+  ],
+});
+
 function portsWith(
   overrides: {
     lot?: Partial<LotView>;
     image?: LotImagePort["getLotImage"];
+    photo?: LotImagePort["getLotPhoto"];
     entry?: EntryPort["requestAccess"];
     // Права смотрящего; по умолчанию — право аукциона.
     rights?: readonly ("place-bids" | "access-hub")[];
@@ -312,6 +330,13 @@ function portsWith(
           mediaType: "image/jpeg",
           version: "img-1",
         })),
+      getLotPhoto:
+        overrides.photo ??
+        (async ({ photoId }) => ({
+          content: new Uint8Array([4, 5, 6]),
+          mediaType: "image/jpeg",
+          version: `photo-${photoId}`,
+        })),
     },
   });
 }
@@ -374,7 +399,7 @@ describe("auction bot", () => {
     });
     await first.bot.handleUpdate(start);
     expect(first.calls[0]?.payload).toMatchObject({
-      text: expect.stringContaining("Что продаём"),
+      text: expect.stringContaining("Как делать ставки"),
     });
     expect(acknowledged).toBe(false);
     const press = (action: "read" | "faq"): Update => ({
@@ -397,7 +422,7 @@ describe("auction bot", () => {
     });
     await restarted.bot.handleUpdate(press("faq"));
     expect(restarted.calls.at(-1)?.payload).toMatchObject({
-      text: expect.stringContaining("Что продаём"),
+      text: expect.stringContaining("Как делать ставки"),
     });
   });
 
@@ -451,7 +476,9 @@ describe("auction bot", () => {
       }),
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Кружка");
-    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("Что продаём");
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
+      "Как делать ставки",
+    );
   });
 
   // Отказ Auction на приходе по ссылке — тот же кадр недоступности с
@@ -1238,6 +1265,102 @@ describe("auction bot", () => {
     expect(edits[1]?.payload).toMatchObject({
       rich_message: { media: [{ id: "lot", media: { media: "large" } }] },
     });
+  });
+
+  // Несколько фото лота (PER-721): карусель над заголовком, как постеры
+  // карточки сходки; каждое фото грузится своим `GetLotPhoto`, а `file_id`
+  // кэшируется по каждому, и второй показ идёт без байтов.
+  it("shows several photos of a lot as a carousel and reuses the file_id of each", async () => {
+    const photos = createPhotoCache();
+    const getLotPhoto = vi.fn(async ({ photoId }: { photoId: string }) => ({
+      content: new Uint8Array([1]),
+      mediaType: "image/jpeg",
+      version: `v-${photoId}`,
+    }));
+    const getLotImage = vi.fn(async () => {
+      throw new Error("the cover is read as a photo");
+    });
+    const { bot, calls } = makeBot(
+      portsWith({
+        lot: {
+          card: {
+            title: "Кружка",
+            description: "",
+            image: { version: "v-p1" },
+            photos: [
+              { photoId: "p1", version: "v-p1" },
+              { photoId: "p2", version: "v-p2" },
+              { photoId: "p3", version: "v-p3" },
+            ],
+          },
+        },
+        image: getLotImage,
+        photo: getLotPhoto,
+      }),
+      { photos },
+    );
+    await bot.handleUpdate(lotPress());
+    await bot.handleUpdate(lotPress());
+
+    expect(getLotPhoto).toHaveBeenCalledTimes(3);
+    expect(getLotImage).not.toHaveBeenCalled();
+    const edits = calls.filter((call) => call.method === "editMessageText");
+    const first = edits[0]?.payload as {
+      rich_message: { html: string; media: { id: string }[] };
+    };
+    expect(first.rich_message.html).toMatch(
+      /^<tg-slideshow><img src="tg:\/\/photo\?id=lot"\/><img src="tg:\/\/photo\?id=lot2"\/><img src="tg:\/\/photo\?id=lot3"\/><\/tg-slideshow><h1>Кружка<\/h1>/,
+    );
+    expect(first.rich_message.media.map((photo) => photo.id)).toEqual([
+      "lot",
+      "lot2",
+      "lot3",
+    ]);
+    expect(edits[1]?.payload).toMatchObject({
+      rich_message: {
+        media: [
+          { id: "lot", media: { media: "large" } },
+          { id: "lot2", media: { media: "large-2" } },
+          { id: "lot3", media: { media: "large-3" } },
+        ],
+      },
+    });
+  });
+
+  it("leaves out of the carousel a photo Auction does not give", async () => {
+    const getLotPhoto = vi.fn(async ({ photoId }: { photoId: string }) => {
+      if (photoId === "p2") throw new Error("gone");
+      return {
+        content: new Uint8Array([1]),
+        mediaType: "image/jpeg",
+        version: `v-${photoId}`,
+      };
+    });
+    const { bot, calls } = makeBot(
+      portsWith({
+        lot: {
+          card: {
+            title: "Кружка",
+            description: "",
+            image: { version: "v-p1" },
+            photos: [
+              { photoId: "p1", version: "v-p1" },
+              { photoId: "p2", version: "v-p2" },
+            ],
+          },
+        },
+        photo: getLotPhoto,
+      }),
+    );
+    await bot.handleUpdate(lotPress());
+
+    const card = calls.find((call) => call.method === "editMessageText")
+      ?.payload as { rich_message: { html: string; media: unknown[] } };
+    // Одно оставшееся фото стоит фотографией, а не каруселью из одного кадра.
+    expect(card.rich_message.html).toMatch(
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>/,
+    );
+    expect(card.rich_message.media).toHaveLength(1);
   });
 
   // Кнопка «К лоту» под уведомлением (PER-328): карточка приходит новым

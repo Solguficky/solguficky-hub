@@ -193,6 +193,12 @@ function fakeAuction(
     options.image ??
     (async () => ({ content: new Uint8Array([1, 2, 3]), version: "img-1" }));
   const getLotImage = vi.fn((_request: { lotId: string }) => image());
+  const getLotPhoto = vi.fn(
+    async (request: { lotId: string; photoId: string }) => ({
+      content: new Uint8Array([7]),
+      version: `photo-${request.photoId}`,
+    }),
+  );
   const listAuctionLots = vi.fn(async () => ({
     lots: [shownLot],
     nextPageToken: "",
@@ -328,6 +334,10 @@ function fakeAuction(
             ...(await getLotImage(request)),
             mediaType: "image/jpeg",
           }),
+          getLotPhoto: async (request) => ({
+            ...(await getLotPhoto(request)),
+            mediaType: "image/jpeg",
+          }),
         },
       };
     },
@@ -338,6 +348,7 @@ function fakeAuction(
     opIds,
     lookups,
     getLotImage,
+    getLotPhoto,
     listAuctionLots,
     getLot,
     getAuction,
@@ -1088,6 +1099,66 @@ describe("lot photo delivery", () => {
     expect(lastScreen(calls).rich_message?.media?.[0]?.media.media).toBe(
       "big-file",
     );
+  });
+
+  // Несколько фото лота (PER-721): карусель, как у постеров карточки сходки,
+  // фото — своим `GetLotPhoto` каждое, `file_id` — по каждому.
+  it("shows the photos of a lot as a carousel and reuses the file_id of each", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      lot: {
+        ...lot,
+        card: {
+          title: "Кружка с совой",
+          description: "Ручная роспись.",
+          image: { version: "photo-p1" },
+          photos: [
+            { photoId: "p1", version: "photo-p1" },
+            { photoId: "p2", version: "photo-p2" },
+          ],
+        },
+      },
+    });
+    const photos = createLotPhotos();
+    const { bot, calls } = harness("member", auction, {
+      lotPhotos: photos,
+      respond: (method) =>
+        method === "editMessageText"
+          ? {
+              ...richLot("first-file"),
+              rich_message: {
+                blocks: [
+                  {
+                    type: "slideshow",
+                    blocks: [
+                      ...richLot("first-file").rich_message.blocks,
+                      ...richLot("second-file").rich_message.blocks,
+                    ],
+                  },
+                ],
+              },
+            }
+          : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    const card = lastScreen(calls);
+    expect(card.rich_message?.html).toMatch(
+      /^<tg-slideshow><img src="tg:\/\/photo\?id=lot"\/><img src="tg:\/\/photo\?id=lot2"\/><\/tg-slideshow><h1>/,
+    );
+    expect(auction.getLotPhoto).toHaveBeenCalledTimes(2);
+    expect(auction.getLotImage).not.toHaveBeenCalled();
+    expect(photos.get({ lotId, version: "photo-p2" })).toEqual({
+      kind: "file",
+      fileId: "second-file",
+    });
+
+    await bot.handleUpdate(press(lotData));
+    expect(auction.getLotPhoto).toHaveBeenCalledTimes(2);
+    expect(
+      lastScreen(calls).rich_message?.media?.map((photo) => photo.media.media),
+    ).toEqual(["first-file", "second-file"]);
   });
 
   it("sends the card without a photo when Auction does not give the image", async () => {

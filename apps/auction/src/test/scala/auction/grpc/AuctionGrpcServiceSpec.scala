@@ -65,6 +65,10 @@ import auction.aggregate.StartNextLot
 import auction.aggregate.StartNextLotRejected
 import auction.aggregate.StartPrebidding
 import auction.catalog.CardEdit
+import auction.catalog.CardInsertion
+import auction.catalog.CatalogRefusal
+import auction.catalog.PhotoAddition
+import auction.catalog.PhotoRemoval
 import auction.catalog.CardStanding
 import auction.catalog.LotCard
 import auction.catalog.LotCatalogCommands
@@ -309,8 +313,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private object UntouchableStore extends LotCatalogStore {
     private def touched = fail("the catalog store was touched")
-    def insertIfAbsent(card: NewCard): Future[Option[LotCard]] = touched
+    def insertIfAbsent(card: NewCard): Future[CardInsertion] = touched
     def update(edit: CardEdit): Future[Option[LotCard]] = touched
+    def addPhoto(addition: PhotoAddition, maxPhotos: Int): Future[Either[CatalogRefusal, LotCard]] = touched
+    def removePhoto(removal: PhotoRemoval): Future[Either[CatalogRefusal, LotCard]] = touched
     def find(lotId: LotId): Future[Option[LotCard]] = touched
   }
 
@@ -336,6 +342,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
       fail("the registry was touched")
     def image(lotId: UUID): Future[Option[LotImageView]] = fail("the image was read")
+    def photo(lotId: UUID, photoId: UUID): Future[Option[LotImageView]] = fail("the photo was read")
     def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[HistoryRecord]]] =
       fail("the history was touched")
     def statistics(auctionId: UUID): Future[List[LotStatisticsView]] = fail("the statistics were read")
@@ -710,13 +717,18 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   }
 
   /** Аукцион сходки, запланированный с `lot` в реестре: раунд каталога может быть открыт. */
-  private def scheduledWithLot: AuctionCommands = {
+  private def scheduledWithLot: AuctionCommands = withLotAfter()
+
+  /** Тот же аукцион, после планирования которого записаны `later` — старт торгов, общий дедлайн. */
+  private def withLotAfter(later: AuctionEvent*): AuctionCommands = {
     val planned = Auction.replay(
       Auction.initial,
       List(
         AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(MeetupId(UUID.fromString(meetupId)))),
         AuctionEnvelope(2, LotFixtures.op(2), AuctionEvent.LotAdded(LotId(UUID.fromString(lot)))),
         AuctionEnvelope(3, LotFixtures.op(3), AuctionEvent.AuctionScheduled(AuctionFixtures.config()))
+      ) ++ later.toList.zipWithIndex.map((event, index) =>
+        AuctionEnvelope(4L + index, LotFixtures.op(4 + index), event)
       )
     )
     AuctionCommands(
@@ -818,6 +830,38 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .getAccepted
         .answers should have size 2
       games.reached shouldBe empty
+    }
+
+    "takes a catalog prediction through the online week and refuses it from the common deadline on" in {
+      val trading = withLotAfter(AuctionEvent.PrebiddingStarted)
+      val during = Games(Right(guess))
+      service(
+        Unreachable,
+        auctions = trading,
+        predictions = during,
+        clock = Clock.fixed(AuctionFixtures.closesAt.minusSeconds(60), java.time.ZoneOffset.UTC)
+      ).submitPrediction(predictionOf(lot)).futureValue.outcome.isAccepted shouldBe true
+      during.reached should have size 1
+      val due = Games(Right(guess))
+      service(
+        Unreachable,
+        auctions = trading,
+        predictions = due,
+        clock = Clock.fixed(AuctionFixtures.closesAt, java.time.ZoneOffset.UTC)
+      ).submitPrediction(predictionOf(lot)).futureValue.getRefused.reason.isRoundClosed shouldBe true
+      val settling = Games(Right(guess))
+      service(
+        Unreachable,
+        auctions = withLotAfter(AuctionEvent.PrebiddingStarted, AuctionEvent.PrebiddingDeadlineReached),
+        predictions = settling
+      ).submitPrediction(predictionOf(lot)).futureValue.getRefused.reason.isRoundClosed shouldBe true
+      due.reached shouldBe empty
+      settling.reached shouldBe empty
+      service(
+        Unreachable,
+        auctions = withLotAfter(AuctionEvent.PrebiddingStarted, AuctionEvent.PrebiddingDeadlineReached),
+        predictions = Games(Right(guess), sent = Some(Right(guess)))
+      ).submitPrediction(predictionOf(lot)).futureValue.outcome.isAccepted shouldBe true
     }
 
     "answers a closed round as a value and a foreign op_id as already existing" in {

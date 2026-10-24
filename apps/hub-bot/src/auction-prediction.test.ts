@@ -12,18 +12,18 @@ const catalogPrediction = {
   status: "open",
   answers: [],
   lotNames: {},
-  opensAt: "2026-10-31T12:00:00Z",
+  closesAt: "2026-10-31T12:00:00Z",
 } satisfies Extract<AuctionBlock, { kind: "prediction" }>;
 
 describe("shared auction prediction copy", () => {
-  it("labels the catalog opening time as planned rather than guaranteed", () => {
+  it("names the common deadline of online trading as the end of the catalog round", () => {
     const paragraphs = predictionParagraphs(catalogPrediction, {
       moment: () => "31 октября, 12:00",
       money: () => "0 ₽",
     });
 
     expect(paragraphs[0]).toBe(
-      "Прогнозы закроются при открытии онлайн-торгов. По плану торги начнутся 31 октября, 12:00; фактическое закрытие прогнозов зависит от момента старта торгов.",
+      "Прогноз можно менять всю онлайн-неделю: раунд закроется в момент общего дедлайна торгов — 31 октября, 12:00.",
     );
   });
 

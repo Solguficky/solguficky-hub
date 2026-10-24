@@ -83,10 +83,14 @@ export type NewLotId = string & { readonly __newLot: true };
 // `chain` — вопрос задан цепочкой нового лота (PER-618): после названия форма
 // сама спрашивает цену, шаг и фото по порядку. Признак едет в кнопке вопроса
 // и переживает рестарт; юзкейс его не читает — следующий шаг выбирает край.
+//
+// `set` — правка всего сета лота (PER-716): «Все лоты сета» выбраны до
+// вопроса, и признак едет в кнопке, как `chain`. С цепочкой он не бывает: у
+// нового лота сета нет.
 export type LotQuestion =
   | { kind: "new"; auctionId: string; lotId: NewLotId }
-  | { kind: "text"; field: LotTextField; lotId: string }
-  | { kind: "price"; lotId: string; chain?: true }
+  | { kind: "text"; field: LotTextField; lotId: string; set?: true }
+  | { kind: "price"; lotId: string; chain?: true; set?: true }
   // Способ шага выбирается до вопроса о нём (PER-491): один шаг или пороги.
   | {
       kind: "step";
@@ -94,8 +98,12 @@ export type LotQuestion =
       priceRubles: number;
       mode: LotStepMode;
       chain?: true;
+      set?: true;
     }
-  | { kind: "image"; lotId: string; chain?: true };
+  | { kind: "image"; lotId: string; chain?: true; set?: true }
+  // Сколько всего лотов будет вместе с этим (PER-716): копии с той же
+  // карточкой, ценой и шагом, собранные в сет.
+  | { kind: "copies"; lotId: string };
 
 // Почему вопрос формы лота задан заново.
 export type LotAskError =
@@ -118,13 +126,10 @@ export type LotAskError =
   | "unsupported-image"
   // Ответ на вопрос о фото — не фотография: текст, файл, стикер.
   | "photo-needed"
-  // Альбом: лоту нужна одна фотография.
-  | "photo-album"
   // Telegram не отдал файл фотографии: её можно прислать ещё раз.
   | "photo-unavailable"
-  // Фото сменилось после подтверждения «Убрать фото» (PER-715): ничего не
-  // снято, решают заново.
-  | "photo-changed";
+  // Число лотов для копий — не целое от 2 до 20 (PER-716).
+  | "copies-count";
 
 // Способ задать шаг (PER-491): один на все цены либо по ценовым порогам.
 export type LotStepMode = "single" | "tiered";
@@ -156,12 +161,41 @@ export type LotFormView = {
   auctionId: string;
   title?: string;
   description: string;
-  hasImage: boolean;
-  // Отпечаток версии фото (PER-715): «Да, убрать фото» несёт его, чтобы не
-  // снять фото, которое сменилось после подтверждения.
-  imagePrint?: string;
+  // Фото лота в порядке показа, первое — обложка (PER-721).
+  photos: readonly LotFormPhoto[];
   terms: LotTermsView;
+  // Реестр аукциона лота (PER-716): открыт ли он и сет лота. Его несёт только
+  // экран правки, прочитанный вместе с пультом; нет — пульт не прочитан, и
+  // экран не предлагает ни копий, ни удаления, ни правки сета.
+  registry?: LotRegistryView;
 };
+
+// Фото на экране «Фото лота». `print` — отпечаток фото для кнопки «Убрать»:
+// идентификатор в 64 байта не помещается. `photoId` нет — Auction до списка
+// фото назвал только обложку, и снимается она правкой карточки.
+export type LotFormPhoto = { print: string; photoId?: string };
+
+// `open` — онлайн-торги не открыты: лоты добавляются и снимаются. `set` — сет,
+// в который лот входит, с числом его лотов; неполный сет тоже.
+export type LotRegistryView = {
+  open: boolean;
+  set?: { name: string; size: number };
+};
+
+// Почему правка сета не дошла до лота (PER-716): лот продан или закрыт без
+// продажи, торги по лоту начались, у лота предел фото (PER-721), лота нет в
+// реестре, Auction не ответил или отказал иначе.
+export type LotSetMiss =
+  | "sold"
+  | "card-closed"
+  | "terms-closed"
+  | "photo-limit"
+  | "not-in-auction"
+  | "unavailable"
+  | "refused";
+
+// Поле, которое правка сета разносит по лотам.
+export type LotSetField = LotTextField | "image" | "price";
 
 export type LotRefusal =
   // Auction или Meetups не подтвердили администратора сходки.
@@ -179,7 +213,15 @@ export type LotRefusal =
   // Лот сняли с аукциона, пока форма была открыта.
   | "lot-not-in-auction"
   // Сходку отменили: аукцион наследует отмену (ADR-047, дополнение 2026-10-12).
-  | "meetup-cancelled";
+  | "meetup-cancelled"
+  // Копии собираются в сет, а лот уже в сете (PER-716).
+  | "lot-in-set"
+  // Сетов у аукциона столько, сколько держит экран сетов (PER-716).
+  | "set-limit"
+  // Торги начались: лот из аукциона уже не снять (PER-716).
+  | "removal-frozen"
+  // У лота уже предел фото (PER-721): новое не добавить, пока не убрать одно.
+  | "photo-limit";
 // `unschedule` снимает назначенную публикацию: это не ось видимости, но
 // механика та же — отдельное действие с подтверждением и повтором по версии.
 export type MeetupStateAction = "unpublish" | "cancel" | "hold" | "unschedule";
@@ -349,15 +391,20 @@ export type LotFormRequest =
       title: string;
       opId: string;
     })
-  | (LotFormCall & { intent: "view-lot-form"; lotId: string })
+  // `registry` — экрану нужен реестр аукциона (PER-716): копии, удаление и
+  // правка сета. Остальным нажатиям пульт не читается.
+  | (LotFormCall & { intent: "view-lot-form"; lotId: string; registry?: true })
   // Предпросмотр лота глазами участника (PER-512): снимок целиком, его тело
   // строит аукционное дерево.
   | (LotFormCall & { intent: "view-lot-preview"; lotId: string })
+  // `set` — правка всего сета лота (PER-716); ключ рождает край, и из него
+  // выводятся ключи команд каждого лота.
   | (LotFormCall & {
       intent: "set-lot-text";
       lotId: string;
       field: LotTextField;
       value: string;
+      set?: true;
     })
   // Цена проверяется до вопроса о шаге: иначе отказ пришёл бы после второго
   // ответа. В Auction она уходит вместе с шагом.
@@ -370,6 +417,7 @@ export type LotFormRequest =
       mode: LotStepMode;
       value: string;
       opId: string;
+      set?: true;
     })
   // Новая цена с прежним шагом лота (PER-714): «Оставить шаг» на экране выбора
   // способа шага. Шаг юзкейс берёт из чтения лота.
@@ -378,19 +426,45 @@ export type LotFormRequest =
       lotId: string;
       priceRubles: number;
       opId: string;
+      set?: true;
     })
-  // Фото уже скачано у Telegram краем: юзкейс получает только байты.
+  // Фото в конец списка (PER-721). Его уже скачал у Telegram край: юзкейс
+  // получает только байты. `photoId` край выводит из лота и байтов фото
+  // (`lotPhotoIdOf`): повтор того же фото даёт тот же идентификатор.
   | (LotFormCall & {
-      intent: "set-lot-image";
+      intent: "add-lot-photo";
       lotId: string;
+      photoId: string;
       image: Uint8Array;
+      set?: true;
     })
-  // Снятие фото лота (PER-715): «Да» под подтверждением «Убрать фото?».
+  // «Повторить для оставшихся» (PER-716): поле лота разносится по его сету
+  // заново — значение берётся у самого лота, правка которого уже прошла.
   | (LotFormCall & {
-      intent: "remove-lot-image";
+      intent: "retry-lot-set";
+      lotId: string;
+      field: LotSetField;
+      opId: string;
+      // У фото — отпечаток версии фото, которое разносили (PER-721): повтор
+      // добавляет то же фото, а не последнее из галереи.
+      photoPrint?: string;
+    })
+  // Копии лота (PER-716): ответ — сколько всего лотов будет вместе с ним.
+  | (LotFormCall & {
+      intent: "copy-lot";
+      lotId: string;
+      value: string;
+      opId: string;
+    })
+  // «Да, удалить лот» (PER-716): лот уходит из реестра и из своего сета.
+  | (LotFormCall & { intent: "remove-lot"; lotId: string; opId: string })
+  // Снятие фото лота (PER-715, PER-721): «Да» под подтверждением «Убрать
+  // фото?».
+  | (LotFormCall & {
+      intent: "remove-lot-photo";
       lotId: string;
       // Отпечаток фото, которое подтвердили снять.
-      imagePrint: string;
+      photoPrint: string;
     });
 
 // Пульт аукциона администратора (PER-320). Пульт — экран хаба, а не тело
@@ -425,6 +499,9 @@ export type AuctionWeek = {
   // Приз розыгрыша одной строкой (PER-649); нет — приз не объявлен. Лежит рядом
   // с моментом: задаётся до открытия недели и после него не меняется.
   rafflePrize?: string;
+  // Срок оплаты счёта в секундах от продажи (PER-722). Auction хранит его в
+  // каждой конфигурации; нет — снимок его не отдал, и команда его не шлёт.
+  paymentTermSeconds?: number;
 };
 
 // Окно сниженного шага (ADR-047, дополнение 2026-10-08): полуоткрытый
@@ -567,6 +644,8 @@ export type ConsoleNote =
   | "prize-saved"
   | "prize-removed"
   | "prize-without-raffle"
+  // Срок оплаты счёта (PER-722) сохранён.
+  | "payment-term-saved"
   | "marked"
   | "unmarked"
   | "already-marked"
@@ -644,6 +723,10 @@ export type RaffleAskError =
 // не длиннее 200 знаков: пустой приз говорит, что приза не будет, а предел
 // держит и бот, и Auction.
 export type RafflePrizeAskError = "prize-blank" | "prize-too-long";
+
+// Почему вопрос о сроке оплаты счёта задан заново (PER-722). Срок — целое
+// число дней от 1 до 30: тот же предел держит Auction.
+export type PaymentTermAskError = "payment-term-format" | "payment-term-range";
 
 // Почему вопрос об ориентировочном времени финала задан заново (PER-663).
 // Момент лежит в будущем и в поясе сообщества: анонс трансляции не должен
@@ -776,6 +859,14 @@ export type AuctionConsoleRequest =
     })
   | (AuctionConsoleCall & {
       intent: "remove-auction-raffle-prize";
+      opId: string;
+    })
+  // Срок оплаты счёта (PER-722): вопрос о числе дней и ответ, как его написал
+  // человек. Снятия нет: срок у аукциона есть всегда.
+  | (AuctionConsoleCall & { intent: "ask-auction-payment-term" })
+  | (AuctionConsoleCall & {
+      intent: "set-auction-payment-term";
+      value: string;
       opId: string;
     })
   // Кнопка несёт целевое состояние финала, а не переворот.
@@ -1360,7 +1451,15 @@ export type ExecuteResult =
   | {
       kind: "lot-form";
       lot: LotFormView;
-      saved?: "created" | "text" | "terms" | "image" | "image-removed";
+      // `photo-missing` — фото, которое подтвердили снять, у лота уже нет:
+      // снимать нечего.
+      saved?:
+        | "created"
+        | "text"
+        | "terms"
+        | "photo-added"
+        | "photo-removed"
+        | "photo-missing";
     }
   // Предпросмотр лота (PER-512): снимок, прочитанный правом администратора.
   | { kind: "lot-preview"; lot: LotView }
@@ -1380,12 +1479,38 @@ export type ExecuteResult =
       // границей 0, когда такой ввод форма приняла бы (PER-709).
       suggestedTiers?: LotTierView[];
     }
-  // Отказ Auction, который человеку показывают, а не повторяют.
+  // Отказ Auction, который человеку показывают, а не повторяют. `setName` —
+  // сет, в котором лот уже лежит, у отказа `lot-in-set` (PER-716).
   | {
       kind: "lot-refused";
       reason: LotRefusal;
       lotId?: string;
       auctionId?: string;
+      // Предел фото, как его назвал Auction, у отказа `photo-limit`.
+      maxPhotos?: number;
+      setName?: string;
+    }
+  // Копии заведены и собраны в сет (PER-716): `lot` — исходный лот с новым
+  // названием, `total` — лотов в сете вместе с ним, `name` — имя сета.
+  | { kind: "lot-copies"; lot: LotFormView; total: number; name: string }
+  // Правка сета разнесена (PER-716): до скольких лотов дошла и какие лоты, с
+  // причиной, остались без неё.
+  | {
+      kind: "lot-set-applied";
+      lot: LotFormView;
+      field: LotSetField;
+      // Отпечаток версии разнесённого фото (PER-721) для «Повторить».
+      photoPrint?: string;
+      applied: number;
+      total: number;
+      missed: readonly { title: string; reason: LotSetMiss }[];
+    }
+  // Лот снят из реестра (PER-716). `already` — снятие прошло раньше.
+  | {
+      kind: "lot-removed";
+      auctionId: string;
+      title?: string;
+      already?: true;
     }
   // Пульт аукциона (PER-320). `note` — исход команды первой строкой. После
   // команды пульт собран из чтения Auction и принятой команды: чтения
@@ -1426,6 +1551,14 @@ export type ExecuteResult =
       auctionId: string;
       prize?: string;
       error?: RafflePrizeAskError;
+    }
+  // Вопрос о сроке оплаты счёта (PER-722): первый либо тот же заново, с
+  // причиной. `days` — текущий срок в днях, его вопрос повторяет.
+  | {
+      kind: "auction-payment-term-ask";
+      auctionId: string;
+      days?: number;
+      error?: PaymentTermAskError;
     }
   // Вопрос об ориентировочном времени финала (PER-663): первый либо тот же
   // заново, с причиной. `finalAt` — выставленный анонс, его вопрос повторяет.

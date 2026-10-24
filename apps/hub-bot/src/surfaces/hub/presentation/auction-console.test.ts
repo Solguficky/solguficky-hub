@@ -105,13 +105,20 @@ const forgedAuctionPresses = {
   "lot-step-mode": `v1:lot:sm:${uuidToToken(vaseId)}:100:single`,
   "lot-skip": `v1:lot:skip:${uuidToToken(vaseId)}`,
   "lot-keep-step": `v1:lot:sk:${uuidToToken(vaseId)}:100`,
-  "lot-image-remove": `v1:lot:rm:${uuidToToken(vaseId)}`,
-  "lot-image-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
+  "lot-photos": `v1:lot:ph:${uuidToToken(vaseId)}`,
+  "lot-photo-remove": `v1:lot:rm:${uuidToToken(vaseId)}:1`,
+  "lot-photo-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
+  "lot-scope": `v1:lot:sc:${uuidToToken(vaseId)}:title`,
+  "lot-set-retry": `v1:lot:sr:${uuidToToken(vaseId)}:title`,
+  "lot-copy": `v1:lot:cp:${uuidToToken(vaseId)}`,
+  "lot-remove": `v1:lot:dl:${uuidToToken(vaseId)}`,
+  "lot-remove-confirm": `v1:lot:dy:${uuidToToken(vaseId)}`,
   "console-view": consoleData,
   "console-week": `v1:ac:w:${auctionToken}`,
   "console-raffle": `v1:ac:r:${auctionToken}`,
   "console-raffle-remove": `v1:ac:rx:${auctionToken}`,
   "console-raffle-prize": `v1:ac:rp:${auctionToken}`,
+  "console-payment-term": `v1:ac:pt:${auctionToken}`,
   "console-raffle-prize-remove": `v1:ac:rz:${auctionToken}`,
   "console-final": `v1:ac:f:${auctionToken}:1`,
   "console-final-time": `v1:ac:ft:${auctionToken}`,
@@ -276,6 +283,9 @@ function fakeAuction(
     // вместо принятия команды над ним.
     paymentText?: string;
     paymentTextRefusal?: PaymentInstructionsResult;
+    // Срок оплаты счёта (PER-722): Auction отказывает в конфигурации, хотя бот
+    // её принял, — так выглядит расхождение пределов.
+    paymentTermRefused?: true;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -459,9 +469,14 @@ function fakeAuction(
     enableAuction: notUsed,
     createLotCard: notUsed,
     editLotCard: notUsed,
+    addLotPhoto: notUsed,
+    removeLotPhoto: notUsed,
     addLot: notUsed,
     scheduleLot: notUsed,
     getLot: notUsed,
+    removeLot: notUsed,
+    getLotImage: notUsed,
+    getLotPhoto: notUsed,
     async getAuctionConsole(): Promise<ConsoleReadResult> {
       commands.push({ method: "getAuctionConsole", args: auctionId });
       if (options.refuse === true) return { kind: "not-administrator" };
@@ -534,6 +549,16 @@ function fakeAuction(
         if (prize.trim() === "") return { kind: "raffle-prize-blank" };
         if (prize.length > 200) return { kind: "raffle-prize-too-long" };
       }
+      // Срок оплаты (PER-722): от суток до тридцати дней, как в сервисе. Без
+      // поля сервис хранит срок платформы; фейк его не выдумывает, чтобы
+      // сценарии без срока сверяли команды как прежде.
+      const term = config.paymentTermSeconds;
+      if (
+        options.paymentTermRefused === true ||
+        (term !== undefined && (term < 86_400 || term > 30 * 86_400))
+      ) {
+        return { kind: "payment-term-out-of-range" };
+      }
       state.status = "scheduled";
       state.week = {
         opensAt: config.opensAt,
@@ -542,6 +567,7 @@ function fakeAuction(
         windows: config.windows,
         ...(raffle === undefined ? {} : { raffleClosesAt: raffle }),
         ...(prize === undefined ? {} : { rafflePrize: prize }),
+        ...(term === undefined ? {} : { paymentTermSeconds: term }),
       };
       return { kind: "ok" };
     },
@@ -1044,7 +1070,7 @@ function fakeAuction(
           submitPrediction: notUsed,
         },
         operations: { newOperationId: () => "unused" },
-        image: { getLotImage: notUsed },
+        image: { getLotImage: notUsed, getLotPhoto: notUsed },
       };
     },
   };
@@ -1762,7 +1788,7 @@ describe("week of the auction", () => {
       ["Время финала"],
       ["Вкл · Финал в зале"],
       ["Счастливые часы", "Сводка дня"],
-      ["Розыгрыш"],
+      ["Розыгрыш", "Срок оплаты"],
       ["Открыть онлайн-неделю"],
       ["🗑 Удалить аукцион"],
       ["‹ Аукцион"],
@@ -1935,7 +1961,7 @@ describe("raffle of the week", () => {
     expect(plain(last(calls))).toContain(
       "Розыгрыш: регистрация до 22 октября, чт, 18:00.",
     );
-    expect(labels(last(calls))).toContainEqual(["Розыгрыш"]);
+    expect(labels(last(calls))).toContainEqual(["Розыгрыш", "Срок оплаты"]);
     expect(labels(last(calls))).toContainEqual(["🗑 Убрать розыгрыш"]);
 
     // Вопрос называет текущий момент в том виде, в каком его вводят.
@@ -2024,6 +2050,149 @@ describe("raffle of the week", () => {
     // Неделя без момента открывается без розыгрыша, как раньше.
     await bot.handleUpdate(press(feedData));
     expect(labels(last(calls)).flat()).not.toContain("Розыгрыш");
+  });
+});
+
+// Срок оплаты счёта (PER-722) — поле сроков недели: администратор задаёт его
+// числом дней, и каждая правка недели отдаёт его Auction вместе с остальной
+// конфигурацией — иначе Auction вернул бы срок платформы, семь дней.
+describe("payment term of the week", () => {
+  const day = 86_400;
+
+  it("asks the days, keeps the step over a restart, saves one day and shows it on the console", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true, paymentTermSeconds: 7 * day },
+    });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    expect(plain(last(calls))).toContain("Срок оплаты: 7 дн.");
+    expect(labels(last(calls))).toContainEqual(["Розыгрыш", "Срок оплаты"]);
+    expect(dataOf(last(calls), "Срок оплаты")).toBe(`v1:ac:pt:${auctionToken}`);
+
+    await next((history) => press(dataOf(last(history), "Срок оплаты")));
+    const asked = question(calls).payload;
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:pt:${auctionToken}:42`);
+    expect(asked.text).toContain("Сейчас: 7");
+    expect(asked.text).toContain("Целое число от 1 до 30");
+
+    await next((history) => answer(history, { text: "1" }));
+    expect(auction.sent("scheduleAuction")).toEqual([
+      {
+        method: "scheduleAuction",
+        args: {
+          auctionId,
+          opId: expect.any(String),
+          ...week,
+          final: true,
+          raffleClosesAt: undefined,
+          rafflePrize: undefined,
+          paymentTermSeconds: day,
+        },
+      },
+    ]);
+    expect(last(calls).text).toBe("<b>Срок оплаты счёта сохранён: 1 дн.</b>");
+
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("Срок оплаты: 1 дн.");
+  });
+
+  it("keeps the term over new dates, the final, the raffle and a window", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true, paymentTermSeconds: day },
+    });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    await next((history) => press(dataOf(last(history), "Вкл · Финал в зале")));
+    await next(() => press(`v1:ac:w:${auctionToken}`));
+    await next((history) =>
+      answer(history, { text: "20.10.2026 18:00 — 28.10.2026 00:00" }),
+    );
+    await next(() => press(`v1:ac:r:${auctionToken}`));
+    await next((history) => answer(history, { text: "22.10.2026 18:00" }));
+
+    // Ни одна правка недели не сбрасывает срок на семь дней.
+    expect(
+      auction.sent("scheduleAuction").map((command) => command.args),
+    ).toEqual([
+      expect.objectContaining({ final: false, paymentTermSeconds: day }),
+      expect.objectContaining({
+        closesAt: "2026-10-27T21:00:00Z",
+        paymentTermSeconds: day,
+      }),
+      expect.objectContaining({
+        raffleClosesAt: "2026-10-22T15:00:00Z",
+        paymentTermSeconds: day,
+      }),
+    ]);
+    expect(auction.state.week?.paymentTermSeconds).toBe(day);
+  });
+
+  it.each([
+    ["0", "<b>Срок оплаты — от 1 до 30 дней</b>"],
+    ["31", "<b>Срок оплаты — от 1 до 30 дней</b>"],
+    [
+      "1.5",
+      "<b>Не получилось разобрать срок</b>\n\nНужно целое число дней, например: 1.",
+    ],
+    [
+      "сутки",
+      "<b>Не получилось разобрать срок</b>\n\nНужно целое число дней, например: 1.",
+    ],
+  ])("refuses %s days without a command", async (text, refusal) => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:pt:${auctionToken}`));
+    await bot.handleUpdate(answer(calls, { text }));
+
+    expect(last(calls).text).toBe(refusal);
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(auction.sent("scheduleAuction")).toEqual([]);
+  });
+
+  it("answers the refusal of Auction with the text of the console", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      paymentTermRefused: true,
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:pt:${auctionToken}`));
+    await bot.handleUpdate(answer(calls, { text: "3" }));
+
+    expect(auction.sent("scheduleAuction")).toHaveLength(1);
+    expect(last(calls).text).toBe("<b>Срок оплаты — от 1 до 30 дней</b>");
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+  });
+
+  it("asks for the dates before the term", async () => {
+    const auction = fakeAuction({ status: "draft" });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(labels(last(calls)).flat()).not.toContain("Срок оплаты");
+
+    await bot.handleUpdate(press(`v1:ac:pt:${auctionToken}`));
+    expect(plain(last(calls))).toContain("Сначала задай сроки недели");
+    expect(auction.sent("scheduleAuction")).toEqual([]);
   });
 });
 

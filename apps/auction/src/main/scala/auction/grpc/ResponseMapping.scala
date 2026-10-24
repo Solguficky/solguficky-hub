@@ -223,6 +223,8 @@ object ResponseMapping {
             throw new IllegalStateException("lot catalog creation refused with CardNotFound")
           case CatalogRefusal.CardClosed =>
             throw new IllegalStateException("lot catalog creation refused with CardClosed")
+          case CatalogRefusal.PhotoLimitReached(_) | CatalogRefusal.PhotoConflict =>
+            throw new IllegalStateException("lot catalog creation refused with a photo refusal")
         }
         wire.CreateLotCardResponse().withRefused(wire.CreateLotCardRefusal(reason))
     }
@@ -242,6 +244,8 @@ object ResponseMapping {
           case CatalogRefusal.CardClosed => wire.EditLotCardRefusal.Reason.CardClosed(wire.CardClosed())
           case CatalogRefusal.CardConflict =>
             throw new IllegalStateException("lot catalog edit refused with CardConflict")
+          case CatalogRefusal.PhotoLimitReached(_) | CatalogRefusal.PhotoConflict =>
+            throw new IllegalStateException("lot catalog edit refused with a photo refusal")
         }
         wire.EditLotCardResponse().withRefused(wire.EditLotCardRefusal(reason))
     }
@@ -1162,7 +1166,42 @@ object ResponseMapping {
    * лота.
    */
   private[grpc] def lotCard(card: LotCard): wire.LotCard =
-    wire.LotCard(card.title.value, card.description, card.image.map(version => wire.LotImageRef(version.value)))
+    wire.LotCard(
+      card.title.value,
+      card.description,
+      card.image.map(version => wire.LotImageRef(version.value)),
+      card.photos.map(photo => wire.LotPhotoRef(photo.photoId.value.toString, photo.version.value))
+    )
+
+  /** Отказ команд фото (ADR-057, дополнение 2026-10-24); `AddLotPhoto` и `RemoveLotPhoto` делят его форму. */
+  private def photoRefusal(refusal: CatalogRefusal): wire.LotPhotoRefusal = {
+    val reason = refusal match {
+      case CatalogRefusal.NotAdmin => wire.LotPhotoRefusal.Reason.NotAdmin(wire.NotAdmin())
+      case CatalogRefusal.CardNotFound => wire.LotPhotoRefusal.Reason.CardNotFound(wire.CardNotFound())
+      case CatalogRefusal.CardClosed => wire.LotPhotoRefusal.Reason.CardClosed(wire.CardClosed())
+      case CatalogRefusal.ImageTooLarge(maxBytes) =>
+        wire.LotPhotoRefusal.Reason.ImageTooLarge(wire.ImageTooLarge(maxBytes.toLong))
+      case CatalogRefusal.UnsupportedImage => wire.LotPhotoRefusal.Reason.UnsupportedImage(wire.UnsupportedImage())
+      case CatalogRefusal.PhotoLimitReached(maxPhotos) =>
+        wire.LotPhotoRefusal.Reason.PhotoLimitReached(wire.PhotoLimitReached(maxPhotos))
+      case CatalogRefusal.PhotoConflict => wire.LotPhotoRefusal.Reason.PhotoConflict(wire.PhotoConflict())
+      case CatalogRefusal.EmptyTitle | CatalogRefusal.CardConflict =>
+        throw new IllegalStateException(s"lot photo command refused with $refusal")
+    }
+    wire.LotPhotoRefusal(reason)
+  }
+
+  def addLotPhoto(outcome: Either[CatalogRefusal, LotCard]): wire.AddLotPhotoResponse =
+    outcome match {
+      case Right(card) => wire.AddLotPhotoResponse().withAccepted(lotCard(card))
+      case Left(refusal) => wire.AddLotPhotoResponse().withRefused(photoRefusal(refusal))
+    }
+
+  def removeLotPhoto(outcome: Either[CatalogRefusal, LotCard]): wire.RemoveLotPhotoResponse =
+    outcome match {
+      case Right(card) => wire.RemoveLotPhotoResponse().withAccepted(lotCard(card))
+      case Left(refusal) => wire.RemoveLotPhotoResponse().withRefused(photoRefusal(refusal))
+    }
 
   /** Изображение из строки каталога как есть: версия — версия этих байтов, а не прочитанной раньше карточки. */
   def lotImage(image: LotImageView): wire.LotImage =

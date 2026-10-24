@@ -98,6 +98,12 @@ const WindowIndexSchema = z
   .regex(/^(0|[1-9]\d?)$/)
   .transform(Number);
 const WindowPrintSchema = z.string().regex(/^[0-9a-z]{5}$/);
+// Место фото лота на экране «Фото лота» (PER-721): с единицы, не больше
+// десяти — предела фото у лота.
+const PhotoIndexSchema = z
+  .string()
+  .regex(/^(?:[1-9]|10)$/)
+  .transform(Number);
 // Номер лота запускаемого окна в кнопке пульта (PER-615): номер в
 // отсортированном реестре с нуля — знак base36, шестидесяти четырёх лотов
 // хватает с запасом.
@@ -345,8 +351,31 @@ type PlainAction =
   | { kind: "lot-new"; auction: string }
   | { kind: "lot-form"; lot: string }
   // `chain` — кнопка цепочки нового лота (PER-618): «Ввести заново» под её
-  // вопросом продолжает цепочку, а не правку одного ряда.
-  | { kind: "lot-ask"; lot: string; field: LotFormField; chain?: true }
+  // вопросом продолжает цепочку, а не правку одного ряда. `set` — правка всех
+  // лотов сета (PER-716).
+  | {
+      kind: "lot-ask";
+      lot: string;
+      field: LotFormField;
+      chain?: true;
+      set?: true;
+    }
+  // Поле лота в сете (PER-716): спрашивает, править только этот лот или все
+  // лоты сета.
+  | { kind: "lot-scope"; lot: string; field: LotFormField }
+  // «Повторить для оставшихся» (PER-716): поле разносится по сету заново.
+  | {
+      kind: "lot-set-retry";
+      lot: string;
+      field: LotFormField;
+      // Отпечаток версии фото у повтора фото сета (PER-721).
+      print?: string;
+    }
+  // «Копировать» (PER-716): вопрос, сколько всего лотов.
+  | { kind: "lot-copy"; lot: string }
+  // «Удалить лот» и «Да» его подтверждения (PER-716).
+  | { kind: "lot-remove"; lot: string }
+  | { kind: "lot-remove-confirm"; lot: string }
   // Выбор способа шага (PER-491): цена и режим едут в кнопке, чтобы рестарт
   // не терял цену.
   | {
@@ -355,16 +384,21 @@ type PlainAction =
       price: number;
       mode: LotStepMode;
       chain?: true;
+      set?: true;
     }
   // «Оставить шаг» на выборе способа шага (PER-714): новая цена едет в кнопке,
   // шаг юзкейс берёт у лота.
-  | { kind: "lot-keep-step"; lot: string; price: number }
+  | { kind: "lot-keep-step"; lot: string; price: number; set?: true }
   // «Пропустить» под вопросом о фото в цепочке нового лота (PER-618).
   | { kind: "lot-skip"; lot: string }
-  // «Убрать фото» под вопросом о фото и «Да» его подтверждения (PER-715).
-  | { kind: "lot-image-remove"; lot: string }
-  // «Да» несёт отпечаток версии фото: снимается то, что подтвердили.
-  | { kind: "lot-image-remove-confirm"; lot: string; print: string }
+  // Экран «Фото лота» (PER-721). `fromQuestion` — прежняя «Убрать фото» под
+  // вопросом о фото (PER-715): вопрос уходит, как от «Отмены».
+  | { kind: "lot-photos"; lot: string; fromQuestion?: true }
+  // «Убрать фото N» на экране фото и «Да» его подтверждения (PER-715,
+  // PER-721): номер — место фото в списке на экране, а «Да» несёт отпечаток
+  // самого фото: снимается то, что подтвердили.
+  | { kind: "lot-photo-remove"; lot: string; index: number }
+  | { kind: "lot-photo-remove-confirm"; lot: string; print: string }
   // «Глазами участника» на экране правки (PER-512): карточка лота без кнопок.
   | { kind: "lot-view"; lot: string }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
@@ -377,6 +411,8 @@ type PlainAction =
   // Приз розыгрыша (PER-649): вопрос о призе и его снятие.
   | { kind: "console-raffle-prize"; auction: string }
   | { kind: "console-raffle-prize-remove"; auction: string }
+  // Срок оплаты счёта (PER-722): вопрос о числе дней.
+  | { kind: "console-payment-term"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
   // Ориентировочное время финала (PER-663): вопрос о моменте и снятие
   // анонса.
@@ -676,16 +712,21 @@ export type QuestionStep =
   | { kind: "lot-new"; auction: string; key: string }
   // `chain` — вопрос цепочки нового лота (PER-618): цена, шаг и фото по
   // порядку после названия; «Отмена» и у них ведёт в форму лота.
-  | { kind: "lot-text"; lot: string; field: LotTextField }
-  | { kind: "lot-price"; lot: string; chain?: true }
+  // `set` — вопрос правки всех лотов сета (PER-716): свои коды `st`, `sd`,
+  // `sp`, `ss`/`sy`, `si`.
+  | { kind: "lot-text"; lot: string; field: LotTextField; set?: true }
+  | { kind: "lot-price"; lot: string; chain?: true; set?: true }
   | {
       kind: "lot-step";
       lot: string;
       price: number;
       mode: LotStepMode;
       chain?: true;
+      set?: true;
     }
-  | { kind: "lot-image"; lot: string; chain?: true }
+  | { kind: "lot-image"; lot: string; chain?: true; set?: true }
+  // Сколько всего лотов дают копии (PER-716).
+  | { kind: "lot-copies"; lot: string }
   // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
   // ответ читает у Auction заново.
   | { kind: "console-week"; auction: string }
@@ -701,6 +742,9 @@ export type QuestionStep =
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
+  // Срок оплаты счёта (PER-722): аукцион, а остальную конфигурацию ответ
+  // читает у Auction заново.
+  | { kind: "console-payment-term"; auction: string }
   // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
   // ответ читает у Auction заново.
   | { kind: "console-window"; auction: string }
@@ -748,14 +792,49 @@ export function lotPreviewData(lot: string): string {
 
 /**
  * Данные кнопки ряда на экране правки лота. `chain` — вопрос цепочки нового
- * лота (PER-618): так его задаёт «Ввести заново» под цепочкой.
+ * лота (PER-618): так его задаёт «Ввести заново» под цепочкой. `"set"` —
+ * вопрос правки всех лотов сета (PER-716).
  */
 export function lotAskData(
   lot: string,
   field: LotFormField,
-  chain?: boolean,
+  scope?: boolean | "set",
 ): string {
-  return `v1:lot:ask:${lot}:${field}${chain === true ? chainMark : ""}`;
+  return `v1:lot:ask:${lot}:${field}${scopeMark(scope)}`;
+}
+
+/** Поле лота в сете: выбор «Только этот лот» или «Все лоты сета» (PER-716). */
+export function lotScopeData(lot: string, field: LotFormField): string {
+  return `v1:lot:sc:${lot}:${field}`;
+}
+
+/**
+ * «Повторить для оставшихся» под исходом правки сета (PER-716). У фото
+ * (PER-721) хвост — отпечаток версии разнесённого фото.
+ */
+export function lotSetRetryData(
+  lot: string,
+  field: LotFormField,
+  print?: string,
+): string {
+  return print === undefined
+    ? `v1:lot:sr:${lot}:${field}`
+    : `v1:lot:sr:${lot}:${field}:${print}`;
+}
+
+/** «Копировать» на экране правки лота (PER-716). */
+export function lotCopyData(lot: string): string {
+  return `v1:lot:cp:${lot}`;
+}
+
+/** «Удалить лот» на экране правки лота (PER-716). */
+export function lotRemoveData(lot: string): string {
+  return `v1:lot:dl:${lot}`;
+}
+
+/** «Да, удалить лот» под подтверждением (PER-716). */
+export function lotRemoveConfirmData(lot: string): string {
+  return `v1:lot:dy:${lot}`;
 }
 
 /** «Пропустить» под вопросом о фото в цепочке нового лота (PER-618). */
@@ -763,18 +842,29 @@ export function lotSkipData(lot: string): string {
   return `v1:lot:skip:${lot}`;
 }
 
-/** «Убрать фото» под вопросом о фото лота с фото (PER-715). */
-export function lotImageRemoveData(lot: string): string {
-  return `v1:lot:rm:${lot}`;
+/** Экран «Фото лота» (PER-721). */
+export function lotPhotosData(lot: string): string {
+  return `v1:lot:ph:${lot}`;
 }
 
-/** «Да, убрать фото» под подтверждением (PER-715). */
-export function lotImageRemoveConfirmData(lot: string, print: string): string {
+/** «Убрать фото N» на экране фото лота (PER-721); номер — с единицы. */
+export function lotPhotoRemoveData(lot: string, index: number): string {
+  return `v1:lot:rm:${lot}:${index}`;
+}
+
+/** «Да, убрать фото» под подтверждением (PER-715): отпечаток фото. */
+export function lotPhotoRemoveConfirmData(lot: string, print: string): string {
   return `v1:lot:ry:${lot}:${print}`;
 }
 
 // Хвост кнопки цепочки нового лота (PER-618).
 const chainMark = ":c";
+// Хвост кнопки правки всех лотов сета (PER-716).
+const setMark = ":s";
+
+function scopeMark(scope: boolean | "set" | undefined): string {
+  return scope === "set" ? setMark : scope === true ? chainMark : "";
+}
 
 /**
  * Данные кнопки выбора способа шага (PER-491). Цена едет в кнопке: вопрос о
@@ -784,9 +874,9 @@ export function lotStepModeData(
   lot: string,
   price: number,
   mode: LotStepMode,
-  chain?: boolean,
+  scope?: boolean | "set",
 ): string {
-  return `v1:lot:sm:${lot}:${price}:${mode}${chain === true ? chainMark : ""}`;
+  return `v1:lot:sm:${lot}:${price}:${mode}${scopeMark(scope)}`;
 }
 
 /**
@@ -794,8 +884,12 @@ export function lotStepModeData(
  * Цена едет в кнопке, как у выбора способа; цепочки у кнопки нет — у нового
  * лота прежнего шага нет.
  */
-export function lotKeepStepData(lot: string, price: number): string {
-  return `v1:lot:sk:${lot}:${price}`;
+export function lotKeepStepData(
+  lot: string,
+  price: number,
+  set?: boolean,
+): string {
+  return `v1:lot:sk:${lot}:${price}${set === true ? setMark : ""}`;
 }
 
 // Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самые длинные —
@@ -837,6 +931,11 @@ export function consoleRafflePrizeData(auction: string): string {
 /** «Убрать приз»: розыгрыш остаётся, победитель получит весть без приза. */
 export function consoleRafflePrizeRemoveData(auction: string): string {
   return `v1:ac:rz:${auction}`;
+}
+
+/** «Срок оплаты»: вопрос о сроке оплаты счёта в днях (PER-722). */
+export function consolePaymentTermData(auction: string): string {
+  return `v1:ac:pt:${auction}`;
 }
 
 /** «Время финала»: вопрос об ориентировочном времени финала (PER-663). */
@@ -1247,35 +1346,37 @@ export function questionData(step: QuestionStep, askedBy: number): string {
   return `${stepData(step)}:${askedBy}`;
 }
 
+// Первая буква кода вопроса формы лота: `l` — правка одного лота, `c` —
+// цепочка нового лота (PER-618), `s` — правка всех лотов сета (PER-716).
+function lotLead(step: { chain?: true; set?: true }): string {
+  return step.chain === true ? "c" : step.set === true ? "s" : "l";
+}
+
 function stepData(step: QuestionStep): string {
   switch (step.kind) {
     case "lot-new":
       return `v1:q:ln:${step.auction}:${step.key}`;
     case "lot-text":
-      return `v1:q:${step.field === "title" ? "lt" : "ld"}:${step.lot}`;
-    // Цепочка нового лота (PER-618) — свои коды: `cp`, `cs`/`cy`, `ci`.
+      return `v1:q:${step.set === true ? "s" : "l"}${step.field === "title" ? "t" : "d"}:${step.lot}`;
+    // Цепочка нового лота (PER-618) — свои коды: `cp`, `cs`/`cy`, `ci`; правка
+    // всех лотов сета (PER-716) — `sp`, `ss`/`sy`, `si`.
     case "lot-price":
-      return `v1:q:${step.chain === true ? "cp" : "lp"}:${step.lot}`;
-    case "lot-step": {
+      return `v1:q:${lotLead(step)}p:${step.lot}`;
+    case "lot-step":
       // `ls` — один шаг, `ly` — пороги: способ восстанавливается из кнопки.
-      const code =
-        step.chain === true
-          ? step.mode === "single"
-            ? "cs"
-            : "cy"
-          : step.mode === "single"
-            ? "ls"
-            : "ly";
-      return `v1:q:${code}:${step.lot}:${step.price}`;
-    }
+      return `v1:q:${lotLead(step)}${step.mode === "single" ? "s" : "y"}:${step.lot}:${step.price}`;
     case "lot-image":
-      return `v1:q:${step.chain === true ? "ci" : "li"}:${step.lot}`;
+      return `v1:q:${lotLead(step)}i:${step.lot}`;
+    case "lot-copies":
+      return `v1:q:lc:${step.lot}`;
     case "console-week":
       return `v1:q:aw:${step.auction}`;
     case "console-raffle":
       return `v1:q:ar:${step.auction}`;
     case "console-raffle-prize":
       return `v1:q:ap:${step.auction}`;
+    case "console-payment-term":
+      return `v1:q:pt:${step.auction}`;
     case "console-final-time":
       return `v1:q:ft:${step.auction}`;
     case "console-payment-text":
@@ -1681,11 +1782,15 @@ export function parseCallback(raw: unknown): CallbackAction {
 }
 
 // Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>`,
-// `v1:lot:view:<лот>`, `v1:lot:ask:<лот>:<поле>[:c]`,
-// `v1:lot:sm:<лот>:<цена>:<способ>[:c]`, `v1:lot:sk:<лот>:<цена>`,
-// `v1:lot:skip:<лот>`, `v1:lot:rm:<лот>` и `v1:lot:ry:<лот>:<отпечаток фото>`
-// («Убрать фото» и его «Да», PER-715); `:c` — кнопка цепочки нового лота
-// (PER-618).
+// `v1:lot:view:<лот>`, `v1:lot:ask:<лот>:<поле>[:c|:s]`,
+// `v1:lot:sm:<лот>:<цена>:<способ>[:c|:s]`, `v1:lot:sk:<лот>:<цена>[:s]`,
+// `v1:lot:skip:<лот>`, `v1:lot:ph:<лот>` (экран «Фото лота», PER-721),
+// `v1:lot:rm:<лот>:<номер>` и `v1:lot:ry:<лот>:<отпечаток фото>` («Убрать
+// фото N» и его «Да», PER-715, PER-721) и прежняя `v1:lot:rm:<лот>`, которая
+// открывает экран фото; `:c` — кнопка цепочки нового лота (PER-618). Копии,
+// сет и удаление (PER-716): `v1:lot:cp:<лот>`, `v1:lot:sc:<лот>:<поле>`,
+// `v1:lot:sr:<лот>:<поле>`, `v1:lot:dl:<лот>` и `v1:lot:dy:<лот>`; `:s` —
+// правка всех лотов сета.
 function parseLot(parts: readonly string[]): CallbackAction {
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return { kind: "malformed" };
@@ -1701,38 +1806,81 @@ function parseLot(parts: readonly string[]): CallbackAction {
   if (parts.length === 4 && parts[2] === "skip") {
     return { kind: "lot-skip", lot: token.data };
   }
-  if (parts.length === 5 && parts[2] === "sk") {
-    const price = RublesSchema.safeParse(parts[4]);
-    return price.success
-      ? { kind: "lot-keep-step", lot: token.data, price: price.data }
+  if (parts.length === 4 && parts[2] === "cp") {
+    return { kind: "lot-copy", lot: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "dl") {
+    return { kind: "lot-remove", lot: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "dy") {
+    return { kind: "lot-remove-confirm", lot: token.data };
+  }
+  if (parts.length === 6 && parts[2] === "sr" && parts[4] === "image") {
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    return print.success
+      ? {
+          kind: "lot-set-retry",
+          lot: token.data,
+          field: "image",
+          print: print.data,
+        }
       : { kind: "malformed" };
   }
+  if (parts.length === 5 && (parts[2] === "sc" || parts[2] === "sr")) {
+    const field = LotFormFieldSchema.safeParse(parts[4]);
+    if (!field.success) return { kind: "malformed" };
+    return {
+      kind: parts[2] === "sc" ? "lot-scope" : "lot-set-retry",
+      lot: token.data,
+      field: field.data,
+    };
+  }
+  if ((parts.length === 5 || parts.length === 6) && parts[2] === "sk") {
+    const price = RublesSchema.safeParse(parts[4]);
+    const set =
+      parts.length === 5
+        ? {}
+        : parts[5] === "s"
+          ? { set: true as const }
+          : undefined;
+    return price.success && set !== undefined
+      ? { kind: "lot-keep-step", lot: token.data, price: price.data, ...set }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "ph") {
+    return { kind: "lot-photos", lot: token.data };
+  }
+  // «Убрать фото» под вопросом о фото до PER-721: открывает экран фото.
   if (parts.length === 4 && parts[2] === "rm") {
-    return { kind: "lot-image-remove", lot: token.data };
+    return { kind: "lot-photos", lot: token.data, fromQuestion: true };
+  }
+  if (parts.length === 5 && parts[2] === "rm") {
+    const index = PhotoIndexSchema.safeParse(parts[4]);
+    return index.success
+      ? { kind: "lot-photo-remove", lot: token.data, index: index.data }
+      : { kind: "malformed" };
   }
   if (parts.length === 5 && parts[2] === "ry") {
     const print = WindowPrintSchema.safeParse(parts[4]);
     return print.success
-      ? { kind: "lot-image-remove-confirm", lot: token.data, print: print.data }
+      ? { kind: "lot-photo-remove-confirm", lot: token.data, print: print.data }
       : { kind: "malformed" };
   }
   // Хвост цепочки — только `c` и только у цены и фото: у названия и описания
-  // цепочки нет.
+  // цепочки нет. Хвост `s` — правка всех лотов сета (PER-716), у любого поля.
   const chain = (at: number) =>
     parts.length === at + 1 && parts[at] === "c"
       ? { chain: true as const }
-      : parts.length === at
-        ? {}
-        : undefined;
+      : parts.length === at + 1 && parts[at] === "s"
+        ? { set: true as const }
+        : parts.length === at
+          ? {}
+          : undefined;
   if (parts[2] === "ask") {
     const field = LotFormFieldSchema.safeParse(parts[4]);
     const tail = chain(5);
     if (!field.success || tail === undefined) return { kind: "malformed" };
-    if (
-      tail.chain === true &&
-      field.data !== "price" &&
-      field.data !== "image"
-    ) {
+    if ("chain" in tail && field.data !== "price" && field.data !== "image") {
       return { kind: "malformed" };
     }
     return { kind: "lot-ask", lot: token.data, field: field.data, ...tail };
@@ -2041,6 +2189,11 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-raffle-prize-remove", auction: auction.data }
         : { kind: "malformed" };
+    // Срок оплаты счёта (PER-722): вопрос о числе дней `pt`.
+    case "pt":
+      return parts.length === 4
+        ? { kind: "console-payment-term", auction: auction.data }
+        : { kind: "malformed" };
     // Ориентировочное время финала (PER-663): вопрос о моменте `ft` и его
     // снятие `fx`.
     case "ft":
@@ -2229,20 +2382,37 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-text", lot: token.data, field: "title" };
       case "ld":
         return { kind: "lot-text", lot: token.data, field: "description" };
+      case "st":
+        return { kind: "lot-text", lot: token.data, field: "title", set: true };
+      case "sd":
+        return {
+          kind: "lot-text",
+          lot: token.data,
+          field: "description",
+          set: true,
+        };
       case "lp":
         return { kind: "lot-price", lot: token.data };
       case "cp":
         return { kind: "lot-price", lot: token.data, chain: true };
+      case "sp":
+        return { kind: "lot-price", lot: token.data, set: true };
       case "li":
         return { kind: "lot-image", lot: token.data };
       case "ci":
         return { kind: "lot-image", lot: token.data, chain: true };
+      case "si":
+        return { kind: "lot-image", lot: token.data, set: true };
+      case "lc":
+        return { kind: "lot-copies", lot: token.data };
       case "aw":
         return { kind: "console-week", auction: token.data };
       case "ar":
         return { kind: "console-raffle", auction: token.data };
       case "ap":
         return { kind: "console-raffle-prize", auction: token.data };
+      case "pt":
+        return { kind: "console-payment-term", auction: token.data };
       case "ft":
         return { kind: "console-final-time", auction: token.data };
       case "ai":
@@ -2274,21 +2444,18 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       ? { kind: "lot-new", auction: token.data, key: key.data }
       : undefined;
   }
-  if (
-    parts[2] === "ls" ||
-    parts[2] === "ly" ||
-    parts[2] === "cs" ||
-    parts[2] === "cy"
-  ) {
+  const stepCode = /^([lcs])([sy])$/.exec(parts[2] ?? "");
+  if (stepCode !== null) {
     const price = RublesSchema.safeParse(parts[4]);
-    const chain = parts[2] === "cs" || parts[2] === "cy";
+    const lead = stepCode[1];
     return price.success
       ? {
           kind: "lot-step",
           lot: token.data,
           price: price.data,
-          mode: parts[2] === "ls" || parts[2] === "cs" ? "single" : "tiered",
-          ...(chain ? { chain: true as const } : {}),
+          mode: stepCode[2] === "s" ? "single" : "tiered",
+          ...(lead === "c" ? { chain: true as const } : {}),
+          ...(lead === "s" ? { set: true as const } : {}),
         }
       : undefined;
   }

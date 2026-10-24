@@ -36,6 +36,11 @@ import {
   reportLiveConsoleFailure,
   reportLiveEditFailure,
 } from "../../../core/auction/live-failures.js";
+import {
+  loadLotPhoto,
+  richPhotoFileIds,
+  richPhotoId,
+} from "../../../core/auction/lot-photos.js";
 import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -75,7 +80,7 @@ import {
   hubAccessText,
   hubWelcome,
 } from "../application/hub-access.js";
-import { isSold, lotCurrency } from "../application/lot-form.js";
+import { isSold, lotCurrency, lotPhotoIdOf } from "../application/lot-form.js";
 import {
   type CommunityToday,
   formatLocalMoment,
@@ -99,6 +104,7 @@ import type {
   MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
+  PaymentTermAskError,
   PaymentTextAskError,
   Person,
   PublishMomentRetry,
@@ -155,7 +161,6 @@ import {
   hubTradeCallback,
   isAuctionCallback,
   packageIdentity,
-  photoFileId,
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
@@ -198,6 +203,7 @@ import {
   consoleFinalTimeData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
+  consolePaymentTermData,
   consolePaymentTextData,
   consoleRaffleData,
   consoleRafflePrizeData,
@@ -213,8 +219,8 @@ import {
   floorPickData,
   floorSearchData,
   lotAskData,
+  lotCopyData,
   lotFormData,
-  lotImageRemoveData,
   lotNewData,
   lotSkipData,
   lotStepModeData,
@@ -249,11 +255,7 @@ import {
   decisionToast,
   declineConfirmScreen,
 } from "./screens/application.js";
-import {
-  type AuctionView,
-  auctionScreen,
-  lotPhotoId,
-} from "./screens/auction.js";
+import { type AuctionView, auctionScreen } from "./screens/auction.js";
 import {
   auctionDiscardedText,
   type ConsoleScreenView,
@@ -273,6 +275,8 @@ import {
   launchScreen,
   lineupConfirmScreen,
   lineupOrderScreen,
+  paymentTermAskErrorText,
+  paymentTermQuestionText,
   raffleAskErrorText,
   rafflePrizeAskErrorText,
   rafflePrizeQuestionText,
@@ -357,14 +361,22 @@ import {
 import {
   lotAskErrorText,
   lotChainLead,
+  lotCopiesScreen,
   lotFormScreen,
-  lotImageRemoveConfirmScreen,
+  lotInSetText,
+  lotPhotoRemoveConfirmScreen,
+  lotPhotoSavedScreen,
+  lotPhotosScreen,
   lotQuestionText,
   lotRefusalText,
+  lotRemoveConfirmScreen,
+  lotRemovedScreen,
   lotSavedNote,
   lotSavedScreen,
+  lotScopeScreen,
+  lotSetAppliedScreen,
   lotStepModeScreen,
-  removePhotoLabel,
+  photoLimitText,
   skipPhotoLabel,
   toLot,
   toLots,
@@ -763,6 +775,14 @@ type PendingConsolePrize = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о сроке оплаты счёта на пульте (PER-722). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePaymentTerm = {
+  kind: "console-payment-term";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос об ориентировочном времени финала на пульте (PER-663). Шаг — аукцион —
 // лежит в кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleFinalTime = {
@@ -835,6 +855,7 @@ type HubPendingInput =
   | PendingConsoleWeek
   | PendingConsoleRaffle
   | PendingConsolePrize
+  | PendingConsolePaymentTerm
   | PendingConsoleFinalTime
   | PendingConsolePaymentText
   | PendingConsoleWindow
@@ -858,6 +879,10 @@ const consoleQuestionIntents = {
   "console-raffle-prize": {
     intent: "set-auction-raffle-prize",
     foreign: "foreign raffle prize answer ignored",
+  },
+  "console-payment-term": {
+    intent: "set-auction-payment-term",
+    foreign: "foreign payment term answer ignored",
   },
   "console-final-time": {
     intent: "set-auction-final-time",
@@ -1093,7 +1118,7 @@ async function handleMessage(
     if (command) await dropOpenQuestions(ctx, questions);
     removeExpiredQuestions(questions, Date.now());
     // Остальные снимки альбома, которому вопрос о фото лота уже отказал: отказ
-    // ушёл на первый снимок, а вопрос задан заново.
+    // ушёл на снимок, на котором случился, а вопрос задан заново (PER-721).
     const album = ctx.message?.media_group_id;
     if (album !== undefined && photos.albums.seen(album)) {
       outcome = {
@@ -1647,6 +1672,7 @@ async function handleMessage(
         result.kind !== "auction-week-ask" &&
         result.kind !== "auction-raffle-ask" &&
         result.kind !== "auction-raffle-prize-ask" &&
+        result.kind !== "auction-payment-term-ask" &&
         result.kind !== "auction-final-time-ask" &&
         result.kind !== "payment-text-ask" &&
         result.kind !== "step-window-ask" &&
@@ -2096,6 +2122,7 @@ async function handleMessage(
         pending.kind === "console-week" ||
         pending.kind === "console-raffle" ||
         pending.kind === "console-raffle-prize" ||
+        pending.kind === "console-payment-term" ||
         pending.kind === "console-final-time" ||
         pending.kind === "console-payment-text" ||
         pending.kind === "console-window" ||
@@ -2116,6 +2143,7 @@ async function handleMessage(
             : pending.kind === "console-week" ||
                 pending.kind === "console-raffle" ||
                 pending.kind === "console-raffle-prize" ||
+                pending.kind === "console-payment-term" ||
                 pending.kind === "console-final-time" ||
                 pending.kind === "console-payment-text" ||
                 pending.kind === "console-window" ||
@@ -2361,13 +2389,13 @@ async function handleCallback(
     const action: ScreenAction =
       pressed.kind === "question" ? cancelTarget(pressed.step) : pressed;
     const pressedId = ctx.callbackQuery?.message?.message_id;
-    // «Пропустить» под вопросом о фото нового лота (PER-618) и «Убрать фото»
-    // (PER-715) уходят от вопроса так же, как «Отмена»: вопрос удаляется, итог
-    // или подтверждение приходит новым сообщением.
+    // «Пропустить» под вопросом о фото нового лота (PER-618) и прежняя «Убрать
+    // фото» под ним (PER-715) уходят от вопроса так же, как «Отмена»: вопрос
+    // удаляется, итог или экран приходит новым сообщением.
     if (
       pressed.kind === "question" ||
       pressed.kind === "lot-skip" ||
-      pressed.kind === "lot-image-remove"
+      (pressed.kind === "lot-photos" && pressed.fromQuestion === true)
     ) {
       if (pressedId !== undefined) {
         questions.delete(questionKey(ctx.chat?.id, pressedId));
@@ -2495,8 +2523,14 @@ async function handleCallback(
       action.kind === "lot-step-mode" ||
       action.kind === "lot-skip" ||
       action.kind === "lot-keep-step" ||
-      action.kind === "lot-image-remove" ||
-      action.kind === "lot-image-remove-confirm"
+      action.kind === "lot-photos" ||
+      action.kind === "lot-photo-remove" ||
+      action.kind === "lot-photo-remove-confirm" ||
+      action.kind === "lot-scope" ||
+      action.kind === "lot-set-retry" ||
+      action.kind === "lot-copy" ||
+      action.kind === "lot-remove" ||
+      action.kind === "lot-remove-confirm"
     ) {
       outcome = canRunAuctions(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
@@ -2527,6 +2561,7 @@ async function handleCallback(
       action.kind === "console-raffle-remove" ||
       action.kind === "console-raffle-prize" ||
       action.kind === "console-raffle-prize-remove" ||
+      action.kind === "console-payment-term" ||
       action.kind === "console-final-time" ||
       action.kind === "console-final-time-remove" ||
       action.kind === "console-final" ||
@@ -6649,8 +6684,14 @@ async function handleLotFormCallback(
         | "lot-step-mode"
         | "lot-skip"
         | "lot-keep-step"
-        | "lot-image-remove"
-        | "lot-image-remove-confirm";
+        | "lot-photos"
+        | "lot-photo-remove"
+        | "lot-photo-remove-confirm"
+        | "lot-scope"
+        | "lot-set-retry"
+        | "lot-copy"
+        | "lot-remove"
+        | "lot-remove-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -6684,15 +6725,23 @@ async function handleLotFormCallback(
       lotId,
       priceRubles: action.price,
       opId: createUuidV7(),
+      ...setScope(action.set),
       ...rpcCall(ctx, useCase),
     });
     if (kept.kind === "lot-form") {
       await showScreen(ctx, lotSavedScreen(kept.lot, lotSavedNote.terms));
       return sent("lot price saved with the kept step");
     }
+    if (kept.kind === "lot-set-applied") {
+      await showScreen(ctx, lotSetAppliedScreen(kept.lot, kept));
+      return sent("lot set price saved with the kept step");
+    }
     // Шага у лота в чтении нет — снова выбор способа с той же ценой.
     if (kept.kind === "lot-step-mode") {
-      await showScreen(ctx, lotStepModeScreen(kept.lot, kept.priceRubles));
+      await showScreen(
+        ctx,
+        lotStepModeScreen(kept.lot, kept.priceRubles, undefined, action.set),
+      );
       return sent("lot step mode requested again");
     }
     // Auction не принял прежний шаг с новой ценой — вопрос о шаге с причиной.
@@ -6709,44 +6758,95 @@ async function handleLotFormCallback(
       retry: ctx.callbackQuery?.data,
     });
   }
-  // «Да, убрать фото» (PER-715): лот читает сам юзкейс — тексты карточки ему
-  // нужны для правки. Отказ Auction — кадр отказа формы, а не сбоя.
-  if (action.kind === "lot-image-remove-confirm") {
+  // «Да, убрать фото» (PER-715, PER-721): лот читает сам юзкейс — фото ищется
+  // по отпечатку из кнопки. Отказ Auction — кадр отказа формы, а не сбоя.
+  if (action.kind === "lot-photo-remove-confirm") {
     const removed = await runtime.dispatcher.execute({
       identity: person,
-      intent: "remove-lot-image",
+      intent: "remove-lot-photo",
       lotId,
-      imagePrint: action.print,
+      photoPrint: action.print,
       ...rpcCall(ctx, useCase),
     });
     if (removed.kind === "lot-form") {
       await showScreen(
         ctx,
-        lotSavedScreen(removed.lot, lotSavedNote["image-removed"]),
+        lotPhotoSavedScreen(
+          removed.lot,
+          removed.saved === "photo-missing" ? "photo-missing" : "photo-removed",
+        ),
       );
       return sent("lot photo removed");
-    }
-    // Фото сменилось после подтверждения: ничего не снято — исход с «Ввести
-    // заново», который задаёт вопрос о фото с кнопкой для нового фото.
-    if (removed.kind === "lot-ask") {
-      await askLotQuestion(ctx, questions, {
-        question: removed.question,
-        lot: removed.lot,
-        error: removed.error,
-      });
-      return sent("lot photo removal asked again: the photo changed");
     }
     return showLotFailure(ctx, removed, {
       person,
       retry: ctx.callbackQuery?.data,
     });
   }
+  // «Да, удалить лот» (PER-716): ключ рождается на нажатие; повтор после
+  // удаления Auction отвечает «лота в реестре нет», и исход тот же.
+  if (action.kind === "lot-remove-confirm") {
+    const removed = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "remove-lot",
+      lotId,
+      opId: createUuidV7(),
+      ...rpcCall(ctx, useCase),
+    });
+    if (removed.kind === "lot-removed") {
+      await showScreen(ctx, lotRemovedScreen(removed));
+      return sent(
+        removed.already === true ? "lot already removed" : "lot removed",
+      );
+    }
+    return showLotFailure(ctx, removed, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
+  // «Повторить для оставшихся» (PER-716): значение поля юзкейс берёт у лота и
+  // разносит по сету заново.
+  if (action.kind === "lot-set-retry") {
+    const retried = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "retry-lot-set",
+      lotId,
+      field: action.field,
+      ...(action.print === undefined ? {} : { photoPrint: action.print }),
+      opId: createUuidV7(),
+      ...rpcCall(ctx, useCase),
+    });
+    if (retried.kind === "lot-set-applied") {
+      await showScreen(ctx, lotSetAppliedScreen(retried.lot, retried));
+      return sent("lot set edit retried");
+    }
+    if (retried.kind === "lot-form") {
+      await showScreen(ctx, lotFormScreen(retried.lot));
+      return sent("lot form sent: nothing to spread over the set");
+    }
+    return showLotFailure(ctx, retried, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
   // Способ шага выбран (PER-491): цена уже принята и едет в кнопке, поэтому
   // лот читать не нужно — спрашивается сам шаг.
+  // Реестр аукциона (PER-716) читается только там, где он нужен экрану:
+  // форме, экрану фото, выбору правки сета, копиям, удалению и вопросу правки
+  // сета.
+  const needsRegistry =
+    action.kind === "lot-form" ||
+    action.kind === "lot-photos" ||
+    action.kind === "lot-scope" ||
+    action.kind === "lot-copy" ||
+    action.kind === "lot-remove" ||
+    ((action.kind === "lot-ask" || action.kind === "lot-step-mode") &&
+      action.set === true);
   const result = await runtime.dispatcher.execute({
     identity: person,
     intent: "view-lot-form",
     lotId,
+    ...(needsRegistry ? { registry: true as const } : {}),
     ...rpcCall(ctx, useCase),
   });
   if (result.kind !== "lot-form") {
@@ -6759,6 +6859,49 @@ async function handleLotFormCallback(
     await showScreen(ctx, lotFormScreen(result.lot));
     return sent("lot form sent");
   }
+  const registry = result.lot.registry;
+  // «Копировать» (PER-716): кнопка стоит, пока реестр открыт и лот вне сета,
+  // но старая остаётся в чате. Реестр не прочитан — вопрос задаётся, а
+  // решает ответ.
+  if (action.kind === "lot-copy") {
+    if (registry?.open === false) {
+      return showLotFailure(
+        ctx,
+        { kind: "lot-refused", reason: "lots-frozen", lotId },
+        { person },
+      );
+    }
+    if (registry?.set !== undefined) {
+      return showLotFailure(
+        ctx,
+        {
+          kind: "lot-refused",
+          reason: "lot-in-set",
+          lotId,
+          setName: registry.set.name,
+        },
+        { person },
+      );
+    }
+    await askLotQuestion(ctx, questions, {
+      question: { kind: "copies", lotId },
+      lot: result.lot,
+    });
+    return sent("lot copies count requested");
+  }
+  // «Удалить лот» (PER-716): подтверждение, пока реестр открыт. Подделанное
+  // «Да» после открытия недели получит отказ Auction.
+  if (action.kind === "lot-remove") {
+    if (registry?.open === false) {
+      return showLotFailure(
+        ctx,
+        { kind: "lot-refused", reason: "removal-frozen", lotId },
+        { person },
+      );
+    }
+    await showScreen(ctx, lotRemoveConfirmScreen(result.lot));
+    return sent("lot removal confirmation sent");
+  }
   // Фото пропущено — цепочка нового лота кончилась (PER-618): тот же итог,
   // что после принятого фото. Вопрос удалён до чтения, итог — новым
   // сообщением.
@@ -6766,10 +6909,10 @@ async function handleLotFormCallback(
     await showScreen(ctx, lotSavedScreen(result.lot, lotSavedNote.ready));
     return sent("lot photo skipped");
   }
-  // «Убрать фото» (PER-715): вопрос удалён до чтения, подтверждение — новым
-  // сообщением. У проданного лота правок нет, а у лота, у которого фото уже
-  // убрали, подтверждать нечего — открывается форма.
-  if (action.kind === "lot-image-remove") {
+  // Экран «Фото лота» и «Убрать фото N» (PER-721). У проданного лота правок
+  // нет, а фото, которого на этом месте уже нет, подтверждать нечего —
+  // открывается экран фото, каким он стал.
+  if (action.kind === "lot-photos" || action.kind === "lot-photo-remove") {
     if (isSold(result.lot.terms)) {
       return showLotFailure(
         ctx,
@@ -6777,16 +6920,19 @@ async function handleLotFormCallback(
         { person },
       );
     }
-    const { imagePrint } = result.lot;
-    if (imagePrint === undefined) {
-      await showScreen(ctx, lotFormScreen(result.lot));
-      return sent("lot form sent: no photo to remove");
+    const photo =
+      action.kind === "lot-photo-remove"
+        ? result.lot.photos[action.index - 1]
+        : undefined;
+    if (action.kind === "lot-photo-remove" && photo !== undefined) {
+      await showScreen(
+        ctx,
+        lotPhotoRemoveConfirmScreen(result.lot, action.index, photo.print),
+      );
+      return sent("lot photo removal confirmation sent");
     }
-    await showScreen(
-      ctx,
-      lotImageRemoveConfirmScreen({ ...result.lot, imagePrint }),
-    );
-    return sent("lot photo removal confirmation sent");
+    await showScreen(ctx, lotPhotosScreen(result.lot));
+    return sent("lot photos sent");
   }
   // Способ шага выбран (PER-491): цена едет в кнопке. Условия могли замерзнуть
   // между ценой и этим нажатием — отказ приходит здесь, до вопроса, а не после
@@ -6806,6 +6952,7 @@ async function handleLotFormCallback(
         priceRubles: action.price,
         mode: action.mode,
         ...chained(action.chain),
+        ...setScope(action.set),
       },
       lot: result.lot,
     });
@@ -6829,16 +6976,38 @@ async function handleLotFormCallback(
       { person },
     );
   }
+  // Поле лота полного сета (PER-716): сначала выбор «Только этот лот» или
+  // «Все лоты сета». Сет разобрали, пока висела кнопка, — вопрос одного лота.
+  if (
+    action.kind === "lot-scope" &&
+    registry?.set !== undefined &&
+    registry.set.size >= 2
+  ) {
+    await showScreen(
+      ctx,
+      lotScopeScreen(result.lot, registry.set, action.field),
+    );
+    return sent("lot edit scope requested");
+  }
+  const tail =
+    action.kind === "lot-ask"
+      ? { ...chained(action.chain), ...setScope(action.set) }
+      : {};
   // Фото, как и тексты, меняется и после старта торгов до продажи (ADR-057). Кнопка
   // цепочки нового лота (PER-618) — «Ввести заново» под ней — задаёт вопрос
   // цепочки.
   await askLotQuestion(ctx, questions, {
     question:
       action.field === "price"
-        ? { kind: "price", lotId, ...chained(action.chain) }
+        ? { kind: "price", lotId, ...tail }
         : action.field === "image"
-          ? { kind: "image", lotId, ...chained(action.chain) }
-          : { kind: "text", field: action.field, lotId },
+          ? { kind: "image", lotId, ...tail }
+          : {
+              kind: "text",
+              field: action.field,
+              lotId,
+              ...setScope(action.kind === "lot-ask" ? action.set : undefined),
+            },
     lot: result.lot,
   });
   return sent("lot field requested");
@@ -6849,26 +7018,52 @@ function chained(chain: boolean | undefined): { chain?: true } {
   return chain === true ? { chain: true } : {};
 }
 
+// Хвост кнопки повтора вопроса формы лота: цепочка (PER-618) или правка
+// всех лотов сета (PER-716).
+function stepScope(step: { chain?: true; set?: true }): boolean | "set" {
+  return step.set === true ? "set" : step.chain === true;
+}
+
+// Признак правки всех лотов сета (PER-716) полем вопроса или запроса.
+function setScope(set: boolean | undefined): { set?: true } {
+  return set === true ? { set: true } : {};
+}
+
 // Идёт ли вопрос цепочкой нового лота (PER-618).
 function inChain(question: LotQuestion): boolean {
   return (
     question.kind !== "new" &&
     question.kind !== "text" &&
+    question.kind !== "copies" &&
     question.chain === true
   );
 }
 
-// Вопрос, который юзкейс вернул заново, остаётся в цепочке, если в ней был
-// отвеченный: юзкейс признак цепочки не читает и не возвращает.
+// Правит ли вопрос все лоты сета (PER-716).
+function inSet(question: LotQuestion): boolean {
+  return (
+    question.kind !== "new" &&
+    question.kind !== "copies" &&
+    question.set === true
+  );
+}
+
+// Вопрос, который юзкейс вернул заново, остаётся в цепочке или в правке сета,
+// если в ней был отвеченный: проверка цены признаков не читает и не
+// возвращает.
 function keepChain(question: LotQuestion, answered: LotQuestion): LotQuestion {
-  if (!inChain(answered)) return question;
+  const chain = inChain(answered);
+  const set = inSet(answered);
+  if (!chain && !set) return question;
   switch (question.kind) {
     case "price":
     case "step":
     case "image":
-      return { ...question, chain: true };
-    case "new":
+      return { ...question, ...chained(chain), ...setScope(set) };
     case "text":
+      return { ...question, ...setScope(set) };
+    case "new":
+    case "copies":
       return question;
     default: {
       const _exhaustive: never = question;
@@ -6973,23 +7168,16 @@ function askLotQuestion(
       ask.replaces,
     );
   }
-  // Фото в цепочке нового лота можно пропустить (PER-618), а у лота с фото —
-  // убрать (PER-715): кнопка стоит над «Отменой» и, как она, уводит от
-  // вопроса. У нового лота фото ещё нет, поэтому двух кнопок сразу не бывает.
+  // Фото в цепочке нового лота можно пропустить (PER-618): кнопка стоит над
+  // «Отменой» и, как она, уводит от вопроса. Убирают фото на экране «Фото
+  // лота» (PER-721), а не под вопросом.
   const photoAction =
-    ask.question.kind !== "image"
-      ? undefined
-      : ask.question.chain === true
-        ? {
-            text: skipPhotoLabel,
-            data: lotSkipData(uuidToToken(ask.question.lotId)),
-          }
-        : ask.lot?.hasImage === true
-          ? {
-              text: removePhotoLabel,
-              data: lotImageRemoveData(uuidToToken(ask.question.lotId)),
-            }
-          : undefined;
+    ask.question.kind === "image" && ask.question.chain === true
+      ? {
+          text: skipPhotoLabel,
+          data: lotSkipData(uuidToToken(ask.question.lotId)),
+        }
+      : undefined;
   return askQuestion(
     ctx,
     questions,
@@ -7027,6 +7215,7 @@ function lotAnswerRequest(
         lotId: question.lotId,
         field: question.field,
         value,
+        ...setScope(question.set),
       };
     case "price":
       return {
@@ -7042,6 +7231,17 @@ function lotAnswerRequest(
         lotId: question.lotId,
         priceRubles: question.priceRubles,
         mode: question.mode,
+        value,
+        opId: createUuidV7(),
+        ...setScope(question.set),
+      };
+    // Копии (PER-716): лоты и сет выведены из исходного лота, поэтому
+    // повторный ответ после сбоя дозаводит недостающее.
+    case "copies":
+      return {
+        ...call,
+        intent: "copy-lot",
+        lotId: question.lotId,
         value,
         opId: createUuidV7(),
       };
@@ -7090,17 +7290,24 @@ async function renderLotAnswer(
     });
     return handled("lot photo requested in the chain");
   }
+  if (result.kind === "lot-set-applied") {
+    await showScreen(ctx, lotSetAppliedScreen(result.lot, result));
+    return handled("lot set edit applied");
+  }
+  if (result.kind === "lot-copies") {
+    await showScreen(ctx, lotCopiesScreen(result.lot, result));
+    return handled("lot copied into a set");
+  }
   if (result.kind === "lot-form") {
     await showScreen(
       ctx,
       result.saved === undefined
         ? lotFormScreen(result.lot)
-        : lotSavedScreen(
-            result.lot,
-            lotSavedNote[
-              chain && result.saved === "image" ? "ready" : result.saved
-            ],
-          ),
+        : result.saved === "photo-added" ||
+            result.saved === "photo-removed" ||
+            result.saved === "photo-missing"
+          ? lotPhotoSavedScreen(result.lot, result.saved)
+          : lotSavedScreen(result.lot, lotSavedNote[result.saved]),
     );
     return handled("lot form answer saved");
   }
@@ -7109,7 +7316,12 @@ async function renderLotAnswer(
   if (result.kind === "lot-step-mode") {
     await showScreen(
       ctx,
-      lotStepModeScreen(result.lot, result.priceRubles, chain),
+      lotStepModeScreen(
+        result.lot,
+        result.priceRubles,
+        chain,
+        inSet(answer.answered),
+      ),
     );
     return handled("lot step mode requested");
   }
@@ -7152,7 +7364,15 @@ async function answerLotPhoto(
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "manage_lot";
   const identity = { identity_id: answer.person.identityId };
+  // Альбом приходит сообщением на каждый снимок, и каждый снимок — своё фото
+  // (PER-721). Отказ на одном снимке — один на альбом: остальные снимки этого
+  // альбома бот дальше не читает.
+  const group = ctx.message?.media_group_id;
+  const refuseAlbum = () => {
+    if (group !== undefined) photos.albums.remember(group);
+  };
   const askAgain = async (error: LotAskError, message: string) => {
+    refuseAlbum();
     await askLotQuestion(ctx, questions, {
       question: answer.question,
       error,
@@ -7167,15 +7387,23 @@ async function answerLotPhoto(
     } satisfies BoundaryOutcome;
   };
   const input = parseLotPhoto(ctx.message);
-  if (input.kind === "album") {
-    photos.albums.remember(input.group);
-    return askAgain("photo-album", "lot photo album refused");
-  }
   if (input.kind === "not-photo") {
+    // Видео или документ внутри альбома, фото которого уже добавлены: снимок
+    // пропускается, а не отменяет принятое отказом.
+    if (group !== undefined && photos.albums.outcomeOf(group) !== undefined) {
+      return {
+        level: "info",
+        message: "lot photo album item skipped: not a photo",
+        result: "ok",
+        use_case: useCase,
+        ...identity,
+      };
+    }
     return askAgain("photo-needed", "lot photo answer asked again");
   }
   const downloaded = await downloadPhoto(ctx, photos.files, input.fileId);
   if (downloaded.kind === "failed") {
+    refuseAlbum();
     await askLotQuestion(ctx, questions, {
       question: answer.question,
       error: "photo-unavailable",
@@ -7194,11 +7422,51 @@ async function answerLotPhoto(
   }
   const result = await runtime.dispatcher.execute({
     identity: answer.person,
-    intent: "set-lot-image",
+    intent: "add-lot-photo",
     lotId: answer.question.lotId,
+    photoId: lotPhotoIdOf(answer.question.lotId, downloaded.bytes),
     image: downloaded.bytes,
+    ...setScope(answer.question.set),
     ...rpcCall(ctx, useCase),
   });
+  // Исход добавления — один экран на альбом: следующий снимок правит экран
+  // предыдущего, и число фото растёт на месте. У правки всего сета (PER-716)
+  // исход — «Применено к K из M»; исход с непрошедшими лотами приходит своим
+  // сообщением и не правится следующим снимком: его «Повторить для
+  // оставшихся» несёт своё фото, и удачный снимок после не прячет его.
+  if (
+    (result.kind === "lot-form" && result.saved === "photo-added") ||
+    result.kind === "lot-set-applied"
+  ) {
+    const screen =
+      result.kind === "lot-set-applied"
+        ? lotSetAppliedScreen(result.lot, result)
+        : inChain(answer.question)
+          ? lotSavedScreen(result.lot, lotSavedNote.ready)
+          : lotPhotoSavedScreen(result.lot, "photo-added");
+    const partial =
+      result.kind === "lot-set-applied" && result.missed.length > 0;
+    const before =
+      group === undefined || partial
+        ? undefined
+        : photos.albums.outcomeOf(group);
+    const shown = await showScreen(
+      ctx,
+      before === undefined ? screen : { ...screen, editOf: before },
+    );
+    if (group !== undefined && shown !== undefined && !partial) {
+      photos.albums.rememberOutcome(group, shown.message_id);
+    }
+    await answer.answered(result);
+    return {
+      level: "info",
+      message: "lot photo added",
+      result: "ok",
+      use_case: useCase,
+      ...identity,
+    };
+  }
+  if (result.kind !== "lot-form") refuseAlbum();
   const outcome = await renderLotAnswer(ctx, questions, result, {
     person: answer.person,
     answered: answer.question,
@@ -7271,7 +7539,11 @@ async function showLotFailure(
       ctx,
       result.reason === "not-administrator"
         ? forbiddenText
-        : lotRefusalText[result.reason],
+        : result.reason === "lot-in-set" && result.setName !== undefined
+          ? lotInSetText(result.setName)
+          : result.reason === "photo-limit" && result.maxPhotos !== undefined
+            ? photoLimitText(result.maxPhotos)
+            : lotRefusalText[result.reason],
       exit,
     );
     return {
@@ -7368,6 +7640,7 @@ async function handleConsoleCallback(
         | "console-raffle-remove"
         | "console-raffle-prize"
         | "console-raffle-prize-remove"
+        | "console-payment-term"
         | "console-final"
         | "console-final-time"
         | "console-final-time-remove"
@@ -7471,6 +7744,15 @@ async function handleConsoleCallback(
           ...call,
           intent: "remove-auction-raffle-prize",
           opId: createUuidV7(),
+        }),
+      );
+    // Срок оплаты счёта (PER-722): вопрос решает юзкейс по прочитанной
+    // конфигурации — без сроков недели вопроса нет.
+    case "console-payment-term":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-payment-term",
         }),
       );
     case "console-final":
@@ -7966,6 +8248,18 @@ async function renderConsoleResult(
           ? "raffle prize requested"
           : "raffle prize asked again",
       );
+    case "auction-payment-term-ask":
+      await askConsolePaymentTerm(ctx, context.questions, {
+        auctionId: result.auctionId,
+        days: result.days,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "payment term requested"
+          : "payment term asked again",
+      );
     case "auction-final-time-ask":
       await askConsoleFinalTime(ctx, context.questions, {
         auctionId: result.auctionId,
@@ -8337,6 +8631,42 @@ function askConsolePrize(
     questions,
     pending,
     rafflePrizeQuestionText(ask.prize),
+    ask.replaces,
+  );
+}
+
+// Вопрос о сроке оплаты счёта (PER-722): целое число дней, текущий — в
+// подсказке.
+function askConsolePaymentTerm(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    days?: number | undefined;
+    error?: PaymentTermAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-payment-term",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      paymentTermAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    paymentTermQuestionText(ask.days),
     ask.replaces,
   );
 }
@@ -9270,55 +9600,90 @@ async function deliverAuctionScreen(
       error: errorText(cause),
     });
   const shown = auctionScreen(input.view);
-  const key = shown.image;
-  if (key === undefined) {
+  const keys = shown.images ?? [];
+  if (keys.length === 0) {
     return shownIn(undefined, shown.screen);
   }
-  const withPhoto = (photo: ScreenPhoto) =>
-    auctionScreen({ ...input.view, photo }).screen;
-  const cached = lotPhotos.get(key);
-  if (cached?.kind === "rejected") {
+  const withPhotos = (photos: readonly ScreenPhoto[]) =>
+    auctionScreen({ ...input.view, photos }).screen;
+  // Версии, которые Telegram уже не принял, до рестарта не грузятся.
+  const shownKeys = keys.filter(
+    (key) => lotPhotos.get(key)?.kind !== "rejected",
+  );
+  if (shownKeys.length === 0) {
     return shownIn("lot image skipped: rejected earlier", shown.screen);
   }
-  if (cached?.kind === "file") {
-    const photo = withPhoto({ id: lotPhotoId, fileId: cached.fileId });
+  const cachedIds = shownKeys.map((key) => {
+    const cached = lotPhotos.get(key);
+    return cached?.kind === "file" ? cached.fileId : undefined;
+  });
+  if (cachedIds.every((fileId) => fileId !== undefined)) {
+    const screen = withPhotos(
+      cachedIds.map((fileId, index) => ({ id: richPhotoId(index), fileId })),
+    );
     try {
-      return at(await showScreen(ctx, { ...photo, strict: true }));
+      return at(await showScreen(ctx, { ...screen, strict: true }));
     } catch (cause) {
       if (!rejectedFile(cause)) {
         // Отказ не про файл — сообщение не правится или Telegram моргнул:
-        // запись остаётся, а экран идёт обычным путём края с тем же фото.
-        return shownIn(undefined, photo);
+        // записи остаются, а экран идёт обычным путём края с теми же фото.
+        return shownIn(undefined, screen);
       }
-      // Telegram больше не принимает этот `file_id`: запись вытесняется, и
-      // показ один раз повторяется загрузкой байтов.
-      lotPhotos.delete(key);
+      // Telegram больше не принимает один из `file_id`, и какой — не
+      // сказано: записи вытесняются, и показ один раз повторяется загрузкой.
+      for (const key of shownKeys) lotPhotos.delete(key);
       warn("cached lot photo rejected", cause);
     }
   }
-  let bytes: Awaited<ReturnType<LotImagePort["getLotImage"]>>;
-  try {
-    bytes = await input.image.getLotImage({
-      viewer: input.viewer,
-      lotId: key.lotId,
-    });
-  } catch (cause) {
-    // Бюджет действия исчерпан на изображении или Auction его не отдал:
-    // карточка уходит без фото (дизайн-код, «Показ фото лота»).
-    warn("lot image unavailable", cause);
+  // Фото без записи грузятся из Auction параллельно. Фото, которое Auction не
+  // отдал, выпадает из карусели; не отдал ни одного — карточка без фото
+  // (дизайн-код, «Показ фото лота»).
+  const loaded = await Promise.all(
+    shownKeys.map(async (key) => {
+      const cached = lotPhotos.get(key);
+      if (cached?.kind === "file") {
+        return { kind: "cached" as const, key, fileId: cached.fileId };
+      }
+      try {
+        const bytes = await loadLotPhoto(input.image, input.viewer, key);
+        // Ключ — версия самих байтов: фото могли сменить между чтением
+        // карточки и загрузкой, и старое фото не ляжет под новым ключом.
+        return {
+          kind: "upload" as const,
+          key: { lotId: key.lotId, version: bytes.version },
+          file: new InputFile(bytes.content, "lot"),
+        };
+      } catch (cause) {
+        warn("lot image unavailable", cause);
+        return undefined;
+      }
+    }),
+  );
+  const present = loaded.filter((photo) => photo !== undefined);
+  if (present.length === 0) {
     return shownIn("lot image unavailable", shown.screen);
   }
-  // Ключ — версия самих байтов: изображение могли сменить между чтением
-  // карточки и загрузкой, и старое фото не ляжет под новым ключом.
-  const uploaded = { lotId: key.lotId, version: bytes.version };
-  const upload = withPhoto({
-    id: lotPhotoId,
-    upload: new InputFile(bytes.content, "lot"),
-  });
+  const uploads = present.flatMap((photo, index) =>
+    photo.kind === "upload" ? [{ index, key: photo.key }] : [],
+  );
+  const upload = withPhotos(
+    present.map((photo, index) =>
+      photo.kind === "cached"
+        ? { id: richPhotoId(index), fileId: photo.fileId }
+        : { id: richPhotoId(index), upload: photo.file },
+    ),
+  );
+  // `file_id` в ответе идут в порядке фото карточки; не сошлось число — запись
+  // не делается, иначе фото легло бы под чужой версией.
   const remember = (sent: { message_id: number } | undefined) => {
-    const fileId = photoFileId(sent);
-    if (fileId !== undefined) {
-      lotPhotos.set(uploaded, { kind: "file", fileId });
+    const fileIds = richPhotoFileIds(sent);
+    if (fileIds.length === present.length) {
+      for (const { index, key } of uploads) {
+        const fileId = fileIds[index];
+        if (fileId !== undefined) {
+          lotPhotos.set(key, { kind: "file", fileId });
+        }
+      }
     }
     return at(sent);
   };
@@ -9330,12 +9695,25 @@ async function deliverAuctionScreen(
       // загрузкой: изображение тут ни при чём.
       return remember(await showScreen(ctx, { ...upload, delivery: "new" }));
     }
-    // Telegram отверг сам запрос (400) — эта версия до рестарта больше не
-    // грузится. Обрыв соединения, лимит и сбой Telegram отметки не
-    // оставляют: следующее открытие лота грузит изображение снова. В обоих
-    // случаях сообщение правится в карточку без фото обычной правкой.
+    // Отказ на `file_id` из кэша рядом с загрузкой: виновата запись кэша, а не
+    // загруженные байты. Записи кэша этой карточки вытесняются, загруженные
+    // версии не помечаются, и следующий показ грузит всё заново.
+    if (rejectedFile(cause) && uploads.length < present.length) {
+      for (const photo of present) {
+        if (photo.kind === "cached") lotPhotos.delete(photo.key);
+      }
+      warn("cached lot photo rejected", cause);
+      return shownIn("lot image rejected", shown.screen);
+    }
+    // Telegram отверг сам запрос (400) — какое фото виновато, он не говорит,
+    // и загруженные версии до рестарта больше не грузятся. Обрыв соединения,
+    // лимит и сбой Telegram отметки не оставляют: следующее открытие лота
+    // грузит фото снова. В обоих случаях сообщение правится в карточку без
+    // фото обычной правкой.
     if (cause instanceof GrammyError && cause.error_code === 400) {
-      lotPhotos.set(uploaded, { kind: "rejected" });
+      for (const { key } of uploads) {
+        lotPhotos.set(key, { kind: "rejected" });
+      }
     }
     warn("lot image rejected by Telegram", cause);
     return shownIn("lot image rejected", shown.screen);
@@ -9428,13 +9806,19 @@ async function editLiveLotCard(
     ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
   const shown = auctionScreen(view);
-  const key = shown.image;
-  const cached = key === undefined ? undefined : input.lotPhotos.get(key);
+  // Фото без записи в кэше из карусели выпадают: загрузки здесь нет.
+  const cached = (shown.images ?? []).flatMap((key) => {
+    const photo = input.lotPhotos.get(key);
+    return photo?.kind === "file" ? [{ key, fileId: photo.fileId }] : [];
+  });
   const withPhoto =
-    cached?.kind === "file"
+    cached.length > 0
       ? auctionScreen({
           ...view,
-          photo: { id: lotPhotoId, fileId: cached.fileId },
+          photos: cached.map((photo, index) => ({
+            id: richPhotoId(index),
+            fileId: photo.fileId,
+          })),
         }).screen
       : undefined;
   const edit = (screen: ShownScreen) => {
@@ -9469,16 +9853,12 @@ async function editLiveLotCard(
     try {
       await edit(withPhoto ?? shown.screen);
     } catch (cause) {
-      // Telegram больше не знает `file_id` из кэша: запись вытесняется, и
+      // Telegram больше не знает один из `file_id` кэша: записи вытесняются, и
       // правка идёт без фото — иначе каждая следующая цена падала бы на нём же.
-      if (
-        withPhoto === undefined ||
-        key === undefined ||
-        !rejectedFile(cause)
-      ) {
+      if (withPhoto === undefined || !rejectedFile(cause)) {
         throw cause;
       }
-      input.lotPhotos.delete(key);
+      for (const photo of cached) input.lotPhotos.delete(photo.key);
       await edit(shown.screen);
     }
     return { kind: "done" };
@@ -10320,6 +10700,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle-prize",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-payment-term":
+      return {
+        kind: "console-payment-term",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-final-time":
       return {
         kind: "console-final-time",
@@ -10371,9 +10756,19 @@ function lotStepOf(question: LotQuestion): QuestionStep {
   const lot = uuidToToken(question.lotId);
   switch (question.kind) {
     case "text":
-      return { kind: "lot-text", lot, field: question.field };
+      return {
+        kind: "lot-text",
+        lot,
+        field: question.field,
+        ...setScope(question.set),
+      };
     case "price":
-      return { kind: "lot-price", lot, ...chained(question.chain) };
+      return {
+        kind: "lot-price",
+        lot,
+        ...chained(question.chain),
+        ...setScope(question.set),
+      };
     case "step":
       return {
         kind: "lot-step",
@@ -10381,9 +10776,17 @@ function lotStepOf(question: LotQuestion): QuestionStep {
         price: question.priceRubles,
         mode: question.mode,
         ...chained(question.chain),
+        ...setScope(question.set),
       };
     case "image":
-      return { kind: "lot-image", lot, ...chained(question.chain) };
+      return {
+        kind: "lot-image",
+        lot,
+        ...chained(question.chain),
+        ...setScope(question.set),
+      };
+    case "copies":
+      return { kind: "lot-copies", lot };
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -10404,9 +10807,14 @@ function lotQuestionOf(
   const lotId = tokenToUuid(step.lot);
   switch (step.kind) {
     case "lot-text":
-      return { kind: "text", field: step.field, lotId };
+      return { kind: "text", field: step.field, lotId, ...setScope(step.set) };
     case "lot-price":
-      return { kind: "price", lotId, ...chained(step.chain) };
+      return {
+        kind: "price",
+        lotId,
+        ...chained(step.chain),
+        ...setScope(step.set),
+      };
     case "lot-step":
       return {
         kind: "step",
@@ -10414,9 +10822,17 @@ function lotQuestionOf(
         priceRubles: step.price,
         mode: step.mode,
         ...chained(step.chain),
+        ...setScope(step.set),
       };
     case "lot-image":
-      return { kind: "image", lotId, ...chained(step.chain) };
+      return {
+        kind: "image",
+        lotId,
+        ...chained(step.chain),
+        ...setScope(step.set),
+      };
+    case "lot-copies":
+      return { kind: "copies", lotId };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10486,6 +10902,7 @@ function pendingOf(
     case "lot-price":
     case "lot-step":
     case "lot-image":
+    case "lot-copies":
       return {
         kind: "lot",
         question: lotQuestionOf(step),
@@ -10509,6 +10926,13 @@ function pendingOf(
     case "console-raffle-prize":
       return {
         kind: "console-raffle-prize",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-payment-term":
+      return {
+        kind: "console-payment-term",
         auctionId: tokenToUuid(step.auction),
         telegramUserId,
         expiresAt,
@@ -10620,14 +11044,16 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "lot-price":
     case "lot-step":
     case "lot-image":
+    case "lot-copies":
       return { kind: "lot-form", lot: step.lot };
     case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-payment-term":
     case "console-final-time":
     case "final-ask":
-      // Вопросы о сроках, о розыгрыше, о призе, о времени финала и о цене
-      // заданы с пульта аукциона.
+      // Вопросы о сроках, о розыгрыше, о призе, о сроке оплаты, о времени
+      // финала и о цене заданы с пульта аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -10791,23 +11217,27 @@ function reopenData(step: QuestionStep): string {
     case "lot-new":
       return lotNewData(step.auction);
     case "lot-text":
-      return lotAskData(step.lot, step.field);
+      return lotAskData(step.lot, step.field, stepScope(step));
     // Вопрос цепочки нового лота (PER-618) повтор задаёт в цепочке: после
-    // него она идёт дальше.
+    // него она идёт дальше. Вопрос правки сета (PER-716) — тоже для сета.
     case "lot-price":
-      return lotAskData(step.lot, "price", step.chain);
+      return lotAskData(step.lot, "price", stepScope(step));
     // Цена уже в шаге, как в кнопке выбора способа (PER-491): повтор задаёт
     // тот же вопрос о шаге, а не цену заново.
     case "lot-step":
-      return lotStepModeData(step.lot, step.price, step.mode, step.chain);
+      return lotStepModeData(step.lot, step.price, step.mode, stepScope(step));
     case "lot-image":
-      return lotAskData(step.lot, "image", step.chain);
+      return lotAskData(step.lot, "image", stepScope(step));
+    case "lot-copies":
+      return lotCopyData(step.lot);
     case "console-week":
       return consoleWeekData(step.auction);
     case "console-raffle":
       return consoleRaffleData(step.auction);
     case "console-raffle-prize":
       return consoleRafflePrizeData(step.auction);
+    case "console-payment-term":
+      return consolePaymentTermData(step.auction);
     case "console-final-time":
       return consoleFinalTimeData(step.auction);
     case "console-payment-text":
@@ -10863,10 +11293,12 @@ function answerParent(step: QuestionStep): Parent {
     case "lot-price":
     case "lot-step":
     case "lot-image":
+    case "lot-copies":
       return toLot(tokenToUuid(step.lot));
     case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-payment-term":
     case "console-final-time":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
@@ -11017,18 +11449,22 @@ function evictOldestQuestions(questions: Map<string, PendingInput>): void {
 }
 
 // Альбом приходит отдельным update на каждую фотографию, и все они отвечают
-// на один вопрос. Отказ «нужна одна фотография» нужен один раз на альбом, а не
-// по сообщению на снимок. Память процесса: после рестарта посреди альбома
-// отказ придёт ещё раз, и это не теряет ничего.
+// на один вопрос (PER-721). Отказ нужен один раз на альбом, а не по сообщению
+// на снимок, а исход добавления — один экран, который следующий снимок правит.
+// Память процесса: после рестарта посреди альбома исход придёт новым
+// сообщением, и это не теряет ничего.
 type SeenAlbums = {
   seen(group: string): boolean;
   remember(group: string): void;
+  outcomeOf(group: string): number | undefined;
+  rememberOutcome(group: string, messageId: number): void;
 };
 
 const albumMemory = 64;
 
 function createSeenAlbums(): SeenAlbums {
   const seen = new Set<string>();
+  const outcomes = new Map<string, number>();
   return {
     seen(group) {
       return seen.has(group);
@@ -11038,6 +11474,16 @@ function createSeenAlbums(): SeenAlbums {
       if (seen.size > albumMemory) {
         const oldest = seen.values().next().value;
         if (oldest !== undefined) seen.delete(oldest);
+      }
+    },
+    outcomeOf(group) {
+      return outcomes.get(group);
+    },
+    rememberOutcome(group, messageId) {
+      outcomes.set(group, messageId);
+      if (outcomes.size > albumMemory) {
+        const oldest = outcomes.keys().next().value;
+        if (oldest !== undefined) outcomes.delete(oldest);
       }
     },
   };
@@ -11120,14 +11566,21 @@ function callbackUseCase(
     | "lot-step-mode"
     | "lot-skip"
     | "lot-keep-step"
-    | "lot-image-remove"
-    | "lot-image-remove-confirm"
+    | "lot-photos"
+    | "lot-photo-remove"
+    | "lot-photo-remove-confirm"
+    | "lot-scope"
+    | "lot-set-retry"
+    | "lot-copy"
+    | "lot-remove"
+    | "lot-remove-confirm"
     | "console-view"
     | "console-week"
     | "console-raffle"
     | "console-raffle-remove"
     | "console-raffle-prize"
     | "console-raffle-prize-remove"
+    | "console-payment-term"
     | "console-final"
     | "console-final-time"
     | "console-final-time-remove"
@@ -11315,8 +11768,14 @@ function callbackUseCase(
     case "lot-step-mode":
     case "lot-skip":
     case "lot-keep-step":
-    case "lot-image-remove":
-    case "lot-image-remove-confirm":
+    case "lot-photos":
+    case "lot-photo-remove":
+    case "lot-photo-remove-confirm":
+    case "lot-scope":
+    case "lot-set-retry":
+    case "lot-copy":
+    case "lot-remove":
+    case "lot-remove-confirm":
       return "manage_lot";
     case "console-view":
     case "console-week":
@@ -11324,6 +11783,7 @@ function callbackUseCase(
     case "console-raffle-remove":
     case "console-raffle-prize":
     case "console-raffle-prize-remove":
+    case "console-payment-term":
     case "console-final":
     case "console-visibility":
     case "console-open":

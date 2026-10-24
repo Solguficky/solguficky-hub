@@ -8,9 +8,11 @@ import auction.catalog.ImageChange
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotId
 import auction.catalog.LotImage
+import auction.catalog.PhotoId
 import auction.catalog.TestImages
 import auction.testkit.PostgresFixture
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
+import org.flywaydb.core.Flyway
 import org.postgresql.util.PSQLException
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
@@ -64,6 +66,40 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
       }
     }
 
+  /** Фото лота в порядке показа мимо сервиса: позиция и изображение. */
+  private def photos(database: DatabaseSettings, lotId: LotId): List[(Int, StoredImage)] =
+    withConnection(database) { connection =>
+      Using.resource(
+        connection.prepareStatement(
+          "SELECT position, content, media_type, version FROM lot_photo WHERE lot_id = ?::uuid ORDER BY position"
+        )
+      ) { statement =>
+        statement.setString(1, lotId.value.toString)
+        Using.resource(statement.executeQuery()) { found =>
+          val all = ListBuffer.empty[(Int, StoredImage)]
+          while (found.next())
+            all += found.getInt(1) -> StoredImage(found.getBytes(2).toSeq, found.getString(3), found.getString(4))
+          all.toList
+        }
+      }
+    }
+
+  /** Строка каталога с изображением мимо сервиса — так её пишет образ Auction без `lot_photo`. */
+  private def writePast(database: DatabaseSettings, lotId: LotId, bytes: IArray[Byte]): Unit =
+    withConnection(database) { connection =>
+      Using.resource(
+        connection.prepareStatement(
+          "INSERT INTO lot_catalog (lot_id, title, description, image, image_media_type, image_version) " +
+            "VALUES (?::uuid, 'Кружка', '', ?, 'image/jpeg', ?)"
+        )
+      ) { statement =>
+        statement.setString(1, lotId.value.toString)
+        statement.setBytes(2, IArray.genericWrapArray(bytes).toArray)
+        statement.setString(3, stored(bytes, "image/jpeg").version)
+        statement.executeUpdate()
+      }
+    }
+
   private def node(database: DatabaseSettings): ActorTestKit = {
     JournalSchema.migrate(database)
     ActorTestKit(s"auction-${UUID.randomUUID()}", nodeConfig(database))
@@ -84,6 +120,10 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
   }
 
   private def lotId() = LotId(UUID.randomUUID())
+
+  private def photoId() = PhotoId(UUID.randomUUID())
+
+  private def jpeg(fill: Int) = TestImages.jpeg(fill = fill.toByte)
 
   private def stored(bytes: IArray[Byte], mediaType: String): StoredImage = {
     val accepted = LotImage(bytes).getOrElse(fail("the image was refused"))
@@ -215,6 +255,143 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
       }
 
       rows(database, id) shouldBe List("Кружка с опечаткой исправленной" -> "")
+      rows(database, missing) shouldBe empty
+    }
+
+    "moves an image stored before the photo list into the first photo with the same bytes and version" in {
+      val database = freshDatabase()
+      val id = lotId()
+      val bare = lotId()
+      Flyway
+        .configure()
+        .dataSource(database.url, database.user, database.password)
+        .locations("classpath:db/migration")
+        .table(JournalSchema.HistoryTable)
+        .target("18")
+        .load()
+        .migrate()
+      writePast(database, id, jpeg(1))
+      withConnection(database)(
+        _.createStatement().executeUpdate(
+          s"INSERT INTO lot_catalog (lot_id, title, description) VALUES ('${bare.value}', 'Без фото', '')"
+        )
+      )
+
+      JournalSchema.migrate(database) shouldBe 1
+
+      photos(database, id) shouldBe List(1 -> stored(jpeg(1), "image/jpeg"))
+      image(database, id) shouldBe Some(stored(jpeg(1), "image/jpeg"))
+      photos(database, bare) shouldBe empty
+      val card = withNode(database)((store, _) => store.find(id).futureValue).getOrElse(fail("no card"))
+      card.photos.map(_.version) shouldBe Vector(card.image.getOrElse(fail("no cover")))
+    }
+
+    "adds photos to the end, keeps the image equal to the cover and refuses the eleventh with the limit" in {
+      val database = freshDatabase()
+      val id = lotId()
+      val ids = Vector.fill(LotImage.MaxPhotos)(photoId())
+      withNode(database) { (_, commands) =>
+        commands.create(admin, id, "Кружка", "", None).futureValue
+        ids.zipWithIndex.foreach((photo, index) =>
+          commands.addPhoto(admin, id, photo, jpeg(index + 1)).futureValue.isRight shouldBe true
+        )
+
+        val card = commands.addPhoto(admin, id, ids.last, jpeg(LotImage.MaxPhotos)).futureValue
+        card.map(_.photos.map(_.photoId)) shouldBe Right(ids)
+        card.map(_.image) shouldBe Right(card.toOption.flatMap(_.photos.headOption.map(_.version)))
+        commands.addPhoto(admin, id, photoId(), jpeg(99)).futureValue shouldBe
+          Left(CatalogRefusal.PhotoLimitReached(LotImage.MaxPhotos))
+      }
+
+      photos(database, id).map(_._2) shouldBe (1 to LotImage.MaxPhotos).map(fill => stored(jpeg(fill), "image/jpeg"))
+      image(database, id) shouldBe Some(stored(jpeg(1), "image/jpeg"))
+    }
+
+    "accepts a repeated addition once and refuses the same photo id with other bytes" in {
+      val database = freshDatabase()
+      val id = lotId()
+      val photo = photoId()
+      withNode(database) { (_, commands) =>
+        commands.create(admin, id, "Кружка", "", None).futureValue
+        val first = commands.addPhoto(admin, id, photo, jpeg(1)).futureValue
+
+        commands.addPhoto(admin, id, photo, jpeg(1)).futureValue shouldBe first
+        commands.addPhoto(admin, id, photo, jpeg(2)).futureValue shouldBe Left(CatalogRefusal.PhotoConflict)
+      }
+
+      photos(database, id) shouldBe List(1 -> stored(jpeg(1), "image/jpeg"))
+    }
+
+    "removes any photo, makes the next one the cover and clears the image with the last" in {
+      val database = freshDatabase()
+      val id = lotId()
+      val (first, second, third) = (photoId(), photoId(), photoId())
+      withNode(database) { (_, commands) =>
+        commands.create(admin, id, "Кружка", "", None).futureValue
+        commands.addPhoto(admin, id, first, jpeg(1)).futureValue
+        commands.addPhoto(admin, id, second, jpeg(2)).futureValue
+        commands.addPhoto(admin, id, third, jpeg(3)).futureValue
+
+        commands.removePhoto(admin, id, first).futureValue.map(_.photos.map(_.photoId)) shouldBe
+          Right(Vector(second, third))
+        image(database, id) shouldBe Some(stored(jpeg(2), "image/jpeg"))
+
+        commands.removePhoto(admin, id, third).futureValue.map(_.photos.map(_.photoId)) shouldBe Right(Vector(second))
+        image(database, id) shouldBe Some(stored(jpeg(2), "image/jpeg"))
+
+        commands.removePhoto(admin, id, second).futureValue.map(_.image) shouldBe Right(None)
+        commands.removePhoto(admin, id, second).futureValue.map(_.photos) shouldBe Right(Vector.empty)
+      }
+
+      photos(database, id) shouldBe empty
+      image(database, id) shouldBe None
+    }
+
+    "replaces and removes the cover through a card edit and keeps the other photos" in {
+      val database = freshDatabase()
+      val id = lotId()
+      val later = photoId()
+      withNode(database) { (_, commands) =>
+        val created = commands.create(admin, id, "Кружка", "", Some(jpeg(1))).futureValue
+        val cover = created.toOption.flatMap(_.photos.headOption).getOrElse(fail("no first photo")).photoId
+        commands.addPhoto(admin, id, later, jpeg(2)).futureValue
+
+        val replaced = commands.edit(admin, id, "Кружка", "", ImageChange.Replace(jpeg(3))).futureValue
+        replaced.map(_.photos.map(_.photoId)) shouldBe Right(Vector(cover, later))
+        image(database, id) shouldBe Some(stored(jpeg(3), "image/jpeg"))
+
+        val removed = commands.edit(admin, id, "Кружка", "", ImageChange.Remove).futureValue
+        removed.map(_.photos.map(_.photoId)) shouldBe Right(Vector(later))
+      }
+
+      photos(database, id).map(_._2) shouldBe List(stored(jpeg(2), "image/jpeg"))
+      image(database, id) shouldBe Some(stored(jpeg(2), "image/jpeg"))
+    }
+
+    "adopts an image written past the photo list as the first photo before a photo command" in {
+      val database = freshDatabase()
+      val id = lotId()
+      val added = photoId()
+      JournalSchema.migrate(database)
+      writePast(database, id, jpeg(1))
+
+      withNode(database) { (_, commands) =>
+        val card = commands.addPhoto(admin, id, added, jpeg(2)).futureValue
+        card.map(_.photos.map(_.version.value)) shouldBe
+          Right(Vector(stored(jpeg(1), "image/jpeg").version, stored(jpeg(2), "image/jpeg").version))
+      }
+
+      image(database, id) shouldBe Some(stored(jpeg(1), "image/jpeg"))
+    }
+
+    "refuses photo commands of a card that does not exist" in {
+      val database = freshDatabase()
+      val missing = lotId()
+      withNode(database) { (_, commands) =>
+        commands.addPhoto(admin, missing, photoId(), jpeg(1)).futureValue shouldBe Left(CatalogRefusal.CardNotFound)
+        commands.removePhoto(admin, missing, photoId()).futureValue shouldBe Left(CatalogRefusal.CardNotFound)
+      }
+
       rows(database, missing) shouldBe empty
     }
 

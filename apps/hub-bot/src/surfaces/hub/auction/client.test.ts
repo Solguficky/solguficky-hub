@@ -38,6 +38,7 @@ import {
   PublishAuctionResponseSchema,
   RaffleSchema,
   RaffleStatus,
+  RemoveLotResponseSchema,
   SaveLotSetResponseSchema,
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
@@ -118,6 +119,10 @@ function adapter(rpc: {
   setPaymentInstructions?: Call;
   listMyInvoices?: Call;
   chooseFulfillment?: Call;
+  removeLot?: Call;
+  getLotPhoto?: Call;
+  addLotPhoto?: Call;
+  removeLotPhoto?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -126,6 +131,7 @@ function adapter(rpc: {
     createLotCard: (rpc.createLotCard ?? notUsed) as never,
     editLotCard: (rpc.editLotCard ?? notUsed) as never,
     addLot: (rpc.addLot ?? notUsed) as never,
+    removeLot: (rpc.removeLot ?? notUsed) as never,
     scheduleLot: (rpc.scheduleLot ?? notUsed) as never,
     getLot: (rpc.getLot ?? notUsed) as never,
     listAuctionLots: (rpc.listAuctionLots ?? notUsed) as never,
@@ -143,6 +149,9 @@ function adapter(rpc: {
     getPredictionResults: notUsed,
     submitPrediction: notUsed,
     getLotImage: notUsed,
+    getLotPhoto: (rpc.getLotPhoto ?? notUsed) as never,
+    addLotPhoto: (rpc.addLotPhoto ?? notUsed) as never,
+    removeLotPhoto: (rpc.removeLotPhoto ?? notUsed) as never,
     getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,
     getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
     getAuctionDaySummary: (rpc.getAuctionDaySummary ?? notUsed) as never,
@@ -430,6 +439,47 @@ describe("auction adapter of the lot form", () => {
     },
   );
 
+  it.each([
+    ["notMeetupAdministrator", { kind: "not-administrator" }],
+    ["meetupNotFound", { kind: "meetup-not-found" }],
+    ["meetupCancelled", { kind: "meetup-cancelled" }],
+    ["lotsFrozen", { kind: "lots-frozen" }],
+    ["lotNotInAuction", { kind: "lot-not-in-auction" }],
+  ] as const)(
+    "reads the %s refusal of a removal as a final answer",
+    async (reason, expected) => {
+      const lots = adapter({
+        removeLot: async () => refused(RemoveLotResponseSchema, reason),
+      });
+
+      await expect(
+        lots.removeLot(admin, { auctionId, lotId, opId }),
+      ).resolves.toEqual(expected);
+    },
+  );
+
+  it("sends the removal of a lot with its key and reads an auction without a journal", async () => {
+    const removeLot = vi.fn(async () =>
+      create(RemoveLotResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    const missing = adapter({
+      removeLot: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+
+    await expect(
+      adapter({ removeLot }).removeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(removeLot).toHaveBeenCalledWith(
+      { viewer: wireAdmin, auctionId, lotId, opId },
+      expect.anything(),
+    );
+    await expect(
+      missing.removeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+
   it("sends the price and one fixed step in minor units", async () => {
     const scheduleLot = vi.fn(async () =>
       create(ScheduleLotResponseSchema, {
@@ -590,6 +640,7 @@ describe("auction console adapter", () => {
     windows: [],
     raffleClosesAt: undefined,
     rafflePrize: undefined,
+    paymentTermSeconds: undefined,
   };
 
   it.each([
@@ -670,6 +721,44 @@ describe("auction console adapter", () => {
         final: true,
       }),
     ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  // Срок оплаты счёта (PER-722): едет секундами в конфигурации, а отказ
+  // Auction о пределе — ответ человеку, а не дефект.
+  it("sends the payment term with the week and reads its refusal", async () => {
+    const scheduleAuction = vi.fn(async (_request: unknown) =>
+      create(ScheduleAuctionResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    await adapter({ scheduleAuction }).scheduleAuction(admin, {
+      ...week,
+      final: false,
+      paymentTermSeconds: 86_400,
+    });
+    const sent = scheduleAuction.mock.calls[0]?.[0] as {
+      config: Record<string, unknown>;
+    };
+    expect(sent.config).toMatchObject({ paymentTermSeconds: 86_400n });
+
+    await expect(
+      adapter({
+        scheduleAuction: async () =>
+          create(ScheduleAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: {
+                reason: {
+                  case: "configInvalid",
+                  value: {
+                    reason: { case: "paymentTermOutOfRange", value: {} },
+                  },
+                },
+              },
+            },
+          }),
+      }).scheduleAuction(admin, { ...week, final: false }),
+    ).resolves.toEqual({ kind: "payment-term-out-of-range" });
   });
 
   it("sends the happy hours windows with the week and reads their refusals by window", async () => {
