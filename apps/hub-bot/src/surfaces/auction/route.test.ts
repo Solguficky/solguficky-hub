@@ -255,7 +255,7 @@ describe("FAQ entry", () => {
   );
 
   it("sends a community member to the hub bot on /start and on a lot press", async () => {
-    const p = ports(identity({ rights: [...MEMBER, "manage-members"] }));
+    const p = ports(identity({ rights: [...MEMBER, "admit-bidders"] }));
     expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
       screen: { kind: "denied", reason: "in-community" },
       identityId: VIEWER_ID,

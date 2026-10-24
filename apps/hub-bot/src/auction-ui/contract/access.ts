@@ -273,9 +273,10 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     action: LOT_BUTTON,
     answer: "admitted",
   },
-  // Участнику и администратору бот аукциона отвечает только переходом в бот
-  // хаба: торгов и списков нет, и подделанное нажатие до Auction не доходит
-  // (ADR-064, пункт 2).
+  // Участнику бот аукциона отвечает только переходом в бот хаба: торгов и
+  // списков нет, и подделанное нажатие до Auction не доходит (ADR-064,
+  // пункт 2). Администратор входит в бот аукциона, чтобы проверять его глазами
+  // гостя (решение владельца 24.10.2026).
   {
     name: "auction: hub right starts",
     surface: "auction",
@@ -298,18 +299,18 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     answer: "in-community",
   },
   {
-    name: "auction: all rights start",
+    name: "auction: admin starts",
     surface: "auction",
     person: ADMIN,
     action: START,
-    answer: "in-community",
+    answer: "admitted",
   },
   {
-    name: "auction: all rights press",
+    name: "auction: admin presses",
     surface: "auction",
     person: ADMIN,
     action: LOT_BUTTON,
-    answer: "in-community",
+    answer: "admitted",
   },
   // Право хаба без права аукциона Identity не отдаёт; строка держит, что
   // переход решает право хаба, а не пара прав.
