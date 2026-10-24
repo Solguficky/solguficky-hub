@@ -544,13 +544,20 @@ export function photoBytesOf(variant: PhotoVariant): Uint8Array | undefined {
 // `file_id` в кэш `lotPhotos`, и второй показ карточки идёт без `GetLotImage`.
 // Без блока кэш в проводе не грелся бы, и путь по `file_id` оставался бы
 // непройденным. Та же форма, что у харнесса бота аукциона.
-const photoBlock = {
+// Блок на каждое фото сообщения, в порядке `media`: у карусели (PER-721)
+// `file_id` второго и следующих фото свои — `large-2` и дальше.
+const photoBlock = (index: number) => ({
   type: "photo",
   photo: [
     { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
-    { file_id: "large", file_unique_id: "l", width: 800, height: 800 },
+    {
+      file_id: index === 0 ? "large" : `large-${index + 1}`,
+      file_unique_id: "l",
+      width: 800,
+      height: 800,
+    },
   ],
-};
+});
 
 /**
  * Telegram в проводе за пределами ответа `true`: `getFile` отвечает путём по
@@ -593,7 +600,7 @@ function fakeTelegram(calls: readonly RecordedCall[]): {
             first_name: "tester",
           },
           rich_message: {
-            blocks: rich.media === undefined ? [] : [photoBlock],
+            blocks: (rich.media ?? []).map((_, index) => photoBlock(index)),
           },
         };
       }

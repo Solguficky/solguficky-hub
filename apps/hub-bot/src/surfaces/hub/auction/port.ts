@@ -2,6 +2,7 @@ import type {
   AuctionPort,
   AuctionSummaryView,
   LotImagePort,
+  LotPhotoView,
   LotView,
   Money,
   OperationIdPort,
@@ -92,6 +93,21 @@ export type LotCardResult =
   | { kind: "unsupported-image" }
   | AuctionFailure;
 
+// Исход команды фото лота (PER-721). `ok` несёт фото лота после команды:
+// чтение Auction её ещё могло не увидеть, а форма называет их число.
+// `photo-limit` — у лота уже предел фото, `maxPhotos` — предел, как его назвал
+// Auction. Отказы изображения бывают только у добавления.
+export type LotPhotoResult =
+  | { kind: "ok"; photos: readonly LotPhotoView[] }
+  | { kind: "not-admin" }
+  | { kind: "card-not-found" }
+  | { kind: "card-closed" }
+  | { kind: "image-too-large"; maxBytes: number }
+  | { kind: "unsupported-image" }
+  | { kind: "photo-limit"; maxPhotos: number }
+  | { kind: "photo-conflict" }
+  | AuctionFailure;
+
 export type AddLotResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
@@ -133,8 +149,8 @@ export type RemoveLotResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
-// Байты фото лота для копий (PER-716): копия получает то же фото, а Auction
-// держит его версией содержимого.
+// Байты фото лота для копий (PER-716, PER-721): копия получает те же фото, а
+// Auction держит каждое версией содержимого.
 export type LotImageResult =
   | { kind: "ok"; content: Uint8Array; version: string }
   | { kind: "not-found" }
@@ -169,6 +185,19 @@ export type LotAdministration = {
     card: LotCardEdit,
     meta?: RpcMetadata,
   ): Promise<LotCardResult>;
+  // Фото в конец списка (PER-721). `photoId` рождает вызывающий: повтор с ним
+  // Auction узнаёт и второго фото не заводит.
+  addLotPhoto(
+    person: Person,
+    photo: { lotId: string; photoId: string; image: Uint8Array },
+    meta?: RpcMetadata,
+  ): Promise<LotPhotoResult>;
+  // Снятое уже фото — тоже `ok`: снятие идемпотентно.
+  removeLotPhoto(
+    person: Person,
+    photo: { lotId: string; photoId: string },
+    meta?: RpcMetadata,
+  ): Promise<LotPhotoResult>;
   addLot(
     person: Person,
     lot: { auctionId: string; lotId: string; opId: string },
@@ -199,6 +228,12 @@ export type LotAdministration = {
   getLotImage(
     person: Person,
     lotId: string,
+    meta?: RpcMetadata,
+  ): Promise<LotImageResult>;
+  // Одно фото галереи лота (PER-721): копии и правка сета берут его байты.
+  getLotPhoto(
+    person: Person,
+    photo: { lotId: string; photoId: string },
     meta?: RpcMetadata,
   ): Promise<LotImageResult>;
 };

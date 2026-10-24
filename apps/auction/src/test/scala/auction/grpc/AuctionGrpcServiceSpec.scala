@@ -65,6 +65,10 @@ import auction.aggregate.StartNextLot
 import auction.aggregate.StartNextLotRejected
 import auction.aggregate.StartPrebidding
 import auction.catalog.CardEdit
+import auction.catalog.CardInsertion
+import auction.catalog.CatalogRefusal
+import auction.catalog.PhotoAddition
+import auction.catalog.PhotoRemoval
 import auction.catalog.CardStanding
 import auction.catalog.LotCard
 import auction.catalog.LotCatalogCommands
@@ -309,8 +313,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private object UntouchableStore extends LotCatalogStore {
     private def touched = fail("the catalog store was touched")
-    def insertIfAbsent(card: NewCard): Future[Option[LotCard]] = touched
+    def insertIfAbsent(card: NewCard): Future[CardInsertion] = touched
     def update(edit: CardEdit): Future[Option[LotCard]] = touched
+    def addPhoto(addition: PhotoAddition, maxPhotos: Int): Future[Either[CatalogRefusal, LotCard]] = touched
+    def removePhoto(removal: PhotoRemoval): Future[Either[CatalogRefusal, LotCard]] = touched
     def find(lotId: LotId): Future[Option[LotCard]] = touched
   }
 
@@ -336,6 +342,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
       fail("the registry was touched")
     def image(lotId: UUID): Future[Option[LotImageView]] = fail("the image was read")
+    def photo(lotId: UUID, photoId: UUID): Future[Option[LotImageView]] = fail("the photo was read")
     def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[HistoryRecord]]] =
       fail("the history was touched")
     def statistics(auctionId: UUID): Future[List[LotStatisticsView]] = fail("the statistics were read")

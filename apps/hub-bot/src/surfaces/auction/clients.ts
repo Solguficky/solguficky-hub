@@ -120,6 +120,7 @@ export type AuctionRpc = Pick<
   | "getPredictionResults"
   | "submitPrediction"
   | "getLotImage"
+  | "getLotPhoto"
   | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
@@ -520,6 +521,21 @@ export function createPorts(
         async getLotImage(request) {
           const image = await auction.getLotImage(
             { viewer: wireViewer(request.viewer), lotId: request.lotId },
+            callOptions(imageTimeoutMs),
+          );
+          return {
+            content: image.content,
+            mediaType: image.mediaType,
+            version: image.version,
+          };
+        },
+        async getLotPhoto(request) {
+          const image = await auction.getLotPhoto(
+            {
+              viewer: wireViewer(request.viewer),
+              lotId: request.lotId,
+              photoId: request.photoId,
+            },
             callOptions(imageTimeoutMs),
           );
           return {

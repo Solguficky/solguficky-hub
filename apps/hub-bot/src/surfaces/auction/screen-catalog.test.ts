@@ -778,13 +778,9 @@ const middlePage: AuctionListPage = {
   ],
 };
 
-// Тексты организатора со знаками разметки: в сообщение они уходят дословно.
+// Текст организатора уже размечен: в сообщение он уходит дословно.
 const urls = {
-  items: "Грибы & соленья <домашние>.",
-  purpose: "На сходки.",
-  simultaneousBids: "Побеждает первая.",
-  connectionFailure: "Ставка либо принята, либо нет.",
-  delivery: "Лично на сходке.",
+  text: "<b>Правила и FAQ</b>\n\nГрибы &amp; соленья &lt;домашние&gt;.",
   detailsUrl: "https://example.org/rules",
   questionUrl: "https://t.me/organizer",
 };
@@ -1570,10 +1566,13 @@ describe("auction screens beyond the linter", () => {
   it("addresses the person informally in every text", () => {
     // Местоимения и повелительные формы, которые стояли в текстах до
     // перевёрстки; общий признак окончания дал бы ложные «лимите» и «ответе».
+    // FAQ — текст организаторов на «вы» (решение владельца 24.10.2026), а не
+    // голос бота, поэтому правило его не касается.
     const formal =
       /(^|[^а-яё])(вы|вас|вам|ваш[а-яё]*|выберите|отправьте|попробуйте|пришлите|откройте|проверьте)(?![а-яё])/i;
     expect(
       rendered
+        .filter((screen) => screen.id !== "faq")
         .filter((screen) => formal.test(visible(screen)))
         .map((screen) => `${screen.id}: ${visible(screen)}`),
     ).toEqual([]);

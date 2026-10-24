@@ -1,48 +1,24 @@
+import { organizerFaqText } from "./auction-faq-text.js";
+
 // FAQ организатора общий для обеих поверхностей; навигацию каждая оболочка
-// задаёт отдельно.
+// задаёт отдельно. Текст — свободный, Telegram HTML (`auction-faq-text.ts`),
+// ссылки кнопок — конфигурация среды.
 export type FaqContent = {
-  items: string;
-  purpose: string;
-  simultaneousBids: string;
-  connectionFailure: string;
-  delivery: string;
+  text: string;
   detailsUrl?: string;
   questionUrl?: string;
 };
 
-export const defaultFaq: FaqContent = {
-  items: "Состав лотов организатор объявит отдельно.",
-  purpose: "Организатор ещё не указал, куда идут средства.",
-  simultaneousBids:
-    "Организатор ещё не опубликовал порядок при почти одновременных ставках.",
-  connectionFailure:
-    "Организатор ещё не опубликовал порядок действий при сбое и потере связи.",
-  delivery: "Организатор ещё не опубликовал условия доставки победителю.",
-};
+export const defaultFaq: FaqContent = { text: organizerFaqText };
 
 export type FaqConfigResult =
   | { ok: true; content: FaqContent }
   | { ok: false; error: string };
 
-// Ограничение каждого текста держит весь FAQ в бюджете одного sendMessage.
 export function readFaqContent(
   env: Readonly<Record<string, string | undefined>>,
 ): FaqConfigResult {
-  const fields = {
-    items: "AUCTION_FAQ_ITEMS",
-    purpose: "AUCTION_FAQ_PURPOSE",
-    simultaneousBids: "AUCTION_FAQ_SIMULTANEOUS_BIDS",
-    connectionFailure: "AUCTION_FAQ_CONNECTION_FAILURE",
-    delivery: "AUCTION_FAQ_DELIVERY",
-  } as const;
   const content: FaqContent = { ...defaultFaq };
-  for (const [field, name] of Object.entries(fields)) {
-    const raw = env[name]?.trim();
-    if (raw === undefined || raw === "") continue;
-    if (raw.length > 500)
-      return { ok: false, error: `${name} exceeds 500 characters` };
-    content[field as keyof typeof fields] = raw;
-  }
   for (const [field, name] of [
     ["detailsUrl", "AUCTION_FAQ_DETAILS_URL"],
     ["questionUrl", "AUCTION_FAQ_QUESTION_URL"],
@@ -76,26 +52,45 @@ export function readFaqContent(
   return { ok: true, content };
 }
 
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
+// Telegram принимает в тексте сообщения до 4096 знаков после разбора
+// разметки; запас оставлен под правку текста без пересчёта.
+export const FAQ_TEXT_LIMIT = 4000;
+
+const ALLOWED_TAG = /^<(\/?)(b|i|u|a)(\s+href="https:\/\/[^"\s<>]+")?>$/;
+
+// Нарушения формы текста FAQ: неизвестный или незакрытый тег, ссылка не по
+// https, голые «<» и «&», текст длиннее сообщения Telegram. Пустой список —
+// текст уйдёт в `parse_mode: HTML` без отказа Bot API.
+export function faqTextProblems(text: string): string[] {
+  const problems: string[] = [];
+  const open: string[] = [];
+  for (const match of text.matchAll(/<[^>]*>/g)) {
+    const tag = ALLOWED_TAG.exec(match[0]);
+    if (tag === null) {
+      problems.push(`tag ${match[0]} is not allowed`);
+      continue;
+    }
+    const [, closing, name] = tag;
+    if (name === undefined) continue;
+    if (closing === "/") {
+      if (open.pop() !== name) problems.push(`tag </${name}> is unbalanced`);
+    } else {
+      if (name === "a" && tag[3] === undefined)
+        problems.push("link without an https href");
+      open.push(name);
+    }
+  }
+  if (open.length > 0) problems.push(`tags ${open.join(", ")} are not closed`);
+  const plain = text.replace(/<[^>]*>/g, "");
+  if (/<|>/.test(plain)) problems.push("bare angle bracket");
+  if (/&(?!(amp|lt|gt|quot);)/.test(plain)) problems.push("bare ampersand");
+  const visible = plain.replace(/&(amp|lt|gt|quot);/g, "x");
+  if (visible.length > FAQ_TEXT_LIMIT)
+    problems.push(`visible text is ${visible.length} > ${FAQ_TEXT_LIMIT}`);
+  return problems;
 }
 
-// Тексты организатора дословны, но не являются Telegram HTML-разметкой.
+// Текст организатора уже размечен: он уходит в сообщение как есть.
 export function renderFaqText(faq: FaqContent): string {
-  const heading = (text: string) => `<b>${escapeHtml(text)}</b>`;
-  const section = (name: string, text: string) =>
-    `${heading(name)}\n${escapeHtml(text)}`;
-  return [
-    heading("Правила и FAQ"),
-    section("Что продаём", faq.items),
-    section("Куда идут средства", faq.purpose),
-    section("Правила ставок", "Отменить сделанную ставку нельзя."),
-    section("Почти одновременные ставки", faq.simultaneousBids),
-    section("Сбой и потеря связи", faq.connectionFailure),
-    section("Доставка победителю", faq.delivery),
-  ].join("\n\n");
+  return faq.text;
 }

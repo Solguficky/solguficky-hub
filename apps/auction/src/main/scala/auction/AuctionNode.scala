@@ -4,6 +4,7 @@ import auction.aggregate.AuctionCommands
 import auction.aggregate.MeetupAuthority
 import auction.boundary.ScreenRoutes
 import auction.catalog.LotCatalogCommands
+import auction.catalog.PhotoId
 import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
 import auction.entity.AuctionLots
@@ -13,6 +14,7 @@ import auction.entity.AuctionResults
 import auction.entity.AuctionSetOutcomes
 import auction.entity.AuctionSlot
 import auction.entity.LotCardGate
+import auction.entity.UuidV7
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
@@ -546,7 +548,8 @@ object AuctionNode {
       lots,
       LotCatalogCommands(
         SlickLotCatalogStore(system),
-        id => lots.stateOf(id.value).map(LotCardGate.standing)
+        id => lots.stateOf(id.value).map(LotCardGate.standing),
+        { val next = UuidV7.generator(clock); () => PhotoId(next()) }
       ),
       SlickFaqAcknowledgements(system),
       SlickLotViews(system),

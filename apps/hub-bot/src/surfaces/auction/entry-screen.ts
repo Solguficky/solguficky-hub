@@ -97,6 +97,10 @@ import {
   invoicesTitle,
   invoiceTitle,
 } from "../../auction-winner-invoices.js";
+import {
+  type LotPhotoKey,
+  lotPhotoKeys,
+} from "../../core/auction/lot-photos.js";
 import type { Presentation } from "../../core/config.js";
 import {
   admittersLine,
@@ -206,9 +210,10 @@ export type RenderedScreen = {
    * разметки у бота нет.
    */
   format: "html" | "rich";
-  // Изображение rich-карточки лота: адаптер ставит его первым блоком. Байты
-  // и `file_id` достаёт адаптер Telegram, экрану достаточно ключа.
-  photo?: { lotId: string; version: string };
+  // Фото rich-карточки лота в порядке показа: адаптер ставит их первым блоком,
+  // несколько — каруселью (PER-721). Байты и `file_id` достаёт адаптер
+  // Telegram, экрану достаточно ключей.
+  photos?: readonly LotPhotoKey[];
   // Вопрос: адаптер шлёт его новым сообщением с `force_reply` (дизайн-код,
   // «Вопросы»).
   asks?: true;
@@ -1619,7 +1624,7 @@ function setGroups(block: LotBlock): string[][] {
 function renderCard(
   block: LotBlock,
   options: RenderOptions,
-): Pick<RenderedScreen, "text" | "format" | "photo"> {
+): Pick<RenderedScreen, "text" | "format" | "photos"> {
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
   // Исход ставки финала — своей группой под статусом и ценой (PER-336).
   const groups = [
@@ -1659,15 +1664,13 @@ function renderCard(
   const kept = paragraphs.slice(0, PARAGRAPH_LIMIT - 1);
   const rest = paragraphs.slice(PARAGRAPH_LIMIT - 1).flat();
   const blocks = [...groups, ...kept, ...(rest.length === 0 ? [] : [rest])];
-  const image = block.card?.image;
+  const photos = lotPhotoKeys(block.lotId, block.card);
   return {
     format: "rich",
     text: `<h1>${escapeHtml(title)}</h1>${blocks
       .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`)
       .join("")}`,
-    ...(image === undefined
-      ? {}
-      : { photo: { lotId: block.lotId, version: image.version } }),
+    ...(photos.length === 0 ? {} : { photos }),
   };
 }
 
