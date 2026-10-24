@@ -43,6 +43,9 @@ import {
   consoleWindowsData,
   lotAskData,
   lotFormData,
+  lotImageRemoveConfirmData,
+  lotImageRemoveData,
+  lotKeepStepData,
   lotNewData,
   lotPreviewData,
   lotSkipData,
@@ -1172,6 +1175,11 @@ describe("lot form callbacks", () => {
         { kind: "lot-step-mode", lot, price: 1, mode: "single" },
       ],
       [lotSkipData(lot), { kind: "lot-skip", lot }],
+      [lotImageRemoveData(lot), { kind: "lot-image-remove", lot }],
+      [
+        lotImageRemoveConfirmData(lot, "0zz9a"),
+        { kind: "lot-image-remove-confirm", lot, print: "0zz9a" },
+      ],
     ] as const;
     for (const [data, expected] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
@@ -1220,6 +1228,16 @@ describe("lot form callbacks", () => {
     }
   });
 
+  it("reads the kept step button with the largest price back from its data", () => {
+    const data = lotKeepStepData(lot, maxLotRubles);
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+    expect(parseCallback(data)).toEqual({
+      kind: "lot-keep-step",
+      lot,
+      price: maxLotRubles,
+    });
+  });
+
   it("rejects a lot callback with a broken token, field, price or shape", () => {
     for (const data of [
       "v1:lot",
@@ -1236,6 +1254,15 @@ describe("lot form callbacks", () => {
       `v1:lot:sm:${lot}:700:single:x`,
       `v1:lot:sm:${lot}:700:single:c:c`,
       `v1:lot:skip:${lot}:extra`,
+      // «Оставить шаг» (PER-714): цена обязательна, цепочки нет.
+      `v1:lot:sk:${lot}`,
+      `v1:lot:sk:${lot}:0`,
+      `v1:lot:sk:${lot}:${maxLotRubles + 1}`,
+      `v1:lot:sk:${lot}:700:c`,
+      `v1:lot:rm:${lot}:extra`,
+      `v1:lot:ry:${lot}`,
+      `v1:lot:ry:${lot}:ABCDE`,
+      `v1:lot:ry:${lot}:abcde:extra`,
       `v1:lot:drop:${lot}`,
       `v1:q:ln:${auction}`,
       `v1:q:ln:${auction}:short`,

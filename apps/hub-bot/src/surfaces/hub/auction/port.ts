@@ -131,8 +131,13 @@ export type LotStepPolicyInput =
   | { kind: "tiered"; tiers: readonly LotTierInput[] };
 
 // Правка карточки. Без `image` изображение остаётся как есть: `image_change` не
-// выставляется. С ним — заменяется файлом, скачанным у Telegram.
-export type LotCardEdit = LotCardText & { image?: Uint8Array };
+// выставляется. С ним — заменяется файлом, скачанным у Telegram. С
+// `removeImage` — снимается (PER-715); заменить и снять одной правкой нельзя.
+export type LotCardEdit = LotCardText &
+  (
+    | { image?: Uint8Array; removeImage?: never }
+    | { image?: never; removeImage: true }
+  );
 
 export type LotAdministration = {
   createLotCard(

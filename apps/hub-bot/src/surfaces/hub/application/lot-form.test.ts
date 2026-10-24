@@ -8,6 +8,7 @@ import type {
   ScheduleLotResult,
 } from "../auction/port.js";
 import { createDispatcher } from "./dispatcher.js";
+import { fingerprint } from "./fingerprint.js";
 import { lotReadWindowMs, parseRubles } from "./lot-form.js";
 import type { NewLotId } from "./types.js";
 
@@ -526,6 +527,118 @@ describe("lot form", () => {
     });
   });
 
+  it("removes the image of the card and resends both texts as they are stored", async () => {
+    const { dispatcher, calls } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          card: {
+            title: "Ваза",
+            description: "Синяя.",
+            image: { version: "img-1" },
+          },
+        },
+      },
+    });
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "remove-lot-image",
+      lotId,
+      imagePrint: fingerprint("img-1"),
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "editLotCard",
+      args: { lotId, title: "Ваза", description: "Синяя.", removeImage: true },
+    });
+    expect(result).toMatchObject({
+      kind: "lot-form",
+      lot: { hasImage: false },
+      saved: "image-removed",
+    });
+  });
+
+  it("removes nothing when the photo changed after the confirmation and asks about the photo again", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          card: {
+            title: "Ваза",
+            description: "Синяя.",
+            image: { version: "img-2" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-image",
+        lotId,
+        imagePrint: fingerprint("img-1"),
+      }),
+    ).resolves.toMatchObject({
+      kind: "lot-ask",
+      question: { kind: "image", lotId },
+      error: "photo-changed",
+    });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  it("sends no command when the photo is already gone and answers it as removed", async () => {
+    const { dispatcher, methods } = fakeLots();
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-image",
+        lotId,
+        imagePrint: fingerprint("img-1"),
+      }),
+    ).resolves.toMatchObject({
+      kind: "lot-form",
+      lot: { hasImage: false },
+      saved: "image-removed",
+    });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  it("refuses to remove the image of a sold lot before Auction", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          card: {
+            title: "Ваза",
+            description: "Синяя.",
+            image: { version: "img-1" },
+          },
+          status: {
+            kind: "sold",
+            winnerId: admin.identityId,
+            price: { minorUnits: 90_000, currency: "RUB" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-image",
+        lotId,
+        imagePrint: fingerprint("img-1"),
+      }),
+    ).resolves.toMatchObject({ kind: "lot-refused", reason: "lot-sold" });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
   it.each([
     [
       { kind: "image-too-large", maxBytes: 2_097_152 } as const,
@@ -727,7 +840,83 @@ describe("lot form", () => {
     });
   });
 
-  it("refuses thresholds that do not start at zero or do not ascend", async () => {
+  it("refuses thresholds that start at the starting price and suggests the same lines from zero", async () => {
+    const { dispatcher, methods } = fakeLots();
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-terms",
+      lotId,
+      priceRubles: 1500,
+      mode: "tiered",
+      value: "1500 — 100\n3000 — 200",
+      opId,
+    });
+
+    expect(result).toMatchObject({
+      kind: "lot-ask",
+      question: { kind: "step", lotId, priceRubles: 1500, mode: "tiered" },
+      error: "step-start",
+      suggestedTiers: [
+        {
+          lowerBound: { minorUnits: 0, currency: "RUB" },
+          step: { minorUnits: 10_000, currency: "RUB" },
+        },
+        {
+          lowerBound: { minorUnits: 300_000, currency: "RUB" },
+          step: { minorUnits: 20_000, currency: "RUB" },
+        },
+      ],
+    });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  // Порядок сверяется по присланным строкам, а не по исправленным: замена
+  // первой границы нулём не должна прятать нарушение порядка или шага.
+  it.each([
+    ["a zero line below the first one", "100 — 10\n0 — 20"],
+    ["descending bounds", "5000 — 100\n3000 — 200"],
+    ["a repeated bound", "1500 — 100\n1500 — 200"],
+    ["a decreasing step", "1500 — 200\n3000 — 100"],
+  ])("suggests no corrected thresholds for lines with %s", async (_, value) => {
+    const { dispatcher } = fakeLots();
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-terms",
+      lotId,
+      priceRubles: 1000,
+      mode: "tiered",
+      value,
+      opId,
+    });
+
+    expect(result).toMatchObject({ kind: "lot-ask", error: "step-start" });
+    expect(result).not.toHaveProperty("suggestedTiers");
+  });
+
+  it("suggests no corrected thresholds when there are too many to repeat", async () => {
+    const { dispatcher } = fakeLots();
+    const value = Array.from(
+      { length: 21 },
+      (_, i) => `${(i + 1) * 100} — 10`,
+    ).join("\n");
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-terms",
+      lotId,
+      priceRubles: 1000,
+      mode: "tiered",
+      value,
+      opId,
+    });
+
+    expect(result).toMatchObject({ kind: "lot-ask", error: "step-start" });
+    expect(result).not.toHaveProperty("suggestedTiers");
+  });
+
+  it("refuses thresholds whose step decreases", async () => {
     const { dispatcher, methods } = fakeLots();
 
     await expect(
@@ -737,10 +926,36 @@ describe("lot form", () => {
         lotId,
         priceRubles: 1000,
         mode: "tiered",
-        value: "100 — 10\n0 — 20",
+        value: "0 — 500\n5000 — 100",
         opId,
       }),
-    ).resolves.toMatchObject({ kind: "lot-ask", error: "step-order" });
+    ).resolves.toMatchObject({ kind: "lot-ask", error: "step-decreasing" });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  // Равный шаг на следующем пороге не убывает.
+  it.each([
+    ["grows", "0 — 100\n5000 — 250"],
+    ["stays the same", "0 — 100\n5000 — 100"],
+  ])("accepts thresholds whose step %s", async (_, value) => {
+    const { dispatcher } = fakeLots();
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-terms",
+        lotId,
+        priceRubles: 1000,
+        mode: "tiered",
+        value,
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-form", saved: "terms" });
+  });
+
+  it("refuses thresholds that do not ascend", async () => {
+    const { dispatcher, methods } = fakeLots();
+
     await expect(
       dispatcher.execute({
         identity: admin,
@@ -752,7 +967,7 @@ describe("lot form", () => {
         opId,
       }),
     ).resolves.toMatchObject({ kind: "lot-ask", error: "step-order" });
-    expect(methods()).toEqual(["getLot", "getLot"]);
+    expect(methods()).toEqual(["getLot"]);
   });
 
   it("refuses a threshold line without a dash separator", async () => {
@@ -790,6 +1005,67 @@ describe("lot form", () => {
       question: { kind: "step", lotId, priceRubles: 1500 },
       error: "amount-range",
     });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  // Черновой лот и пороги без строк: Auction пустые пороги не примет, и
+  // оставлять нечего.
+  it.each([
+    ["a draft lot", drafted],
+    [
+      "empty thresholds",
+      {
+        ...drafted,
+        tiers: [],
+        status: {
+          kind: "scheduled",
+          startingPrice: { minorUnits: 150_000, currency: "RUB" },
+        },
+      } satisfies LotView,
+    ],
+  ])(
+    "asks the step mode again for %s with no step to keep and sends no command",
+    async (_, lot) => {
+      const { dispatcher, methods } = fakeLots({ read: { kind: "ok", lot } });
+
+      await expect(
+        dispatcher.execute({
+          identity: admin,
+          intent: "keep-lot-step",
+          lotId,
+          priceRubles: 2500,
+          opId,
+        }),
+      ).resolves.toMatchObject({ kind: "lot-step-mode", priceRubles: 2500 });
+      expect(methods()).toEqual(["getLot"]);
+    },
+  );
+
+  it("refuses to keep the step once the trading of the lot has begun", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          fixedStep: { minorUnits: 10_000, currency: "RUB" },
+          status: {
+            kind: "trading",
+            currentPrice: { minorUnits: 150_000, currency: "RUB" },
+            phase: "online",
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "keep-lot-step",
+        lotId,
+        priceRubles: 2500,
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-refused", reason: "terms-closed" });
     expect(methods()).toEqual(["getLot"]);
   });
 

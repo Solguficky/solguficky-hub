@@ -12,6 +12,7 @@ import {
   type Money,
 } from "../../../auction-ui/index.js";
 import { createDispatcher } from "../application/dispatcher.js";
+import { fingerprint } from "../application/fingerprint.js";
 import { lotReadWindowMs } from "../application/lot-form.js";
 import type {
   AddLotResult,
@@ -25,6 +26,7 @@ import type { IdentityResolver } from "../identity/port.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { newLotIdOf } from "./new-lot-id.js";
 import { type LotFormField, lotAskData } from "./parse-callback.js";
+import { money } from "./screens/auction.js";
 import type { FileDownload, TelegramFiles } from "./telegram-files.js";
 
 // Форма лота администратора в боте хаба (PER-319): входы в ленте и под
@@ -122,6 +124,7 @@ function fakeAuction(
           version: `img-${images.size + 1}`,
         });
       }
+      if (card.removeImage === true) images.delete(card.lotId);
       const stored = images.get(card.lotId);
       lots.set(card.lotId, {
         ...lot,
@@ -644,6 +647,109 @@ describe("lot form", () => {
     expect(JSON.stringify(last(calls))).toContain("Ваза · старт 1 500 ₽");
   });
 
+  // Прогон dev 24.10 (PER-714): админ меняет только цену, а шаг оставляет.
+  const { fixedStep: _single, ...unstepped } = scheduled;
+  const tieredLot: LotView = {
+    ...unstepped,
+    tiers: [
+      { lowerBound: rub(0), step: rub(10_000) },
+      { lowerBound: rub(500_000), step: rub(25_000) },
+    ],
+  };
+  it.each([
+    [
+      "single step",
+      scheduled,
+      `Оставить шаг ${money(rub(10_000))}`,
+      { kind: "fixed", step: rub(10_000) },
+    ],
+    [
+      "thresholds",
+      tieredLot,
+      "Оставить пороги шага",
+      { kind: "tiered", tiers: tieredLot.tiers },
+    ],
+  ])(
+    "saves a new price with the lot's %s kept by one press over a restart",
+    async (_, lot, keep, stepPolicy) => {
+      const auction = fakeAuction({ lots: [lot] });
+      const calls: RecordedCall[] = [];
+      const next = async (update: (history: RecordedCall[]) => Update) => {
+        const { bot } = harness("admin", auction, calls);
+        await bot.init();
+        await bot.handleUpdate(update(calls));
+      };
+      const token = uuidToToken(existingLot);
+
+      await next(() => press(`v1:lot:ask:${token}:price`));
+      await next((history) => answer(history, "2 500"));
+
+      // Экран говорит до ухода, что цена без шага не сохранится, и даёт оставить
+      // прежний шаг; цена едет в кнопке.
+      const mode = last(calls);
+      expect(labels(mode)).toEqual([
+        ["Один шаг", "По порогам"],
+        [keep],
+        ["‹ Изменить лот"],
+      ]);
+      expect(dataOf(mode, keep)).toBe(`v1:lot:sk:${token}:2500`);
+      expect(plain(mode)).toContain(
+        "Цена сохранится только вместе с шагом: «‹ Изменить лот» её не сохранит.",
+      );
+
+      await next((history) => press(dataOf(last(history), keep)));
+
+      expect(auction.commands).toEqual([
+        {
+          method: "scheduleLot",
+          args: {
+            auctionId,
+            lotId: existingLot,
+            opId: expect.any(String),
+            startingPrice: rub(250_000),
+            stepPolicy,
+          },
+        },
+      ]);
+      const saved = last(calls);
+      expect(plain(saved)).toBe(
+        ["Цена и шаг сохранены", "Кружка с совой"].join("\n\n"),
+      );
+      expect(labels(saved)).toEqual([["Изменить лот"], ["‹ Лот"]]);
+    },
+  );
+
+  it("leaves the price unsaved when the administrator goes back from choosing the step", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    const token = uuidToToken(existingLot);
+
+    await bot.handleUpdate(press(`v1:lot:ask:${token}:price`));
+    await bot.handleUpdate(answer(calls, "2 500"));
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Изменить лот")));
+
+    expect(auction.commands).toEqual([]);
+    expect(last(calls).text).toMatch(/Стартовая цена: 500\s₽/);
+  });
+
+  it("offers no kept step in the chain of a new lot", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
+    await bot.handleUpdate(answer(calls, "Ваза"));
+    await bot.handleUpdate(answer(calls, "1 500"));
+
+    const mode = last(calls);
+    expect(labels(mode)).toEqual([
+      ["Один шаг", "По порогам"],
+      ["‹ Изменить лот"],
+    ]);
+    expect(plain(mode)).not.toContain("Цена сохранится только");
+  });
+
   it("ignores an answer to a question of the form from anyone but the asked after a restart", async () => {
     const auction = fakeAuction();
     const calls: RecordedCall[] = [];
@@ -725,22 +831,73 @@ describe("lot form", () => {
     const lot = uuidToToken(existingLot);
 
     await bot.handleUpdate(press(`v1:lot:ask:${lot}:price`));
-    await bot.handleUpdate(answer(calls, "1000"));
+    await bot.handleUpdate(answer(calls, "1500"));
     await bot.handleUpdate(press(dataOf(last(calls), "По порогам")));
-    await bot.handleUpdate(answer(calls, "1000 - 50"));
-
-    // Повтор — снова пороги при цене 1 000 ₽, а не вопрос о стартовой цене.
-    const again = await reasked(
-      bot,
-      calls,
-      "Пороги идут по возрастанию, и первый начинается с 0.",
+    // Вопрос объясняет, что пороги — по цене лота от 0, с расшифровкой.
+    expect(question(calls).payload.text).toContain(
+      [
+        "Пороги шага — строками «от цены — шаг». Цена считается от 0, а не от стартовой: первый порог всегда 0. Дальше цены растут, а шаг не уменьшается. Например:",
+        "0 — 100",
+        "5000 — 250",
+        "До 5 000 ₽ шаг 100 ₽, с 5 000 ₽ — 250 ₽.",
+      ].join("\n"),
     );
-    expect(again.text).toContain("Пороги шага строками");
-    expect(again.text).toMatch(/^Стартовая цена: 1\s000\s₽\./);
-    expect(dataOf(again, "Отмена")).toBe(`v1:q:ly:${lot}:1000:42`);
+    // Прогон dev 24.10: пороги начаты со стартовой цены.
+    await bot.handleUpdate(answer(calls, "1500 — 100\n3000 — 200"));
+
+    // Отказ называет первый порог и предлагает те же строки с нуля.
+    expect(plain(last(calls))).toBe(
+      [
+        "Первый порог — 0",
+        "",
+        "Пороги считаются по цене лота от 0, а не от стартовой цены. Пришли так:",
+        "0 — 100",
+        "3000 — 200",
+      ].join("\n"),
+    );
+    // Повтор — снова пороги при цене 1 500 ₽, а не вопрос о стартовой цене.
+    const again = await reasked(bot, calls, "Первый порог — 0.");
+    expect(again.text).toContain("Пороги шага — строками");
+    expect(again.text).toMatch(/^Стартовая цена: 1\s500\s₽\./);
+    expect(dataOf(again, "Отмена")).toBe(`v1:q:ly:${lot}:1500:42`);
     expect(auction.commands).toEqual([]);
     expect(records.every((record) => record.level !== "error")).toBe(true);
   });
+
+  it.each([
+    [
+      "whose step decreases",
+      "0 — 500\n5000 — 100",
+      "Шаг не может уменьшаться",
+      "С ростом цены шаг остаётся прежним или растёт. Например:",
+    ],
+    [
+      "whose prices do not ascend",
+      "0 — 100\n5000 — 250\n3000 — 300",
+      "Цены порогов не по возрастанию",
+      "Каждый следующий порог — с цены выше прежнего. Например:",
+    ],
+  ])(
+    "refuses thresholds %s with its own reason",
+    async (_, value, title, explanation) => {
+      const auction = fakeAuction({ lots: [scheduled] });
+      const { bot, calls } = harness("admin", auction);
+      await bot.init();
+      const lot = uuidToToken(existingLot);
+
+      await bot.handleUpdate(press(`v1:lot:ask:${lot}:price`));
+      await bot.handleUpdate(answer(calls, "1000"));
+      await bot.handleUpdate(press(dataOf(last(calls), "По порогам")));
+      await bot.handleUpdate(answer(calls, value));
+
+      expect(plain(last(calls))).toBe(
+        [title, "", explanation, "0 — 100", "5000 — 250"].join("\n"),
+      );
+      const again = await reasked(bot, calls, `${title}.`);
+      expect(dataOf(again, "Отмена")).toBe(`v1:q:ly:${lot}:1000:42`);
+      expect(auction.commands).toEqual([]);
+    },
+  );
 
   it("changes one text of the card and shows the outcome with a way back to the form", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
@@ -1255,6 +1412,184 @@ describe("lot form photo question", () => {
   });
 });
 
+// Снятие фото лота (PER-715, решение владельца 24 октября 2026 года): у лота с
+// фото вопрос о фото даёт «Убрать фото» с подтверждением, а «Да» — правку
+// карточки с `remove_image`.
+describe("lot photo removal", () => {
+  const lot = uuidToToken(existingLot);
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const withPhoto: LotView = {
+    ...scheduled,
+    card: {
+      title: "Кружка с совой",
+      description: "Ручная роспись.",
+      image: { version: "img-1" },
+    },
+  };
+  const auctionWithPhoto = (edit?: () => LotCardResult | undefined) => {
+    const auction = fakeAuction({
+      lots: [withPhoto],
+      ...(edit === undefined ? {} : { edit }),
+    });
+    auction.images.set(existingLot, { content: jpeg, version: "img-1" });
+    return auction;
+  };
+
+  it("removes the photo of a lot after the confirmation over a restart and shows the lot without it", async () => {
+    const auction = auctionWithPhoto();
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(`v1:lot:ask:${lot}:image`));
+    const asked = question(calls).payload;
+    expect(labels(asked)).toEqual([["🗑 Убрать фото"], ["Отмена"]]);
+
+    await next((history) =>
+      press(dataOf(question(history).payload, "🗑 Убрать фото")),
+    );
+    const confirm = last(calls);
+    expect(plain(confirm)).toBe(
+      [
+        "Убрать фото?",
+        "Кружка с совой",
+        "Участники увидят карточку лота без фото. Вернуть его можно, только прислав фото заново.",
+      ].join("\n\n"),
+    );
+    expect(labels(confirm)).toEqual([["✔️ Да, убрать фото", "✖️ Нет"]]);
+    expect(auction.commands).toEqual([]);
+
+    await next((history) => press(dataOf(last(history), "✔️ Да, убрать фото")));
+    // Тексты карточки уходят прежними: правка заменяет оба.
+    expect(auction.commands).toEqual([
+      {
+        method: "editLotCard",
+        args: {
+          lotId: existingLot,
+          title: "Кружка с совой",
+          description: "Ручная роспись.",
+          removeImage: true,
+        },
+      },
+    ]);
+    const outcome = last(calls);
+    expect(plain(outcome)).toBe(["Фото убрано", "Кружка с совой"].join("\n\n"));
+    expect(labels(outcome)).toEqual([["Изменить лот"], ["‹ Лот"]]);
+
+    await next(() => press(dataOf(outcome, "Изменить лот")));
+    expect(last(calls).text).toContain("Фото: нет");
+  });
+
+  it("shows the lot without the photo to a member's eyes after the removal", async () => {
+    const auction = auctionWithPhoto();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ry:${lot}:${fingerprint("img-1")}`));
+    await bot.handleUpdate(press(`v1:lot:view:${lot}`));
+
+    // Текстом на месте нажатия, без фото: ни `sendPhoto`, ни медиа rich.
+    expect(calls.at(-1)?.method).toBe("editMessageText");
+    expect(last(calls).text).toContain("<b>Кружка с совой</b>");
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("media");
+  });
+
+  it("removes nothing when the photo changed after the confirmation", async () => {
+    const auction = auctionWithPhoto();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(
+      press(dataOf(question(calls).payload, "🗑 Убрать фото")),
+    );
+    const confirm = last(calls);
+    // Пока подтверждение висело, лоту прислали другое фото.
+    auction.images.set(existingLot, { content: jpeg, version: "img-2" });
+    auction.lots.set(existingLot, {
+      ...withPhoto,
+      card: {
+        title: "Кружка с совой",
+        description: "Ручная роспись.",
+        image: { version: "img-2" },
+      },
+    });
+    await bot.handleUpdate(press(dataOf(confirm, "✔️ Да, убрать фото")));
+
+    expect(plain(last(calls))).toBe(
+      [
+        "Фото уже сменилось",
+        "",
+        "Ничего не убрано: посмотри новое фото и реши заново.",
+      ].join("\n"),
+    );
+    expect(auction.commands).toEqual([]);
+  });
+
+  it("refuses to remove the photo of a sold lot with the sold-lot frame", async () => {
+    const auction = fakeAuction({
+      lots: [
+        {
+          ...withPhoto,
+          status: { kind: "sold", winnerId: existingLot, price: rub(90_000) },
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:rm:${lot}`));
+
+    expect(plain(last(calls))).toBe(
+      "Лот продан. Название, описание и фото больше не меняются.",
+    );
+    expect(auction.commands).toEqual([]);
+  });
+
+  it("asks the photo again when the administrator declines the removal", async () => {
+    const auction = auctionWithPhoto();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(
+      press(dataOf(question(calls).payload, "🗑 Убрать фото")),
+    );
+    await bot.handleUpdate(press(dataOf(last(calls), "✖️ Нет")));
+
+    expect(question(calls).payload.text).toContain("Пришли фото лота");
+    expect(auction.commands).toEqual([]);
+  });
+
+  it("offers no removal on the photo question of a lot without a photo", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+
+    expect(labels(question(calls).payload)).toEqual([["Отмена"]]);
+  });
+
+  it("shows the closed-card frame of the form when Auction refuses the removal", async () => {
+    const auction = auctionWithPhoto(() => ({ kind: "card-closed" }));
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ry:${lot}:${fingerprint("img-1")}`));
+
+    const refusal = last(calls);
+    expect(plain(refusal)).toBe(
+      "Лот закрыт. Название, описание и фото больше не меняются.",
+    );
+    expect(labels(refusal)).toEqual([["‹ Лот"]]);
+    expect(records.every((record) => record.level !== "error")).toBe(true);
+  });
+});
+
 // Лот глазами участника (PER-512): карточка той же вёрсткой и с тем же фото,
 // что у участника, без кнопок ставки, с пометкой и возвратом в форму.
 describe("lot preview", () => {
@@ -1405,7 +1740,7 @@ describe("new lot chain", () => {
     await next((history) => press(dataOf(last(history), "По порогам")));
     const step = question(calls).payload;
     expect(dataOf(step, "Отмена")).toBe(`v1:q:cy:${lot}:1500:42`);
-    expect(step.text).toContain("Пороги шага строками");
+    expect(step.text).toContain("Пороги шага — строками");
 
     await next((history) => answer(history, "0 — 100\n5000 — 250"));
     expect(auction.commands.at(-1)).toMatchObject({

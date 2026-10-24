@@ -1,6 +1,7 @@
 package auction.meetup
 
 import auction.entity.AuctionAnswer
+import auction.telemetry.NatsClientLog
 import io.nats.client.Connection
 import io.nats.client.ConsumerContext
 import io.nats.client.FetchConsumeOptions
@@ -107,15 +108,7 @@ final class MeetupCancellationConsumer(
         case _: InterruptedException => ()
       }
 
-  private def connect(): Connection =
-    Nats.connect(
-      new Options.Builder()
-        .server(url)
-        .connectionTimeout(Duration.ofSeconds(2))
-        // Переподключение ведёт сам цикл: оборванное соединение уходит на новый круг с привязкой к durable.
-        .maxReconnects(0)
-        .build()
-    )
+  private def connect(): Connection = Nats.connect(MeetupCancellationConsumer.options(url))
 
   private def consume(connection: Connection): Unit = {
     val context = connection
@@ -128,8 +121,11 @@ final class MeetupCancellationConsumer(
     while (running) {
       if (connection.getStatus != Connection.Status.CONNECTED)
         throw new IllegalStateException("auction meetup facts connection is not connected")
-      // Пустая выборка клиент отдаёт как `null`.
-      Option(context.fetch(options).nextMessage()).foreach(handle)
+      // Выборка — своя подписка с таймером idle heartbeat, и пустую выборку клиент отдаёт `null`, не закрывая её: после
+      // конца pull сервер heartbeat не шлёт, и брошенная подписка через три периода писала `heartbeatAlarm` (PER-697).
+      // Поэтому выборка закрывается до обработки: ответ аукциона ждётся дольше трёх периодов. Подтверждение идёт через
+      // соединение сообщения, подписка ему не нужна.
+      Option(Using.resource(context.fetch(options))(_.nextMessage())).foreach(handle)
     }
   }
 
@@ -193,6 +189,16 @@ object MeetupCancellationConsumer {
   val Durable: String = "auction-meetups-events"
 
   val Subject: String = "events.meetups.meetup_cancelled"
+
+  /** Настройки соединения потребителя; события клиента идут в лог сервиса через `NatsClientLog`. */
+  private[meetup] def options(url: String): Options =
+    new Options.Builder()
+      .server(url)
+      .connectionTimeout(Duration.ofSeconds(2))
+      // Переподключение ведёт сам цикл: оборванное соединение уходит на новый круг с привязкой к durable.
+      .maxReconnects(0)
+      .errorListener(NatsClientLog(Operation))
+      .build()
 
   // Коды ошибок JetStream API: 10014 — durable не найден, 10059 — стрим не найден.
   private def isMissing(failure: JetStreamApiException): Boolean =
