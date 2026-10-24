@@ -725,22 +725,73 @@ describe("lot form", () => {
     const lot = uuidToToken(existingLot);
 
     await bot.handleUpdate(press(`v1:lot:ask:${lot}:price`));
-    await bot.handleUpdate(answer(calls, "1000"));
+    await bot.handleUpdate(answer(calls, "1500"));
     await bot.handleUpdate(press(dataOf(last(calls), "По порогам")));
-    await bot.handleUpdate(answer(calls, "1000 - 50"));
-
-    // Повтор — снова пороги при цене 1 000 ₽, а не вопрос о стартовой цене.
-    const again = await reasked(
-      bot,
-      calls,
-      "Пороги идут по возрастанию, и первый начинается с 0.",
+    // Вопрос объясняет, что пороги — по цене лота от 0, с расшифровкой.
+    expect(question(calls).payload.text).toContain(
+      [
+        "Пороги шага — строками «от цены — шаг». Цена считается от 0, а не от стартовой: первый порог всегда 0. Дальше цены растут, а шаг не уменьшается. Например:",
+        "0 — 100",
+        "5000 — 250",
+        "До 5 000 ₽ шаг 100 ₽, с 5 000 ₽ — 250 ₽.",
+      ].join("\n"),
     );
-    expect(again.text).toContain("Пороги шага строками");
-    expect(again.text).toMatch(/^Стартовая цена: 1\s000\s₽\./);
-    expect(dataOf(again, "Отмена")).toBe(`v1:q:ly:${lot}:1000:42`);
+    // Прогон dev 24.10: пороги начаты со стартовой цены.
+    await bot.handleUpdate(answer(calls, "1500 — 100\n3000 — 200"));
+
+    // Отказ называет первый порог и предлагает те же строки с нуля.
+    expect(plain(last(calls))).toBe(
+      [
+        "Первый порог — 0",
+        "",
+        "Пороги считаются по цене лота от 0, а не от стартовой цены. Пришли так:",
+        "0 — 100",
+        "3000 — 200",
+      ].join("\n"),
+    );
+    // Повтор — снова пороги при цене 1 500 ₽, а не вопрос о стартовой цене.
+    const again = await reasked(bot, calls, "Первый порог — 0.");
+    expect(again.text).toContain("Пороги шага — строками");
+    expect(again.text).toMatch(/^Стартовая цена: 1\s500\s₽\./);
+    expect(dataOf(again, "Отмена")).toBe(`v1:q:ly:${lot}:1500:42`);
     expect(auction.commands).toEqual([]);
     expect(records.every((record) => record.level !== "error")).toBe(true);
   });
+
+  it.each([
+    [
+      "whose step decreases",
+      "0 — 500\n5000 — 100",
+      "Шаг не может уменьшаться",
+      "С ростом цены шаг остаётся прежним или растёт. Например:",
+    ],
+    [
+      "whose prices do not ascend",
+      "0 — 100\n5000 — 250\n3000 — 300",
+      "Цены порогов не по возрастанию",
+      "Каждый следующий порог — с цены выше прежнего. Например:",
+    ],
+  ])(
+    "refuses thresholds %s with its own reason",
+    async (_, value, title, explanation) => {
+      const auction = fakeAuction({ lots: [scheduled] });
+      const { bot, calls } = harness("admin", auction);
+      await bot.init();
+      const lot = uuidToToken(existingLot);
+
+      await bot.handleUpdate(press(`v1:lot:ask:${lot}:price`));
+      await bot.handleUpdate(answer(calls, "1000"));
+      await bot.handleUpdate(press(dataOf(last(calls), "По порогам")));
+      await bot.handleUpdate(answer(calls, value));
+
+      expect(plain(last(calls))).toBe(
+        [title, "", explanation, "0 — 100", "5000 — 250"].join("\n"),
+      );
+      const again = await reasked(bot, calls, `${title}.`);
+      expect(dataOf(again, "Отмена")).toBe(`v1:q:ly:${lot}:1000:42`);
+      expect(auction.commands).toEqual([]);
+    },
+  );
 
   it("changes one text of the card and shows the outcome with a way back to the form", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
@@ -1405,7 +1456,7 @@ describe("new lot chain", () => {
     await next((history) => press(dataOf(last(history), "По порогам")));
     const step = question(calls).payload;
     expect(dataOf(step, "Отмена")).toBe(`v1:q:cy:${lot}:1500:42`);
-    expect(step.text).toContain("Пороги шага строками");
+    expect(step.text).toContain("Пороги шага — строками");
 
     await next((history) => answer(history, "0 — 100\n5000 — 250"));
     expect(auction.commands.at(-1)).toMatchObject({
