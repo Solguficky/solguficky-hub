@@ -875,8 +875,9 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
           lotId: lot.lotId,
           maxPhotos: written.maxPhotos,
         };
-      // `photoId` рождается на каждое сообщение, и конфликт с другими
-      // байтами значит дефект края, а не ответ человека.
+      // `photoId` выводится из лота и байтов фото (`lotPhotoIdOf`), поэтому
+      // тот же идентификатор с другими байтами — дефект края, а не ответ
+      // человека.
       case "photo-conflict":
         return failed({
           kind: "invalid",

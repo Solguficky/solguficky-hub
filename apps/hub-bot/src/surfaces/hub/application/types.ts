@@ -429,7 +429,8 @@ export type LotFormRequest =
       set?: true;
     })
   // Фото в конец списка (PER-721). Его уже скачал у Telegram край: юзкейс
-  // получает только байты. `photoId` край рождает на каждое сообщение.
+  // получает только байты. `photoId` край выводит из лота и байтов фото
+  // (`lotPhotoIdOf`): повтор того же фото даёт тот же идентификатор.
   | (LotFormCall & {
       intent: "add-lot-photo";
       lotId: string;

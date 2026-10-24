@@ -596,7 +596,8 @@ function reply(
   return {
     update_id: 4,
     message: {
-      // Свой номер у каждого ответа: из него бот выводит идентификатор фото.
+      // Свой номер у каждого ответа; идентификатор фото бот выводит из лота
+      // и байтов, а не из номера сообщения.
       message_id: 1000 + calls.length,
       date: 0,
       chat: { id: 42, type: "private", first_name: "tester" },
