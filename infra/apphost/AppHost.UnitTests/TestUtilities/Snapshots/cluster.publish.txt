@@ -34,7 +34,13 @@ auction: ContainerResource
   health: auction_http_/health_200_check
 auction-bot: ContainerResource
   image: /hub-bot:latest
+  env: AUCTION_FAQ_CONNECTION_FAILURE={auction-faq-connection-failure.value}
+  env: AUCTION_FAQ_DELIVERY={auction-faq-delivery.value}
+  env: AUCTION_FAQ_DETAILS_URL={auction-faq-details-url.value}
+  env: AUCTION_FAQ_ITEMS={auction-faq-items.value}
+  env: AUCTION_FAQ_PURPOSE={auction-faq-purpose.value}
   env: AUCTION_FAQ_QUESTION_URL=https://t.me/{support-bot-username.value}?start=auction
+  env: AUCTION_FAQ_SIMULTANEOUS_BIDS={auction-faq-simultaneous-bids.value}
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
@@ -52,6 +58,12 @@ auction-bot: ContainerResource
   relationship: Reference auction
   relationship: Reference auction-bot-service-token
   relationship: Reference auction-bot-token
+  relationship: Reference auction-faq-connection-failure
+  relationship: Reference auction-faq-delivery
+  relationship: Reference auction-faq-details-url
+  relationship: Reference auction-faq-items
+  relationship: Reference auction-faq-purpose
+  relationship: Reference auction-faq-simultaneous-bids
   relationship: Reference identity
   relationship: Reference nats
   relationship: Reference notifications
@@ -70,6 +82,18 @@ auction-db-password: ParameterResource
   secret: True
 auction-db-user: ParameterResource
   secret: True
+auction-faq-connection-failure: ParameterResource
+  secret: False
+auction-faq-delivery: ParameterResource
+  secret: False
+auction-faq-details-url: ParameterResource
+  secret: False
+auction-faq-items: ParameterResource
+  secret: False
+auction-faq-purpose: ParameterResource
+  secret: False
+auction-faq-simultaneous-bids: ParameterResource
+  secret: False
 auction-service-token: ParameterResource
   secret: True
 cloudflared: ContainerResource
@@ -86,6 +110,12 @@ cloudflared-tunnel-token: ParameterResource
 hub-bot: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/hub-bot/Containerfile context=<repo>
+  env: AUCTION_FAQ_CONNECTION_FAILURE={auction-faq-connection-failure.value}
+  env: AUCTION_FAQ_DELIVERY={auction-faq-delivery.value}
+  env: AUCTION_FAQ_DETAILS_URL={auction-faq-details-url.value}
+  env: AUCTION_FAQ_ITEMS={auction-faq-items.value}
+  env: AUCTION_FAQ_PURPOSE={auction-faq-purpose.value}
+  env: AUCTION_FAQ_SIMULTANEOUS_BIDS={auction-faq-simultaneous-bids.value}
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
@@ -103,6 +133,12 @@ hub-bot: ContainerResource
   waits: nats WaitUntilHealthy
   waits: notifications WaitUntilHealthy
   relationship: Reference auction
+  relationship: Reference auction-faq-connection-failure
+  relationship: Reference auction-faq-delivery
+  relationship: Reference auction-faq-details-url
+  relationship: Reference auction-faq-items
+  relationship: Reference auction-faq-purpose
+  relationship: Reference auction-faq-simultaneous-bids
   relationship: Reference hub-bot-service-token
   relationship: Reference hub-bot-token
   relationship: Reference identity

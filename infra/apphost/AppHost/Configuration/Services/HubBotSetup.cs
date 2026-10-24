@@ -37,6 +37,7 @@ internal static class HubBotSetup
             context,
             TelegramEnvironment.Resolve(context.Builder.Configuration),
             SupportBotLink.Local(context.Builder.Configuration),
+            AuctionFaqTexts.Local(context.Builder.Configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.HubBot));
 
     /// <summary>
@@ -49,6 +50,7 @@ internal static class HubBotSetup
                 context,
                 TelegramEnvironment.Production,
                 SupportBotLink.Published(context.Builder),
+                AuctionFaqTexts.Published(context.Builder),
                 context.Builder.AddDockerfile(
                     AppHostNames.Resources.HubBot,
                     RepositoryPaths.Root(context.Builder),
@@ -60,6 +62,7 @@ internal static class HubBotSetup
         ServiceGraphContext context,
         TelegramEnvironment environment,
         SupportBotLink? support,
+        AuctionFaqTexts faq,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
@@ -78,6 +81,9 @@ internal static class HubBotSetup
 
         // Вход в бот поддержки из «Помощи» и ожидания допуска (ADR-068, п. 2).
         support?.Username(bot);
+
+        // Тексты FAQ аукциона и «Подробнее» — общие с ботом аукциона.
+        faq.Apply(bot);
 
         return bot
             // Один пакет на три бота (ADR-064, п. 18): поверхность — параметр

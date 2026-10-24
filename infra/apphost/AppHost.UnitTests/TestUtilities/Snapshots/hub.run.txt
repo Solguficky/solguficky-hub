@@ -20,6 +20,7 @@ hub-bot: ExecutableResource
   command: node
   workdir: <repo>/apps/hub-bot
   arg: dist/src/main.js
+  env: AUCTION_FAQ_PURPOSE=Charity
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
   env: BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}

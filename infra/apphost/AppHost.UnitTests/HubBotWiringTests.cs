@@ -11,7 +11,7 @@ namespace AppHost.UnitTests;
 
 /// <summary>
 /// Имя бота аукциона для ссылок каналов прихода (PER-441) и имя бота поддержки
-/// (ADR-068, п. 2) — необязательные настройки: заданная доезжает до бота хаба,
+/// (ADR-068, п. 2) и тексты FAQ аукциона — необязательные настройки: заданная доезжает до бота хаба,
 /// незаданная не появляется вовсе.
 /// </summary>
 public class HubBotWiringTests
@@ -51,9 +51,41 @@ public class HubBotWiringTests
         environment.ShouldNotContainKey("BOT_SUPPORT_BOT_USERNAME");
     }
 
+    /// <summary>
+    /// FAQ аукциона (временный мостик до PER-720): заданный текст доезжает
+    /// обрезанным, пустой и незаданный не дают переменной — бот покажет заглушку.
+    /// </summary>
+    [Fact]
+    public async Task HubBot_GetsOnlyTheConfiguredAuctionFaqTexts()
+    {
+        var environment = await EnvironmentAsync(null, faq: new()
+        {
+            ["AuctionFaq:Purpose"] = " На ремонт клуба. ",
+            ["AuctionFaq:DetailsUrl"] = "https://example.org/auction",
+            ["AuctionFaq:Delivery"] = "  ",
+        });
+
+        environment["AUCTION_FAQ_PURPOSE"].ShouldBe("На ремонт клуба.");
+        environment["AUCTION_FAQ_DETAILS_URL"].ShouldBe("https://example.org/auction");
+        environment.ShouldNotContainKey("AUCTION_FAQ_DELIVERY");
+        environment.ShouldNotContainKey("AUCTION_FAQ_ITEMS");
+    }
+
+    [Fact]
+    public async Task HubBot_WithoutAuctionFaq_GetsNoFaqVariable()
+    {
+        var environment = await EnvironmentAsync(null);
+
+        foreach (var field in AuctionFaqTexts.Fields)
+        {
+            environment.ShouldNotContainKey(field.Variable);
+        }
+    }
+
     private static async Task<Dictionary<string, object>> EnvironmentAsync(
         string? auctionBotUsername,
-        string? supportBotUsername = null)
+        string? supportBotUsername = null,
+        Dictionary<string, string?>? faq = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -64,6 +96,7 @@ public class HubBotWiringTests
             [HubBotSetup.AuctionBotUsernameKey] = auctionBotUsername,
             [SupportBotLink.UsernameKey] = supportBotUsername,
         });
+        builder.Configuration.AddInMemoryCollection(faq ?? []);
         var profile = new ProfileConfig { Name = "hub", Services = ["hub-bot"], Infrastructure = [] };
         var bot = HubBotSetup.Configure(new ServiceGraphContext(builder, profile)).Resource;
 

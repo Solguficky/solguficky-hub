@@ -29,10 +29,16 @@ public class GraphSnapshotTests
         MatchAsync(HubArgs, "hub.run.txt");
 
     /// <summary>
-    /// Имя бота поддержки — настройка, которой в CI нет (SupportBotLink): без
-    /// неё снимок не показал бы адресов, которые получают два других бота.
+    /// Имя бота поддержки и текст FAQ аукциона — настройки, которых в CI нет
+    /// (SupportBotLink, AuctionFaqTexts): без них снимок не показал бы
+    /// переменных, которые из них получают боты.
     /// </summary>
-    private static readonly string[] HubArgs = ["--profile", "hub", "--SupportBot:Username=solguficky_support_bot"];
+    private static readonly string[] HubArgs =
+    [
+        "--profile", "hub",
+        "--SupportBot:Username=solguficky_support_bot",
+        "--AuctionFaq:Purpose=Charity",
+    ];
 
     /// <summary>
     /// Bind молчит, если узла нет: локально это свойство среза, а в чарте —

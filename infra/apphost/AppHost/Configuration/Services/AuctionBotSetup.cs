@@ -34,6 +34,7 @@ internal static class AuctionBotSetup
             context,
             environment,
             SupportBotLink.Local(configuration),
+            AuctionFaqTexts.Local(configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.AuctionBot));
     }
 
@@ -50,6 +51,7 @@ internal static class AuctionBotSetup
                 context,
                 TelegramEnvironment.Production,
                 SupportBotLink.Published(context.Builder),
+                AuctionFaqTexts.Published(context.Builder),
                 context.Builder.AddContainer(AppHostNames.Resources.AuctionBot, AppHostNames.Resources.HubBot))
             .AsClusterWorkload(Cluster);
 
@@ -57,12 +59,16 @@ internal static class AuctionBotSetup
         ServiceGraphContext context,
         TelegramEnvironment environment,
         SupportBotLink? support,
+        AuctionFaqTexts faq,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
         // Вход в бот поддержки из ожидания допуска и «Задать вопрос ↗» FAQ
         // (ADR-068, п. 2).
         support?.UsernameAndQuestionUrl(bot);
+
+        // Тексты FAQ и «Подробнее» — общие с ботом хаба.
+        faq.Apply(bot);
 
         var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
 

@@ -194,6 +194,17 @@ public class AuctionBotWiringTests
         environment.ShouldNotContainKey("AUCTION_FAQ_QUESTION_URL");
     }
 
+    /// <summary>FAQ аукциона — тот же, что у бота хаба (временный мостик до PER-720).</summary>
+    [Fact]
+    public async Task AuctionBot_GetsTheConfiguredAuctionFaqTexts()
+    {
+        var (bot, _) = Materialize("prod", faq: new() { ["AuctionFaq:Items"] = "Мерч и автографы." });
+        var environment = await EnvironmentAsync(bot);
+
+        environment["AUCTION_FAQ_ITEMS"].ShouldBe("Мерч и автографы.");
+        environment.ShouldNotContainKey("AUCTION_FAQ_PURPOSE");
+    }
+
     [Fact]
     public async Task AuctionBot_TestEnvironment_TakesTheTestToken()
     {
@@ -208,7 +219,8 @@ public class AuctionBotWiringTests
         string telegramEnvironment,
         string? staleAuctionId = null,
         bool withNotifications = true,
-        string? supportBotUsername = null)
+        string? supportBotUsername = null,
+        Dictionary<string, string?>? faq = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -231,6 +243,7 @@ public class AuctionBotWiringTests
             ["AuctionBot:AuctionId"] = staleAuctionId,
             [SupportBotLink.UsernameKey] = supportBotUsername,
         });
+        builder.Configuration.AddInMemoryCollection(faq ?? []);
         if (withNotifications)
         {
             builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
