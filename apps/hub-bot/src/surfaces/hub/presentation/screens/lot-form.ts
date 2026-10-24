@@ -468,7 +468,10 @@ const lotAskErrors: Record<LotAskError, string> = {
   "image-too-large": "Фото слишком большое, аукцион его не принял.",
   "unsupported-image": "Аукцион не узнал в этом файле изображение.",
   "photo-needed": "Нужна фотография, а не текст, файл или стикер.",
-  "photo-unavailable": "Не получилось получить фото у Telegram.",
+  "photo-unavailable":
+    "Не получилось получить фото у Telegram. Пришли фото ещё раз.",
+  "photo-not-saved":
+    "Не получилось сохранить фото. Это на моей стороне. Пришли фото ещё раз.",
   "copies-count": `Нужно целое число от ${minLotCopies} до ${maxLotCopies}.`,
 };
 
