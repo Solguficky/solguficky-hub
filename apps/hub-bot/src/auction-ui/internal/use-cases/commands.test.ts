@@ -5,11 +5,16 @@ import {
   CONTRACT_LOT,
   CONTRACT_OP_IDS,
   CONTRACT_USER,
+  type ContractAuction,
   contractIdentity,
+  contractViewer,
   type PortCall,
   spyPorts,
 } from "../../contract/check.js";
+import { AUCTION_SURFACES } from "../../contract/surfaces.js";
 import { handleAuctionUpdate } from "../../gateway.js";
+import type { LotView, TelegramUser } from "../../ports.js";
+import type { AuctionScreenBody } from "../../screen.js";
 
 const press = (ports: ReturnType<typeof spyPorts>, data: string) =>
   handleAuctionUpdate(
@@ -290,3 +295,152 @@ describe("proxy explainer example", () => {
     expect(example?.firstBid).toBeUndefined();
   });
 });
+
+// Ставка с карточки финала без выбранного имени (PER-713): «Поставить» ведёт к
+// выбору имени, а выбранное имя ставит ту же цену, если она всё ещё
+// следующая. Дерево одно у двух ботов, поэтому сценарий идёт по обеим
+// поверхностям.
+
+const rub = (rubles: number) => ({ minorUnits: rubles * 100, currency: "RUB" });
+
+const liveAt = (current: number, next: number): LotView => ({
+  ...CONTRACT_LOT,
+  nextPrice: rub(next),
+  status: { kind: "trading", currentPrice: rub(current), phase: "live" },
+});
+
+// С ником: экран выбора имени предлагает его одной кнопкой.
+const user: TelegramUser = {
+  telegramUserId: 424242,
+  telegramUsername: "owl_fan",
+};
+
+const bids = (calls: readonly PortCall[]) =>
+  calls.flatMap((call) =>
+    call.method === "placeBid" ? [call.request.amount.minorUnits] : [],
+  );
+
+function lotBlock(body: AuctionScreenBody) {
+  const block = body.blocks[0];
+  if (block?.kind !== "lot") throw new Error(`no lot card: ${block?.kind}`);
+  return block;
+}
+
+describe.each(AUCTION_SURFACES)(
+  "final bid after choosing a name (%s)",
+  (surface) => {
+    const pressOn = (ports: ReturnType<typeof spyPorts>, data: string) =>
+      handleAuctionUpdate(
+        { kind: surface, ports },
+        {
+          identity: contractIdentity(surface),
+          user,
+          input: { kind: "callback", data },
+        },
+      );
+
+    // «Поставить 1 300 ₽» без имени: Auction отказывает, и дерево ведёт к выбору
+    // имени; кнопка ника несёт отложенную ставку.
+    async function pressBidWithoutName(snapshot: ContractAuction) {
+      const calls: PortCall[] = [];
+      const ports = spyPorts(calls, snapshot, contractIdentity(surface));
+      const choice = await pressOn(
+        ports,
+        encodeAuctionCallback({
+          kind: "final-bid",
+          lotId: CONTRACT_LOT.lotId,
+          amount: rub(1300).minorUnits,
+          page: 0,
+        }),
+      );
+      if (choice.kind !== "screen") throw new Error("no name choice");
+      expect(choice.body.blocks[0]?.kind).toBe("name-choice");
+      const username = choice.body.keyboard
+        .flat()
+        .find((button) => button.action === "name.username");
+      if (username === undefined) throw new Error("no username button");
+      return { calls, ports, username: username.callbackData };
+    }
+
+    it("places the same bid right after the name is chosen, without a second press", async () => {
+      const { calls, ports, username } = await pressBidWithoutName({
+        ...AUCTION,
+        lots: [liveAt(1200, 1300)],
+        bids: [
+          { kind: "refused", refusal: { kind: "display-name-not-chosen" } },
+          { kind: "accepted", lotVersion: 0 },
+        ],
+        displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+      });
+
+      const result = await pressOn(ports, username);
+
+      expect(bids(calls)).toEqual([rub(1300).minorUnits, rub(1300).minorUnits]);
+      if (result.kind !== "screen") throw new Error("no card");
+      expect(lotBlock(result.body).finalBid).toEqual({
+        kind: "accepted",
+        amount: rub(1300),
+      });
+    });
+
+    // Пока висел выбор имени, человек поставил из другого бота и лидирует: у
+    // лидера кнопки ставки нет, и карточка говорит, что цена его.
+    it("tells the leader the price is theirs instead of bidding again", async () => {
+      const snapshot: ContractAuction = {
+        ...AUCTION,
+        lots: [liveAt(1200, 1300)],
+        bids: [
+          { kind: "refused", refusal: { kind: "display-name-not-chosen" } },
+        ],
+        displayNames: [{ kind: "refused", refusal: "name-frozen" }],
+      };
+      const { calls, ports, username } = await pressBidWithoutName(snapshot);
+      const led: LotView = {
+        ...liveAt(1300, 1350),
+        status: {
+          kind: "trading",
+          currentPrice: rub(1300),
+          leaderId: contractViewer(surface).identityId,
+          phase: "live",
+        },
+      };
+      // Шпион читает лоты из снимка на каждом чтении, а `ContractAuction`
+      // держит их только для чтения, поэтому подмена — приведением.
+      (snapshot as { lots: readonly LotView[] }).lots = [led];
+
+      const result = await pressOn(ports, username);
+
+      expect(bids(calls)).toEqual([rub(1300).minorUnits]);
+      if (result.kind !== "screen") throw new Error("no card");
+      expect(lotBlock(result.body).finalBid).toEqual({
+        kind: "refused",
+        refusal: { kind: "bidder-is-leader", currentPrice: rub(1300) },
+      });
+    });
+
+    it("shows the new price instead of bidding when it moved while the name was chosen", async () => {
+      const snapshot: ContractAuction = {
+        ...AUCTION,
+        lots: [liveAt(1200, 1300)],
+        bids: [
+          { kind: "refused", refusal: { kind: "display-name-not-chosen" } },
+        ],
+        displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+      };
+      const { calls, ports, username } = await pressBidWithoutName(snapshot);
+      // Пока человек выбирал имя, ведущий поднял цену.
+      (snapshot as { lots: readonly LotView[] }).lots = [liveAt(1300, 1400)];
+
+      const result = await pressOn(ports, username);
+
+      expect(bids(calls)).toEqual([rub(1300).minorUnits]);
+      if (result.kind !== "screen") throw new Error("no card");
+      const block = lotBlock(result.body);
+      expect(block.finalBid).toEqual({
+        kind: "price-changed",
+        next: rub(1400),
+      });
+      expect(block.nextPrice).toEqual(rub(1400));
+    });
+  },
+);

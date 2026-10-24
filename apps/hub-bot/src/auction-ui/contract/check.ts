@@ -1632,9 +1632,11 @@ const pending = (command: "bid" | "proxy", amount: number) => ({
   amount,
 });
 
+// `final` — выбор имени после «Поставить» карточки финала (PER-713):
+// отложенная ставка несёт метку и после имени уходит сразу.
 const nameChoiceBody = (
   amount: number,
-  extra: { username?: string } = {},
+  extra: { username?: string; final?: true } = {},
 ): AuctionScreenBody => ({
   blocks: [
     {
@@ -1656,7 +1658,10 @@ const nameChoiceBody = (
                 kind: "username",
                 lotId: CONTRACT_LOT.lotId,
                 page: 2,
-                pending: pending("bid", amount),
+                pending: {
+                  ...pending("bid", amount),
+                  ...(extra.final === undefined ? {} : { final: extra.final }),
+                },
               }),
             },
           ],
@@ -1669,7 +1674,10 @@ const nameChoiceBody = (
           question: "alias",
           lotId: CONTRACT_LOT.lotId,
           page: 2,
-          pending: pending("bid", amount),
+          pending: {
+            ...pending("bid", amount),
+            ...(extra.final === undefined ? {} : { final: extra.final }),
+          },
         }),
       },
     ],
@@ -2812,12 +2820,70 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       bids: [{ kind: "refused", refusal: { kind: "display-name-not-chosen" } }],
     },
     auctionCalls: [LOT_CALL, bidCall(125000)],
-    body: nameChoiceBody(125000, { username: "owl_fan" }),
+    body: nameChoiceBody(125000, { username: "owl_fan", final: true }),
   },
-  // Имя выбрано — назад на карточку финала, а не к подтверждению: ставку
-  // человек делает сам, по цене, которая действует сейчас.
+  // Имя выбрано (PER-713): «Поставить» уже нажато, и ставка уходит сразу, если
+  // цена кнопки всё ещё следующая, — второго нажатия нет, подтверждения тоже.
   {
-    intent: "final: name chosen returns to the card",
+    intent: "final: name chosen places the pending bid",
+    callbackData: callback({
+      kind: "username",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+      pending: { ...pending("bid", 125000), final: true },
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...LIVE_AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      after: [LIVE_LOT_AFTER_BID],
+      lagging: true,
+    },
+    auctionCalls: [
+      LOT_CALL,
+      chooseCall({ kind: "username", username: "owl_fan" }),
+      bidCall(125000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      namesCall(CONTRACT_VIEWER.identityId),
+    ],
+    body: liveBody({
+      lot: LIVE_LOT_AFTER_BID,
+      participantName: "@me",
+      finalBid: { kind: "accepted", amount: rub(1250) },
+    }),
+  },
+  // Цена ушла, пока выбирали имя: ставкой она не становится — карточка с
+  // новой ценой на кнопке и строкой «цена изменилась», команда не уходит.
+  {
+    intent: "final: name chosen after the price moved",
+    callbackData: callback({
+      kind: "username",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+      pending: { ...pending("bid", 120000), final: true },
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...LIVE_AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      chooseCall({ kind: "username", username: "owl_fan" }),
+      namesCall(LEADER_ID),
+    ],
+    body: liveBody({
+      lot: LIVE_LOT,
+      participantName: "@owl",
+      button: 125000,
+      finalBid: { kind: "price-changed", next: rub(1250) },
+    }),
+  },
+  // Ставка онлайн-недели, чьё имя выбрали уже в финале: её «Да» ещё не было,
+  // и выход лота в финал её не подтверждает — карточка финала без ставки.
+  {
+    intent: "final: name chosen for a week bid returns to the card",
     callbackData: callback({
       kind: "username",
       lotId: CONTRACT_LOT.lotId,

@@ -471,7 +471,10 @@ export type CommandResult =
 export type FinalBidOutcome =
   | { kind: "accepted"; amount: Money }
   | { kind: "refused"; refusal: BidRefusal }
-  | { kind: "unknown" };
+  | { kind: "unknown" }
+  // Цена ушла, пока человек выбирал имя (PER-713): ставка не отправлена,
+  // кнопка карточки уже несёт новую цену.
+  | { kind: "price-changed"; next: Money };
 
 // Анти-снайп после принятой команды (PER-631, №107). `extended` — ставка
 // продлила дедлайн: новый дедлайн, номер продления и окно, которое его

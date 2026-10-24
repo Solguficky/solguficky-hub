@@ -1814,7 +1814,8 @@ function clockOf(instant: string, timeZone: string): string {
 }
 
 // Свой лимит смотрящего: чужих Auction не отдаёт, и строка говорит, что этот
-// виден только ему; исчерпанный лимит так и назван (PER-631, №81).
+// виден только ему; исчерпанный лимит так и назван (PER-631, №81), в живом
+// финале — без совета поднять его (PER-713).
 function proxyLine(block: LotBlock): string[] {
   return block.viewerProxyLimit === undefined
     ? []
