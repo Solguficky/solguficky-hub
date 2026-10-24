@@ -217,7 +217,9 @@ export type ContractAuction = {
   registrations?: readonly RaffleOutcome<RaffleRegistrationRefusal>[];
   cancellations?: readonly RaffleOutcome<RaffleCancellationRefusal>[];
   // Свои прогнозы по раундам; нет — этот намерение не должен их читать.
-  predictions?: readonly PredictionRoundView[];
+  // `forbidden` — `GetMyPredictions` отказывает `PERMISSION_DENIED`, как
+  // смотрящему без права `place_bids` (PER-703); `unavailable` — иной отказ.
+  predictions?: readonly PredictionRoundView[] | "forbidden" | "unavailable";
   // Ответы отправки прогноза по порядку вызовов.
   predictionSubmissions?: readonly PredictionOutcome[];
   // Счета смотрящего и текст организатора (PER-322). Нет — `ListMyInvoices`
@@ -3370,6 +3372,28 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
       keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID)],
     },
   },
+  // Корень открывается и смотрящему, которому Auction прогнозы не отдаёт
+  // (PER-703): хаб пускает в корень держателя `run_auctions` без `place_bids`,
+  // и `GetMyPredictions` отвечает ему `PERMISSION_DENIED`. Отказ чтения
+  // прогнозов, как у розыгрыша, убирает только кнопку «Прогнозы».
+  ...(["forbidden", "unavailable"] as const).map(
+    (refusal): AuctionContractCase => ({
+      intent: `root: predictions read ${refusal}`,
+      callbackData: rootCallback(CONTRACT_AUCTION_ID),
+      auction: { ...AUCTION, summary: CONTRACT_SUMMARY, predictions: refusal },
+      auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+      body: {
+        blocks: [
+          {
+            kind: "root",
+            auctionId: CONTRACT_AUCTION_ID,
+            auction: CONTRACT_SUMMARY,
+          },
+        ],
+        keyboard: [rootLotsRow],
+      },
+    }),
+  ),
   // У процесса с Notifications в корне — «Избранное» (PER-644): вход в
   // список только отсюда, аукцион в кнопке — возврат.
   {
@@ -4474,6 +4498,51 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       notice: "unanswered",
     }),
   },
+  // Имя спрашивается до ответа (PER-703), как перед ставкой (PER-595): после
+  // выбора имени отказ `display-name-not-chosen` терял введённый ответ — кнопки
+  // выбора имени несут номинацию, а не значение. Свои ответы раунда значат, что
+  // имя уже выбрано, и Auction за ним не зовут; отказ чтения имени вопрос не
+  // прячет — страховкой остаётся отказ отправки.
+  {
+    intent: "predictions: ask for the name before the answer",
+    callbackData: callback({
+      kind: "prediction-edit",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+      ownName: "none",
+    },
+    auctionCalls: [predictionReadCall(CONTRACT_AUCTION_ID), OWN_NAME_CALL],
+    body: predictionNameChoiceBody({
+      round: "final",
+      nomination: "final-total-bids",
+      username: "owl_fan",
+    }),
+  },
+  {
+    intent: "predictions: own name read refused still asks the answer",
+    callbackData: callback({
+      kind: "prediction-edit",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+      ownName: "unavailable",
+    },
+    auctionCalls: [predictionReadCall(CONTRACT_AUCTION_ID), OWN_NAME_CALL],
+    body: predictionNumberQuestionBody({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+  },
   {
     intent: "predictions: ask for a name without losing the nomination",
     callbackData: predictionQuestionCallback({
@@ -4648,6 +4717,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [
       chooseCall({ kind: "alias", alias: "Сова" }),
       predictionReadCall(CONTRACT_AUCTION_ID),
+      OWN_NAME_CALL,
     ],
     body: predictionNumberQuestionBody({
       round: "catalog",
@@ -5616,8 +5686,13 @@ export function spyPorts(
   const registrations = [...(snapshot.registrations ?? [])];
   const cancellations = [...(snapshot.cancellations ?? [])];
   const predictionSubmissions = [...(snapshot.predictionSubmissions ?? [])];
-  let predictionRounds =
-    snapshot.predictions === undefined ? undefined : [...snapshot.predictions];
+  const predictionsRefusal =
+    typeof snapshot.predictions === "string" ? snapshot.predictions : undefined;
+  let predictionRounds: PredictionRoundView[] | undefined =
+    snapshot.predictions === undefined ||
+    typeof snapshot.predictions === "string"
+      ? undefined
+      : [...snapshot.predictions];
   const fulfillments = [...(snapshot.fulfillments ?? [])];
   let invoices = snapshot.invoices;
   const { followed, explainer } = snapshot;
@@ -5732,6 +5807,12 @@ export function spyPorts(
       },
       async getMyPredictions(request) {
         calls.push({ port: "auction", method: "getMyPredictions", request });
+        if (predictionsRefusal === "forbidden") {
+          throw new Error("predictions forbidden: PERMISSION_DENIED");
+        }
+        if (predictionsRefusal === "unavailable") {
+          throw new Error("predictions unavailable");
+        }
         if (predictionRounds === undefined) {
           throw new Error("predictions are not expected");
         }

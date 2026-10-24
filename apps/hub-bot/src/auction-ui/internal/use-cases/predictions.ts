@@ -212,6 +212,9 @@ export async function editPrediction(
   if (current.status !== "open") {
     return openPrediction(context, input);
   }
+  if (!(await nameChosen(context, input.auctionId, current))) {
+    return predictionNameChoice(context, input);
+  }
   const answer = current.answers.find(
     (each) => each.nomination === input.nomination,
   );
@@ -232,6 +235,28 @@ export async function editPrediction(
       ? { currentValue: answer.answer.value }
       : {}),
   });
+}
+
+// Имя спрашивается до ответа (PER-703), как перед ставкой (PER-595): кнопки
+// выбора имени несут номинацию, а не значение, и ответ, отклонённый отказом
+// `display-name-not-chosen`, после выбора имени пришлось бы вводить заново.
+// Свои ответы в раунде значат, что имя уже выбрано, — Auction за ним не зовут.
+// Отказ чтения имени вопрос не прячет: страховкой остаётся отказ отправки.
+async function nameChosen(
+  context: PredictionContext,
+  auctionId: string,
+  round: PredictionRoundView,
+): Promise<boolean> {
+  if (round.answers.length > 0) return true;
+  try {
+    const own = await context.auction.getOwnDisplayName({
+      viewer: context.viewer,
+      auctionId,
+    });
+    return own !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 async function candidateLots(
