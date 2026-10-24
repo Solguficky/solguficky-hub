@@ -21,9 +21,9 @@ describe("FAQ content", () => {
     expect(screen.text).toBe(defaultFaq.text);
     expect(screen.text).toContain("Отменить ставку нельзя");
     // Только «Аукционы» ставит отметку ознакомления; последний ряд —
-    // возврат в меню (PER-592).
+    // возврат в меню (PER-592). Без ссылки организатора «Прочитать
+    // подробнее» нет: текст уже в сообщении (решение владельца 24.10.2026).
     expect(screen.keyboard).toEqual([
-      [{ text: "Прочитать подробнее", callback_data: "v1:entry:details" }],
       [{ text: "Задать вопрос", callback_data: "v1:entry:question" }],
       [{ text: "Аукционы", callback_data: "v1:entry:read" }],
       [{ text: "‹ Меню", callback_data: "v1:entry:menu" }],
