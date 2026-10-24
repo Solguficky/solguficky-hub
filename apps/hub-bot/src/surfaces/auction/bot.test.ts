@@ -1,7 +1,12 @@
+import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { HttpError, InputFile, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  RaffleSchema,
+  RaffleStatus,
+} from "../../../gen/auction/v1/auction_service_pb.js";
 import { AccessRight } from "../../../gen/identity/v1/access_pb.js";
 import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
@@ -15,6 +20,7 @@ import {
   type ProxyExplainerPort,
   type RaffleView,
 } from "../../auction-ui/index.js";
+import { raffleOf } from "../../core/auction/raffle.js";
 import type {
   AuctionWatches,
   AuctionWatchState,
@@ -3157,6 +3163,59 @@ describe("raffle among the participants", () => {
         .keyboard.flat()
         .map((b) => b.text),
     ).toEqual(["‹ Аукцион"]);
+  });
+
+  // Отменённый вместе с аукционом розыгрыш (PER-698): «Розыгрыш» корня ведёт
+  // в экран отмены с возвратом в корень, а не в кадр сбоя. Статус приходит
+  // переводом ответа Auction, как у настоящего клиента.
+  it("shows a raffle cancelled with its auction as its own screen", async () => {
+    const service = raffleService(openRaffle);
+    service.methods.getRaffle = async () =>
+      raffleOf(
+        create(RaffleSchema, {
+          auctionId,
+          status: RaffleStatus.CANCELLED,
+          closesAt: openRaffle.closesAt,
+          commitment: "ab".repeat(32),
+          beaconRound: 12_345_678n,
+          registered: true,
+        }),
+      );
+    const { bot, calls } = makeBot(withRaffle(publicPorts, service));
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    await bot.handleUpdate(press(buttonData(lastScreen(calls), "Розыгрыш")));
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("<b>Розыгрыш среди участников</b>");
+    expect(screen.text).toContain(
+      "Розыгрыш отменён вместе с аукционом: жеребьёвки не будет.",
+    );
+    expect(screen.text).not.toContain("недоступен");
+    expect(screen.keyboard.flat().map((b) => b.text)).toEqual(["‹ Аукцион"]);
+  });
+
+  // Статус, которого бот не знает, отменой не становится (PER-698): перевод
+  // бросает, и человек видит кадр сбоя, а не экран отмены.
+  it("keeps the failure frame for a raffle of an unknown status", async () => {
+    const service = raffleService(openRaffle);
+    service.methods.getRaffle = async () =>
+      raffleOf(
+        create(RaffleSchema, {
+          auctionId,
+          status: (RaffleStatus.CANCELLED + 1) as RaffleStatus,
+          closesAt: openRaffle.closesAt,
+        }),
+      );
+    const { bot, calls } = makeBot(withRaffle(publicPorts, service));
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle", auctionId })),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Аукцион сейчас недоступен");
+    expect(screen.text).not.toContain("отменён");
   });
 
   // «К розыгрышу» под итогом (PER-620) — кнопка следа: экран итога приходит

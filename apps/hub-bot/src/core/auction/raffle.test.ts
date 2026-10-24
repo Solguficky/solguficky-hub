@@ -115,6 +115,38 @@ describe("raffle answers", () => {
     expect(raffle.status).toBe("not-held");
   });
 
+  // Аукцион отменили до жеребьёвки (PER-698): розыгрыш — свой статус, а не
+  // дефект соседа.
+  it("reads a raffle cancelled with its auction", () => {
+    const raffle = raffleOf(
+      create(RaffleSchema, {
+        auctionId: AUCTION_ID,
+        status: RaffleStatus.CANCELLED,
+        closesAt: "2026-10-29T18:00:00Z",
+        commitment: "ab".repeat(32),
+        beaconRound: 12_345_678n,
+      }),
+    );
+    expect(raffle).toMatchObject({
+      status: "cancelled",
+      commitment: "ab".repeat(32),
+      beaconRound: 12_345_678,
+    });
+  });
+
+  // Статус, которого бот ещё не знает, отменой не считается: перевод бросает,
+  // и человек видит кадр сбоя.
+  it("treats a status from a future contract as a defect of the neighbour", () => {
+    expect(() =>
+      raffleOf(
+        create(RaffleSchema, {
+          auctionId: AUCTION_ID,
+          status: (RaffleStatus.CANCELLED + 1) as RaffleStatus,
+        }),
+      ),
+    ).toThrow(/unknown status: 8/);
+  });
+
   it("treats an unspecified status as a defect of the neighbour", () => {
     expect(() =>
       raffleOf(create(RaffleSchema, { auctionId: AUCTION_ID })),

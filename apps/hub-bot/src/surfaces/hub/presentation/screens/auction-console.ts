@@ -335,6 +335,8 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
       return "Розыгрыш: не состоялся, никто не зарегистрировался.";
     case "not-held":
       return "Розыгрыш: не проводился, неделя открылась после закрытия регистрации.";
+    case "cancelled":
+      return "Розыгрыш: отменён вместе с аукционом.";
     default: {
       const _exhaustive: never = raffle.status;
       return _exhaustive;

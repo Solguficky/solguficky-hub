@@ -82,11 +82,13 @@ export function raffleBody(
 }
 
 // Проверять есть что, пока у розыгрыша есть отпечаток или раскрытие: у
-// непроведённого их нет, и кнопки «Как проверить честность» тоже.
+// непроведённого их нет, и кнопки «Как проверить честность» тоже. У
+// отменённого отпечаток остаётся, но seed не раскроется — проверять нечего.
 function provable(raffle: RaffleView | undefined): boolean {
   return (
     raffle !== undefined &&
     raffle.status !== "not-held" &&
+    raffle.status !== "cancelled" &&
     (raffle.commitment !== undefined || raffle.reveal !== undefined)
   );
 }

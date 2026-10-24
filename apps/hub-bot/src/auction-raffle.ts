@@ -105,6 +105,8 @@ export function raffleParagraphs(
       return [
         "Розыгрыш не проводится: онлайн-торги открылись не раньше момента закрытия регистрации.",
       ];
+    case "cancelled":
+      return [cancelledLine];
     default: {
       const _exhaustive: never = raffle.status;
       return _exhaustive;
@@ -149,12 +151,19 @@ export function raffleProofParagraphs(
       ].filter((line) => line !== "");
     case "not-held":
       return ["Розыгрыш не проводился: проверять нечего."];
+    case "cancelled":
+      return [`${cancelledLine} Seed не раскрывается: проверять нечего.`];
     default: {
       const _exhaustive: never = raffle.status;
       return _exhaustive;
     }
   }
 }
+
+// Аукцион отменили до жеребьёвки (ADR-066, дополнение 2026-10-12): регистрация
+// закрыта, жеребьёвки не будет, seed не раскроется.
+const cancelledLine =
+  "Розыгрыш отменён вместе с аукционом: жеребьёвки не будет.";
 
 const rules =
   "Один билет каждому участнику аукциона за бесплатную регистрацию. Ставки и покупки на билет не влияют, проигрыш ничего не стоит. Приз предоставляет организатор.";
