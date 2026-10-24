@@ -63,12 +63,18 @@ export function finalLineupOf(
   return active === undefined ? { order } : { order, activeLotId: active };
 }
 
+// Момент онлайн-фазы — RFC 3339 в UTC, как обещает `auction.v1.OnlinePhase`:
+// «2026-10-21T21:00:00Z» или с долями секунды. `Date.parse` берёт и
+// «2026-10-21», и «Oct 21, 2026», а выдуманное время в тексте читалось бы как
+// срок (PER-688).
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
 function instantOf(
   value: string | undefined,
   what: string,
 ): string | undefined {
   if (value === undefined || value === "") return undefined;
-  if (Number.isNaN(Date.parse(value))) {
+  if (!INSTANT.test(value) || !Number.isFinite(Date.parse(value))) {
     throw new Error(`auction ${what} is not an instant`);
   }
   return value;
