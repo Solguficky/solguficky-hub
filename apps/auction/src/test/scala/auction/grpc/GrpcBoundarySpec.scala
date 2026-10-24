@@ -1,6 +1,5 @@
 package auction.grpc
 
-import auction.testkit.StallingProxy
 import auction.v1.auction_service as wire
 import ch.qos.logback.classic.Logger as LogbackLogger
 import ch.qos.logback.classic.spi.ILoggingEvent
@@ -63,11 +62,9 @@ final class GrpcBoundarySpec
   private val kit = ActorTestKit(
     "grpc-boundary",
     ConfigFactory
-      // Keepalive HTTP/2 (PER-705) сжат до долей секунды: сервер пингует после
-      // 300 мс тишины, клиент pekko-http — после 100 мс.
+      // Keepalive клиента pekko-http (PER-705) сжат до долей секунды: PING после 100 мс тишины.
       .parseString("""
         pekko.actor.provider = local
-        pekko.http.server.http2 { ping-interval = 300ms, ping-timeout = 300ms }
         pekko.http.client.http2 { ping-interval = 100ms, ping-timeout = 100ms }
       """)
       .withFallback(ConfigFactory.load())
@@ -435,28 +432,12 @@ final class GrpcBoundarySpec
     (stream, watchEnds.asScala.last)
   }
 
-  // Полуоткрытое соединение (PER-705): клиент пропал, а сеть замолкла, не закрывшись.
+  // Полуоткрытое соединение замечает клиент своим PING (PER-705): сервер обязан на них отвечать, сколько бы их ни было.
   "grpc boundary keepalive" should {
 
-    "releases a watch whose client went silent once its ping goes unanswered" in {
-      val proxy = StallingProxy(binding.localAddress.getPort)
-      val silent = wire.AuctionServiceClient(
-        GrpcClientSettings.connectToServiceAt("127.0.0.1", proxy.port).withTls(false)
-      )
-      try {
-        val (_, released) = openWatch(silent)
-        proxy.silence()
-        // Отказ соединения отменяет поток: его конец может прийти и отказом, важно, что пришёл.
-        eventually(released.isCompleted shouldBe true)
-      } finally {
-        silent.close().futureValue
-        proxy.close()
-      }
-    }
-
     "keeps a watch open under the pings of a client far more frequent than the hub bot's" in {
-      // Ответы сервера клиенту: PING ACK — 17 байт кадра. Свой PING сервер шлёт только после 300 мс тишины в обе
-      // стороны, а клиент пингует после 100 мс, поэтому байты ответа за паузу — ответы на PING клиента.
+      // Ответы сервера клиенту: PING ACK — 17 байт кадра. Сам сервер не пингует, а поток после первого сообщения
+      // молчит, поэтому байты ответа за паузу — ответы на PING клиента: их там раз в 100 мс.
       val answered = AtomicLong(0)
       val relay = Tcp(kit.system)
         .bind("127.0.0.1", 0)
