@@ -63,6 +63,7 @@ object MethodAccess {
     "RegisterForRaffle" -> bots,
     "CancelRaffleRegistration" -> bots,
     "GetRaffle" -> bots,
+    "AssignRaffleWinner" -> Set(Caller.HubBot),
     "SubmitPrediction" -> bots,
     "GetMyPredictions" -> bots,
     "GetPredictionResults" -> bots,

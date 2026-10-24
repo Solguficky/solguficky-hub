@@ -32,7 +32,8 @@
         "registrationCancelled": null,
         "poolFixed": null,
         "raffleDrawn": null,
-        "raffleCancelled": null
+        "raffleCancelled": null,
+        "winnerAssigned": null
       }
     },
     {
@@ -48,7 +49,8 @@
         "registrationCancelled": null,
         "poolFixed": null,
         "raffleDrawn": null,
-        "raffleCancelled": null
+        "raffleCancelled": null,
+        "winnerAssigned": null
       }
     },
     {
@@ -63,10 +65,12 @@
         "poolFixed": {
           "tickets": [
             "0190f2a0-0000-7000-8000-000000000065"
-          ]
+          ],
+          "byHand": null
         },
         "raffleDrawn": null,
-        "raffleCancelled": null
+        "raffleCancelled": null,
+        "winnerAssigned": null
       }
     },
     {
@@ -83,9 +87,11 @@
           "randomness": "d7941e7b5bcaf8742bfc7136d38c5ab8274286629ffe43081dbda1f05d798300",
           "at": "2026-10-28T18:01:02Z"
         },
-        "raffleCancelled": null
+        "raffleCancelled": null,
+        "winnerAssigned": null
       }
     }
   ],
-  "cancelledAt": null
+  "cancelledAt": null,
+  "assigned": null
 }

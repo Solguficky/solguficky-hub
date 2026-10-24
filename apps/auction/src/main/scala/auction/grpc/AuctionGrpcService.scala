@@ -34,6 +34,7 @@ import auction.prediction.PredictionRound
 import auction.prediction.SubmitForecast
 import auction.projection.LotSnapshotView
 import auction.projection.LotViews
+import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
 import auction.raffle.Raffle
 import auction.raffle.RaffleGateway
@@ -1032,6 +1033,25 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Ручной итог розыгрыша (ADR-066, дополнение 2026-10-24, PER-727): форма, затем право вести аукцион у Meetups с
+   * воротами отменённой сходки, как у ручной отметки итогов прогнозов, затем розыгрыш. Номер билета и итог судит
+   * розыгрыш; ответ — розыгрыш глазами администратора.
+   */
+  def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest): Future[wire.AssignRaffleWinnerResponse] =
+    RequestMapping.assignRaffleWinner(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        val query = ConsoleQuery(command.auctionId, command.acting)
+        administered(query, ResponseMapping.assignWinnerDenied, MeetupGate.NotCancelled) { _ =>
+          raffles
+            .assign(command.auctionId, AssignWinner(command.ticket, command.opId))
+            .recoverWith(awaited)
+            .flatMap(outcome => viewed(command.auctionId, command.acting.participant, outcome))
+            .flatMap(outcome => RaffleMapping.assign(outcome).fold(refuse, Future.successful))
+        }
+    }
+
+  /**
    * Прогноз раунда (ADR-067, пп. 2–5): форма, право `place_bids` на каждой отправке, аукцион и лоты раунда, имя в
    * аукционе — тем же правилом, что перед ставкой, но без заморозки, — затем игра. Лоты сверяются, только пока раунд
    * может быть открыт: в остальное время отказ раунда даёт сама игра, и чужой лот его не подменяет.
@@ -1169,7 +1189,8 @@ final class AuctionGrpcService(
    */
   private def view(auction: AuctionId, participant: ParticipantId, raffle: Raffle): Future[Option[wire.Raffle]] = {
     val names = raffle.state match {
-      case RaffleState.Fixed(_, _) | RaffleState.Drawn(_, _, _, _) =>
+      case RaffleState.Fixed(_, _) | RaffleState.AwaitingWinner(_, _) | RaffleState.Drawn(_, _, _, _) |
+          RaffleState.Assigned(_, _, _, _) =>
         Future.delegate(raffleNames(auction)).recover { case NonFatal(cause) =>
           AuctionGrpcService.logger.warn(
             "raffle ticket names unavailable",
@@ -1403,6 +1424,7 @@ object AuctionGrpcService {
     private def none[T]: Future[T] = Future.failed(new IllegalStateException("raffles are not wired in this node"))
     def register(auction: AuctionId, command: Register) = none
     def cancel(auction: AuctionId, command: CancelRegistration) = none
+    def assign(auction: AuctionId, command: AssignWinner) = none
     def get(auction: AuctionId) = none
   }
 
