@@ -100,12 +100,19 @@ export type Money = {
 
 // Каталожная карточка лота (ADR-057). Изображение — только его версия: байты
 // грузит приложение через `LotImagePort`, когда показывает карточку.
+// `image` — обложка, первое из `photos` (PER-721). Пустые `photos` при
+// `image` — Auction до списка фото: карточка показывает одну обложку.
 export type LotCardView = {
   title: string;
   // Пустая строка — описания нет.
   description: string;
   image?: { version: string };
+  photos?: readonly LotPhotoView[];
 };
+
+// Одно фото лота в порядке показа (PER-721): байты — `getLotPhoto` по
+// `photoId`, версия меняется вместе с байтами.
+export type LotPhotoView = { photoId: string; version: string };
 
 // Где лот, — ветка `status` снимка. Причины снятия и непродажи экраны не
 // показывают, поэтому их здесь нет.
@@ -640,6 +647,12 @@ export type LotImage = {
 // чтобы оба бота реализовали одну сигнатуру.
 export interface LotImagePort {
   getLotImage(request: { viewer: Viewer; lotId: string }): Promise<LotImage>;
+  // Одно фото лота по идентификатору из `LotCardView.photos` (PER-721).
+  getLotPhoto(request: {
+    viewer: Viewer;
+    lotId: string;
+    photoId: string;
+  }): Promise<LotImage>;
 }
 
 // Избранные лоты (ADR-063): отметка «человек следит за лотом» живёт в

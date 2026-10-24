@@ -334,13 +334,13 @@ describe("renderEntryScreen", () => {
         "<p>Следующая ставка: от 1 250 ₽<br>Шаг: 50 ₽</p>" +
         "<p>Роспись.</p>",
     );
-    expect(screen.photo).toBeUndefined();
+    expect(screen.photos).toBeUndefined();
   });
 
   // Пустое описание — заглушка, та же, что у карточки сходки хаба (PER-594).
   it("shows the placeholder for an empty description of a lot without a photo", () => {
     const screen = lotScreen({ card: { title: "Кружка", description: "" } });
-    expect(screen.photo).toBeUndefined();
+    expect(screen.photos).toBeUndefined();
     expect(plain(screen.text)).toMatch(
       /<\/p><p>Описание пока не добавлено\.<\/p>$/,
     );
@@ -390,7 +390,7 @@ describe("renderEntryScreen", () => {
     const screen = lotScreen({
       card: { title: "Кружка", description, image: { version: "img-1" } },
     });
-    expect(screen.photo).toEqual({ lotId: "lot-1", version: "img-1" });
+    expect(screen.photos).toEqual([{ lotId: "lot-1", version: "img-1" }]);
     expect(screen.text).toContain(`<p>${description}</p>`);
     expect(screen.text).not.toContain("…");
   });
@@ -437,7 +437,7 @@ describe("renderEntryScreen", () => {
       plainCard,
     );
     expect(screen.format).toBe("html");
-    expect(screen.photo).toBeUndefined();
+    expect(screen.photos).toBeUndefined();
     expect(screen.text).toBe(
       "<b>Кружка &lt;XL&gt;</b>\n\nСтатус: не продан\n\nРоспись &amp; глазурь.",
     );

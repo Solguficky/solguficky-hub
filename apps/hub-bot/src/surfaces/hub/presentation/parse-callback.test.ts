@@ -45,10 +45,11 @@ import {
   lotAskData,
   lotCopyData,
   lotFormData,
-  lotImageRemoveConfirmData,
-  lotImageRemoveData,
   lotKeepStepData,
   lotNewData,
+  lotPhotoRemoveConfirmData,
+  lotPhotoRemoveData,
+  lotPhotosData,
   lotPreviewData,
   lotRemoveConfirmData,
   lotRemoveData,
@@ -1181,10 +1182,17 @@ describe("lot form callbacks", () => {
         { kind: "lot-step-mode", lot, price: 1, mode: "single" },
       ],
       [lotSkipData(lot), { kind: "lot-skip", lot }],
-      [lotImageRemoveData(lot), { kind: "lot-image-remove", lot }],
+      [lotPhotosData(lot), { kind: "lot-photos", lot }],
+      // Прежняя «Убрать фото» под вопросом (PER-715) открывает экран фото.
+      [`v1:lot:rm:${lot}`, { kind: "lot-photos", lot, fromQuestion: true }],
+      [lotPhotoRemoveData(lot, 1), { kind: "lot-photo-remove", lot, index: 1 }],
       [
-        lotImageRemoveConfirmData(lot, "0zz9a"),
-        { kind: "lot-image-remove-confirm", lot, print: "0zz9a" },
+        lotPhotoRemoveData(lot, 10),
+        { kind: "lot-photo-remove", lot, index: 10 },
+      ],
+      [
+        lotPhotoRemoveConfirmData(lot, "0zz9a"),
+        { kind: "lot-photo-remove-confirm", lot, print: "0zz9a" },
       ],
     ] as const;
     for (const [data, expected] of cases) {
@@ -1256,6 +1264,10 @@ describe("lot form callbacks", () => {
       [
         lotSetRetryData(lot, "description"),
         { kind: "lot-set-retry", lot, field: "description" },
+      ],
+      [
+        lotSetRetryData(lot, "image", "a1b2c"),
+        { kind: "lot-set-retry", lot, field: "image", print: "a1b2c" },
       ],
       [
         lotAskData(lot, "description", "set"),

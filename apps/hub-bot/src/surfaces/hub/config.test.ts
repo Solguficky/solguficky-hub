@@ -22,9 +22,13 @@ describe("readHubConfig", () => {
     });
   });
 
-  it("reads the shared auction FAQ content", () => {
-    const result = readHubConfig({ AUCTION_FAQ_ITEMS: "Лоты" });
-    expect(result.ok && result.config.faq.items).toBe("Лоты");
+  it("reads the shared auction FAQ links", () => {
+    const result = readHubConfig({
+      AUCTION_FAQ_DETAILS_URL: "https://example.org/rules",
+    });
+    expect(result.ok && result.config.faq.detailsUrl).toBe(
+      "https://example.org/rules",
+    );
   });
 
   it("refuses an auction bot name that is not a bot username", () => {

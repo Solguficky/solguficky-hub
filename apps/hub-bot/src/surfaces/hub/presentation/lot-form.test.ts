@@ -14,7 +14,7 @@ import {
 } from "../../../auction-ui/index.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import { fingerprint } from "../application/fingerprint.js";
-import { lotReadWindowMs } from "../application/lot-form.js";
+import { lotPhotoIdOf, lotReadWindowMs } from "../application/lot-form.js";
 import type { ConsoleAuctionStatus, LotSet } from "../application/types.js";
 import type {
   AddLotResult,
@@ -22,6 +22,7 @@ import type {
   AuctionScreens,
   LotAdministration,
   LotCardResult,
+  LotPhotoResult,
   MeetupAuctions,
   ScheduleLotResult,
 } from "../auction/port.js";
@@ -83,6 +84,8 @@ function fakeAuction(
     // Предел изображения Auction в байтах; по умолчанию — 1 МиБ, как у него.
     imageLimit?: number;
     edit?: (card: { lotId: string }) => LotCardResult | undefined;
+    // Отказ команды фото; `undefined` — команда принята.
+    photo?: () => LotPhotoResult | undefined;
     // Сколько первых чтений после `AddLot` read model ещё не знает лот.
     readLag?: number;
     // Пульт аукциона (PER-716): статус и сеты. Нет — форма пульта не видит.
@@ -91,8 +94,41 @@ function fakeAuction(
 ) {
   const lagging = new Map<string, number>();
   const imageLimit = options.imageLimit ?? 1024 * 1024;
-  // Байты изображений по лоту: их отдаёт `GetLotImage` экрана лота.
+  // Обложка лота у Auction до списка фото (PER-721): карточка несёт только
+  // `image`, байты отдаёт `GetLotImage`.
   const images = new Map<string, { content: Uint8Array; version: string }>();
+  // Фото лота по порядку (PER-721): их отдаёт `GetLotPhoto`, первое — обложка.
+  const photos = new Map<
+    string,
+    { photoId: string; content: Uint8Array; version: string }[]
+  >();
+  let photoVersions = 0;
+  const photosOf = (lotId: string) => photos.get(lotId) ?? [];
+  // Карточка лота несёт фото после каждой команды, как чтение Auction.
+  const syncCard = (lotId: string) => {
+    const lot = lots.get(lotId);
+    if (lot?.card === undefined) return;
+    const list = photosOf(lotId);
+    const { image: _image, photos: _photos, ...text } = lot.card;
+    const cover = list[0] ?? images.get(lotId);
+    lots.set(lotId, {
+      ...lot,
+      card: {
+        ...text,
+        ...(cover === undefined ? {} : { image: { version: cover.version } }),
+        ...(list.length === 0
+          ? {}
+          : {
+              photos: list.map(({ photoId, version }) => ({
+                photoId,
+                version,
+              })),
+            }),
+      },
+    });
+  };
+  const refs = (lotId: string) =>
+    photosOf(lotId).map(({ photoId, version }) => ({ photoId, version }));
   const lots = new Map<string, LotView>(
     (options.lots ?? []).map((lot) => [lot.lotId, lot]),
   );
@@ -141,18 +177,51 @@ function fakeAuction(
         });
       }
       if (card.removeImage === true) images.delete(card.lotId);
-      const stored = images.get(card.lotId);
       lots.set(card.lotId, {
         ...lot,
-        card: {
-          title: card.title,
-          description: card.description,
-          ...(stored === undefined
-            ? {}
-            : { image: { version: stored.version } }),
-        },
+        card: { title: card.title, description: card.description },
       });
+      syncCard(card.lotId);
       return { kind: "ok" };
+    },
+    async addLotPhoto(_person, added) {
+      commands.push({ method: "addLotPhoto", args: added });
+      const refused = options.photo?.();
+      if (refused !== undefined) return refused;
+      if (!lots.has(added.lotId)) return { kind: "card-not-found" };
+      if (added.image.byteLength > imageLimit) {
+        return { kind: "image-too-large", maxBytes: imageLimit };
+      }
+      const list = photosOf(added.lotId);
+      // Повтор того же `photoId` второго фото не заводит, как у Auction.
+      if (list.some((photo) => photo.photoId === added.photoId)) {
+        return { kind: "ok", photos: refs(added.lotId) };
+      }
+      if (list.length >= 10) return { kind: "photo-limit", maxPhotos: 10 };
+      photos.set(added.lotId, [
+        ...list,
+        {
+          photoId: added.photoId,
+          content: added.image,
+          // Версия фото у Auction — SHA-256 содержимого.
+          version: createHash("sha256").update(added.image).digest("hex"),
+        },
+      ]);
+      syncCard(added.lotId);
+      return { kind: "ok", photos: refs(added.lotId) };
+    },
+    async removeLotPhoto(_person, removed) {
+      commands.push({ method: "removeLotPhoto", args: removed });
+      const refused = options.photo?.();
+      if (refused !== undefined) return refused;
+      photos.set(
+        removed.lotId,
+        photosOf(removed.lotId).filter(
+          (photo) => photo.photoId !== removed.photoId,
+        ),
+      );
+      syncCard(removed.lotId);
+      return { kind: "ok", photos: refs(removed.lotId) };
     },
     async addLot(_person, added) {
       commands.push({ method: "addLot", args: added });
@@ -216,6 +285,12 @@ function fakeAuction(
         ? { kind: "not-found" }
         : { kind: "ok", content: stored.content, version: stored.version };
     },
+    async getLotPhoto(_person, { lotId, photoId }) {
+      const stored = photosOf(lotId).find((photo) => photo.photoId === photoId);
+      return stored === undefined
+        ? { kind: "not-found" }
+        : { kind: "ok", content: stored.content, version: stored.version };
+    },
     currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
       return {
@@ -265,6 +340,13 @@ function fakeAuction(
             if (stored === undefined) throw new Error("no image");
             return { ...stored, mediaType: "image/jpeg" };
           },
+          async getLotPhoto({ lotId, photoId }) {
+            const stored = photosOf(lotId).find(
+              (photo) => photo.photoId === photoId,
+            );
+            if (stored === undefined) throw new Error("no photo");
+            return { ...stored, mediaType: "image/jpeg" };
+          },
         },
       };
     },
@@ -306,10 +388,29 @@ function fakeAuction(
     port,
     lots,
     images,
+    photos,
+    // Карточка лота по фото после правки `photos` в обход команд.
+    resync: syncCard,
     commands,
     registry,
     sets,
     consoles: options.console === undefined ? undefined : consoles,
+    // Фото лота с готовыми байтами, как их завела бы форма.
+    seedPhotos(lotId: string, count: number) {
+      const content = new Uint8Array([0xff, 0xd8, 0xff, 0xe0]);
+      photos.set(
+        lotId,
+        Array.from({ length: count }, (_, index) => {
+          photoVersions += 1;
+          return {
+            photoId: `0198f2a4-7c1e-7d3a-9b21-0000000000${String(index + 1).padStart(2, "0")}`,
+            content,
+            version: `img-${photoVersions}`,
+          };
+        }),
+      );
+      syncCard(lotId);
+    },
     methods: () => commands.map((command) => command.method),
   };
 }
@@ -495,7 +596,9 @@ function reply(
   return {
     update_id: 4,
     message: {
-      message_id: 10,
+      // Свой номер у каждого ответа; идентификатор фото бот выводит из лота
+      // и байтов, а не из номера сообщения.
+      message_id: 1000 + calls.length,
       date: 0,
       chat: { id: 42, type: "private", first_name: "tester" },
       from: { id: from, is_bot: false, first_name: "tester" },
@@ -1257,9 +1360,9 @@ describe("lot form", () => {
   );
 });
 
-// Фото лота (PER-452): ответ фотографией на вопрос формы, скачивание у
-// Telegram и замена изображения в карточке каталога.
-describe("lot form photo question", () => {
+// Фото лота (PER-452, PER-721): экран «Фото лота», ответ фотографией на вопрос
+// формы, скачивание у Telegram и добавление фото в конец списка у Auction.
+describe("lot form photos", () => {
   const lot = uuidToToken(existingLot);
   const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
   // Telegram присылает фото несколькими размерами, наибольший — последним.
@@ -1270,11 +1373,17 @@ describe("lot form photo question", () => {
     ],
   };
   const photoQuestion =
-    "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
+    "Пришли фото лота ответом на это сообщение — одно или альбомом. Фото встанут в конец, у лота их бывает до 10.";
+  const otherJpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 4, 5, 6]);
+  const photoOf = (fileId: string) => ({
+    photo: [
+      { file_id: fileId, file_unique_id: fileId, width: 800, height: 800 },
+    ],
+  });
 
-  it("saves the photo sent in the form and shows it on the lot card after a restart", async () => {
+  it("adds photos from the photo screen over restarts, counts them in the form and shows a carousel on the card", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const telegram = fakeTelegramFiles({ large: jpeg });
+    const telegram = fakeTelegramFiles({ large: jpeg, other: otherJpeg });
     const calls: RecordedCall[] = [];
     const next = async (
       update: (history: RecordedCall[]) => Update,
@@ -1289,43 +1398,162 @@ describe("lot form photo question", () => {
     };
 
     await next(() => press(`v1:lot:form:${lot}`));
-    expect(last(calls).text).toContain("Фото: нет");
-    await next(() => press(`v1:lot:ask:${lot}:image`));
+    const form = last(calls);
+    expect(form.text).toContain("Фото: нет");
+    await next(() => press(dataOf(form, "🖼 Фото")));
+    const screen = last(calls);
+    expect(plain(screen)).toBe(
+      "Фото лота\n<i>Кружка с совой</i>\n\nФото пока нет.",
+    );
+    expect(labels(screen)).toEqual([["Добавить фото"], ["‹ Изменить лот"]]);
+
+    await next(() => press(dataOf(screen, "Добавить фото")));
     const asked = question(calls).payload;
     expect(asked.text).toBe(["Сейчас: нет", photoQuestion].join("\n"));
     // Шаг вопроса лежит в его «Отмене»: ответ после рестарта принимается.
     expect(dataOf(asked, "Отмена")).toBe(`v1:q:li:${lot}:42`);
 
     await next((history) => reply(history, photo));
-
     expect(telegram.downloads).toEqual(["photos/large"]);
-    expect(auction.commands).toEqual([
-      {
-        method: "editLotCard",
-        args: {
-          lotId: existingLot,
-          title: "Кружка с совой",
-          description: "Ручная роспись.",
-          image: jpeg,
-        },
-      },
-    ]);
-    const form = last(calls);
-    expect(form.text).toBe(
-      ["<b>Фото сохранено</b>", "<b>Кружка с совой</b>"].join("\n\n"),
+    expect(auction.methods()).toEqual(["addLotPhoto"]);
+    expect(auction.commands[0]?.args).toMatchObject({
+      lotId: existingLot,
+      image: jpeg,
+    });
+    const added = last(calls);
+    expect(plain(added)).toBe(
+      ["Фото добавлено", "Кружка с совой", "Фото у лота: 1 из 10."].join(
+        "\n\n",
+      ),
     );
-    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот"]]);
-    await next(() => press(dataOf(form, "Изменить лот")));
-    expect(last(calls).text).toContain("Фото: есть");
+    expect(labels(added)).toEqual([["Фото лота"], ["‹ Лот"]]);
 
-    // Новый процесс с пустым кэшем `file_id` берёт фото у Auction.
+    // Второе фото тем же путём встаёт в конец.
+    await next(() => press(dataOf(added, "Фото лота")));
+    await next(() => press(dataOf(last(calls), "Добавить фото")));
+    expect(question(calls).payload.text).toBe(
+      ["Сейчас: фото 1 из 10, новое встанет в конец", photoQuestion].join("\n"),
+    );
+    await next((history) => reply(history, photoOf("other")));
+    expect(plain(last(calls))).toContain("Фото у лота: 2 из 10.");
+    // Идентификатор у другого фото свой.
+    const ids = auction.commands.map(
+      (command) => (command.args as { photoId: string }).photoId,
+    );
+    expect(new Set(ids).size).toBe(2);
+
+    await next(() => press(`v1:lot:form:${lot}`));
+    expect(last(calls).text).toContain("Фото: 2");
+
+    // Новый процесс с пустым кэшем `file_id` берёт оба фото у Auction и
+    // ставит их каруселью над заголовком.
     await next(() => press(lotData(existingLot)), "rich");
     const card = calls.at(-1)?.payload as {
-      rich_message?: { media?: { media: { media: unknown } }[] };
+      rich_message?: { html?: string; media?: { media: { media: unknown } }[] };
     };
-    expect(card.rich_message?.media?.[0]?.media.media).toBeInstanceOf(
+    expect(card.rich_message?.media).toHaveLength(2);
+    expect(card.rich_message?.media?.[1]?.media.media).toBeInstanceOf(
       InputFile,
     );
+    expect(card.rich_message?.html).toMatch(
+      /^<tg-slideshow><img src="tg:\/\/photo\?id=lot"\/><img src="tg:\/\/photo\?id=lot2"\/><\/tg-slideshow><h1>/,
+    );
+  });
+
+  it("adds every photo of an album and shows one outcome that counts them", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const telegram = fakeTelegramFiles({
+      a1: new Uint8Array([0xff, 0xd8, 1]),
+      a2: new Uint8Array([0xff, 0xd8, 2]),
+      a3: new Uint8Array([0xff, 0xd8, 3]),
+    });
+    const { bot, calls } = harness("admin", auction, [], { telegram });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    const asked = question(calls);
+
+    // Снимки альбома отвечают на один вопрос: первый его закрывает.
+    for (const file of ["a1", "a2", "a3"]) {
+      const update = reply(calls, {
+        ...photoOf(file),
+        media_group_id: "album-1",
+      });
+      (
+        update.message as { reply_to_message: { message_id: number } }
+      ).reply_to_message.message_id = asked.messageId;
+      await bot.handleUpdate(update);
+    }
+
+    expect(auction.methods()).toEqual([
+      "addLotPhoto",
+      "addLotPhoto",
+      "addLotPhoto",
+    ]);
+    expect(auction.photos.get(existingLot)).toHaveLength(3);
+    // Один исход на альбом: второй и третий снимки правят его на месте.
+    const outcomes = calls.filter((call) =>
+      ((call.payload as Sent).text ?? "").includes("Фото добавлено"),
+    );
+    expect(outcomes.map((call) => call.method)).toEqual([
+      "sendMessage",
+      "editMessageText",
+      "editMessageText",
+    ]);
+    expect(plain(outcomes.at(-1)?.payload as Sent)).toContain(
+      "Фото у лота: 3 из 10.",
+    );
+  });
+
+  it("adds no second photo when the same photo comes again, redelivered or resent", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const { bot, calls } = harness("admin", auction, [], { telegram });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    const update = reply(calls, photo);
+
+    await bot.handleUpdate(update);
+    await bot.handleUpdate(structuredClone(update));
+    // Ответ Auction не дошёл, и администратор прислал то же фото заново.
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(reply(calls, photo));
+
+    const ids = auction.commands.map(
+      (command) => (command.args as { photoId: string }).photoId,
+    );
+    expect(ids).toHaveLength(3);
+    expect(new Set(ids).size).toBe(1);
+    expect(auction.photos.get(existingLot)).toHaveLength(1);
+  });
+
+  it("refuses the eleventh photo with the reason and leaves the ten", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    auction.seedPhotos(existingLot, 10);
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const { bot, calls, records } = harness("admin", auction, [], {
+      telegram,
+    });
+    await bot.init();
+
+    // На экране фото у полного лота добавить нечего.
+    await bot.handleUpdate(press(`v1:lot:ph:${lot}`));
+    const screen = last(calls);
+    expect(labels(screen)[0]).toEqual(["🗑 Убрать фото 1"]);
+    expect(plain(screen)).toContain(
+      "Больше 10 фото у лота не бывает: чтобы добавить новое, убери одно.",
+    );
+
+    // Вопрос, заданный раньше, получает отказ Auction с причиной.
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    await bot.handleUpdate(reply(calls, photo));
+
+    const refusal = last(calls);
+    expect(plain(refusal)).toBe(
+      "У лота уже 10 фото — больше не бывает. Чтобы добавить новое, убери одно в «Фото лота».",
+    );
+    expect(labels(refusal)).toEqual([["‹ Лот"]]);
+    expect(auction.photos.get(existingLot)).toHaveLength(10);
+    expect(records.every((record) => record.level !== "error")).toBe(true);
   });
 
   it("answers a photo above the limit of Auction with the limit on a reason screen, the lot unchanged", async () => {
@@ -1390,37 +1618,6 @@ describe("lot form photo question", () => {
     expect(records.every((record) => record.level === "info")).toBe(true);
   });
 
-  it("refuses an album once on a reason screen and ignores its other photos", async () => {
-    const auction = fakeAuction({ lots: [scheduled] });
-    const telegram = fakeTelegramFiles({ large: jpeg });
-    const { bot, calls } = harness("admin", auction, [], {
-      telegram,
-    });
-    await bot.init();
-    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
-    const asked = question(calls);
-    const albumPhoto = { ...photo, media_group_id: "album-1" };
-
-    await bot.handleUpdate(reply(calls, albumPhoto));
-    const refused = last(calls);
-    const shownAfterFirst = shown(calls).length;
-    // Второй снимок того же альбома отвечает на тот же первый вопрос.
-    const second = reply(calls, albumPhoto);
-    (
-      second.message as { reply_to_message: { message_id: number } }
-    ).reply_to_message.message_id = asked.messageId;
-    await bot.handleUpdate(second);
-
-    expect(plain(refused).split("\n")[0]).toBe(
-      "Нужна одна фотография, альбом не подходит",
-    );
-    expect(refused.reply_markup?.force_reply).not.toBe(true);
-    // Остальные снимки альбома ничего нового не показали.
-    expect(shown(calls)).toHaveLength(shownAfterFirst);
-    expect(telegram.downloads).toEqual([]);
-    expect(auction.commands).toEqual([]);
-  });
-
   it.each([
     [
       "Telegram does not know the file",
@@ -1466,7 +1663,7 @@ describe("lot form photo question", () => {
     },
   );
 
-  it("replaces the photo of a lot that already trades", async () => {
+  it("adds a photo to a lot that already trades", async () => {
     const auction = fakeAuction({
       lots: [
         {
@@ -1488,36 +1685,30 @@ describe("lot form photo question", () => {
     await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
     await bot.handleUpdate(reply(calls, photo));
 
-    expect(auction.methods()).toEqual(["editLotCard"]);
-    expect(last(calls).text).toContain("<b>Фото сохранено</b>");
+    expect(auction.methods()).toEqual(["addLotPhoto"]);
+    expect(last(calls).text).toContain("Фото добавлено");
   });
 });
 
-// Снятие фото лота (PER-715, решение владельца 24 октября 2026 года): у лота с
-// фото вопрос о фото даёт «Убрать фото» с подтверждением, а «Да» — правку
-// карточки с `remove_image`.
+// Снятие фото лота (PER-715, PER-721): экран «Фото лота» даёт «Убрать фото N»
+// с подтверждением, а «Да» снимает то фото, которое подтвердили.
 describe("lot photo removal", () => {
   const lot = uuidToToken(existingLot);
-  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
-  const withPhoto: LotView = {
-    ...scheduled,
-    card: {
-      title: "Кружка с совой",
-      description: "Ручная роспись.",
-      image: { version: "img-1" },
-    },
-  };
-  const auctionWithPhoto = (edit?: () => LotCardResult | undefined) => {
+  const withPhotos = (
+    count: number,
+    photo?: () => LotPhotoResult | undefined,
+  ) => {
     const auction = fakeAuction({
-      lots: [withPhoto],
-      ...(edit === undefined ? {} : { edit }),
+      lots: [scheduled],
+      ...(photo === undefined ? {} : { photo }),
     });
-    auction.images.set(existingLot, { content: jpeg, version: "img-1" });
+    auction.seedPhotos(existingLot, count);
     return auction;
   };
 
-  it("removes the photo of a lot after the confirmation over a restart and shows the lot without it", async () => {
-    const auction = auctionWithPhoto();
+  it("removes the second of three photos after the confirmation over a restart", async () => {
+    const auction = withPhotos(3);
+    const [, second] = auction.photos.get(existingLot) ?? [];
     const calls: RecordedCall[] = [];
     const next = async (update: (history: RecordedCall[]) => Update) => {
       const { bot } = harness("admin", auction, calls);
@@ -1525,26 +1716,89 @@ describe("lot photo removal", () => {
       await bot.handleUpdate(update(calls));
     };
 
-    await next(() => press(`v1:lot:ask:${lot}:image`));
-    const asked = question(calls).payload;
-    expect(labels(asked)).toEqual([["🗑 Убрать фото"], ["Отмена"]]);
-
-    await next((history) =>
-      press(dataOf(question(history).payload, "🗑 Убрать фото")),
+    await next(() => press(`v1:lot:form:${lot}`));
+    expect(last(calls).text).toContain("Фото: 3");
+    await next((history) => press(dataOf(last(history), "🖼 Фото")));
+    const screen = last(calls);
+    expect(plain(screen)).toBe(
+      "Фото лота\n<i>Кружка с совой</i>\n\nФото: 3 из 10. Первое — обложка: оно открывает карточку и стоит на экране зала.",
     );
+    expect(labels(screen)).toEqual([
+      ["Добавить фото"],
+      ["🗑 Убрать фото 1"],
+      ["🗑 Убрать фото 2"],
+      ["🗑 Убрать фото 3"],
+      ["‹ Изменить лот"],
+    ]);
+
+    await next((history) => press(dataOf(last(history), "🗑 Убрать фото 2")));
     const confirm = last(calls);
     expect(plain(confirm)).toBe(
       [
         "Убрать фото?",
         "Кружка с совой",
-        "Участники увидят карточку лота без фото. Вернуть его можно, только прислав фото заново.",
+        "Фото 2 из 3. Участники больше не увидят его в карточке лота. Вернуть его можно, только прислав фото заново.",
       ].join("\n\n"),
     );
     expect(labels(confirm)).toEqual([["✔️ Да, убрать фото", "✖️ Нет"]]);
     expect(auction.commands).toEqual([]);
 
     await next((history) => press(dataOf(last(history), "✔️ Да, убрать фото")));
-    // Тексты карточки уходят прежними: правка заменяет оба.
+    expect(auction.commands).toEqual([
+      {
+        method: "removeLotPhoto",
+        args: { lotId: existingLot, photoId: second?.photoId },
+      },
+    ]);
+    const outcome = last(calls);
+    expect(plain(outcome)).toBe(
+      ["Фото убрано", "Кружка с совой", "Фото у лота: 2 из 10."].join("\n\n"),
+    );
+    expect(labels(outcome)).toEqual([["Фото лота"], ["‹ Лот"]]);
+    expect(
+      auction.photos.get(existingLot)?.map((photo) => photo.photoId),
+    ).not.toContain(second?.photoId);
+  });
+
+  it("removes nothing more when the confirmed photo is already gone", async () => {
+    const auction = withPhotos(2);
+    const [first] = auction.photos.get(existingLot) ?? [];
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:rm:${lot}:1`));
+    const confirm = last(calls);
+    // Пока подтверждение висело, это фото уже убрали.
+    auction.photos.set(
+      existingLot,
+      (auction.photos.get(existingLot) ?? []).slice(1),
+    );
+    auction.resync(existingLot);
+    await bot.handleUpdate(press(dataOf(confirm, "✔️ Да, убрать фото")));
+
+    expect(first).toBeDefined();
+    expect(auction.commands).toEqual([]);
+    expect(plain(last(calls))).toContain("Фото у лота: 1 из 10.");
+  });
+
+  it("removes the only cover of an Auction without the list by a card edit", async () => {
+    const auction = fakeAuction({
+      lots: [
+        {
+          ...scheduled,
+          card: {
+            title: "Кружка с совой",
+            description: "Ручная роспись.",
+            image: { version: "img-old" },
+          },
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:ry:${lot}:${fingerprint("img-old")}`));
+
     expect(auction.commands).toEqual([
       {
         method: "editLotCard",
@@ -1556,65 +1810,14 @@ describe("lot photo removal", () => {
         },
       },
     ]);
-    const outcome = last(calls);
-    expect(plain(outcome)).toBe(["Фото убрано", "Кружка с совой"].join("\n\n"));
-    expect(labels(outcome)).toEqual([["Изменить лот"], ["‹ Лот"]]);
-
-    await next(() => press(dataOf(outcome, "Изменить лот")));
-    expect(last(calls).text).toContain("Фото: нет");
+    expect(plain(last(calls))).toContain("У лота нет фото.");
   });
 
-  it("shows the lot without the photo to a member's eyes after the removal", async () => {
-    const auction = auctionWithPhoto();
-    const { bot, calls } = harness("admin", auction);
-    await bot.init();
-
-    await bot.handleUpdate(press(`v1:lot:ry:${lot}:${fingerprint("img-1")}`));
-    await bot.handleUpdate(press(`v1:lot:view:${lot}`));
-
-    // Текстом на месте нажатия, без фото: ни `sendPhoto`, ни медиа rich.
-    expect(calls.at(-1)?.method).toBe("editMessageText");
-    expect(last(calls).text).toContain("<b>Кружка с совой</b>");
-    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("media");
-  });
-
-  it("removes nothing when the photo changed after the confirmation", async () => {
-    const auction = auctionWithPhoto();
-    const { bot, calls } = harness("admin", auction);
-    await bot.init();
-
-    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
-    await bot.handleUpdate(
-      press(dataOf(question(calls).payload, "🗑 Убрать фото")),
-    );
-    const confirm = last(calls);
-    // Пока подтверждение висело, лоту прислали другое фото.
-    auction.images.set(existingLot, { content: jpeg, version: "img-2" });
-    auction.lots.set(existingLot, {
-      ...withPhoto,
-      card: {
-        title: "Кружка с совой",
-        description: "Ручная роспись.",
-        image: { version: "img-2" },
-      },
-    });
-    await bot.handleUpdate(press(dataOf(confirm, "✔️ Да, убрать фото")));
-
-    expect(plain(last(calls))).toBe(
-      [
-        "Фото уже сменилось",
-        "",
-        "Ничего не убрано: посмотри новое фото и реши заново.",
-      ].join("\n"),
-    );
-    expect(auction.commands).toEqual([]);
-  });
-
-  it("refuses to remove the photo of a sold lot with the sold-lot frame", async () => {
+  it("refuses to open the photos of a sold lot with the sold-lot frame, also to an old removal button", async () => {
     const auction = fakeAuction({
       lots: [
         {
-          ...withPhoto,
+          ...scheduled,
           status: { kind: "sold", winnerId: existingLot, price: rub(90_000) },
         },
       ],
@@ -1622,31 +1825,36 @@ describe("lot photo removal", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
 
-    await bot.handleUpdate(press(`v1:lot:rm:${lot}`));
-
-    expect(plain(last(calls))).toBe(
-      "Лот продан. Название, описание и фото больше не меняются.",
-    );
+    for (const data of [
+      `v1:lot:ph:${lot}`,
+      `v1:lot:rm:${lot}`,
+      `v1:lot:rm:${lot}:1`,
+    ]) {
+      await bot.handleUpdate(press(data));
+      expect(plain(last(calls))).toBe(
+        "Лот продан. Название, описание и фото больше не меняются.",
+      );
+    }
     expect(auction.commands).toEqual([]);
   });
 
-  it("asks the photo again when the administrator declines the removal", async () => {
-    const auction = auctionWithPhoto();
+  it("returns to the photo screen when the administrator declines the removal", async () => {
+    const auction = withPhotos(1);
     const { bot, calls } = harness("admin", auction);
     await bot.init();
 
-    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
-    await bot.handleUpdate(
-      press(dataOf(question(calls).payload, "🗑 Убрать фото")),
+    await bot.handleUpdate(press(`v1:lot:rm:${lot}:1`));
+    expect(plain(last(calls))).toContain(
+      "Фото 1 из 1. Участники увидят карточку лота без фото.",
     );
     await bot.handleUpdate(press(dataOf(last(calls), "✖️ Нет")));
 
-    expect(question(calls).payload.text).toContain("Пришли фото лота");
+    expect(plain(last(calls)).split("\n")[0]).toBe("Фото лота");
     expect(auction.commands).toEqual([]);
   });
 
-  it("offers no removal on the photo question of a lot without a photo", async () => {
-    const auction = fakeAuction({ lots: [scheduled] });
+  it("offers no removal under the photo question", async () => {
+    const auction = withPhotos(2);
     const { bot, calls } = harness("admin", auction);
     await bot.init();
 
@@ -1656,11 +1864,14 @@ describe("lot photo removal", () => {
   });
 
   it("shows the closed-card frame of the form when Auction refuses the removal", async () => {
-    const auction = auctionWithPhoto(() => ({ kind: "card-closed" }));
+    const auction = withPhotos(1, () => ({ kind: "card-closed" }));
+    const [first] = auction.photos.get(existingLot) ?? [];
     const { bot, calls, records } = harness("admin", auction);
     await bot.init();
 
-    await bot.handleUpdate(press(`v1:lot:ry:${lot}:${fingerprint("img-1")}`));
+    await bot.handleUpdate(
+      press(`v1:lot:ry:${lot}:${fingerprint(first?.photoId ?? "")}`),
+    );
 
     const refusal = last(calls);
     expect(plain(refusal)).toBe(
@@ -1774,7 +1985,7 @@ describe("new lot chain", () => {
     photo: [{ file_id: "large", file_unique_id: "l", width: 800, height: 800 }],
   };
   const photoPrompt =
-    "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота. Нет фото под рукой — «Пропустить», его можно добавить потом.";
+    "Пришли фото лота ответом на это сообщение — одно или альбомом. Их увидят участники на карточке лота, первое — обложка. Нет фото под рукой — «Пропустить», их можно добавить потом.";
   const readyText = [
     "<b>Лот готов</b>",
     "<b>Ваза</b>",
@@ -1850,7 +2061,7 @@ describe("new lot chain", () => {
     expect(ready.text).toBe(readyText);
     expect(labels(ready)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     expect(dataOf(ready, "‹ Лот")).toBe(lotData(lotId));
-    expect(auction.images.has(lotId)).toBe(true);
+    expect(auction.photos.get(lotId)).toHaveLength(1);
   });
 
   it("skips the photo with a button that removes the question and ends with the lot ready", async () => {
@@ -2037,10 +2248,15 @@ describe("lot copies, set edits and removal", () => {
     set.lotIds.forEach((lotId, index) => {
       expect(auction.registry.has(lotId)).toBe(true);
       const lot = auction.lots.get(lotId);
+      // Копия получает фото командой фото (PER-721), а у исходного лота
+      // остаётся его обложка.
       expect(lot?.card).toEqual({
         title: `Кружка с совой | ${index + 1} из 7`,
         description: "Ручная роспись.",
         image: { version },
+        ...(index === 0
+          ? {}
+          : { photos: [{ photoId: lotPhotoIdOf(lotId, jpeg), version }] }),
       });
       expect(lot?.status).toEqual({
         kind: "scheduled",
@@ -2267,28 +2483,208 @@ describe("lot copies, set edits and removal", () => {
     expect(plain(last(calls)).split("\n")[0]).toBe("Применено к 3 из 3");
   });
 
-  it("offers no photo removal on the photo question of the whole set", async () => {
+  it("asks the scope before adding a photo to a lot of the set and removes photos one lot at a time", async () => {
     const auction = fakeAuction({
-      lots: setLots.map((lotId, index) => ({
-        ...vase(lotId, index),
-        card: {
-          title: `Ваза | ${index + 1} из 3`,
-          description: "Синяя.",
-          image: { version },
-        },
-      })),
+      lots: setLots.map(vase),
       console: { sets: [vaseSet] },
     });
+    auction.seedPhotos(setLots[0], 2);
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     const token = uuidToToken(setLots[0]);
 
-    await bot.handleUpdate(press(`v1:lot:ask:${token}:image:s`));
-    expect(labels(question(calls).payload).flat()).not.toContain(
-      "🗑 Убрать фото",
+    await bot.handleUpdate(press(`v1:lot:ph:${token}`));
+    const screen = last(calls);
+    expect(dataOf(screen, "Добавить фото")).toBe(`v1:lot:sc:${token}:image`);
+    expect(dataOf(screen, "🗑 Убрать фото 1")).toBe(`v1:lot:rm:${token}:1`);
+    await bot.handleUpdate(press(dataOf(screen, "Добавить фото")));
+    expect(plain(last(calls))).toContain("в конец их фото");
+    expect(dataOf(last(calls), "Все лоты сета (3)")).toBe(
+      `v1:lot:ask:${token}:image:s`,
     );
-    await bot.handleUpdate(press(`v1:lot:ask:${token}:image`));
-    expect(labels(question(calls).payload).flat()).toContain("🗑 Убрать фото");
+    // Под вопросом о фото снятия нет: фото убирают на экране «Фото лота».
+    await bot.handleUpdate(press(`v1:lot:ask:${token}:image:s`));
+    expect(labels(question(calls).payload)).toEqual([["Отмена"]]);
+  });
+
+  it("adds the photo to the end of every lot of the set, names the lot at the photo limit and retries it", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    auction.seedPhotos(setLots[0], 1);
+    auction.seedPhotos(setLots[2], 10);
+    const { calls, next } = steps(auction, fakeTelegramFiles({ large: jpeg }));
+    const token = uuidToToken(setLots[0]);
+    const versions = (lotId: string) =>
+      auction.photos.get(lotId)?.map((each) => each.version) ?? [];
+
+    await next(() => press(`v1:lot:ask:${token}:image:s`));
+    await next((history) => reply(history, photo));
+    expect(versions(setLots[0])).toEqual(["img-1", version]);
+    expect(versions(setLots[1])).toEqual([version]);
+    expect(versions(setLots[2])).toHaveLength(10);
+    const outcome = last(calls);
+    expect(plain(outcome)).toBe(
+      [
+        "Применено к 2 из 3",
+        "Ваза | 1 из 3",
+        "Не применено: «Ваза | 3 из 3» — у лота предел фото.",
+      ].join("\n\n"),
+    );
+
+    // Место освободилось: повтор добавляет то же фото только оставшемуся.
+    auction.photos.set(
+      setLots[2],
+      auction.photos.get(setLots[2])?.slice(1) ?? [],
+    );
+    auction.resync(setLots[2]);
+    const before = auction.commands.length;
+    await next(() => press(dataOf(outcome, "Повторить для оставшихся")));
+    expect(auction.commands.slice(before)).toEqual([
+      {
+        method: "addLotPhoto",
+        args: {
+          lotId: setLots[2],
+          photoId: lotPhotoIdOf(setLots[2], jpeg),
+          image: jpeg,
+        },
+      },
+    ]);
+    expect(versions(setLots[2]).at(-1)).toBe(version);
+    expect(plain(last(calls)).split("\n")[0]).toBe("Применено к 3 из 3");
+  });
+
+  it("retries the photo the set edit spread, not the last photo of the lot", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    const other = new Uint8Array([0xff, 0xd8, 9]);
+    const sha = (bytes: Uint8Array) =>
+      createHash("sha256").update(bytes).digest("hex");
+    // У исходного лота фото A уже есть, за ним — B.
+    auction.photos.set(setLots[0], [
+      { photoId: lotPhotoIdOf(setLots[0], jpeg), content: jpeg, version },
+      {
+        photoId: lotPhotoIdOf(setLots[0], other),
+        content: other,
+        version: sha(other),
+      },
+    ]);
+    auction.resync(setLots[0]);
+    auction.seedPhotos(setLots[2], 10);
+    const { calls, next } = steps(auction, fakeTelegramFiles({ large: jpeg }));
+    const token = uuidToToken(setLots[0]);
+
+    await next(() => press(`v1:lot:ask:${token}:image:s`));
+    await next((history) => reply(history, photo));
+    const outcome = last(calls);
+    expect(plain(outcome).split("\n")[0]).toBe("Применено к 2 из 3");
+
+    auction.photos.set(
+      setLots[2],
+      auction.photos.get(setLots[2])?.slice(1) ?? [],
+    );
+    auction.resync(setLots[2]);
+    await next(() => press(dataOf(outcome, "Повторить для оставшихся")));
+    expect(auction.photos.get(setLots[2])?.at(-1)?.version).toBe(version);
+    expect(
+      auction.photos
+        .get(setLots[2])
+        ?.some((each) => each.version === sha(other)),
+    ).toBe(false);
+  });
+
+  it("keeps the partial outcome of one album photo when a later photo of the album reaches every lot", async () => {
+    const auction = fakeAuction({
+      lots: setLots.map(vase),
+      console: { sets: [vaseSet] },
+    });
+    auction.seedPhotos(setLots[2], 10);
+    const second = new Uint8Array([0xff, 0xd8, 2]);
+    const telegram = fakeTelegramFiles({ a1: jpeg, a2: second });
+    const { bot, calls } = harness("admin", auction, [], { telegram });
+    await bot.init();
+    const token = uuidToToken(setLots[0]);
+    await bot.handleUpdate(press(`v1:lot:ask:${token}:image:s`));
+    const asked = question(calls);
+
+    for (const [index, file] of ["a1", "a2"].entries()) {
+      // Место у третьего лота освобождается ко второму снимку.
+      if (index === 1) {
+        auction.photos.set(
+          setLots[2],
+          auction.photos.get(setLots[2])?.slice(1) ?? [],
+        );
+        auction.resync(setLots[2]);
+      }
+      const update = reply(calls, {
+        photo: [
+          { file_id: file, file_unique_id: file, width: 1280, height: 1280 },
+        ],
+        media_group_id: "album-set",
+      });
+      (
+        update.message as { reply_to_message: { message_id: number } }
+      ).reply_to_message.message_id = asked.messageId;
+      await bot.handleUpdate(update);
+    }
+
+    const outcomes = calls.filter((call) =>
+      ((call.payload as Sent).text ?? "").includes("Применено к"),
+    );
+    // Исход с непрошедшим лотом остаётся своим сообщением с «Повторить».
+    expect(outcomes.map((call) => call.method)).toEqual([
+      "sendMessage",
+      "sendMessage",
+    ]);
+    expect(labels(outcomes[0]?.payload as Sent).flat()).toContain(
+      "Повторить для оставшихся",
+    );
+    expect(plain(outcomes[1]?.payload as Sent).split("\n")[0]).toBe(
+      "Применено к 3 из 3",
+    );
+  });
+
+  it("copies every photo of the lot into each copy in the same order", async () => {
+    const auction = fakeAuction({
+      lots: [
+        {
+          ...scheduled,
+          card: { title: "Кружка с совой", description: "Ручная роспись." },
+        },
+      ],
+      console: {},
+    });
+    const gallery = [1, 2, 3].map((n) => new Uint8Array([0xff, 0xd8, n]));
+    auction.photos.set(
+      existingLot,
+      gallery.map((content, index) => ({
+        photoId: `0198f2a4-7c1e-7d3a-9b21-0000000000a${index}`,
+        content,
+        version: createHash("sha256").update(content).digest("hex"),
+      })),
+    );
+    auction.resync(existingLot);
+    const { next } = steps(auction);
+
+    await next(() => press(`v1:lot:cp:${uuidToToken(existingLot)}`));
+    await next((history) => answer(history, "3"));
+    const [set] = [...auction.sets.values()];
+    if (set === undefined) throw new Error("no set");
+    for (const lotId of set.lotIds.slice(1)) {
+      expect(auction.photos.get(lotId)?.map((each) => each.content)).toEqual(
+        gallery,
+      );
+    }
+
+    // Повтор ответа фото второй раз не шлёт.
+    const before = auction.commands.length;
+    await next((history) => answer(history, "3"));
+    expect(
+      auction.commands.slice(before).map((each) => each.method),
+    ).not.toContain("addLotPhoto");
   });
 
   it("names at most five refused lots with short titles and counts the rest", async () => {

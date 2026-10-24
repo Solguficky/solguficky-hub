@@ -151,6 +151,9 @@ trait LotViews {
    */
   def image(lotId: UUID): Future[Option[LotImageView]]
 
+  /** Фото лота, который виден в read model, по id фото; лота или фото нет — `None`, как у `image`. */
+  def photo(lotId: UUID, photoId: UUID): Future[Option[LotImageView]]
+
   /**
    * Ставки и снятия участников лота по возрастанию номера события в журнале, строго после `after`, не больше `limit`.
    * Порядок — журнала, а не часов: события одной команды делят время. Ставка снятого участника приходит с пометкой

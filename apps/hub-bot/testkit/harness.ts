@@ -85,13 +85,20 @@ const sendingMethods: ReadonlySet<string> = new Set([
 // Блок фото в ответе на rich-сообщение с загрузкой: бот берёт `file_id`
 // наибольшего размера в кэш, и без блока писал бы warn на каждой холодной
 // карточке (`lot image file_id missing in response`).
-const photoBlock = {
+// Блок на каждое фото сообщения, в порядке `media`: у карусели (PER-721)
+// `file_id` второго и следующих фото свои — `large-2` и дальше.
+const photoBlock = (index: number) => ({
   type: "photo",
   photo: [
     { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
-    { file_id: "large", file_unique_id: "l", width: 800, height: 800 },
+    {
+      file_id: index === 0 ? "large" : `large-${index + 1}`,
+      file_unique_id: "l",
+      width: 800,
+      height: 800,
+    },
   ],
-};
+});
 
 export type Respond = (method: ApiMethod, payload: ApiPayload) => unknown;
 
@@ -150,7 +157,7 @@ function recorder(
           date: 0,
           chat,
           rich_message: {
-            blocks: rich.media === undefined ? [] : [photoBlock],
+            blocks: (rich.media ?? []).map((_, index) => photoBlock(index)),
           },
         } as never,
       });

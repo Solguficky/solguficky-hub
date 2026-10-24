@@ -16,6 +16,7 @@ import auction.projection.AuctionListing
 import auction.access.Viewer
 import auction.catalog.ImageChange
 import auction.catalog.LotId
+import auction.catalog.PhotoId
 import auction.lot.AntiSnipe
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
@@ -37,6 +38,7 @@ import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
+import auction.v1.auction_service.AddLotPhotoRequest
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AdvanceAskRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
@@ -51,6 +53,7 @@ import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
 import auction.v1.auction_service.PreviewParticipantRemovalRequest
+import auction.v1.auction_service.RemoveLotPhotoRequest
 import auction.v1.auction_service.RemoveParticipantRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
@@ -61,6 +64,7 @@ import auction.v1.auction_service.GetAuctionLotStatisticsRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
+import auction.v1.auction_service.GetLotPhotoRequest
 import auction.v1.auction_service.GetLotRequest
 import auction.v1.auction_service.GetPredictionResultsRequest
 import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
@@ -237,6 +241,14 @@ final case class AuctionsQuery(listing: AuctionListing, after: Option[UUID], lim
  */
 final case class CardCommand[I](lotId: LotId, title: String, description: String, image: I, viewer: Viewer)
 
+/**
+ * Команда над фото лота: добавление несёт ещё не проверенные байты, снятие — `Unit`. Предел и тип — решение домена.
+ */
+final case class PhotoCommand[I](lotId: LotId, photoId: PhotoId, photo: I, viewer: Viewer)
+
+/** Фото лота по id для `GetLotPhoto`. */
+final case class LotPhotoQuery(lotId: UUID, photoId: UUID, acting: Acting)
+
 /** Выбор имени участника в аукционе; участник — тот, от чьего имени действует смотрящий. */
 final case class ChooseCommand(auctionId: AuctionId, choice: NameChoice, acting: Acting)
 
@@ -261,6 +273,9 @@ object RequestMapping {
    * аукцион сходки, — только пятую (integration.md, «Аукцион у сходки»).
    */
   private val CanonicalUuidV5 = "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$".r
+
+  /** Любая версия и вариант в каноническом виде: строчные hex-цифры с дефисами. */
+  private val CanonicalUuid = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$".r
 
   private val CurrencyAlpha = "^[A-Z]{3}$".r
 
@@ -340,6 +355,30 @@ object RequestMapping {
       acting <- acting(request.viewer)
       lotId <- uuidV7("lot_id", request.lotId)
     } yield LotQuery(lotId, acting)
+
+  // Id нового фото рождает вызывающий, как `lot_id`, — UUIDv7. Снятие и чтение называют фото, которое уже есть, а id
+  // фото, пришедшего с карточкой или из миграции, выдаёт сервис, поэтому там годится любой канонический UUID.
+  def addLotPhoto(request: AddLotPhotoRequest): Either[FormError, PhotoCommand[IArray[Byte]]] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      photoId <- uuidV7("photo_id", request.photoId)
+      upload <- request.photo.toRight(FormError("photo"))
+    } yield PhotoCommand(LotId(lotId), PhotoId(photoId), bytes(upload), acting.viewer)
+
+  def removeLotPhoto(request: RemoveLotPhotoRequest): Either[FormError, PhotoCommand[Unit]] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      photoId <- uuidV7("photo_id", request.photoId)
+    } yield PhotoCommand(LotId(lotId), PhotoId(photoId), (), acting.viewer)
+
+  def getLotPhoto(request: GetLotPhotoRequest): Either[FormError, LotPhotoQuery] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      photoId <- uuidV7("photo_id", request.photoId)
+    } yield LotPhotoQuery(lotId, photoId, acting)
 
   def getLot(request: GetLotRequest): Either[FormError, LotQuery] =
     for {
@@ -853,6 +892,9 @@ object RequestMapping {
 
   private[grpc] def canonicalUuidV7(value: String): Option[UUID] =
     Option.when(CanonicalUuidV7.matches(value))(UUID.fromString(value))
+
+  private[grpc] def canonicalUuid(value: String): Option[UUID] =
+    Option.when(CanonicalUuid.matches(value))(UUID.fromString(value))
 
   private[grpc] def canonicalUuidV5(value: String): Option[UUID] =
     Option.when(CanonicalUuidV5.matches(value))(UUID.fromString(value))

@@ -16,6 +16,12 @@ import {
   liveEditFailure,
 } from "../../core/auction/live-cards.js";
 import { reportLiveEditFailure } from "../../core/auction/live-failures.js";
+import {
+  loadLotPhoto,
+  richPhotoBlock,
+  richPhotoFileIds,
+  richPhotoId,
+} from "../../core/auction/lot-photos.js";
 import type { AuctionWatches } from "../../core/auction/watch.js";
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
@@ -630,70 +636,82 @@ async function deleteMessage(
 }
 
 // Фото rich-карточки: из кэша `file_id` или байтами из Auction. Не удалось —
-// карточка уходит без фото: изображение украшает экран, а не держит его.
+// фото выпадает из карусели, а без фото карточка уходит текстом: изображение
+// украшает экран, а не держит его.
 type Photo =
   | { kind: "cached"; key: ImageKey; fileId: string }
   | { kind: "upload"; key: ImageKey; file: InputFile };
 
-// Идентификатор фото внутри rich-сообщения: им `<img>` ссылается на `media`.
-const photoId = "lot";
-
 // Содержимое rich-сообщения: фото — первым блоком, над заголовком карточки
-// (решение владельца 10 октября 2026 года, «Показ фото лота»).
+// (решение владельца 10 октября 2026 года, «Показ фото лота»), несколько —
+// каруселью, как постеры карточки сходки (PER-721).
 export function richMessageOf(
   screen: RenderedScreen,
-  photo: Photo | undefined,
+  photos: readonly Photo[] | undefined,
 ): InputRichMessage {
-  if (photo === undefined) return { html: screen.text };
+  if (photos === undefined || photos.length === 0) return { html: screen.text };
   return {
-    html: `<img src="tg://photo?id=${photoId}"/>${screen.text}`,
-    media: [
-      {
-        id: photoId,
-        media: {
-          type: "photo",
-          media: photo.kind === "cached" ? photo.fileId : photo.file,
-        },
+    html: `${richPhotoBlock(photos.map((_, index) => richPhotoId(index)))}${screen.text}`,
+    media: photos.map((photo, index) => ({
+      id: richPhotoId(index),
+      media: {
+        type: "photo",
+        media: photo.kind === "cached" ? photo.fileId : photo.file,
       },
-    ],
+    })),
   };
 }
 
-async function photoFor(input: {
-  screen: RenderedScreen;
-  photos: PhotoCache;
-  image: LotImagePort;
-  viewer: Viewer | undefined;
-  logger: Logger;
-  requestId: string;
-}): Promise<Photo | undefined> {
-  const key = input.screen.photo;
-  if (key === undefined || input.viewer === undefined) return undefined;
-  const cached = input.photos.get(key);
-  // Эту версию Telegram уже не принял: до рестарта она не загружается.
-  if (cached?.kind === "none") return undefined;
-  if (cached !== undefined)
-    return { kind: "cached", key, fileId: cached.fileId };
-  try {
-    const image = await input.image.getLotImage({
-      viewer: input.viewer,
-      lotId: key.lotId,
-    });
-    return {
-      kind: "upload",
-      // Ключ — версия самих байтов: если изображение сменили между чтением
-      // карточки и загрузкой, старое фото не ляжет под новым ключом.
-      key: { lotId: key.lotId, version: image.version },
-      file: new InputFile(image.content, "lot"),
-    };
-  } catch (cause) {
-    input.logger.warn("lot image unavailable", {
-      request_id: input.requestId,
-      error: messageOf(cause),
-    });
-    return undefined;
-  }
+// Фото карточки в порядке показа. Без записи в кэше фото грузится из Auction,
+// если `upload`; версия, которую Telegram не принял, до рестарта пропускается.
+async function photosFor(
+  input: {
+    screen: RenderedScreen;
+    photos: PhotoCache;
+    image: LotImagePort;
+    viewer: Viewer | undefined;
+    logger: Logger;
+    requestId: string;
+  },
+  upload = true,
+): Promise<Photo[]> {
+  const keys = input.screen.photos ?? [];
+  const viewer = input.viewer;
+  if (keys.length === 0 || viewer === undefined) return [];
+  const loaded = await Promise.all(
+    keys.map(async (key): Promise<Photo | undefined> => {
+      const cached = input.photos.get(key);
+      if (cached?.kind === "none") return undefined;
+      if (cached !== undefined) {
+        return { kind: "cached", key, fileId: cached.fileId };
+      }
+      if (!upload) return undefined;
+      try {
+        const image = await loadLotPhoto(input.image, viewer, key);
+        return {
+          kind: "upload",
+          // Ключ — версия самих байтов: если фото сменили между чтением
+          // карточки и загрузкой, старое фото не ляжет под новым ключом.
+          key: { lotId: key.lotId, version: image.version },
+          file: new InputFile(image.content, "lot"),
+        };
+      } catch (cause) {
+        input.logger.warn("lot image unavailable", {
+          request_id: input.requestId,
+          error: messageOf(cause),
+        });
+        return undefined;
+      }
+    }),
+  );
+  return loaded.filter((photo) => photo !== undefined);
 }
+
+const cachedOnly = (photos: readonly Photo[]) =>
+  photos.filter((photo) => photo.kind === "cached");
+
+const uploadedKeys = (photos: readonly Photo[]) =>
+  photos.flatMap((photo) => (photo.kind === "upload" ? [photo.key] : []));
 
 // Доставка экрана правилами края (дизайн-код, «Доставка» и «Показ фото лота»).
 // Нажатие правит своё сообщение: текст ленты и rich-карточка лота делят одно
@@ -744,27 +762,33 @@ async function deliver(
     await leave();
     return sent.message_id;
   }
-  let photo = await photoFor({ ...input, requestId: ctx.requestId });
+  let photos = await photosFor({ ...input, requestId: ctx.requestId });
   // Новое сообщение после отказа правки загрузку не повторяет.
   let mayUpload = true;
-  // Загруженная версия, на которой Telegram отказал.
-  let rejected: ImageKey | undefined;
+  // Загруженные версии, на которых Telegram отказал.
+  let rejected: ImageKey[] = [];
   for (;;) {
     try {
-      const rich = richMessageOf(screen, photo);
+      const rich = richMessageOf(screen, photos);
       const sent = editable
         ? await ctx.editMessageText(rich, markup)
         : await ctx.replyWithRichMessage(rich, markup);
-      remember({ ...input, requestId: ctx.requestId, photo, sent });
-      // Без фото карточка дошла — значит, отказ был в самом изображении, а не
-      // в лимите, правах или разметке: только тогда версия помечается.
-      if (rejected !== undefined) input.photos.refuse(rejected);
+      remember({
+        ...input,
+        requestId: ctx.requestId,
+        shown: photos,
+        sent,
+      });
+      // Без фото карточка дошла — значит, отказ был в самих изображениях, а не
+      // в лимите, правах или разметке: только тогда версии помечаются. Какое
+      // фото виновато, Telegram не говорит, поэтому помечаются все загруженные.
+      for (const key of rejected) input.photos.refuse(key);
       await leave();
       // Правка оставляет экран в нажатом сообщении; новое называет ответ.
       if (editable) return current?.message_id;
       return sent === true ? undefined : sent.message_id;
     } catch (cause) {
-      if (photo?.kind === "upload" && cause instanceof HttpError) {
+      if (uploadedKeys(photos).length > 0 && cause instanceof HttpError) {
         // Обрыв соединения: Telegram мог вызов и не получить. Отметки нет,
         // следующее открытие лота загрузит изображение снова.
         input.logger.warn("lot image upload interrupted", {
@@ -774,7 +798,7 @@ async function deliver(
         // Новое сообщение не повторяется: если Telegram его принял, повтор
         // прислал бы второе. Правка того же сообщения дубля не даёт.
         if (!editable) throw cause;
-        photo = undefined;
+        photos = [];
         continue;
       }
       if (!(cause instanceof GrammyError)) throw cause;
@@ -786,20 +810,21 @@ async function deliver(
         // `file_id` из кэша либо без фото.
         editable = false;
         mayUpload = false;
-        if (photo?.kind === "upload") photo = undefined;
+        photos = cachedOnly(photos);
         continue;
       }
-      if (photo?.kind === "cached" && rejectedFile(cause.description)) {
-        // Telegram больше не знает этот `file_id`: запись вытесняется, и
-        // повтор идёт загрузкой байтов один раз.
-        input.photos.delete(photo.key);
-        photo = mayUpload
-          ? await photoFor({ ...input, requestId: ctx.requestId })
-          : undefined;
+      const cached = cachedOnly(photos);
+      if (cached.length > 0 && rejectedFile(cause.description)) {
+        // Telegram больше не знает один из `file_id`, и какой — не говорит:
+        // записи вытесняются, и повтор идёт загрузкой байтов один раз.
+        for (const photo of cached) input.photos.delete(photo.key);
+        photos = mayUpload
+          ? await photosFor({ ...input, requestId: ctx.requestId })
+          : [];
         mayUpload = false;
         continue;
       }
-      if (photo !== undefined) {
+      if (photos.length > 0) {
         // Telegram отказал вызову с фото — файл велик, не картинка или не
         // обработался. Сообщение после отказа прежнее, и карточка уходит той
         // же правкой без фото; загруженная версия помечается, если правка без
@@ -808,8 +833,8 @@ async function deliver(
           request_id: ctx.requestId,
           error: cause.description,
         });
-        if (photo.kind === "upload") rejected = photo.key;
-        photo = undefined;
+        rejected = uploadedKeys(photos);
+        photos = [];
         continue;
       }
       throw cause;
@@ -834,36 +859,37 @@ async function editLiveCard(
 ): Promise<LiveEditOutcome> {
   const { card, screen } = input;
   const markup = markupOf(screen);
-  const key = screen.photo;
-  const cached = key === undefined ? undefined : input.photos.get(key);
-  const photo: Photo | undefined =
-    key !== undefined && cached?.kind === "file"
-      ? { kind: "cached", key, fileId: cached.fileId }
-      : undefined;
-  const edit = (shownPhoto: Photo | undefined) =>
+  // Фото без записи в кэше из карусели выпадают: загрузки здесь нет.
+  const photos: Photo[] = (screen.photos ?? []).flatMap((key) => {
+    const cached = input.photos.get(key);
+    return cached?.kind === "file"
+      ? [{ kind: "cached" as const, key, fileId: cached.fileId }]
+      : [];
+  });
+  const edit = (shownPhotos: readonly Photo[]) =>
     screen.format === "rich"
       ? api.editMessageText(
           card.chatId,
           card.messageId,
-          richMessageOf(screen, shownPhoto),
+          richMessageOf(screen, shownPhotos),
           markup,
         )
       : api.editMessageText(card.chatId, card.messageId, screen.text, markup);
   try {
     try {
-      await edit(photo);
+      await edit(photos);
     } catch (cause) {
-      // Telegram больше не знает `file_id` из кэша: запись вытесняется, и
+      // Telegram больше не знает один из `file_id` кэша: записи вытесняются, и
       // правка идёт без фото — иначе каждая следующая цена падала бы на нём же.
       if (
-        photo === undefined ||
+        photos.length === 0 ||
         !(cause instanceof GrammyError) ||
         !rejectedFile(cause.description)
       ) {
         throw cause;
       }
-      input.photos.delete(photo.key);
-      await edit(undefined);
+      for (const photo of photos) input.photos.delete(photo.key);
+      await edit([]);
     }
     return { kind: "done" };
   } catch (cause) {
@@ -882,25 +908,29 @@ async function clearKeyboard(ctx: UpdateContext): Promise<void> {
 // `file_id` наибольшего размера из ответа Telegram ложится в кэш под версией
 // загруженных байтов. Ответ правки — тоже сообщение, поэтому кэш греется с
 // любого показа.
+// `file_id` в ответе идут в порядке фото карточки. Не сошлось число — запись
+// не делается: иначе фото легло бы под чужой версией.
 function remember(input: {
   photos: PhotoCache;
-  photo: Photo | undefined;
+  shown: readonly Photo[];
   sent: Message | true;
   logger: Logger;
   requestId: string;
 }): void {
-  const { photos, photo, sent } = input;
-  if (photo?.kind !== "upload" || sent === true) return;
-  const fileId = sent.rich_message?.blocks
-    .flatMap((block) => (block.type === "photo" ? [block.photo] : []))
-    .at(-1)
-    ?.at(-1)?.file_id;
-  if (fileId !== undefined) {
-    photos.set(photo.key, fileId);
+  const { photos, shown, sent } = input;
+  if (sent === true || uploadedKeys(shown).length === 0) return;
+  const fileIds = richPhotoFileIds(sent);
+  if (fileIds.length === shown.length) {
+    shown.forEach((photo, index) => {
+      const fileId = fileIds[index];
+      if (photo.kind === "upload" && fileId !== undefined) {
+        photos.set(photo.key, fileId);
+      }
+    });
     return;
   }
-  // Загрузка прошла, а фото в ответе нет: без записи каждый показ грузил бы
-  // байты заново, и это должно быть видно.
+  // Загрузка прошла, а фото в ответе не сошлись: без записи каждый показ
+  // грузил бы байты заново, и это должно быть видно.
   input.logger.warn("lot image file_id missing in response", {
     request_id: input.requestId,
   });

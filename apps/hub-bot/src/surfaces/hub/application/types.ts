@@ -126,13 +126,8 @@ export type LotAskError =
   | "unsupported-image"
   // Ответ на вопрос о фото — не фотография: текст, файл, стикер.
   | "photo-needed"
-  // Альбом: лоту нужна одна фотография.
-  | "photo-album"
   // Telegram не отдал файл фотографии: её можно прислать ещё раз.
   | "photo-unavailable"
-  // Фото сменилось после подтверждения «Убрать фото» (PER-715): ничего не
-  // снято, решают заново.
-  | "photo-changed"
   // Число лотов для копий — не целое от 2 до 20 (PER-716).
   | "copies-count";
 
@@ -166,16 +161,19 @@ export type LotFormView = {
   auctionId: string;
   title?: string;
   description: string;
-  hasImage: boolean;
-  // Отпечаток версии фото (PER-715): «Да, убрать фото» несёт его, чтобы не
-  // снять фото, которое сменилось после подтверждения.
-  imagePrint?: string;
+  // Фото лота в порядке показа, первое — обложка (PER-721).
+  photos: readonly LotFormPhoto[];
   terms: LotTermsView;
   // Реестр аукциона лота (PER-716): открыт ли он и сет лота. Его несёт только
   // экран правки, прочитанный вместе с пультом; нет — пульт не прочитан, и
   // экран не предлагает ни копий, ни удаления, ни правки сета.
   registry?: LotRegistryView;
 };
+
+// Фото на экране «Фото лота». `print` — отпечаток фото для кнопки «Убрать»:
+// идентификатор в 64 байта не помещается. `photoId` нет — Auction до списка
+// фото назвал только обложку, и снимается она правкой карточки.
+export type LotFormPhoto = { print: string; photoId?: string };
 
 // `open` — онлайн-торги не открыты: лоты добавляются и снимаются. `set` — сет,
 // в который лот входит, с числом его лотов; неполный сет тоже.
@@ -185,12 +183,13 @@ export type LotRegistryView = {
 };
 
 // Почему правка сета не дошла до лота (PER-716): лот продан или закрыт без
-// продажи, торги по лоту начались, лота нет в реестре, Auction не ответил или
-// отказал иначе.
+// продажи, торги по лоту начались, у лота предел фото (PER-721), лота нет в
+// реестре, Auction не ответил или отказал иначе.
 export type LotSetMiss =
   | "sold"
   | "card-closed"
   | "terms-closed"
+  | "photo-limit"
   | "not-in-auction"
   | "unavailable"
   | "refused";
@@ -220,7 +219,9 @@ export type LotRefusal =
   // Сетов у аукциона столько, сколько держит экран сетов (PER-716).
   | "set-limit"
   // Торги начались: лот из аукциона уже не снять (PER-716).
-  | "removal-frozen";
+  | "removal-frozen"
+  // У лота уже предел фото (PER-721): новое не добавить, пока не убрать одно.
+  | "photo-limit";
 // `unschedule` снимает назначенную публикацию: это не ось видимости, но
 // механика та же — отдельное действие с подтверждением и повтором по версии.
 export type MeetupStateAction = "unpublish" | "cancel" | "hold" | "unschedule";
@@ -427,10 +428,13 @@ export type LotFormRequest =
       opId: string;
       set?: true;
     })
-  // Фото уже скачано у Telegram краем: юзкейс получает только байты.
+  // Фото в конец списка (PER-721). Его уже скачал у Telegram край: юзкейс
+  // получает только байты. `photoId` край выводит из лота и байтов фото
+  // (`lotPhotoIdOf`): повтор того же фото даёт тот же идентификатор.
   | (LotFormCall & {
-      intent: "set-lot-image";
+      intent: "add-lot-photo";
       lotId: string;
+      photoId: string;
       image: Uint8Array;
       set?: true;
     })
@@ -441,6 +445,9 @@ export type LotFormRequest =
       lotId: string;
       field: LotSetField;
       opId: string;
+      // У фото — отпечаток версии фото, которое разносили (PER-721): повтор
+      // добавляет то же фото, а не последнее из галереи.
+      photoPrint?: string;
     })
   // Копии лота (PER-716): ответ — сколько всего лотов будет вместе с ним.
   | (LotFormCall & {
@@ -451,12 +458,13 @@ export type LotFormRequest =
     })
   // «Да, удалить лот» (PER-716): лот уходит из реестра и из своего сета.
   | (LotFormCall & { intent: "remove-lot"; lotId: string; opId: string })
-  // Снятие фото лота (PER-715): «Да» под подтверждением «Убрать фото?».
+  // Снятие фото лота (PER-715, PER-721): «Да» под подтверждением «Убрать
+  // фото?».
   | (LotFormCall & {
-      intent: "remove-lot-image";
+      intent: "remove-lot-photo";
       lotId: string;
       // Отпечаток фото, которое подтвердили снять.
-      imagePrint: string;
+      photoPrint: string;
     });
 
 // Пульт аукциона администратора (PER-320). Пульт — экран хаба, а не тело
@@ -1426,7 +1434,15 @@ export type ExecuteResult =
   | {
       kind: "lot-form";
       lot: LotFormView;
-      saved?: "created" | "text" | "terms" | "image" | "image-removed";
+      // `photo-missing` — фото, которое подтвердили снять, у лота уже нет:
+      // снимать нечего.
+      saved?:
+        | "created"
+        | "text"
+        | "terms"
+        | "photo-added"
+        | "photo-removed"
+        | "photo-missing";
     }
   // Предпросмотр лота (PER-512): снимок, прочитанный правом администратора.
   | { kind: "lot-preview"; lot: LotView }
@@ -1453,6 +1469,8 @@ export type ExecuteResult =
       reason: LotRefusal;
       lotId?: string;
       auctionId?: string;
+      // Предел фото, как его назвал Auction, у отказа `photo-limit`.
+      maxPhotos?: number;
       setName?: string;
     }
   // Копии заведены и собраны в сет (PER-716): `lot` — исходный лот с новым
@@ -1464,6 +1482,8 @@ export type ExecuteResult =
       kind: "lot-set-applied";
       lot: LotFormView;
       field: LotSetField;
+      // Отпечаток версии разнесённого фото (PER-721) для «Повторить».
+      photoPrint?: string;
       applied: number;
       total: number;
       missed: readonly { title: string; reason: LotSetMiss }[];

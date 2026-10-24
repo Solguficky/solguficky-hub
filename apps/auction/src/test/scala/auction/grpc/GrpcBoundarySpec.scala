@@ -123,6 +123,9 @@ final class GrpcBoundarySpec
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest) = unused
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest) = unused
     def getLotImage(in: wire.GetLotImageRequest) = unused
+    def addLotPhoto(in: wire.AddLotPhotoRequest) = unused
+    def removeLotPhoto(in: wire.RemoveLotPhotoRequest) = unused
+    def getLotPhoto(in: wire.GetLotPhotoRequest) = unused
     def draftAuction(in: wire.DraftAuctionRequest) = unused
     def addLot(in: wire.AddLotRequest) = unused
     def removeLot(in: wire.RemoveLotRequest) = unused

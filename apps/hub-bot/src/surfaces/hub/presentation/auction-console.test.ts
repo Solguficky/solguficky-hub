@@ -105,8 +105,9 @@ const forgedAuctionPresses = {
   "lot-step-mode": `v1:lot:sm:${uuidToToken(vaseId)}:100:single`,
   "lot-skip": `v1:lot:skip:${uuidToToken(vaseId)}`,
   "lot-keep-step": `v1:lot:sk:${uuidToToken(vaseId)}:100`,
-  "lot-image-remove": `v1:lot:rm:${uuidToToken(vaseId)}`,
-  "lot-image-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
+  "lot-photos": `v1:lot:ph:${uuidToToken(vaseId)}`,
+  "lot-photo-remove": `v1:lot:rm:${uuidToToken(vaseId)}:1`,
+  "lot-photo-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
   "lot-scope": `v1:lot:sc:${uuidToToken(vaseId)}:title`,
   "lot-set-retry": `v1:lot:sr:${uuidToToken(vaseId)}:title`,
   "lot-copy": `v1:lot:cp:${uuidToToken(vaseId)}`,
@@ -464,11 +465,14 @@ function fakeAuction(
     enableAuction: notUsed,
     createLotCard: notUsed,
     editLotCard: notUsed,
+    addLotPhoto: notUsed,
+    removeLotPhoto: notUsed,
     addLot: notUsed,
     scheduleLot: notUsed,
     getLot: notUsed,
     removeLot: notUsed,
     getLotImage: notUsed,
+    getLotPhoto: notUsed,
     async getAuctionConsole(): Promise<ConsoleReadResult> {
       commands.push({ method: "getAuctionConsole", args: auctionId });
       if (options.refuse === true) return { kind: "not-administrator" };
@@ -1051,7 +1055,7 @@ function fakeAuction(
           submitPrediction: notUsed,
         },
         operations: { newOperationId: () => "unused" },
-        image: { getLotImage: notUsed },
+        image: { getLotImage: notUsed, getLotPhoto: notUsed },
       };
     },
   };

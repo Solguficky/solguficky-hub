@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { LotView } from "../../../auction-ui/index.js";
+import type { LotPhotoView, LotView } from "../../../auction-ui/index.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import { uuidV7Of } from "../../../core/uuid-v7.js";
 import type {
@@ -8,6 +8,7 @@ import type {
   AuctionFailure,
   LotAdministration,
   LotCardResult,
+  LotPhotoResult,
   LotReadResult,
   LotStepPolicyInput,
   RemoveLotResult,
@@ -22,6 +23,7 @@ import type {
   ExecuteResult,
   LotAmount,
   LotAskError,
+  LotFormPhoto,
   LotFormRequest,
   LotFormView,
   LotQuestion,
@@ -283,6 +285,26 @@ function imageVersion(image: Uint8Array): string {
   return createHash("sha256").update(image).digest("hex");
 }
 
+/**
+ * Идентификатор фото лота из самого лота и байтов фото (PER-721, как `op_id`
+ * из сообщения у PER-699): повторная доставка того же update, повтор после
+ * неясного ответа Auction и то же фото, присланное заново, приходят в Auction
+ * повтором команды, а не вторым фото. Так же выводят его правка сета и копии
+ * (PER-716) для каждого лота. Время UUIDv7 — время рождения лота из его же
+ * идентификатора: оно постоянно, как и ключ.
+ */
+export function lotPhotoIdOf(lotId: string, bytes: Uint8Array): string {
+  return uuidV7Of(`lot-photo:${lotId}:${imageVersion(bytes)}`, uuidTime(lotId));
+}
+
+// Версии фото лота в порядке показа; у Auction до списка фото — обложка.
+function photoVersions(card: LotView["card"]): string[] {
+  if (card?.photos !== undefined && card.photos.length > 0) {
+    return card.photos.map((photo) => photo.version);
+  }
+  return card?.image === undefined ? [] : [card.image.version];
+}
+
 // Те же ли условия у лота: цена и шаг, одним шагом или порогами.
 function sameTerms(
   terms: LotTermsView,
@@ -380,12 +402,24 @@ function viewOf(lot: LotView): LotFormView {
     auctionId: lot.auctionId,
     ...(lot.card === undefined ? {} : { title: lot.card.title }),
     description: lot.card?.description ?? "",
-    hasImage: lot.card?.image !== undefined,
-    ...(lot.card?.image === undefined
-      ? {}
-      : { imagePrint: fingerprint(lot.card.image.version) }),
+    photos: formPhotos(lot.card),
     terms: termsOf(lot),
   };
+}
+
+// Фото лота на форме (PER-721): список из чтения, а у Auction до списка —
+// одна обложка без идентификатора.
+function formPhotos(card: LotView["card"]): LotFormPhoto[] {
+  if (card?.photos !== undefined && card.photos.length > 0) {
+    return card.photos.map(photoOf);
+  }
+  return card?.image === undefined
+    ? []
+    : [{ print: fingerprint(card.image.version) }];
+}
+
+function photoOf(photo: LotPhotoView): LotFormPhoto {
+  return { print: fingerprint(photo.photoId), photoId: photo.photoId };
 }
 
 function failed(failure: AuctionFailure): ExecuteResult {
@@ -583,7 +617,7 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
                 auctionId: request.auctionId,
                 title,
                 description: "",
-                hasImage: false,
+                photos: [],
                 terms: { kind: "unset" },
               },
               saved: "created",
@@ -709,20 +743,60 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
   }
 
   // Фото, как название и описание, бот не шлёт у проданного лота. У закрытого
-  // без продажи ряд остаётся, а Auction отвечает `CardClosed` (ADR-057). Правка
-  // заменяет оба текста, поэтому они
-  // берутся из карточки, как у `setText`. Снятие фото (PER-715) идёт тем же
-  // путём: та же правка карточки, только с `remove_image` вместо файла.
-  async function setImage(
-    request: Extract<
-      LotFormRequest,
-      { intent: "set-lot-image" | "remove-lot-image" }
-    >,
+  // без продажи ряд остаётся, а Auction отвечает `CardClosed` (ADR-057). Фото
+  // добавляется в конец списка (PER-721): ответ команды несёт список после
+  // неё, и форма называет число фото по нему, а не по отстающему чтению.
+  // Правка «Все лоты сета» (PER-716) добавляет то же фото в конец каждого лота
+  // сета через `overSet`.
+  async function addPhoto(
+    request: Extract<LotFormRequest, { intent: "add-lot-photo" }>,
     current: Known,
   ): Promise<ExecuteResult> {
-    const removing = request.intent === "remove-lot-image";
     const sold = soldRefusal(current.lot);
     if (sold !== undefined) return sold;
+    const written = await lots.addLotPhoto(
+      request.identity,
+      { lotId: request.lotId, photoId: request.photoId, image: request.image },
+      rpcMeta(request),
+    );
+    return photoWritten(
+      written,
+      current.lot,
+      "photo-added",
+      request.set === true,
+    );
+  }
+
+  // Снимается то фото, которое подтвердили (PER-715, PER-721): кнопка несёт
+  // его отпечаток. Фото с этим отпечатком уже нет — итог тот, о котором
+  // просили, и команда не нужна. Обложку Auction до списка фото снимает
+  // правкой карточки.
+  async function removePhoto(
+    request: Extract<LotFormRequest, { intent: "remove-lot-photo" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const sold = soldRefusal(current.lot);
+    if (sold !== undefined) return sold;
+    // «Да» до PER-721 несёт отпечаток версии обложки, а не идентификатора:
+    // такая кнопка снимает обложку, если та не сменилась.
+    const cover = current.raw.card?.photos?.[0];
+    const photo =
+      current.lot.photos.find((each) => each.print === request.photoPrint) ??
+      (cover !== undefined && fingerprint(cover.version) === request.photoPrint
+        ? current.lot.photos[0]
+        : undefined);
+    if (photo === undefined) {
+      return { kind: "lot-form", lot: current.lot, saved: "photo-missing" };
+    }
+    if (photo.photoId !== undefined) {
+      const written = await lots.removeLotPhoto(
+        request.identity,
+        { lotId: request.lotId, photoId: photo.photoId },
+        rpcMeta(request),
+      );
+      return photoWritten(written, current.lot, "photo-removed");
+    }
     const stored = current.raw.card;
     if (stored === undefined) {
       return {
@@ -731,39 +805,21 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
         lotId: request.lotId,
       };
     }
-    // Снимается то фото, которое подтвердили (PER-715). Фото уже нет — итог
-    // тот, о котором просили, и команда не нужна. Фото сменилось — новое никто
-    // не подтверждал: ничего не снимается, вопрос о фото задаётся заново.
-    if (request.intent === "remove-lot-image") {
-      if (stored.image === undefined) {
-        return { kind: "lot-form", lot: current.lot, saved: "image-removed" };
-      }
-      if (fingerprint(stored.image.version) !== request.imagePrint) {
-        return {
-          kind: "lot-ask",
-          question: { kind: "image", lotId: request.lotId },
-          lot: current.lot,
-          error: "photo-changed",
-        };
-      }
-    }
     const written = await lots.editLotCard(
       request.identity,
       {
         lotId: request.lotId,
         title: stored.title,
         description: stored.description,
-        ...(request.intent === "remove-lot-image"
-          ? { removeImage: true as const }
-          : { image: request.image }),
+        removeImage: true,
       },
       rpcMeta(request),
     );
     if (written.kind === "ok") {
       return {
         kind: "lot-form",
-        lot: { ...current.lot, hasImage: !removing },
-        saved: removing ? "image-removed" : "image",
+        lot: { ...current.lot, photos: [] },
+        saved: "photo-removed",
       };
     }
     if (written.kind === "card-not-found") {
@@ -781,15 +837,55 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
     }
     return cardRefused(
       written,
-      {
-        kind: "image",
-        lotId: request.lotId,
-        ...(request.intent === "set-lot-image" && request.set === true
-          ? { set: true as const }
-          : {}),
-      },
+      { kind: "image", lotId: request.lotId },
       current.lot,
     );
+  }
+
+  function photoWritten(
+    written: LotPhotoResult,
+    lot: LotFormView,
+    saved: "photo-added" | "photo-removed",
+    set = false,
+  ): ExecuteResult {
+    const question: LotQuestion = {
+      kind: "image",
+      lotId: lot.lotId,
+      ...(set ? { set: true as const } : {}),
+    };
+    switch (written.kind) {
+      case "ok":
+        return {
+          kind: "lot-form",
+          lot: { ...lot, photos: written.photos.map(photoOf) },
+          saved,
+        };
+      case "card-not-found":
+        return {
+          kind: "lot-refused",
+          reason: "lot-not-found",
+          lotId: lot.lotId,
+        };
+      // У лота уже предел фото: тот же вопрос заново не поможет — сначала
+      // убрать одно.
+      case "photo-limit":
+        return {
+          kind: "lot-refused",
+          reason: "photo-limit",
+          lotId: lot.lotId,
+          maxPhotos: written.maxPhotos,
+        };
+      // `photoId` выводится из лота и байтов фото (`lotPhotoIdOf`), поэтому
+      // тот же идентификатор с другими байтами — дефект края, а не ответ
+      // человека.
+      case "photo-conflict":
+        return failed({
+          kind: "invalid",
+          cause: new Error("lot photo answered photo-conflict"),
+        });
+      default:
+        return cardRefused(written, question, lot);
+    }
   }
 
   async function checkPrice(
@@ -1022,11 +1118,14 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
   function missOf(
     result:
       | Exclude<LotCardResult, { kind: "ok" }>
-      | Exclude<ScheduleLotResult, { kind: "ok" }>,
+      | Exclude<ScheduleLotResult, { kind: "ok" }>
+      | Exclude<LotPhotoResult, { kind: "ok" }>,
   ): LotSetMiss {
     switch (result.kind) {
       case "card-closed":
         return "card-closed";
+      case "photo-limit":
+        return "photo-limit";
       case "lots-frozen":
       case "scheduling-closed":
         return "terms-closed";
@@ -1071,25 +1170,32 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
     if (isSold(view.terms)) return "sold";
     const card = lot.card;
     if (card === undefined) return "not-in-auction";
+    // Фото сета (PER-721) — то же фото в конец галереи лота. Лот, у которого
+    // такое фото уже есть, команды не получает, а идентификатор фото выведен
+    // из лота и байтов: повтор Auction узнаёт и второго фото не заводит.
+    if (edit.field === "image") {
+      if (photoVersions(card).includes(edit.version)) return "ok";
+      const added = await lots.addLotPhoto(
+        request.identity,
+        {
+          lotId: lot.lotId,
+          photoId: lotPhotoIdOf(lot.lotId, edit.image),
+          image: edit.image,
+        },
+        rpcMeta(request),
+      );
+      return added.kind === "ok" ? "ok" : missOf(added);
+    }
     const title =
       edit.field === "title"
         ? numberedTitle(edit.base, slot.position, slot.total)
         : card.title;
     const description =
       edit.field === "description" ? edit.description : card.description;
-    const same =
-      edit.field === "image"
-        ? card.image?.version === edit.version
-        : card.title === title && card.description === description;
-    if (same) return "ok";
+    if (card.title === title && card.description === description) return "ok";
     const written = await lots.editLotCard(
       request.identity,
-      {
-        lotId: lot.lotId,
-        title,
-        description,
-        ...(edit.field === "image" ? { image: edit.image } : {}),
-      },
+      { lotId: lot.lotId, title, description },
       rpcMeta(request),
     );
     return written.kind === "ok" ? "ok" : missOf(written);
@@ -1165,7 +1271,7 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       {
         intent:
           | "set-lot-text"
-          | "set-lot-image"
+          | "add-lot-photo"
           | "set-lot-terms"
           | "keep-lot-step";
       }
@@ -1203,6 +1309,9 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       applied,
       total,
       missed,
+      ...(edit.field === "image"
+        ? { photoPrint: fingerprint(edit.version) }
+        : {}),
     };
   }
 
@@ -1259,13 +1368,35 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
             ? undefined
             : { field: "description", description: card.description };
         break;
+      // Фото сета (PER-721) — то фото галереи лота, чей отпечаток версии
+      // несёт кнопка повтора; кнопка без отпечатка — последнее фото.
       case "image": {
-        if (card?.image === undefined) break;
-        const image = await lots.getLotImage(
-          request.identity,
-          request.lotId,
-          rpcMeta(request),
-        );
+        const last =
+          request.photoPrint === undefined
+            ? card?.photos?.at(-1)
+            : card?.photos?.find(
+                (photo) => fingerprint(photo.version) === request.photoPrint,
+              );
+        if (
+          last === undefined &&
+          (card?.image === undefined ||
+            (request.photoPrint !== undefined &&
+              fingerprint(card.image.version) !== request.photoPrint))
+        ) {
+          break;
+        }
+        const image =
+          last === undefined
+            ? await lots.getLotImage(
+                request.identity,
+                request.lotId,
+                rpcMeta(request),
+              )
+            : await lots.getLotPhoto(
+                request.identity,
+                { lotId: request.lotId, photoId: last.photoId },
+                rpcMeta(request),
+              );
         if (image.kind === "not-found") break;
         if (image.kind !== "ok") return failed(image);
         edit = { field: "image", image: image.content, version: image.version };
@@ -1298,6 +1429,9 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       applied,
       total: set.lotIds.length,
       missed,
+      ...(edit.field === "image"
+        ? { photoPrint: fingerprint(edit.version) }
+        : {}),
     };
   }
 
@@ -1309,7 +1443,8 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       | Exclude<AddLotResult, { kind: "ok" }>
       | Exclude<ScheduleLotResult, { kind: "ok" }>
       | Exclude<SaveLotSetResult, { kind: "ok" }>
-      | Exclude<RemoveLotResult, { kind: "ok" }>,
+      | Exclude<RemoveLotResult, { kind: "ok" }>
+      | Exclude<LotPhotoResult, { kind: "ok" }>,
     lotId: string,
   ): ExecuteResult {
     switch (result.kind) {
@@ -1335,6 +1470,45 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
           cause: new Error(`lot copy answered ${result.kind}`),
         });
     }
+  }
+
+  // Байты фото исходного лота для копий по порядку галереи (PER-721). Фото,
+  // которое сняли между чтениями, выпадает: копия получит остальные.
+  async function sourcePhotos(
+    request: LotFormRequest,
+    card: NonNullable<LotView["card"]>,
+  ): Promise<
+    | { kind: "ok"; photos: { version: string; image: Uint8Array }[] }
+    | { kind: "refused"; result: ExecuteResult }
+  > {
+    const listed = card.photos ?? [];
+    const reads =
+      listed.length > 0
+        ? listed.map((photo) =>
+            lots.getLotPhoto(
+              request.identity,
+              { lotId: request.lotId, photoId: photo.photoId },
+              rpcMeta(request),
+            ),
+          )
+        : card.image === undefined
+          ? []
+          : [
+              lots.getLotImage(
+                request.identity,
+                request.lotId,
+                rpcMeta(request),
+              ),
+            ];
+    const photos: { version: string; image: Uint8Array }[] = [];
+    for (const read_ of await Promise.all(reads)) {
+      if (read_.kind === "ok") {
+        photos.push({ version: read_.version, image: read_.content });
+      } else if (read_.kind !== "not-found") {
+        return { kind: "refused", result: failed(read_) };
+      }
+    }
+    return { kind: "ok", photos };
   }
 
   // Копии лота (PER-716): недостающие лоты с той же карточкой, ценой и
@@ -1396,7 +1570,7 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
     const snapshots = new Map(
       console.lots.map((each) => [each.lot.lotId, each.lot]),
     );
-    const sourceImage = card.image?.version;
+    const sourceVersions = photoVersions(card);
     const positions = Array.from(
       { length: total - 1 },
       (_, index) => index + 2,
@@ -1405,26 +1579,20 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
       request.lotId,
       ...positions.map((position) => lotCopyId(request.lotId, position)),
     ];
-    // Фото исходного лота читается один раз и только если копии его ещё нет.
-    let image: Uint8Array | undefined;
-    if (
-      sourceImage !== undefined &&
-      lotIds
-        .slice(1)
-        .some(
-          (lotId) => snapshots.get(lotId)?.card?.image?.version !== sourceImage,
-        )
-    ) {
-      const fetched = await lots.getLotImage(
-        request.identity,
-        request.lotId,
-        rpcMeta(request),
-      );
-      if (fetched.kind === "ok") image = fetched.content;
-      else if (fetched.kind !== "not-found") return failed(fetched);
+    // Фото исходного лота — вся галерея в том же порядке (PER-721). Они
+    // читаются один раз и только если у какой-то копии их ещё нет.
+    const missingOf = (lotId: string): string[] => {
+      const has = photoVersions(snapshots.get(lotId)?.card);
+      return sourceVersions.filter((version) => !has.includes(version));
+    };
+    const images = new Map<string, Uint8Array>();
+    if (lotIds.slice(1).some((lotId) => missingOf(lotId).length > 0)) {
+      const fetched = await sourcePhotos(request, card);
+      if (fetched.kind === "refused") return fetched.result;
+      for (const each of fetched.photos) images.set(each.version, each.image);
     }
-    // Одна копия — до четырёх команд по порядку: карточка, реестр, фото,
-    // условия. Отказ — исход всего ответа.
+    // Одна копия — команды по порядку: карточка, реестр, текст, фото по
+    // одному, условия. Отказ — исход всего ответа.
     const ensureCopy = async (
       position: number,
     ): Promise<ExecuteResult | undefined> => {
@@ -1454,20 +1622,23 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
         );
         if (added.kind !== "ok") return copyRefused(added, request.lotId);
       }
-      const withImage =
-        image !== undefined && lot?.card?.image?.version !== sourceImage;
-      if (!textSame || withImage) {
+      if (!textSame) {
         const edited = await lots.editLotCard(
           request.identity,
-          {
-            lotId,
-            title,
-            description: card.description,
-            ...(withImage && image !== undefined ? { image } : {}),
-          },
+          { lotId, title, description: card.description },
           rpcMeta(request),
         );
         if (edited.kind !== "ok") return copyRefused(edited, request.lotId);
+      }
+      for (const version of missingOf(lotId)) {
+        const image = images.get(version);
+        if (image === undefined) continue;
+        const added = await lots.addLotPhoto(
+          request.identity,
+          { lotId, photoId: lotPhotoIdOf(lotId, image), image },
+          rpcMeta(request),
+        );
+        if (added.kind !== "ok") return copyRefused(added, request.lotId);
       }
       if (
         terms !== undefined &&
@@ -1661,23 +1832,19 @@ export function createLotForm(lots: LotAdministration, sets?: LotFormSets) {
           (current) => keepStep(request, current),
           (saved) => termsEdit(saved, request.opId),
         );
-      case "set-lot-image":
+      case "add-lot-photo":
         return overSet(
           request,
           "image",
-          (current) => setImage(request, current),
+          (current) => addPhoto(request, current),
           () => ({
             field: "image",
             image: request.image,
             version: imageVersion(request.image),
           }),
         );
-      case "remove-lot-image": {
-        const current = await read(request);
-        return current.kind === "refused"
-          ? current.result
-          : setImage(request, current);
-      }
+      case "remove-lot-photo":
+        return removePhoto(request);
       case "retry-lot-set":
         return retrySet(request);
       case "copy-lot":

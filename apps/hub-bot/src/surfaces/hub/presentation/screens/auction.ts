@@ -46,6 +46,11 @@ import type {
   LotStatusView,
 } from "../../../../auction-ui/index.js";
 import { invoicesButtonLabel } from "../../../../auction-winner-invoices.js";
+import {
+  type LotPhotoKey,
+  lotPhotoKeys,
+  richPhotoBlock,
+} from "../../../../core/auction/lot-photos.js";
 import { money, truncate } from "../../../../core/format.js";
 import {
   adminLabel,
@@ -55,7 +60,6 @@ import {
   refreshLabel,
 } from "../../../../core/pictograms.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
-import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
@@ -149,8 +153,11 @@ export type AuctionView = {
   presentation: "rich" | "plain";
   timeZone: string;
   today: CommunityDay;
-  /** Фото карточки лота, уже готовое к отправке; нет — карточка без фото. */
-  photo?: ScreenPhoto;
+  /**
+   * Фото карточки лота, уже готовые к отправке, в порядке показа; нет или
+   * пусто — карточка без фото.
+   */
+  photos?: readonly ScreenPhoto[];
   /**
    * Смотрящий держит право вести аукцион: оболочка добавляет вход в пульт
    * (PER-320) и входы в форму лота (PER-319) — «Добавить лот» и «Изменить
@@ -194,22 +201,19 @@ export const lotSetsLabel = adminLabel("Сеты");
 const favoritesLabel = "Избранное";
 
 /**
- * Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает
- * ключа. `asks` — экран вопроса: адаптер шлёт его новым сообщением с
+ * Фото карточки лота в порядке показа (PER-721): байты и `file_id` достаёт
+ * адаптер, экрану хватает ключей. `asks` — экран вопроса: адаптер шлёт его новым сообщением с
  * `force_reply` (дизайн-код, «Вопросы»).
  */
 export type AuctionShown = {
   screen: ShownScreen;
-  image?: ImageKey;
+  images?: readonly LotPhotoKey[];
   asks?: true;
 };
 
 // Пометка предпросмотра — последним абзацем: над заголовком у карточки только
 // фото (дизайн-код, «Форма лота»).
 export const lotPreviewMark = "Предпросмотр: так лот видят участники.";
-
-// Идентификатор фото в rich-сообщении: на него ссылается `tg://photo?id=`.
-export const lotPhotoId = "lot";
 
 const untitled = "Лот без названия";
 // Длину названия Auction не ограничивает. Предел держит заголовок карточки и
@@ -686,16 +690,13 @@ function lotScreen(
   ];
   const mark = preview === undefined ? [] : [lotPreviewMark];
   const rich = view.presentation === "rich";
-  const photo = rich ? view.photo : undefined;
-  const image =
-    lot.card?.image === undefined
-      ? undefined
-      : { lotId: lot.lotId, version: lot.card.image.version };
+  const photos = rich ? (view.photos ?? []) : [];
+  const images = lotPhotoKeys(lot.lotId, lot.card);
   // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026
-  // года, «Показ фото лота»).
+  // года, «Показ фото лота»); несколько — каруселью (PER-721).
   const text = rich
     ? [
-        photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
+        richPhotoBlock(photos.map((photo) => photo.id)),
         `<h1>${escapeHtml(title)}</h1>`,
         ...groups.map(
           (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
@@ -710,9 +711,9 @@ function lotScreen(
       text,
       keyboard: withNav(keyboard, back),
       format: rich ? "rich" : "HTML",
-      ...(photo === undefined ? {} : { media: [photo] }),
+      ...(photos.length === 0 ? {} : { media: photos }),
     },
-    ...(rich && image !== undefined ? { image } : {}),
+    ...(rich && images.length > 0 ? { images } : {}),
   };
 }
 

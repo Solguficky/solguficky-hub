@@ -68,6 +68,12 @@ object LotImage {
    */
   val MaxBytes: Int = 1 * 1024 * 1024
 
+  /**
+   * Предел числа фото лота — 10: столько принимает альбом Telegram, и столько кадров держит карусель rich-карточки;
+   * решение владельца по PER-711 от 2026-10-24 (ADR-057, дополнение 2026-10-24), реализация — PER-721.
+   */
+  val MaxPhotos: Int = 10
+
   def apply(bytes: IArray[Byte]): Either[CatalogRefusal, LotImage] =
     if (bytes.length > MaxBytes) Left(CatalogRefusal.ImageTooLarge(MaxBytes))
     else
@@ -82,7 +88,20 @@ object LotImage {
     )
 }
 
-/** Что правка карточки делает с изображением. Без поля в запросе изображение остаётся как есть. */
+/**
+ * Идентификатор фото лота. Фото, добавленное `AddLotPhoto`, несёт id вызывающего — он же ключ повтора; фото, пришедшее
+ * с карточкой или правкой изображения, и перенесённое миграцией получает id от сервиса.
+ */
+final case class PhotoId(value: UUID)
+
+/** Фото лота без байтов: id и версия, как изображение карточки. */
+final case class LotPhotoRef(photoId: PhotoId, version: ImageVersion)
+
+/**
+ * Что правка карточки делает с изображением. Без поля в запросе изображение остаётся как есть. Изображение карточки —
+ * обложка, первое фото лота: замена меняет байты первого фото, а у лота без фото добавляет его; снятие убирает первое
+ * фото, и обложкой становится следующее (ADR-057, дополнение 2026-10-24).
+ */
 enum ImageChange[+A] {
   case Keep
   case Replace(image: A)
@@ -97,15 +116,59 @@ enum ImageChange[+A] {
  * `LotOpened` заморожены и живут только в журнале лота. Описание может быть пустым. Байтов изображения в карточке нет:
  * их читают отдельно, а карточка несёт только версию, и сравнение карточек — сравнение версий.
  */
-final case class LotCard(lotId: LotId, title: LotTitle, description: String, image: Option[ImageVersion])
+final case class LotCard(
+    lotId: LotId,
+    title: LotTitle,
+    description: String,
+    image: Option[ImageVersion],
+    photos: Vector[LotPhotoRef] = Vector.empty
+) {
 
-/** Новая карточка вместе с проверенным изображением, которое запишется в ту же строку. */
-final case class NewCard(lotId: LotId, title: LotTitle, description: String, image: Option[LotImage]) {
-  def card: LotCard = LotCard(lotId, title, description, image.map(_.version))
+  /**
+   * Та же ли это карточка по содержанию: текст и обложка. Id фото сюда не входят — их у созданной карточки даёт сервис,
+   * и повтор создания с тем же файлом получил бы другой.
+   */
+  def sameContent(other: LotCard): Boolean =
+    lotId == other.lotId && title == other.title && description == other.description && image == other.image
 }
 
-/** Правка карточки: текст заменяется целиком, изображение — по `image`. */
-final case class CardEdit(lotId: LotId, title: LotTitle, description: String, image: ImageChange[LotImage])
+/**
+ * Новая карточка вместе с проверенным изображением, которое запишется в ту же строку и первым фото лота под `photoId`.
+ */
+final case class NewCard(
+    lotId: LotId,
+    title: LotTitle,
+    description: String,
+    image: Option[LotImage],
+    photoId: PhotoId
+) {
+  def card: LotCard =
+    LotCard(lotId, title, description, image.map(_.version), image.map(i => LotPhotoRef(photoId, i.version)).toVector)
+}
+
+/**
+ * Правка карточки: текст заменяется целиком, изображение — по `image`. `photoId` нужен только замене у лота без фото:
+ * под ним ложится первое фото.
+ */
+final case class CardEdit(
+    lotId: LotId,
+    title: LotTitle,
+    description: String,
+    image: ImageChange[LotImage],
+    photoId: PhotoId
+)
+
+/** Фото в конец списка фото лота под id вызывающего. */
+final case class PhotoAddition(lotId: LotId, photoId: PhotoId, image: LotImage)
+
+/** Снятие одного фото лота. */
+final case class PhotoRemoval(lotId: LotId, photoId: PhotoId)
+
+/** Исход вставки карточки: вставлена или уже была — и какая. */
+enum CardInsertion {
+  case Inserted(card: LotCard)
+  case Existing(card: LotCard)
+}
 
 /** Ожидаемые отказы команд каталога. Транспортного кода они не несут: отображение — работа границы. */
 enum CatalogRefusal {
@@ -133,6 +196,12 @@ enum CatalogRefusal {
 
   /** Лот продан или закрыт без продажи: название, описание и изображение больше не меняются. */
   case CardClosed
+
+  /** У лота уже столько фото, сколько каталог принимает; предел — чтобы форма назвала его человеку. */
+  case PhotoLimitReached(maxPhotos: Int)
+
+  /** Фото с этим id у лота уже есть и с другими байтами. Повтор с теми же байтами — успех. */
+  case PhotoConflict
 }
 
 /** Можно ли записать правку карточки. Состояние лота сюда сводит граница: каталог журнал не читает. */
