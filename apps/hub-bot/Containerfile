@@ -42,6 +42,14 @@ COPY --from=build /src/apps/hub-bot/dist dist
 # Записи «Что нового» (ADR-069, п. 1) — данные, а не код: процесс читает их при
 # старте из каталога рядом с package.json, сборке они не нужны.
 COPY apps/hub-bot/release-notes release-notes
+# Данные сборки (PER-736): короткий коммит и дата коммита, из которого CI собрал
+# образ, — файлом в корне пакета, рядом с записями. Аргументы передаёт
+# image-publish.yml; сборка без них пишет пустые значения, и процесс называет
+# себя локальной сборкой. Слой стоит последним: аргументы меняются с каждым
+# коммитом и не сбивают кэш слоёв выше.
+ARG BUILD_COMMIT=""
+ARG BUILD_DATE=""
+RUN printf 'commit=%s\ndate=%s\n' "$BUILD_COMMIT" "$BUILD_DATE" > build-info
 # uid числом: runtime проверяет non-root без чтения /etc/passwd образа.
 USER 1000:1000
 # Команда в CMD, а не в ENTRYPOINT, и точка входа базы (docker-entrypoint.sh)

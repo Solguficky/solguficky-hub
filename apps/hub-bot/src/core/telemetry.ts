@@ -8,6 +8,7 @@ import {
   detectResources,
   envDetector,
   type Resource,
+  resourceFromAttributes,
 } from "@opentelemetry/resources";
 import {
   BatchLogRecordProcessor,
@@ -34,13 +35,13 @@ export type Logs = {
   shutdown(): Promise<void>;
 };
 
-export function startMetrics(): Metrics {
+export function startMetrics(version?: string): Metrics {
   if (!otlpConfigured("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT")) {
     return { shutdown: async () => {} };
   }
 
   const provider = new MeterProvider({
-    resource: telemetryResource(),
+    resource: telemetryResource(version),
     readers: [
       new PeriodicExportingMetricReader({
         exporter: new OTLPMetricExporter(),
@@ -54,12 +55,14 @@ export function startMetrics(): Metrics {
 // Логи уходят по OTLP при том же условии, что и метрики: Structured logs
 // dashboard читает только OTLP, и без этого бот выпадает из фильтра по
 // request_id.
-export function startLogs(name: string): Logs {
+export function startLogs(name: string, version?: string): Logs {
   if (!otlpConfigured("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT")) {
     return { shutdown: async () => {} };
   }
 
-  const provider = new LoggerProvider({ resource: telemetryResource() });
+  const provider = new LoggerProvider({
+    resource: telemetryResource(version),
+  });
   provider.addLogRecordProcessor(
     new BatchLogRecordProcessor(new OTLPLogExporter()),
   );
@@ -71,13 +74,13 @@ export function startLogs(name: string): Logs {
 
 // Трейсы уходят по OTLP при том же условии, что логи и метрики. Без адреса
 // трассировка no-op: бот работает и отвечает, спаны ничего не стоят.
-export function startTraces(): Tracing {
+export function startTraces(version?: string): Tracing {
   if (!otlpConfigured("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")) {
     return noopTracing();
   }
 
   const provider = new BasicTracerProvider({
-    resource: telemetryResource(),
+    resource: telemetryResource(version),
     spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
   });
   return createTracing(provider.getTracer(serviceName()), () =>
@@ -88,9 +91,17 @@ export function startTraces(): Tracing {
 // JS SDK сам не читает OTEL_SERVICE_NAME и OTEL_RESOURCE_ATTRIBUTES, которые
 // выдаёт AppHost: без детектора сигналы ушли бы от unknown_service и не легли
 // бы на ресурс поверхности (hub-bot, auction-bot) в dashboard. Ресурс один на логи, метрики и трейсы,
-// иначе они снова разойдутся по разным ресурсам.
-export function telemetryResource(): Resource {
-  return defaultResource().merge(detectResources({ detectors: [envDetector] }));
+// иначе они снова разойдутся по разным ресурсам. `service.version` — версия
+// образа из данных сборки (PER-736): по ней в dashboard видно, какой образ
+// отвечает; заданный средой атрибут её перекрывает.
+export function telemetryResource(version?: string): Resource {
+  const base =
+    version === undefined
+      ? defaultResource()
+      : defaultResource().merge(
+          resourceFromAttributes({ "service.version": version }),
+        );
+  return base.merge(detectResources({ detectors: [envDetector] }));
 }
 
 function otlpConfigured(signalEndpoint: string): boolean {
