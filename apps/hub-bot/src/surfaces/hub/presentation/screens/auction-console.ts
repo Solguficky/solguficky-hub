@@ -362,6 +362,29 @@ function rafflePrizeLines(week: AuctionWeek): string[] {
   return week.rafflePrize === undefined ? [] : [`Приз: ${week.rafflePrize}`];
 }
 
+// Розыгрыш и прогнозы числами (PER-734), пока идёт онлайн-неделя: по ним
+// организаторы подбирают призы. Числа нет — строки нет.
+function participationLines(console: AuctionConsoleView): string[] {
+  const lines: string[] = [];
+  const registrations = console.raffleRegistrations;
+  if (registrations !== undefined) {
+    lines.push(
+      registrations === 0
+        ? "Розыгрыш: пока никто не зарегистрировался."
+        : `Розыгрыш: зарегистрировались ${registrations}.`,
+    );
+  }
+  const tally = console.predictionTally;
+  if (tally !== undefined) {
+    lines.push(
+      tally.participants === 0
+        ? "Прогнозы: пока ни одного."
+        : `Прогнозы: ${counted(tally.participants, ["участник", "участника", "участников"])}, ${counted(tally.answers, ["ответ", "ответа", "ответов"])}.`,
+    );
+  }
+  return lines;
+}
+
 // Срок оплаты счёта (PER-722): сколько дней у победителя лота на оплату от
 // продажи. Auction отдаёт его всегда; без поля строки нет.
 function paymentTermText(seconds: number): string {
@@ -473,6 +496,7 @@ function statusLines(view: ConsoleScreenView): string[] {
               ...windowsLines(view.console),
               raffleLine(week, view),
               ...rafflePrizeLines(week),
+              ...participationLines(view.console),
               ...paymentTermLines(week),
             ]),
       ];

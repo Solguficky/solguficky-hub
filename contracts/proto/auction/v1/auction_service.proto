@@ -2102,6 +2102,28 @@ message AuctionConsole {
   // LotSnapshot.lot_set. The sets are read with the auction and may name a lot
   // that lots does not list yet. Empty is a real value: the auction has no set.
   repeated ConsoleLotSet lot_sets = 4;
+
+  // How many participants are registered for the raffle right now: cancelled
+  // registrations are not counted. Set only while the raffle holds
+  // registrations, before its pool is fixed; absent when the auction has no
+  // raffle, when the pool is fixed and when the raffle could not be read. The
+  // tickets of a fixed pool are read with GetRaffle.
+  optional uint32 raffle_registrations = 5;
+
+  // How the predictions game of the auction is played, in aggregates only: no
+  // participant and no answer is named. Absent when the auction has no game
+  // yet and when the game could not be read.
+  ConsolePredictions predictions = 6;
+}
+
+// The predictions of every round of the auction counted together.
+message ConsolePredictions {
+  // Participants with at least one answer in any round; a cleared prediction
+  // has no answer and is not counted.
+  uint32 participants = 1;
+
+  // Answered nominations of every participant in every round.
+  uint32 answers = 2;
 }
 
 // A collectible set of lots as the administrator of the auction defined it. The

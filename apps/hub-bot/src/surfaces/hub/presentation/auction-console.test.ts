@@ -34,6 +34,7 @@ import type {
   Invoice,
   InvoiceMark,
   LotSet,
+  PredictionTally,
 } from "../application/types.js";
 import type {
   AuctionConsoles,
@@ -286,6 +287,9 @@ function fakeAuction(
     // Срок оплаты счёта (PER-722): Auction отказывает в конфигурации, хотя бот
     // её принял, — так выглядит расхождение пределов.
     paymentTermRefused?: true;
+    // Розыгрыш и прогнозы числами (PER-734): что отдаёт пульт Auction.
+    raffleRegistrations?: number;
+    predictionTally?: PredictionTally;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -492,6 +496,12 @@ function fakeAuction(
           launchedWindows: state.launchedWindows ?? [],
           lots: state.lots,
           lotSets: state.lotSets,
+          ...(options.raffleRegistrations === undefined
+            ? {}
+            : { raffleRegistrations: options.raffleRegistrations }),
+          ...(options.predictionTally === undefined
+            ? {}
+            : { predictionTally: options.predictionTally }),
         },
       };
     },
@@ -1561,6 +1571,55 @@ describe("auction console", () => {
 
     expect(last(calls).text).toContain("Пульт · 2 из 2");
     expect(plain(last(calls))).toContain("Сортировка: по участникам ↓.");
+  });
+
+  // PER-734: организаторы подбирают призы по числу участников, пока идёт
+  // онлайн-неделя; числа нет — строки нет.
+  it("shows how many registered for the raffle and how many predicted during the online week", async () => {
+    const open = async (options: Parameters<typeof fakeAuction>[0]) => {
+      const { bot, calls } = harness("admin", fakeAuction(options));
+      await bot.init();
+      await bot.handleUpdate(press(consoleData));
+      return plain(last(calls));
+    };
+    const counted = await open({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-26T15:00:00Z" },
+      lots: [vase],
+      raffleRegistrations: 12,
+      predictionTally: { participants: 5, answers: 21 },
+    });
+    expect(counted).toContain("Розыгрыш: зарегистрировались 12.");
+    expect(counted).toContain("Прогнозы: 5 участников, 21 ответ.");
+
+    const nobody = await open({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+      raffleRegistrations: 0,
+      predictionTally: { participants: 0, answers: 0 },
+    });
+    expect(nobody).toContain("Розыгрыш: пока никто не зарегистрировался.");
+    expect(nobody).toContain("Прогнозы: пока ни одного.");
+
+    const bare = await open({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    expect(bare).not.toContain("зарегистрир");
+    expect(bare).not.toContain("Прогнозы:");
+
+    // После онлайн-недели строки нет, даже если Auction число отдал.
+    const after = await open({
+      status: "settling",
+      week: { ...week, final: true },
+      lots: [vase],
+      raffleRegistrations: 3,
+      predictionTally: { participants: 1, answers: 1 },
+    });
+    expect(after).not.toContain("зарегистрировались");
+    expect(after).not.toContain("Прогнозы:");
   });
 
   it("shows the state, the lots with price and bids, the final mark and the overdue lots on their own line", async () => {
