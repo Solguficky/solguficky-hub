@@ -113,6 +113,7 @@ final class GrpcBoundarySpec
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest) = unused
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest) = unused
     def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest) = unused
+    def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest) = unused
     def createLotCard(in: wire.CreateLotCardRequest) = unused
     def editLotCard(in: wire.EditLotCardRequest) = unused
     def listAuctionLots(in: wire.ListAuctionLotsRequest) = unused
@@ -145,6 +146,8 @@ final class GrpcBoundarySpec
     def registerForRaffle(in: wire.RegisterForRaffleRequest) = unused
     def cancelRaffleRegistration(in: wire.CancelRaffleRegistrationRequest) = unused
     def getRaffle(in: wire.GetRaffleRequest) = unused
+    def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest) = unused
+    def changeRafflePrize(in: wire.ChangeRafflePrizeRequest) = unused
     def submitPrediction(in: wire.SubmitPredictionRequest) = unused
     def getMyPredictions(in: wire.GetMyPredictionsRequest) = unused
     def getPredictionResults(in: wire.GetPredictionResultsRequest) = unused

@@ -45,6 +45,10 @@ import scala.util.Try
  *     кончается до времени раунда маяка; неотвеченный кандидат остаётся в пуле.
  *   - После фиксации — снимок «номер — имя» в строку `raffle_ticket`, с повтором до успеха.
  *   - С времени раунда — опрос маяка до получения значения, затем жеребьёвка и назначение срока стирания имён.
+ *
+ * Ручной итог (ADR-066, дополнение 2026-10-24) включает настройка сервиса `byHand`, а не конфигурация аукциона: entity
+ * читает её при фиксации пула и пишет в `PoolFixed`, поэтому рестарт и смена настройки решения не переигрывают. Пул с
+ * ручным итогом маяк не опрашивает и ждёт команды `Assign` от администратора, право которого проверила граница.
  */
 object RaffleEntity {
 
@@ -61,8 +65,15 @@ object RaffleEntity {
    *   пауза перед повтором вопроса к Identity, к маяку и записи снимка имён
    * @param nameRetention
    *   сколько после жеребьёвки хранятся имена снимка (ADR-066, п. 12)
+   * @param byHand
+   *   итог подводит администратор, а не маяк: настройка `auction.raffle.draw` (PER-727)
    */
-  final case class Settings(screeningWindow: FiniteDuration, retryEvery: FiniteDuration, nameRetention: Duration)
+  final case class Settings(
+      screeningWindow: FiniteDuration,
+      retryEvery: FiniteDuration,
+      nameRetention: Duration,
+      byHand: Boolean = false
+  )
 
   sealed trait Command
 
@@ -76,6 +87,13 @@ object RaffleEntity {
 
   /** Отмена по команде отменённого аукциона. Ответ — после записи или сразу, если отменять нечего. */
   final case class Cancel(command: CancelRaffle, replyTo: ActorRef[Done]) extends Command
+
+  /** Ручной итог администратора. Ответ — после записи или сразу на повтор и отказ. */
+  final case class Assign(command: AssignWinner, replyTo: ActorRef[Either[AssignRejected, Raffle]]) extends Command
+
+  /** Смена приза администратором (PER-737). Ответ — после записи или сразу на повтор и отказ. */
+  final case class SetPrize(command: ChangePrize, replyTo: ActorRef[Either[ChangePrizeRejected, Raffle]])
+      extends Command
 
   final case class Get(replyTo: ActorRef[Raffle]) extends Command
 
@@ -160,7 +178,11 @@ object RaffleEntity {
             case RaffleState.Fixed(terms, tickets) =>
               if (!namesRecorded) context.self ! RecordNames
               if (tickets.nonEmpty) arm(BeaconKey, PollBeacon, Quicknet.roundAt(terms.round))
-            case RaffleState.Drawn(_, _, _, _) =>
+            // Ручной итог ждёт администратора: маяка нет, и без человека остаётся только снимок имён, по которому
+            // пульт показывает кандидатов.
+            case RaffleState.AwaitingWinner(_, _) =>
+              if (!namesRecorded) context.self ! RecordNames
+            case RaffleState.Drawn(_, _, _, _) | RaffleState.Assigned(_, _, _, _) =>
               if (!namesRecorded) context.self ! RecordNames
               else if (!expiring) context.self ! ExpireNames
             // Отменённому розыгрышу ждать нечего: таймеры закрытия и маяка гаснут, а снимок имён, если пул успели
@@ -228,6 +250,42 @@ object RaffleEntity {
                     forgetIfAbsent(after)
                   }
               }
+            case Assign(assign, replyTo) =>
+              Raffle.decide(state.raffle, assign, clock.instant()) match {
+                case Left(rejected) =>
+                  Effect.none.thenRun { after =>
+                    replyTo ! Left(rejected)
+                    forgetIfAbsent(after)
+                  }
+                case Right(RaffleDecision.Accepted(event)) =>
+                  persist(assign.opId, event).thenRun { after =>
+                    context.log.info(
+                      "raffle winner assigned",
+                      StructuredArguments.keyValue("auction_id", auctionId),
+                      StructuredArguments.keyValue("winning_ticket", assign.ticket)
+                    )
+                    replyTo ! Right(after.raffle)
+                    follow(after.raffle)
+                  }
+                case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
+                  Effect.reply(replyTo)(Right(state.raffle))
+              }
+            // Приз ход розыгрыша не меняет: таймеры и шаги без человека остаются, как были, и `follow` не нужен.
+            case SetPrize(change, replyTo) =>
+              Raffle.decide(state.raffle, change) match {
+                case Left(rejected) =>
+                  Effect.none.thenRun { after =>
+                    replyTo ! Left(rejected)
+                    forgetIfAbsent(after)
+                  }
+                case Right(RaffleDecision.Accepted(event)) =>
+                  persist(change.opId, event).thenRun { after =>
+                    context.log.info("raffle prize changed", StructuredArguments.keyValue("auction_id", auctionId))
+                    replyTo ! Right(after.raffle)
+                  }
+                case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
+                  Effect.reply(replyTo)(Right(state.raffle))
+              }
             case Get(replyTo) =>
               Effect.none.thenRun { after =>
                 replyTo ! after.raffle
@@ -256,11 +314,14 @@ object RaffleEntity {
               // Сбоя опроса быть не должно: каждый вопрос сам превращает отказ в «нет ответа». Если он всё же случился,
               // правило то же — неотвеченный остаётся в пуле.
               // Ответы, пришедшие с времени раунда маяка, пул не меняют: процесс мог лежать в момент закрытия.
+              // Ручному итогу маяк не нужен, и опоздавший ответ исхода не выбирает.
               val answers = state.raffle.state match {
-                case RaffleState.Open(terms, _) if Raffle.answeredTooLate(terms, clock.instant()) => Map.empty
+                case RaffleState.Open(terms, _) if !settings.byHand && Raffle.answeredTooLate(terms, clock.instant()) =>
+                  Map.empty
                 case _ => result.getOrElse(Map.empty)
               }
-              Raffle.decide(state.raffle, FixPool(Raffle.excluded(answers)), clock.instant()) match {
+              val fix = FixPool(Raffle.excluded(answers), settings.byHand)
+              Raffle.decide(state.raffle, fix, clock.instant()) match {
                 case Left(_) => Effect.none
                 case Right(event) =>
                   persist(systemOp(), event).thenRun { after =>
@@ -270,6 +331,16 @@ object RaffleEntity {
                           "raffle pool fixed",
                           StructuredArguments.keyValue("auction_id", auctionId),
                           StructuredArguments.keyValue("tickets", fixed.size),
+                          StructuredArguments.keyValue("draw", "automatic"),
+                          StructuredArguments.keyValue("excluded", Raffle.excluded(answers).size),
+                          StructuredArguments.keyValue("unverified", answers.count(_._2.isEmpty))
+                        )
+                      case RaffleState.AwaitingWinner(_, fixed) =>
+                        context.log.info(
+                          "raffle pool fixed",
+                          StructuredArguments.keyValue("auction_id", auctionId),
+                          StructuredArguments.keyValue("tickets", fixed.size),
+                          StructuredArguments.keyValue("draw", "manual"),
                           StructuredArguments.keyValue("excluded", Raffle.excluded(answers).size),
                           StructuredArguments.keyValue("unverified", answers.count(_._2.isEmpty))
                         )
@@ -286,7 +357,13 @@ object RaffleEntity {
                 case RaffleState.Fixed(_, fixed) =>
                   recording = true
                   Effect.none.thenRun(_ => context.pipeToSelf(tickets.record(auction, fixed))(NamesRecorded(_)))
+                case RaffleState.AwaitingWinner(_, fixed) =>
+                  recording = true
+                  Effect.none.thenRun(_ => context.pipeToSelf(tickets.record(auction, fixed))(NamesRecorded(_)))
                 case RaffleState.Drawn(_, fixed, _, _) =>
+                  recording = true
+                  Effect.none.thenRun(_ => context.pipeToSelf(tickets.record(auction, fixed))(NamesRecorded(_)))
+                case RaffleState.Assigned(_, fixed, _, _) =>
                   recording = true
                   Effect.none.thenRun(_ => context.pipeToSelf(tickets.record(auction, fixed))(NamesRecorded(_)))
                 case _ => Effect.none
@@ -340,6 +417,10 @@ object RaffleEntity {
             case ExpireNames =>
               state.raffle.state match {
                 case RaffleState.Drawn(_, _, _, at) if !expiring =>
+                  expiring = true
+                  val expiry = tickets.expireAt(auction, at.plus(settings.nameRetention))
+                  Effect.none.thenRun(_ => context.pipeToSelf(expiry)(NamesExpiring(_)))
+                case RaffleState.Assigned(_, _, _, at) if !expiring =>
                   expiring = true
                   val expiry = tickets.expireAt(auction, at.plus(settings.nameRetention))
                   Effect.none.thenRun(_ => context.pipeToSelf(expiry)(NamesExpiring(_)))

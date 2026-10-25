@@ -14,8 +14,10 @@ import {
 import {
   AddLotResponseSchema,
   AdvanceAskResponseSchema,
+  AssignRaffleWinnerResponseSchema,
   AuctionSnapshotSchema,
   CancelAuctionResponseSchema,
+  ChangeRafflePrizeResponseSchema,
   CloseLotResponseSchema,
   CreateLotCardResponseSchema,
   DeleteLotSetResponseSchema,
@@ -108,6 +110,8 @@ function adapter(rpc: {
   getDisplayNames?: Call;
   listAuctions?: Call;
   getRaffle?: Call;
+  assignRaffleWinner?: Call;
+  changeRafflePrize?: Call;
   listAuctionNames?: Call;
   placeBid?: Call;
   launchStepWindow?: Call;
@@ -143,10 +147,13 @@ function adapter(rpc: {
     chooseDisplayName: notUsed,
     getAuction: notUsed,
     getRaffle: (rpc.getRaffle ?? notUsed) as never,
+    assignRaffleWinner: (rpc.assignRaffleWinner ?? notUsed) as never,
+    changeRafflePrize: (rpc.changeRafflePrize ?? notUsed) as never,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
     getMyPredictions: notUsed,
     getPredictionResults: notUsed,
+    getAuctionDayChronicle: notUsed,
     submitPrediction: notUsed,
     getLotImage: notUsed,
     getLotPhoto: (rpc.getLotPhoto ?? notUsed) as never,
@@ -1043,6 +1050,55 @@ describe("auction console adapter", () => {
     });
   });
 
+  // PER-734: числа розыгрыша и прогнозов — только агрегаты; без полей их нет.
+  it("reads the raffle registrations and the predictions tally of the console", async () => {
+    const reading = (
+      extra: Partial<{
+        raffleRegistrations: number;
+        predictions: { participants: number; answers: number };
+      }>,
+    ) =>
+      adapter({
+        getAuctionConsole: async () =>
+          create(GetAuctionConsoleResponseSchema, {
+            outcome: {
+              case: "console",
+              value: {
+                auction: {
+                  id: auctionId,
+                  status: { case: "prebidding", value: {} },
+                },
+                ...extra,
+              },
+            },
+          }),
+      }).getAuctionConsole(admin, auctionId);
+
+    await expect(
+      reading({
+        raffleRegistrations: 12,
+        predictions: { participants: 5, answers: 17 },
+      }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      console: {
+        raffleRegistrations: 12,
+        predictionTally: { participants: 5, answers: 17 },
+      },
+    });
+    const bare = await reading({});
+    expect(bare.kind === "ok" && bare.console).not.toHaveProperty(
+      "raffleRegistrations",
+    );
+    expect(bare.kind === "ok" && bare.console).not.toHaveProperty(
+      "predictionTally",
+    );
+    // Ответов меньше, чем людей, не бывает: это дефект соседа.
+    await expect(
+      reading({ predictions: { participants: 3, answers: 1 } }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
   it("reads ranked-statistics inputs without exposing participant identities", async () => {
     const read = adapter({
       getAuctionLotStatistics: async (request) => {
@@ -1277,6 +1333,190 @@ describe("auction console adapter", () => {
     await expect(
       refused.consoleRaffle(admin, auctionId),
     ).resolves.not.toHaveProperty("raffle");
+  });
+
+  // Ручной итог розыгрыша (PER-727): принятый — розыгрыш с итогом, каждый
+  // именованный отказ — свой ответ, а в Auction едут смотрящий, номер и ключ.
+  it("assigns the raffle winner and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      assignRaffleWinner: async (request: unknown) => {
+        sent.push(request);
+        return create(AssignRaffleWinnerResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: create(RaffleSchema, {
+              auctionId,
+              status: RaffleStatus.DRAWN,
+              closesAt: "2026-10-05T16:12:00Z",
+              drawnByHand: true,
+              tickets: [{ number: 1 }, { number: 2, displayName: "Сова*" }],
+              reveal: { seed: "cd".repeat(32), winningTicket: 2 },
+            }),
+          },
+        });
+      },
+    });
+    await expect(
+      accepted.assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      raffle: {
+        status: "drawn",
+        drawnByHand: true,
+        reveal: { winningTicket: 2 },
+      },
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        ticket: 2,
+        opId,
+      }),
+    ]);
+
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "raffleNotFound", value: {} }, { kind: "raffle-not-found" }],
+      [
+        { case: "notAwaitingWinner", value: {} },
+        { kind: "not-awaiting-winner" },
+      ],
+      [
+        { case: "ticketNotInPool", value: { tickets: 12 } },
+        { kind: "ticket-not-in-pool", tickets: 12 },
+      ],
+      [
+        { case: "alreadyDrawn", value: { winningTicket: 3 } },
+        { kind: "already-drawn", winningTicket: 3 },
+      ],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(
+        adapter({
+          assignRaffleWinner: async () =>
+            create(AssignRaffleWinnerResponseSchema, {
+              outcome: { case: "refused", value: { reason } },
+            }),
+        }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+      ).resolves.toEqual(result);
+    }
+
+    await expect(
+      adapter({
+        assignRaffleWinner: async () =>
+          create(AssignRaffleWinnerResponseSchema, {}),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        assignRaffleWinner: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    // Чужой ключ (ALREADY_EXISTS) — дефект края, а не отказ человеку.
+    await expect(
+      adapter({
+        assignRaffleWinner: () =>
+          Promise.reject(new ConnectError("op", Code.AlreadyExists)),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        assignRaffleWinner: () =>
+          Promise.reject(new ConnectError("down", Code.Unavailable)),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  // Смена приза идущего розыгрыша (PER-737): принятая — розыгрыш с новым
+  // призом, каждый именованный отказ — свой ответ, а в Auction едут
+  // смотрящий, текст и ключ.
+  it("changes the raffle prize and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      changeRafflePrize: async (request: unknown) => {
+        sent.push(request);
+        return create(ChangeRafflePrizeResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: create(RaffleSchema, {
+              auctionId,
+              status: RaffleStatus.OPEN,
+              closesAt: "2026-10-05T16:12:00Z",
+              rafflePrize: "кружка и брелок",
+            }),
+          },
+        });
+      },
+    });
+    const command = { auctionId, prize: "кружка и брелок", opId };
+    await expect(
+      accepted.changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      raffle: { status: "open", prize: "кружка и брелок" },
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        prize: "кружка и брелок",
+        opId,
+      }),
+    ]);
+
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "raffleNotFound", value: {} }, { kind: "raffle-not-found" }],
+      [{ case: "prizeBlank", value: {} }, { kind: "prize-blank" }],
+      [{ case: "prizeTooLong", value: {} }, { kind: "prize-too-long" }],
+      [
+        { case: "alreadyDrawn", value: { winningTicket: 3 } },
+        { kind: "already-drawn", winningTicket: 3 },
+      ],
+      [{ case: "withoutResult", value: {} }, { kind: "without-result" }],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(
+        adapter({
+          changeRafflePrize: async () =>
+            create(ChangeRafflePrizeResponseSchema, {
+              outcome: { case: "refused", value: { reason } },
+            }),
+        }).changeRafflePrize(admin, command),
+      ).resolves.toEqual(result);
+    }
+
+    await expect(
+      adapter({
+        changeRafflePrize: async () =>
+          create(ChangeRafflePrizeResponseSchema, {}),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        changeRafflePrize: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    await expect(
+      adapter({
+        changeRafflePrize: () =>
+          Promise.reject(new ConnectError("down", Code.Unavailable)),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({ kind: "unavailable" });
   });
 
   // Отмена после старта торгов (PER-606): каждый именованный отказ — свой

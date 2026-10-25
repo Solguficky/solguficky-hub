@@ -1077,6 +1077,38 @@ object ResponseMapping {
   def settleResultsDenied(denial: Denial): Either[Status, wire.SettlePredictionResultsManuallyResponse] =
     settleResultsRefusal(denial).map(wire.SettlePredictionResultsManuallyResponse().withRefused)
 
+  /** Отказ права на ручной итог розыгрыша — та же пара, что у ручной отметки итогов прогнозов (PER-727). */
+  def assignWinnerDenied(denial: Denial): Either[Status, wire.AssignRaffleWinnerResponse] = {
+    import wire.AssignRaffleWinnerRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.AssignRaffleWinnerResponse().withRefused(wire.AssignRaffleWinnerRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle winner authority answered $denial")
+    }
+  }
+
+  /** Отказ права на смену приза розыгрыша — та же пара, что у ручного итога (PER-737). */
+  def changePrizeDenied(denial: Denial): Either[Status, wire.ChangeRafflePrizeResponse] = {
+    import wire.ChangeRafflePrizeRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.ChangeRafflePrizeResponse().withRefused(wire.ChangeRafflePrizeRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle prize authority answered $denial")
+    }
+  }
+
   /** Ручная отметка принята: подсчёт подавлен, значения номинаций не несутся (ADR-067, п. 8). */
   val settleResultsAccepted: wire.SettlePredictionResultsManuallyResponse =
     wire.SettlePredictionResultsManuallyResponse().withAccepted(wire.PredictionResultsByHand())

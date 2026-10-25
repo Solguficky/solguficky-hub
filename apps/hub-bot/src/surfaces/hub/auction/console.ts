@@ -2,6 +2,7 @@ import type { AuctionStepWindow } from "../../../../gen/auction/v1/auction_pb.js
 import type {
   AuctionConsole,
   AuctionSnapshot,
+  ConsolePredictions,
   ConsoleLot as WireConsoleLot,
   ConsoleLotSet as WireConsoleLotSet,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
@@ -13,6 +14,7 @@ import type {
   ConsoleAuctionStatus,
   ConsoleLotSnapshot,
   LotSet,
+  PredictionTally,
   StepWindow,
 } from "../application/types.js";
 
@@ -41,6 +43,25 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     launchedWindows: console.launchedStepWindows.map(windowOf),
     lots: console.lots.map(consoleLotOf),
     lotSets: console.lotSets.map(lotSetOf),
+    // Розыгрыш и прогнозы числами (PER-734): организаторы подбирают призы по
+    // числу участников. Нет поля — строки нет.
+    ...(console.raffleRegistrations === undefined
+      ? {}
+      : { raffleRegistrations: console.raffleRegistrations }),
+    ...(console.predictions === undefined
+      ? {}
+      : { predictionTally: predictionTallyOf(console.predictions) }),
+  };
+}
+
+// Ответов не меньше, чем участников: у каждого считанного хотя бы один ответ.
+function predictionTallyOf(predictions: ConsolePredictions): PredictionTally {
+  if (predictions.answers < predictions.participants) {
+    throw new Error("prediction tally with fewer answers than participants");
+  }
+  return {
+    participants: predictions.participants,
+    answers: predictions.answers,
   };
 }
 

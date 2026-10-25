@@ -294,6 +294,15 @@ export const screenCatalog = {
     parent: "auction-root",
     backName: "Итоги",
   },
+  // Хроники дня (PER-725) — тело общего аукционного дерева: вход из корня
+  // аукциона во время онлайн-недели и возврат туда же.
+  "day-chronicle": {
+    class: "screen",
+    nav: "tree",
+    title: "Хроники дня",
+    parent: "auction-root",
+    backName: "Хроники дня",
+  },
   predictions: {
     class: "screen",
     nav: "tree",
@@ -477,6 +486,28 @@ export const screenCatalog = {
     nav: "confirm",
     title: "Отметить",
     irreversible: true,
+  },
+  // Итог розыгрыша вручную (PER-727): список билетов для колеса на внешнем
+  // сайте и «Ввести победителя». Открывается с пульта, пока пул ждёт итога.
+  "raffle-winner": {
+    class: "screen",
+    nav: "tree",
+    title: "Итог розыгрыша",
+    parent: "auction-console",
+  },
+  // Итог не меняется, и участники сразу получают весть: «Да» красное.
+  "raffle-winner-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Назначить победителя?",
+    irreversible: true,
+  },
+  // Смена приза идущего розыгрыша (PER-737): «было → станет». Приз меняется
+  // снова до итога, участникам вести нет — «Да» не красное.
+  "raffle-prize-change-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Изменить приз?",
   },
   // «Счастливые часы» (PER-504): окна сниженного шага онлайн-недели.
   // Открываются с пульта, пока неделя не открыта, а после — только для
@@ -798,6 +829,10 @@ export const screenCatalog = {
   // ставит только его кнопка «Подать заявку». Заголовка нет — первое
   // предложение жирным, как у кадра отказа.
   welcome: { class: "screen", nav: "apply" },
+  // Ответ на «Подать заявку», когда очередь сообщества закрыта (дополнение
+  // ADR-060 от 2026-10-25): вид приветствия и та же кнопка — по ней срабатывает
+  // белый список.
+  "invitation-only": { class: "screen", nav: "apply" },
   // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
   hint: { class: "screen", nav: "exit" },
   notification: { class: "trace", nav: "free" },

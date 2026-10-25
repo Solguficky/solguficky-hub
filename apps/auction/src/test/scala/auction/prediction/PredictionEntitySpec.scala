@@ -83,6 +83,15 @@ final class PredictionEntitySpec extends AnyWordSpec with Matchers with BeforeAn
           .map((round, ofRound) => round -> ofRound.map((_, participant, forecast) => participant -> forecast).toMap)
       })
 
+    def tally(auction: AuctionId): Future[PredictionTally] =
+      Future.successful(synchronized {
+        val answered = rows.toList.collect {
+          case ((`auction`, _, participant), forecast) if forecast.answers.nonEmpty =>
+            participant -> forecast.answers.size
+        }
+        PredictionTally(answered.map(_._1).distinct.size.toLong, answered.map(_._2).sum.toLong)
+      })
+
     def discard(auction: AuctionId): Future[Unit] = synchronized {
       discards += 1
       rows = rows.filterNot(_._1._1 == auction)

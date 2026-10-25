@@ -61,6 +61,7 @@ export const hubSurface: SurfaceDefinition = ({
   logger,
   tracing,
   releaseNotes,
+  build,
 }) => {
   const loaded = readHubConfig(env);
   if (!loaded.ok) return loaded;
@@ -184,6 +185,7 @@ export const hubSurface: SurfaceDefinition = ({
     environment,
     faq: hub.faq,
     today,
+    build,
     ...(hub.auctionBotUsername === undefined
       ? {}
       : { auctionBotUsername: hub.auctionBotUsername }),

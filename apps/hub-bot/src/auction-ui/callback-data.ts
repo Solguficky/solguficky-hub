@@ -129,6 +129,8 @@ export type AuctionIntent =
   // псевдонима и его шаг с адресатом. `op_id` команды рождается на нажатии:
   // повторная регистрация возвращает ту же, второго билета не бывает.
   | { kind: "prediction-results"; auctionId: string }
+  // Хроники дня (PER-725): номинации последних суток из корня аукциона.
+  | { kind: "day-chronicle"; auctionId: string }
   | { kind: "raffle"; auctionId: string }
   | { kind: "raffle-register"; auctionId: string }
   | { kind: "raffle-cancel"; auctionId: string }
@@ -220,6 +222,7 @@ export type AuctionIntent =
 // у имени из настроек.
 const AUCTION_ACTION = {
   "prediction-results": "pi",
+  "day-chronicle": "dc",
   raffle: "rf",
   "raffle-register": "rr",
   "raffle-cancel": "rc",
@@ -469,6 +472,7 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
           : [uuidToToken(intent.auctionId)]),
       ].join(":");
     case "prediction-results":
+    case "day-chronicle":
     case "raffle":
     case "raffle-register":
     case "raffle-cancel":

@@ -54,6 +54,44 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
       keepsGolden("raffle-pool-fixed", stored(RaffleEvent.PoolFixed(Vector(person(1), person(2)))))
       keepsGolden("raffle-drawn", stored(RaffleEvent.RaffleDrawn(randomness, closesAt.plusSeconds(62))))
       keepsGolden("raffle-cancelled", stored(RaffleEvent.RaffleCancelled(closesAt.plusSeconds(30))))
+      keepsGolden(
+        "raffle-pool-fixed-by-hand",
+        stored(RaffleEvent.PoolFixed(Vector(person(1), person(2)), byHand = true))
+      )
+      keepsGolden("raffle-winner-assigned", stored(RaffleEvent.WinnerAssigned(2, closesAt.plusSeconds(5400))))
+      keepsGolden("raffle-prize-changed", stored(RaffleEvent.PrizeChanged("кружка и брелок")))
+    }
+
+    "reads a row written before the prize could change as the same event" in {
+      val assigned = stored(RaffleEvent.WinnerAssigned(2, closesAt.plusSeconds(5400)))
+      legacy("raffle-winner-assigned", assigned) shouldBe assigned
+    }
+
+    "reads a pool fixed before the winner by hand existed as a pool that waits for the beacon" in {
+      val fixed = stored(RaffleEvent.PoolFixed(Vector(person(1), person(2))))
+      legacy("raffle-pool-fixed", fixed) shouldBe fixed
+    }
+
+    "keeps the stored form of a raffle that waits for the winner by hand and of its assigned winner" in {
+      val awaiting = Raffle.replay(
+        Raffle.initial,
+        List(
+          RaffleEnvelope(1, OpId(uuid(2)), RaffleEvent.RaffleOpened(closesAt, seed, round)),
+          RaffleEnvelope(2, OpId(uuid(3)), RaffleEvent.Registered(person(1))),
+          RaffleEnvelope(3, OpId(uuid(4)), RaffleEvent.PoolFixed(Vector(person(1)), byHand = true))
+        )
+      )
+      awaiting.state shouldBe a[RaffleState.AwaitingWinner]
+      keepsGolden("raffle-snapshot-awaiting-winner", RaffleJournal.storeRaffle(awaiting, sequence = 3))
+      RaffleJournal.restoreRaffle(RaffleJournal.storeRaffle(awaiting, sequence = 3)) shouldBe awaiting
+
+      val assigned = Raffle.apply(
+        awaiting,
+        RaffleEnvelope(4, OpId(uuid(5)), RaffleEvent.WinnerAssigned(1, closesAt.plusSeconds(5400)))
+      )
+      assigned.state shouldBe a[RaffleState.Assigned]
+      keepsGolden("raffle-snapshot-assigned", RaffleJournal.storeRaffle(assigned, sequence = 4))
+      RaffleJournal.restoreRaffle(RaffleJournal.storeRaffle(assigned, sequence = 4)) shouldBe assigned
     }
 
     "keeps the stored form of a cancelled raffle snapshot and restores the same raffle" in {

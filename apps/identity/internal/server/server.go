@@ -26,6 +26,7 @@ type Option func(*config)
 
 type config struct {
 	tracerProvider trace.TracerProvider
+	communityQueue CommunityQueue
 }
 
 // WithTracerProvider задаёт провайдер серверных спанов. Без опции спаны идут в
@@ -64,7 +65,12 @@ func New(log *slog.Logger, db *sql.DB, maintainerToken string, callers Callers, 
 			streamRecovery(),
 		),
 	)
-	identityv1.RegisterIdentityServiceServer(srv, identityService{db: db, log: log, maintainerToken: maintainerToken})
+	identityv1.RegisterIdentityServiceServer(srv, identityService{
+		db:              db,
+		log:             log,
+		maintainerToken: maintainerToken,
+		communityQueue:  cfg.communityQueue,
+	})
 
 	healthSrv := health.NewServer()
 	healthSrv.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)

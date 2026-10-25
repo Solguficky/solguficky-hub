@@ -132,6 +132,9 @@ function ports(
       getPredictionResults: vi.fn(async () => {
         throw new Error("not used");
       }),
+      getDayChronicle: async () => {
+        throw new Error("not used");
+      },
       submitPrediction: vi.fn(async () => {
         throw new Error("not used");
       }),

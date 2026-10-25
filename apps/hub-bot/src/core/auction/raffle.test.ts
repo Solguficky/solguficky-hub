@@ -141,10 +141,10 @@ describe("raffle answers", () => {
       raffleOf(
         create(RaffleSchema, {
           auctionId: AUCTION_ID,
-          status: (RaffleStatus.CANCELLED + 1) as RaffleStatus,
+          status: (RaffleStatus.AWAITING_WINNER + 1) as RaffleStatus,
         }),
       ),
-    ).toThrow(/unknown status: 8/);
+    ).toThrow(/unknown status: 9/);
   });
 
   it("treats an unspecified status as a defect of the neighbour", () => {

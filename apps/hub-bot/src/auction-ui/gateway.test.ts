@@ -117,6 +117,9 @@ function surfaceFor(
         async getPredictionResults() {
           throw new Error("not used");
         },
+        getDayChronicle: async () => {
+          throw new Error("not used");
+        },
         async submitPrediction() {
           throw new Error("not used");
         },
@@ -395,6 +398,26 @@ describe("surface entry on /start", () => {
       decideEntry("hub", {
         viewer: { ...VIEWER, rights: MEMBER },
         outcome: "unspecified",
+      }),
+    ).toEqual({ kind: "unknown-outcome", identityId: IDENTITY_ID });
+  });
+
+  // Закрытая очередь сообщества (дополнение ADR-060 от 2026-10-25): хабу —
+  // свой ответ, боту аукциона — незнакомый исход: его очередь не закрывается.
+  it("answers the hub on a closed queue as invitation only", () => {
+    expect(
+      decideEntry("hub", {
+        viewer: { ...VIEWER, rights: ["place-bids"] },
+        outcome: "invitation-only",
+      }),
+    ).toEqual({ kind: "invitation-only", identityId: IDENTITY_ID });
+  });
+
+  it("reads invitation only in the auction queue as an unknown outcome", () => {
+    expect(
+      decideEntry("auction", {
+        viewer: { ...VIEWER, rights: [] },
+        outcome: "invitation-only",
       }),
     ).toEqual({ kind: "unknown-outcome", identityId: IDENTITY_ID });
   });

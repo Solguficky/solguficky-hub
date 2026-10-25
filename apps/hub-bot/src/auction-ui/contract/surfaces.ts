@@ -77,6 +77,7 @@ export const accessMatrixApp =
         }),
       );
       if (entry.kind === "entered") return "admitted";
+      if (entry.kind === "invitation-only") return "invitation-only";
       return entry.kind === "denied"
         ? ENTRY_ANSWERS[entry.reason]
         : "unavailable";

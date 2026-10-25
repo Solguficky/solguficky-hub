@@ -332,3 +332,95 @@ func assertApplicationEvents(t *testing.T, db *sql.DB, identityID string, want .
 		t.Fatalf("application_submitted events:\n got  %q\n want %q", got, want)
 	}
 }
+
+// closedCommunityService — сервис с закрытой очередью сообщества (дополнение
+// ADR-060 от 2026-10-25): в хаб пускает только белый список.
+func closedCommunityService(t *testing.T) (identityService, *sql.DB) {
+	t.Helper()
+	svc, db := newIdentityService(t)
+	svc.communityQueue = CommunityQueueClosed
+	return svc, db
+}
+
+// Закрытая очередь сообщества белый список не трогает: ник из списка входит
+// в хаб тем же исходом, что в открытой.
+func TestClosedCommunityQueueAdmitsAllowlistedUsername(t *testing.T) {
+	t.Parallel()
+	svc, db := closedCommunityService(t)
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "invited", circleMember, uuid.NullUUID{}))
+
+	resp := requestAccess(t, svc, accessRequest{telegramUserID: 7120, username: "invited", queue: hubQueue, firstName: "Eve"})
+
+	assertOutcome(t, resp, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST)
+	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertApplications(t, db, resp.GetIdentityId())
+	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() member{access_hub,place_bids}[] blocked=false")
+}
+
+// Человек не из списка получает INVITATION_ONLY и на первый, и на повторный
+// вызов: заявки нет, события application_submitted нет, поэтому администраторам
+// не уходит и оповещение о ней.
+func TestClosedCommunityQueueAnswersInvitationOnlyWithoutApplication(t *testing.T) {
+	t.Parallel()
+	svc, db := closedCommunityService(t)
+
+	first := requestAccess(t, svc, accessRequest{telegramUserID: 7121, username: "uninvited", queue: hubQueue, source: new("chan"), firstName: "Frank"})
+	again := requestAccess(t, svc, accessRequest{telegramUserID: 7121, username: "uninvited", queue: hubQueue, firstName: "Frank"})
+
+	assertOutcome(t, first, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_INVITATION_ONLY)
+	assertOutcome(t, again, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_INVITATION_ONLY)
+	assertRightSet(t, again.GetRights())
+	assertApplications(t, db, first.GetIdentityId())
+	assertEvents(t, db, first.GetIdentityId(), "v1 profile_registered() {}[] blocked=false")
+	assertApplicationEvents(t, db, first.GetIdentityId())
+}
+
+// Аукционная запись в боте хаба по-прежнему выдаёт guest, но заявки на member
+// закрытая очередь не ставит.
+func TestClosedCommunityQueueAuctionAllowlistInHubBotGrantsGuestOnly(t *testing.T) {
+	t.Parallel()
+	svc, db := closedCommunityService(t)
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "bidder", circleGuest, uuid.NullUUID{}))
+
+	resp := requestAccess(t, svc, accessRequest{telegramUserID: 7122, username: "bidder", queue: hubQueue})
+
+	assertOutcome(t, resp, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_INVITATION_ONLY)
+	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertApplications(t, db, resp.GetIdentityId())
+	assertApplicationEvents(t, db, resp.GetIdentityId())
+}
+
+// Открытую до закрытия заявку очередь не трогает: она остаётся решению
+// администратора, а человек получает тот же ответ, что и без заявки. Отказ в
+// силе отвечает DECLINED, как в открытой очереди.
+func TestClosedCommunityQueueKeepsOpenApplicationAndDecline(t *testing.T) {
+	t.Parallel()
+	svc, db := closedCommunityService(t)
+	adminID := seedAdmin(t, svc, db, 7123)
+	waitingID := seedProfile(t, db, 7124)
+	seedApplication(t, db, waitingID, queueCommunity, time.Now())
+	declinedID := seedProfile(t, db, 7125)
+	decide(t, svc.DeclineApplication, adminID, seedApplication(t, db, declinedID, queueCommunity, time.Now()))
+
+	waiting := requestAccess(t, svc, accessRequest{telegramUserID: 7124, queue: hubQueue})
+	declined := requestAccess(t, svc, accessRequest{telegramUserID: 7125, queue: hubQueue})
+
+	assertOutcome(t, waiting, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_INVITATION_ONLY)
+	assertOutcome(t, declined, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_DECLINED)
+	assertApplications(t, db, waitingID, "community source=<nil> name=<nil>")
+	assertApplicationEvents(t, db, waitingID)
+	assertApplications(t, db, declinedID)
+}
+
+// Очередь аукциона закрытие очереди сообщества не задевает: заявка ставится и
+// объявляется, как прежде.
+func TestClosedCommunityQueueLeavesAuctionQueueOpen(t *testing.T) {
+	t.Parallel()
+	svc, db := closedCommunityService(t)
+
+	resp := requestAccess(t, svc, accessRequest{telegramUserID: 7126, queue: auctionQueue, firstName: "Gina"})
+
+	assertOutcome(t, resp, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_PENDING)
+	assertApplications(t, db, resp.GetIdentityId(), "auction source=<nil> name=Gina")
+	assertApplicationEvents(t, db, resp.GetIdentityId(), "auction")
+}

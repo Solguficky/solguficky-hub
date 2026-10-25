@@ -33,6 +33,7 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../core/auction/commands.js";
+import { dayChronicleOf } from "../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
 import {
@@ -118,6 +119,7 @@ export type AuctionRpc = Pick<
   | "cancelRaffleRegistration"
   | "getMyPredictions"
   | "getPredictionResults"
+  | "getAuctionDayChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
@@ -466,6 +468,16 @@ export function createPorts(
           );
           return predictionResultsOf(response);
         },
+        async getDayChronicle(request) {
+          const response = await auction.getAuctionDayChronicle(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return dayChronicleOf(response);
+        },
         submitPrediction(request) {
           return unansweredOn(async () =>
             predictionOutcomeOf(
@@ -748,6 +760,8 @@ function outcomeName(outcome: WireOutcome): AccessRequestOutcome {
       return "declined";
     case WireOutcome.BLOCKED:
       return "blocked";
+    case WireOutcome.INVITATION_ONLY:
+      return "invitation-only";
     default:
       return "unspecified";
   }

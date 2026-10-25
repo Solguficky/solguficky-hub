@@ -1,4 +1,10 @@
 import type { Api } from "grammy";
+import {
+  type BuildInfo,
+  buildVersion,
+  localBuild,
+  readBuildInfo,
+} from "./build-info.js";
 import type { Env, Loaded, ProcessConfig } from "./config.js";
 import { readProcessConfig } from "./config.js";
 import type { NatsDelivery } from "./delivery/index.js";
@@ -52,6 +58,8 @@ export type SurfaceContext = {
   tracing: Tracing;
   // Записи «Что нового» образа (ADR-069, п. 1).
   releaseNotes: ReleaseNotes;
+  // Данные сборки образа (PER-736): коммит и дата или локальная сборка.
+  build: BuildInfo;
 };
 
 export type SurfaceDefinition = (
@@ -79,7 +87,13 @@ async function main(
   env: Env,
 ): Promise<number> {
   const service = bindService(surface);
-  logs = startLogs(service);
+  // Данные сборки читаются первыми: версия нужна ресурсу OTLP до первого
+  // сигнала. Битый файл старт не роняет — версия справочная, и процесс идёт
+  // как локальная сборка, а запись ниже называет причину.
+  const readBuild = readBuildInfo();
+  const build = readBuild.ok ? readBuild.config : localBuild;
+  const version = buildVersion(build);
+  logs = startLogs(service, version);
   const loaded = readProcessConfig(env, surface);
   // Уровень берётся из конфигурации, а при её отказе — по умолчанию: запись
   // об отказе должна уйти в любом случае.
@@ -91,6 +105,7 @@ async function main(
     logger.error(loaded.error);
     return 1;
   }
+  if (!readBuild.ok) logger.warn(readBuild.error);
   const { config } = loaded;
   // Записи читаются до первого сигнала, как конфигурация: битый каталог —
   // образ собран неверно, и процесс отказывает тем же путём.
@@ -100,9 +115,16 @@ async function main(
     return 1;
   }
   const releaseNotes = notes.config;
-  const metrics = startMetrics();
-  const tracing = startTraces();
-  const defined = define({ env, config, logger, tracing, releaseNotes });
+  const metrics = startMetrics(version);
+  const tracing = startTraces(version);
+  const defined = define({
+    env,
+    config,
+    logger,
+    tracing,
+    releaseNotes,
+    build,
+  });
   if (!defined.ok) {
     logger.error(defined.error);
     await Promise.allSettled([tracing.shutdown(), metrics.shutdown()]);
@@ -183,6 +205,8 @@ async function main(
     }
     logger.info(`${service} starting`, {
       service,
+      version,
+      ...(build.kind === "image" ? { build_date: build.date } : {}),
       telegram_environment: config.environment,
       release_notes: releaseNotes.idsFor(surface).length,
       ...defined.config.startFields,

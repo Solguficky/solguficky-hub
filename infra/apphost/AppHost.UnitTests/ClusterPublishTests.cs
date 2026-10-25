@@ -179,6 +179,44 @@ public class ClusterPublishTests
         (await parameter.GetValueAsync(TestContext.Current.CancellationToken)).ShouldBe("false");
     }
 
+    /// <summary>
+    /// Итог розыгрыша в чарте — жеребьёвка по маяку (ADR-066, дополнение
+    /// 2026-10-24): values среды без ключа оставляют прежнее поведение, а ручной
+    /// итог включают своим значением. Снимок графа значения не показывает,
+    /// поэтому его держит этот тест.
+    /// </summary>
+    [Fact]
+    public async Task Publish_RaffleDraw_IsAutomaticUnlessValuesSayOtherwise()
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = await PublishEnvironmentAsync(builder, R.Auction);
+
+        var parameter = (ParameterResource)environment["AUCTION_RAFFLE_DRAW"];
+        parameter.Name.ShouldBe("auction-raffle-draw");
+        parameter.Secret.ShouldBeFalse();
+        (await parameter.GetValueAsync(TestContext.Current.CancellationToken)).ShouldBe("automatic");
+    }
+
+    /// <summary>
+    /// Очередь сообщества в чарте открыта (дополнение ADR-060 от 2026-10-25,
+    /// PER-739): values среды без ключа оставляют прежнее поведение, а вход
+    /// только по белому списку включают значением <c>closed</c>. Снимок графа
+    /// значения не показывает, поэтому его держит этот тест.
+    /// </summary>
+    [Fact]
+    public async Task Publish_CommunityQueue_IsOpenUnlessValuesSayOtherwise()
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = await PublishEnvironmentAsync(builder, R.Identity);
+
+        var parameter = (ParameterResource)environment["IDENTITY_COMMUNITY_QUEUE"];
+        parameter.Name.ShouldBe("identity-community-queue");
+        parameter.Secret.ShouldBeFalse();
+        (await parameter.GetValueAsync(TestContext.Current.CancellationToken)).ShouldBe("open");
+    }
+
     private static async Task<Dictionary<string, object>> PublishEnvironmentAsync(
         IDistributedApplicationTestingBuilder builder,
         string name)

@@ -28,6 +28,10 @@ export type LogFields = {
   signal?: string;
   timeout?: number;
   telegram_environment?: string;
+  // Версия образа из данных сборки — коммит или `local` — и дата его коммита
+  // (PER-736).
+  version?: string;
+  build_date?: string;
   // Задано ли имя бота аукциона для ссылок каналов прихода (PER-441).
   auction_bot_links?: boolean;
   // Сколько записей «Что нового» своей поверхности нашёл процесс в образе

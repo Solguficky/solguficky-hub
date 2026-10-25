@@ -216,6 +216,12 @@ function fake(answers: {
     markInvoice: async () => {
       throw new Error("invoices not used by the console");
     },
+    assignRaffleWinner: async () => {
+      throw new Error("raffle winner not used by the console");
+    },
+    changeRafflePrize: async () => {
+      throw new Error("raffle prize change not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };
@@ -869,7 +875,7 @@ describe("auction week start", () => {
 });
 
 // PER-618: строка розыгрыша пульта после закрытия регистрации — из
-// `GetRaffle`; до момента закрытия розыгрыш не читается.
+// `GetRaffle`; с PER-737 розыгрыш читается с открытия недели — ради приза.
 describe("auction console raffle", () => {
   const call = { identity: admin, auctionId };
   const raffle: RaffleView = {
@@ -910,9 +916,45 @@ describe("auction console raffle", () => {
     expect(reads.raffle).toBe(1);
   });
 
-  it("does not read the raffle before its registration closes", async () => {
+  // С открытия недели приз живёт у розыгрыша (PER-737): пульт читает его и
+  // до закрытия регистрации, чтобы показать приз, который сменили.
+  it("reads the raffle while its registration is still open", async () => {
+    const console = opened("2026-10-10T16:12:00Z");
+    const open: RaffleView = {
+      ...raffle,
+      status: "open",
+      tickets: [],
+      prize: "Кружка",
+    };
     const { run, reads } = fake({
-      read: { kind: "ok", console: opened("2026-10-10T16:12:00Z") },
+      read: { kind: "ok", console },
+      statistics: noLotStatistics,
+      raffle: { kind: "ok", raffle: open },
+    });
+
+    await expect(
+      run({ ...call, intent: "view-auction-console" }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: { ...console, raffle: open },
+    });
+    expect(reads.raffle).toBe(1);
+  });
+
+  it("does not read the raffle of a week that is not open yet", async () => {
+    const { run, reads } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", {
+          week: {
+            opensAt: "2026-10-05T15:00:00Z",
+            closesAt: "2026-10-12T15:00:00Z",
+            final: true,
+            windows: [],
+            raffleClosesAt: "2026-10-10T16:12:00Z",
+          },
+        }),
+      },
       statistics: noLotStatistics,
       raffle: { kind: "ok", raffle },
     });

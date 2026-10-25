@@ -1,0 +1,79 @@
+{
+  "sequence": 3,
+  "state": "AwaitingWinner",
+  "closesAt": null,
+  "terms": {
+    "closesAt": "2026-10-28T18:00:00Z",
+    "seed": "46fb9863b7178feb348aa621d658c5b41b848e398494830bac4837e0b0f539ae",
+    "round": 33469032,
+    "prize": null
+  },
+  "participants": [
+    "0190f2a0-0000-7000-8000-000000000065"
+  ],
+  "drawn": null,
+  "seen": [
+    {
+      "sequence": 1,
+      "opId": "0190f2a0-0000-7000-8000-000000000002",
+      "event": {
+        "kind": "RaffleOpened",
+        "raffleOpened": {
+          "closesAt": "2026-10-28T18:00:00Z",
+          "seed": "46fb9863b7178feb348aa621d658c5b41b848e398494830bac4837e0b0f539ae",
+          "round": 33469032,
+          "prize": null
+        },
+        "raffleNotHeld": null,
+        "registered": null,
+        "registrationCancelled": null,
+        "poolFixed": null,
+        "raffleDrawn": null,
+        "raffleCancelled": null,
+        "winnerAssigned": null,
+        "prizeChanged": null
+      }
+    },
+    {
+      "sequence": 2,
+      "opId": "0190f2a0-0000-7000-8000-000000000003",
+      "event": {
+        "kind": "Registered",
+        "raffleOpened": null,
+        "raffleNotHeld": null,
+        "registered": {
+          "participantId": "0190f2a0-0000-7000-8000-000000000065"
+        },
+        "registrationCancelled": null,
+        "poolFixed": null,
+        "raffleDrawn": null,
+        "raffleCancelled": null,
+        "winnerAssigned": null,
+        "prizeChanged": null
+      }
+    },
+    {
+      "sequence": 3,
+      "opId": "0190f2a0-0000-7000-8000-000000000004",
+      "event": {
+        "kind": "PoolFixed",
+        "raffleOpened": null,
+        "raffleNotHeld": null,
+        "registered": null,
+        "registrationCancelled": null,
+        "poolFixed": {
+          "tickets": [
+            "0190f2a0-0000-7000-8000-000000000065"
+          ],
+          "byHand": true
+        },
+        "raffleDrawn": null,
+        "raffleCancelled": null,
+        "winnerAssigned": null,
+        "prizeChanged": null
+      }
+    }
+  ],
+  "cancelledAt": null,
+  "assigned": null
+}
