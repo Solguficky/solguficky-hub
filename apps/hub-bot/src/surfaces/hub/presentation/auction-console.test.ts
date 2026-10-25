@@ -6486,14 +6486,51 @@ describe("prize change of a running raffle", () => {
       () => press(consoleData),
     );
     expect(plain(console)).toContain("Приз: Кружка");
-    expect(dataOf(console, "Изменить приз розыгрыша")).toBe(changeData);
+    expect(dataOf(console, "Изменить приз")).toBe(changeData);
 
     const scheduled = await step(
       fakeAuction({ status: "scheduled", week: raffleWeek }),
       [],
       () => press(consoleData),
     );
-    expect(labels(scheduled).flat()).not.toContain("Изменить приз розыгрыша");
+    // До открытия недели «Изменить приз» — приз сроков (PER-649).
+    expect(dataOf(scheduled, "Изменить приз")).not.toBe(changeData);
+  });
+
+  // Пульт онлайн-торгов с полной страницей лотов, окнами и розыгрышем —
+  // самый длинный: ряд смены приза держит его в потолке рядов линтера.
+  it("keeps a full console of the trading week within the row ceiling", async () => {
+    const lots = Array.from({ length: 12 }, (_, index) => ({
+      ...vase,
+      lot: {
+        ...vase.lot,
+        lotId: `0190f2a0-0000-7000-8000-${String(index + 1).padStart(12, "0")}`,
+      },
+    }));
+    const calls: RecordedCall[] = [];
+    const console = await step(
+      fakeAuction({
+        status: "prebidding",
+        week: {
+          ...raffleWeek,
+          windows: [
+            {
+              from: "2026-10-21T15:00:00Z",
+              until: "2026-10-21T18:00:00Z",
+              step: rub(5_000),
+              lotIds: [vaseId],
+            },
+          ],
+        },
+        consoleRaffle: open,
+        lots,
+      }),
+      calls,
+      () => press(consoleData),
+    );
+    expect(dataOf(console, "Изменить приз")).toBe(changeData);
+    expect(labels(console).length).toBeLessThanOrEqual(13);
+    expect(labels(console)).toContainEqual(["Время финала", "Изменить приз"]);
   });
 
   it("asks the text, confirms was and will be and changes the prize after yes over restarts", async () => {
@@ -6501,7 +6538,7 @@ describe("prize change of a running raffle", () => {
     const calls: RecordedCall[] = [];
     await step(auction, calls, () => press(consoleData));
     await step(auction, calls, (history) =>
-      press(dataOf(last(history), "Изменить приз розыгрыша")),
+      press(dataOf(last(history), "Изменить приз")),
     );
     const asked = question(calls).payload;
     expect(asked.text).toContain("Сейчас: Сертификат");
@@ -6583,7 +6620,7 @@ describe("prize change of a running raffle", () => {
       [],
       () => press(consoleData),
     );
-    expect(labels(console).flat()).not.toContain("Изменить приз розыгрыша");
+    expect(labels(console).flat()).not.toContain("Изменить приз");
     const outcome = await step(drawn, [], () => press(changeData));
     expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
     expect(drawn.sent("changeRafflePrize")).toEqual([]);

@@ -23,7 +23,7 @@ import type { ShownScreen } from "./show.js";
 // получает его в сообщении с итогом. Вопрос и его отказы — те же, что у
 // «Приза» запланированного аукциона (`screens/auction-console.ts`).
 
-export const rafflePrizeChangeLabel = "Изменить приз розыгрыша";
+export const rafflePrizeChangeLabel = "Изменить приз";
 const retryLabel = "Ввести заново";
 
 /**

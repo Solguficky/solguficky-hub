@@ -910,6 +910,10 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   // строк настройки. Снятие стоит в том же ряду: два «🗑» в один ряд не
   // встают, а пульт упирается в потолок рядов.
   const finalTimeSet = finalTimeEditable(console);
+  // Смена приза идущего розыгрыша (PER-737) встаёт в ряд времени финала, где
+  // он есть: пульт онлайн-торгов с окнами и полной страницей лотов уже стоит
+  // в потолке рядов. Без времени финала — свой ряд, и он помещается.
+  const prizeChange = prizeChangeShown(console);
   if (finalTimeSet || finalTimeRemovable(console)) {
     nextRow(keyboard);
     if (finalTimeSet) {
@@ -921,6 +925,17 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
         consoleFinalTimeRemoveData(auction),
       );
     }
+    if (prizeChange) {
+      keyboard.text(
+        rafflePrizeChangeLabel,
+        consoleRafflePrizeChangeData(auction),
+      );
+    }
+  } else if (prizeChange) {
+    nextRow(keyboard).text(
+      rafflePrizeChangeLabel,
+      consoleRafflePrizeChangeData(auction),
+    );
   }
   const windowsShown = scheduled || console.status === "prebidding";
   // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд
@@ -974,15 +989,6 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     nextRow(keyboard).text(
       removeLabel("Удалить аукцион"),
       consoleDiscardData(auction),
-    );
-  }
-  // Смена приза идущего розыгрыша (PER-737): с открытия недели, пока итога
-  // нет. До закрытия регистрации пульт розыгрыш может не прочитать — ряд
-  // стоит, а розыгрыш прочитает сама смена.
-  if (prizeChangeShown(console)) {
-    nextRow(keyboard).text(
-      rafflePrizeChangeLabel,
-      consoleRafflePrizeChangeData(auction),
     );
   }
   // Итог розыгрыша вручную (PER-727): ряд стоит, пока пул ждёт победителя.
