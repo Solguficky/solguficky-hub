@@ -375,7 +375,8 @@ export type ExecuteRequest =
   | ParticipantRemovalRequest
   | LotSetsRequest
   | AuctionInvoicesRequest
-  | RaffleWinnerRequest;
+  | RaffleWinnerRequest
+  | RafflePrizeChangeRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -1260,6 +1261,27 @@ export type RaffleWinnerRequest =
       opId: string;
     });
 
+// Смена приза идущего розыгрыша (PER-737; ADR-066, дополнение 2026-10-25):
+// вопрос о тексте, ответ на него — подтверждение «было → станет» — и «Да» с
+// текстом из экрана подтверждения и ключом, рождённым на нажатие.
+export type RafflePrizeChangeRequest =
+  | (AuctionConsoleCall & { intent: "ask-raffle-prize-change" })
+  | (AuctionConsoleCall & { intent: "pick-raffle-prize-change"; value: string })
+  | (AuctionConsoleCall & {
+      intent: "change-raffle-prize";
+      prize: string;
+      opId: string;
+    });
+
+// Исход смены приза — свой экран. `changed` несёт приз из ответа Auction,
+// `already-drawn` — итог уже есть, `without-result` — итога не будет,
+// `no-raffle` — розыгрыша у аукциона нет.
+export type RafflePrizeChangeOutcome =
+  | { note: "changed"; prize: string }
+  | { note: "already-drawn" }
+  | { note: "without-result" }
+  | { note: "no-raffle" };
+
 // Непринятый ответ о номере победителя: не номер или вне пула.
 export type RaffleWinnerAskError = "winner-format" | "winner-range";
 
@@ -1692,6 +1714,24 @@ export type ExecuteResult =
       ticket: RaffleTicketView;
     }
   | ({ kind: "raffle-winner-outcome"; auctionId: string } & RaffleWinnerOutcome)
+  // Смена приза идущего розыгрыша (PER-737): вопрос с текущим призом,
+  // подтверждение «было → станет» и исход.
+  | {
+      kind: "raffle-prize-change-ask";
+      auctionId: string;
+      prize?: string;
+      error?: RafflePrizeAskError;
+    }
+  | {
+      kind: "raffle-prize-change-confirm";
+      auctionId: string;
+      before?: string;
+      after: string;
+    }
+  | ({
+      kind: "raffle-prize-change-outcome";
+      auctionId: string;
+    } & RafflePrizeChangeOutcome)
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
   | { kind: "payment-text-ask"; auctionId: string; error?: PaymentTextAskError }
   | { kind: "auction-invoice"; invoice: InvoiceRow }

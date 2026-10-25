@@ -15,6 +15,7 @@ import {
 } from "../../application/auction-console.js";
 import { maxLotRubles } from "../../application/lot-form.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
+import { prizeChangeable } from "../../application/raffle-prize-change.js";
 import type {
   AuctionConsoleView,
   AuctionWeek,
@@ -61,6 +62,7 @@ import {
   consoleOpenData,
   consolePaymentTermData,
   consoleRaffleData,
+  consoleRafflePrizeChangeData,
   consoleRafflePrizeData,
   consoleRafflePrizeRemoveData,
   consoleRaffleRemoveData,
@@ -82,6 +84,7 @@ import {
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import { invoicesLabel } from "./auction-invoices.js";
+import { rafflePrizeChangeLabel } from "./auction-raffle-prize-change.js";
 import { raffleWinnerLabel } from "./auction-raffle-winner.js";
 import { auctionCancelConsequence } from "./auction-stage.js";
 import {
@@ -364,8 +367,14 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
 
 // Приз розыгрыша (PER-649) — строкой под розыгрышем: его видят участники на
 // экране розыгрыша, а победитель — в вести. Без приза строки нет.
-function rafflePrizeLines(week: AuctionWeek): string[] {
-  return week.rafflePrize === undefined ? [] : [`Приз: ${week.rafflePrize}`];
+// После открытия недели приз — у розыгрыша: он скопировал его из сроков и
+// меняется уже там (PER-737). Розыгрыш не прочитан — приз из сроков.
+function rafflePrizeLines(
+  week: AuctionWeek,
+  view: ConsoleScreenView,
+): string[] {
+  const prize = view.console.raffle?.prize ?? week.rafflePrize;
+  return prize === undefined ? [] : [`Приз: ${prize}`];
 }
 
 // Розыгрыш и прогнозы числами (PER-734), пока идёт онлайн-неделя: по ним
@@ -408,7 +417,7 @@ function raffleLines(view: ConsoleScreenView): string[] {
   const week = view.console.week;
   return week?.raffleClosesAt === undefined
     ? []
-    : [raffleLine(week, view), ...rafflePrizeLines(week)];
+    : [raffleLine(week, view), ...rafflePrizeLines(week, view)];
 }
 
 function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
@@ -486,7 +495,7 @@ function statusLines(view: ConsoleScreenView): string[] {
             ...finalTimeLines(view.console, view),
             ...windowsLines(view.console),
             raffleLine(week, view),
-            ...rafflePrizeLines(week),
+            ...rafflePrizeLines(week, view),
             ...paymentTermLines(week),
           ];
     case "prebidding":
@@ -501,7 +510,7 @@ function statusLines(view: ConsoleScreenView): string[] {
               ...finalTimeLines(view.console, view),
               ...windowsLines(view.console),
               raffleLine(week, view),
-              ...rafflePrizeLines(week),
+              ...rafflePrizeLines(week, view),
               ...participationLines(view.console),
               ...paymentTermLines(week),
             ]),
@@ -552,6 +561,17 @@ function invoicesShown(console: AuctionConsoleView): boolean {
     console.status === "finished" ||
     console.status === "cancelled"
   );
+}
+
+// Приз розыгрыша меняется с открытия недели, пока итога нет (PER-737).
+// Прочитанный розыгрыш решает сам; без него ряд стоит только в онлайн-торгах:
+// после них пульт читает розыгрыш всегда, и нет его — нет и розыгрыша.
+function prizeChangeShown(console: AuctionConsoleView): boolean {
+  if (console.week?.raffleClosesAt === undefined) return false;
+  if (console.raffle !== undefined) {
+    return console.status !== "cancelled" && prizeChangeable(console.raffle);
+  }
+  return console.status === "prebidding";
 }
 
 // Финал идёт, а ведущий ещё не открыл ни одного лота: активного нет, и ни
@@ -954,6 +974,15 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     nextRow(keyboard).text(
       removeLabel("Удалить аукцион"),
       consoleDiscardData(auction),
+    );
+  }
+  // Смена приза идущего розыгрыша (PER-737): с открытия недели, пока итога
+  // нет. До закрытия регистрации пульт розыгрыш может не прочитать — ряд
+  // стоит, а розыгрыш прочитает сама смена.
+  if (prizeChangeShown(console)) {
+    nextRow(keyboard).text(
+      rafflePrizeChangeLabel,
+      consoleRafflePrizeChangeData(auction),
     );
   }
   // Итог розыгрыша вручную (PER-727): ряд стоит, пока пул ждёт победителя.

@@ -17,6 +17,7 @@ import {
   AssignRaffleWinnerResponseSchema,
   AuctionSnapshotSchema,
   CancelAuctionResponseSchema,
+  ChangeRafflePrizeResponseSchema,
   CloseLotResponseSchema,
   CreateLotCardResponseSchema,
   DeleteLotSetResponseSchema,
@@ -110,6 +111,7 @@ function adapter(rpc: {
   listAuctions?: Call;
   getRaffle?: Call;
   assignRaffleWinner?: Call;
+  changeRafflePrize?: Call;
   listAuctionNames?: Call;
   placeBid?: Call;
   launchStepWindow?: Call;
@@ -146,6 +148,7 @@ function adapter(rpc: {
     getAuction: notUsed,
     getRaffle: (rpc.getRaffle ?? notUsed) as never,
     assignRaffleWinner: (rpc.assignRaffleWinner ?? notUsed) as never,
+    changeRafflePrize: (rpc.changeRafflePrize ?? notUsed) as never,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
     getMyPredictions: notUsed,
@@ -1429,6 +1432,90 @@ describe("auction console adapter", () => {
         assignRaffleWinner: () =>
           Promise.reject(new ConnectError("down", Code.Unavailable)),
       }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  // Смена приза идущего розыгрыша (PER-737): принятая — розыгрыш с новым
+  // призом, каждый именованный отказ — свой ответ, а в Auction едут
+  // смотрящий, текст и ключ.
+  it("changes the raffle prize and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      changeRafflePrize: async (request: unknown) => {
+        sent.push(request);
+        return create(ChangeRafflePrizeResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: create(RaffleSchema, {
+              auctionId,
+              status: RaffleStatus.OPEN,
+              closesAt: "2026-10-05T16:12:00Z",
+              rafflePrize: "кружка и брелок",
+            }),
+          },
+        });
+      },
+    });
+    const command = { auctionId, prize: "кружка и брелок", opId };
+    await expect(
+      accepted.changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      raffle: { status: "open", prize: "кружка и брелок" },
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        prize: "кружка и брелок",
+        opId,
+      }),
+    ]);
+
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "raffleNotFound", value: {} }, { kind: "raffle-not-found" }],
+      [{ case: "prizeBlank", value: {} }, { kind: "prize-blank" }],
+      [{ case: "prizeTooLong", value: {} }, { kind: "prize-too-long" }],
+      [
+        { case: "alreadyDrawn", value: { winningTicket: 3 } },
+        { kind: "already-drawn", winningTicket: 3 },
+      ],
+      [{ case: "withoutResult", value: {} }, { kind: "without-result" }],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(
+        adapter({
+          changeRafflePrize: async () =>
+            create(ChangeRafflePrizeResponseSchema, {
+              outcome: { case: "refused", value: { reason } },
+            }),
+        }).changeRafflePrize(admin, command),
+      ).resolves.toEqual(result);
+    }
+
+    await expect(
+      adapter({
+        changeRafflePrize: async () =>
+          create(ChangeRafflePrizeResponseSchema, {}),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        changeRafflePrize: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    await expect(
+      adapter({
+        changeRafflePrize: () =>
+          Promise.reject(new ConnectError("down", Code.Unavailable)),
+      }).changeRafflePrize(admin, command),
     ).resolves.toMatchObject({ kind: "unavailable" });
   });
 
