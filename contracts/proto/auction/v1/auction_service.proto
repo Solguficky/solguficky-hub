@@ -76,6 +76,7 @@ service AuctionService {
   rpc CancelRaffleRegistration(CancelRaffleRegistrationRequest) returns (CancelRaffleRegistrationResponse);
   rpc GetRaffle(GetRaffleRequest) returns (GetRaffleResponse);
   rpc AssignRaffleWinner(AssignRaffleWinnerRequest) returns (AssignRaffleWinnerResponse);
+  rpc ChangeRafflePrize(ChangeRafflePrizeRequest) returns (ChangeRafflePrizeResponse);
   rpc SubmitPrediction(SubmitPredictionRequest) returns (SubmitPredictionResponse);
   rpc GetMyPredictions(GetMyPredictionsRequest) returns (GetMyPredictionsResponse);
   rpc GetPredictionResults(GetPredictionResultsRequest) returns (GetPredictionResultsResponse);
@@ -2618,6 +2619,56 @@ message RaffleAlreadyDrawn {
   // The number of the winning ticket.
   uint32 winning_ticket = 1;
 }
+
+message ChangeRafflePrizeRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+
+  // The new prize as the organizer writes it: one line, trimmed by the
+  // service, not blank and at most 200 characters, as raffle_prize of the
+  // configuration. It replaces the prize the raffle copied when it opened; the
+  // configuration of the auction stays as it is.
+  string prize = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message ChangeRafflePrizeResponse {
+  // Exactly one is set. The prize changes while the raffle has no result:
+  // registration is open or closing, or the pool waits for the beacon or for
+  // the winner by hand. A repeat of the same op_id returns the raffle as it is;
+  // the prize the raffle already has is accepted with no change. raffle_drawn
+  // carries the prize the raffle has at the draw. Participants are not told of
+  // the change.
+  oneof outcome {
+    Raffle accepted = 1;
+    ChangeRafflePrizeRefusal refused = 2;
+  }
+}
+
+message ChangeRafflePrizeRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    RaffleNotFound raffle_not_found = 4;
+    RafflePrizeBlank prize_blank = 5;
+    RafflePrizeTooLong prize_too_long = 6;
+    // The winner is already assigned or drawn: the winner has the prize.
+    RaffleAlreadyDrawn already_drawn = 7;
+    // The raffle will have no result: it is not held, its pool has no ticket
+    // or it is cancelled.
+    RaffleWithoutResult without_result = 8;
+  }
+}
+
+message RaffleWithoutResult {}
 
 message SubmitPredictionRequest {
   // The participant who predicts: there is no separate participant field. The

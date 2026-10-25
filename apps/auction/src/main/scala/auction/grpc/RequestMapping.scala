@@ -45,6 +45,7 @@ import auction.v1.auction_service.AssignRaffleWinnerRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
+import auction.v1.auction_service.ChangeRafflePrizeRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
@@ -218,6 +219,9 @@ final case class RaffleCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /** Ручной итог розыгрыша: номер билета от администратора; диапазон судит розыгрыш по своему пулу. */
 final case class RaffleWinnerCommand(auctionId: AuctionId, ticket: Int, opId: OpId, acting: Acting)
+
+/** Смена приза розыгрыша: текст без пробелов по краям; пустоту и длину судит граница правилами конфигурации. */
+final case class RafflePrizeCommand(auctionId: AuctionId, prize: String, opId: OpId, acting: Acting)
 
 /** Чтение розыгрыша аукциона смотрящим. */
 final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
@@ -725,6 +729,13 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       op <- uuidV7("op_id", request.opId)
     } yield RaffleWinnerCommand(auction, request.ticket, OpId(op), acting)
+
+  def changeRafflePrize(request: ChangeRafflePrizeRequest): Either[FormError, RafflePrizeCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      op <- uuidV7("op_id", request.opId)
+    } yield RafflePrizeCommand(auction, request.prize.trim, OpId(op), acting)
 
   /** Розыгрыш есть только у аукциона сходки: его открывает журнал аукциона, а у тестового аукциона журнала нет. */
   private def raffleCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =

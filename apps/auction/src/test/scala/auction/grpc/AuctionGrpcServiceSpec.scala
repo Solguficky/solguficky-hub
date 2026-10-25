@@ -168,8 +168,11 @@ import org.apache.pekko.pattern.AskTimeoutException
 import auction.raffle.AssignRejected
 import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
+import auction.raffle.ChangePrize
+import auction.raffle.ChangePrizeRejected
 import auction.raffle.Draw
 import auction.raffle.Raffle
+import auction.raffle.RaffleDecision
 import auction.raffle.RaffleEnvelope
 import auction.raffle.RaffleEvent
 import auction.raffle.RaffleGateway
@@ -700,6 +703,15 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       reached :+= command
       Future.successful(assignRefusal.toLeft(raffle))
     }
+    // Смену приза решает настоящее ядро: ответ показывает, что граница отдала розыгрыш после команды.
+    def changePrize(auction: AuctionId, command: ChangePrize) = {
+      reached :+= command
+      Future.successful(Raffle.decide(raffle, command).map {
+        case RaffleDecision.Accepted(event) =>
+          Raffle.apply(raffle, RaffleEnvelope(raffle.seen.size.toLong + 1, command.opId, event))
+        case RaffleDecision.Repeated(_) | RaffleDecision.Unchanged => raffle
+      })
+    }
     def get(auction: AuctionId) = Future.successful(raffle)
   }
 
@@ -736,6 +748,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def register(auction: AuctionId, command: Register) = fail("the raffle was reached")
     def cancel(auction: AuctionId, command: CancelRegistration) = fail("the raffle was reached")
     def assign(auction: AuctionId, command: AssignWinner) = fail("the raffle was reached")
+    def changePrize(auction: AuctionId, command: ChangePrize) = fail("the raffle was reached")
     def get(auction: AuctionId) = fail("the raffle was read")
   }
 
@@ -1396,6 +1409,73 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       assigning(AssignRejected.AlreadyDrawn(1)).futureValue.getRefused.getAlreadyDrawn.winningTicket shouldBe 1
       assigning(AssignRejected.NotAwaitingWinner).futureValue.getRefused.reason.isNotAwaitingWinner shouldBe true
       statusOf(assigning(AssignRejected.OpIdTaken)) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "changes the prize after the meetup confirms the administrator and answers the raffle with the trimmed prize" in {
+      val raffles = Raffles(Raffle(RaffleState.AwaitingWinner(raffleTerms, Vector(ViewerId)), Map.empty))
+      val accepted = service(
+        Unreachable,
+        auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+        raffles = raffles
+      ).changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "  кружка и брелок ", raffleOp))
+        .futureValue
+        .getAccepted
+      accepted.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_AWAITING_WINNER
+      accepted.rafflePrize shouldBe Some("кружка и брелок")
+      raffles.reached shouldBe Vector(ChangePrize("кружка и брелок", OpId(UUID.fromString(raffleOp))))
+    }
+
+    "refuses a blank and an overlong prize as the configuration does, before the meetup and the raffle" in {
+      def changing(prize: String) =
+        service(Unreachable, raffles = UntouchableRaffles)
+          .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, prize, raffleOp))
+          .futureValue
+          .getRefused
+          .reason
+      changing("   ").isPrizeBlank shouldBe true
+      changing("я" * 201).isPrizeTooLong shouldBe true
+    }
+
+    "answers a repeat of its prize op_id before the meetup is asked and refuses a stranger before the raffle" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val op = OpId(UUID.fromString(raffleOp))
+      val changed = Raffle(
+        RaffleState.Open(raffleTerms.copy(prize = Some("кружка")), Vector(ViewerId)),
+        Map(op -> RaffleEnvelope(3, op, RaffleEvent.PrizeChanged("кружка")))
+      )
+      val again = Raffles(changed)
+      val grpc = service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = again)
+      grpc
+        .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+        .futureValue
+        .getAccepted
+        .rafflePrize shouldBe Some("кружка")
+      statusOf(
+        grpc.changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "другой", raffleOp))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+      again.reached shouldBe empty
+
+      val untouched = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty))
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = untouched)
+        .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      untouched.reached shouldBe empty
+    }
+
+    "refuses a prize change after the result and in a raffle that will have none, naming the reason" in {
+      def changing(raffle: Raffle) =
+        service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, granted), raffles = Raffles(raffle))
+          .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+          .futureValue
+          .getRefused
+      val assigned = Raffle(RaffleState.Assigned(raffleTerms, Vector(ViewerId), 1, Instant.EPOCH), Map.empty)
+      changing(assigned).getAlreadyDrawn.winningTicket shouldBe 1
+      val cancelled = Raffle(RaffleState.Cancelled(raffleTerms, Vector(ViewerId), Instant.EPOCH), Map.empty)
+      changing(cancelled).reason.isWithoutResult shouldBe true
+      changing(Raffle.initial).reason.isRaffleNotFound shouldBe true
     }
 
     "shows the candidates of a pool that waits for the winner by hand without the seed" in {

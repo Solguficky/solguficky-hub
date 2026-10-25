@@ -147,6 +147,7 @@ final class GrpcBoundarySpec
     def cancelRaffleRegistration(in: wire.CancelRaffleRegistrationRequest) = unused
     def getRaffle(in: wire.GetRaffleRequest) = unused
     def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest) = unused
+    def changeRafflePrize(in: wire.ChangeRafflePrizeRequest) = unused
     def submitPrediction(in: wire.SubmitPredictionRequest) = unused
     def getMyPredictions(in: wire.GetMyPredictionsRequest) = unused
     def getPredictionResults(in: wire.GetPredictionResultsRequest) = unused

@@ -91,6 +91,10 @@ object RaffleEntity {
   /** Ручной итог администратора. Ответ — после записи или сразу на повтор и отказ. */
   final case class Assign(command: AssignWinner, replyTo: ActorRef[Either[AssignRejected, Raffle]]) extends Command
 
+  /** Смена приза администратором (PER-737). Ответ — после записи или сразу на повтор и отказ. */
+  final case class SetPrize(command: ChangePrize, replyTo: ActorRef[Either[ChangePrizeRejected, Raffle]])
+      extends Command
+
   final case class Get(replyTo: ActorRef[Raffle]) extends Command
 
   private[raffle] case object CloseDue extends Command
@@ -262,6 +266,22 @@ object RaffleEntity {
                     )
                     replyTo ! Right(after.raffle)
                     follow(after.raffle)
+                  }
+                case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
+                  Effect.reply(replyTo)(Right(state.raffle))
+              }
+            // Приз ход розыгрыша не меняет: таймеры и шаги без человека остаются, как были, и `follow` не нужен.
+            case SetPrize(change, replyTo) =>
+              Raffle.decide(state.raffle, change) match {
+                case Left(rejected) =>
+                  Effect.none.thenRun { after =>
+                    replyTo ! Left(rejected)
+                    forgetIfAbsent(after)
+                  }
+                case Right(RaffleDecision.Accepted(event)) =>
+                  persist(change.opId, event).thenRun { after =>
+                    context.log.info("raffle prize changed", StructuredArguments.keyValue("auction_id", auctionId))
+                    replyTo ! Right(after.raffle)
                   }
                 case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
                   Effect.reply(replyTo)(Right(state.raffle))
