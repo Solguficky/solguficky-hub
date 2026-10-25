@@ -8,6 +8,7 @@ import auction.prediction.Answer
 import auction.prediction.Forecast
 import auction.prediction.Nomination
 import auction.prediction.PredictionRound
+import auction.prediction.PredictionTally
 import auction.prediction.SubmitForecast
 import auction.prediction.SubmitRejected
 import auction.testkit.PostgresFixture
@@ -78,6 +79,30 @@ final class PredictionStoreIntegrationSpec extends AnyWordSpec with Matchers wit
 
         store.mine(auction, person).futureValue shouldBe empty
         store.mine(auction, neighbour).futureValue shouldBe Map(PredictionRound.Final -> guess)
+      }
+    }
+
+    "counts the participants with a prediction and their answers in every round, a cleared one not counted" in {
+      withStore { store =>
+        val auction = AuctionId(UUID.randomUUID())
+        val (first, second, cleared) =
+          (ParticipantId(UUID.randomUUID()), ParticipantId(UUID.randomUUID()), ParticipantId(UUID.randomUUID()))
+        val lot = LotId(UUID.randomUUID())
+        val catalog = forecast(
+          PredictionRound.Catalog,
+          Nomination.MostExpensiveLot -> Answer.Lot(lot),
+          Nomination.TotalSales -> Answer.Number(30000)
+        )
+        val finalGuess = forecast(PredictionRound.Final, Nomination.FinalTotalBids -> Answer.Number(40))
+        store.submit(auction, SubmitForecast(first, catalog, op())).futureValue
+        store.submit(auction, SubmitForecast(first, finalGuess, op())).futureValue
+        store.submit(auction, SubmitForecast(second, finalGuess, op())).futureValue
+        store.submit(auction, SubmitForecast(cleared, catalog, op())).futureValue
+        store.submit(auction, SubmitForecast(cleared, Forecast.empty(PredictionRound.Catalog), op())).futureValue
+        store.submit(AuctionId(UUID.randomUUID()), SubmitForecast(second, catalog, op())).futureValue
+
+        store.tally(auction).futureValue shouldBe PredictionTally(participants = 2, answers = 4)
+        store.tally(AuctionId(UUID.randomUUID())).futureValue shouldBe PredictionTally(participants = 0, answers = 0)
       }
     }
 

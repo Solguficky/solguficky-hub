@@ -1046,6 +1046,55 @@ describe("auction console adapter", () => {
     });
   });
 
+  // PER-734: числа розыгрыша и прогнозов — только агрегаты; без полей их нет.
+  it("reads the raffle registrations and the predictions tally of the console", async () => {
+    const reading = (
+      extra: Partial<{
+        raffleRegistrations: number;
+        predictions: { participants: number; answers: number };
+      }>,
+    ) =>
+      adapter({
+        getAuctionConsole: async () =>
+          create(GetAuctionConsoleResponseSchema, {
+            outcome: {
+              case: "console",
+              value: {
+                auction: {
+                  id: auctionId,
+                  status: { case: "prebidding", value: {} },
+                },
+                ...extra,
+              },
+            },
+          }),
+      }).getAuctionConsole(admin, auctionId);
+
+    await expect(
+      reading({
+        raffleRegistrations: 12,
+        predictions: { participants: 5, answers: 17 },
+      }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      console: {
+        raffleRegistrations: 12,
+        predictionTally: { participants: 5, answers: 17 },
+      },
+    });
+    const bare = await reading({});
+    expect(bare.kind === "ok" && bare.console).not.toHaveProperty(
+      "raffleRegistrations",
+    );
+    expect(bare.kind === "ok" && bare.console).not.toHaveProperty(
+      "predictionTally",
+    );
+    // Ответов меньше, чем людей, не бывает: это дефект соседа.
+    await expect(
+      reading({ predictions: { participants: 3, answers: 1 } }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
   it("reads ranked-statistics inputs without exposing participant identities", async () => {
     const read = adapter({
       getAuctionLotStatistics: async (request) => {

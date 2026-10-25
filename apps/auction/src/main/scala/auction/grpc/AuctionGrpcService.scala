@@ -31,6 +31,7 @@ import auction.projection.AuctionWatchViews
 import auction.projection.FinalBids
 import auction.prediction.PredictionGateway
 import auction.prediction.PredictionRound
+import auction.prediction.PredictionTally
 import auction.prediction.SubmitForecast
 import auction.prediction.SubmitRejected
 import auction.projection.LotSnapshotView
@@ -868,14 +869,71 @@ final class AuctionGrpcService(
           val auctionId = query.auctionId.value
           // Страница — весь реестр: пустой реестр всё равно читается страницей в одну строку.
           val wholeRegistry = auction.lots.size.max(1)
-          views.registryPage(auctionId, None, wholeRegistry).map { lots =>
+          val registrations = raffleRegistrations(query.auctionId, auction)
+          val tally = predictionTally(query.auctionId)
+          for {
+            lots <- views.registryPage(auctionId, None, wholeRegistry)
+            registered <- registrations
+            predicted <- tally
+          } yield {
             val view = AuctionSnapshotView(auctionId, auction)
-            val console =
-              ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace)
+            val console = ConsoleMapping.withParticipation(
+              ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace),
+              registered,
+              predicted
+            )
             wire.GetAuctionConsoleResponse().withConsole(console)
           }
         }
     }
+
+  /**
+   * Число регистраций в розыгрыше для пульта (PER-734) — из entity, пока розыгрыш держит регистрации: открыт он только
+   * в онлайн-торгах, поэтому в остальных фазах entity не спрашивается. Число — украшение пульта, а не его условие:
+   * отказ чтения отдаёт пульт без числа, и брошенный до `Future` — тоже: узел без шардинга розыгрыша бросает сразу.
+   */
+  private def raffleRegistrations(auctionId: AuctionId, auction: Auction): Future[Option[Int]] =
+    auction.state match {
+      case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) =>
+        Future
+          .delegate(raffles.get(auctionId))
+          .map(raffle =>
+            raffle.state match {
+              case RaffleState.Open(_, entries) => Some(entries.size)
+              case _ => None
+            }
+          )
+          .recover(participationUnavailable[Int](auctionId, "raffle"))
+      case _ => Future.successful(None)
+    }
+
+  /** Прогнозы аукциона числами для пульта (PER-734); отказ чтения, как у розыгрыша, отдаёт пульт без них. */
+  private def predictionTally(auctionId: AuctionId): Future[Option[PredictionTally]] =
+    Future
+      .delegate(predictions.tally(auctionId))
+      .recover(participationUnavailable[PredictionTally](auctionId, "predictions"))
+
+  /** Пульт без числа розыгрыша или прогнозов пишется событием, как снимок без имени собравшего сет. */
+  private def participationUnavailable[T](
+      auctionId: AuctionId,
+      source: String
+  ): PartialFunction[Throwable, Option[T]] = { case NonFatal(cause) =>
+    AuctionGrpcService.logger.warn(
+      "console participation unavailable",
+      StructuredArguments.entries(
+        (Map[String, Any](
+          "operation" -> AuctionGrpcService.ConsoleParticipationOperation,
+          "result" -> "error",
+          "error_category" -> "dependency_unavailable",
+          "error" -> cause.getClass.getName,
+          "auction_id" -> auctionId.value.toString,
+          "source" -> source
+        ) ++ correlation.requestId.filter(_.nonEmpty).map("request_id" -> _) ++
+          correlation.useCase.filter(_.nonEmpty).map("use_case" -> _)).asJava
+      )
+    )
+    None
+  }
 
   /**
    * Статистика лотов реестра для ручного отбора финалистов (PER-481). Право и отказы — те же, что у пульта, и тем же
@@ -1483,6 +1541,7 @@ object AuctionGrpcService {
     def submit(auction: AuctionId, command: SubmitForecast) = none
     def mine(auction: AuctionId, participant: ParticipantId) = none
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) = none
+    def tally(auction: AuctionId) = none
   }
 
   /** Узел без итогов: тесты границы, которым подсчёт не нужен. */
@@ -1532,6 +1591,9 @@ object AuctionGrpcService {
 
   /** Событие снимка лота, отданного без имени собравшего сет: хранилище имён не ответило. */
   val CollectorNamesOperation: String = "auction.lot_set.collector_names_unavailable"
+
+  /** Событие пульта без числа регистраций розыгрыша или прогнозов (PER-734): entity или строки не ответили. */
+  val ConsoleParticipationOperation: String = "auction.console.participation_unavailable"
 
   /** Событие снимка розыгрыша, отданного с билетами без имён: снимок имён не прочитался. */
   val RaffleNamesOperation: String = "auction.raffle.ticket_names_unavailable"

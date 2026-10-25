@@ -9,6 +9,7 @@ import auction.prediction.Forecast
 import auction.prediction.Nomination
 import auction.prediction.PredictionRound
 import auction.prediction.PredictionStore
+import auction.prediction.PredictionTally
 import auction.prediction.SubmitForecast
 import auction.prediction.SubmitRejected
 import org.apache.pekko.actor.typed.ActorSystem
@@ -126,6 +127,17 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
           }
         }
       }
+
+  // Очищенный прогноз строк не оставляет (`submit` удаляет прежние и не пишет новых), поэтому строки и есть ответы.
+  def tally(auction: AuctionId): Future[PredictionTally] =
+    database
+      .run(
+        sql"""SELECT count(DISTINCT participant_id), count(*) FROM auction_prediction
+              WHERE auction_id = ${auction.value.toString}::uuid"""
+          .as[(Long, Long)]
+          .head
+      )
+      .map { case (participants, answers) => PredictionTally(participants, answers) }
 
   def discard(auction: AuctionId): Future[Unit] =
     database
