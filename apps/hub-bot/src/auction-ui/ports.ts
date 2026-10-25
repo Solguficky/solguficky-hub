@@ -411,7 +411,33 @@ export interface AuctionPort {
     viewer: Viewer;
     auctionId: string;
   }): Promise<PredictionResultsView>;
+  // Хроники дня (PER-725): агрегаты последних суток. Окно выбирает Auction по
+  // своим часам, право — `place_bids`.
+  getDayChronicle(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<DayChronicleView>;
 }
+
+// Хроники дня (PER-725) — срез `GetAuctionDayChronicle`: агрегаты окна каждого
+// лота реестра без значимого порядка, а из жизни лота — только число ставок и
+// рост от стартовой цены, по которым ищется «тёмная лошадка». Служебного пульта
+// — участников, времени последней ставки — Auction сюда не отдаёт.
+export type DayChronicleView = {
+  lots: readonly DayChronicleLot[];
+};
+
+export type DayChronicleLot = {
+  lotId: string;
+  // Ставки, смены лидера и самая длинная дуэль — окна.
+  bidCount: number;
+  leaderChanges: number;
+  longestDuel: number;
+  // Ставки за всю жизнь лота, прочитанные после окна.
+  totalBidCount: number;
+  // Текущая цена минус стартовая; нет — у лота нет цены.
+  priceGrowth?: Money;
+};
 
 // Счёт проданного лота глазами победителя (PER-322; integration.md,
 // «Счета»). Деньги идут мимо продукта: оплату отмечает организатор, и статус

@@ -117,6 +117,9 @@ function surfaceFor(
         async getPredictionResults() {
           throw new Error("not used");
         },
+        getDayChronicle: async () => {
+          throw new Error("not used");
+        },
         async submitPrediction() {
           throw new Error("not used");
         },

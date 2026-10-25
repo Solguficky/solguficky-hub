@@ -1,3 +1,8 @@
+import {
+  dayChronicleButtonLabel,
+  dayChronicleParagraphs,
+  dayChronicleTitle,
+} from "../../auction-day-chronicle.js";
 import { renderFaqText } from "../../auction-faq.js";
 import {
   finalBidLabel,
@@ -965,6 +970,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "answer-refused";
       case "prediction-results":
         return "prediction-results";
+      case "day-chronicle":
+        return "day-chronicle";
       case "raffle":
         return "raffle";
       case "raffle-registered":
@@ -1145,6 +1152,15 @@ function renderLeaf(
           text: screenText(
             predictionResultsTitle,
             ...predictionResultsParagraphs(block, { money }),
+          ),
+        };
+      // Хроники дня (PER-725): тексты общие с хабом.
+      case "day-chronicle":
+        return {
+          format: "html",
+          text: screenText(
+            dayChronicleTitle,
+            ...dayChronicleParagraphs(block, { money }),
           ),
         };
       case "raffle":
@@ -1907,6 +1923,10 @@ function renderButton(
     case "root.prediction-results":
       return text(predictionResultsButtonLabel);
     case "prediction-results.back":
+      return text("‹ Аукцион");
+    case "root.day-chronicle":
+      return text(dayChronicleButtonLabel);
+    case "day-chronicle.back":
       return text("‹ Аукцион");
     case "lot.refresh":
       return text(refreshLabel);

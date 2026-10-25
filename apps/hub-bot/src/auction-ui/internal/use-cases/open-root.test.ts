@@ -42,6 +42,7 @@ function auctionOf(
     },
     getMyPredictions: predictions,
     getPredictionResults: notUsed,
+    getDayChronicle: notUsed,
     submitPrediction: notUsed,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
@@ -142,6 +143,7 @@ describe("root predictions entry", () => {
     expect(fixed.keyboard[1]).toEqual(predictionsRow("catalog"));
     expect(unopened.keyboard.flat().map((button) => button.action)).toEqual([
       "root.lots",
+      "root.day-chronicle",
     ]);
   });
 
@@ -181,6 +183,47 @@ describe("root predictions entry", () => {
     ]);
     expect(body.keyboard.flat().map((button) => button.action)).toEqual([
       "root.lots",
+      "root.day-chronicle",
     ]);
+  });
+});
+
+// Хроники дня (PER-725): вход есть, пока идёт онлайн-неделя — в торгах и в
+// ожидании закрытия последних лотов, — и нет до неё и после.
+describe("root day chronicle entry", () => {
+  const stages: readonly AuctionSummaryView["stage"][] = [
+    "draft",
+    "scheduled",
+    "prebidding",
+    "settling",
+    "on-break",
+    "lineup-frozen",
+    "in-final",
+    "finished",
+    "cancelled",
+  ];
+
+  it("offers the day chronicle only during the online week", async () => {
+    const offered: AuctionSummaryView["stage"][] = [];
+    for (const stage of stages) {
+      const body = await openRoot({
+        auction: {
+          ...auctionOf(async () => []),
+          getAuction: async () => ({ ...SUMMARY, stage }),
+        },
+        viewer: VIEWER,
+        auctionId: AUCTION_ID,
+      });
+      const chronicle = body.keyboard
+        .flat()
+        .find((button) => button.action === "root.day-chronicle");
+      if (chronicle === undefined) continue;
+      offered.push(stage);
+      expect(chronicle.callbackData).toBe(
+        encodeAuctionCallback({ kind: "day-chronicle", auctionId: AUCTION_ID }),
+      );
+    }
+
+    expect(offered).toEqual(["prebidding", "settling"]);
   });
 });
