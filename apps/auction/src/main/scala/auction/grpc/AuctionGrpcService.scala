@@ -887,13 +887,13 @@ final class AuctionGrpcService(
   /**
    * Число регистраций в розыгрыше для пульта (PER-734) — из entity, пока розыгрыш держит регистрации: открыт он только
    * в онлайн-торгах, поэтому в остальных фазах entity не спрашивается. Число — украшение пульта, а не его условие:
-   * отказ чтения отдаёт пульт без числа.
+   * отказ чтения отдаёт пульт без числа, и брошенный до `Future` — тоже: узел без шардинга розыгрыша бросает сразу.
    */
   private def raffleRegistrations(auctionId: AuctionId, auction: Auction): Future[Option[Int]] =
     auction.state match {
       case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) =>
-        raffles
-          .get(auctionId)
+        Future
+          .delegate(raffles.get(auctionId))
           .map(raffle =>
             raffle.state match {
               case RaffleState.Open(_, entries) => Some(entries.size)
