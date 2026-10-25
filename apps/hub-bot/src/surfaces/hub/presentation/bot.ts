@@ -45,6 +45,7 @@ import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
 import { markUpdateFailed } from "../../../core/bot/tracing.js";
+import { type BuildInfo, localBuild } from "../../../core/build-info.js";
 import {
   defaultTelegramEnvironment,
   type TelegramEnvironment,
@@ -506,6 +507,9 @@ export type BotRuntime = {
   // Имя бота поддержки без «@»: «Помощь» и кадр ожидания допуска несут
   // ссылку «Написать в поддержку ↗» (PER-625). Нет — ни ряда, ни кнопки.
   supportBotUsername?: string;
+  // Данные сборки образа (PER-736): строку версии «Помощь» показывает
+  // мейнтейнеру. Нет — версия называется локальной сборкой.
+  build?: BuildInfo;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -6286,7 +6290,12 @@ async function openHelp(
   }
   await showScreen(
     ctx,
-    helpScreen(person, result.text, runtime.supportBotUsername),
+    helpScreen(person, result.text, {
+      build: runtime.build ?? localBuild,
+      ...(runtime.supportBotUsername === undefined
+        ? {}
+        : { supportBotUsername: runtime.supportBotUsername }),
+    }),
   );
   return {
     level: "info",

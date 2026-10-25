@@ -78,6 +78,20 @@ describe("telemetryResource", () => {
   });
 });
 
+describe("telemetryResource version", () => {
+  // Версия образа (PER-736): по service.version в dashboard видно, какой
+  // образ отвечает.
+  it("carries the image version as service.version", async () => {
+    const resource = telemetryResource("d78d99f");
+    await resource.waitForAsyncAttributes?.();
+
+    expect(resource.attributes).toMatchObject({
+      "service.name": "hub-bot",
+      "service.version": "d78d99f",
+    });
+  });
+});
+
 describe("startMetrics", () => {
   it("creates the meter provider on the hub-bot resource", async () => {
     vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317");
