@@ -917,6 +917,8 @@ function accessRequestOutcome(
       return "declined";
     case WireAccessRequestOutcome.BLOCKED:
       return "blocked";
+    case WireAccessRequestOutcome.INVITATION_ONLY:
+      return "invitation-only";
     default:
       return "unspecified";
   }

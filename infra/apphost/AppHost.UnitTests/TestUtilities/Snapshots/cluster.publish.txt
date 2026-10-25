@@ -133,6 +133,7 @@ identity: ContainerResource
   env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
   env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
   env: IDENTITY_CALLER_TOKEN_SUPPORT_BOT={support-bot-service-token.value}
+  env: IDENTITY_COMMUNITY_QUEUE={identity-community-queue.value}
   env: IDENTITY_DATABASE_URL={identity-db.connectionString}
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
@@ -143,6 +144,7 @@ identity: ContainerResource
   relationship: Reference auction-service-token
   relationship: Reference hub-bot-service-token
   relationship: Reference identity
+  relationship: Reference identity-community-queue
   relationship: Reference identity-db
   relationship: Reference identity-maintainer-token
   relationship: Reference meetups-service-token
@@ -152,6 +154,8 @@ identity: ContainerResource
   relationship: WaitFor identity-db
   relationship: WaitFor nats
   health: identity-grpc
+identity-community-queue: ParameterResource
+  secret: False
 identity-db: ConnectionStringParameterResource
   secret: True
 identity-maintainer-token: ParameterResource

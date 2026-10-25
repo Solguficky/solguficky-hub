@@ -211,6 +211,8 @@ describe("access matrix self-check", () => {
       "hub: blocked presses",
       "hub: blocked applies",
       "hub: unknown outcome",
+      "hub: closed queue applies",
+      "hub: auction right only applies to a closed queue",
       "auction: auction right starts",
       "auction: auction right presses",
       "auction: hub right starts",
@@ -229,6 +231,7 @@ describe("access matrix self-check", () => {
       "auction: blocked presses",
       "auction: blocked applies",
       "auction: unknown outcome",
+      "auction: invitation-only outcome",
     ]);
   });
 });

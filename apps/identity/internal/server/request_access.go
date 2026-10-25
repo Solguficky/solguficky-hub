@@ -55,7 +55,7 @@ func (s identityService) RequestAccess(ctx context.Context, req *identityv1.Requ
 	if err != nil {
 		return nil, internal("upsert profile", err)
 	}
-	outcome, opened, err := requestAccessTx(ctx, tx, identityID, queue, req, !registered)
+	outcome, opened, err := requestAccessTx(ctx, tx, identityID, queue, req, !registered, s.communityQueue)
 	if err != nil {
 		return nil, internal("request access", err)
 	}
@@ -104,14 +104,17 @@ func (s identityService) RequestAccess(ctx context.Context, req *identityv1.Requ
 // по кругу: гость без place_bids в очередь аукциона попадает (integration.md,
 // ALREADY_HELD). Строка профиля блокируется первой, поэтому два /start одного
 // человека идут друг за другом, а решение модератора не встаёт между чтением
-// прав и заявкой. Второе значение — заявка, открытая этим вызовом; nil — заявку
-// не открыли или нашли открытой.
+// прав и заявкой. Закрытая очередь сообщества на последнем шаге заявку не
+// ставит и отвечает INVITATION_ONLY: в хаб пускает только белый список
+// (дополнение ADR-060 от 2026-10-25). Второе значение — заявка, открытая этим
+// вызовом; nil — заявку не открыли или нашли открытой.
 func requestAccessTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	identityID, queue string,
 	req *identityv1.RequestAccessRequest,
 	announce bool,
+	communityQueue CommunityQueue,
 ) (identityv1.AccessRequestOutcome, *openedApplication, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
@@ -144,6 +147,11 @@ func requestAccessTx(
 	}
 	if declined {
 		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_DECLINED, nil, nil
+	}
+	// Открытую раньше заявку закрытая очередь не трогает: её решает
+	// администратор, как прежде. Ответ человеку — тот же отказ.
+	if queue == queueCommunity && communityQueue == CommunityQueueClosed {
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_INVITATION_ONLY, nil, nil
 	}
 	opened, err := openApplication(ctx, tx, identityID, queue, req)
 	if err != nil {

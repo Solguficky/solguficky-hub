@@ -59,6 +59,15 @@ func run() int {
 		return 1
 	}
 
+	// Режим очереди сообщества (дополнение ADR-060 от 2026-10-25) тоже
+	// проверяется до базы: незнакомое значение не должно молча оставить очередь
+	// открытой. Запись старта называет режим.
+	communityQueue, err := server.ParseCommunityQueue(os.Getenv(server.CommunityQueueEnv))
+	if err != nil {
+		log.Error("community queue invalid", "service", server.ServiceName, "error", err)
+		return 1
+	}
+
 	// Телеметрия закрывается после сервера и релея: defer исполняются в обратном
 	// порядке, и последние спаны и метрики успевают уйти до закрытия логов.
 	traces, closeTelemetry, err := startTelemetry(ctx, log)
@@ -88,10 +97,13 @@ func run() int {
 	}
 	defer stopRelay()
 
-	srv := server.New(log, db, maintainerToken, callers, server.WithTracerProvider(traces))
+	srv := server.New(log, db, maintainerToken, callers,
+		server.WithTracerProvider(traces),
+		server.WithCommunityQueue(communityQueue))
 	errCh := make(chan error, 1)
 	go func() {
-		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String())
+		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String(),
+			"community_queue", communityQueue.String())
 		errCh <- srv.Serve(lis)
 	}()
 

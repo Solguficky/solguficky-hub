@@ -80,6 +80,7 @@ import {
   hubAccessErrors,
   hubAccessText,
   hubWelcome,
+  invitationOnlyHub,
 } from "../application/hub-access.js";
 import { isSold, lotCurrency, lotPhotoIdOf } from "../application/lot-form.js";
 import {
@@ -6230,6 +6231,8 @@ async function applyForHub(
   }
   ctx.commandsPerson = entry.person;
   if (entry.access !== "admitted") {
+    // Код канала нужен кадру закрытой очереди: его кнопка — та же «Подать
+    // заявку».
     return denyHubAccess(
       ctx,
       runtime,
@@ -6237,6 +6240,7 @@ async function applyForHub(
       entry.person,
       useCase,
       true,
+      sourceCode,
     );
   }
   return openMenu(ctx, runtime, entry.person, useCase);
@@ -10495,7 +10499,7 @@ async function denyHubAccessIfNeeded(
 // Без адреса, а также у отказа и блокировки клавиатуры нет.
 function noAccessFrame(
   runtime: BotRuntime,
-  access: Exclude<HubAccess, "admitted" | "unapplied">,
+  access: Exclude<HubAccess, "admitted" | "unapplied" | "invitation-only">,
 ): {
   id: "no-access" | "no-access-support";
   keyboard: InlineKeyboard;
@@ -10530,6 +10534,25 @@ async function denyHubAccess(
       text: screenText(
         hubWelcome.title,
         ...hubWelcome.paragraphs.map(escapeHtml),
+      ),
+      keyboard: new InlineKeyboard().text(
+        applyLabel,
+        withSourceCode(applyData, sourceCode),
+      ),
+      format: "HTML",
+      ...(edit ? {} : { delivery: "new" as const }),
+    });
+    return hubAccessOutcome(access, person.identityId, useCase);
+  }
+  // Закрытая очередь сообщества (дополнение ADR-060 от 2026-10-25): кадр того
+  // же вида, что приветствие, и та же кнопка — ник, добавленный в список
+  // позже, она пропустит.
+  if (access === "invitation-only") {
+    await showScreen(ctx, {
+      id: "invitation-only",
+      text: screenText(
+        invitationOnlyHub.title,
+        ...invitationOnlyHub.paragraphs.map(escapeHtml),
       ),
       keyboard: new InlineKeyboard().text(
         applyLabel,

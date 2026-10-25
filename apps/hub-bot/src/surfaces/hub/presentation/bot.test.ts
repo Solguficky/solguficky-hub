@@ -25,6 +25,7 @@ import {
   blockedHubAccessText,
   declinedHubAccessText,
   hubWelcome,
+  invitationOnlyHub,
   pendingHubAccessText,
 } from "../application/hub-access.js";
 import { rejectedValueText } from "../application/meetup-form.js";
@@ -1484,6 +1485,38 @@ describe("presentation adapter", () => {
       use_case: "find_meetup",
     });
     expect(records[0]?.fields.error).toBe("hub_access_declined");
+    expect(records[0]?.fields.identity_id).toBe(resolvedId);
+  });
+
+  // Закрытая очередь сообщества (дополнение ADR-060 от 2026-10-25): заявки
+  // нет, кадр «только по приглашению» с той же кнопкой и тем же кодом канала —
+  // ник, добавленный в список позже, она пропустит.
+  it("answers a closed community queue with the invitation-only frame", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      entering(answered("invitation-only", ["place-bids"])),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:apply:tg_ads"));
+    const shown = calls.find((call) => call.method === "editMessageText");
+    expect(screen(shown).text).toBe(
+      screenText(
+        invitationOnlyHub.title,
+        ...invitationOnlyHub.paragraphs.map(escapeHtml),
+      ),
+    );
+    expect(buttonLabels(shown)).toEqual(["Подать заявку"]);
+    expect(JSON.stringify(shown?.payload)).toContain('"v1:apply:tg_ads"');
+    expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "authorization",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("hub_access_invitation_only");
     expect(records[0]?.fields.identity_id).toBe(resolvedId);
   });
 
