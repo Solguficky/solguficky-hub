@@ -1221,6 +1221,37 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Хроники дня участника (PER-725): та же сводка окна, что у пульта, за последние сутки по часам сервиса, и счётчики
+   * жизни лота, без которых не найти «тёмную лошадку». Право — `place_bids`, скрытый аукцион — как отсутствующий.
+   * Служебного пульта — числа участников и времени последней ставки — ответ не несёт. Окно выбирает сервис, а не
+   * вызывающий: участник читает последние сутки, а не любой срез недели.
+   */
+  def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest): Future[wire.GetAuctionDayChronicleResponse] =
+    RequestMapping.getAuctionDayChronicle(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        val auctionId = query.auctionId.value
+        concealed(auctionId, query.acting.viewer).flatMap {
+          case true => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case false =>
+            auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+              case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+              case Some(_) =>
+                val until = clock.instant()
+                val from = until.minus(AuctionGrpcService.ChronicleWindow)
+                // Сутки — раньше жизни лота, как у пульта (PER-511): ставка между чтениями попадает только в число
+                // ставок за всё время и лишь завышает «до суток».
+                for {
+                  day <- views.dayStatistics(auctionId, from, until)
+                  lifetime <- views.statistics(auctionId)
+                } yield DaySummaryMapping.chronicle(from, until, day, lifetime)
+            }
+        }
+    }
+
+  /**
    * Ручная отметка итогов (ADR-067, п. 8): только администратор сходки аукциона, право у Meetups — тем же путём, что у
    * пульта. Подсчёт этим подавляется; повтор на посчитанном или уже отмеченном принят без второго факта.
    */
@@ -1518,6 +1549,9 @@ object AuctionGrpcService {
 
   /** Допуск просрочки по умолчанию; узел передаёт `auction.deadlines.overdue-grace` — тот же, что у метрики. */
   val DefaultOverdueGrace: Duration = Duration.ofMinutes(1)
+
+  /** Окно хроник дня участника (PER-725): последние сутки до ответа. */
+  val ChronicleWindow: Duration = Duration.ofHours(24)
 
   /** Розыгрыша в узле нет: тесты границы, которым он не нужен. Любой вызов — ответа нет. */
   val NoRaffles: RaffleGateway = new RaffleGateway {

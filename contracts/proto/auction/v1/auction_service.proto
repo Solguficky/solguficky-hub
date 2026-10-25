@@ -86,6 +86,7 @@ service AuctionService {
   rpc ListMyInvoices(ListMyInvoicesRequest) returns (ListMyInvoicesResponse);
   rpc ListAuctionInvoices(ListAuctionInvoicesRequest) returns (ListAuctionInvoicesResponse);
   rpc SetPaymentInstructions(SetPaymentInstructionsRequest) returns (SetPaymentInstructionsResponse);
+  rpc GetAuctionDayChronicle(GetAuctionDayChronicleRequest) returns (GetAuctionDayChronicleResponse);
 }
 
 message Viewer {
@@ -3054,4 +3055,44 @@ message PaymentInstructionsRefusal {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
   }
+}
+
+message GetAuctionDayChronicleRequest {
+  // The viewer must hold place_bids; without it the call is PERMISSION_DENIED.
+  // An auction hidden from the viewer is NOT_FOUND, as in GetAuction.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
+
+// The trading of the last day as a participant reads it: the same window
+// aggregates as GetAuctionDaySummary, with the lifetime counters a participant
+// needs to tell an underdog lot, and nothing the console alone shows - no
+// participant counts, no participant ids, display names or proxy limits.
+message GetAuctionDayChronicleResponse {
+  // RFC 3339 instant in UTC: the first instant of the window, 24 hours before
+  // until. The service picks the window, not the caller.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the instant the service answered, the first
+  // instant after the half-open window [from, until).
+  string until = 2;
+
+  // Every lot of the registry, without pagination or a meaningful order. The
+  // caller ranks the complete list.
+  repeated DayChronicleLot lots = 3;
+}
+
+message DayChronicleLot {
+  // The aggregates of the window, as in GetAuctionDaySummary.
+  DayLotStatistics day = 1;
+
+  // Accepted bids over the life of the lot, as LotSnapshot.bid_count. Read after
+  // the window, so a bid between the two reads counts here only.
+  int64 bid_count = 2;
+
+  // Current price minus starting price over the life of the lot, as
+  // LotStatistics.price_growth, with the same unset cases.
+  Money price_growth = 3;
 }
