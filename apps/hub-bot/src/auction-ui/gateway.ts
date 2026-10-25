@@ -176,6 +176,9 @@ export function applicationQueue(
 export type SurfaceEntry =
   | { kind: "entered"; identity: ResolvedIdentity }
   | { kind: "denied"; reason: AuctionDenial; identityId: string }
+  // Хаб закрыт для заявок: в него пускает только белый список (дополнение
+  // ADR-060 от 2026-10-25). Только у поверхности хаба.
+  | { kind: "invitation-only"; identityId: string }
   // Исход, которого край не знает. По контракту это отказ, но не ответ о
   // заявке: приложение отвечает как на сбой соседа и пишет нарушение в лог.
   | { kind: "unknown-outcome"; identityId: string };
@@ -198,6 +201,13 @@ export function decideEntry(
   });
   if (outcome === "unspecified") return { kind: "unknown-outcome", identityId };
   if (outcome === "blocked") return denied("blocked");
+  // Закрывается только очередь сообщества: в очереди аукциона такой исход —
+  // нарушение контракта, и бот аукциона отвечает на него, как на незнакомый.
+  if (outcome === "invitation-only") {
+    return surface === "hub"
+      ? { kind: "invitation-only", identityId }
+      : { kind: "unknown-outcome", identityId };
+  }
   // Участник в боте аукциона получает переход при любом исходе очереди
   // аукциона: о заявке ему здесь отвечать нечего (ADR-064, пункт 2).
   const refused = refusal(surface, viewer.rights);
