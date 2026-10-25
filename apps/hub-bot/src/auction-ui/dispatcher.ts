@@ -8,6 +8,7 @@ import {
   confirmCommand,
   placeFinalBid,
 } from "./internal/use-cases/commands.js";
+import { openDayChronicle } from "./internal/use-cases/day-chronicle.js";
 import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
 import {
   chooseFulfillment,
@@ -171,6 +172,8 @@ export function dispatchAuctionIntent(input: {
       });
     case "prediction-results":
       return openPredictionResults(context, intent.auctionId);
+    case "day-chronicle":
+      return openDayChronicle(context, intent.auctionId);
     case "raffle":
       return openRaffle(context, intent.auctionId);
     case "raffle-register":

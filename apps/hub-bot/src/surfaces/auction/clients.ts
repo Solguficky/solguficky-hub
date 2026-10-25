@@ -33,6 +33,7 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../core/auction/commands.js";
+import { dayChronicleOf } from "../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
 import {
@@ -118,6 +119,7 @@ export type AuctionRpc = Pick<
   | "cancelRaffleRegistration"
   | "getMyPredictions"
   | "getPredictionResults"
+  | "getAuctionDayChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
@@ -465,6 +467,16 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return predictionResultsOf(response);
+        },
+        async getDayChronicle(request) {
+          const response = await auction.getAuctionDayChronicle(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return dayChronicleOf(response);
         },
         submitPrediction(request) {
           return unansweredOn(async () =>

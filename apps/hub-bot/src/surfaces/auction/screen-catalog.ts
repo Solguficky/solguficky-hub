@@ -145,6 +145,15 @@ export const screenCatalog = {
     parent: "root",
     backName: "Итоги",
   },
+  // Хроники дня (PER-725) — тело общего аукционного дерева: вход из корня
+  // аукциона во время онлайн-недели и возврат туда же.
+  "day-chronicle": {
+    class: "screen",
+    nav: "tree",
+    title: "Хроники дня",
+    parent: "root",
+    backName: "Хроники дня",
+  },
   predictions: {
     class: "screen",
     nav: "tree",

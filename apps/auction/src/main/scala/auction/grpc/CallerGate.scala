@@ -73,7 +73,8 @@ object MethodAccess {
     "ChooseFulfillment" -> bots,
     "ListMyInvoices" -> bots,
     "ListAuctionInvoices" -> Set(Caller.HubBot),
-    "SetPaymentInstructions" -> Set(Caller.HubBot)
+    "SetPaymentInstructions" -> Set(Caller.HubBot),
+    "GetAuctionDayChronicle" -> bots
   )
 
   /** Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого. */

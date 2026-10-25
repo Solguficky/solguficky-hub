@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { dayChronicleButtonLabel } from "../../../../auction-day-chronicle.js";
 import {
   finalBidLabel,
   finalBidLine,
@@ -81,6 +82,7 @@ import {
   oneLine,
   questionScreen,
 } from "./auction-bid.js";
+import { dayChronicleScreen } from "./auction-day-chronicle.js";
 import { predictionResultsScreen } from "./auction-prediction-results.js";
 import {
   predictionAliasQuestionScreen,
@@ -265,6 +267,8 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
       // Розыгрыш среди участников (ADR-066).
       case "prediction-results":
         return { screen: predictionResultsScreen(block) };
+      case "day-chronicle":
+        return { screen: dayChronicleScreen(block) };
       case "raffle":
         return { screen: raffleScreen(block, view.body.keyboard, view) };
       case "raffle-registered":
@@ -472,6 +476,9 @@ function rootScreen(
   const predictionResults = buttons.find(
     (button) => button.action === "root.prediction-results",
   );
+  const dayChronicle = buttons.find(
+    (button) => button.action === "root.day-chronicle",
+  );
   const raffle = buttons.find((button) => button.action === "root.raffle");
   const favorites = buttons.find(
     (button) => button.action === "root.favorites",
@@ -491,6 +498,10 @@ function rootScreen(
     keyboard
       .text(predictionResultsButtonLabel, predictionResults.callbackData)
       .row();
+  }
+  // «Хроники дня» (PER-725) — своим рядом, пока идёт онлайн-неделя.
+  if (dayChronicle !== undefined) {
+    keyboard.text(dayChronicleButtonLabel, dayChronicle.callbackData).row();
   }
   // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
   if (invoices !== undefined) {
@@ -617,6 +628,8 @@ function feedLabel(
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.day-chronicle":
+    case "day-chronicle.back":
     case "root.raffle":
     case "lot.set":
     case "set.open-lot":
@@ -851,6 +864,8 @@ function lotLabel(
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.day-chronicle":
+    case "day-chronicle.back":
     case "root.raffle":
     case "root.invoices":
     case "invoices.open":
@@ -991,6 +1006,8 @@ function setLotLabelOf(
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.day-chronicle":
+    case "day-chronicle.back":
     case "root.raffle":
     case "set.back":
     case "root.invoices":
@@ -1222,6 +1239,8 @@ function historyLabel(button: AuctionButton): string {
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.day-chronicle":
+    case "day-chronicle.back":
     case "root.raffle":
     case "lot.set":
     case "set.open-lot":

@@ -150,6 +150,7 @@ function adapter(rpc: {
     cancelRaffleRegistration: notUsed,
     getMyPredictions: notUsed,
     getPredictionResults: notUsed,
+    getAuctionDayChronicle: notUsed,
     submitPrediction: notUsed,
     getLotImage: notUsed,
     getLotPhoto: (rpc.getLotPhoto ?? notUsed) as never,

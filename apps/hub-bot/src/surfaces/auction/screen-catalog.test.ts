@@ -998,6 +998,29 @@ const predictionResultsBody = (
   ],
 });
 
+// Хроники дня (PER-725): номинации последних суток и пустые сутки.
+const dayChronicleBody = (
+  chronicle: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "day-chronicle" }
+  >["chronicle"],
+): AuctionScreenBody => ({
+  blocks: [
+    { kind: "day-chronicle", auctionId: predictionResultsAuctionId, chronicle },
+  ],
+  keyboard: [
+    [
+      {
+        action: "day-chronicle.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: predictionResultsAuctionId,
+        }),
+      },
+    ],
+  ],
+});
+
 const raffleNameChoice: AuctionScreenBody = {
   blocks: [
     { kind: "raffle-name-choice", auctionId: "auc-1", username: "owl_fan" },
@@ -1261,6 +1284,26 @@ const shown: readonly {
           },
         ],
       }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: dayChronicleBody({
+        kind: "nominated",
+        contested: { title: "Кружка с совой", leaderChanges: 5 },
+        darkHorse: {
+          priceGrowth: { minorUnits: 50_000, currency: "RUB" },
+          bidsBefore: 1,
+        },
+        duel: { title: "Кружка с совой", longestDuel: 4 },
+      }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: dayChronicleBody({ kind: "no-bids" }),
     },
   },
   ...raffles.map((raffle) => ({

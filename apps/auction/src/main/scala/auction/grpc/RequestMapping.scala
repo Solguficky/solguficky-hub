@@ -62,6 +62,7 @@ import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
+import auction.v1.auction_service.GetAuctionDayChronicleRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
@@ -232,6 +233,9 @@ final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
 
 /** Сводка дня торгов: аукцион сходки и окно `[from, until)`, за которое считается статистика лотов. */
 final case class DaySummaryQuery(auctionId: AuctionId, acting: Acting, from: Instant, until: Instant)
+
+/** Хроники дня участника (PER-725): аукцион сходки и тот, кто смотрит; окно выбирает сервис. */
+final case class DayChronicleQuery(auctionId: AuctionId, acting: Acting)
 
 /** Подписка на поток аукциона сходки: аукцион и тот, кто смотрит. */
 final case class WatchQuery(auctionId: AuctionId, acting: Acting)
@@ -557,6 +561,13 @@ object RequestMapping {
       until <- instant("until", request.until)
       _ <- Either.cond(until.isAfter(from), (), FormError("until"))
     } yield DaySummaryQuery(query.auctionId, query.acting, from, until)
+
+  /** Хроники дня участника: аукцион сходки; право `place_bids` граница проверит до чтения, окно — сервис. */
+  def getAuctionDayChronicle(request: GetAuctionDayChronicleRequest): Either[FormError, DayChronicleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield DayChronicleQuery(auction, acting)
 
   /** Чтение итогов прогнозов смотрящим: аукцион сходки; право `place_bids` граница проверит до чтения. */
   def getPredictionResults(request: GetPredictionResultsRequest): Either[FormError, PredictionQuery] =

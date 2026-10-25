@@ -26,6 +26,13 @@ export {
   parseAuctionCallback,
   replacesAuctionQuestion,
 } from "./callback-data.js";
+export type { DayNominations, DayNominee } from "./day-nominations.js";
+export {
+  biggestBy,
+  darkHorseMaxBidsBefore,
+  dayNominations,
+  duelMinChanges,
+} from "./day-nominations.js";
 export {
   type AuctionDenial,
   type AuctionResult,
@@ -52,6 +59,8 @@ export type {
   BidOriginView,
   BidRefusal,
   CommandOutcome,
+  DayChronicleLot,
+  DayChronicleView,
   DisplayNameChoice,
   DisplayNameOutcome,
   DisplayNameRefusal,
