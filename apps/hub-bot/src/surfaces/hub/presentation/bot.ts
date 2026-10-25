@@ -1160,13 +1160,14 @@ async function handleMessage(
     // её не видит. Человек ушёл от вопроса, и брошенный вопрос удаляется:
     // иначе клиент держал бы режим ответа на него и дальше.
     const command = parsed.kind === "start" || parsed.kind === "command";
-    const replyId = command
-      ? undefined
-      : ctx.message?.reply_to_message?.message_id;
     // Сначала удаление: вычищенный по сроку вопрос карта уже не назовёт, и
     // его сообщение осталось бы держать режим ответа.
     if (command) await dropOpenQuestions(ctx, questions);
     removeExpiredQuestions(questions, Date.now());
+    const replyId = command
+      ? undefined
+      : (ctx.message?.reply_to_message?.message_id ??
+        openMaterialSourceQuestion(ctx, questions));
     // Остальные снимки альбома, которому вопрос о фото лота уже отказал: отказ
     // ушёл на снимок, на котором случился, а вопрос задан заново (PER-721).
     const album = ctx.message?.media_group_id;
@@ -11149,6 +11150,32 @@ async function renderFormResult(
       "new",
     );
   }
+}
+
+// Пересланное сообщение Telegram ответом на вопрос не отправит: клиент
+// пересылает без ответа. Пересылка, фото или документ без ответа идут ответом
+// на открытый вопрос об источнике материала того же человека. Набранный текст
+// так не идёт: подпись к пересылке приходит отдельным сообщением до неё и
+// иначе сняла бы вопрос отказом. Вопрос, заданный до рестарта, карта уже не
+// знает, и такое сообщение получает подсказку, как раньше.
+function openMaterialSourceQuestion(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+): number | undefined {
+  const message = ctx.message;
+  if (message === undefined || isTypedText(message)) return undefined;
+  const prefix = `${ctx.chat?.id ?? "unknown"}:`;
+  let found: number | undefined;
+  for (const [key, question] of questions) {
+    if (
+      key.startsWith(prefix) &&
+      question.kind === "material-source" &&
+      question.telegramUserId === ctx.from?.id
+    ) {
+      found = Number(key.slice(prefix.length));
+    }
+  }
+  return found;
 }
 
 function removeExpiredQuestions(
