@@ -735,6 +735,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   private object UntouchableRaffles extends RaffleGateway {
     def register(auction: AuctionId, command: Register) = fail("the raffle was reached")
     def cancel(auction: AuctionId, command: CancelRegistration) = fail("the raffle was reached")
+    def assign(auction: AuctionId, command: AssignWinner) = fail("the raffle was reached")
     def get(auction: AuctionId) = fail("the raffle was read")
   }
 
