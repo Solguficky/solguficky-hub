@@ -510,11 +510,14 @@ export type PredictionOutcome =
 // Где розыгрыш (`auction.v1.RaffleStatus`). `closing` — момент закрытия прошёл,
 // а пул ещё фиксируется; `not-held` — онлайн-торги открылись не раньше момента
 // закрытия, и регистрация не открывалась; `cancelled` — аукцион отменили до
-// жеребьёвки (ADR-066, дополнение 2026-10-12), и seed не раскроется.
+// жеребьёвки (ADR-066, дополнение 2026-10-12), и seed не раскроется;
+// `awaiting-winner` — пул ждёт итога, который назовёт администратор
+// (ADR-066, дополнение 2026-10-24).
 export type RaffleStatusView =
   | "open"
   | "closing"
   | "awaiting-beacon"
+  | "awaiting-winner"
   | "drawn"
   | "no-tickets"
   | "not-held"
@@ -551,6 +554,9 @@ export type RaffleView = {
   reveal?: RaffleRevealView;
   // Приз розыгрыша одной строкой (PER-649); нет — розыгрыш без приза.
   prize?: string;
+  // Итог называет администратор, а не маяк (PER-727): известно с фиксации
+  // пула, и пересчитывать такой итог нечего. Нет поля — итог по маяку.
+  drawnByHand?: true;
 };
 
 export type RaffleRegistrationRefusal =

@@ -113,6 +113,12 @@ object Main {
       case Right(settings) => settings
       case Left(reason) => fail(reason, None)
     }
+    // Режим итога розыгрыша (PER-727) виден в логе старта: на проде его включает values среды, и запись — способ
+    // убедиться, что выкладка его донесла.
+    logger.info(
+      "auction raffle draw configured",
+      StructuredArguments.keyValue("raffle_draw", if (raffle.byHand) "manual" else "automatic")
+    )
     val erasureEvery: FiniteDuration = config.getDuration("auction.raffle.erasure-every").toScala
 
     // Схема применяется до ActorSystem: журнал, поднятый на базе без таблиц,
@@ -256,7 +262,8 @@ object Main {
           changes,
           clock,
           overdueGrace,
-          invoices
+          invoices,
+          raffle.byHand
         )
       )
       .onComplete(bound("grpc", system))

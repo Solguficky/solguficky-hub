@@ -195,6 +195,73 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
     }
   }
 
+  "the winner by hand" should {
+
+    val assignedAt = closesAt.plusSeconds(5400)
+
+    def byHand(raffle: Raffle): Raffle =
+      Raffle.decide(raffle, FixPool(Set.empty, byHand = true), closesAt) match {
+        case Right(event) => step(raffle, op(90), event)
+        case Left(rejected) => fail(s"pool not fixed: $rejected")
+      }
+
+    val waiting = byHand(register(register(open, 1, 2), 2, 3))
+
+    "fixes the pool to wait for an administrator instead of the beacon, and an empty pool as before" in {
+      val terms = RaffleTerms(closesAt, seed, Quicknet.roundFor(closesAt))
+      waiting.state shouldBe RaffleState.AwaitingWinner(terms, Vector(person(1), person(2)))
+      byHand(open).state shouldBe RaffleState.Fixed(terms, Vector.empty)
+      Raffle.decide(waiting, DrawWinner(randomness, closesAt.plusSeconds(61))) shouldBe
+        Left(DrawRejected.NotAwaitingBeacon)
+      Raffle.decide(waiting, FixPool(Set.empty), closesAt) shouldBe Left(FixPoolRejected.AlreadyFixed)
+    }
+
+    "assigns a ticket of the pool once and keeps it for a repeat and for the same ticket" in {
+      val assigned = accepted(waiting, op(70), Raffle.decide(waiting, AssignWinner(2, op(70)), assignedAt))
+      assigned.state shouldBe a[RaffleState.Assigned]
+      Raffle.winningTicket(assigned.state) shouldBe Some(2)
+      Raffle.decide(assigned, AssignWinner(2, op(70)), assignedAt) shouldBe
+        Right(RaffleDecision.Repeated(assigned.seen(op(70))))
+      Raffle.decide(assigned, AssignWinner(2, op(71)), assignedAt) shouldBe Right(RaffleDecision.Unchanged)
+      Raffle.decide(assigned, AssignWinner(1, op(72)), assignedAt) shouldBe Left(AssignRejected.AlreadyDrawn(2))
+      Raffle.decide(assigned, AssignWinner(1, op(70)), assignedAt) shouldBe Left(AssignRejected.OpIdTaken)
+    }
+
+    "refuses a ticket out of the pool, a raffle that draws from the beacon and a raffle that is not there" in {
+      Raffle.decide(waiting, AssignWinner(0, op(70)), assignedAt) shouldBe Left(AssignRejected.TicketNotInPool(2))
+      Raffle.decide(waiting, AssignWinner(3, op(70)), assignedAt) shouldBe Left(AssignRejected.TicketNotInPool(2))
+      val beacon = fixed(register(open, 1, 2))
+      Raffle.decide(beacon, AssignWinner(1, op(70)), assignedAt) shouldBe Left(AssignRejected.NotAwaitingWinner)
+      Raffle.decide(register(open, 1, 2), AssignWinner(1, op(70)), assignedAt) shouldBe
+        Left(AssignRejected.NotAwaitingWinner)
+      Raffle.decide(Raffle.initial, AssignWinner(1, op(70)), assignedAt) shouldBe Left(AssignRejected.RaffleNotFound)
+      val drawn = Raffle.decide(beacon, DrawWinner(randomness, closesAt.plusSeconds(61))) match {
+        case Right(event) => step(beacon, op(91), event)
+        case Left(rejected) => fail(s"draw refused: $rejected")
+      }
+      Raffle.decide(drawn, AssignWinner(1, op(70)), assignedAt) shouldBe Left(AssignRejected.AlreadyDrawn(1))
+    }
+
+    "reads a draw a rolled back image made over a pool waiting for the winner by hand as the draw" in {
+      val drawnAt = closesAt.plusSeconds(61)
+      step(waiting, op(91), RaffleEvent.RaffleDrawn(randomness, drawnAt)).state shouldBe
+        RaffleState.Drawn(
+          RaffleTerms(closesAt, seed, Quicknet.roundFor(closesAt)),
+          Vector(person(1), person(2)),
+          randomness,
+          drawnAt
+        )
+    }
+
+    "is cancelled with the auction while it waits and kept once assigned" in {
+      val cancelledAt = closesAt.plusSeconds(30)
+      Raffle.decide(waiting, CancelRaffle(op(80)), cancelledAt) shouldBe
+        RaffleDecision.Accepted(RaffleEvent.RaffleCancelled(cancelledAt))
+      val assigned = accepted(waiting, op(70), Raffle.decide(waiting, AssignWinner(1, op(70)), assignedAt))
+      Raffle.decide(assigned, CancelRaffle(op(80)), cancelledAt) shouldBe RaffleDecision.Unchanged
+    }
+  }
+
   "cancelling with the auction" should {
 
     val cancelledAt = closesAt.plusSeconds(30)

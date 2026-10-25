@@ -216,6 +216,9 @@ function fake(answers: {
     markInvoice: async () => {
       throw new Error("invoices not used by the console");
     },
+    assignRaffleWinner: async () => {
+      throw new Error("raffle winner not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };

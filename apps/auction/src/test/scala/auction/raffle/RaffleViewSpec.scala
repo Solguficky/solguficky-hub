@@ -78,6 +78,30 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       view(RaffleState.NotHeld(closesAt)).get.drawnAt shouldBe None
     }
 
+    "shows the candidates of a pool waiting for the winner by hand and reveals the assigned ticket without a draw" in {
+      val tickets = Vector(person(2), person(1))
+      val waiting = view(RaffleState.AwaitingWinner(terms, tickets), names = Map(1 -> "a*", 2 -> "b*")).get
+      waiting.status shouldBe RaffleStatus.AwaitingWinner
+      waiting.byHand shouldBe true
+      waiting.tickets shouldBe Vector(RaffleTicketView(1, Some("a*")), RaffleTicketView(2, Some("b*")))
+      waiting.myTicket shouldBe Some(2)
+      waiting.reveal shouldBe None
+      waiting.toString should not include seed.hex
+      val assignedAt = closesAt.plusSeconds(5400)
+      val assigned = view(RaffleState.Assigned(terms, tickets, 1, assignedAt)).get
+      assigned.status shouldBe RaffleStatus.Drawn
+      assigned.byHand shouldBe true
+      assigned.drawnAt shouldBe Some(assignedAt)
+      assigned.reveal shouldBe Some(RaffleReveal(seed, None, Some(1)))
+      assigned.reveal.flatMap(_.winningTicket) shouldBe Some(1)
+      view(RaffleState.Drawn(terms, tickets, randomness, assignedAt)).get.byHand shouldBe false
+      // До фиксации пула режим называет настройка сервиса: тот, который запишет закрытие.
+      val ahead =
+        RaffleView.of(raffle(RaffleState.Open(terms, tickets)), person(1), closesAt.minusSeconds(1), Map.empty, true)
+      ahead.map(_.byHand) shouldBe Some(true)
+      view(RaffleState.Open(terms, tickets)).get.byHand shouldBe false
+    }
+
     "shows a cancelled raffle with the registration of the viewer, without tickets and never with the seed" in {
       val cancelled = view(RaffleState.Cancelled(terms, Vector(person(2), person(1)), closesAt.plusSeconds(30))).get
       cancelled.status shouldBe RaffleStatus.Cancelled

@@ -35,6 +35,15 @@ const momentLines = (paragraphs: readonly string[]): string[] =>
   paragraphs.filter((line) => line.startsWith("Жеребьёвка: "));
 
 describe("shared raffle result text", () => {
+  it("promises no beacon draw and no proof while the winner is due by hand", () => {
+    const open = raffleParagraphs({ ...base, drawnByHand: true }, { moment });
+    expect(open.join("\n")).toContain("Победителя выберут организаторы");
+    expect(open.join("\n")).not.toContain("через пару минут");
+    expect(open.join("\n")).not.toContain("проверяемый");
+    const beacon = raffleParagraphs(base, { moment });
+    expect(beacon.join("\n")).toContain("через пару минут");
+  });
+
   it("shows the draw moment right after the winner", () => {
     expect(
       raffleParagraphs(drawnRaffle({ drawnAt: "2026-10-13T22:51:00Z" }), {

@@ -164,9 +164,13 @@ import org.apache.pekko.stream.scaladsl.Sink
 import org.apache.pekko.stream.scaladsl.SinkQueueWithCancel
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.pattern.AskTimeoutException
+import auction.raffle.AssignRejected
+import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
 import auction.raffle.Draw
 import auction.raffle.Raffle
+import auction.raffle.RaffleEnvelope
+import auction.raffle.RaffleEvent
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleState
 import auction.raffle.RaffleTerms
@@ -679,7 +683,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
   /** Розыгрыш в памяти: отвечает тем, что задал тест, и помнит команды, которые до него дошли. */
-  private final class Raffles(raffle: Raffle, refusal: Option[RegistrationRejected] = None) extends RaffleGateway {
+  private final class Raffles(
+      raffle: Raffle,
+      refusal: Option[RegistrationRejected] = None,
+      assignRefusal: Option[AssignRejected] = None
+  ) extends RaffleGateway {
     var reached: Vector[Any] = Vector.empty
     private def answer(command: Any) = {
       reached :+= command
@@ -687,6 +695,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
     def register(auction: AuctionId, command: Register) = answer(command)
     def cancel(auction: AuctionId, command: CancelRegistration) = answer(command)
+    def assign(auction: AuctionId, command: AssignWinner) = {
+      reached :+= command
+      Future.successful(assignRefusal.toLeft(raffle))
+    }
     def get(auction: AuctionId) = Future.successful(raffle)
   }
 
@@ -1207,6 +1219,90 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   }
 
   "the raffle at the grpc boundary" should {
+
+    "assigns the winner by hand after the meetup confirms the administrator and reveals the ticket without a draw" in {
+      val pool = Vector(ParticipantId(UUID.fromString(lot)), ViewerId)
+      val raffles = Raffles(Raffle(RaffleState.Assigned(raffleTerms, pool, 2, Instant.EPOCH), Map.empty))
+      val accepted = service(
+        Unreachable,
+        auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+        raffles = raffles,
+        raffleNames = _ => Future.successful(Map(1 -> "Кот*", 2 -> "Сова*"))
+      ).assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 2, raffleOp))
+        .futureValue
+        .getAccepted
+      accepted.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_DRAWN
+      accepted.drawnByHand shouldBe true
+      accepted.getReveal.winningTicket shouldBe Some(2)
+      accepted.getReveal.randomness shouldBe ""
+      accepted.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, Some("Сова*")))
+      raffles.reached shouldBe Vector(AssignWinner(2, OpId(UUID.fromString(raffleOp))))
+    }
+
+    "answers a repeat of its op_id with the raffle before the meetup is asked and leaves the raffle untouched" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val op = OpId(UUID.fromString(raffleOp))
+      val assigned = Raffle(
+        RaffleState.Assigned(raffleTerms, Vector(ViewerId), 1, Instant.EPOCH),
+        Map(op -> RaffleEnvelope(4, op, RaffleEvent.WinnerAssigned(1, Instant.EPOCH)))
+      )
+      val raffles = Raffles(assigned)
+      val grpc = service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = raffles)
+      grpc
+        .assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 1, raffleOp))
+        .futureValue
+        .getAccepted
+        .getReveal
+        .winningTicket shouldBe Some(1)
+      statusOf(
+        grpc.assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 2, raffleOp))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+      raffles.reached shouldBe empty
+    }
+
+    "refuses the winner by hand to a viewer whom the meetup does not confirm and leaves the raffle untouched" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val raffles = Raffles(Raffle(RaffleState.AwaitingWinner(raffleTerms, Vector(ViewerId)), Map.empty))
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = raffles)
+        .assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 1, raffleOp))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      raffles.reached shouldBe empty
+    }
+
+    "answers a ticket out of the pool, an assigned winner and a foreign op_id the way the contract names them" in {
+      val waiting = Raffle(RaffleState.AwaitingWinner(raffleTerms, Vector(ViewerId)), Map.empty)
+      def assigning(refusal: AssignRejected) =
+        service(
+          Unreachable,
+          auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+          raffles = Raffles(waiting, assignRefusal = Some(refusal))
+        ).assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 5, raffleOp))
+      assigning(AssignRejected.TicketNotInPool(1)).futureValue.getRefused.getTicketNotInPool.tickets shouldBe 1
+      assigning(AssignRejected.AlreadyDrawn(1)).futureValue.getRefused.getAlreadyDrawn.winningTicket shouldBe 1
+      assigning(AssignRejected.NotAwaitingWinner).futureValue.getRefused.reason.isNotAwaitingWinner shouldBe true
+      statusOf(assigning(AssignRejected.OpIdTaken)) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "shows the candidates of a pool that waits for the winner by hand without the seed" in {
+      val read = service(
+        Unreachable,
+        raffles = Raffles(
+          Raffle(
+            RaffleState.AwaitingWinner(raffleTerms, Vector(ParticipantId(UUID.fromString(lot)), ViewerId)),
+            Map.empty
+          )
+        ),
+        raffleNames = _ => Future.successful(Map(1 -> "Кот*"))
+      ).getRaffle(wire.GetRaffleRequest(Some(viewer), raffleAuction)).futureValue.getRaffle
+      read.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_AWAITING_WINNER
+      read.drawnByHand shouldBe true
+      read.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, None))
+      read.reveal shouldBe None
+      read.toProtoString should not include raffleSeed.hex
+    }
 
     "refuses a viewer without the right to bid and a participant without a chosen name before the raffle" in {
       val raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector.empty), Map.empty))

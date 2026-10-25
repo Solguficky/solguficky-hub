@@ -75,6 +75,7 @@ service AuctionService {
   rpc RegisterForRaffle(RegisterForRaffleRequest) returns (RegisterForRaffleResponse);
   rpc CancelRaffleRegistration(CancelRaffleRegistrationRequest) returns (CancelRaffleRegistrationResponse);
   rpc GetRaffle(GetRaffleRequest) returns (GetRaffleResponse);
+  rpc AssignRaffleWinner(AssignRaffleWinnerRequest) returns (AssignRaffleWinnerResponse);
   rpc SubmitPrediction(SubmitPredictionRequest) returns (SubmitPredictionResponse);
   rpc GetMyPredictions(GetMyPredictionsRequest) returns (GetMyPredictionsResponse);
   rpc GetPredictionResults(GetPredictionResultsRequest) returns (GetPredictionResultsResponse);
@@ -2468,6 +2469,15 @@ message Raffle {
   // The prize of the raffle as the organizer wrote it. Unset when the raffle has
   // no prize and when the raffle is not held: there are no terms to read it from.
   optional string raffle_prize = 11;
+
+  // Whether the winner is assigned by an administrator instead of drawn from
+  // the beacon. The service decides it when registration closes, by its own
+  // setting, and the decision never changes; with OPEN and CLOSING it tells
+  // the setting at the moment of the read. With it the pool waits with
+  // AWAITING_WINNER, and the reveal of DRAWN carries the seed and
+  // winning_ticket but no randomness and no value: there is nothing to
+  // recompute.
+  bool drawn_by_hand = 12;
 }
 
 enum RaffleStatus {
@@ -2495,6 +2505,10 @@ enum RaffleStatus {
   // The auction was cancelled before the draw: registration is closed, no draw
   // will take place, and the seed is not revealed.
   RAFFLE_STATUS_CANCELLED = 7;
+
+  // The pool is fixed and waits for an administrator to assign the winning
+  // ticket: drawn_by_hand is set.
+  RAFFLE_STATUS_AWAITING_WINNER = 8;
 }
 
 message RaffleTicket {
@@ -2520,9 +2534,66 @@ message RaffleReveal {
   // Empty with NO_TICKETS.
   string value = 3;
 
-  // value read as an unsigned big-endian number, modulo N, plus one. Unset with
-  // NO_TICKETS.
+  // value read as an unsigned big-endian number, modulo N, plus one; with
+  // drawn_by_hand the ticket the administrator assigned. Unset with NO_TICKETS.
   optional uint32 winning_ticket = 4;
+}
+
+message AssignRaffleWinnerRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+
+  // The number of the winning ticket in the fixed pool, from 1 to the count of
+  // tickets.
+  uint32 ticket = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message AssignRaffleWinnerResponse {
+  // Exactly one is set. A repeat of the same op_id returns the raffle as it is.
+  // Assigning the ticket that is already the winner is accepted with no second
+  // fact; another ticket is refused with already_drawn: the result never
+  // changes.
+  oneof outcome {
+    Raffle accepted = 1;
+    AssignRaffleWinnerRefusal refused = 2;
+  }
+}
+
+message AssignRaffleWinnerRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    RaffleNotFound raffle_not_found = 4;
+    // The pool does not wait for a winner by hand: registration is still open
+    // or closing, the raffle draws from the beacon, has no ticket, is not held
+    // or is cancelled.
+    RaffleNotAwaitingWinner not_awaiting_winner = 5;
+    // The ticket is not in 1..N of the fixed pool.
+    RaffleTicketNotInPool ticket_not_in_pool = 6;
+    // The winner is already assigned or drawn, and it is another ticket.
+    RaffleAlreadyDrawn already_drawn = 7;
+  }
+}
+
+message RaffleNotAwaitingWinner {}
+
+message RaffleTicketNotInPool {
+  // The count of tickets in the fixed pool.
+  uint32 tickets = 1;
+}
+
+message RaffleAlreadyDrawn {
+  // The number of the winning ticket.
+  uint32 winning_ticket = 1;
 }
 
 message SubmitPredictionRequest {

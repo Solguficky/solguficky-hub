@@ -36,6 +36,7 @@ import type {
   LotSet,
 } from "../application/types.js";
 import type {
+  AssignRaffleWinnerResult,
   AuctionConsoles,
   AuctionScreens,
   AuctionVisibilityResult,
@@ -168,6 +169,10 @@ const forgedAuctionPresses = {
   "console-invoice-mark-confirm": `v1:ac:iy:${auctionToken}:${uuidToToken(vaseInvoiceId)}:p`,
   "console-payment-text": `v1:ac:it:${auctionToken}`,
   "console-payment-text-remove": `v1:ac:ix:${auctionToken}`,
+  "console-raffle-winner": `v1:ac:rw:${auctionToken}`,
+  "console-raffle-winner-ask": `v1:ac:ra:${auctionToken}`,
+  "console-raffle-winner-pick": `v1:ac:rc:${auctionToken}:2`,
+  "console-raffle-winner-confirm": `v1:ac:ry:${auctionToken}:2`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -283,6 +288,8 @@ function fakeAuction(
     // вместо принятия команды над ним.
     paymentText?: string;
     paymentTextRefusal?: PaymentInstructionsResult;
+    // Итог розыгрыша вручную (PER-727): отказ Auction вместо назначения.
+    raffleWinnerRefusal?: AssignRaffleWinnerResult;
     // Срок оплаты счёта (PER-722): Auction отказывает в конфигурации, хотя бот
     // её принял, — так выглядит расхождение пределов.
     paymentTermRefused?: true;
@@ -320,6 +327,9 @@ function fakeAuction(
     transitions: { invoiceId: string; mark: InvoiceMark }[];
     // Текст «Как оплатить и получить» (PER-322).
     paymentText?: string;
+    // Розыгрыш глазами администратора (PER-618): ручной итог (PER-727)
+    // переводит его в «итог подведён».
+    raffle?: RaffleView;
   } = {
     status: options.status ?? "draft",
     hidden: options.hidden ?? false,
@@ -342,6 +352,9 @@ function fakeAuction(
     ...(options.paymentText === undefined
       ? {}
       : { paymentText: options.paymentText }),
+    ...(options.consoleRaffle === undefined
+      ? {}
+      : { raffle: options.consoleRaffle }),
   };
   // Сеты как в Auction (ADR-073): меняются до открытия недели, лот — в одном
   // сете и только из реестра, тот же идентификатор заменяет сет целиком.
@@ -808,9 +821,40 @@ function fakeAuction(
       };
     },
     async consoleRaffle() {
-      return options.consoleRaffle === undefined
+      return state.raffle === undefined
         ? { kind: "ok" as const }
-        : { kind: "ok" as const, raffle: options.consoleRaffle };
+        : { kind: "ok" as const, raffle: state.raffle };
+    },
+    // Ручной итог как в Auction (PER-727): тот же номер после итога принят,
+    // другой — `already-drawn`, номер вне пула — `ticket-not-in-pool`.
+    async assignRaffleWinner(
+      _person: unknown,
+      command: { auctionId: string; ticket: number; opId: string },
+    ): Promise<AssignRaffleWinnerResult> {
+      commands.push({ method: "assignRaffleWinner", args: command });
+      if (options.raffleWinnerRefusal !== undefined) {
+        return options.raffleWinnerRefusal;
+      }
+      const raffle = state.raffle;
+      if (raffle === undefined) return { kind: "raffle-not-found" };
+      const winning = raffle.reveal?.winningTicket;
+      if (raffle.status === "drawn" && winning !== undefined) {
+        return winning === command.ticket
+          ? { kind: "ok", raffle }
+          : { kind: "already-drawn", winningTicket: winning };
+      }
+      if (raffle.status !== "awaiting-winner") {
+        return { kind: "not-awaiting-winner" };
+      }
+      if (command.ticket < 1 || command.ticket > raffle.tickets.length) {
+        return { kind: "ticket-not-in-pool", tickets: raffle.tickets.length };
+      }
+      state.raffle = {
+        ...raffle,
+        status: "drawn",
+        reveal: { seed: "cd".repeat(32), winningTicket: command.ticket },
+      };
+      return { kind: "ok", raffle: state.raffle };
     },
     async listAuctionNames() {
       commands.push({ method: "listAuctionNames", args: auctionId });
@@ -6069,5 +6113,224 @@ describe("invoices of the auction console", () => {
     const refused = await pressFresh(auction, calls, invoicesData);
     expect(refused.text).toContain("Это действие тебе недоступно.");
     expect(auction.sent("getAuctionConsole")).toEqual([]);
+  });
+});
+
+describe("raffle winner of the auction console", () => {
+  // Итог розыгрыша вручную (PER-727): пул ждёт победителя, которого
+  // администратор выбирает колесом на внешнем сайте и вносит номером.
+  const raffleWeek = {
+    opensAt: "2026-10-01T15:00:00Z",
+    closesAt: "2026-10-05T15:00:00Z",
+    final: true,
+    windows: [],
+    raffleClosesAt: "2026-10-05T16:12:00Z",
+  };
+  const awaiting = (
+    tickets: RaffleView["tickets"] = [
+      { number: 1, displayName: "@jay" },
+      { number: 2, displayName: "Сова*" },
+      { number: 3 },
+    ],
+  ): RaffleView => ({
+    auctionId,
+    status: "awaiting-winner",
+    closesAt: raffleWeek.raffleClosesAt,
+    registered: false,
+    tickets,
+    drawnByHand: true,
+    prize: "Сертификат",
+  });
+  const winnerData = `v1:ac:rw:${auctionToken}`;
+  const uuidV7 =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const inBreak = (
+    extra: Parameters<typeof fakeAuction>[0] = {},
+    raffle: RaffleView = awaiting(),
+  ) =>
+    fakeAuction({
+      status: "break",
+      week: raffleWeek,
+      consoleRaffle: raffle,
+      ...extra,
+    });
+  // Каждый шаг — новый бот: состояние едет в кнопках, а не в процессе.
+  const step = async (
+    auction: ReturnType<typeof fakeAuction>,
+    calls: RecordedCall[],
+    update: (history: RecordedCall[]) => Update,
+  ) => {
+    const { bot } = harness("admin", auction, calls);
+    await bot.init();
+    await bot.handleUpdate(update(calls));
+    return last(calls);
+  };
+
+  it("names the waiting raffle on the console and leads to its result", async () => {
+    const calls: RecordedCall[] = [];
+    const console = await step(inBreak(), calls, () => press(consoleData));
+    expect(plain(console)).toContain(
+      "Розыгрыш: регистрация закрыта, билетов: 3 — ждёт итога.",
+    );
+    expect(dataOf(console, "Итог розыгрыша")).toBe(winnerData);
+
+    const drawn: RecordedCall[] = [];
+    const after = await step(
+      inBreak(
+        {},
+        {
+          ...awaiting(),
+          status: "drawn",
+          reveal: { seed: "cd".repeat(32), winningTicket: 2 },
+        },
+      ),
+      drawn,
+      () => press(consoleData),
+    );
+    expect(labels(after).flat()).not.toContain("Итог розыгрыша");
+  });
+
+  it("lists every ticket with its name in a block to copy and counts them", async () => {
+    const calls: RecordedCall[] = [];
+    const screen = await step(inBreak(), calls, () => press(winnerData));
+    expect(screen.text).toContain("<b>Итог розыгрыша</b>");
+    expect(screen.text).toContain("Билетов: 3\nПриз: Сертификат");
+    expect(screen.text).toContain("<pre>№1 — @jay\n№2 — Сова*\n№3</pre>");
+    expect(labels(screen)).toEqual([["Ввести победителя"], ["‹ Пульт"]]);
+    expect(dataOf(screen, "Ввести победителя")).toBe(
+      `v1:ac:ra:${auctionToken}`,
+    );
+  });
+
+  // Сообщение Telegram — до 4096 знаков: большой пул листается по
+  // восемьдесят билетов, а не режется.
+  it("pages a long pool under the message limit", async () => {
+    const tickets = Array.from({ length: 100 }, (_, index) => ({
+      number: index + 1,
+      displayName: `@${"a".repeat(31)}${index % 10}`,
+    }));
+    const auction = inBreak({}, awaiting(tickets));
+    const calls: RecordedCall[] = [];
+    const first = await step(auction, calls, () => press(winnerData));
+    expect(first.text).toContain("<b>Итог розыгрыша · 1 из 2</b>");
+    expect(first.text).toContain("Билетов: 100");
+    expect(first.text).toContain("Здесь билеты 1–80.");
+    expect((first.text ?? "").length).toBeLessThan(4096);
+    expect(labels(first)).toEqual([["Ввести победителя"], ["→"], ["‹ Пульт"]]);
+    const second = await step(auction, calls, (history) =>
+      press(dataOf(last(history), "→")),
+    );
+    expect(second.text).toContain("Здесь билеты 81–100.");
+    expect(second.text).toContain(`№100 — @${"a".repeat(31)}9</pre>`);
+  });
+
+  it("asks the number over restarts, refuses a wrong one and assigns after yes", async () => {
+    const auction = inBreak();
+    const calls: RecordedCall[] = [];
+    await step(auction, calls, () => press(winnerData));
+    await step(auction, calls, (history) =>
+      press(dataOf(last(history), "Ввести победителя")),
+    );
+    const asked = question(calls).payload;
+    expect(asked.text).toContain("целое число от 1 до 3");
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:rw:${auctionToken}:42`);
+
+    const notNumber = await step(auction, calls, (history) =>
+      answer(history, { text: "Сова" }),
+    );
+    expect(notNumber.text).toBe(
+      "<b>Это не номер билета</b>\n\nНужно целое число от 1 до 3.",
+    );
+    expect(labels(notNumber)).toEqual([
+      ["Ввести заново"],
+      ["‹ Итог розыгрыша"],
+    ]);
+
+    await step(auction, calls, (history) =>
+      press(dataOf(last(history), "Ввести заново")),
+    );
+    const outside = await step(auction, calls, (history) =>
+      answer(history, { text: "4" }),
+    );
+    expect(plain(outside)).toContain("Такого билета нет");
+    expect(plain(outside)).toContain("В розыгрыше билеты от 1 до 3.");
+
+    await step(auction, calls, (history) =>
+      press(dataOf(last(history), "Ввести заново")),
+    );
+    const confirm = await step(auction, calls, (history) =>
+      answer(history, { text: " №2 " }),
+    );
+    expect(plain(confirm)).toContain("Назначить победителя?");
+    expect(plain(confirm)).toContain("Победитель — билет №2 — Сова*");
+    expect(labels(confirm)).toEqual([["✔️ Да, назначить", "✖️ Нет"]]);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(winnerData);
+    expect(auction.sent("assignRaffleWinner")).toEqual([]);
+
+    const outcome = await step(auction, calls, (history) =>
+      press(dataOf(last(history), "✔️ Да, назначить")),
+    );
+    expect(auction.sent("assignRaffleWinner")).toEqual([
+      {
+        method: "assignRaffleWinner",
+        args: { auctionId, ticket: 2, opId: expect.stringMatching(uuidV7) },
+      },
+    ]);
+    expect(outcome.text).toBe(
+      "<b>Итог розыгрыша подведён</b>\n\n<b>Победитель — билет №2 — Сова*</b>\n\nУчастники получат сообщение с итогом.",
+    );
+    expect(labels(outcome)).toEqual([["‹ Пульт"]]);
+  });
+
+  it("names the drawn ticket when the result is already in", async () => {
+    const auction = inBreak({
+      raffleWinnerRefusal: { kind: "already-drawn", winningTicket: 1 },
+    });
+    const calls: RecordedCall[] = [];
+    const outcome = await step(auction, calls, () =>
+      press(`v1:ac:ry:${auctionToken}:2`),
+    );
+    expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
+    expect(plain(outcome)).toContain("Победитель — билет №1 — @jay");
+    expect(labels(outcome)).toEqual([["‹ Пульт"]]);
+  });
+
+  it("refuses a ticket outside the pool and offers to enter another", async () => {
+    const auction = inBreak();
+    const calls: RecordedCall[] = [];
+    const outcome = await step(auction, calls, () =>
+      press(`v1:ac:ry:${auctionToken}:9`),
+    );
+    expect(auction.sent("assignRaffleWinner")).toHaveLength(1);
+    expect(plain(outcome)).toContain("Такого билета нет");
+    expect(plain(outcome)).toContain("В розыгрыше билеты от 1 до 3.");
+    expect(labels(outcome)).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+  });
+
+  it("answers a stale button of a raffle that no longer waits", async () => {
+    const auction = inBreak(
+      {},
+      {
+        ...awaiting(),
+        status: "drawn",
+        reveal: { seed: "cd".repeat(32), winningTicket: 3 },
+      },
+    );
+    const calls: RecordedCall[] = [];
+    const outcome = await step(auction, calls, () => press(winnerData));
+    expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
+    expect(plain(outcome)).toContain("Победитель — билет №3");
+    expect(auction.sent("assignRaffleWinner")).toEqual([]);
+  });
+
+  it("shows the refusal of Auction to a non-administrator of the meetup", async () => {
+    const auction = inBreak({
+      raffleWinnerRefusal: { kind: "not-administrator" },
+    });
+    const calls: RecordedCall[] = [];
+    const refused = await step(auction, calls, () =>
+      press(`v1:ac:ry:${auctionToken}:2`),
+    );
+    expect(refused.text).toContain("Это действие тебе недоступно.");
   });
 });

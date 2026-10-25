@@ -64,6 +64,7 @@ import {
   consoleRafflePrizeData,
   consoleRafflePrizeRemoveData,
   consoleRaffleRemoveData,
+  consoleRaffleWinnerData,
   consoleStartFinalData,
   consoleViewData,
   consoleVisibilityData,
@@ -81,6 +82,7 @@ import {
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import { invoicesLabel } from "./auction-invoices.js";
+import { raffleWinnerLabel } from "./auction-raffle-winner.js";
 import { auctionCancelConsequence } from "./auction-stage.js";
 import {
   buttonText,
@@ -330,6 +332,10 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
     case "closing":
     case "awaiting-beacon":
       return "Розыгрыш: регистрация закрыта, жеребьёвка идёт.";
+    // Пул ждёт итога, который назовёт администратор (PER-727): вход в итог —
+    // ряд «Итог розыгрыша» пульта.
+    case "awaiting-winner":
+      return `Розыгрыш: регистрация закрыта, билетов: ${raffle.tickets.length} — ждёт итога.`;
     case "drawn": {
       const tickets = `билетов: ${raffle.tickets.length}`;
       const number = raffle.reveal?.winningTicket;
@@ -925,6 +931,10 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       removeLabel("Удалить аукцион"),
       consoleDiscardData(auction),
     );
+  }
+  // Итог розыгрыша вручную (PER-727): ряд стоит, пока пул ждёт победителя.
+  if (console.raffle?.status === "awaiting-winner") {
+    nextRow(keyboard).text(raffleWinnerLabel, consoleRaffleWinnerData(auction));
   }
   // Счета (PER-321): лоты продаются с общего дедлайна онлайн-недели, и с него
   // же у аукциона появляются счета. Отменённый аукцион их сохраняет: проданный

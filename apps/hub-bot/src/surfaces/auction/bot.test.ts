@@ -3327,7 +3327,7 @@ describe("raffle among the participants", () => {
       raffleOf(
         create(RaffleSchema, {
           auctionId,
-          status: (RaffleStatus.CANCELLED + 1) as RaffleStatus,
+          status: (RaffleStatus.AWAITING_WINNER + 1) as RaffleStatus,
           closesAt: openRaffle.closesAt,
         }),
       );
