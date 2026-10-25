@@ -89,6 +89,7 @@ import {
   type AuctionScreens,
   type AuctionVisibilityResult,
   type CancelAuctionResult,
+  type ChangeRafflePrizeResult,
   type CloseLotResult,
   type ConsoleReadResult,
   type DaySummaryReadResult,
@@ -149,6 +150,7 @@ type AuctionRpc = Pick<
   | "getAuction"
   | "getRaffle"
   | "assignRaffleWinner"
+  | "changeRafflePrize"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "listMyInvoices"
@@ -427,6 +429,19 @@ export function createAuctionAdapter(
           options(meta),
         );
         return assignRaffleWinnerResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Повтора нет, как у итога: ключ рождается на нажатие «Да», а повтор того
+    // же «Да» Auction примет без второй смены.
+    async changeRafflePrize(person, command, meta) {
+      try {
+        const response = await rpc.changeRafflePrize(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return changeRafflePrizeResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -2819,6 +2834,53 @@ function assignRaffleWinnerResult(
     }
     case undefined:
       return defect("raffle winner response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы смены приза розыгрыша (PER-737): именованный отказ Auction —
+// значение ответа, а не сбой вызова.
+function changeRafflePrizeResult(
+  outcome: Awaited<ReturnType<AuctionRpc["changeRafflePrize"]>>["outcome"],
+): ChangeRafflePrizeResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "prizeBlank":
+          return { kind: "prize-blank" };
+        case "prizeTooLong":
+          return { kind: "prize-too-long" };
+        case "alreadyDrawn":
+          return {
+            kind: "already-drawn",
+            winningTicket: reason.value.winningTicket,
+          };
+        case "withoutResult":
+          return { kind: "without-result" };
+        case undefined:
+          return defect("raffle prize refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle prize response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

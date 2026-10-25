@@ -27,6 +27,7 @@ import {
   createDispatcher,
   type Dispatcher,
 } from "../application/dispatcher.js";
+import { prizeChangeable } from "../application/raffle-prize-change.js";
 import type {
   AuctionConsoleView,
   ConsoleAuctionStatus,
@@ -42,6 +43,7 @@ import type {
   AuctionScreens,
   AuctionVisibilityResult,
   AuctionWeekConfig,
+  ChangeRafflePrizeResult,
   ConsoleReadResult,
   DayLotStatistics,
   FinalistResult,
@@ -174,6 +176,8 @@ const forgedAuctionPresses = {
   "console-raffle-winner-ask": `v1:ac:ra:${auctionToken}`,
   "console-raffle-winner-pick": `v1:ac:rc:${auctionToken}:2`,
   "console-raffle-winner-confirm": `v1:ac:ry:${auctionToken}:2`,
+  "console-raffle-prize-change": `v1:ac:rn:${auctionToken}`,
+  "console-raffle-prize-change-confirm": `v1:ac:rv:${auctionToken}:00000`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -864,6 +868,23 @@ function fakeAuction(
         status: "drawn",
         reveal: { seed: "cd".repeat(32), winningTicket: command.ticket },
       };
+      return { kind: "ok", raffle: state.raffle };
+    },
+    // Смена приза как в Auction (PER-737): до итога приз меняется, после —
+    // `already-drawn`, у розыгрыша без итога — `without-result`.
+    async changeRafflePrize(
+      _person: unknown,
+      command: { auctionId: string; prize: string; opId: string },
+    ): Promise<ChangeRafflePrizeResult> {
+      commands.push({ method: "changeRafflePrize", args: command });
+      const raffle = state.raffle;
+      if (raffle === undefined) return { kind: "raffle-not-found" };
+      const winning = raffle.reveal?.winningTicket;
+      if (raffle.status === "drawn" && winning !== undefined) {
+        return { kind: "already-drawn", winningTicket: winning };
+      }
+      if (!prizeChangeable(raffle)) return { kind: "without-result" };
+      state.raffle = { ...raffle, prize: command.prize };
       return { kind: "ok", raffle: state.raffle };
     },
     async listAuctionNames() {
@@ -6394,5 +6415,214 @@ describe("raffle winner of the auction console", () => {
       press(`v1:ac:ry:${auctionToken}:2`),
     );
     expect(refused.text).toContain("Это действие тебе недоступно.");
+  });
+});
+
+describe("prize change of a running raffle", () => {
+  // Смена приза идущего розыгрыша (PER-737): приз розыгрыш скопировал при
+  // открытии недели, и пульт меняет его у розыгрыша за четыре шага — «Изменить
+  // приз», текст, «было → станет», готово.
+  const raffleWeek = {
+    opensAt: "2026-10-01T15:00:00Z",
+    closesAt: "2099-10-05T15:00:00Z",
+    final: true,
+    windows: [],
+    raffleClosesAt: "2099-10-05T14:00:00Z",
+    rafflePrize: "Сертификат",
+  };
+  const open: RaffleView = {
+    auctionId,
+    status: "open",
+    closesAt: raffleWeek.raffleClosesAt,
+    registered: false,
+    tickets: [],
+    prize: "Сертификат",
+  };
+  const changeData = `v1:ac:rn:${auctionToken}`;
+  const uuidV7 =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const trading = (raffle: RaffleView = open) =>
+    fakeAuction({
+      status: "prebidding",
+      week: raffleWeek,
+      consoleRaffle: raffle,
+    });
+  const step = async (
+    auction: ReturnType<typeof fakeAuction>,
+    calls: RecordedCall[],
+    update: (history: RecordedCall[]) => Update,
+  ) => {
+    const { bot } = harness("admin", auction, calls);
+    await bot.init();
+    await bot.handleUpdate(update(calls));
+    return last(calls);
+  };
+  // Нажатие под сообщением бота: Telegram отдаёт его текст без разметки.
+  const pressUnder = (screen: Sent, label: string, text?: string): Update => {
+    const update = press(dataOf(screen, label));
+    const query = update.callback_query as unknown as {
+      message: Record<string, unknown>;
+    };
+    query.message = {
+      ...query.message,
+      from: { id: 1, is_bot: true, first_name: "stub" },
+      text:
+        text ??
+        (screen.text ?? "")
+          .replaceAll(/<[^>]+>/g, "")
+          .replaceAll("&lt;", "<")
+          .replaceAll("&gt;", ">")
+          .replaceAll("&quot;", '"')
+          .replaceAll("&amp;", "&"),
+    };
+    return update;
+  };
+
+  it("shows the prize of the raffle and offers to change it while trading", async () => {
+    const calls: RecordedCall[] = [];
+    const console = await step(
+      trading({ ...open, prize: "Кружка" }),
+      calls,
+      () => press(consoleData),
+    );
+    expect(plain(console)).toContain("Приз: Кружка");
+    expect(dataOf(console, "Изменить приз")).toBe(changeData);
+
+    const scheduled = await step(
+      fakeAuction({ status: "scheduled", week: raffleWeek }),
+      [],
+      () => press(consoleData),
+    );
+    // До открытия недели «Изменить приз» — приз сроков (PER-649).
+    expect(dataOf(scheduled, "Изменить приз")).not.toBe(changeData);
+  });
+
+  // Пульт онлайн-торгов с полной страницей лотов, окнами и розыгрышем —
+  // самый длинный: ряд смены приза держит его в потолке рядов линтера.
+  it("keeps a full console of the trading week within the row ceiling", async () => {
+    const lots = Array.from({ length: 12 }, (_, index) => ({
+      ...vase,
+      lot: {
+        ...vase.lot,
+        lotId: `0190f2a0-0000-7000-8000-${String(index + 1).padStart(12, "0")}`,
+      },
+    }));
+    const calls: RecordedCall[] = [];
+    const console = await step(
+      fakeAuction({
+        status: "prebidding",
+        week: {
+          ...raffleWeek,
+          windows: [
+            {
+              from: "2026-10-21T15:00:00Z",
+              until: "2026-10-21T18:00:00Z",
+              step: rub(5_000),
+              lotIds: [vaseId],
+            },
+          ],
+        },
+        consoleRaffle: open,
+        lots,
+      }),
+      calls,
+      () => press(consoleData),
+    );
+    expect(dataOf(console, "Изменить приз")).toBe(changeData);
+    expect(labels(console).length).toBeLessThanOrEqual(13);
+    expect(labels(console)).toContainEqual(["Время финала", "Изменить приз"]);
+  });
+
+  it("asks the text, confirms was and will be and changes the prize after yes over restarts", async () => {
+    const auction = trading();
+    const calls: RecordedCall[] = [];
+    await step(auction, calls, () => press(consoleData));
+    await step(auction, calls, (history) =>
+      press(dataOf(last(history), "Изменить приз")),
+    );
+    const asked = question(calls).payload;
+    expect(asked.text).toContain("Сейчас: Сертификат");
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:rn:${auctionToken}:42`);
+
+    const blank = await step(auction, calls, (history) =>
+      answer(history, { text: "   " }),
+    );
+    expect(plain(blank)).toContain("Пустой приз призом не считается");
+
+    await step(auction, calls, (history) =>
+      press(dataOf(last(history), "Ввести заново")),
+    );
+    const confirm = await step(auction, calls, (history) =>
+      answer(history, { text: "  кружка   и <брелок> " }),
+    );
+    expect(plain(confirm)).toContain("Изменить приз?");
+    expect(confirm.text).toContain(
+      "Было: Сертификат\nСтанет: кружка и &lt;брелок&gt;",
+    );
+    expect(labels(confirm)).toEqual([["✔️ Да, изменить", "✖️ Нет"]]);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(consoleData);
+    expect(auction.sent("changeRafflePrize")).toEqual([]);
+
+    const outcome = await step(auction, calls, () =>
+      pressUnder(confirm, "✔️ Да, изменить"),
+    );
+    expect(auction.sent("changeRafflePrize")).toEqual([
+      {
+        method: "changeRafflePrize",
+        args: {
+          auctionId,
+          prize: "кружка и <брелок>",
+          opId: expect.stringMatching(uuidV7),
+        },
+      },
+    ]);
+    expect(plain(outcome)).toContain("Приз розыгрыша изменён");
+    expect(plain(outcome)).toContain("Приз: кружка и &lt;брелок&gt;");
+    expect(labels(outcome)).toEqual([["‹ Пульт"]]);
+
+    const console = await step(auction, calls, () => press(consoleData));
+    expect(plain(console)).toContain("Приз: кружка и &lt;брелок&gt;");
+  });
+
+  it("changes nothing on a confirmation whose text does not match its button", async () => {
+    const auction = trading();
+    const calls: RecordedCall[] = [];
+    await step(auction, calls, () => press(changeData));
+    const confirm = await step(auction, calls, (history) =>
+      answer(history, { text: "кружка" }),
+    );
+    const stale = await step(auction, calls, () =>
+      pressUnder(confirm, "✔️ Да, изменить", "Изменить приз?\n\nСтанет: ваза"),
+    );
+    expect(plain(stale)).toContain("Подтверждение устарело");
+    expect(labels(stale)).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(auction.sent("changeRafflePrize")).toEqual([]);
+  });
+
+  it("answers a stale button once the raffle has its result", async () => {
+    const drawn = trading({
+      ...open,
+      status: "drawn",
+      tickets: [{ number: 1 }],
+      reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+    });
+    const console = await step(
+      fakeAuction({
+        status: "settling",
+        week: { ...raffleWeek, raffleClosesAt: "2026-10-05T14:00:00Z" },
+        consoleRaffle: {
+          ...open,
+          status: "drawn",
+          tickets: [{ number: 1 }],
+          reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+        },
+      }),
+      [],
+      () => press(consoleData),
+    );
+    expect(labels(console).flat()).not.toContain("Изменить приз");
+    const outcome = await step(drawn, [], () => press(changeData));
+    expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
+    expect(drawn.sent("changeRafflePrize")).toEqual([]);
   });
 });

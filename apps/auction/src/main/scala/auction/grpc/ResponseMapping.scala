@@ -1093,6 +1093,22 @@ object ResponseMapping {
     }
   }
 
+  /** Отказ права на смену приза розыгрыша — та же пара, что у ручного итога (PER-737). */
+  def changePrizeDenied(denial: Denial): Either[Status, wire.ChangeRafflePrizeResponse] = {
+    import wire.ChangeRafflePrizeRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.ChangeRafflePrizeResponse().withRefused(wire.ChangeRafflePrizeRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle prize authority answered $denial")
+    }
+  }
+
   /** Ручная отметка принята: подсчёт подавлен, значения номинаций не несутся (ADR-067, п. 8). */
   val settleResultsAccepted: wire.SettlePredictionResultsManuallyResponse =
     wire.SettlePredictionResultsManuallyResponse().withAccepted(wire.PredictionResultsByHand())

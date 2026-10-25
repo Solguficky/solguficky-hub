@@ -30,7 +30,8 @@
         "poolFixed": null,
         "raffleDrawn": null,
         "raffleCancelled": null,
-        "winnerAssigned": null
+        "winnerAssigned": null,
+        "prizeChanged": null
       }
     },
     {
@@ -47,7 +48,8 @@
         "poolFixed": null,
         "raffleDrawn": null,
         "raffleCancelled": null,
-        "winnerAssigned": null
+        "winnerAssigned": null,
+        "prizeChanged": null
       }
     },
     {
@@ -64,7 +66,8 @@
         "raffleCancelled": {
           "at": "2026-10-28T18:00:30Z"
         },
-        "winnerAssigned": null
+        "winnerAssigned": null,
+        "prizeChanged": null
       }
     }
   ],

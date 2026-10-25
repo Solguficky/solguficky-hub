@@ -473,6 +473,14 @@ type PlainAction =
   | { kind: "console-raffle-winner-ask"; auction: string }
   | { kind: "console-raffle-winner-pick"; auction: string; ticket: number }
   | { kind: "console-raffle-winner-confirm"; auction: string; ticket: number }
+  // Смена приза идущего розыгрыша (PER-737): вопрос о тексте и «Да» с
+  // отпечатком нового приза; сам текст «Да» берёт из экрана подтверждения.
+  | { kind: "console-raffle-prize-change"; auction: string }
+  | {
+      kind: "console-raffle-prize-change-confirm";
+      auction: string;
+      print: string;
+    }
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -753,6 +761,9 @@ export type QuestionStep =
   // Номер выигравшего билета (PER-727): аукцион, а пул ответ читает у Auction
   // заново.
   | { kind: "console-raffle-winner"; auction: string }
+  // Новый приз идущего розыгрыша (PER-737): аукцион, а текущий приз ответ
+  // читает у Auction заново.
+  | { kind: "console-raffle-prize-change"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
@@ -996,6 +1007,19 @@ export function consoleRaffleWinnerConfirmData(
   ticket: number,
 ): string {
   return `v1:ac:ry:${auction}:${ticket}`;
+}
+
+/** «Изменить приз» идущего розыгрыша (PER-737): вопрос о новом тексте. */
+export function consoleRafflePrizeChangeData(auction: string): string {
+  return `v1:ac:rn:${auction}`;
+}
+
+/** «Да» смены приза: аукцион и отпечаток нового текста; ключ — на нажатие. */
+export function consoleRafflePrizeChangeConfirmData(
+  auction: string,
+  print: string,
+): string {
+  return `v1:ac:rv:${auction}:${print}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1423,6 +1447,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ai:${step.auction}`;
     case "console-raffle-winner":
       return `v1:q:rw:${step.auction}`;
+    case "console-raffle-prize-change":
+      return `v1:q:rn:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
@@ -1962,7 +1988,8 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:<tx|ty>:<аукцион>:<сет>:<отпечаток>`. Розыгрыш (PER-593):
 // `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`, итог вручную (PER-727):
 // `v1:ac:rw:<аукцион>[:<страница>]`, `v1:ac:ra:<аукцион>` и
-// `v1:ac:<rc|ry>:<аукцион>:<билет>`. Видимость (PER-673):
+// `v1:ac:<rc|ry>:<аукцион>:<билет>`, смена приза (PER-737): `v1:ac:rn:<аукцион>`
+// и `v1:ac:rv:<аукцион>:<отпечаток>`. Видимость (PER-673):
 // `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
@@ -2055,6 +2082,22 @@ function parseConsole(parts: readonly string[]): CallbackAction {
         auction: auction.data,
         ticket: ticket.data,
       };
+    }
+    // Смена приза идущего розыгрыша (PER-737): вопрос `rn` и «Да» `rv` с
+    // отпечатком текста.
+    case "rn":
+      return parts.length === 4
+        ? { kind: "console-raffle-prize-change", auction: auction.data }
+        : { kind: "malformed" };
+    case "rv": {
+      const print = WindowPrintSchema.safeParse(parts[4]);
+      return parts.length === 5 && print.success
+        ? {
+            kind: "console-raffle-prize-change-confirm",
+            auction: auction.data,
+            print: print.data,
+          }
+        : { kind: "malformed" };
     }
     // Текст «Как оплатить и получить» (PER-322): вопрос `it` и снятие `ix`.
     case "it":
@@ -2492,6 +2535,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-payment-text", auction: token.data };
       case "rw":
         return { kind: "console-raffle-winner", auction: token.data };
+      case "rn":
+        return { kind: "console-raffle-prize-change", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":

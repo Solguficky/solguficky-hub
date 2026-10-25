@@ -19,6 +19,7 @@ import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { createParticipantRemoval } from "./participant-removal.js";
+import { createRafflePrizeChange } from "./raffle-prize-change.js";
 import { createRaffleWinner } from "./raffle-winner.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
@@ -84,6 +85,11 @@ export function createDispatcher(
   // пускает право вести аукцион.
   const raffleWinner =
     consoles === undefined ? undefined : createRaffleWinner(consoles.auctions);
+  // Смена приза идущего розыгрыша (PER-737) — тот же порт и то же право.
+  const rafflePrizeChange =
+    consoles === undefined
+      ? undefined
+      : createRafflePrizeChange(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -370,6 +376,12 @@ export function createDispatcher(
           return raffleWinner === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : raffleWinner(request);
+        case "ask-raffle-prize-change":
+        case "pick-raffle-prize-change":
+        case "change-raffle-prize":
+          return rafflePrizeChange === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : rafflePrizeChange(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined
