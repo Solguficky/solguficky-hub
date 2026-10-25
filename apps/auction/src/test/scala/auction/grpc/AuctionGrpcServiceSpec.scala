@@ -736,6 +736,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def register(auction: AuctionId, command: Register) = fail("the raffle was reached")
     def cancel(auction: AuctionId, command: CancelRegistration) = fail("the raffle was reached")
     def get(auction: AuctionId) = fail("the raffle was read")
+    def assign(auction: AuctionId, command: AssignWinner) = fail("the raffle was reached")
   }
 
   /** Аукцион сходки, запланированный с `lot` в реестре: раунд каталога может быть открыт. */
