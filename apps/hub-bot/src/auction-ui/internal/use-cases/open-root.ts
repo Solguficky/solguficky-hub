@@ -102,8 +102,11 @@ export async function openRoot(input: {
           ]
         : []),
       // Хроники дня (PER-725): сводка последних суток, пока идёт онлайн-неделя
-      // — от открытия торгов до закрытия последнего лота по дедлайну.
-      ...(auction.stage === "prebidding" || auction.stage === "settling"
+      // — от открытия торгов до закрытия последнего лота по дедлайну. Читает её
+      // только держатель `place_bids`: держатель одного `run_auctions`, которого
+      // хаб пускает в корень, получил бы отказ Auction, и кнопки у него нет.
+      ...((auction.stage === "prebidding" || auction.stage === "settling") &&
+      input.viewer.rights.includes("place-bids")
         ? [
             [
               {

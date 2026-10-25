@@ -226,4 +226,18 @@ describe("root day chronicle entry", () => {
 
     expect(offered).toEqual(["prebidding", "settling"]);
   });
+
+  // Хроники читает держатель `place_bids`; держатель одного `run_auctions`
+  // получил бы отказ Auction, и кнопки у него нет.
+  it("offers no day chronicle to a viewer without place_bids", async () => {
+    const body = await openRoot({
+      auction: auctionOf(async () => []),
+      viewer: { ...VIEWER, rights: ["run-auctions"] },
+      auctionId: AUCTION_ID,
+    });
+
+    expect(body.keyboard.flat().map((button) => button.action)).not.toContain(
+      "root.day-chronicle",
+    );
+  });
 });

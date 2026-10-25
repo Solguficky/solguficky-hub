@@ -113,9 +113,7 @@ export function daySummaryScreen(view: DaySummaryScreenView): ShownScreen {
                       darkHorseTail(
                         darkHorse.priceGrowth,
                         darkHorse.bidsBefore,
-                        {
-                          money,
-                        },
+                        { money, window: "day" },
                       ),
                     ),
                   ],

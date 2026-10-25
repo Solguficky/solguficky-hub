@@ -25,17 +25,21 @@ export function contestedTail(leaderChanges: number): string {
   return `${counted(leaderChanges, ["смена", "смены", "смен"])} лидера`;
 }
 
-/** «+500 ₽ от старта, 2 ставки до этого дня». */
+/**
+ * «+500 ₽ от старта, 2 ставки до этого дня». Окно называет вызывающий: сводка
+ * пульта считает день сообщества, а хроники участника — последние сутки.
+ */
 export function darkHorseTail(
   priceGrowth: Money,
   bidsBefore: number,
-  options: { money: (amount: Money) => string },
+  options: { money: (amount: Money) => string; window: "day" | "last-day" },
 ): string {
   const before =
     bidsBefore === 0
       ? "нет ставок"
       : counted(bidsBefore, ["ставка", "ставки", "ставок"]);
-  return `+${options.money(priceGrowth)} от старта, ${before} до этого дня`;
+  const until = options.window === "day" ? "до этого дня" : "до этих суток";
+  return `+${options.money(priceGrowth)} от старта, ${before} ${until}`;
 }
 
 /** «5 перебиваний подряд вдвоём». */
@@ -71,11 +75,10 @@ export function dayChronicleParagraphs(
           : section(
               darkHorseName,
               darkHorse.title,
-              darkHorseTail(
-                darkHorse.priceGrowth,
-                darkHorse.bidsBefore,
-                options,
-              ),
+              darkHorseTail(darkHorse.priceGrowth, darkHorse.bidsBefore, {
+                ...options,
+                window: "last-day",
+              }),
             ),
         duel === undefined
           ? undefined
