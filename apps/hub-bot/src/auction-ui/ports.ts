@@ -294,6 +294,12 @@ export type AuctionSummaryView = {
   // приходит только тому, от кого аукцион не скрыт, — держателю
   // `run_auctions`; остальным скрытого аукциона нет вовсе.
   hidden?: true;
+  // Ориентировочное начало финала (ADR-040, дополнение 2026-10-19): анонс,
+  // а не условие торгов. Нет — администратор его не выставил.
+  finalAt?: string;
+  // «Счастливые часы» недели (PER-724): объявленные в конфигурации и
+  // запущенные по ходу торгов, по началу окна. Нет — окон нет.
+  stepWindows?: readonly AuctionStepWindowView[];
   // Порядок и разделы ленты, которые выставил администратор (PER-719). Нет —
   // администратор лоты не упорядочивал, и лента идёт в порядке создания.
   layout?: LotLayoutView;
@@ -310,6 +316,14 @@ export type LotLayoutView = {
 export type LotSectionView = {
   sectionId: number;
   name: string;
+  lotIds: readonly string[];
+};
+
+// Окно сниженного шага аукциона — полуинтервал [from, until) моментов
+// RFC 3339 в UTC и лоты, к которым оно применяется.
+export type AuctionStepWindowView = {
+  from: string;
+  until: string;
   lotIds: readonly string[];
 };
 

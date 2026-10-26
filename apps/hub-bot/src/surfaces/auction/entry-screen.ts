@@ -24,6 +24,7 @@ import {
   predictionResultsParagraphs,
   predictionResultsTitle,
 } from "../../auction-prediction-results.js";
+import { programmeParagraph } from "../../auction-programme.js";
 import {
   cancelRegistrationLabel,
   raffleBackName,
@@ -1069,6 +1070,13 @@ function rootText(block: RootBlock, options: RenderOptions): string {
         ? ["После них — финал в зале."]
         : []),
     ].join("\n"),
+    // Программа недели (PER-724) — абзацем под сроками, текст общий с хабом.
+    programmeParagraph(block, {
+      moment: (instant) =>
+        readableMoment(instant, options.timeZone, options.now),
+      timeZone: options.timeZone,
+      now: options.now ?? new Date(),
+    }),
   );
 }
 
