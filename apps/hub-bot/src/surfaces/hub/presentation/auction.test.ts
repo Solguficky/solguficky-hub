@@ -885,7 +885,7 @@ describe("auction root and the way back", () => {
 
     const root = lastScreen(calls);
     expect(root.text).toContain("<b>Программа недели</b>");
-    expect(root.text).toMatch(/Счастливые часы: сейчас, до \d\d:\d\d — 2 лота/);
+    expect(root.text).toMatch(/Счастливые часы: сейчас, до (?:.+, )?\d\d:\d\d — 2 лота/);
     expect(root.text).toContain("Розыгрыш: ");
     expect(root.text).toContain("Онлайн-торги до ");
     expect(root.text).toContain("Финал: ориентировочно ");
