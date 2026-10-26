@@ -5,7 +5,7 @@ import type {
   ConsoleReadResult,
   LotLayoutResult,
 } from "../auction/port.js";
-import { arrangedLayout, createLotLayout } from "./lot-layout.js";
+import { arrangedLayout, createLotLayout, newSectionId } from "./lot-layout.js";
 import type {
   AuctionConsoleSnapshot,
   ConsoleAuctionStatus,
@@ -167,6 +167,17 @@ describe("lot layout use cases", () => {
       auctionId,
       error: "name-empty",
     });
+  });
+
+  // Номер раздела — минута нажатия: номер удалённого раздела новому не
+  // достаётся, и старая кнопка удалённого раздела нового не тронет.
+  it("numbers a new section by the minute of the press and never below the next one", () => {
+    // 2026-10-26T12:00:00Z — минута 36 720 от 1 октября 2026 года.
+    const at = (Date.UTC(2026, 9, 26, 12) / 1).toString(16).padStart(12, "0");
+    const opId = `${at.slice(0, 8)}-${at.slice(8)}-7000-8000-000000000000`;
+    expect(newSectionId(opId, [3])).toBe(36_720);
+    expect(newSectionId(opId, [36_720])).toBe(36_721);
+    expect(newSectionId("op", [2, 5])).toBe(6);
   });
 
   it("renames a section and refuses the name of another section", async () => {

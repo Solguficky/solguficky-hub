@@ -1,7 +1,7 @@
 import type { AuctionPort, LotView, Viewer } from "../../ports.js";
 import {
   arrangeFeed,
-  FEED_PAGE_SIZE,
+  feedPages,
   loadFeed,
   orderForFeed,
   readFeedShape,
@@ -24,17 +24,21 @@ export type LotNeighbors = {
 
 // На краях соседа нет, по кругу листание не идёт (решение владельца по
 // прогону 14 октября 2026 года). Лота нет в ленте — соседей тоже.
+// `lead` — ряды кнопок разделов на первой странице общего списка (PER-719):
+// они сдвигают страницы его лотов.
 export function neighborsOf(
   sorted: readonly LotView[],
   lotId: string,
+  lead = 0,
 ): LotNeighbors {
+  const pages = feedPages(sorted.length, lead);
   const index = sorted.findIndex((lot) => lot.lotId === lotId);
   if (index < 0) return {};
   const at = (position: number): LotNeighbor | undefined => {
     const lot = sorted[position];
     return lot === undefined
       ? undefined
-      : { lotId: lot.lotId, page: Math.floor(position / FEED_PAGE_SIZE) };
+      : { lotId: lot.lotId, page: pages.pageOf(position) };
   };
   const prev = at(index - 1);
   const next = at(index + 1);
@@ -72,7 +76,7 @@ export async function readNeighbors(input: {
       each.lots.some((lot) => lot.lotId === input.lot.lotId),
     );
     return section === undefined
-      ? neighborsOf(rest, input.lot.lotId)
+      ? neighborsOf(rest, input.lot.lotId, sections.length)
       : {
           ...neighborsOf(section.lots, input.lot.lotId),
           sectionId: section.sectionId,

@@ -437,7 +437,9 @@ function feedScreen(
           : feedSectionTitle(feed.section.name),
         { items: feed.lots, ...feed },
       ),
-      ...(feed.lots.length === 0
+      // Пустой общий список при заполненных разделах — не пустой аукцион
+      // (PER-719): сводка своих лотов остаётся.
+      ...(feed.lots.length === 0 && (feed.sections?.length ?? 0) === 0
         ? ["Лотов пока нет."]
         : feedSummary(feed, mineOptions)),
     ),

@@ -356,8 +356,10 @@ export function createLotLayout(consoles: AuctionConsoles) {
     if (layout.sections.length >= lotSectionLimit) {
       return noted(console, { kind: "limit" });
     }
-    const sectionId =
-      Math.max(0, ...layout.sections.map((section) => section.sectionId)) + 1;
+    const sectionId = newSectionId(
+      request.opId,
+      layout.sections.map((section) => section.sectionId),
+    );
     const added: LotLayoutView = {
       ...layout,
       sections: [...layout.sections, { sectionId, name: value, lotIds: [] }],
@@ -476,4 +478,25 @@ export function createLotLayout(consoles: AuctionConsoles) {
       }
     }
   };
+}
+
+// Начало отсчёта номеров разделов — 1 октября 2026 года в минутах.
+const sectionEpochMinutes = Date.UTC(2026, 9, 1) / 60_000;
+
+/**
+ * Номер нового раздела (PER-719): минута нажатия по времени `op_id` — UUIDv7
+ * несёт момент рождения первыми 48 битами, — но не меньше следующего за
+ * наибольшим. Так номер удалённого раздела новому не достаётся, и старая
+ * кнопка удалённого раздела не правит и не открывает новый; совпасть номера
+ * могут, только если раздел удалили и завели заново в ту же минуту. Состояния
+ * для счётчика у пульта нет, а момент нажатия едет в ключе команды. Ключ не
+ * UUIDv7 — следующий за наибольшим.
+ */
+export function newSectionId(opId: string, taken: readonly number[]): number {
+  const next = Math.max(0, ...taken) + 1;
+  const millis = Number.parseInt(opId.replaceAll("-", "").slice(0, 12), 16);
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-7/.test(opId) || !Number.isFinite(millis)) {
+    return next;
+  }
+  return Math.max(next, Math.floor(millis / 60_000) - sectionEpochMinutes);
 }

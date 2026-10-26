@@ -59,9 +59,15 @@ export async function openFeed(input: {
     lineup?.activeLotId === undefined
       ? undefined
       : lots.find((lot) => lot.lotId === lineup.activeLotId);
-  const pageCount = Math.max(1, Math.ceil(lots.length / FEED_PAGE_SIZE));
-  const page = Math.min(input.page, pageCount - 1);
-  const shown = lots.slice(page * FEED_PAGE_SIZE, (page + 1) * FEED_PAGE_SIZE);
+  // Кнопки разделов стоят на первой странице ленты вместо части лотов: экран
+  // не выходит за потолок рядов (PER-719).
+  const pages = feedPages(
+    lots.length,
+    section === undefined ? sections.length : 0,
+  );
+  const page = Math.min(input.page, pages.count - 1);
+  const pageCount = pages.count;
+  const shown = lots.slice(...pages.range(page));
   const feedButton = (target: number) =>
     section === undefined
       ? encodeAuctionCallback({
@@ -83,11 +89,12 @@ export async function openFeed(input: {
       ? [{ action: "feed.next" as const, callbackData: feedButton(page + 1) }]
       : []),
   ];
-  // Разделы стоят над лотами на каждой странице ленты: листание идёт по
-  // лотам вне разделов, а разделы — оглавление, а не страница.
+  // Разделы — оглавление над лотами первой страницы: листание идёт по лотам
+  // вне разделов.
+  const shownSections = section === undefined && page === 0 ? sections : [];
   const sectionRows: AuctionButton[][] =
-    section === undefined
-      ? sections.map((each) => [
+    shownSections.length > 0
+      ? shownSections.map((each) => [
           {
             action: "feed.open-section" as const,
             sectionId: each.sectionId,
@@ -110,9 +117,9 @@ export async function openFeed(input: {
         lots: shown.map((lot) => feedItemOf(lot, input.viewer)),
         ...withMine(mineOf(ordered, input.viewer)),
         ...(beforeTrading(loaded) ? { beforeTrading: true as const } : {}),
-        ...(section === undefined && sections.length > 0
+        ...(shownSections.length > 0
           ? {
-              sections: sections.map((each) => ({
+              sections: shownSections.map((each) => ({
                 sectionId: each.sectionId,
                 name: each.name,
                 lotCount: each.lots.length,
@@ -233,6 +240,30 @@ export function loadFeed(input: {
       return { items: page.lots, nextPageToken: page.nextPageToken };
     },
   });
+}
+
+// Страницы списка ленты: `lead` рядов первой страницы заняты кнопками
+// разделов (PER-719), и лотов на ней столько меньше; дальше — по
+// `FEED_PAGE_SIZE`. Ту же раскладку страниц берут соседи карточки.
+export function feedPages(
+  count: number,
+  lead: number,
+): {
+  count: number;
+  range: (page: number) => [number, number];
+  pageOf: (index: number) => number;
+} {
+  const first = Math.max(0, FEED_PAGE_SIZE - lead);
+  const rest = Math.max(0, count - first);
+  return {
+    count: count === 0 ? 1 : 1 + Math.ceil(rest / FEED_PAGE_SIZE),
+    range: (page) =>
+      page === 0
+        ? [0, first]
+        : [first + (page - 1) * FEED_PAGE_SIZE, first + page * FEED_PAGE_SIZE],
+    pageOf: (index) =>
+      index < first ? 0 : 1 + Math.floor((index - first) / FEED_PAGE_SIZE),
+  };
 }
 
 // Стадия и раскладка ленты из одного `getAuction`: состав идущего финала

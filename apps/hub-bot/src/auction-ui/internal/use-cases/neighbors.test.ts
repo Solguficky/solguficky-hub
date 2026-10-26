@@ -32,6 +32,15 @@ describe("lot neighbors", () => {
     });
   });
 
+  // Кнопки разделов занимают ряды первой страницы (PER-719), и страницы лотов
+  // сдвигаются.
+  it("shifts the pages of the general list by the section buttons", () => {
+    expect(neighborsOf(feed, "lot-1", FEED_PAGE_SIZE - 2)).toEqual({
+      prev: { lotId: "lot-0", page: 0 },
+      next: { lotId: "lot-2", page: 1 },
+    });
+  });
+
   it("has no neighbors for a lot outside the feed or alone in it", () => {
     expect(neighborsOf(feed, "lot-missing")).toEqual({});
     expect(neighborsOf([lot(0)], "lot-0")).toEqual({});

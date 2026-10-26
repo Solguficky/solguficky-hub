@@ -721,13 +721,13 @@ function auctionAction(
     : accept({ kind: question, auctionId, addressee });
 }
 
-// Номер раздела ленты (PER-719) — положительное целое без ведущих нулей: его
-// выбирает пульт, следующий за наибольшим, и в 64 байта он помещается с
-// запасом.
-const SECTION = /^[1-9]\d{0,5}$/;
+// Номер раздела ленты (PER-719) — положительное целое без ведущих нулей до
+// семи цифр: его выбирает пульт минутой создания раздела, и в 64 байта он
+// помещается с запасом.
+const SECTION = /^[1-9]\d{0,6}$/;
 
 function sectionArgument(sectionId: number): string {
-  if (!Number.isInteger(sectionId) || sectionId < 1 || sectionId > 999_999) {
+  if (!Number.isInteger(sectionId) || sectionId < 1 || sectionId > 9_999_999) {
     throw new RangeError(`feed section out of range: ${sectionId}`);
   }
   return String(sectionId);

@@ -518,6 +518,31 @@ describe("feed in the order of the administrator", () => {
     ]);
   });
 
+  // Восемь разделов и девять лотов вне них: разделы стоят на первой странице
+  // вместо лотов, и экран не выходит за потолок рядов.
+  it("gives the section buttons the place of lots on the first page", async () => {
+    const many = Array.from({ length: 17 }, (_, i) => lot(i + 1, 100));
+    const sections = Array.from({ length: 8 }, (_, i) => ({
+      sectionId: i + 1,
+      name: `Раздел ${i + 1}`,
+      lotIds: [many[i]?.lotId ?? ""],
+    }));
+    const first = await open({ lotIds: [], sections }, { feed: many });
+    expect(first.keyboard).toHaveLength(FEED_PAGE_SIZE + 2);
+    expect(blockOf(first).lots).toEqual([]);
+    expect(blockOf(first).pageCount).toBe(3);
+    const second = await openFeed({
+      auction: withLayout({ lotIds: [], sections }, many),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 1,
+    });
+    expect(blockOf(second).sections).toBeUndefined();
+    expect(blockOf(second).lots.map((item) => item.lotId)).toEqual(
+      many.slice(8, 16).map((l) => l.lotId),
+    );
+  });
+
   it("pages a long section with buttons of the same section", async () => {
     const many = Array.from({ length: FEED_PAGE_SIZE + 2 }, (_, i) =>
       lot(i + 1, 100),
