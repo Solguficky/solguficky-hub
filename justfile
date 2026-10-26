@@ -746,6 +746,11 @@ dotnet-tools:
 telegram-rich-probe:
     node tools/telegram-rich-probe/probe.mjs
 
+# Зонд шёпота и невидимых команд в группе (PER-680): HUB_BOT_TOKEN и
+# GROUP_CHAT_ID без умолчаний, бот без второго поллера; не входит в verify
+telegram-whisper-probe:
+    node tools/telegram-rich-probe/whisper.mjs
+
 # Сквозной контур (L2): Identity и Meetups вместе на топологии, поднятой
 # AppHost через Aspire.Hosting.Testing. В `verify` намеренно не входит —
 # стандарт держит в механическом гейте только L0. Входит в `test-all`.
