@@ -1,0 +1,24 @@
+Elixir 1.20.4 (compiled with Erlang/OTP 28)
+    warning: the following clause will never match:
+
+        {:lot_sould, _} ->
+
+    because it attempts to match on the result of:
+
+        decode(n)
+
+    which has type:
+
+        dynamic(
+          {:bid_placed, %Occ.BidPlaced{previous_leader_id: nil}} or {:lot_sold, %Occ.LotSold{}} or
+            {:lot_unsold, %Occ.LotUnsold{}}
+        )
+
+    type warning found at:
+    │
+ 30 │       {:lot_sould, _} -> "typo"
+    │       ~~~~~~~~~~~~~~~~~~~~~~~~~
+    │
+    └─ occasion.ex:30: Occ.describe_typo/1
+
+elixirc exit=0
