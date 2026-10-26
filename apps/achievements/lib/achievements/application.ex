@@ -40,11 +40,18 @@ defmodule Achievements.Application do
   # Без адреса шины релея нет: строки ждут в outbox.
   defp bus(nil, _interval), do: []
 
-  defp bus(%{host: host, port: port}, interval) do
+  defp bus(settings, interval) do
     [
       {Gnat.ConnectionSupervisor,
-       %{name: :gnat, connection_settings: [%{host: host, port: port, no_responders: true}]}},
+       %{name: :gnat, connection_settings: [connection_settings(settings)]}},
       {Achievements.Relay, connection: :gnat, interval: interval}
     ]
   end
+
+  @doc """
+  Настройки соединения gnat из `Achievements.Settings.nats!/1`: адрес вместе с
+  учёткой, которую Aspire и среда кладут в URL шины. `no_responders` — отказ
+  публикации на subject без стрима приходит сразу, а не таймаутом.
+  """
+  def connection_settings(settings), do: Map.put(settings, :no_responders, true)
 end

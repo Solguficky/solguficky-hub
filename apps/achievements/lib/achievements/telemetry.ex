@@ -14,14 +14,16 @@ defmodule Achievements.Telemetry do
   def setup(export_logs?) do
     :ok = :logger.update_primary_config(%{metadata: %{service: @service}})
 
-    if export_logs? do
-      :ok =
-        :logger.add_handler(:otel_logs, :otel_log_handler, %{
-          level: :info,
-          config: %{exporter: {:otel_exporter_logs_otlp, %{}}}
-        })
-    end
+    if export_logs?,
+      do: :ok = :logger.add_handler(:otel_logs, :otel_log_handler, log_handler_config())
 
     :ok
   end
+
+  @doc """
+  Конфигурация `otel_log_handler`. Экспортёр — ключ верхнего уровня: без него
+  обработчик берёт умолчанием экспортёр трейсов, который на пачке логов
+  падает, и ни одна запись не уходит.
+  """
+  def log_handler_config, do: %{level: :info, exporter: {:otel_exporter_logs_otlp, %{}}}
 end

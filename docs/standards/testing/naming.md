@@ -66,7 +66,7 @@
 
 - Модуль теста — `<SUT>Test`, где SUT — модуль ровно как в коде: `Achievements.Grpc.BoundaryTest`, `Achievements.SettingsTest`. Строка `test` называет наблюдаемое поведение предложением со строчной буквы и глаголом в третьем лице настоящего времени, без `should`: `test "liveness serves without asking the database"`, `test "an unknown connection parameter fails instead of being ignored"`.
 - Отрицательный случай называет наблюдаемое бездействие или отказ: `refuses`, `stays unpublished`, `is omitted rather than written empty`.
-- Файл `<unit>_test.exs` лежит в `test/` по пути модуля SUT, как `lib/` раскладывает исходники. Уровень выражается каталогом и тегом, а не именем: L1 лежит в `test/integration/` с `@moduletag :integration`, и `test_helper.exs` отбирает его переменной уровня ([testing-strategy.md](testing-strategy.md)).
+- Файл `<unit>_test.exs` лежит в `test/` по пути модуля SUT, как `lib/` раскладывает исходники. L1 лежит в `test/integration/` с `@moduletag :integration`, и `test_helper.exs` отбирает его переменной уровня ([testing-strategy.md](testing-strategy.md)); модуль L1 называется `<SUT>IntegrationTest`, как `*IntegrationSpec` в Scala: имя модуля в проекте одно, и L0 того же SUT уже занял `<SUT>Test`.
 
 ## Пример
 

@@ -1,4 +1,4 @@
-defmodule Achievements.ApplicationTest do
+defmodule Achievements.ApplicationIntegrationTest do
   # L1: настоящий узел над PostgreSQL и NATS в Testcontainers — миграции до
   # listen, health по gRPC и релей outbox в JetStream.
   use ExUnit.Case, async: false
@@ -26,7 +26,8 @@ defmodule Achievements.ApplicationTest do
 
     {:ok, nats} =
       Container.new("nats:2")
-      |> Container.with_cmd(["-js"])
+      # Шина под паролем, как у Aspire и в чарте: релей обязан нести учётку.
+      |> Container.with_cmd(["-js", "--user", "nats", "--pass", "relay-secret"])
       |> Container.with_exposed_port(4222)
       |> Container.with_waiting_strategy(
         Testcontainers.LogWaitStrategy.new(~r/Server is ready/, 30_000)
@@ -39,10 +40,10 @@ defmodule Achievements.ApplicationTest do
     Application.put_env(:achievements, Repo, Keyword.put(db, :ssl, false))
     Application.put_env(:achievements, :grpc_port, grpc_port)
 
-    Application.put_env(:achievements, :nats, %{
-      host: Testcontainers.get_host(nats),
-      port: Container.mapped_port(nats, 4222)
-    })
+    nats_url =
+      "nats://nats:relay-secret@#{Testcontainers.get_host(nats)}:#{Container.mapped_port(nats, 4222)}"
+
+    Application.put_env(:achievements, :nats, Achievements.Settings.nats!(nats_url))
 
     # Тики релея тест делает сам, чтобы таймер не забирал строки раньше.
     Application.put_env(:achievements, :relay_interval, :timer.hours(1))

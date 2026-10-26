@@ -1,7 +1,9 @@
 defmodule Achievements.Relay do
   @moduledoc """
   Релей outbox: переносит неопубликованные строки в JetStream по порядку
-  `position` и отмечает каждую после подтверждения стрима. Заголовок
+  `position` и отмечает каждую после подтверждения стрима. Порядок между
+  транзакциями писателей, закоммиченными не в порядке `position`, этим не
+  гарантирован: его решает первый писатель outbox. Заголовок
   `Nats-Msg-Id` — `event_id` строки, поэтому повтор после сбоя между
   подтверждением и отметкой стрим отсекает в окне дедупликации, а за окном —
   потребитель по `event_id`.
@@ -67,19 +69,25 @@ defmodule Achievements.Relay do
       {event_id, reason} ->
         Logger.warning(
           "outbox relay failed",
-          [
-            result: "error",
-            error_category: "dependency_unavailable",
-            error: reason,
-            event_id: event_id
-          ] ++ fields
+          [result: "error", error_category: "dependency_unavailable", error: reason] ++
+            if(event_id, do: [event_id: event_id], else: []) ++ fields
         )
     end
 
     published
   end
 
+  # Недоступная база — отказ зависимости, а не дефект: тик пишет его записью
+  # каркаса и ждёт следующего, вместо падения процесса на каждом тике, которое
+  # исчерпало бы рестарты дерева и погасило узел.
   defp publish_batch(state) do
+    publish_rows(state)
+  rescue
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      {0, {nil, Exception.message(error)}}
+  end
+
+  defp publish_rows(state) do
     from(o in Outbox, where: is_nil(o.published_at), order_by: o.position, limit: @batch)
     |> Repo.all()
     |> Enum.reduce_while({0, nil}, fn row, {published, nil} ->
