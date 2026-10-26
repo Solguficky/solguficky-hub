@@ -1,0 +1,356 @@
+syntax = "proto3";
+
+package auction.v1;
+
+// Domain value types of the trading core, shared by the service contract and by
+// the consumers that carry a lot state without calling the service. They live
+// apart from auction_service.proto so that a consumer of the events does not drag
+// AuctionService and its requests into its codegen.
+//
+// Catalog attributes of a lot - title, description, pictures - are not part of
+// this domain and appear in none of these messages: the trading core does not
+// know them.
+
+// An amount of money. Floating point appears nowhere in this contract.
+message Money {
+  // Whole number of minor units of the currency, e.g. kopecks for RUB.
+  int64 minor_units = 1;
+
+  // ISO 4217 alphabetic code, upper case, e.g. "RUB". Carried by every amount
+  // even though the platform has one currency, so that an amount is readable
+  // without the configuration of its lot.
+  string currency = 2;
+}
+
+// Trading configuration of a lot. LotScheduled sets it and may replace it until
+// the lot enters trading; from LotOpened on it never changes.
+message LotConfig {
+  // ISO 4217 alphabetic code shared by every amount of the lot.
+  string currency = 1;
+
+  StepPolicy step_policy = 2;
+  AntiSnipe anti_snipe = 3;
+
+  // false is a real value: proxy limits are disabled for the lot.
+  bool proxy_enabled = 4;
+}
+
+// How the minimum raise is computed from a price. Exactly one policy is set, and
+// an empty oneof is not a value.
+message StepPolicy {
+  oneof policy {
+    // One step at every price.
+    Money fixed = 1;
+
+    // Step by price tiers.
+    TieredSteps tiered = 2;
+  }
+}
+
+message TieredSteps {
+  // Sorted by lower_bound ascending, never empty, the first lower bound is zero.
+  // The step at a price is the step of the last tier whose lower bound does not
+  // exceed that price, so the last tier is open upwards.
+  repeated StepTier tiers = 1;
+}
+
+message StepTier {
+  // The lowest price this tier applies to - a lower bound, not an upper one.
+  Money lower_bound = 1;
+
+  // Strictly positive.
+  Money step = 2;
+}
+
+// Anti-sniping: a bid placed close to the deadline extends it a bounded number of
+// times. Durations are whole seconds.
+message AntiSnipe {
+  // A bid extends the deadline when it lands within this many seconds before it.
+  int64 window_seconds = 1;
+
+  // How many seconds one extension adds to the deadline.
+  int64 extension_seconds = 2;
+
+  // How many extensions the lot may use in total. 0 is a real value: never extend.
+  int32 max_extensions = 3;
+}
+
+// A lot that exists and belongs to its auction, with no trading conditions yet.
+// It carries nothing: the auction is in the envelope, and the config is unset.
+message LotDraft {}
+
+// A lot with checked trading conditions, waiting to be opened. The conditions
+// are the config next to the status and are not repeated here; this carries only
+// what the config does not - the starting price. A deadline is not here either:
+// it belongs to the auction and reaches the lot when the lot is opened. Bids are
+// not accepted.
+message LotSchedule {
+  // The price trading opens at. Its currency is the currency of the config.
+  Money starting_price = 1;
+}
+
+// A lot in trading: bids are accepted.
+message LotTrading {
+  // The last accepted price; before the first bid it is the starting price. After
+  // a participant was removed it is the price the lot went on with, which may be
+  // lower than an accepted bid.
+  Money current_price = 1;
+
+  // The price the auctioneer announced. Unset when no ask was announced; it is
+  // then not zero, it is absent.
+  Money ask = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the leading
+  // participant. Unset before the first bid, and after a removal that left
+  // nobody to lead.
+  optional string leader_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the bid that holds the lead. Set
+  // exactly when leader_id is set. After a removal it may name the position the
+  // removal recorded for the leader rather than a bid of the history.
+  optional string leading_bid_id = 4;
+
+  // RFC 3339 instant in UTC. Unset when the lot is led by a person and closes on
+  // their command rather than by time.
+  optional string deadline = 5;
+
+  // Anti-sniping extensions used so far. 0 is a real value.
+  int32 extensions_used = 6;
+
+  LotPhase phase = 7;
+}
+
+// A lot selected for the live final, held between the common deadline and its
+// turn in the final. It has neither a deadline nor an ask, and it accepts no bids.
+message LotHeld {
+  // The price the lot had when it was held, or the price a removal left it with.
+  Money current_price = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Unset when the lot was held without
+  // a bid, and after a removal that left nobody to lead.
+  optional string leader_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens. Set exactly when leader_id is set.
+  optional string leading_bid_id = 3;
+
+  int32 extensions_used = 4;
+}
+
+// A sold lot. Terminal.
+message LotSale {
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the winner.
+  string winner_id = 1;
+
+  Money price = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the winning bid.
+  string bid_id = 3;
+
+  // RFC 3339 instant in UTC: the server time the sale was decided.
+  string sold_at = 4;
+}
+
+// Configuration of an auction: its format expressed as
+// values, not as branches. AuctionScheduled sets it and may replace it until
+// prebidding starts; from PrebiddingStarted on it never changes.
+message AuctionConfig {
+  // The online phase. Unset is a real value: a format without an online phase.
+  // It is then absent, not empty.
+  OnlinePhase online_phase = 1;
+
+  // How many blocks the live final has: 0 or 1. 0 is a real value: no final.
+  // The auction knows one final, so a larger number is refused as an invalid
+  // configuration rather than accepted silently.
+  int32 final_blocks = 2;
+
+  ClosingPolicy closing_policy = 3;
+
+  // Values the auction fills into the conditions of a lot that a ScheduleLot
+  // leaves unset. They are applied at that moment: a later change of the defaults
+  // does not reach a lot already scheduled.
+  LotDefaults lot_defaults = 4;
+
+  // Windows of the online phase with a reduced bid step on the lots they name.
+  // Empty is a real value: no window.
+  repeated AuctionStepWindow step_windows = 5;
+
+  // How long the winner of a lot has to pay its invoice, in whole seconds from
+  // the sale: InvoiceState.payment_due_at is LotSale.sold_at plus this term. From
+  // one day to thirty days. Unset in ScheduleAuction, the auction fills in the
+  // term of the platform, seven days, and stores it, so a stored configuration
+  // always carries it; a later change of the platform term does not reach an
+  // auction already scheduled.
+  optional int64 payment_term_seconds = 6;
+}
+
+// A window of reduced bid step: the half-open interval [from, until) of the
+// online phase.
+message AuctionStepWindow {
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+
+  // The bid step inside the window, in the currency of the lots.
+  Money step = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens, each the id of a lot the window
+  // applies to.
+  repeated string lot_ids = 4;
+}
+
+// The online phase of an auction: two instants, not a duration, because the
+// scheduler needs points on the time line to start and to end the prebidding.
+message OnlinePhase {
+  // RFC 3339 instant in UTC: when the prebidding starts.
+  string opens_at = 1;
+
+  // RFC 3339 instant in UTC: when the online phase ends. It is the one source of
+  // the common deadline of the lots: a lot has no deadline of its own and receives
+  // this one when it is opened, if closes_lots is set. Unset when the phase ends on
+  // a command rather than by time; it is then absent, not empty.
+  optional string closes_at = 2;
+
+  // Whether the end of the online phase closes the lots. false is a real value:
+  // the lots stay open and a person closes them.
+  bool closes_lots = 3;
+
+  // RFC 3339 instant in UTC: when registration for the raffle among the
+  // participants closes. Unset is a real value: an auction without a raffle; it
+  // is then absent, not empty.
+  optional string raffle_closes_at = 4;
+
+  // The prize of the raffle among the participants, one line as the organizer
+  // wrote it. Unset is a real value: a raffle without a prize; the field is
+  // then absent, not empty.
+  optional string raffle_prize = 5;
+}
+
+// Who closes the lots. Exactly one is set, and an empty oneof is not a value.
+message ClosingPolicy {
+  oneof policy {
+    ClosingByAuctioneer by_auctioneer = 1;
+    ClosingByDeadline by_deadline = 2;
+    MixedClosing mixed = 3;
+  }
+}
+
+// Every lot is closed by the auctioneer.
+message ClosingByAuctioneer {}
+
+// Every lot is closed by its deadline.
+message ClosingByDeadline {}
+
+// The online phase and the final are closed differently. Only the online side is
+// a parameter.
+message MixedClosing {
+  // Whether the lots of the online phase close by deadline. false is a real value.
+  bool online_by_deadline = 1;
+}
+
+// Defaults for the trading conditions of a lot. The fields are those of LotConfig
+// with the same numbers so that the two stay readable side by side, but this is
+// not a config: nothing trades on it, and it is a value of the auction, not of a
+// lot.
+message LotDefaults {
+  // ISO 4217 alphabetic code.
+  string currency = 1;
+
+  StepPolicy step_policy = 2;
+  AntiSnipe anti_snipe = 3;
+
+  // false is a real value: proxy limits are disabled unless a lot says otherwise.
+  bool proxy_enabled = 4;
+}
+
+// Phase of a lot in trading. The format of the auction is not visible here: the
+// lot learns its phase from its own events.
+enum LotPhase {
+  LOT_PHASE_UNSPECIFIED = 0;
+
+  // Online trading with a deadline or led by a person; any amount above the
+  // minimum is accepted.
+  LOT_PHASE_ONLINE = 1;
+
+  // Live final: a bid is accepted only at the next price.
+  LOT_PHASE_LIVE = 2;
+}
+
+enum UnsoldReason {
+  UNSOLD_REASON_UNSPECIFIED = 0;
+  UNSOLD_REASON_NO_BIDS = 1;
+}
+
+enum WithdrawnReason {
+  WITHDRAWN_REASON_UNSPECIFIED = 0;
+  WITHDRAWN_REASON_BY_ORGANIZER = 1;
+  WITHDRAWN_REASON_BY_AUTHOR = 2;
+  WITHDRAWN_REASON_DUPLICATE = 3;
+
+  // The auction of the lot was cancelled while the lot was not sold or closed.
+  WITHDRAWN_REASON_AUCTION_CANCELLED = 4;
+}
+
+// Channel a manual bid came through.
+enum BidSource {
+  BID_SOURCE_UNSPECIFIED = 0;
+
+  // A participant bid from the bot.
+  BID_SOURCE_BOT = 1;
+
+  // A bid from the room, entered on behalf of a participant.
+  BID_SOURCE_FLOOR = 2;
+}
+
+// The ten nominations of the predictions game (ADR-067), shared by the reads
+// and the results fact: it lived in auction_service.proto while only the
+// service spoke of it, and moved here when the bus fact named it too.
+enum PredictionNomination {
+  PREDICTION_NOMINATION_UNSPECIFIED = 0;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT = 1;
+
+  // Catalog round, a number.
+  PREDICTION_NOMINATION_TOTAL_SALES = 2;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_MOST_BIDS_LOT = 3;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_BIGGEST_GROWTH_LOT = 4;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_MOST_BIDDERS_LOT = 5;
+
+  // Catalog round, a number.
+  PREDICTION_NOMINATION_TOTAL_BIDS = 6;
+
+  // Final round, a lot.
+  PREDICTION_NOMINATION_FINAL_MOST_EXPENSIVE_LOT = 7;
+
+  // Final round, a number.
+  PREDICTION_NOMINATION_FINAL_TOTAL_SALES = 8;
+
+  // Final round, a lot.
+  PREDICTION_NOMINATION_FINAL_BIGGEST_GROWTH_LOT = 9;
+
+  // Final round, a number.
+  PREDICTION_NOMINATION_FINAL_TOTAL_BIDS = 10;
+}
+
+// How the winner receives a sold lot. The winner chooses it; until then the
+// method is unspecified, and that is a real state rather than a default.
+enum FulfillmentMethod {
+  FULFILLMENT_METHOD_UNSPECIFIED = 0;
+
+  // The winner collects the lot in person.
+  FULFILLMENT_METHOD_PICKUP = 1;
+
+  // The lot is sent to the winner.
+  FULFILLMENT_METHOD_DELIVERY = 2;
+
+  // The lot is digital and is handed over without a physical transfer.
+  FULFILLMENT_METHOD_DIGITAL = 3;
+}

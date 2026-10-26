@@ -1,0 +1,24 @@
+# Образ спайка Elixir: mix release в образе Elixir 1.20 / OTP 28, рантайм —
+# debian trixie-slim без Erlang и Elixir: ERTS едет в release. Базы по digest.
+FROM mirror.gcr.io/library/elixir@sha256:d2b22bba38b499b709c113bd040bf4a6dd12b505668b44d9484b5964059fefa9 AS build
+ENV MIX_ENV=prod MIX_HOME=/root/.mix HEX_HOME=/root/.hex
+WORKDIR /src
+COPY .cache/mix /root/.mix
+COPY .cache/hex /root/.hex
+COPY achievements/mix.exs achievements/mix.lock ./
+COPY achievements/deps ./deps
+COPY achievements/config ./config
+COPY achievements/lib ./lib
+COPY achievements/priv ./priv
+RUN mix compile && mix release
+
+FROM mirror.gcr.io/library/debian@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+# libssl, libcrypto, libtinfo и zlib в slim уже есть; libstdc++ — из той же trixie:
+# apt по http прокси среды не пропускает.
+COPY --from=build /usr/lib/x86_64-linux-gnu/libstdc++.so.6* /usr/lib/x86_64-linux-gnu/
+COPY --from=build /src/_build/prod/rel/achievements /app
+RUN useradd -r -u 10001 app
+ENV LANG=C.UTF-8
+USER app
+ENTRYPOINT ["/app/bin/achievements"]
+CMD ["start"]

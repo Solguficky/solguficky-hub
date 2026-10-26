@@ -1,0 +1,5 @@
+.cache/
+pygen/
+__pycache__/
+achievements/_build/
+achievements/deps/

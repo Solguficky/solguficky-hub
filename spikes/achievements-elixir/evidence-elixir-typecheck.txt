@@ -1,0 +1,32 @@
+mix compile exit=0
+    warning: unknown key .winer_id in expression:
+
+        s.winer_id
+
+    the given type does not have the given key:
+
+        dynamic(%Auction.V1.InvoiceState{
+          id: term(),
+          auction_id: term(),
+          lot_id: term(),
+          winner_id: term(),
+          amount: term(),
+          payment_due_at: term(),
+          status: term(),
+          __unknown_fields__: term(),
+          __protobuf__: term()
+        })
+
+    where "s" was given the type:
+
+        # type: dynamic(%Auction.V1.InvoiceState{})
+        # from: lib/typecheck/occasion_check.ex:24:46
+        %Auction.V1.InvoiceState{} = s
+
+    type warning found at:
+    │
+ 24 │   def direct_typo(%Auction.V1.InvoiceState{} = s), do: s.winer_id
+    │                                                          ~~~~~~~~
+    │
+    └─ lib/typecheck/occasion_check.ex:24:58: Achievements.OccasionCheck.direct_typo/1
+
