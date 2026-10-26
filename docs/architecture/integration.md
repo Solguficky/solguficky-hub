@@ -787,10 +787,12 @@ Subject называет повод, сообщение на всех повод
 |---|---|---|---|---|
 | `MEETUPS_EVENTS` | `events.meetups.>` | `limits`: `max_age` 7 дней, `discard old` | `file`, том `nats-data` рабочего дерева | 2 минуты |
 | `IDENTITY_EVENTS` | `events.identity.>` | то же | то же | то же |
-| `AUCTION_EVENTS` | `events.auction.>` | то же | то же | то же |
+| `AUCTION_EVENTS` | `events.auction.>` | `limits`: `max_age` 90 дней, `discard old` | то же | то же |
 | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | то же | то же | то же |
 
 Один стрим на домен-producer, а не на subject: повод — фильтр внутри стрима, и новый повод словаря не заводит стрима. Retention `limits`, а не `interest` или `workqueue`: те привязывают хранение к составу потребителей, и сообщение, пришедшее раньше объявления durable, исчезало бы. Семь дней — не гарантия хранения, а запас на простой потребителя: стрим не источник истины, и потерявший позицию потребитель собирает состояние с нуля, не полагаясь ни на журнал, ни на стрим ([PER-70](https://linear.app/anticnvm/issue/per-70)).
+
+У `AUCTION_EVENTS` срок свой — 90 дней ([PER-758](https://linear.app/anticnvm/issue/per-758)): ачивки ([ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md)) выдадут по фактам аукциона 2026 правилами, когда появится сервис Achievements, а за семь дней факты недели торгов истекли бы задолго до первого правила. Это запас до переотправки фактов новому подписчику из журнала модуля ([PER-757](https://linear.app/anticnvm/issue/per-757)), а не гарантия хранения. Смену `max_age` JetStream принимает на живом стриме, и новый срок действует и на уже лежащие сообщения: удалять том NATS для неё не нужно.
 
 Стрим `NOTIFICATIONS_EVENTS` заведён вместе с producer'ом адресного факта ([PER-216](https://linear.app/anticnvm/issue/per-216)), раньше первого канала: retention `limits` держит опубликованное независимо от состава потребителей, и факты, вынесенные до появления durable канала, дождутся его в пределах окна хранения. Durable канала заведён вместе с каналом ([PER-217](https://linear.app/anticnvm/issue/per-217)). `AUCTION_EVENTS` и durable Notifications заведены с первым потребителем (PER-326): модуль `Auction/` разбирает поводы лота — `bid_placed`, `lot_sold` и `participant_removed` ([PER-672](https://linear.app/anticnvm/issue/per-672)), — и поводы аукциона, остальные подтверждает без разбора. Publisher Auction — релей outbox проекции публикации ([PER-331](https://linear.app/anticnvm/issue/per-331)). Новый лидер, отличный от присутствующего `previous_leader_id`, создаёт адресный `lot_outbid` прежнему лидеру. Ключ события и outbox записываются атомарно; порядок версий, подписки и реплика Identity не фильтруют этот повод. Общий транспорт находится в `Messaging/`, обработчик реплики этих событий не видит.
 
@@ -819,7 +821,7 @@ Subject называет повод, сообщение на всех повод
 
 | Bucket | Владелец | Ключ | Хранение |
 |---|---|---|---|
-| `hub-bot-deliveries` | Hub Bot, журнал попыток доставки | `notification_id` | `file`, одна версия на ключ, `max_age` — окно стрима плюс сутки |
+| `hub-bot-deliveries` | Hub Bot, журнал попыток доставки | `notification_id` | `file`, одна версия на ключ, `max_age` — окно `NOTIFICATIONS_EVENTS` плюс сутки |
 | `auction-bot-deliveries` | бот аукциона, журнал попыток доставки | `notification_id` | то же |
 | `support-bot-topics` | бот поддержки, пара «человек ↔ тема» ([ADR-068](../decisions/ADR-068-support-bot-with-operator-topics.md), п. 8) | `person.<группа>.<Telegram id>` → номер темы и `topic.<группа>.<номер темы>` → Telegram id | `file`, одна версия на ключ, `max_age` — 180 дней: бот переписывает обе записи на каждом сообщении человека и доставленном ответе оператора |
 
