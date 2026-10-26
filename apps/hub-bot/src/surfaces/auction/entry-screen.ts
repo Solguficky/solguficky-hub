@@ -54,6 +54,8 @@ import {
   extensionLine,
   favoritesEmptyText,
   favoritesSummary,
+  feedSectionLabel,
+  feedSectionTitle,
   feedSummary,
   finalFeedLabel,
   followLabel,
@@ -918,7 +920,12 @@ function renderBody(
     keyboard,
     format: "html",
     text: screenText(
-      paged("Лоты", feed),
+      paged(
+        feed.section === undefined
+          ? "Лоты"
+          : feedSectionTitle(feed.section.name),
+        feed,
+      ),
       ...(feed.lots.length === 0
         ? ["Лотов пока нет."]
         : feedSummary(feed, mineOptions)),
@@ -1007,6 +1014,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "name-answer-refused":
         return "answer-refused";
       case "feed":
+        // Раздел ленты (PER-719) — свой экран с возвратом к списку разделов.
+        if (block.section !== undefined) screen = "feed-section";
         break;
       default: {
         const _exhaustive: never = block;
@@ -1914,6 +1923,13 @@ function renderButton(
       if (item === undefined) return text(untitled);
       return text(setLotLabel(item, setOptions));
     }
+    // Раздел ленты (PER-719): название и число лотов.
+    case "feed.open-section": {
+      const section = blocks
+        .find((block): block is FeedBlock => block.kind === "feed")
+        ?.sections?.find((each) => each.sectionId === button.sectionId);
+      return text(section === undefined ? untitled : feedSectionLabel(section));
+    }
     case "feed.prev":
       return text("←");
     case "feed.next":
@@ -1957,8 +1973,16 @@ function renderButton(
       return text("←");
     case "favorites.next":
       return text("→");
-    case "favorites.back":
+    // С раздела ленты возврат — к списку разделов (PER-719).
     case "feed.back":
+      return text(
+        blocks.some(
+          (block) => block.kind === "feed" && block.section !== undefined,
+        )
+          ? "‹ Лоты"
+          : `‹ ${rootTitle}`,
+      );
+    case "favorites.back":
     case "raffle.back":
       return text(`‹ ${rootTitle}`);
     // Без ставок первая ставка — не «по шагу» (PER-631, №82).

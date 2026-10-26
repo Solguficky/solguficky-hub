@@ -78,6 +78,9 @@ export type AuctionIntent =
   // Корень аукциона (PER-605): стадия, сроки и входы в лоты и розыгрыш.
   | { kind: "root"; auctionId: string }
   | { kind: "feed"; auctionId: string; page: number }
+  // Раздел ленты (PER-719): номер раздела выбрал пульт, лоты — в порядке
+  // администратора, листание — по ним. Раздела нет — открывается лента.
+  | { kind: "section"; auctionId: string; sectionId: number; page: number }
   | { kind: "lot"; lotId: string; page: number; atLeastVersion?: number }
   // Экран сета (ADR-073, п. 7): открывается с карточки лота сета, поэтому
   // несёт его — сет читается из снимка лота. `page` — страница ленты, с
@@ -416,6 +419,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       return `${prefix}:rt:${uuidToToken(intent.auctionId)}`;
     case "feed":
       return `${prefix}:feed:${uuidToToken(intent.auctionId)}:${pageArgument(intent.page)}`;
+    case "section":
+      return `${prefix}:sec:${uuidToToken(intent.auctionId)}:${sectionArgument(intent.sectionId)}:${pageArgument(intent.page)}`;
     case "lot":
       return [
         `${prefix}:lot`,
@@ -540,6 +545,7 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (command !== undefined) return command;
   if (action === "fav") return favoritesAction(args);
   if (action === "rt") return rootAction(args);
+  if (action === "sec") return sectionAction(args);
   if (action === "ia" || action === "im") return invoiceAction(action, args);
   const prediction = predictionAction(action, args);
   if (prediction !== undefined) return prediction;
@@ -713,6 +719,40 @@ function auctionAction(
   return addressee === undefined || question === undefined
     ? refuse("malformed")
     : accept({ kind: question, auctionId, addressee });
+}
+
+// Номер раздела ленты (PER-719) — положительное целое без ведущих нулей: его
+// выбирает пульт, следующий за наибольшим, и в 64 байта он помещается с
+// запасом.
+const SECTION = /^[1-9]\d{0,5}$/;
+
+function sectionArgument(sectionId: number): string {
+  if (!Number.isInteger(sectionId) || sectionId < 1 || sectionId > 999_999) {
+    throw new RangeError(`feed section out of range: ${sectionId}`);
+  }
+  return String(sectionId);
+}
+
+// Раздел ленты: токен аукциона, номер раздела и страница.
+function sectionAction(args: readonly string[]): ParsedAuctionCallback {
+  const [token, rawSection, rawPage, ...rest] = args;
+  const auctionId = token === undefined ? undefined : tokenToUuid(token);
+  const page = pageOf(rawPage);
+  if (
+    auctionId === undefined ||
+    rawSection === undefined ||
+    !SECTION.test(rawSection) ||
+    page === undefined ||
+    rest.length !== 0
+  ) {
+    return refuse("malformed");
+  }
+  return accept({
+    kind: "section",
+    auctionId,
+    sectionId: Number(rawSection),
+    page,
+  });
 }
 
 // Счёт победителя: токены лота и счёта и, у выбора способа, его буква.

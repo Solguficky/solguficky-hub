@@ -138,6 +138,7 @@ export type {
   BidExtension,
   CommandResult,
   FeedItem,
+  FeedSectionItem,
   FinalBidOutcome,
   HistoryItem,
   InvoiceItem,

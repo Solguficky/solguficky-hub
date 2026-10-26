@@ -1,18 +1,26 @@
 import type { AuctionPort, LotView, Viewer } from "../../ports.js";
 import {
+  arrangeFeed,
   FEED_PAGE_SIZE,
   loadFeed,
   orderForFeed,
-  readFinalLineup,
+  readFeedShape,
 } from "./open-feed.js";
 
 // Соседи лота в ленте для ◀️ и ▶️ карточки (PER-644, PER-669). Порядок — тот
-// же, что у ленты: соседей считает её же сортировка, поэтому листание карточки
-// и строки ленты не расходятся по устройству. У соседа своя страница ленты:
+// же, что у ленты: соседей считает её же раскладка (PER-719), поэтому
+// листание карточки и строки ленты не расходятся по устройству. У соседа своя страница ленты:
 // после листания «‹ Лоты» открывает ту, где он стоит.
 export type LotNeighbor = { lotId: string; page: number };
 
-export type LotNeighbors = { prev?: LotNeighbor; next?: LotNeighbor };
+// `sectionId` — раздел ленты, в котором стоит лот (PER-719): соседи берутся
+// из его списка, а «‹ Лоты» карточки ведёт в раздел. Нет — лот в общем
+// списке или идёт финал.
+export type LotNeighbors = {
+  prev?: LotNeighbor;
+  next?: LotNeighbor;
+  sectionId?: number;
+};
 
 // На краях соседа нет, по кругу листание не идёт (решение владельца по
 // прогону 14 октября 2026 года). Лота нет в ленте — соседей тоже.
@@ -50,11 +58,25 @@ export async function readNeighbors(input: {
       viewer: input.viewer,
       auctionId: input.lot.auctionId,
     };
-    const [lineup, lots] = await Promise.all([
-      readFinalLineup(feed),
+    const [{ lineup, layout }, lots] = await Promise.all([
+      readFeedShape(feed),
       loadFeed(feed),
     ]);
-    return neighborsOf(orderForFeed(lots, lineup), input.lot.lotId);
+    if (lineup !== undefined) {
+      return neighborsOf(orderForFeed(lots, lineup), input.lot.lotId);
+    }
+    // Вне финала соседи — в списке лота: в его разделе или в общем списке,
+    // как их показывает лента.
+    const { sections, rest } = arrangeFeed(lots, layout);
+    const section = sections.find((each) =>
+      each.lots.some((lot) => lot.lotId === input.lot.lotId),
+    );
+    return section === undefined
+      ? neighborsOf(rest, input.lot.lotId)
+      : {
+          ...neighborsOf(section.lots, input.lot.lotId),
+          sectionId: section.sectionId,
+        };
   } catch {
     return {};
   }

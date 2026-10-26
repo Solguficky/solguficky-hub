@@ -285,6 +285,15 @@ export const screenCatalog = {
     parent: "auction-root",
     backName: "Лоты",
   },
+  // Раздел ленты (PER-719): лоты раздела в порядке администратора, возврат —
+  // к списку разделов.
+  "lot-section": {
+    class: "screen",
+    nav: "tree",
+    title: "Лоты",
+    parent: "lots",
+    backName: "Лоты",
+  },
   // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
   // корня аукциона и возврат туда же (PER-644).
   "prediction-results": {

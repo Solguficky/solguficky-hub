@@ -187,11 +187,17 @@ function lotBody(input: {
       [
         {
           action: "lot.back",
-          callbackData: encodeAuctionCallback({
-            kind: "feed",
-            auctionId: lot.auctionId,
-            page: input.page,
-          }),
+          // Лот раздела возвращает в свой раздел (PER-719).
+          callbackData: encodeAuctionCallback(
+            input.neighbors.sectionId === undefined
+              ? { kind: "feed", auctionId: lot.auctionId, page: input.page }
+              : {
+                  kind: "section",
+                  auctionId: lot.auctionId,
+                  sectionId: input.neighbors.sectionId,
+                  page: input.page,
+                },
+          ),
         },
       ],
     ],
