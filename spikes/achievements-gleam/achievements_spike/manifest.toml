@@ -1,0 +1,32 @@
+# Do not manually edit this file, it is managed by Gleam.
+#
+# This file locks the dependency versions used, to make your build
+# deterministic and to prevent unexpected versions from being included
+# in your application.
+#
+# You should check this file into your source control repository.
+
+packages = [
+  { name = "argv", version = "1.1.0", build_tools = ["gleam"], requirements = [], source = "git", repo = "https://github.com/lpil/argv", commit = "126b38c2489b41adf135ade69a54d759095b7f0e" },
+  { name = "filepath", version = "1.1.2", build_tools = ["gleam"], requirements = ["gleam_stdlib"], source = "git", repo = "https://github.com/lpil/filepath", commit = "21131e233ba8c96a6f1182d6c0c064d90c86f460" },
+  { name = "gleam_erlang", version = "1.3.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], source = "git", repo = "https://github.com/gleam-lang/erlang", commit = "51b0d4566508290cc82be64f9a92b69e96f4c8ce" },
+  { name = "gleam_otp", version = "1.3.0", build_tools = ["gleam"], requirements = ["gleam_erlang", "gleam_stdlib"], source = "git", repo = "https://github.com/gleam-lang/otp", commit = "4bd9c3e7963cc5d580a7f8e16526797a76cd9391" },
+  { name = "gleam_stdlib", version = "1.0.5", build_tools = ["gleam"], requirements = [], source = "git", repo = "https://github.com/gleam-lang/stdlib", commit = "5b0642a77a38f984db5913548b84668652ca8b5c" },
+  { name = "gleam_time", version = "1.11.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], source = "git", repo = "https://github.com/gleam-lang/time", commit = "09b049db0d697a5c9ffceec6010fa17ad6c7a53a" },
+  { name = "protozoa", version = "2.0.3", build_tools = ["gleam"], requirements = ["argv", "filepath", "gleam_erlang", "gleam_stdlib", "simplifile", "snag", "tom"], source = "git", repo = "https://github.com/renatillas/protozoa", commit = "90d08655bab560ce8ace961bab58b6226d5631f6" },
+  { name = "simplifile", version = "2.7.0", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], source = "git", repo = "https://github.com/bcpeinhardt/simplifile", commit = "8404c143b9d777de25115d7098368bfa224d5a02" },
+  { name = "snag", version = "1.2.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], source = "git", repo = "https://github.com/gleam-experiments/snag", commit = "6deb82ac056806bf7007a1e688cec620fb09a2b2" },
+  { name = "tom", version = "2.1.0", build_tools = ["gleam"], requirements = ["gleam_stdlib", "gleam_time"], source = "git", repo = "https://github.com/lpil/tom", commit = "9727ba2d25d2d35b082d71567f865e08c7a1016b" },
+]
+
+[requirements]
+argv = { git = "https://github.com/lpil/argv", ref = "v1.1.0" }
+filepath = { git = "https://github.com/lpil/filepath", ref = "v1.1.2" }
+gleam_erlang = { git = "https://github.com/gleam-lang/erlang", ref = "v1.3.0" }
+gleam_otp = { git = "https://github.com/gleam-lang/otp", ref = "v1.3.0" }
+gleam_stdlib = { git = "https://github.com/gleam-lang/stdlib", ref = "v1.0.5" }
+gleam_time = { git = "https://github.com/gleam-lang/time", ref = "v1.11.0" }
+protozoa = { git = "https://github.com/renatillas/protozoa", ref = "v2.0.3" }
+simplifile = { git = "https://github.com/bcpeinhardt/simplifile", ref = "v2.7.0" }
+snag = { git = "https://github.com/gleam-experiments/snag", ref = "v1.2.0" }
+tom = { git = "https://github.com/lpil/tom", ref = "v2.1.0" }

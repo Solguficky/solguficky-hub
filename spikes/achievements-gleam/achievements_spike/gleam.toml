@@ -1,0 +1,18 @@
+name = "achievements_spike"
+version = "0.1.0"
+target = "erlang"
+
+# repo.hex.pm закрыт политикой сети среды: все Gleam-зависимости — git-источники
+# тех же тегов, что на hex. Elixir/rebar-пакеты (gnat, grpc, postgrex, pgo) так
+# не подключить: Gleam принимает из git только Gleam-проекты.
+[dependencies]
+gleam_stdlib = { git = "https://github.com/gleam-lang/stdlib", ref = "v1.0.5" }
+gleam_erlang = { git = "https://github.com/gleam-lang/erlang", ref = "v1.3.0" }
+gleam_otp = { git = "https://github.com/gleam-lang/otp", ref = "v1.3.0" }
+gleam_time = { git = "https://github.com/gleam-lang/time", ref = "v1.11.0" }
+filepath = { git = "https://github.com/lpil/filepath", ref = "v1.1.2" }
+simplifile = { git = "https://github.com/bcpeinhardt/simplifile", ref = "v2.7.0" }
+tom = { git = "https://github.com/lpil/tom", ref = "v2.1.0" }
+protozoa = { git = "https://github.com/renatillas/protozoa", ref = "v2.0.3" }
+argv = { git = "https://github.com/lpil/argv", ref = "v1.1.0" }
+snag = { git = "https://github.com/gleam-experiments/snag", ref = "v1.2.0" }

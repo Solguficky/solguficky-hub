@@ -1,0 +1,14 @@
+108 │ │     LotScheduled -> "scheduled"
+109 │ │     LotOpened -> "opened"
+    · │
+119 │ │     UnknownLotOccasion -> "unknown"
+120 │ │   }
+    │ ╰───^
+
+This case expression does not have a pattern for all possible values. If it
+is run on one of the values without a pattern then it will crash.
+
+The missing patterns are:
+
+    ParticipantRemoved
+
