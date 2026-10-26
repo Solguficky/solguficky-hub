@@ -75,7 +75,10 @@ async function onMessage(message) {
     await whisperBack(message);
   } else if (message.ephemeral_message_id !== undefined && command === "late") {
     // Задержка не держит цикл getUpdates: у остальных действий своё 15-секундное окно.
-    sleep(lateDelayMs).then(() => whisperBack(message));
+    // Без catch сетевой отказ здесь уронил бы процесс, не вернув команды группы.
+    sleep(lateDelayMs)
+      .then(() => whisperBack(message))
+      .catch((error) => print("late-failed", String(error)));
   } else if (command === "public") {
     await call("sendMessage", {
       chat_id: chatId,
@@ -152,7 +155,9 @@ if (installed.ok !== true) {
 
 let offset = 0;
 for (;;) {
-  const updates = await call("getUpdates", { offset, timeout: 25, allowed_updates: ["message", "callback_query"] });
+  const updates = await call("getUpdates", { offset, timeout: 25, allowed_updates: ["message", "callback_query"] }).catch(
+    (error) => ({ ok: false, description: String(error) }),
+  );
   if (updates.ok !== true) {
     print("getUpdates", updates);
     await restoreCommands();
