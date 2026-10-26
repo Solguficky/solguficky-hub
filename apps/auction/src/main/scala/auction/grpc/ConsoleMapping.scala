@@ -5,6 +5,7 @@ import auction.contract.AuctionValues
 import auction.lot.Lot
 import auction.lot.LotState
 import auction.lot.ParticipantId
+import auction.prediction.PredictionTally
 import auction.projection.AuctionSnapshotView
 import auction.projection.LotSnapshotView
 import auction.v1.auction_service as wire
@@ -43,6 +44,22 @@ object ConsoleMapping {
       // Сеты (ADR-073, п. 3; PER-509) — из агрегата, все, и неполные: организатор собирает сет постепенно и видит его
       // до второго лота. Снимок лота неполный сет не показывает.
       lotSets = lotSets(auction.auction)
+    )
+
+  /**
+   * Розыгрыш и прогнозы числами (PER-734): организаторы подбирают призы по числу участников. Только агрегаты — ни
+   * имени, ни идентификатора. Числа больше `uint32` в аукционе сообщества не бывает, поэтому они не усекаются.
+   */
+  def withParticipation(
+      console: wire.AuctionConsole,
+      registrations: Option[Int],
+      tally: Option[PredictionTally]
+  ): wire.AuctionConsole =
+    console.copy(
+      raffleRegistrations = registrations,
+      predictions = tally.map(found =>
+        wire.ConsolePredictions(participants = found.participants.toInt, answers = found.answers.toInt)
+      )
     )
 
   /** Сеты аукциона в порядке идентификатора: UUIDv7 сортируется по времени создания, и номер сета в пульте устойчив. */

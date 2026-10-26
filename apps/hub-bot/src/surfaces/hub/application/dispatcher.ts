@@ -19,6 +19,8 @@ import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { createParticipantRemoval } from "./participant-removal.js";
+import { createRafflePrizeChange } from "./raffle-prize-change.js";
+import { createRaffleWinner } from "./raffle-winner.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
@@ -79,6 +81,15 @@ export function createDispatcher(
     consoles === undefined
       ? undefined
       : createAuctionInvoices(consoles.auctions, consoles.now);
+  // Итог розыгрыша вручную (PER-727) — тот же порт: назначение победителя
+  // пускает право вести аукцион.
+  const raffleWinner =
+    consoles === undefined ? undefined : createRaffleWinner(consoles.auctions);
+  // Смена приза идущего розыгрыша (PER-737) — тот же порт и то же право.
+  const rafflePrizeChange =
+    consoles === undefined
+      ? undefined
+      : createRafflePrizeChange(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -357,6 +368,20 @@ export function createDispatcher(
           return auctionInvoices === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionInvoices(request);
+        case "view-raffle-winner":
+        case "ask-raffle-winner":
+        case "pick-raffle-winner":
+        case "prepare-raffle-winner":
+        case "assign-raffle-winner":
+          return raffleWinner === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : raffleWinner(request);
+        case "ask-raffle-prize-change":
+        case "pick-raffle-prize-change":
+        case "change-raffle-prize":
+          return rafflePrizeChange === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : rafflePrizeChange(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

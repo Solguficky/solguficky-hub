@@ -42,7 +42,7 @@ export type MaterialConfirmation = {
 
 const TypedTextSchema = z.object({
   text: z.string(),
-  forward_origin: z.undefined(),
+  forward_origin: z.undefined().optional(),
 });
 
 /**

@@ -1,3 +1,8 @@
+import {
+  dayChronicleButtonLabel,
+  dayChronicleParagraphs,
+  dayChronicleTitle,
+} from "../../auction-day-chronicle.js";
 import { renderFaqText } from "../../auction-faq.js";
 import {
   finalBidLabel,
@@ -343,6 +348,13 @@ const lotSubject = (title: string | undefined) =>
 // Строка списка в теле (дизайн-код, «Списки»): маркер, затем поля через «—».
 const bullet = (line: string) => `• ${line}`;
 
+// Слово организаторов на корневом меню бота аукциона (решение владельца
+// 24.10.2026): абзацы текста, без разметки; ники уходят как есть.
+export const auctionMenuIntro = [
+  "@solguficky_auction_bot — бот для проведения бустигуфиковских аукционов.\nКнопки меню помогут открыть каталог лотов, сделать ставку, посмотреть свои ставки и заглянуть в FAQ.",
+  "Данный бот разработан: @anticnvm\nАвторы лотов: @Nilda97 @NyanQT314 @myasko18 @DrScarecrow @Neptunini\nОтдельная благодарность: @po_darya",
+] as const;
+
 export function renderEntryScreen(
   screen: AuctionEntryScreen,
   options: RenderOptions,
@@ -350,14 +362,13 @@ export function renderEntryScreen(
   const faq = options.faq ?? defaultFaq;
   switch (screen.kind) {
     // Корневое меню: разделы кнопками в порядке списка команд, возврата нет.
+    // Под заголовком — слово организаторов о боте (решение владельца
+    // 24.10.2026), а не служебная строка о разделах.
     case "menu":
       return {
         id: "menu",
         format: "html",
-        text: screenText(
-          menuTitle,
-          "Разделы бота. Те же разделы — в кнопке меню рядом с полем ввода.",
-        ),
+        text: screenText(menuTitle, ...auctionMenuIntro),
         keyboard: [
           [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
           [{ text: settingsTitle, callback_data: entryCallback("settings") }],
@@ -425,17 +436,19 @@ export function renderEntryScreen(
         format: "html",
         text: renderFaqText(faq),
         keyboard: [
-          [
-            faq.detailsUrl === undefined
-              ? {
-                  text: "Прочитать подробнее",
-                  callback_data: entryCallback("details"),
-                }
-              : {
-                  text: `Прочитать подробнее${linkSign}`,
-                  url: faq.detailsUrl,
-                },
-          ],
+          // «Прочитать подробнее» — только со ссылкой организатора: полный
+          // текст FAQ уже в сообщении, а без адреса кнопка вела бы в кадр
+          // «ссылки нет» (решение владельца 24.10.2026).
+          ...(faq.detailsUrl === undefined
+            ? []
+            : [
+                [
+                  {
+                    text: `Прочитать подробнее${linkSign}`,
+                    url: faq.detailsUrl,
+                  },
+                ],
+              ]),
           [
             faq.questionUrl === undefined
               ? {
@@ -957,6 +970,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "answer-refused";
       case "prediction-results":
         return "prediction-results";
+      case "day-chronicle":
+        return "day-chronicle";
       case "raffle":
         return "raffle";
       case "raffle-registered":
@@ -1137,6 +1152,15 @@ function renderLeaf(
           text: screenText(
             predictionResultsTitle,
             ...predictionResultsParagraphs(block, { money }),
+          ),
+        };
+      // Хроники дня (PER-725): тексты общие с хабом.
+      case "day-chronicle":
+        return {
+          format: "html",
+          text: screenText(
+            dayChronicleTitle,
+            ...dayChronicleParagraphs(block, { money }),
           ),
         };
       case "raffle":
@@ -1899,6 +1923,10 @@ function renderButton(
     case "root.prediction-results":
       return text(predictionResultsButtonLabel);
     case "prediction-results.back":
+      return text("‹ Аукцион");
+    case "root.day-chronicle":
+      return text(dayChronicleButtonLabel);
+    case "day-chronicle.back":
       return text("‹ Аукцион");
     case "lot.refresh":
       return text(refreshLabel);

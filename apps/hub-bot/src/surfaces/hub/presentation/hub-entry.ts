@@ -38,7 +38,10 @@ export function hubAccessRequest(
 
 // `in-community` политика хаба не отдаёт: право хаба его и пускает. Запись
 // есть только ради полноты словаря.
-const denials: Record<AuctionDenial, Exclude<HubAccess, "admitted">> = {
+const denials: Record<
+  AuctionDenial,
+  Exclude<HubAccess, "admitted" | "invitation-only">
+> = {
   "not-admitted": "pending",
   "in-community": "pending",
   declined: "declined",
@@ -66,6 +69,8 @@ export function decideHubEntry(
       return { kind: "decided", person, access: "admitted" };
     case "denied":
       return { kind: "decided", person, access: denials[entry.reason] };
+    case "invitation-only":
+      return { kind: "decided", person, access: "invitation-only" };
     case "unknown-outcome":
       return entry;
     default: {

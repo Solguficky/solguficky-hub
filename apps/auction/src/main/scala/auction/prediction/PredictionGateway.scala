@@ -22,6 +22,11 @@ trait PredictionGateway {
 
   def mine(auction: AuctionId, participant: ParticipantId): Future[MyPredictions]
 
+  /**
+   * Прогнозы аукциона числами для пульта администратора (PER-734): `None` — игры ещё нет, ни один раунд не открывался.
+   */
+  def tally(auction: AuctionId): Future[Option[PredictionTally]]
+
   /** Принятая раньше отправка с этим `op_id`, если она была: граница узнаёт повтор до своих проверок по состоянию. */
   def recall(
       auction: AuctionId,
@@ -49,6 +54,11 @@ object PredictionGateway {
           game <- entity(auction).ask[Predictions](PredictionEntity.Get(_))
           forecasts <- store.mine(auction, participant)
         } yield MyPredictions(game, forecasts)
+
+      def tally(auction: AuctionId): Future[Option[PredictionTally]] =
+        entity(auction).ask[Predictions](PredictionEntity.Get(_)).flatMap { game =>
+          if (game == Predictions.initial) Future.successful(None) else store.tally(auction).map(Some(_))
+        }
 
       def recall(
           auction: AuctionId,

@@ -694,6 +694,42 @@ export type ConsoleRaffleResult =
   | { kind: "ok"; raffle?: RaffleView }
   | AuctionFailure;
 
+// Итог розыгрыша, который называет администратор (PER-727; ADR-066,
+// дополнение 2026-10-24): принятый — розыгрыш с итогом, повтор того же ключа
+// или того же номера — тоже принятый. `ticket-not-in-pool` несёт число билетов
+// пула, `already-drawn` — выигравший билет. `auction-not-found` — аукциона нет,
+// кнопка устарела.
+export type AssignRaffleWinnerResult =
+  | { kind: "ok"; raffle: RaffleView }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | { kind: "raffle-not-found" }
+  | { kind: "not-awaiting-winner" }
+  | { kind: "ticket-not-in-pool"; tickets: number }
+  | { kind: "already-drawn"; winningTicket: number }
+  | AuctionFailure;
+
+// Смена приза идущего розыгрыша (PER-737; ADR-066, дополнение 2026-10-25):
+// принятая — розыгрыш с новым призом, повтор того же ключа или тот же приз —
+// тоже принятая. Пустой и длинный текст — отказы `prize-blank` и
+// `prize-too-long`, как у приза конфигурации; `already-drawn` — итог уже есть
+// и приз за победителем, `without-result` — итога не будет. `auction-not-found`
+// — аукциона нет, кнопка устарела.
+export type ChangeRafflePrizeResult =
+  | { kind: "ok"; raffle: RaffleView }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | { kind: "raffle-not-found" }
+  | { kind: "prize-blank" }
+  | { kind: "prize-too-long" }
+  | { kind: "already-drawn"; winningTicket: number }
+  | { kind: "without-result" }
+  | AuctionFailure;
+
 // Аукционы сообщества от запланированного до финала (`ListAuctions` ACTIVE):
 // по ним пульт узнаёт, у кого идут торги, до подтверждения открытия недели.
 export type ActiveAuctionsResult =
@@ -842,6 +878,20 @@ export type AuctionConsoles = {
     auctionId: string,
     meta?: RpcMetadata,
   ): Promise<ConsoleRaffleResult>;
+  // Итог розыгрыша вручную (PER-727): номер выигравшего билета в пуле, ключ
+  // рождает край на нажатие «Да».
+  assignRaffleWinner(
+    person: Person,
+    command: { auctionId: string; ticket: number; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<AssignRaffleWinnerResult>;
+  // Смена приза идущего розыгрыша (PER-737): текст целиком, ключ рождает
+  // край на нажатие «Да». Конфигурацию аукциона команда не трогает.
+  changeRafflePrize(
+    person: Person,
+    command: { auctionId: string; prize: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<ChangeRafflePrizeResult>;
   // Активные аукционы сообщества: слот торгов один (PER-603), и пульт
   // предупреждает об идущих торгах до подтверждения открытия (PER-618).
   activeAuctions(

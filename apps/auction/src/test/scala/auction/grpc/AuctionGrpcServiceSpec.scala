@@ -80,6 +80,7 @@ import auction.prediction.MyPredictions
 import auction.prediction.Nomination
 import auction.prediction.PredictionGateway
 import auction.prediction.PredictionRound
+import auction.prediction.PredictionTally
 import auction.prediction.Predictions
 import auction.prediction.RoundStatus
 import auction.prediction.SubmitForecast
@@ -164,9 +165,16 @@ import org.apache.pekko.stream.scaladsl.Sink
 import org.apache.pekko.stream.scaladsl.SinkQueueWithCancel
 import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.pattern.AskTimeoutException
+import auction.raffle.AssignRejected
+import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
+import auction.raffle.ChangePrize
+import auction.raffle.ChangePrizeRejected
 import auction.raffle.Draw
 import auction.raffle.Raffle
+import auction.raffle.RaffleDecision
+import auction.raffle.RaffleEnvelope
+import auction.raffle.RaffleEvent
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleState
 import auction.raffle.RaffleTerms
@@ -679,7 +687,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
   /** Розыгрыш в памяти: отвечает тем, что задал тест, и помнит команды, которые до него дошли. */
-  private final class Raffles(raffle: Raffle, refusal: Option[RegistrationRejected] = None) extends RaffleGateway {
+  private final class Raffles(
+      raffle: Raffle,
+      refusal: Option[RegistrationRejected] = None,
+      assignRefusal: Option[AssignRejected] = None
+  ) extends RaffleGateway {
     var reached: Vector[Any] = Vector.empty
     private def answer(command: Any) = {
       reached :+= command
@@ -687,6 +699,19 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
     def register(auction: AuctionId, command: Register) = answer(command)
     def cancel(auction: AuctionId, command: CancelRegistration) = answer(command)
+    def assign(auction: AuctionId, command: AssignWinner) = {
+      reached :+= command
+      Future.successful(assignRefusal.toLeft(raffle))
+    }
+    // Смену приза решает настоящее ядро: ответ показывает, что граница отдала розыгрыш после команды.
+    def changePrize(auction: AuctionId, command: ChangePrize) = {
+      reached :+= command
+      Future.successful(Raffle.decide(raffle, command).map {
+        case RaffleDecision.Accepted(event) =>
+          Raffle.apply(raffle, RaffleEnvelope(raffle.seen.size.toLong + 1, command.opId, event))
+        case RaffleDecision.Repeated(_) | RaffleDecision.Unchanged => raffle
+      })
+    }
     def get(auction: AuctionId) = Future.successful(raffle)
   }
 
@@ -699,7 +724,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   /** Игра в памяти: отвечает тем, что задал тест, и помнит, что до неё дошло и чьи прогнозы у неё спросили. */
   private final class Games(
       answer: Either[SubmitRejected, Forecast],
-      sent: Option[Either[SubmitRejected.OpIdTaken.type, Forecast]] = None
+      sent: Option[Either[SubmitRejected.OpIdTaken.type, Forecast]] = None,
+      counted: Option[PredictionTally] = None
   ) extends PredictionGateway {
     var reached: Vector[SubmitForecast] = Vector.empty
     var asked: Vector[ParticipantId] = Vector.empty
@@ -714,6 +740,16 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) =
       Future.successful(sent)
+    def tally(auction: AuctionId) = Future.successful(counted)
+  }
+
+  /** Розыгрыш, которого пульт не должен спросить: отказ права наступает до него. */
+  private object UntouchableRaffles extends RaffleGateway {
+    def register(auction: AuctionId, command: Register) = fail("the raffle was reached")
+    def cancel(auction: AuctionId, command: CancelRegistration) = fail("the raffle was reached")
+    def assign(auction: AuctionId, command: AssignWinner) = fail("the raffle was reached")
+    def changePrize(auction: AuctionId, command: ChangePrize) = fail("the raffle was reached")
+    def get(auction: AuctionId) = fail("the raffle was read")
   }
 
   /** Аукцион сходки, запланированный с `lot` в реестре: раунд каталога может быть открыт. */
@@ -875,6 +911,107 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         service(Unreachable, auctions = scheduledWithLot, predictions = Games(Left(SubmitRejected.OpIdTaken)))
           .submitPrediction(predictionOf(lot))
       ) shouldBe Status.Code.ALREADY_EXISTS
+    }
+  }
+
+  // PER-725: хроники дня — сводка дня торгов глазами участника. Окно выбирает сервис, право — place_bids, и
+  // ничего из пульта сверх агрегатов окна, числа ставок и роста от старта ответ не несёт.
+  "the day chronicle of a participant" should {
+
+    val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+    val (busy, quiet) = (new UUID(7L, 1L), new UUID(7L, 2L))
+    val now = Instant.parse("2026-10-27T12:00:00Z")
+
+    final class Chronicled extends Views {
+      var windows: List[(Instant, Instant)] = Nil
+      override def dayStatistics(auctionId: UUID, from: Instant, until: Instant) =
+        if (auctionId != meetupAuction) fail(s"day statistics of $auctionId")
+        else {
+          windows :+= (from, until)
+          Future.successful(
+            List(
+              DayLotStatisticsView(busy, 4, Some(money(450)), Some(money(350)), LotContest(5, 4)),
+              DayLotStatisticsView(quiet, 0, None, None)
+            )
+          )
+        }
+      override def statistics(auctionId: UUID) =
+        Future.successful(
+          List(
+            LotStatisticsView(busy, trading(price = 450), Some(money(300)), 6, 3, Some(now.minusSeconds(60))),
+            LotStatisticsView(quiet, trading(price = 300), Some(money(300)), 0, 0, None)
+          )
+        )
+    }
+
+    "answers the last day before the service clock with the window aggregates of every lot" in {
+      val read = Chronicled()
+      val answer = service(
+        Unreachable,
+        views = read,
+        auctions = AuctionCommands(consoleOf(busy, quiet), Unreachable, NoMeetups),
+        clock = Clock.fixed(now, java.time.ZoneOffset.UTC)
+      ).getAuctionDayChronicle(wire.GetAuctionDayChronicleRequest(Some(viewer), meetupAuction.toString)).futureValue
+
+      read.windows shouldBe List((now.minusSeconds(24 * 3600), now))
+      (answer.from, answer.until) shouldBe ((now.minusSeconds(24 * 3600).toString, now.toString))
+      answer.lots.map(lot =>
+        (lot.getDay.lotId, lot.getDay.bidCount, lot.getDay.leaderChangeCount, lot.getDay.longestDuel, lot.bidCount)
+      ) shouldBe Seq((busy.toString, 4L, 5L, 4L, 6L), (quiet.toString, 0L, 0L, 0L, 0L))
+      answer.lots.map(_.priceGrowth) shouldBe Seq(Some(LotValues.money(money(150))), Some(LotValues.money(money(0))))
+      answer.lots.head.getDay.growth shouldBe Some(LotValues.money(money(100)))
+    }
+
+    "carries nothing the console alone shows: no participant count, last bid or participant of any kind" in {
+      wire.DayChronicleLot.scalaDescriptor.fields.map(_.name) shouldBe Seq("day", "bid_count", "price_growth")
+      wire.DayLotStatistics.scalaDescriptor.fields.map(_.name) shouldBe
+        Seq("lot_id", "bid_count", "max_price", "growth", "leader_change_count", "longest_duel")
+      wire.GetAuctionDayChronicleResponse.scalaDescriptor.fields.map(_.name) shouldBe Seq("from", "until", "lots")
+    }
+
+    "refuses a viewer without place_bids before any read, the organizer of the console too" in {
+      val organizer = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS))
+      statusOf(
+        service(Unreachable)
+          .getAuctionDayChronicle(wire.GetAuctionDayChronicleRequest(Some(organizer), meetupAuction.toString))
+      ) shouldBe Status.Code.PERMISSION_DENIED
+    }
+
+    "answers NOT_FOUND for an auction hidden from the participant and reads no lot" in {
+      val hidden = new AuctionViews {
+        def byId(auctionId: UUID) =
+          Future.successful(
+            Some(
+              AuctionSnapshotView(
+                auctionId,
+                Auction(
+                  AuctionState.Draft,
+                  Some(MeetupId(UUID.fromString(meetupId))),
+                  Set.empty,
+                  Map.empty,
+                  hidden = true
+                )
+              )
+            )
+          )
+        def byMeetup(meetup: MeetupId) = fail("the auction read model was touched")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("the auction read model was touched")
+      }
+      statusOf(
+        service(Unreachable, auctionViews = hidden)
+          .getAuctionDayChronicle(wire.GetAuctionDayChronicleRequest(Some(viewer), meetupAuction.toString))
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "answers NOT_FOUND for an auction without a journal and reads no lot" in {
+      val absent = new Auctions {
+        override def get(auctionId: AuctionId) = Future.successful(Auction.initial)
+      }
+      statusOf(
+        service(Unreachable, auctions = AuctionCommands(absent, Unreachable, NoMeetups))
+          .getAuctionDayChronicle(wire.GetAuctionDayChronicleRequest(Some(viewer), meetupAuction.toString))
+      ) shouldBe Status.Code.NOT_FOUND
     }
   }
 
@@ -1207,6 +1344,157 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   }
 
   "the raffle at the grpc boundary" should {
+
+    "assigns the winner by hand after the meetup confirms the administrator and reveals the ticket without a draw" in {
+      val pool = Vector(ParticipantId(UUID.fromString(lot)), ViewerId)
+      val raffles = Raffles(Raffle(RaffleState.Assigned(raffleTerms, pool, 2, Instant.EPOCH), Map.empty))
+      val accepted = service(
+        Unreachable,
+        auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+        raffles = raffles,
+        raffleNames = _ => Future.successful(Map(1 -> "Кот*", 2 -> "Сова*"))
+      ).assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 2, raffleOp))
+        .futureValue
+        .getAccepted
+      accepted.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_DRAWN
+      accepted.drawnByHand shouldBe true
+      accepted.getReveal.winningTicket shouldBe Some(2)
+      accepted.getReveal.randomness shouldBe ""
+      accepted.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, Some("Сова*")))
+      raffles.reached shouldBe Vector(AssignWinner(2, OpId(UUID.fromString(raffleOp))))
+    }
+
+    "answers a repeat of its op_id with the raffle before the meetup is asked and leaves the raffle untouched" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val op = OpId(UUID.fromString(raffleOp))
+      val assigned = Raffle(
+        RaffleState.Assigned(raffleTerms, Vector(ViewerId), 1, Instant.EPOCH),
+        Map(op -> RaffleEnvelope(4, op, RaffleEvent.WinnerAssigned(1, Instant.EPOCH)))
+      )
+      val raffles = Raffles(assigned)
+      val grpc = service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = raffles)
+      grpc
+        .assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 1, raffleOp))
+        .futureValue
+        .getAccepted
+        .getReveal
+        .winningTicket shouldBe Some(1)
+      statusOf(
+        grpc.assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 2, raffleOp))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+      raffles.reached shouldBe empty
+    }
+
+    "refuses the winner by hand to a viewer whom the meetup does not confirm and leaves the raffle untouched" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val raffles = Raffles(Raffle(RaffleState.AwaitingWinner(raffleTerms, Vector(ViewerId)), Map.empty))
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = raffles)
+        .assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 1, raffleOp))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      raffles.reached shouldBe empty
+    }
+
+    "answers a ticket out of the pool, an assigned winner and a foreign op_id the way the contract names them" in {
+      val waiting = Raffle(RaffleState.AwaitingWinner(raffleTerms, Vector(ViewerId)), Map.empty)
+      def assigning(refusal: AssignRejected) =
+        service(
+          Unreachable,
+          auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+          raffles = Raffles(waiting, assignRefusal = Some(refusal))
+        ).assignRaffleWinner(wire.AssignRaffleWinnerRequest(Some(viewer), raffleAuction, 5, raffleOp))
+      assigning(AssignRejected.TicketNotInPool(1)).futureValue.getRefused.getTicketNotInPool.tickets shouldBe 1
+      assigning(AssignRejected.AlreadyDrawn(1)).futureValue.getRefused.getAlreadyDrawn.winningTicket shouldBe 1
+      assigning(AssignRejected.NotAwaitingWinner).futureValue.getRefused.reason.isNotAwaitingWinner shouldBe true
+      statusOf(assigning(AssignRejected.OpIdTaken)) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "changes the prize after the meetup confirms the administrator and answers the raffle with the trimmed prize" in {
+      val raffles = Raffles(Raffle(RaffleState.AwaitingWinner(raffleTerms, Vector(ViewerId)), Map.empty))
+      val accepted = service(
+        Unreachable,
+        auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+        raffles = raffles
+      ).changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "  кружка и брелок ", raffleOp))
+        .futureValue
+        .getAccepted
+      accepted.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_AWAITING_WINNER
+      accepted.rafflePrize shouldBe Some("кружка и брелок")
+      raffles.reached shouldBe Vector(ChangePrize("кружка и брелок", OpId(UUID.fromString(raffleOp))))
+    }
+
+    "refuses a blank and an overlong prize as the configuration does, before the meetup and the raffle" in {
+      def changing(prize: String) =
+        service(Unreachable, raffles = UntouchableRaffles)
+          .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, prize, raffleOp))
+          .futureValue
+          .getRefused
+          .reason
+      changing("   ").isPrizeBlank shouldBe true
+      changing("я" * 201).isPrizeTooLong shouldBe true
+    }
+
+    "answers a repeat of its prize op_id before the meetup is asked and refuses a stranger before the raffle" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val op = OpId(UUID.fromString(raffleOp))
+      val changed = Raffle(
+        RaffleState.Open(raffleTerms.copy(prize = Some("кружка")), Vector(ViewerId)),
+        Map(op -> RaffleEnvelope(3, op, RaffleEvent.PrizeChanged("кружка")))
+      )
+      val again = Raffles(changed)
+      val grpc = service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = again)
+      grpc
+        .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+        .futureValue
+        .getAccepted
+        .rafflePrize shouldBe Some("кружка")
+      statusOf(
+        grpc.changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "другой", raffleOp))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+      again.reached shouldBe empty
+
+      val untouched = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty))
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = untouched)
+        .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      untouched.reached shouldBe empty
+    }
+
+    "refuses a prize change after the result and in a raffle that will have none, naming the reason" in {
+      def changing(raffle: Raffle) =
+        service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, granted), raffles = Raffles(raffle))
+          .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+          .futureValue
+          .getRefused
+      val assigned = Raffle(RaffleState.Assigned(raffleTerms, Vector(ViewerId), 1, Instant.EPOCH), Map.empty)
+      changing(assigned).getAlreadyDrawn.winningTicket shouldBe 1
+      val cancelled = Raffle(RaffleState.Cancelled(raffleTerms, Vector(ViewerId), Instant.EPOCH), Map.empty)
+      changing(cancelled).reason.isWithoutResult shouldBe true
+      changing(Raffle.initial).reason.isRaffleNotFound shouldBe true
+    }
+
+    "shows the candidates of a pool that waits for the winner by hand without the seed" in {
+      val read = service(
+        Unreachable,
+        raffles = Raffles(
+          Raffle(
+            RaffleState.AwaitingWinner(raffleTerms, Vector(ParticipantId(UUID.fromString(lot)), ViewerId)),
+            Map.empty
+          )
+        ),
+        raffleNames = _ => Future.successful(Map(1 -> "Кот*"))
+      ).getRaffle(wire.GetRaffleRequest(Some(viewer), raffleAuction)).futureValue.getRaffle
+      read.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_AWAITING_WINNER
+      read.drawnByHand shouldBe true
+      read.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, None))
+      read.reveal shouldBe None
+      read.toProtoString should not include raffleSeed.hex
+    }
 
     "refuses a viewer without the right to bid and a participant without a chosen name before the raffle" in {
       val raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector.empty), Map.empty))
@@ -1960,12 +2248,66 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       )
     }
 
+    "shows the administrator the registrations of the open raffle without the cancelled one and the predictions" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val registry = new Views {
+        override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) = Future.successful(Nil)
+      }
+      val (left, stayed) = (participant(1), participant(2))
+      val open = Raffle.replay(
+        Raffle.initial,
+        List(
+          RaffleEnvelope(1, LotFixtures.op(1), RaffleEvent.RaffleOpened(raffleTerms.closesAt, raffleSeed, 42L)),
+          RaffleEnvelope(2, LotFixtures.op(2), RaffleEvent.Registered(left)),
+          RaffleEnvelope(3, LotFixtures.op(3), RaffleEvent.Registered(stayed)),
+          RaffleEnvelope(4, LotFixtures.op(4), RaffleEvent.RegistrationCancelled(left))
+        )
+      )
+      val meetups: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      val console = service(
+        Unreachable,
+        views = registry,
+        auctions = AuctionCommands(consoleOf(), Unreachable, meetups),
+        raffles = Raffles(open),
+        predictions = Games(Left(SubmitRejected.RoundNotOpen), counted = Some(PredictionTally(3, 7)))
+      ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString)).futureValue.getConsole
+
+      console.raffleRegistrations shouldBe Some(1)
+      console.predictions.map(found => (found.participants, found.answers)) shouldBe Some((3, 7))
+    }
+
+    "shows the console without the raffle and predictions lines when the auction has neither or they do not answer" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val registry = new Views {
+        override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) = Future.successful(Nil)
+      }
+      val meetups: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      def read(raffles: RaffleGateway, predictions: PredictionGateway) =
+        service(
+          Unreachable,
+          views = registry,
+          auctions = AuctionCommands(consoleOf(), Unreachable, meetups),
+          raffles = raffles,
+          predictions = predictions
+        ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString)).futureValue.getConsole
+
+      val absent = read(Raffles(Raffle.initial), Games(Left(SubmitRejected.RoundNotOpen)))
+      val silent = read(AuctionGrpcService.NoRaffles, AuctionGrpcService.NoPredictions)
+
+      for (console <- List(absent, silent)) {
+        console.getAuction.status.isPrebidding shouldBe true
+        console.raffleRegistrations shouldBe None
+        console.predictions shouldBe None
+      }
+    }
+
     "refuses the console to a viewer whom the meetup does not confirm and reads no lot" in {
       val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
       val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
       service(
         Unreachable,
-        auctions = AuctionCommands(consoleOf(new UUID(7L, 1L), new UUID(7L, 2L)), Unreachable, stranger)
+        auctions = AuctionCommands(consoleOf(new UUID(7L, 1L), new UUID(7L, 2L)), Unreachable, stranger),
+        raffles = UntouchableRaffles
       ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString))
         .futureValue
         .getRefused

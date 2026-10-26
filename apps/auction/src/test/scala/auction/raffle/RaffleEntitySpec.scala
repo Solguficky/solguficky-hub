@@ -77,7 +77,8 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
       clock: Clock,
       access: RaffleAccess,
       beacon: Beacon,
-      tickets: Tickets
+      tickets: Tickets,
+      settings: RaffleEntity.Settings = settings
   ): Kit = {
     val ids = new AtomicLong(0)
     EventSourcedBehaviorTestKit(
@@ -233,6 +234,85 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
       tickets.expiry.get shouldBe None
       recording.success(())
       eventually(calls.toArray.toList shouldBe List("record", "recorded", "expire"))
+    }
+
+    "waits for the winner by hand without asking the beacon, across a restart, and keeps the assigned ticket" in {
+      val clock = new MovableClock(closesAt.minusSeconds(60))
+      val tickets = new Tickets
+      val raffle = entity(
+        clock,
+        participant => Future.successful(participant != person(2)),
+        _ => Future.failed(new AssertionError("a pool waiting for the winner by hand must not ask the beacon")),
+        tickets,
+        settings.copy(byHand = true)
+      )
+      raffle.runCommand[Done](RaffleEntity.Open(OpenRaffle(closesAt), _))
+      for (who <- 1 to 3) register(raffle, who, who)
+      clock.now = closesAt.plusSeconds(1)
+      raffle.runCommand(RaffleEntity.CloseDue)
+      eventually {
+        raffle.getState().raffle.state match {
+          case RaffleState.AwaitingWinner(_, fixed) => fixed shouldBe Vector(person(1), person(3))
+          case other => fail(s"unexpected $other")
+        }
+      }
+      eventually(tickets.recorded.get shouldBe Vector(person(1), person(3)))
+
+      clock.now = Quicknet.roundAt(Quicknet.roundFor(closesAt)).plusSeconds(1)
+      raffle.runCommand(RaffleEntity.PollBeacon)
+      raffle.restart()
+      raffle.getState().raffle.state shouldBe a[RaffleState.AwaitingWinner]
+
+      def assign(ticket: Int, opN: Int) =
+        raffle.runCommand[Either[AssignRejected, Raffle]](
+          RaffleEntity.Assign(AssignWinner(ticket, OpId(uuid(2000 + opN))), _)
+        )
+      assign(3, 1).reply shouldBe Left(AssignRejected.TicketNotInPool(2))
+      val assigned = assign(2, 2)
+      assigned.events.map(_.event.kind) shouldBe Seq("WinnerAssigned")
+      assigned.reply.map(raffle => Raffle.winningTicket(raffle.state)) shouldBe Right(Some(2))
+      assign(2, 2).events shouldBe empty
+      assign(1, 3).reply shouldBe Left(AssignRejected.AlreadyDrawn(2))
+      eventually(tickets.expiry.get shouldBe Some(clock.now.plus(java.time.Duration.ofDays(30))))
+    }
+
+    "changes the prize before the result across a restart, keeps a repeat without an event and refuses it after" in {
+      val clock = new MovableClock(closesAt.minusSeconds(60))
+      val raffle = entity(
+        clock,
+        _ => Future.successful(true),
+        _ => Future.failed(new AssertionError("a pool waiting for the winner by hand must not ask the beacon")),
+        new Tickets,
+        settings.copy(byHand = true)
+      )
+      raffle.runCommand[Done](RaffleEntity.Open(OpenRaffle(closesAt, Some("кружка")), _))
+      register(raffle, 1, 1)
+      def change(prize: String, opN: Int) =
+        raffle.runCommand[Either[ChangePrizeRejected, Raffle]](
+          RaffleEntity.SetPrize(ChangePrize(prize, OpId(uuid(3000 + opN))), _)
+        )
+      def prizeOf(state: RaffleState) =
+        state match {
+          case RaffleState.Open(terms, _) => terms.prize
+          case RaffleState.AwaitingWinner(terms, _) => terms.prize
+          case RaffleState.Assigned(terms, _, _, _) => terms.prize
+          case other => fail(s"unexpected $other")
+        }
+      val changed = change("кружка и брелок", 1)
+      changed.events.map(_.event.kind) shouldBe Seq("PrizeChanged")
+      changed.reply.map(raffle => prizeOf(raffle.state)) shouldBe Right(Some("кружка и брелок"))
+      change("кружка и брелок", 1).events shouldBe empty
+
+      clock.now = closesAt.plusSeconds(1)
+      raffle.runCommand(RaffleEntity.CloseDue)
+      eventually(raffle.getState().raffle.state shouldBe a[RaffleState.AwaitingWinner])
+      raffle.restart()
+      prizeOf(raffle.getState().raffle.state) shouldBe Some("кружка и брелок")
+      change("подставка", 2).events.map(_.event.kind) shouldBe Seq("PrizeChanged")
+
+      raffle.runCommand[Either[AssignRejected, Raffle]](RaffleEntity.Assign(AssignWinner(1, OpId(uuid(2001))), _))
+      prizeOf(raffle.getState().raffle.state) shouldBe Some("подставка")
+      change("другой", 3).reply shouldBe Left(ChangePrizeRejected.AlreadyDrawn(1))
     }
 
     "fixes an empty pool without asking the beacon" in {

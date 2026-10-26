@@ -62,6 +62,10 @@ export const ACCESS_REQUEST_OUTCOMES = [
   "pending",
   "declined",
   "blocked",
+  // Очередь закрыта настройкой Identity: вход только по белому списку, заявки
+  // нет (дополнение ADR-060 от 2026-10-25). Закрывается только очередь
+  // сообщества, поэтому бот аукциона читает его как незнакомый исход.
+  "invitation-only",
   // Значение, которого край не знает. По контракту читается как отказ.
   "unspecified",
 ] as const;
@@ -411,7 +415,33 @@ export interface AuctionPort {
     viewer: Viewer;
     auctionId: string;
   }): Promise<PredictionResultsView>;
+  // Хроники дня (PER-725): агрегаты последних суток. Окно выбирает Auction по
+  // своим часам, право — `place_bids`.
+  getDayChronicle(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<DayChronicleView>;
 }
+
+// Хроники дня (PER-725) — срез `GetAuctionDayChronicle`: агрегаты окна каждого
+// лота реестра без значимого порядка, а из жизни лота — только число ставок и
+// рост от стартовой цены, по которым ищется «тёмная лошадка». Служебного пульта
+// — участников, времени последней ставки — Auction сюда не отдаёт.
+export type DayChronicleView = {
+  lots: readonly DayChronicleLot[];
+};
+
+export type DayChronicleLot = {
+  lotId: string;
+  // Ставки, смены лидера и самая длинная дуэль — окна.
+  bidCount: number;
+  leaderChanges: number;
+  longestDuel: number;
+  // Ставки за всю жизнь лота, прочитанные после окна.
+  totalBidCount: number;
+  // Текущая цена минус стартовая; нет — у лота нет цены.
+  priceGrowth?: Money;
+};
 
 // Счёт проданного лота глазами победителя (PER-322; integration.md,
 // «Счета»). Деньги идут мимо продукта: оплату отмечает организатор, и статус
@@ -510,11 +540,14 @@ export type PredictionOutcome =
 // Где розыгрыш (`auction.v1.RaffleStatus`). `closing` — момент закрытия прошёл,
 // а пул ещё фиксируется; `not-held` — онлайн-торги открылись не раньше момента
 // закрытия, и регистрация не открывалась; `cancelled` — аукцион отменили до
-// жеребьёвки (ADR-066, дополнение 2026-10-12), и seed не раскроется.
+// жеребьёвки (ADR-066, дополнение 2026-10-12), и seed не раскроется;
+// `awaiting-winner` — пул ждёт итога, который назовёт администратор
+// (ADR-066, дополнение 2026-10-24).
 export type RaffleStatusView =
   | "open"
   | "closing"
   | "awaiting-beacon"
+  | "awaiting-winner"
   | "drawn"
   | "no-tickets"
   | "not-held"
@@ -551,6 +584,9 @@ export type RaffleView = {
   reveal?: RaffleRevealView;
   // Приз розыгрыша одной строкой (PER-649); нет — розыгрыш без приза.
   prize?: string;
+  // Итог называет администратор, а не маяк (PER-727): известно с фиксации
+  // пула, и пересчитывать такой итог нечего. Нет поля — итог по маяку.
+  drawnByHand?: true;
 };
 
 export type RaffleRegistrationRefusal =

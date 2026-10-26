@@ -7,6 +7,8 @@ import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
+import auction.raffle.AssignRejected
+import auction.raffle.AssignWinner
 import auction.raffle.Beacon
 import auction.raffle.Draw
 import auction.raffle.OpenRaffle
@@ -95,7 +97,12 @@ final class RafflePublicationIntegrationSpec
     clock.shift =
       java.time.Duration.between(Instant.now(), Quicknet.roundAt(Quicknet.roundFor(closesAt)).plusSeconds(1))
 
-  private def withNode[A](database: DatabaseSettings, beacon: Beacon, clock: MovableClock = new MovableClock)(
+  private def withNode[A](
+      database: DatabaseSettings,
+      beacon: Beacon,
+      clock: MovableClock = new MovableClock,
+      byHand: Boolean = false
+  )(
       use: ClusterSharding => A
   ): A = {
     val kit = ActorTestKit(s"raffle-publication-${UUID.randomUUID()}", nodeConfig(database))
@@ -109,7 +116,7 @@ final class RafflePublicationIntegrationSpec
         _ => Future.successful(true),
         beacon,
         NoNames,
-        RaffleEntity.Settings(5.seconds, 200.millis, java.time.Duration.ofDays(30))
+        RaffleEntity.Settings(5.seconds, 200.millis, java.time.Duration.ofDays(30), byHand)
       )
       val meter = SdkMeterProvider.builder().registerMetricReader(InMemoryMetricReader.create()).build().get("t")
       AuctionNode.startPublication(
@@ -142,6 +149,11 @@ final class RafflePublicationIntegrationSpec
       .ask[Either[RegistrationRejected, Raffle]](RaffleEntity.Enter(Register(who, OpId(ids())), _))
       .futureValue
       .isRight shouldBe true
+
+  private def assign(sharding: ClusterSharding, auction: UUID, ticket: Int, opId: OpId) =
+    raffle(sharding, auction)
+      .ask[Either[AssignRejected, Raffle]](RaffleEntity.Assign(AssignWinner(ticket, opId), _))
+      .futureValue
 
   private def state(sharding: ClusterSharding, auction: UUID): RaffleState =
     raffle(sharding, auction).ask[Raffle](RaffleEntity.Get(_)).futureValue.state
@@ -225,6 +237,48 @@ final class RafflePublicationIntegrationSpec
         eventually(published(database) should have size 1)
       }
       published(database).head.state.map(_.tickets) shouldBe Some(pool.map(_.value.toString))
+    }
+
+    "wait for the winner by hand without drawing from the beacon and publish the assigned ticket once" in {
+      val database = migrated()
+      val auction = UUID.randomUUID()
+      val pool = people(3)
+      val clock = new MovableClock
+      val closesAt = Instant.now().plusSeconds(8)
+      val op = OpId(ids())
+      withNode(database, new HeldBeacon(released = true), clock, byHand = true) { sharding =>
+        open(sharding, auction, closesAt)
+        pool.foreach(register(sharding, auction, _))
+        eventually {
+          state(sharding, auction) match {
+            case RaffleState.AwaitingWinner(_, tickets) => tickets shouldBe pool
+            case other => fail(s"expected a pool waiting for the winner, got $other")
+          }
+        }
+        pastBeaconRound(clock, closesAt)
+        Thread.sleep(2000)
+        state(sharding, auction) shouldBe a[RaffleState.AwaitingWinner]
+        published(database) shouldBe empty
+
+        assign(sharding, auction, 4, OpId(ids())) shouldBe Left(AssignRejected.TicketNotInPool(3))
+        assign(sharding, auction, 2, op).map(_.state) match {
+          case Right(RaffleState.Assigned(_, tickets, 2, _)) => tickets shouldBe pool
+          case other => fail(s"expected the assigned winner, got $other")
+        }
+        assign(sharding, auction, 2, op).isRight shouldBe true
+        assign(sharding, auction, 3, OpId(ids())) shouldBe Left(AssignRejected.AlreadyDrawn(2))
+        eventually(published(database) should have size 1)
+      }
+      val fact = published(database).head
+      fact.occasion.isRaffleDrawn shouldBe true
+      fact.state.map(body => (body.tickets, body.winningTicket)) shouldBe Some((pool.map(_.value.toString), 2))
+
+      // Настройка сервиса читается только при фиксации пула: узел в автоматическом режиме итог не переигрывает.
+      withNode(database, new HeldBeacon(released = true), clock) { sharding =>
+        state(sharding, auction) shouldBe a[RaffleState.Assigned]
+        Thread.sleep(2000)
+        published(database) should have size 1
+      }
     }
 
     "publish nothing for an empty pool and for a raffle that is not held" in {

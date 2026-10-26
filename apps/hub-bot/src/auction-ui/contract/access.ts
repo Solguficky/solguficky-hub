@@ -43,6 +43,9 @@ export type AccessAnswer =
   | "blocked"
   // «Ты уже участник сообщества солегуфиков. Аукционы для тебя — в основном боте сообщества: открой сходку и нажми „🧩 Расширения“» (ADR-064, пункт 2; PER-605).
   | "in-community"
+  // «Бот сообщества — только по приглашению»: очередь сообщества закрыта, и
+  // заявки нет (дополнение ADR-060 от 2026-10-25). Только в хабе.
+  | "invitation-only"
   // Сбой соседа: ни допуска, ни ответа о заявке.
   | "unavailable";
 
@@ -259,6 +262,23 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     action: APPLY,
     answer: "unavailable",
   },
+  // Закрытая очередь сообщества (дополнение ADR-060 от 2026-10-25): белый
+  // список не сработал, заявки нет — «только по приглашению». Право аукциона
+  // из аукционной записи хаб по-прежнему не открывает.
+  {
+    name: "hub: closed queue applies",
+    surface: "hub",
+    person: { ...NEWCOMER, outcome: "invitation-only" },
+    action: APPLY_FROM_CHANNEL,
+    answer: "invitation-only",
+  },
+  {
+    name: "hub: auction right only applies to a closed queue",
+    surface: "hub",
+    person: { ...AUCTION_ONLY, outcome: "invitation-only" },
+    action: APPLY,
+    answer: "invitation-only",
+  },
   {
     name: "auction: auction right starts",
     surface: "auction",
@@ -273,9 +293,10 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     action: LOT_BUTTON,
     answer: "admitted",
   },
-  // Участнику и администратору бот аукциона отвечает только переходом в бот
-  // хаба: торгов и списков нет, и подделанное нажатие до Auction не доходит
-  // (ADR-064, пункт 2).
+  // Участнику бот аукциона отвечает только переходом в бот хаба: торгов и
+  // списков нет, и подделанное нажатие до Auction не доходит (ADR-064,
+  // пункт 2). Администратор входит в бот аукциона, чтобы проверять его глазами
+  // гостя (решение владельца 24.10.2026).
   {
     name: "auction: hub right starts",
     surface: "auction",
@@ -298,18 +319,18 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     answer: "in-community",
   },
   {
-    name: "auction: all rights start",
+    name: "auction: admin starts",
     surface: "auction",
     person: ADMIN,
     action: START,
-    answer: "in-community",
+    answer: "admitted",
   },
   {
-    name: "auction: all rights press",
+    name: "auction: admin presses",
     surface: "auction",
     person: ADMIN,
     action: LOT_BUTTON,
-    answer: "in-community",
+    answer: "admitted",
   },
   // Право хаба без права аукциона Identity не отдаёт; строка держит, что
   // переход решает право хаба, а не пара прав.
@@ -393,6 +414,15 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     name: "auction: unknown outcome",
     surface: "auction",
     person: { rights: ["place-bids"], blocked: false, outcome: "unspecified" },
+    action: APPLY,
+    answer: "unavailable",
+  },
+  // Очередь аукциона не закрывается: такой исход в ней — нарушение контракта,
+  // и бот аукциона отвечает, как на незнакомый.
+  {
+    name: "auction: invitation-only outcome",
+    surface: "auction",
+    person: { ...NEWCOMER, outcome: "invitation-only" },
     action: APPLY,
     answer: "unavailable",
   },

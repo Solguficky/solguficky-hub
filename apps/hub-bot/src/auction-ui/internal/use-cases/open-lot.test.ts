@@ -54,6 +54,9 @@ const auction: AuctionPort = {
   getPredictionResults: async () => {
     throw new Error("not used");
   },
+  getDayChronicle: async () => {
+    throw new Error("not used");
+  },
   submitPrediction: async () => {
     throw new Error("not used");
   },

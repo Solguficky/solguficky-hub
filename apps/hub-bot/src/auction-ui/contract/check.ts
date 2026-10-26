@@ -15,6 +15,7 @@ import type {
   AuctionSummaryView,
   BidRefusal,
   CommandOutcome,
+  DayChronicleView,
   DisplayNameOutcome,
   FollowOutcome,
   FulfillmentOutcome,
@@ -149,6 +150,11 @@ export type PortCall =
     }
   | {
       port: "auction";
+      method: "getDayChronicle";
+      request: Parameters<AuctionMethods["getDayChronicle"]>[0];
+    }
+  | {
+      port: "auction";
       method: "submitPrediction";
       request: Parameters<AuctionMethods["submitPrediction"]>[0];
     }
@@ -229,6 +235,8 @@ export type ContractAuction = {
   // следующее чтение счетов уже видит.
   fulfillments?: readonly FulfillmentOutcome[];
   predictionResults?: PredictionResultsView;
+  // Хроники дня (PER-725). Нет — чтение не ожидается.
+  dayChronicle?: DayChronicleView;
 };
 
 export type AuctionContractCase = {
@@ -3433,6 +3441,17 @@ const rootPredictionsRow = (
   },
 ];
 
+// Хроники дня (PER-725): корень онлайн-недели несёт вход в них.
+const chronicleCallback = () =>
+  encodeAuctionCallback({
+    kind: "day-chronicle",
+    auctionId: CONTRACT_AUCTION_ID,
+  });
+
+const rootChronicleRow = [
+  { action: "root.day-chronicle" as const, callbackData: chronicleCallback() },
+];
+
 const rootLotsRow = [
   {
     action: "root.lots" as const,
@@ -3467,6 +3486,7 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
           },
         ],
         rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootChronicleRow,
       ],
     },
   },
@@ -3517,7 +3537,11 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
           auction: CONTRACT_SUMMARY,
         },
       ],
-      keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID)],
+      keyboard: [
+        rootLotsRow,
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootChronicleRow,
+      ],
     },
   },
   // Корень открывается и смотрящему, которому Auction прогнозы не отдаёт
@@ -3538,7 +3562,7 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
             auction: CONTRACT_SUMMARY,
           },
         ],
-        keyboard: [rootLotsRow],
+        keyboard: [rootLotsRow, rootChronicleRow],
       },
     }),
   ),
@@ -3560,6 +3584,7 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
       keyboard: [
         rootLotsRow,
         rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootChronicleRow,
         [
           {
             action: "root.favorites",
@@ -4097,7 +4122,11 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
           auction: CONTRACT_SUMMARY,
         },
       ],
-      keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID, "final")],
+      keyboard: [
+        rootLotsRow,
+        rootPredictionsRow(CONTRACT_AUCTION_ID, "final"),
+        rootChronicleRow,
+      ],
     },
   },
   {
@@ -4118,7 +4147,11 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
           auction: PREDICTION_SUMMARY,
         },
       ],
-      keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID)],
+      keyboard: [
+        rootLotsRow,
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootChronicleRow,
+      ],
     },
   },
   {
@@ -5148,6 +5181,143 @@ const PREDICTION_RESULTS_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Хроники дня (PER-725): вход в корне во время онлайн-недели — у контрактного
+// аукциона она идёт — и номинации последних суток. Названия читаются только у
+// выбранных лотов, каждое один раз; людей и служебных чисел пульта в теле нет.
+const chronicleReadCall = (): PortCall => ({
+  port: "auction",
+  method: "getDayChronicle",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+});
+
+const chronicleBody = (
+  chronicle: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "day-chronicle" }
+  >["chronicle"],
+): AuctionScreenBody => ({
+  blocks: [
+    { kind: "day-chronicle", auctionId: CONTRACT_AUCTION_ID, chronicle },
+  ],
+  keyboard: [
+    [
+      {
+        action: "day-chronicle.back",
+        callbackData: callback({
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+        }),
+      },
+    ],
+  ],
+});
+
+const DAY_CHRONICLE_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "day chronicle: nominations of the last day",
+    callbackData: chronicleCallback(),
+    auction: {
+      ...AUCTION,
+      dayChronicle: {
+        lots: [
+          // Спорнее всех и дуэль: пять смен лидера, четыре подряд вдвоём, до
+          // суток две ставки.
+          {
+            lotId: CONTRACT_LOT.lotId,
+            bidCount: 4,
+            leaderChanges: 5,
+            longestDuel: 4,
+            totalBidCount: 6,
+            priceGrowth: { minorUnits: 15_000, currency: "RUB" },
+          },
+          // Тёмная лошадка: одна ставка до суток и наибольший рост от старта.
+          {
+            lotId: SOLD_LOT.lotId,
+            bidCount: 2,
+            leaderChanges: 1,
+            longestDuel: 1,
+            totalBidCount: 3,
+            priceGrowth: { minorUnits: 50_000, currency: "RUB" },
+          },
+          // Без ставок за сутки лот не номинируется и не читается.
+          {
+            lotId: SCHEDULED_LOT.lotId,
+            bidCount: 0,
+            leaderChanges: 0,
+            longestDuel: 0,
+            totalBidCount: 0,
+            priceGrowth: { minorUnits: 0, currency: "RUB" },
+          },
+        ],
+      },
+    },
+    auctionCalls: [
+      chronicleReadCall(),
+      findLotCall(CONTRACT_LOT.lotId),
+      findLotCall(SOLD_LOT.lotId),
+    ],
+    body: chronicleBody({
+      kind: "nominated",
+      contested: { title: "Кружка с совой", leaderChanges: 5 },
+      darkHorse: {
+        title: "Плакат",
+        priceGrowth: { minorUnits: 50_000, currency: "RUB" },
+        bidsBefore: 1,
+      },
+      duel: { title: "Кружка с совой", longestDuel: 4 },
+    }),
+  },
+  {
+    intent: "day chronicle: no bids in the last day",
+    callbackData: chronicleCallback(),
+    auction: {
+      ...AUCTION,
+      dayChronicle: {
+        lots: [
+          {
+            lotId: CONTRACT_LOT.lotId,
+            bidCount: 0,
+            leaderChanges: 0,
+            longestDuel: 0,
+            totalBidCount: 6,
+          },
+        ],
+      },
+    },
+    auctionCalls: [chronicleReadCall()],
+    body: chronicleBody({ kind: "no-bids" }),
+  },
+  {
+    intent: "day chronicle: no lots",
+    callbackData: chronicleCallback(),
+    auction: { ...AUCTION, dayChronicle: { lots: [] } },
+    auctionCalls: [chronicleReadCall()],
+    body: chronicleBody({ kind: "no-lots" }),
+  },
+  // Ставки были, а номинации не набрались: ни смены лидера, ни роста.
+  {
+    intent: "day chronicle: bids without a nominee",
+    callbackData: chronicleCallback(),
+    auction: {
+      ...AUCTION,
+      dayChronicle: {
+        lots: [
+          {
+            lotId: CONTRACT_LOT.lotId,
+            bidCount: 1,
+            leaderChanges: 0,
+            longestDuel: 0,
+            totalBidCount: 9,
+            priceGrowth: { minorUnits: 0, currency: "RUB" },
+          },
+        ],
+      },
+    },
+    auctionCalls: [chronicleReadCall()],
+    body: chronicleBody({ kind: "nominated" }),
+  },
+];
+
 // Счета победителя (PER-322): «Мои счета» в корне, список с суммой и текстом
 // организатора, счёт и выбор способа получения. Чужих счетов шпион не
 // отдаёт, как Auction: в снимке только счета смотрящего.
@@ -5241,6 +5411,7 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
       keyboard: [
         rootLotsRow,
         rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootChronicleRow,
         [{ action: "root.invoices", callbackData: invoicesCallback }],
       ],
     },
@@ -5400,6 +5571,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...SET_CASES,
   ...ROOT_CASES,
   ...PREDICTION_RESULTS_CASES,
+  ...DAY_CHRONICLE_CASES,
   {
     intent: "feed",
     callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
@@ -5997,6 +6169,13 @@ export function spyPorts(
           throw new Error("prediction results are not expected");
         }
         return snapshot.predictionResults;
+      },
+      async getDayChronicle(request) {
+        calls.push({ port: "auction", method: "getDayChronicle", request });
+        if (snapshot.dayChronicle === undefined) {
+          throw new Error("the day chronicle is not expected");
+        }
+        return snapshot.dayChronicle;
       },
       async submitPrediction(request) {
         calls.push({ port: "auction", method: "submitPrediction", request });

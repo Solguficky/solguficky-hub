@@ -296,6 +296,26 @@ export type AuctionBlock =
           };
     }
   | {
+      // Хроники дня (PER-725): номинации последних суток глазами участника.
+      // Лот назван только названием карточки — нет его, оболочка подставит
+      // «лот без названия»; людей и служебных чисел пульта в блоке нет.
+      kind: "day-chronicle";
+      auctionId: string;
+      chronicle:
+        | { kind: "no-lots" }
+        | { kind: "no-bids" }
+        | {
+            kind: "nominated";
+            contested?: { title?: string; leaderChanges: number };
+            darkHorse?: {
+              title?: string;
+              priceGrowth: Money;
+              bidsBefore: number;
+            };
+            duel?: { title?: string; longestDuel: number };
+          };
+    }
+  | {
       // Розыгрыш среди участников (ADR-066, п. 11): что показать, решает
       // статус. Нет `raffle` — у аукциона розыгрыша нет: кнопка устарела.
       kind: "raffle";
@@ -532,6 +552,7 @@ export type AuctionButton =
         | "root.lots"
         | "root.predictions"
         | "root.prediction-results"
+        | "root.day-chronicle"
         | "root.raffle"
         | "root.favorites"
         // Счета победителя (PER-322): вход из корня, возврат из списка в
@@ -589,6 +610,7 @@ export type AuctionButton =
         | "raffle.back"
         | "raffle.return"
         | "prediction-results.back"
+        | "day-chronicle.back"
         // Имя из настроек: возврат на экран имени с исхода.
         | "name.return";
       callbackData: string;

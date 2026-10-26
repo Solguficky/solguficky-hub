@@ -2,6 +2,7 @@ package auction.grpc
 
 import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
+import auction.aggregate.AuctionConfig
 import auction.aggregate.AuctionState
 import auction.aggregate.MeetupGate
 import auction.aggregate.PaymentInstructions
@@ -31,11 +32,16 @@ import auction.projection.AuctionWatchViews
 import auction.projection.FinalBids
 import auction.prediction.PredictionGateway
 import auction.prediction.PredictionRound
+import auction.prediction.PredictionTally
 import auction.prediction.SubmitForecast
 import auction.prediction.SubmitRejected
 import auction.projection.LotSnapshotView
 import auction.projection.LotViews
+import auction.raffle.AssignRejected
+import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
+import auction.raffle.ChangePrize
+import auction.raffle.ChangePrizeRejected
 import auction.raffle.Raffle
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleState
@@ -93,7 +99,8 @@ final class AuctionGrpcService(
     notes: OperationNotes = OperationNotes.discarded,
     finalBids: FinalBids = FinalBids.empty,
     invoices: InvoiceGateway = InvoiceGateway.none,
-    invoiceViews: InvoiceViews = InvoiceViews.none
+    invoiceViews: InvoiceViews = InvoiceViews.none,
+    raffleByHand: Boolean = false
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -865,14 +872,71 @@ final class AuctionGrpcService(
           val auctionId = query.auctionId.value
           // Страница — весь реестр: пустой реестр всё равно читается страницей в одну строку.
           val wholeRegistry = auction.lots.size.max(1)
-          views.registryPage(auctionId, None, wholeRegistry).map { lots =>
+          val registrations = raffleRegistrations(query.auctionId, auction)
+          val tally = predictionTally(query.auctionId)
+          for {
+            lots <- views.registryPage(auctionId, None, wholeRegistry)
+            registered <- registrations
+            predicted <- tally
+          } yield {
             val view = AuctionSnapshotView(auctionId, auction)
-            val console =
-              ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace)
+            val console = ConsoleMapping.withParticipation(
+              ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace),
+              registered,
+              predicted
+            )
             wire.GetAuctionConsoleResponse().withConsole(console)
           }
         }
     }
+
+  /**
+   * Число регистраций в розыгрыше для пульта (PER-734) — из entity, пока розыгрыш держит регистрации: открыт он только
+   * в онлайн-торгах, поэтому в остальных фазах entity не спрашивается. Число — украшение пульта, а не его условие:
+   * отказ чтения отдаёт пульт без числа, и брошенный до `Future` — тоже: узел без шардинга розыгрыша бросает сразу.
+   */
+  private def raffleRegistrations(auctionId: AuctionId, auction: Auction): Future[Option[Int]] =
+    auction.state match {
+      case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) =>
+        Future
+          .delegate(raffles.get(auctionId))
+          .map(raffle =>
+            raffle.state match {
+              case RaffleState.Open(_, entries) => Some(entries.size)
+              case _ => None
+            }
+          )
+          .recover(participationUnavailable[Int](auctionId, "raffle"))
+      case _ => Future.successful(None)
+    }
+
+  /** Прогнозы аукциона числами для пульта (PER-734); отказ чтения, как у розыгрыша, отдаёт пульт без них. */
+  private def predictionTally(auctionId: AuctionId): Future[Option[PredictionTally]] =
+    Future
+      .delegate(predictions.tally(auctionId))
+      .recover(participationUnavailable[PredictionTally](auctionId, "predictions"))
+
+  /** Пульт без числа розыгрыша или прогнозов пишется событием, как снимок без имени собравшего сет. */
+  private def participationUnavailable[T](
+      auctionId: AuctionId,
+      source: String
+  ): PartialFunction[Throwable, Option[T]] = { case NonFatal(cause) =>
+    AuctionGrpcService.logger.warn(
+      "console participation unavailable",
+      StructuredArguments.entries(
+        (Map[String, Any](
+          "operation" -> AuctionGrpcService.ConsoleParticipationOperation,
+          "result" -> "error",
+          "error_category" -> "dependency_unavailable",
+          "error" -> cause.getClass.getName,
+          "auction_id" -> auctionId.value.toString,
+          "source" -> source
+        ) ++ correlation.requestId.filter(_.nonEmpty).map("request_id" -> _) ++
+          correlation.useCase.filter(_.nonEmpty).map("use_case" -> _)).asJava
+      )
+    )
+    None
+  }
 
   /**
    * Статистика лотов реестра для ручного отбора финалистов (PER-481). Право и отказы — те же, что у пульта, и тем же
@@ -1033,6 +1097,69 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Ручной итог розыгрыша (ADR-066, дополнение 2026-10-24, PER-727): форма, затем право вести аукцион у Meetups с
+   * воротами отменённой сходки, как у ручной отметки итогов прогнозов, затем розыгрыш. Повтор своего `op_id` отвечает
+   * раньше права, как у отметок счёта (ADR-047): принятый итог не превращается в отказ сходки или `UNAVAILABLE`. Номер
+   * билета и итог судит розыгрыш; ответ — розыгрыш глазами администратора.
+   */
+  def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest): Future[wire.AssignRaffleWinnerResponse] =
+    RequestMapping.assignRaffleWinner(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        val assign = AssignWinner(command.ticket, command.opId)
+        def answer(outcome: Either[AssignRejected, Raffle]) =
+          viewed(command.auctionId, command.acting.participant, outcome)
+            .flatMap(viewedOutcome => RaffleMapping.assign(viewedOutcome).fold(refuse, Future.successful))
+        raffles.get(command.auctionId).recoverWith(awaited).flatMap { raffle =>
+          raffle.seen.get(command.opId) match {
+            case Some(_) =>
+              Raffle.decide(raffle, assign, clock.instant()) match {
+                case Left(rejected) => answer(Left(rejected))
+                case Right(_) => answer(Right(raffle))
+              }
+            case None =>
+              val query = ConsoleQuery(command.auctionId, command.acting)
+              administered(query, ResponseMapping.assignWinnerDenied, MeetupGate.NotCancelled) { _ =>
+                raffles.assign(command.auctionId, assign).recoverWith(awaited).flatMap(answer)
+              }
+          }
+        }
+    }
+
+  /**
+   * Смена приза розыгрыша (ADR-066, дополнение 2026-10-25, PER-737) путём ручного итога: форма, затем текст теми же
+   * правилами, что приз конфигурации (`RafflePrizeBlank`, `RafflePrizeTooLong`), затем повтор своего `op_id` раньше
+   * права, затем право вести аукцион у Meetups с воротами отменённой сходки, затем розыгрыш. Конфигурацию аукциона
+   * команда не трогает: приз меняется только в розыгрыше, который скопировал его при открытии.
+   */
+  def changeRafflePrize(in: wire.ChangeRafflePrizeRequest): Future[wire.ChangeRafflePrizeResponse] =
+    RequestMapping.changeRafflePrize(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) if command.prize.isBlank => Future.successful(RaffleMapping.prizeBlank)
+      case Right(command) if command.prize.length > AuctionConfig.MaxRafflePrize =>
+        Future.successful(RaffleMapping.prizeTooLong)
+      case Right(command) =>
+        val change = ChangePrize(command.prize, command.opId)
+        def answer(outcome: Either[ChangePrizeRejected, Raffle]) =
+          viewed(command.auctionId, command.acting.participant, outcome)
+            .flatMap(viewedOutcome => RaffleMapping.changePrize(viewedOutcome).fold(refuse, Future.successful))
+        raffles.get(command.auctionId).recoverWith(awaited).flatMap { raffle =>
+          raffle.seen.get(command.opId) match {
+            case Some(_) =>
+              Raffle.decide(raffle, change) match {
+                case Left(rejected) => answer(Left(rejected))
+                case Right(_) => answer(Right(raffle))
+              }
+            case None =>
+              val query = ConsoleQuery(command.auctionId, command.acting)
+              administered(query, ResponseMapping.changePrizeDenied, MeetupGate.NotCancelled) { _ =>
+                raffles.changePrize(command.auctionId, change).recoverWith(awaited).flatMap(answer)
+              }
+          }
+        }
+    }
+
+  /**
    * Прогноз раунда (ADR-067, пп. 2–5): форма, право `place_bids` на каждой отправке, аукцион и лоты раунда, имя в
    * аукционе — тем же правилом, что перед ставкой, но без заморозки, — затем игра. Лоты сверяются, только пока раунд
    * может быть открыт: в остальное время отказ раунда даёт сама игра, и чужой лот его не подменяет.
@@ -1130,6 +1257,37 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Хроники дня участника (PER-725): та же сводка окна, что у пульта, за последние сутки по часам сервиса, и счётчики
+   * жизни лота, без которых не найти «тёмную лошадку». Право — `place_bids`, скрытый аукцион — как отсутствующий.
+   * Служебного пульта — числа участников и времени последней ставки — ответ не несёт. Окно выбирает сервис, а не
+   * вызывающий: участник читает последние сутки, а не любой срез недели.
+   */
+  def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest): Future[wire.GetAuctionDayChronicleResponse] =
+    RequestMapping.getAuctionDayChronicle(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        val auctionId = query.auctionId.value
+        concealed(auctionId, query.acting.viewer).flatMap {
+          case true => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case false =>
+            auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+              case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+              case Some(_) =>
+                val until = clock.instant()
+                val from = until.minus(AuctionGrpcService.ChronicleWindow)
+                // Сутки — раньше жизни лота, как у пульта (PER-511): ставка между чтениями попадает только в число
+                // ставок за всё время и лишь завышает «до суток».
+                for {
+                  day <- views.dayStatistics(auctionId, from, until)
+                  lifetime <- views.statistics(auctionId)
+                } yield DaySummaryMapping.chronicle(from, until, day, lifetime)
+            }
+        }
+    }
+
+  /**
    * Ручная отметка итогов (ADR-067, п. 8): только администратор сходки аукциона, право у Meetups — тем же путём, что у
    * пульта. Подсчёт этим подавляется; повтор на посчитанном или уже отмеченном принят без второго факта.
    */
@@ -1196,7 +1354,8 @@ final class AuctionGrpcService(
    */
   private def view(auction: AuctionId, participant: ParticipantId, raffle: Raffle): Future[Option[wire.Raffle]] = {
     val names = raffle.state match {
-      case RaffleState.Fixed(_, _) | RaffleState.Drawn(_, _, _, _) =>
+      case RaffleState.Fixed(_, _) | RaffleState.AwaitingWinner(_, _) | RaffleState.Drawn(_, _, _, _) |
+          RaffleState.Assigned(_, _, _, _) =>
         Future.delegate(raffleNames(auction)).recover { case NonFatal(cause) =>
           AuctionGrpcService.logger.warn(
             "raffle ticket names unavailable",
@@ -1216,7 +1375,9 @@ final class AuctionGrpcService(
       case _ => Future.successful(Map.empty[Int, String])
     }
     names.map(known =>
-      RaffleView.of(raffle, participant, clock.instant(), known).map(RaffleMapping.raffle(auction.value, _))
+      RaffleView
+        .of(raffle, participant, clock.instant(), known, raffleByHand)
+        .map(RaffleMapping.raffle(auction.value, _))
     )
   }
 
@@ -1425,11 +1586,16 @@ object AuctionGrpcService {
   /** Допуск просрочки по умолчанию; узел передаёт `auction.deadlines.overdue-grace` — тот же, что у метрики. */
   val DefaultOverdueGrace: Duration = Duration.ofMinutes(1)
 
+  /** Окно хроник дня участника (PER-725): последние сутки до ответа. */
+  val ChronicleWindow: Duration = Duration.ofHours(24)
+
   /** Розыгрыша в узле нет: тесты границы, которым он не нужен. Любой вызов — ответа нет. */
   val NoRaffles: RaffleGateway = new RaffleGateway {
     private def none[T]: Future[T] = Future.failed(new IllegalStateException("raffles are not wired in this node"))
     def register(auction: AuctionId, command: Register) = none
     def cancel(auction: AuctionId, command: CancelRegistration) = none
+    def assign(auction: AuctionId, command: AssignWinner) = none
+    def changePrize(auction: AuctionId, command: ChangePrize) = none
     def get(auction: AuctionId) = none
   }
 
@@ -1446,6 +1612,7 @@ object AuctionGrpcService {
     def submit(auction: AuctionId, command: SubmitForecast) = none
     def mine(auction: AuctionId, participant: ParticipantId) = none
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) = none
+    def tally(auction: AuctionId) = none
   }
 
   /** Узел без итогов: тесты границы, которым подсчёт не нужен. */
@@ -1495,6 +1662,9 @@ object AuctionGrpcService {
 
   /** Событие снимка лота, отданного без имени собравшего сет: хранилище имён не ответило. */
   val CollectorNamesOperation: String = "auction.lot_set.collector_names_unavailable"
+
+  /** Событие пульта без числа регистраций розыгрыша или прогнозов (PER-734): entity или строки не ответили. */
+  val ConsoleParticipationOperation: String = "auction.console.participation_unavailable"
 
   /** Событие снимка розыгрыша, отданного с билетами без имён: снимок имён не прочитался. */
   val RaffleNamesOperation: String = "auction.raffle.ticket_names_unavailable"

@@ -2,6 +2,7 @@ import type {
   AccessRight,
   AuctionSummaryView,
   LotView,
+  RaffleTicketView,
   RaffleView,
 } from "../../../auction-ui/index.js";
 import type {
@@ -128,6 +129,9 @@ export type LotAskError =
   | "photo-needed"
   // Telegram не отдал файл фотографии: её можно прислать ещё раз.
   | "photo-unavailable"
+  // Auction не ответил на фото вовремя или недоступен (PER-728): то же фото
+  // можно прислать ещё раз, второго фото повтор не заведёт.
+  | "photo-not-saved"
   // Число лотов для копий — не целое от 2 до 20 (PER-716).
   | "copies-count";
 
@@ -370,7 +374,9 @@ export type ExecuteRequest =
   | FloorBidsRequest
   | ParticipantRemovalRequest
   | LotSetsRequest
-  | AuctionInvoicesRequest;
+  | AuctionInvoicesRequest
+  | RaffleWinnerRequest
+  | RafflePrizeChangeRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -587,7 +593,19 @@ export type AuctionConsoleSnapshot = {
   // организатор собирает его постепенно. Сеты читаются с агрегатом и могут
   // назвать лот, которого `lots` ещё не отдаёт.
   lotSets: readonly LotSet[];
+  // Сколько участников зарегистрировалось в розыгрыше сейчас (PER-734):
+  // отменённая регистрация не считается. Есть, только пока розыгрыш держит
+  // регистрации; нет — розыгрыша нет, пул зафиксирован или Auction числа не
+  // отдал.
+  raffleRegistrations?: number;
+  // Прогнозы аукциона числами (PER-734), без людей и ответов. Нет — игры ещё
+  // нет или Auction их не отдал.
+  predictionTally?: PredictionTally;
 };
+
+// Прогнозы всех раундов вместе: участники хотя бы с одним ответом и все их
+// ответы. Очищенный прогноз ответов не несёт и не считается.
+export type PredictionTally = { participants: number; answers: number };
 
 // Сет лотов: название и лоты в порядке организатора. Неполный — меньше двух
 // лотов: участнику он не показывается и собранным не бывает (ADR-073, п. 1).
@@ -1229,6 +1247,54 @@ export type AuctionInvoicesRequest =
       opId: string;
     });
 
+// Итог розыгрыша вручную (PER-727; ADR-066, дополнение 2026-10-24): экран
+// списка билетов со страницей, вопрос о номере, ответ на него, подтверждение
+// по номеру из кнопки и «Да» с ключом, рождённым на нажатие.
+export type RaffleWinnerRequest =
+  | (AuctionConsoleCall & { intent: "view-raffle-winner"; page: number })
+  | (AuctionConsoleCall & { intent: "ask-raffle-winner" })
+  | (AuctionConsoleCall & { intent: "pick-raffle-winner"; value: string })
+  | (AuctionConsoleCall & { intent: "prepare-raffle-winner"; ticket: number })
+  | (AuctionConsoleCall & {
+      intent: "assign-raffle-winner";
+      ticket: number;
+      opId: string;
+    });
+
+// Смена приза идущего розыгрыша (PER-737; ADR-066, дополнение 2026-10-25):
+// вопрос о тексте, ответ на него — подтверждение «было → станет» — и «Да» с
+// текстом из экрана подтверждения и ключом, рождённым на нажатие.
+export type RafflePrizeChangeRequest =
+  | (AuctionConsoleCall & { intent: "ask-raffle-prize-change" })
+  | (AuctionConsoleCall & { intent: "pick-raffle-prize-change"; value: string })
+  | (AuctionConsoleCall & {
+      intent: "change-raffle-prize";
+      prize: string;
+      opId: string;
+    });
+
+// Исход смены приза — свой экран. `changed` несёт приз из ответа Auction,
+// `already-drawn` — итог уже есть, `without-result` — итога не будет,
+// `no-raffle` — розыгрыша у аукциона нет.
+export type RafflePrizeChangeOutcome =
+  | { note: "changed"; prize: string }
+  | { note: "already-drawn" }
+  | { note: "without-result" }
+  | { note: "no-raffle" };
+
+// Непринятый ответ о номере победителя: не номер или вне пула.
+export type RaffleWinnerAskError = "winner-format" | "winner-range";
+
+// Исход итога розыгрыша — свой экран. `already-drawn` называет выигравший
+// билет, `not-in-pool` — число билетов пула; `not-awaiting` — розыгрыш итога
+// не ждёт, `no-raffle` — розыгрыша у аукциона нет.
+export type RaffleWinnerOutcome =
+  | { note: "assigned"; ticket: RaffleTicketView }
+  | { note: "already-drawn"; ticket: RaffleTicketView }
+  | { note: "not-in-pool"; tickets: number }
+  | { note: "not-awaiting" }
+  | { note: "no-raffle" };
+
 // Непринятый ответ о тексте оплаты (PER-322): пустой после обрезки краёв или
 // длиннее предела Auction.
 export type PaymentTextAskError =
@@ -1628,6 +1694,44 @@ export type ExecuteResult =
       paymentInstructions?: string;
       note?: PaymentTextNote;
     }
+  // Итог розыгрыша вручную (PER-727): список билетов, вопрос о номере с
+  // числом билетов пула, подтверждение и исход.
+  | {
+      kind: "raffle-winner";
+      auctionId: string;
+      raffle: RaffleView;
+      page: number;
+    }
+  | {
+      kind: "raffle-winner-ask";
+      auctionId: string;
+      tickets: number;
+      error?: RaffleWinnerAskError;
+    }
+  | {
+      kind: "raffle-winner-confirm";
+      auctionId: string;
+      ticket: RaffleTicketView;
+    }
+  | ({ kind: "raffle-winner-outcome"; auctionId: string } & RaffleWinnerOutcome)
+  // Смена приза идущего розыгрыша (PER-737): вопрос с текущим призом,
+  // подтверждение «было → станет» и исход.
+  | {
+      kind: "raffle-prize-change-ask";
+      auctionId: string;
+      prize?: string;
+      error?: RafflePrizeAskError;
+    }
+  | {
+      kind: "raffle-prize-change-confirm";
+      auctionId: string;
+      before?: string;
+      after: string;
+    }
+  | ({
+      kind: "raffle-prize-change-outcome";
+      auctionId: string;
+    } & RafflePrizeChangeOutcome)
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
   | { kind: "payment-text-ask"; auctionId: string; error?: PaymentTextAskError }
   | { kind: "auction-invoice"; invoice: InvoiceRow }

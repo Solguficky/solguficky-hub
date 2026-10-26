@@ -62,7 +62,11 @@ export type AuctionResult =
 
 // Политика поверхности по правам, которые вывел Identity (ADR-064, RFC-016):
 // хаб требует `access-hub`, бот аукциона — `place-bids` и отсутствие
-// `access-hub`. Ни круга, ни набора шлюз не знает. `undefined` — пустить.
+// `access-hub`. Исключение — администратор (право `manage-members`, его даёт
+// только набор `admin`): он входит и в бот аукциона, чтобы проверять, как бот
+// ведёт себя у гостя (решение владельца 24.10.2026, пересматривает ADR-064,
+// п. 2 для администратора). Ни круга, ни набора шлюз не знает. `undefined` —
+// пустить.
 function refusal(
   surface: AuctionSurface["kind"],
   rights: readonly AccessRight[],
@@ -71,7 +75,8 @@ function refusal(
     case "hub":
       return rights.includes("access-hub") ? undefined : "not-admitted";
     case "auction":
-      if (rights.includes("access-hub")) return "in-community";
+      if (rights.includes("access-hub") && !rights.includes("manage-members"))
+        return "in-community";
       return rights.includes("place-bids") ? undefined : "not-admitted";
     default: {
       const _exhaustive: never = surface;
@@ -171,6 +176,9 @@ export function applicationQueue(
 export type SurfaceEntry =
   | { kind: "entered"; identity: ResolvedIdentity }
   | { kind: "denied"; reason: AuctionDenial; identityId: string }
+  // Хаб закрыт для заявок: в него пускает только белый список (дополнение
+  // ADR-060 от 2026-10-25). Только у поверхности хаба.
+  | { kind: "invitation-only"; identityId: string }
   // Исход, которого край не знает. По контракту это отказ, но не ответ о
   // заявке: приложение отвечает как на сбой соседа и пишет нарушение в лог.
   | { kind: "unknown-outcome"; identityId: string };
@@ -193,6 +201,13 @@ export function decideEntry(
   });
   if (outcome === "unspecified") return { kind: "unknown-outcome", identityId };
   if (outcome === "blocked") return denied("blocked");
+  // Закрывается только очередь сообщества: в очереди аукциона такой исход —
+  // нарушение контракта, и бот аукциона отвечает на него, как на незнакомый.
+  if (outcome === "invitation-only") {
+    return surface === "hub"
+      ? { kind: "invitation-only", identityId }
+      : { kind: "unknown-outcome", identityId };
+  }
   // Участник в боте аукциона получает переход при любом исходе очереди
   // аукциона: о заявке ему здесь отвечать нечего (ADR-064, пункт 2).
   const refused = refusal(surface, viewer.rights);

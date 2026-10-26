@@ -10,6 +10,7 @@ import {
 import {
   type AccessRight,
   type AuctionStageView,
+  type DayChronicleView,
   encodeAuctionCallback,
   type FavoritesPort,
   type LotView,
@@ -162,7 +163,9 @@ function fakeAuction(
     nameless?: { aliasRefusal?: "alias-taken" };
     // Идущий аукцион сообщества (PER-595, PER-669); по умолчанию — нет его.
     current?: () => MeetupAuctionResult | Promise<MeetupAuctionResult>;
-    stage?: "scheduled" | "finished";
+    stage?: "scheduled" | "prebidding" | "finished";
+    // Хроники дня (PER-725): агрегаты последних суток от Auction.
+    chronicle?: DayChronicleView;
     // Отображаемые имена участников: карточка проданного лота называет
     // победителя.
     names?: Readonly<Record<string, string>>;
@@ -322,6 +325,10 @@ function fakeAuction(
           },
           getMyPredictions: async () => [],
           getPredictionResults: async () => ({ kind: "after-final" as const }),
+          getDayChronicle: async () => {
+            if (options.chronicle === undefined) throw new Error("not used");
+            return options.chronicle;
+          },
           submitPrediction: async () => {
             throw new Error("not used");
           },
@@ -759,6 +766,63 @@ describe("enabling the auction", () => {
 });
 
 describe("auction root and the way back", () => {
+  // PER-725: участник открывает «Хроники дня» из корня онлайн-недели и видит
+  // номинации суток — без разделов, ссылок и кнопок сводки дня пульта.
+  it("opens the day chronicle of the online week without the console", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      stage: "prebidding",
+      chronicle: {
+        lots: [
+          {
+            lotId: lot.lotId,
+            bidCount: 4,
+            leaderChanges: 5,
+            longestDuel: 4,
+            totalBidCount: 6,
+            priceGrowth: { minorUnits: 15_000, currency: "RUB" },
+          },
+        ],
+      },
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(labels(root)).toContainEqual(["Хроники дня"]);
+    await bot.handleUpdate(press(data(root, "Хроники дня") ?? ""));
+    const chronicle = lastScreen(calls);
+    expect(chronicle.text).toContain("Хроники дня");
+    expect(chronicle.text).toContain("Спорнее всех:");
+    expect(chronicle.text).toContain("5 смен лидера");
+    expect(chronicle.text).toContain("Тёмная лошадка:");
+    expect(chronicle.text).toContain("Эпичная дуэль:");
+    expect(chronicle.text).toContain("4 перебивания подряд вдвоём");
+    // Только у сводки дня пульта: максимумы цены, рост за сутки, ссылки на
+    // лоты для пересылки и возврат в пульт.
+    expect(chronicle.text).not.toContain("Новые максимумы цены");
+    expect(chronicle.text).not.toContain("Больше всех выросла цена");
+    expect(chronicle.text).not.toContain("t.me/");
+    expect(labels(chronicle).flat()).not.toContain("‹ Пульт");
+    expect(labels(chronicle).flat()).toContain("‹ Аукцион");
+  });
+
+  it("offers no day chronicle before the online week", async () => {
+    const auction = fakeAuction({ existing: true, stage: "scheduled" });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    expect(labels(lastScreen(calls)).flat()).not.toContain("Хроники дня");
+  });
+
   it("opens prediction results from a finished auction", async () => {
     const auction = fakeAuction({ existing: true, stage: "finished" });
     const { bot, calls } = harness("member", auction, {
@@ -2288,7 +2352,7 @@ describe("events of the hub", () => {
   it("hides the events from the menu while nothing goes and keeps /events with an empty state", async () => {
     const auction = fakeAuction({
       existing: true,
-      current: going("scheduled"),
+      current: going("draft"),
     });
     const { bot, calls } = harness("member", auction, {
       presentation: "plain",

@@ -33,6 +33,7 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../../core/auction/commands.js";
+import { dayChronicleOf } from "../../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
 import {
@@ -81,12 +82,14 @@ import { consoleOf } from "./console.js";
 import {
   type AddLotResult,
   type AdvanceAskResult,
+  type AssignRaffleWinnerResult,
   type AuctionConsoles,
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
   type AuctionVisibilityResult,
   type CancelAuctionResult,
+  type ChangeRafflePrizeResult,
   type CloseLotResult,
   type ConsoleReadResult,
   type DaySummaryReadResult,
@@ -146,12 +149,15 @@ type AuctionRpc = Pick<
   | "chooseDisplayName"
   | "getAuction"
   | "getRaffle"
+  | "assignRaffleWinner"
+  | "changeRafflePrize"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "listMyInvoices"
   | "chooseFulfillment"
   | "getMyPredictions"
   | "getPredictionResults"
+  | "getAuctionDayChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
@@ -412,6 +418,32 @@ export function createAuctionAdapter(
           : { kind: "ok", raffle: raffleOf(raffle) };
       } catch (cause) {
         return toFailure(cause);
+      }
+    },
+    // Повтора нет: ключ рождается на нажатие «Да», а повтор того же «Да»
+    // Auction примет без второго итога.
+    async assignRaffleWinner(person, command, meta) {
+      try {
+        const response = await rpc.assignRaffleWinner(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return assignRaffleWinnerResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Повтора нет, как у итога: ключ рождается на нажатие «Да», а повтор того
+    // же «Да» Auction примет без второй смены.
+    async changeRafflePrize(person, command, meta) {
+      try {
+        const response = await rpc.changeRafflePrize(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return changeRafflePrizeResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
       }
     },
     async enableAuction(person, meetupId, opId, meta) {
@@ -1375,6 +1407,16 @@ export function createAuctionAdapter(
               options(meta),
             );
             return predictionResultsOf(response);
+          },
+          async getDayChronicle(request) {
+            const response = await rpc.getAuctionDayChronicle(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return dayChronicleOf(response);
           },
           submitPrediction(request) {
             return unansweredOn(async () =>
@@ -2747,6 +2789,98 @@ function paymentInstructionsResult(
       }
     case undefined:
       return defect("payment instructions response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы ручного итога розыгрыша (PER-727): именованный отказ Auction —
+// значение ответа, а не сбой вызова.
+function assignRaffleWinnerResult(
+  outcome: Awaited<ReturnType<AuctionRpc["assignRaffleWinner"]>>["outcome"],
+): AssignRaffleWinnerResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "notAwaitingWinner":
+          return { kind: "not-awaiting-winner" };
+        case "ticketNotInPool":
+          return { kind: "ticket-not-in-pool", tickets: reason.value.tickets };
+        case "alreadyDrawn":
+          return {
+            kind: "already-drawn",
+            winningTicket: reason.value.winningTicket,
+          };
+        case undefined:
+          return defect("raffle winner refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle winner response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы смены приза розыгрыша (PER-737): именованный отказ Auction —
+// значение ответа, а не сбой вызова.
+function changeRafflePrizeResult(
+  outcome: Awaited<ReturnType<AuctionRpc["changeRafflePrize"]>>["outcome"],
+): ChangeRafflePrizeResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "prizeBlank":
+          return { kind: "prize-blank" };
+        case "prizeTooLong":
+          return { kind: "prize-too-long" };
+        case "alreadyDrawn":
+          return {
+            kind: "already-drawn",
+            winningTicket: reason.value.winningTicket,
+          };
+        case "withoutResult":
+          return { kind: "without-result" };
+        case undefined:
+          return defect("raffle prize refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle prize response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

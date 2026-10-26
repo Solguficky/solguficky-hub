@@ -41,9 +41,11 @@ import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service.AddLotPhotoRequest
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AdvanceAskRequest
+import auction.v1.auction_service.AssignRaffleWinnerRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
+import auction.v1.auction_service.ChangeRafflePrizeRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
@@ -61,6 +63,7 @@ import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
+import auction.v1.auction_service.GetAuctionDayChronicleRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
@@ -214,6 +217,12 @@ final case class FinalCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 /** Регистрация в розыгрыше аукциона или её отмена: участник — смотрящий (ADR-066). */
 final case class RaffleCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
+/** Ручной итог розыгрыша: номер билета от администратора; диапазон судит розыгрыш по своему пулу. */
+final case class RaffleWinnerCommand(auctionId: AuctionId, ticket: Int, opId: OpId, acting: Acting)
+
+/** Смена приза розыгрыша: текст без пробелов по краям; пустоту и длину судит граница правилами конфигурации. */
+final case class RafflePrizeCommand(auctionId: AuctionId, prize: String, opId: OpId, acting: Acting)
+
 /** Чтение розыгрыша аукциона смотрящим. */
 final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
 
@@ -228,6 +237,9 @@ final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
 
 /** Сводка дня торгов: аукцион сходки и окно `[from, until)`, за которое считается статистика лотов. */
 final case class DaySummaryQuery(auctionId: AuctionId, acting: Acting, from: Instant, until: Instant)
+
+/** Хроники дня участника (PER-725): аукцион сходки и тот, кто смотрит; окно выбирает сервис. */
+final case class DayChronicleQuery(auctionId: AuctionId, acting: Acting)
 
 /** Подписка на поток аукциона сходки: аукцион и тот, кто смотрит. */
 final case class WatchQuery(auctionId: AuctionId, acting: Acting)
@@ -554,6 +566,13 @@ object RequestMapping {
       _ <- Either.cond(until.isAfter(from), (), FormError("until"))
     } yield DaySummaryQuery(query.auctionId, query.acting, from, until)
 
+  /** Хроники дня участника: аукцион сходки; право `place_bids` граница проверит до чтения, окно — сервис. */
+  def getAuctionDayChronicle(request: GetAuctionDayChronicleRequest): Either[FormError, DayChronicleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield DayChronicleQuery(auction, acting)
+
   /** Чтение итогов прогнозов смотрящим: аукцион сходки; право `place_bids` граница проверит до чтения. */
   def getPredictionResults(request: GetPredictionResultsRequest): Either[FormError, PredictionQuery] =
     for {
@@ -703,6 +722,20 @@ object RequestMapping {
       acting <- acting(request.viewer)
       auction <- meetupAuction(request.auctionId)
     } yield RaffleQuery(auction, acting)
+
+  def assignRaffleWinner(request: AssignRaffleWinnerRequest): Either[FormError, RaffleWinnerCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      op <- uuidV7("op_id", request.opId)
+    } yield RaffleWinnerCommand(auction, request.ticket, OpId(op), acting)
+
+  def changeRafflePrize(request: ChangeRafflePrizeRequest): Either[FormError, RafflePrizeCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      op <- uuidV7("op_id", request.opId)
+    } yield RafflePrizeCommand(auction, request.prize.trim, OpId(op), acting)
 
   /** Розыгрыш есть только у аукциона сходки: его открывает журнал аукциона, а у тестового аукциона журнала нет. */
   private def raffleCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =

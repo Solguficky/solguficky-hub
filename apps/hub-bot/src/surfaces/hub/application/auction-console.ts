@@ -915,21 +915,17 @@ export function createAuctionConsole(
     };
   }
 
-  // Розыгрыш для строки пульта (PER-618): читается, только когда момент
-  // закрытия регистрации у открытой недели прошёл, — до него строка называет
-  // момент, и вызов не нужен. Пульт ведущего строки розыгрыша не несёт и
-  // не читает его на каждом «Обновить». Отказ чтения пульт не роняет: строка
-  // остаётся прежней.
+  // Розыгрыш для строки пульта (PER-618) и его приза (PER-737): читается с
+  // открытия недели — до закрытия регистрации строка называет момент, а приз
+  // уже живёт у розыгрыша. Пульт ведущего строки розыгрыша не несёт и не
+  // читает его на каждом «Обновить». Отказ чтения пульт не роняет: строка
+  // остаётся прежней, а приз — из сроков.
   async function raffleOf(
     request: AuctionConsoleRequest,
     console: AuctionConsoleView,
   ): Promise<RaffleView | undefined> {
     const closesAt = console.week?.raffleClosesAt;
-    if (
-      closesAt === undefined ||
-      !rafflePhases.has(console.status) ||
-      Date.parse(closesAt) > now().getTime()
-    ) {
+    if (closesAt === undefined || !rafflePhases.has(console.status)) {
       return undefined;
     }
     const raffle = await consoles.consoleRaffle(

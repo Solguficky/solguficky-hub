@@ -303,6 +303,9 @@ function portsWith(
       },
       getMyPredictions: async () => [],
       getPredictionResults: async () => ({ kind: "after-final" as const }),
+      getDayChronicle: async () => {
+        throw new Error("not used");
+      },
       submitPrediction: async () => {
         throw new Error("not used");
       },
@@ -781,6 +784,16 @@ describe("auction bot", () => {
                 kind: "feed",
                 auctionId,
                 page: 0,
+              }),
+            },
+          ],
+          // Онлайн-неделя: вход в «Хроники дня» (PER-725).
+          [
+            {
+              text: "Хроники дня",
+              callback_data: encodeAuctionCallback({
+                kind: "day-chronicle",
+                auctionId,
               }),
             },
           ],
@@ -3327,7 +3340,7 @@ describe("raffle among the participants", () => {
       raffleOf(
         create(RaffleSchema, {
           auctionId,
-          status: (RaffleStatus.CANCELLED + 1) as RaffleStatus,
+          status: (RaffleStatus.AWAITING_WINNER + 1) as RaffleStatus,
           closesAt: openRaffle.closesAt,
         }),
       );

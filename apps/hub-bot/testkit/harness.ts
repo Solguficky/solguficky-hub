@@ -102,6 +102,14 @@ const photoBlock = (index: number) => ({
 
 export type Respond = (method: ApiMethod, payload: ApiPayload) => unknown;
 
+function apiAnswer(answer: unknown): never {
+  return (
+    typeof answer === "object" && answer !== null && "ok" in answer
+      ? answer
+      : { ok: true, result: answer }
+  ) as never;
+}
+
 // Записывающий трансформер: вызов уходит в `calls`, экран сверяется с
 // каталогом поверхности и дизайн-кодом в момент отправки — найденное снимает
 // хук набора (`lint-setup.ts`) либо пульт, — а ответ Telegram подставляется.
@@ -125,13 +133,10 @@ function recorder(
     // Ответ с полем `ok` — готовый ответ Bot API, в том числе отказ: из него
     // grammY сам соберёт GrammyError. Остальное — результат успешного вызова.
     const answer = respond?.(method, payload);
+    // Обещание — медленный Telegram: ответ приходит, когда оно исполнится.
+    if (answer instanceof Promise) return answer.then(apiAnswer);
     if (answer instanceof Error) return Promise.reject(answer);
-    if (typeof answer === "object" && answer !== null && "ok" in answer) {
-      return Promise.resolve(answer as never);
-    }
-    if (answer !== undefined) {
-      return Promise.resolve({ ok: true, result: answer as never });
-    }
+    if (answer !== undefined) return Promise.resolve(apiAnswer(answer));
     // Харнесс аукциона отвечает чатом получателя, харнесс хаба — всегда 42:
     // так они отвечали до общего kit, и наборы обеих поверхностей на это
     // опираются.
@@ -211,6 +216,7 @@ export type HarnessOptions = Partial<
     | "communityTimeZone"
     | "auctionBotUsername"
     | "supportBotUsername"
+    | "build"
     | "files"
     | "favorites"
     | "proxyExplainer"

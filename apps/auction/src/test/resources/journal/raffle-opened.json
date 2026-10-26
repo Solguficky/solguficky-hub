@@ -15,6 +15,8 @@
     "registrationCancelled": null,
     "poolFixed": null,
     "raffleDrawn": null,
-    "raffleCancelled": null
+    "raffleCancelled": null,
+    "winnerAssigned": null,
+    "prizeChanged": null
   }
 }
