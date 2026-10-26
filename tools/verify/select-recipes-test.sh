@@ -94,6 +94,8 @@ assert_selects "auction seed selects only itself" \
 assert_selects "prefix match stops at the directory" "$always" apps/identity-old/readme.md
 assert_selects "shared prefix match stops at the directory" "$always" shared/dotnet-old/readme.md
 assert_selects "auction selects auction" "$always auction-verify" apps/auction/build.sbt
+assert_selects "achievements selects achievements" \
+    "$always achievements-build achievements-test achievements-format-check" apps/achievements/lib/achievements/application.ex
 mode="--full --deferred"
 assert_selects "full selection defers nothing" "" apps/auction/build.sbt
 

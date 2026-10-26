@@ -36,6 +36,12 @@ internal static class PostgresSetup
             AppHostNames.Resources.AuctionDb,
             postgres.AddDatabase(AppHostNames.Resources.AuctionDb, AppHostNames.Resources.AuctionDbName));
 
+        // Реестр выдач, состояние правил и outbox Achievements (ADR-077). Схему
+        // заводит сам сервис миграциями Ecto при старте.
+        context.Publish(
+            AppHostNames.Resources.AchievementsDb,
+            postgres.AddDatabase(AppHostNames.Resources.AchievementsDb, AppHostNames.Resources.AchievementsDbName));
+
         return postgres;
     }
 
@@ -50,7 +56,8 @@ internal static class PostgresSetup
             AppHostNames.Resources.IdentityDb,
             AppHostNames.Resources.MeetupsDb,
             AppHostNames.Resources.NotificationsDb,
-            AppHostNames.Resources.AuctionDb])
+            AppHostNames.Resources.AuctionDb,
+            AppHostNames.Resources.AchievementsDb])
         {
             context.Publish(database, context.Builder.AddConnectionString(database));
         }

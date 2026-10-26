@@ -8,11 +8,12 @@ fixture in which every image is pinned by a synthetic digest, and each rendered
 workload is checked against the rules of the production chart:
 
 - the workloads are exactly the four MVP services, Auction, the auction bot,
-  the support bot and the public entry tunnel, nothing else;
+  the support bot, Achievements and the public entry tunnel, nothing else;
 - every service runs one replica with the Recreate strategy and no rollingUpdate
   block, which the Kubernetes API rejects next to Recreate;
-- the tunnel (ADR-071) runs one replica only where the environment's values set
-  `enabled.cloudflared: true`, and none without the key: the chart is rendered
+- the tunnel (ADR-071) and Achievements (ADR-077, addendum 2026-10-26) run one
+  replica only where the environment's values set `enabled.<key>: true`, and
+  none without the key: the chart is rendered
   twice, and the count is a `!!int`-tagged scalar, because a plain template in a
   number field is quoted by the generator and a quoted count is rejected by the
   Kubernetes API while helm stays silent;
@@ -57,7 +58,7 @@ is real: real digests live in the ops repository (ADR-055).
 Usage:
   check-chart.py <chart-dir> <values-fixture>   render with helm, then check
   check-chart.py --rendered <dir>               check an already rendered tree
-  check-chart.py --rendered-enabled <dir>       the same, rendered with the tunnel enabled
+  check-chart.py --rendered-enabled <dir>       the same, rendered with the switched workloads enabled
   check-chart.py --values <values.yaml>         check the chart's own values only
 """
 
@@ -68,9 +69,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-WORKLOADS = {"identity", "meetups", "notifications", "hub-bot", "auction", "auction-bot", "support-bot", "cloudflared"}
+WORKLOADS = {"identity", "meetups", "notifications", "hub-bot", "auction", "auction-bot", "support-bot", "achievements", "cloudflared"}
 # Workloads an environment switches on with `enabled.<key>: true` in its values.
-SWITCHED = {"cloudflared": "cloudflared"}
+SWITCHED = {"cloudflared": "cloudflared", "achievements": "achievements"}
 TUNNEL = "cloudflared"
 TUNNEL_RULES = "cloudflared-ingress"
 TUNNEL_ORIGIN = "auction-service"
