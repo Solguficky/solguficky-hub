@@ -1,0 +1,8 @@
+lot_bid_placed: event_id=0192e5a0-0000-7000-8000-000000000001 lot=0192e5a0-0000-7000-8000-0000000000aa version=7 occasion=Some(BidPlaced(BidPlaced { previous_leader_id: None, overtaken_by_proxy: false, answers_other_bidder: false, origin: Some(Manual(ManualBid { source: Unspecified })) })) reencode_equal=true
+  rules: bidder=Some("0192e5a0-0000-7000-8000-0000000000b1")
+lot_sold: event_id=0192e5a0-0000-7000-8000-000000000001 lot=0192e5a0-0000-7000-8000-0000000000aa version=9 occasion=Some(LotSold(LotSold)) reencode_equal=true
+  rules: bidder=None
+invoice_paid: event_id=0192e5a0-0000-7000-8000-000000000002 winner=0192e5a0-0000-7000-8000-0000000000b1 occasion=Some(InvoicePaid(InvoicePaid)) reencode_equal=true
+  rules: payer=Some("0192e5a0-0000-7000-8000-0000000000b1")
+lot_unknown_occasion: event_id=0192e5a0-0000-7000-8000-000000000001 lot=0192e5a0-0000-7000-8000-0000000000aa version=7 occasion=None reencode_equal=false
+  rules: bidder=None

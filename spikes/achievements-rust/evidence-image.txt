@@ -1,0 +1,26 @@
+DROP TABLE
+published 40 last_seq 42
+f4aa808e1e4bb4983921e8bdacccafbabb479dae264f8479c764cf4301cb28fd
+grpc health on 0.0.0.0:50071
+collector: start from seq 1
+first_bidder: start from seq 1
+first_payment: start from seq 1
+bidder: start from seq 1
+14
+--- cursors
+bidder|42
+collector|42
+first_bidder|42
+first_payment|42
+--- tonic client inside image
+http://127.0.0.1:50071 grpc.health.v1.Health/Check -> Serving
+--- python grpcio-health-checking
+grpcio 1.85.0 Check -> SERVING
+--- process RSS after start, 4 actors running (pid 16462)
+VmHWM:	    9572 kB
+VmRSS:	    9572 kB
+Threads:	5
+docker stats mem 2.227MiB / 15.71GiB
+image size 58319876 bytes
+gzip docker save: 15168341 bytes
+serve binary tar bytes: 8456192

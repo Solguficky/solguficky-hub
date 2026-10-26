@@ -1,0 +1,6 @@
+target/
+fixtures/
+pygen/
+*.log
+# корневой .gitignore режет bin/ (.NET) — у Rust это исходники
+!src/bin/

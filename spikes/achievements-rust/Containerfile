@@ -1,0 +1,19 @@
+# Образ спайка: контекст — корень репозитория (нужен contracts/proto).
+#   docker build --network host --build-arg HTTPS_PROXY --secret id=ca,src=/root/.ccr/ca-bundle.crt \
+#     -f spikes/achievements-rust/Containerfile -t achievements-rust .
+# Сборка в rust:1.97-slim-trixie, рантайм distroless/cc-debian13:nonroot; базы по digest.
+FROM mirror.gcr.io/library/rust@sha256:8e8cf8f7fd54a2d23d5a743b3a03f56e26b6c774276c33fa0595111704ebb15c AS build
+ARG HTTPS_PROXY
+WORKDIR /src/spikes/achievements-rust
+COPY contracts/proto /src/contracts/proto
+COPY spikes/achievements-rust/Cargo.toml spikes/achievements-rust/Cargo.lock spikes/achievements-rust/build.rs ./
+COPY spikes/achievements-rust/src ./src
+RUN --mount=type=secret,id=ca,required=false \
+    if [ -f /run/secrets/ca ]; then export CARGO_HTTP_CAINFO=/run/secrets/ca; fi; \
+    cargo build --release --locked --bin serve --bin health_check
+
+FROM gcr.io/distroless/cc-debian13@sha256:3ee00291cf386ec52a552e6a858d555debd74776eb4bfa53fa3df2cd6677515e
+COPY --from=build /src/spikes/achievements-rust/target/release/serve /app/serve
+COPY --from=build /src/spikes/achievements-rust/target/release/health_check /app/health_check
+USER nonroot
+ENTRYPOINT ["/app/serve"]

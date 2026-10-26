@@ -1,0 +1,52 @@
+DROP TABLE
+published 40 last_seq 42
+cursors before kill -9:
+bidder|30
+collector|31
+first_bidder|31
+killed 9242
+--- serve1
+grpc health on 0.0.0.0:50071
+collector: start from seq 1
+first_bidder: start from seq 1
+bidder: start from seq 1
+first_bidder: granted 0192e5a0-0000-7000-8000-000000000502 at seq 1
+bidder: granted 0192e5a0-0000-7000-8000-000000000502 at seq 1
+bidder: granted 0192e5a0-0000-7000-8000-000000000503 at seq 2
+bidder: granted 0192e5a0-0000-7000-8000-000000000504 at seq 3
+bidder: granted 0192e5a0-0000-7000-8000-000000000500 at seq 4
+bidder: granted 0192e5a0-0000-7000-8000-000000000501 at seq 5
+announce occasion seq 1 0192e5a0-0000-7000-8000-000000001000 -> [("bidder", "0192e5a0-0000-7000-8000-000000000502"), ("first_bidder", "0192e5a0-0000-7000-8000-000000000502")]
+announce occasion seq 2 0192e5a0-0000-7000-8000-000000001001 -> [("bidder", "0192e5a0-0000-7000-8000-000000000503")]
+announce occasion seq 3 0192e5a0-0000-7000-8000-000000001002 -> [("bidder", "0192e5a0-0000-7000-8000-000000000504")]
+announce occasion seq 4 0192e5a0-0000-7000-8000-000000001003 -> [("bidder", "0192e5a0-0000-7000-8000-000000000500")]
+announce occasion seq 5 0192e5a0-0000-7000-8000-000000001004 -> [("bidder", "0192e5a0-0000-7000-8000-000000000501")]
+collector: granted 0192e5a0-0000-7000-8000-000000000500 at seq 30
+announce occasion seq 30 0192e5a0-0000-7000-8000-000000002005 -> [("collector", "0192e5a0-0000-7000-8000-000000000500")]
+--- serve2
+grpc health on 0.0.0.0:50071
+collector: start from seq 32
+bidder: start from seq 32
+first_bidder: start from seq 32
+collector: granted 0192e5a0-0000-7000-8000-000000000503 at seq 33
+collector: granted 0192e5a0-0000-7000-8000-000000000501 at seq 34
+collector: granted 0192e5a0-0000-7000-8000-000000000504 at seq 39
+announce occasion seq 33 0192e5a0-0000-7000-8000-000000002008 -> [("collector", "0192e5a0-0000-7000-8000-000000000503")]
+announce occasion seq 34 0192e5a0-0000-7000-8000-000000002009 -> [("collector", "0192e5a0-0000-7000-8000-000000000501")]
+announce occasion seq 39 0192e5a0-0000-7000-8000-000000002014 -> [("collector", "0192e5a0-0000-7000-8000-000000000504")]
+--- cursors
+bidder|42
+collector|42
+first_bidder|42
+--- collector counts
+0|4
+1|4
+2|2
+3|3
+4|3
+--- grants per achievement
+bidder|5
+collector|4
+first_bidder|1
+--- outbox unpublished
+0

@@ -1,0 +1,17 @@
+cargo 1.97.0 (c980f4866 2026-06-30)
+rustc 1.97.0 (2d8144b78 2026-07-07)
+├── anyhow v1.0.104
+├── async-nats v0.46.0
+├── futures v0.3.34
+├── prost v0.14.4
+├── sqlx v0.8.6
+├── tokio v1.54.1
+├── tonic v0.14.6
+└── tonic-health v0.14.6
+├── prost-build v0.14.4
+└── protox v0.9.1
+nats-server: nats-server: v2.15.1
+postgres: postgres (PostgreSQL) 17.11 (Debian 17.11-1.pgdg13+2)
+--- generation: build.rs, protox + prost-build on unmodified files
+contracts/proto unchanged vs origin/develop: yes
+generated auction.v1.rs: 1430 lines, 5 x `pub enum Occasion` (LotEvent, AuctionEvent, InvoiceEvent, RaffleEvent, PredictionResultsEvent)
