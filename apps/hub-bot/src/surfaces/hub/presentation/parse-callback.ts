@@ -93,6 +93,12 @@ const PositionSchema = z
   .transform(Number);
 // Окно «Счастливых часов» в кнопке пульта (PER-504): номер в конфигурации с
 // нуля — двух цифр хватает с запасом, — и отпечаток его сроков и шага.
+// Номер раздела ленты (PER-719) в кнопке; `0` — общий список.
+const SectionSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,2})$/)
+  .transform(Number);
+
 const WindowIndexSchema = z
   .string()
   .regex(/^(0|[1-9]\d?)$/)
@@ -506,6 +512,35 @@ type PlainAction =
     }
   | { kind: "console-set-delete"; auction: string; set: LotSetRef }
   | { kind: "console-set-delete-confirm"; auction: string; set: LotSetRef }
+  // Порядок и разделы ленты (PER-719): экран разделов, список места — номер
+  // раздела или `0`, общий список, — лот в раскладке, лот выше и ниже, лот
+  // в другое место, вопрос о названии нового или переименуемого раздела,
+  // раздел выше и ниже, подтверждение удаления раздела и «Да». Лот кнопка
+  // называет токеном, раздел — номером, который выбрал пульт.
+  | { kind: "console-layout"; auction: string }
+  | { kind: "console-layout-list"; auction: string; place: number; page: number }
+  | { kind: "console-layout-lot"; auction: string; lot: string }
+  | {
+      kind: "console-layout-lot-move";
+      auction: string;
+      lot: string;
+      direction: "up" | "down";
+    }
+  | {
+      kind: "console-layout-lot-place";
+      auction: string;
+      lot: string;
+      place: number;
+    }
+  | { kind: "console-section-ask"; auction: string; section?: number }
+  | {
+      kind: "console-section-move";
+      auction: string;
+      section: number;
+      direction: "up" | "down";
+    }
+  | { kind: "console-section-delete"; auction: string; section: number }
+  | { kind: "console-section-delete-confirm"; auction: string; section: number }
   // Запуск окна сниженного шага по ходу торгов (PER-615): начать запуск,
   // переключить лот запускаемого окна, запустить и листать лоты. Черновик
   // едет в кнопке — состояния у пульта нет.
@@ -779,6 +814,9 @@ export type QuestionStep =
   // Название нового сета лотов (PER-509): аукцион, а сеты ответ читает у
   // Auction заново.
   | { kind: "console-set"; auction: string }
+  // Название раздела ленты (PER-719): нового либо, с `section`, нового
+  // названия раздела.
+  | { kind: "console-section"; auction: string; section?: number }
   // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
   | { kind: "final-ask"; auction: string; position: number }
   // «Другой человек…» «Ставок зала» (PER-565): аукцион, а людей и цену ответ
@@ -1208,6 +1246,68 @@ export function consoleSetDeleteConfirmData(
   return `v1:ac:ty:${auction}:${set.index}:${set.print}`;
 }
 
+/** «Порядок» пульта: разделы ленты и общий список (PER-719). */
+export function consoleLayoutData(auction: string): string {
+  return `v1:ac:m:${auction}`;
+}
+
+/** Список раздела `place` или общий список (`0`) на странице `page`. */
+export function consoleLayoutListData(
+  auction: string,
+  place: number,
+  page = 0,
+): string {
+  const base = `v1:ac:ml:${auction}:${place}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/** Лот в раскладке; `mu` и `md` — тот же лот выше и ниже. */
+export function consoleLayoutLotData(
+  auction: string,
+  lot: string,
+  move?: "up" | "down",
+): string {
+  const code = move === undefined ? "mo" : move === "up" ? "mu" : "md";
+  return `v1:ac:${code}:${auction}:${lot}`;
+}
+
+/** Лот в раздел `place` или в общий список (`0`): 58 байт при трёх цифрах. */
+export function consoleLayoutPlaceData(
+  auction: string,
+  lot: string,
+  place: number,
+): string {
+  return `v1:ac:mv:${auction}:${lot}:${place}`;
+}
+
+/** «Новый раздел» и, с номером, «Переименовать»: вопрос о названии. */
+export function consoleSectionAskData(
+  auction: string,
+  section?: number,
+): string {
+  return section === undefined
+    ? `v1:ac:mq:${auction}`
+    : `v1:ac:mr:${auction}:${section}`;
+}
+
+/** Раздел выше (`mh`) и ниже (`mj`). */
+export function consoleSectionMoveData(
+  auction: string,
+  section: number,
+  direction: "up" | "down",
+): string {
+  return `v1:ac:${direction === "up" ? "mh" : "mj"}:${auction}:${section}`;
+}
+
+/** «Удалить раздел»: подтверждение (`mx`) и «Да» (`my`). */
+export function consoleSectionDeleteData(
+  auction: string,
+  section: number,
+  confirmed = false,
+): string {
+  return `v1:ac:${confirmed ? "my" : "mx"}:${auction}:${section}`;
+}
+
 /** «Запустить окно»: вопрос о начале, конце и шаге (PER-615). */
 export function consoleWindowLaunchData(auction: string): string {
   return `v1:ac:hl:${auction}`;
@@ -1455,6 +1555,10 @@ function stepData(step: QuestionStep): string {
       return `v1:q:al:${step.auction}`;
     case "console-set":
       return `v1:q:as:${step.auction}`;
+    case "console-section":
+      return step.section === undefined
+        ? `v1:q:aq:${step.auction}`
+        : `v1:q:ae:${step.auction}:${step.section}`;
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
     case "floor-search":
@@ -2242,6 +2346,93 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-window-launch", auction: auction.data }
         : { kind: "malformed" };
+    // Порядок и разделы ленты (PER-719).
+    case "m":
+      return parts.length === 4
+        ? { kind: "console-layout", auction: auction.data }
+        : { kind: "malformed" };
+    case "ml": {
+      const place = SectionSchema.safeParse(parts[4]);
+      const page = PageSchema.safeParse(parts[5] ?? "0");
+      return (parts.length === 5 || parts.length === 6) &&
+        place.success &&
+        page.success
+        ? {
+            kind: "console-layout-list",
+            auction: auction.data,
+            place: place.data,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "mo":
+    case "mu":
+    case "md": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !lot.success) return { kind: "malformed" };
+      return parts[2] === "mo"
+        ? { kind: "console-layout-lot", auction: auction.data, lot: lot.data }
+        : {
+            kind: "console-layout-lot-move",
+            auction: auction.data,
+            lot: lot.data,
+            direction: parts[2] === "mu" ? "up" : "down",
+          };
+    }
+    case "mv": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      const place = SectionSchema.safeParse(parts[5]);
+      return parts.length === 6 && lot.success && place.success
+        ? {
+            kind: "console-layout-lot-place",
+            auction: auction.data,
+            lot: lot.data,
+            place: place.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "mq":
+      return parts.length === 4
+        ? { kind: "console-section-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "mr":
+    case "mh":
+    case "mj":
+    case "mx":
+    case "my": {
+      const section = SectionSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !section.success || section.data === 0) {
+        return { kind: "malformed" };
+      }
+      switch (parts[2]) {
+        case "mr":
+          return {
+            kind: "console-section-ask",
+            auction: auction.data,
+            section: section.data,
+          };
+        case "mh":
+        case "mj":
+          return {
+            kind: "console-section-move",
+            auction: auction.data,
+            section: section.data,
+            direction: parts[2] === "mh" ? "up" : "down",
+          };
+        case "mx":
+          return {
+            kind: "console-section-delete",
+            auction: auction.data,
+            section: section.data,
+          };
+        default:
+          return {
+            kind: "console-section-delete-confirm",
+            auction: auction.data,
+            section: section.data,
+          };
+      }
+    }
     case "hm": {
       const draft = decodeLaunchDraft(parts[4] ?? "");
       return parts.length === 5 && draft !== undefined
@@ -2545,6 +2736,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-launch", auction: token.data };
       case "as":
         return { kind: "console-set", auction: token.data };
+      case "aq":
+        return { kind: "console-section", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":
@@ -2577,6 +2770,12 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
           ...(lead === "c" ? { chain: true as const } : {}),
           ...(lead === "s" ? { set: true as const } : {}),
         }
+      : undefined;
+  }
+  if (parts[2] === "ae") {
+    const section = SectionSchema.safeParse(parts[4]);
+    return section.success && section.data > 0
+      ? { kind: "console-section", auction: token.data, section: section.data }
       : undefined;
   }
   if (parts[2] === "fa") {

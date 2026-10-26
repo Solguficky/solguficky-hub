@@ -46,6 +46,7 @@ import {
   ScheduleLotResponseSchema,
   SelectForFinalResponseSchema,
   SetFinalTimeResponseSchema,
+  SetLotLayoutResponseSchema,
   StartFinalResponseSchema,
   StartNextLotResponseSchema,
   StartPrebiddingResponseSchema,
@@ -98,6 +99,7 @@ function adapter(rpc: {
   hideAuction?: Call;
   setFinalTime?: Call;
   saveLotSet?: Call;
+  setLotLayout?: Call;
   deleteLotSet?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
@@ -172,6 +174,7 @@ function adapter(rpc: {
     setFinalTime: (rpc.setFinalTime ?? notUsed) as never,
     saveLotSet: (rpc.saveLotSet ?? notUsed) as never,
     deleteLotSet: (rpc.deleteLotSet ?? notUsed) as never,
+    setLotLayout: (rpc.setLotLayout ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
     freezeFinalLineup: (rpc.freezeFinalLineup ?? notUsed) as never,
@@ -1877,6 +1880,86 @@ describe("auction console adapter", () => {
     });
     await expect(
       odd.deleteLotSet(admin, { auctionId, lotSetId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+
+  // Порядок и разделы ленты (PER-719): раскладка уходит целиком, отказ лота
+  // несёт лот.
+  it("sends the lot layout whole and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const layout = {
+      lotIds: [lotId],
+      sections: [{ sectionId: 1, name: "Книги", lotIds: [] }],
+    };
+    const accepted = adapter({
+      setLotLayout: async (request: unknown) => {
+        sent.push(request);
+        return create(SetLotLayoutResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.setLotLayout(admin, { auctionId, layout, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      {
+        viewer: { identityId: admin.identityId },
+        auctionId,
+        opId,
+        layout: {
+          lotIds: [lotId],
+          sections: [{ sectionId: 1, name: "Книги", lotIds: [] }],
+        },
+      },
+    ]);
+
+    const refusal = (reason: unknown) =>
+      adapter({
+        setLotLayout: async () =>
+          create(SetLotLayoutResponseSchema, {
+            outcome: { case: "refused", value: { reason } as never },
+          }),
+      }).setLotLayout(admin, { auctionId, layout, opId });
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [
+        { case: "finalAlreadyStarted", value: {} },
+        { kind: "final-already-started" },
+      ],
+      [
+        { case: "auctionAlreadyFinished", value: {} },
+        { kind: "auction-already-finished" },
+      ],
+      [
+        { case: "auctionAlreadyCancelled", value: {} },
+        { kind: "auction-already-cancelled" },
+      ],
+      [
+        { case: "lotNotInAuction", value: { lotId } },
+        { kind: "lot-not-in-auction", lotId },
+      ],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(refusal(reason)).resolves.toEqual(result);
+    }
+
+    const odd = adapter({
+      setLotLayout: async () => create(SetLotLayoutResponseSchema, {}),
+    });
+    await expect(
+      odd.setLotLayout(admin, { auctionId, layout, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    const missing = adapter({
+      setLotLayout: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    await expect(
+      missing.setLotLayout(admin, { auctionId, layout, opId }),
     ).resolves.toEqual({ kind: "auction-not-found" });
   });
 });
