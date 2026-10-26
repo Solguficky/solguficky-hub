@@ -28,7 +28,7 @@ export type ProgrammeOptions = {
  * Абзац программы с заголовком жирным или `undefined`, когда рассказать
  * нечего: торги онлайн-недели прошли, а финал без анонса. Окна и дедлайн —
  * пока онлайн-неделя впереди или идёт, розыгрыш — пока регистрация открыта,
- * финал — пока он не начался и у него есть ориентировочное время.
+ * финал — пока он не начался и его ориентировочное время впереди.
  */
 export function programmeParagraph(
   root: RootBlock,
@@ -52,6 +52,7 @@ export function programmeParagraph(
       : []),
     ...(auction.final &&
     auction.finalAt !== undefined &&
+    ahead(auction.finalAt) &&
     finalAhead.has(auction.stage)
       ? [`Финал: ориентировочно ${options.moment(auction.finalAt)}`]
       : []),
@@ -99,16 +100,16 @@ function windowLine(
   options: ProgrammeOptions,
 ): string {
   const lots = counted(window.lotIds.length, ["лот", "лота", "лотов"]);
-  if (Date.parse(window.from) <= options.now.getTime()) {
-    return `Счастливые часы: сейчас, до ${timeOf(window.until, options.timeZone)} — ${lots}`;
-  }
-  const sameDay =
-    dayOf(window.from, options.timeZone) ===
-    dayOf(window.until, options.timeZone);
-  const until = sameDay
-    ? timeOf(window.until, options.timeZone)
-    : options.moment(window.until);
-  return `Счастливые часы: ${options.moment(window.from)}–${until} — ${lots}`;
+  const running = Date.parse(window.from) <= options.now.getTime();
+  // Конец в другой день сообщества называется моментом целиком.
+  const start = running ? options.now.toISOString() : window.from;
+  const until =
+    dayOf(start, options.timeZone) === dayOf(window.until, options.timeZone)
+      ? timeOf(window.until, options.timeZone)
+      : options.moment(window.until);
+  return running
+    ? `Счастливые часы: сейчас, до ${until} — ${lots}`
+    : `Счастливые часы: ${options.moment(window.from)}–${until} — ${lots}`;
 }
 
 // День сообщества строкой «ГГГГ-ММ-ДД»: такие строки сравниваются по порядку.

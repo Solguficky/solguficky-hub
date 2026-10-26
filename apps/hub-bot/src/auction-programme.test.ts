@@ -106,6 +106,34 @@ describe("week programme in the auction root", () => {
     );
   });
 
+  it("names the end of a running window past midnight by its moment", () => {
+    const text = programmeParagraph(
+      root({
+        stepWindows: [window("2026-10-26T11:00:00Z", "2026-10-26T22:00:00Z")],
+      }),
+      options,
+    );
+
+    expect(text).toContain(
+      "Счастливые часы: сейчас, до [2026-10-26T22:00:00Z] — 1 лот",
+    );
+  });
+
+  it("caps the windows of a busy day and counts the rest", () => {
+    const hours = [13, 14, 15, 16];
+    const text = programmeParagraph(
+      root({
+        stepWindows: hours.map((hour) =>
+          window(`2026-10-26T${hour}:00:00Z`, `2026-10-26T${hour}:30:00Z`),
+        ),
+      }),
+      options,
+    );
+
+    expect(text?.match(/Счастливые часы:/g)).toHaveLength(3);
+    expect(text).toContain("Ещё счастливых часов на неделе: 1");
+  });
+
   // Критерий PER-724: без окон и розыгрыша — только финал и дедлайн.
   it("tells only the deadline and the final without windows and raffle", () => {
     const text = programmeParagraph(
@@ -128,8 +156,15 @@ describe("week programme in the auction root", () => {
     expect(text).not.toContain("Розыгрыш");
   });
 
-  it("drops the final without an estimated time and after it has begun", () => {
+  it("drops the final without an estimated time, once it is past and after it has begun", () => {
     expect(programmeParagraph(root({}), options)).not.toContain("Финал");
+    // Финал задержался: прошедшее время не обещается.
+    expect(
+      programmeParagraph(
+        root({ stage: "on-break", finalAt: "2026-10-26T11:00:00Z" }),
+        options,
+      ),
+    ).toBeUndefined();
     expect(
       programmeParagraph(
         root({ stage: "in-final", finalAt: "2026-10-26T11:00:00Z" }),
