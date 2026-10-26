@@ -55,6 +55,7 @@
     "lotSetDefined": null,
     "lotSetDeleted": null,
     "lotSetSettled": null,
-    "paymentInstructions": null
+    "paymentInstructions": null,
+    "lotLayout": null
   }
 }

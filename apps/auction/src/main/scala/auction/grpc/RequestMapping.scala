@@ -4,6 +4,10 @@ import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
+import auction.aggregate.LotLayout
+import auction.aggregate.LotSection
+import auction.aggregate.LotSectionId
+import auction.aggregate.LotSectionName
 import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
@@ -92,6 +96,8 @@ import auction.v1.auction_service.SetPaymentInstructionsRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
+import auction.v1.auction_service.LotLayout as LotLayoutMessage
+import auction.v1.auction_service.SetLotLayoutRequest
 import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
@@ -196,6 +202,9 @@ final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
  * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): `at` пусто — время снимается.
  */
 final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opId: OpId, acting: Acting)
+
+/** Порядок и разделы ленты (PER-719): раскладка целиком, форма уже проверена. */
+final case class LotLayoutCommand(auctionId: AuctionId, layout: LotLayout, opId: OpId, acting: Acting)
 
 /** Текст «как оплатить и получить» (PER-322): `text` пусто — текст снимается. */
 final case class PaymentInstructionsCommand(
@@ -685,6 +694,38 @@ object RequestMapping {
         PaymentInstructions.parse(raw).map(Some(_)).toRight(FormError("text"))
       )
     } yield PaymentInstructionsCommand(auction, text, OpId(opId), acting)
+
+  /**
+   * Порядок и разделы ленты (PER-719). Пустое поле — пустая раскладка: порядок создания. Номер раздела вне диапазона,
+   * пустое название, повтор лота или номера — не форма запроса, а `INVALID_ARGUMENT`: название спрашивает вызывающий, и
+   * отказа значением у него нет.
+   */
+  def setLotLayout(request: SetLotLayoutRequest): Either[FormError, LotLayoutCommand] = {
+    val requested = request.layout.getOrElse(LotLayoutMessage())
+    def lotsOf(field: String, raw: Seq[String]): Either[FormError, List[LotId]] =
+      raw
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, id) =>
+          acc.flatMap(lots => uuidV7(field, id).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      lots <- lotsOf("layout.lot_ids", requested.lotIds)
+      sections <- requested.sections
+        .foldLeft[Either[FormError, List[LotSection]]](Right(Nil)) { (acc, section) =>
+          for {
+            done <- acc
+            id <- LotSectionId(section.sectionId).toRight(FormError("layout.sections.section_id"))
+            name <- LotSectionName(section.name).toRight(FormError("layout.sections.name"))
+            members <- lotsOf("layout.sections.lot_ids", section.lotIds)
+          } yield LotSection(id, name, members) :: done
+        }
+        .map(_.reverse)
+      layout <- LotLayout.of(lots, sections).left.map(_ => FormError("layout"))
+    } yield LotLayoutCommand(auction, layout, OpId(opId), acting)
+  }
 
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {
