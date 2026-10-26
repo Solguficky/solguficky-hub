@@ -51,6 +51,10 @@ skills:
     source: github.com/alexandru/skills/skills/akka-streams
   - name: orleans
     source: github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans
+  - name: otp
+    source: github.com/georgeguimaraes/elixir-agent-tools/plugins/elixir-dev/skills/otp
+  - name: elixir
+    source: github.com/georgeguimaraes/elixir-agent-tools/plugins/elixir-dev/skills/elixir
 ignore:
   - .DS_Store
   - .git/

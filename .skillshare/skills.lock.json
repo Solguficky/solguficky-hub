@@ -15,6 +15,11 @@
       "commit": "68836ddaf5697224520f1847d90cdb90ca8babaa",
       "tree_hash": "732b15173f44c2dc3129cd010e2b2f6113d066e0"
     },
+    "elixir": {
+      "source": "github.com/georgeguimaraes/elixir-agent-tools/plugins/elixir-dev/skills/elixir",
+      "commit": "ac3a5a1661a087158b39d5eb742b3c25fe3c7b44",
+      "tree_hash": "104e34b252d9bb66c31b5f34003e86c30b12c4a2"
+    },
     "find-skills": {
       "source": "https://github.com/vercel-labs/skills/find-skills",
       "commit": "435076e78988e1e6ec40d00b0b1d76bdbbc5419a",
@@ -37,6 +42,11 @@
       "source": "github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans",
       "commit": "bcd48ab508df1f71b2e1b7f9601c2c35be900c4e",
       "tree_hash": "ee0c9cd2ac4479b3a2b4bbb8132d988db4268382"
+    },
+    "otp": {
+      "source": "github.com/georgeguimaraes/elixir-agent-tools/plugins/elixir-dev/skills/otp",
+      "commit": "ac3a5a1661a087158b39d5eb742b3c25fe3c7b44",
+      "tree_hash": "27d23c9467c09dd55e412f16b59cd5b4c423dae4"
     },
     "playwright-cli": {
       "source": "github.com/microsoft/playwright-cli/skills/playwright-cli",
