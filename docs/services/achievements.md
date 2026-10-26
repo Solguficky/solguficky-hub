@@ -1,6 +1,6 @@
 # Achievements
 
-> **Слой:** Future. **Устройство и границы:** Accepted, [ADR-076](../decisions/ADR-076-achievements-cross-cutting-service.md). **Стек и рантайм:** не выбраны — задача на скелет [PER-750](https://linear.app/anticnvm/issue/per-750). **Контракт:** не заведён. **Реализация:** нет.
+> **Слой:** Future. **Устройство и границы:** Accepted, [ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md). **Стек и рантайм:** не выбраны — задача на скелет [PER-750](https://linear.app/anticnvm/issue/per-750). **Контракт:** не заведён. **Реализация:** нет.
 
 Achievements отвечает на вопрос **«что у кого есть и за что»**. Это сквозной сервис по [RFC-001](../rfcs/RFC-001-meetup-modules-topology.md#10-классы-компонентов): он не подключается к сходке и не занимает слот. Поведение задаёт [продуктовая модель](../product/future/achievements.md).
 
