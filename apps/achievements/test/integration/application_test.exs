@@ -1,4 +1,4 @@
-defmodule Achievements.ServiceTest do
+defmodule Achievements.ApplicationTest do
   # L1: настоящий узел над PostgreSQL и NATS в Testcontainers — миграции до
   # listen, health по gRPC и релей outbox в JetStream.
   use ExUnit.Case, async: false

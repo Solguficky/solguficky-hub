@@ -64,7 +64,11 @@ defmodule Achievements.Grpc.Boundary do
         base
 
       {%GRPC.RPCError{} = error, _stack} ->
-        base ++ [error_category: category(error.status), error: error.message || ""]
+        base ++
+          [
+            error_category: category(error.status),
+            error: error.message || GRPC.Status.code_name(error.status)
+          ]
 
       {error, stack} ->
         base ++

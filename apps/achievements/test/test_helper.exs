@@ -4,7 +4,7 @@
 # PostgreSQL и NATS в Testcontainers. Docker нужен только L1.
 #
 # Пропуск и недобор до порога роняют прогон: правило живёт здесь, а не в
-# рецепте, потому что CI зовёт `mix test` напрямую. Добавил или удалил тест —
+# рецепте, чтобы его нёс и прямой `mix test` в каталоге компонента. Добавил или удалил тест —
 # поправь порог своего уровня тем же изменением.
 integration? = System.get_env("ACHIEVEMENTS_INTEGRATION_TESTS") == "1"
 minimum = if integration?, do: 32, else: 26

@@ -20,6 +20,7 @@ config :logger, :default_formatter,
     :error,
     :stack,
     :event_id,
+    :published,
     :grpc_port,
     :bus
   ]

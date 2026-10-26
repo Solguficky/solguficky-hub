@@ -7,9 +7,10 @@ defmodule Achievements.Relay do
   потребитель по `event_id`.
 
   Отказ шины останавливает пачку на первой неподтверждённой строке: следующая
-  не обгоняет её, и тик повторяется через интервал. Релей краем цепочки не
-  является и `request_id` не рождает; запись о тике пишется только при
-  отказе.
+  не обгоняет её, и тик повторяется через интервал. Каждый тик — одна запись
+  каркаса лога в форме релея Identity: тик с публикацией — info, холостой —
+  debug, отказ — warning. Релей краем цепочки не является и `request_id` не
+  рождает: тик обслуживает много цепочек сразу.
   """
   use GenServer
 
@@ -53,26 +54,44 @@ defmodule Achievements.Relay do
   end
 
   defp relay(state) do
+    start = System.monotonic_time()
+    {published, failure} = publish_batch(state)
+    duration_us = System.convert_time_unit(System.monotonic_time() - start, :native, :microsecond)
+    fields = [operation: "outbox_relay", duration_us: duration_us, published: published]
+
+    case failure do
+      nil ->
+        level = if published > 0, do: :info, else: :debug
+        Logger.log(level, "outbox relay tick", [result: "ok"] ++ fields)
+
+      {event_id, reason} ->
+        Logger.warning(
+          "outbox relay failed",
+          [
+            result: "error",
+            error_category: "dependency_unavailable",
+            error: reason,
+            event_id: event_id
+          ] ++ fields
+        )
+    end
+
+    published
+  end
+
+  defp publish_batch(state) do
     from(o in Outbox, where: is_nil(o.published_at), order_by: o.position, limit: @batch)
     |> Repo.all()
-    |> Enum.reduce_while(0, fn row, published ->
+    |> Enum.reduce_while({0, nil}, fn row, {published, nil} ->
       case publish(state, row) do
         :ok ->
           from(o in Outbox, where: o.event_id == ^row.event_id)
           |> Repo.update_all(set: [published_at: DateTime.utc_now()])
 
-          {:cont, published + 1}
+          {:cont, {published + 1, nil}}
 
         {:error, reason} ->
-          Logger.warning("outbox relay failed",
-            operation: "outbox_relay",
-            result: "error",
-            error_category: "dependency_unavailable",
-            error: reason,
-            event_id: row.event_id
-          )
-
-          {:halt, published}
+          {:halt, {published, {row.event_id, reason}}}
       end
     end)
   end

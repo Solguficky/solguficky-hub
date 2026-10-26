@@ -42,6 +42,12 @@ PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad
 # Джобы CI ставят just tools/env/install-just.sh из релиза и сверяют архив
 # x86_64-unknown-linux-musl с суммой: сторонний setup-just искал релиз через
 # API и ронял джобы, когда поиск возвращался пустым.
+JUST_VERSION := "1.58.0"
+JUST_SHA256 := "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d"
+LEFTHOOK_VERSION := "2.1.10"
+SKILLSHARE_VERSION := "0.21.10"
+NODE_MAJOR := "22"
+
 # Erlang/OTP и Elixir Achievements: версии — apps/achievements/.tool-versions,
 # его же читает erlef/setup-beam в CI, а суммы архивов builds.hex.pm, которые
 # ставит tools/env/install.sh, — здесь: OTP собран для Ubuntu 24.04, Elixir —
@@ -49,11 +55,6 @@ PROTOC_SHA256 := "d99c011b799e9e412064244f0be417e5d76c9b6ace13a2ac735330fa7d57ad
 # apps/achievements/Containerfile меняются тем же изменением.
 ERLANG_SHA256 := "9d1e254f31554bf26595a6a03164f8e38f48c74d5f60c00b589d581b8ad67781"
 ELIXIR_SHA256 := "ea7ff98bc1ed76c663a5d034c863c6fd37e65c9c855b6bbf6ccb2034d806673c"
-JUST_VERSION := "1.58.0"
-JUST_SHA256 := "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d"
-LEFTHOOK_VERSION := "2.1.10"
-SKILLSHARE_VERSION := "0.21.10"
-NODE_MAJOR := "22"
 
 # Helm для проверки и публикации чарта прода (apphost-chart). Джобы apphost и
 # chart-publish в CI ставят его tools/apphost/install-helm.sh из релиза и
