@@ -298,6 +298,8 @@ export function createLotLayout(consoles: AuctionConsoles) {
   // названием уже есть — открывается он, без команды: так повторная доставка
   // того же ответа (PER-699) не заводит второй раздел и не упирается в чужой
   // ключ, а два раздела с одним названием участник всё равно не различил бы.
+  // Переименование в название другого раздела — отказ ответу, а не молчаливый
+  // переход в чужой раздел.
   async function name(
     request: Extract<LotLayoutRequest, { intent: "name-lot-section" }>,
   ): Promise<ExecuteResult> {
@@ -323,6 +325,18 @@ export function createLotLayout(consoles: AuctionConsoles) {
         at: { page: 0 },
       }) as const;
     const same = layout.sections.find((section) => section.name === value);
+    if (
+      same !== undefined &&
+      request.sectionId !== undefined &&
+      same.sectionId !== request.sectionId
+    ) {
+      return {
+        kind: "lot-section-ask",
+        auctionId: request.auctionId,
+        sectionId: request.sectionId,
+        error: "name-taken",
+      };
+    }
     if (same !== undefined) return list(console, same.sectionId);
     if (request.sectionId !== undefined) {
       const { sectionId } = request;

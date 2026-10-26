@@ -374,4 +374,5 @@ export const lotSectionRenamePrompt =
 /** Причина отказа ответу о названии: заголовок экрана исхода. */
 export const lotSectionAskErrorText = {
   "name-empty": "Название пустое. Напиши название раздела.",
+  "name-taken": "Раздел с таким названием уже есть. Напиши другое название.",
 } as const;

@@ -435,7 +435,10 @@ export function feedSectionLabel(section: {
   return `${truncate(name, 64 - tail.length)}${tail}`;
 }
 
-/** Заголовок экрана раздела: «Лоты · Книги». */
+/**
+ * Заголовок экрана раздела: «Лоты · Книги». Название обрезается, как в
+ * кнопке: длину его Auction не ограничивает, а Telegram — ограничивает.
+ */
 export function feedSectionTitle(name: string): string {
-  return `Лоты · ${name.replace(/\s+/g, " ").trim()}`;
+  return `Лоты · ${truncate(name.replace(/\s+/g, " ").trim(), 64)}`;
 }

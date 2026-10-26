@@ -9145,7 +9145,7 @@ function askConsoleSection(
   ask: {
     auctionId: string;
     sectionId?: number | undefined;
-    error?: "name-empty" | undefined;
+    error?: "name-empty" | "name-taken" | undefined;
     replaces?: number | undefined;
   },
 ): Promise<void> {

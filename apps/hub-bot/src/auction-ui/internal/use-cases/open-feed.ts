@@ -5,6 +5,7 @@ import type {
   LotLayoutView,
   LotStatusView,
   LotView,
+  Money,
   Viewer,
 } from "../../ports.js";
 import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
@@ -308,10 +309,10 @@ export function flatFeed(
 }
 
 // Порядок ленты: вне финала — порядок администратора (PER-719), в финале —
-// порядок зала (PER-639). Активный лот первым, за ним лоты состава, которые
-// ещё ждут своей очереди, в порядке выхода, затем проданные и прочие в
-// порядке администратора. Соседи карточки берут ту же функцию, поэтому
-// листание и лента не расходятся.
+// порядок зала (PER-639), и раскладку финал не читает. Активный лот первым,
+// за ним лоты состава, которые ещё ждут своей очереди, в порядке выхода,
+// затем проданные и прочие по цене. Соседи карточки берут ту же функцию,
+// поэтому листание и лента не расходятся.
 export function orderForFeed(
   lots: readonly LotView[],
   lineup: FinalLineupView | undefined,
@@ -332,11 +333,47 @@ export function orderForFeed(
   const placed = new Set(ahead.map((lot) => lot.lotId));
   return [
     ...ahead,
-    ...flatFeed(
-      lots.filter((lot) => !placed.has(lot.lotId)),
-      layout,
-    ),
+    ...sortForFeed(lots.filter((lot) => !placed.has(lot.lotId))),
   ];
+}
+
+// Финал (PER-639): по возрастанию цены; при равной цене — по `lotId`, чтобы
+// номер страницы держал один и тот же набор лотов между нажатиями. Валюта у
+// платформы одна, поэтому сравниваются минимальные единицы.
+function sortForFeed(lots: readonly LotView[]): LotView[] {
+  return [...lots].sort((a, b) => {
+    const priceA = feedPriceOf(a.status)?.minorUnits;
+    const priceB = feedPriceOf(b.status)?.minorUnits;
+    if (priceA !== priceB) {
+      if (priceA === undefined) return 1;
+      if (priceB === undefined) return -1;
+      return priceA - priceB;
+    }
+    return a.lotId < b.lotId ? -1 : a.lotId > b.lotId ? 1 : 0;
+  });
+}
+
+// Цена, по которой лот стоит в ленте финала: текущая в торгах, стартовая до
+// них, цена продажи у проданного. У черновика, снятого и непроданного лота
+// цены нет — они идут в конец.
+function feedPriceOf(status: LotStatusView): Money | undefined {
+  switch (status.kind) {
+    case "trading":
+    case "held":
+      return status.currentPrice;
+    case "scheduled":
+      return status.startingPrice;
+    case "sold":
+      return status.price;
+    case "draft":
+    case "unsold":
+    case "withdrawn":
+      return undefined;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 // Порядок создания — порядок `lotId`: идентификатор лота — UUIDv7, и его

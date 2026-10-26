@@ -268,8 +268,8 @@ describe("feed before trading", () => {
 
 // Лента в живом финале (PER-639): стадия из `getAuction` даёт состав и лот,
 // который торгует ведущий. Кнопки — в порядке зала: активный лот, лоты
-// состава, которые ждут очереди, по порядку выхода, затем остальные в порядке
-// администратора.
+// состава, которые ждут очереди, по порядку выхода, затем остальные по цене:
+// раскладку администратора финал не читает (PER-719).
 describe("feed in the live final", () => {
   const money = (rubles: number) => ({
     minorUnits: rubles * 100,
@@ -338,14 +338,42 @@ describe("feed in the live final", () => {
     expect(block.final?.active?.lotId).toBe(shirt.lotId);
   });
 
+  // Раскладка администратора (PER-719) финал не трогает: разделов нет, лоты
+  // вне состава — по цене, как до неё.
+  it("ignores the layout of the administrator in the final", async () => {
+    const withLayout: AuctionPort["getAuction"] = async () => {
+      const summary = await inFinal(shirt.lotId)({
+        viewer: VIEWER,
+        auctionId: AUCTION_ID,
+      });
+      if (summary === undefined) throw new Error("summary expected");
+      return {
+        ...summary,
+        layout: {
+          lotIds: [lot(5).lotId],
+          sections: [{ sectionId: 1, name: "Книги", lotIds: [mug.lotId] }],
+        },
+      };
+    };
+    const block = await blockOf(withLayout, [...lots, sold(5, 100)]);
+    expect(block.sections).toBeUndefined();
+    expect(block.lots.map((item) => item.lotId)).toEqual([
+      shirt.lotId,
+      lamp.lotId,
+      vase.lotId,
+      lot(5).lotId,
+      mug.lotId,
+    ]);
+  });
+
   it("marks the final without an active lot between lots", async () => {
     const block = await blockOf(inFinal(), [mug, lamp, vase, sold(1, 1500)]);
     expect(block.final).toEqual({});
     expect(block.lots.map((item) => item.lotId)).toEqual([
       lamp.lotId,
       vase.lotId,
-      lot(1).lotId,
       mug.lotId,
+      lot(1).lotId,
     ]);
   });
 

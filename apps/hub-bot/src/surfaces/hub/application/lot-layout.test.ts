@@ -169,6 +169,42 @@ describe("lot layout use cases", () => {
     });
   });
 
+  it("renames a section and refuses the name of another section", async () => {
+    const dishes = { sectionId: 2, name: "Посуда", lotIds: [] };
+    const { run, saved } = layoutOf({
+      read: {
+        kind: "ok",
+        console: snapshot({ lotIds: [], sections: [books, dishes] }),
+      },
+    });
+    await expect(
+      run({
+        ...call,
+        intent: "name-lot-section",
+        sectionId: 2,
+        value: "Книги",
+      }),
+    ).resolves.toEqual({
+      kind: "lot-section-ask",
+      auctionId,
+      sectionId: 2,
+      error: "name-taken",
+    });
+    expect(saved).toHaveLength(0);
+    await expect(
+      run({
+        ...call,
+        intent: "name-lot-section",
+        sectionId: 2,
+        value: "Кружки",
+      }),
+    ).resolves.toMatchObject({ kind: "lot-layout-list", place: 2 });
+    expect(saved.at(-1)?.sections.map((section) => section.name)).toEqual([
+      "Книги",
+      "Кружки",
+    ]);
+  });
+
   it("moves the lots of a deleted section to the end of the general list", async () => {
     const { run, saved } = layoutOf({
       read: {

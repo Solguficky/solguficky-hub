@@ -1840,7 +1840,7 @@ export type ExecuteResult =
       kind: "lot-section-ask";
       auctionId: string;
       sectionId?: number;
-      error?: "name-empty";
+      error?: "name-empty" | "name-taken";
     }
   | {
       kind: "lot-section-delete-confirm";
