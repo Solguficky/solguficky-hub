@@ -400,5 +400,6 @@ Telegram-опросы и сообщения остаются допустимы�
 - [Неприоритизированные идеи](ideas.md)
 - [Будущий аукцион](future/auction.md)
 - [Плейлист сходки](future/playlist.md)
+- [Ачивки](future/achievements.md)
 - [Telegram Bot Features](https://core.telegram.org/bots/features)
 - [Telegram Mini Apps: validating data received via the Mini App](https://core.telegram.org/bots/webapps)
