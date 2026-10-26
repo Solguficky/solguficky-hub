@@ -3,3 +3,4 @@ pygen/
 gleam
 __pycache__/
 proto_patched/
+.cache/

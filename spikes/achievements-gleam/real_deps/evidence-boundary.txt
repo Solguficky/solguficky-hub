@@ -1,0 +1,2 @@
+rule on unknown tag: {decision,[],[]}
+describe on unknown tag: {case_clause,lot_relisted}

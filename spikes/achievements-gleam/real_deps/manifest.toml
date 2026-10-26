@@ -1,0 +1,50 @@
+# Do not manually edit this file, it is managed by Gleam.
+#
+# This file locks the dependency versions used, to make your build
+# deterministic and to prevent unexpected versions from being included
+# in your application.
+#
+# You should check this file into your source control repository.
+
+packages = [
+  { name = "chacha20", version = "1.0.4", build_tools = ["mix"], requirements = [], otp_app = "chacha20", source = "hex", outer_checksum = "2027F5D321AE9903F1F0DA7F51B0635AD6B8819BC7FE397837930A2011BC2349" },
+  { name = "connection", version = "1.1.0", build_tools = ["mix"], requirements = [], otp_app = "connection", source = "hex", outer_checksum = "722C1EB0A418FBE91BA7BD59A47E28008A189D47E37E0E7BB85585A016B2869C" },
+  { name = "cowboy", version = "2.20.0", build_tools = ["make", "rebar3"], requirements = ["cowlib", "ranch"], otp_app = "cowboy", source = "hex", outer_checksum = "A0BE47464A2887F71C061CE90723DC17441C9B81BA9569CD9B596EB0367D1EDD" },
+  { name = "cowlib", version = "2.21.0", build_tools = ["make", "rebar3"], requirements = [], otp_app = "cowlib", source = "hex", outer_checksum = "0960248773762A5319B3C17285028BC76F54F58EF0F9451367401BDF67B46274" },
+  { name = "curve25519", version = "1.0.6", build_tools = ["mix"], requirements = [], otp_app = "curve25519", source = "hex", outer_checksum = "DD714C2DA20CDDDCA81F0B659236C8FB2119E58697326DA50785B5C1BC64AF9D" },
+  { name = "db_connection", version = "2.10.2", build_tools = ["mix"], requirements = ["telemetry"], otp_app = "db_connection", source = "hex", outer_checksum = "510B14482330F1AF6490A2FA0EFD8D4F1435D1529B165647DF22AC0F2DF0FA93" },
+  { name = "decimal", version = "3.2.0", build_tools = ["mix"], requirements = [], otp_app = "decimal", source = "hex", outer_checksum = "190BCA80580CE61AA69BB0EACADD7677710205C770225C2C2C07E32A5C31B234" },
+  { name = "ecto", version = "3.14.2", build_tools = ["mix"], requirements = ["decimal", "jason", "telemetry"], otp_app = "ecto", source = "hex", outer_checksum = "25D60B8C816A07D19D85B80BDF60978BD8B102209DDA198D768CD7C6745339A6" },
+  { name = "ecto_sql", version = "3.14.0", build_tools = ["mix"], requirements = ["db_connection", "decimal", "ecto", "myxql", "postgrex", "tds", "telemetry"], otp_app = "ecto_sql", source = "hex", outer_checksum = "F4D8D36FAF294C9417B5A37EC7AC8217EE2ABDEF5FCF197BA690F361548D3949" },
+  { name = "ed25519", version = "1.5.2", build_tools = ["mix"], requirements = [], otp_app = "ed25519", source = "hex", outer_checksum = "9CF2D4D923E7FD97297F5537B61E77FC9E08076F816E13F0D496A6A56C9D96B8" },
+  { name = "equivalex", version = "1.0.3", build_tools = ["mix"], requirements = [], otp_app = "equivalex", source = "hex", outer_checksum = "46FA311ADB855117D36E461B9C0AD2598F72110AD17AD73D7533C78020E045FC" },
+  { name = "flow", version = "1.2.4", build_tools = ["mix"], requirements = ["gen_stage"], otp_app = "flow", source = "hex", outer_checksum = "874ADDE96368E71870F3510B91E35BC31652291858C86C0E75359CBDD35EB211" },
+  { name = "gen_stage", version = "1.3.2", build_tools = ["mix"], requirements = [], otp_app = "gen_stage", source = "hex", outer_checksum = "0FFAE547FA777B3ED889A6B9E1E64566217413D018CABD825F786E843FFE63E7" },
+  { name = "gleam_erlang", version = "1.3.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleam_erlang", source = "hex", outer_checksum = "1124AD3AA21143E5AF0FC5CF3D9529F6DB8CA03E43A55711B60B6B7B3874375C" },
+  { name = "gleam_stdlib", version = "1.0.5", build_tools = ["gleam"], requirements = [], otp_app = "gleam_stdlib", source = "hex", outer_checksum = "CEE5B6C076A85B45F60C585F4316C63EC8B7127C119D5738C3958A9C4D50404E" },
+  { name = "gnat", version = "1.18.1", build_tools = ["mix"], requirements = ["connection", "jason", "nimble_parsec", "nkeys", "telemetry"], otp_app = "gnat", source = "hex", outer_checksum = "6191D511F3E5E4302292E001EEF2B680B678FBD87FC481F68F37653D950BEAF1" },
+  { name = "googleapis", version = "0.1.0", build_tools = ["mix"], requirements = ["protobuf"], otp_app = "googleapis", source = "hex", outer_checksum = "1989A7244FD17D3EB5F3DE311A022B656C3736B39740DB46506157C4604BD212" },
+  { name = "grpc", version = "1.0.5", build_tools = ["mix"], requirements = ["castore", "grpc_core", "gun", "mint"], otp_app = "grpc", source = "hex", outer_checksum = "5E892E542A2E0F05ED17A4AD3814483E3980EAA93906F993DAC9E08369B178EA" },
+  { name = "grpc_core", version = "1.0.5", build_tools = ["mix"], requirements = ["googleapis", "jason", "protobuf", "telemetry"], otp_app = "grpc_core", source = "hex", outer_checksum = "A18AE7380CFEBC20271AAD36393E8AA041E1FAA926FA25F40328E4350F83D8F0" },
+  { name = "grpc_server", version = "1.0.5", build_tools = ["mix"], requirements = ["cowboy", "cowlib", "flow", "grpc_core", "protobuf"], otp_app = "grpc_server", source = "hex", outer_checksum = "1A7DF870E92DAD4D7C12EC1BD264A06C94CBAB2F12B054064636EE2B486607B0" },
+  { name = "jason", version = "1.4.5", build_tools = ["mix"], requirements = ["decimal"], otp_app = "jason", source = "hex", outer_checksum = "B0C823996102BCD0239B3C2444EB00409B72F6A140C1950BC8B457D836B30684" },
+  { name = "kcl", version = "1.5.2", build_tools = ["mix"], requirements = ["curve25519", "ed25519", "poly1305", "salsa20"], otp_app = "kcl", source = "hex", outer_checksum = "91E6A872D6F1640C928D7087B572DB37C04AB8189DFA66634FE54B8573FF3427" },
+  { name = "nimble_parsec", version = "1.4.2", build_tools = ["mix"], requirements = [], otp_app = "nimble_parsec", source = "hex", outer_checksum = "4B21398942DDA052B403BBE1DA991CCD03A053668D147D53FB8C4E0EFE09C973" },
+  { name = "nkeys", version = "0.3.1", build_tools = ["mix"], requirements = ["ed25519", "kcl"], otp_app = "nkeys", source = "hex", outer_checksum = "80D8D1D62AC9C5127AD776D8F435E5E1CC732985F6235B22E6C157808B44C108" },
+  { name = "poly1305", version = "1.0.4", build_tools = ["mix"], requirements = ["chacha20", "equivalex"], otp_app = "poly1305", source = "hex", outer_checksum = "E14E684661A5195E149B3139DB4A1693579D4659D65BBA115A307529C47DBC3B" },
+  { name = "postgrex", version = "0.22.4", build_tools = ["mix"], requirements = ["db_connection", "decimal", "jason", "table"], otp_app = "postgrex", source = "hex", outer_checksum = "4AAE45A2D60E35B04EEA2602440BE152FAE332901F1FC7A60FC7CB7F0F9A9C5A" },
+  { name = "protobuf", version = "0.17.1", build_tools = ["mix"], requirements = ["jason"], otp_app = "protobuf", source = "hex", outer_checksum = "76770ECDA0EF057E540932F15B5A143BA8877875E88727F53429A7DC4DBF8B6C" },
+  { name = "ranch", version = "2.3.0", build_tools = ["make", "rebar3"], requirements = [], otp_app = "ranch", source = "hex", outer_checksum = "6168EC49409D982F7CFBD83DD083144F6CBE67CAA4036551D2F0A3AD67C9D023" },
+  { name = "salsa20", version = "1.0.4", build_tools = ["mix"], requirements = [], otp_app = "salsa20", source = "hex", outer_checksum = "745DDCD8CFA563DDB0FD61E7CE48D5146279A2CF7834E1DA8441B369FDC58AC6" },
+  { name = "telemetry", version = "1.4.2", build_tools = ["rebar3"], requirements = [], otp_app = "telemetry", source = "hex", outer_checksum = "928F6495066506077862C0D1646609EED891A4326BEE3126BA54B60AF61FEBB1" },
+]
+
+[requirements]
+ecto_sql = { version = ">= 3.13.0 and < 4.0.0" }
+gleam_erlang = { version = ">= 1.3.0 and < 2.0.0" }
+gleam_stdlib = { version = ">= 0.44.0 and < 2.0.0" }
+gnat = { version = ">= 1.18.1 and < 2.0.0" }
+grpc = { version = ">= 1.0.0 and < 2.0.0" }
+grpc_server = { version = ">= 1.0.0 and < 2.0.0" }
+postgrex = { version = ">= 0.21.0 and < 1.0.0" }
+protobuf = { version = ">= 0.17.0 and < 1.0.0" }

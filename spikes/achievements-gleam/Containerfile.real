@@ -1,0 +1,26 @@
+# Gleam-корень с Elixir-зависимостями: сборка в образе Elixir 1.20 / OTP 28 +
+# Gleam 1.19.2, рантайм — debian trixie-slim с одним Erlang, без Elixir.
+FROM mirror.gcr.io/library/elixir@sha256:d2b22bba38b499b709c113bd040bf4a6dd12b505668b44d9484b5964059fefa9 AS build
+COPY gleam /usr/local/bin/gleam
+# Hex для mix, которым Gleam собирает Elixir-зависимости; пакеты — уже скачанные
+# gleam deps download, чтобы сборка образа не ходила в сеть.
+ENV MIX_HOME=/root/.mix
+COPY .cache/mix /root/.mix
+WORKDIR /src
+COPY real_deps/gleam.toml real_deps/manifest.toml ./
+COPY real_deps/src ./src
+COPY real_deps/build/packages ./build/packages
+RUN gleam export erlang-shipment \
+ && rm -rf /usr/local/lib/erlang/lib/*/src /usr/local/lib/erlang/lib/*/doc \
+    /usr/local/lib/erlang/lib/*/examples /usr/local/lib/erlang/misc
+
+FROM mirror.gcr.io/library/debian@sha256:62bd423aeee912639ca8ee681c2b762cb3e25137e0a92b20be455898a9f034ad
+COPY --from=build /usr/lib/x86_64-linux-gnu/libstdc++.so.6* /usr/lib/x86_64-linux-gnu/
+COPY --from=build /usr/local/lib/erlang /usr/local/lib/erlang
+RUN ln -s /usr/local/lib/erlang/bin/erl /usr/local/bin/erl
+COPY --from=build /src/build/erlang-shipment /app
+RUN useradd -r -u 10001 app
+ENV LANG=C.UTF-8 ELIXIR_ERL_OPTIONS=+fnu
+USER app
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["run"]
