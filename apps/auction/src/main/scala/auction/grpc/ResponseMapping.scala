@@ -1225,6 +1225,9 @@ object ResponseMapping {
       hidden = view.auction.hidden,
       finalAt = view.auction.finalAt.map(LotValues.instant),
       lotLayout = lotLayout(view.auction.layout),
+      // Запущенные по ходу торгов окна (PER-724): участник видит их в программе недели рядом с объявленными, как
+      // администратор в пульте.
+      launchedStepWindows = view.auction.launched.map(_.window).map(AuctionValues.stepWindow),
       status = status
     )
   }
