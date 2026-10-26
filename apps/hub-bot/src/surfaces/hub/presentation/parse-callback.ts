@@ -518,7 +518,12 @@ type PlainAction =
   // раздел выше и ниже, подтверждение удаления раздела и «Да». Лот кнопка
   // называет токеном, раздел — номером, который выбрал пульт.
   | { kind: "console-layout"; auction: string }
-  | { kind: "console-layout-list"; auction: string; place: number; page: number }
+  | {
+      kind: "console-layout-list";
+      auction: string;
+      place: number;
+      page: number;
+    }
   | { kind: "console-layout-lot"; auction: string; lot: string }
   | {
       kind: "console-layout-lot-move";

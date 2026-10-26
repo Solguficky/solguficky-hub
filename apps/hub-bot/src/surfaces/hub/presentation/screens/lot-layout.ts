@@ -227,10 +227,7 @@ export function lotLayoutListScreen(view: {
     if (moves.length > 0) {
       nextRow(keyboard);
       for (const [text, direction] of moves) {
-        keyboard.text(
-          text,
-          consoleSectionMoveData(auction, place, direction),
-        );
+        keyboard.text(text, consoleSectionMoveData(auction, place, direction));
       }
     }
     nextRow(keyboard)
@@ -343,9 +340,7 @@ export function lotSectionDeleteConfirmScreen(view: {
 }): ShownScreen {
   const { console, sectionId } = view;
   const layout = arrangedLayout(console);
-  const section = layout.sections.find(
-    (each) => each.sectionId === sectionId,
-  );
+  const section = layout.sections.find((each) => each.sectionId === sectionId);
   if (section === undefined) {
     return lotLayoutScreen({ console, note: { kind: "changed" } });
   }

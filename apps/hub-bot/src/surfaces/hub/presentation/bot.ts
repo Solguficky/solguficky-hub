@@ -206,6 +206,8 @@ import {
   consoleFinalTimeData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
+  consoleLayoutData,
+  consoleLayoutListData,
   consolePaymentTermData,
   consolePaymentTextData,
   consoleRaffleData,
@@ -214,8 +216,6 @@ import {
   consoleRaffleWinnerAskData,
   consoleRaffleWinnerData,
   consoleRaffleWinnerPickData,
-  consoleLayoutData,
-  consoleLayoutListData,
   consoleSectionAskData,
   consoleSetAskData,
   consoleSetsData,
@@ -8289,7 +8289,10 @@ async function handleConsoleCallback(
     // не помещается. Повтор нажатия — новая правка от прочитанной раскладки.
     case "console-layout":
       return render(
-        await runtime.dispatcher.execute({ ...call, intent: "view-lot-layout" }),
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-layout",
+        }),
       );
     case "console-layout-list":
       return render(
