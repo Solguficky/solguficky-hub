@@ -140,6 +140,18 @@ export async function handleAuctionUpdate(
       error: new AuctionCallbackError("outdated"),
     };
   }
+  // «Статистика» всего аукциона (PER-800) — вход пульта хаба: её открывает
+  // только держатель `run_auctions` в хабе. Кнопка из корня, где она стояла
+  // раньше, или подделка — устаревшая кнопка, и Auction не читается.
+  if (
+    intent.kind === "auction-chronicle" &&
+    !chronicleAdmitted(surface.kind, identity.viewer.rights)
+  ) {
+    return {
+      kind: "unreadable",
+      error: new AuctionCallbackError("outdated"),
+    };
+  }
 
   const body = await dispatchAuctionIntent({
     auction: surface.ports.auction,
@@ -161,6 +173,13 @@ export async function handleAuctionUpdate(
       : {}),
   });
   return { kind: "screen", body };
+}
+
+function chronicleAdmitted(
+  surface: AuctionSurface["kind"],
+  rights: readonly AccessRight[],
+): boolean {
+  return surface === "hub" && rights.includes("run-auctions");
 }
 
 // Очередь, в которую поверхность ставит заявку на `/start` (ADR-064, пункт 8):

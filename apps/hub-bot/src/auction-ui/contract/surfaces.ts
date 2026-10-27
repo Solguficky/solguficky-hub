@@ -92,5 +92,7 @@ export const accessMatrixApp =
     );
     if (result.kind === "screen") return "admitted";
     if (result.kind === "denied") return ANSWERS[result.reason];
+    // Кнопка, которую поверхность этому человеку больше не ставит (PER-800).
+    if (result.error.reason === "outdated") return "outdated";
     throw result.error;
   };

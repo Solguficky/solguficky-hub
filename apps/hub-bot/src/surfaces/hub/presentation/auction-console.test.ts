@@ -5137,7 +5137,11 @@ describe("day summary screen", () => {
     expect(screen).toContain("5 смен лидера");
     expect(screen).toContain("Ваза");
     expect(screen).toContain("Кружка");
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    // «Статистика» всего аукциона (PER-800) — вход пульта ведущего.
+    expect(labels(last(calls))).toEqual([["Статистика"], ["‹ Пульт"]]);
+    expect(dataOf(last(calls), "Статистика")).toBe(
+      encodeAuctionCallback({ kind: "auction-chronicle", auctionId }),
+    );
     expect(auction.windows).toEqual([
       {
         auctionId,

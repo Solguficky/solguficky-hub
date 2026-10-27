@@ -830,7 +830,9 @@ describe("auction root and the way back", () => {
     await bot.handleUpdate(press(rootData));
 
     const root = lastScreen(calls);
-    expect(labels(root)).toContainEqual(["Хроники дня", "Статистика"]);
+    // «Статистики» в корне нет ни у кого (PER-800): хроники — своим рядом.
+    expect(labels(root)).toContainEqual(["Хроники дня"]);
+    expect(labels(root).flat()).not.toContain("Статистика");
     await bot.handleUpdate(press(data(root, "Хроники дня") ?? ""));
     const chronicle = lastScreen(calls);
     expect(chronicle.text).toContain("Хроники дня");
@@ -848,9 +850,15 @@ describe("auction root and the way back", () => {
     expect(labels(chronicle).flat()).toContain("‹ Аукцион");
   });
 
-  // PER-770: участник открывает «Статистику» из корня и после торгов —
-  // счётчики, рекорд роста и номинации за весь аукцион, без людей и ников.
-  it("opens the statistics of the whole auction and returns to the root", async () => {
+  // PER-770, PER-800: «Статистику» открывает ведущий со «Сводки дня» пульта —
+  // счётчики, рекорд роста и номинации за весь аукцион, без людей и ников, и
+  // возврат в сводку дня; в корне её нет ни у кого.
+  const statisticsData = encodeAuctionCallback({
+    kind: "auction-chronicle",
+    auctionId,
+  });
+
+  it("opens the statistics of the whole auction to the host and returns to the day summary", async () => {
     const auction = fakeAuction({
       existing: true,
       stage: "finished",
@@ -872,17 +880,15 @@ describe("auction root and the way back", () => {
         ],
       },
     });
-    const { bot, calls } = harness("member", auction, {
+    const { bot, calls } = harness("admin", auction, {
       presentation: "plain",
     });
     await bot.init();
     await bot.handleUpdate(press(extensionsData));
     await bot.handleUpdate(press(rootData));
 
-    const root = lastScreen(calls);
-    expect(labels(root)).toContainEqual(["Статистика"]);
-    expect(labels(root).flat()).not.toContain("Хроники дня");
-    await bot.handleUpdate(press(data(root, "Статистика") ?? ""));
+    expect(labels(lastScreen(calls)).flat()).not.toContain("Статистика");
+    await bot.handleUpdate(press(statisticsData));
     const statistics = lastScreen(calls);
     expect(statistics.text).toContain("Статистика аукциона");
     expect(statistics.text).toContain("42 ставки");
@@ -894,14 +900,15 @@ describe("auction root and the way back", () => {
     expect(statistics.text).not.toContain("Тёмная лошадка:");
     expect(statistics.text).not.toContain("@");
     expect(statistics.text).not.toContain("t.me/");
-    await bot.handleUpdate(press(data(statistics, "‹ Аукцион") ?? ""));
-    expect(labels(lastScreen(calls))).toContainEqual(["Статистика"]);
+    expect(data(statistics, "‹ Сводка дня")).toBe(
+      `v1:ac:ds:${uuidToToken(auctionId)}`,
+    );
   });
 
-  it("offers a retry when Auction does not answer the statistics", async () => {
+  it("answers an old statistics button of a member as outdated without Auction", async () => {
     const auction = fakeAuction({
       existing: true,
-      stage: "prebidding",
+      stage: "finished",
       auctionChronicle: "down",
     });
     const { bot, calls } = harness("member", auction, {
@@ -910,15 +917,27 @@ describe("auction root and the way back", () => {
     await bot.init();
     await bot.handleUpdate(press(extensionsData));
     await bot.handleUpdate(press(rootData));
-    const statisticsData = data(lastScreen(calls), "Статистика") ?? "";
+
+    expect(labels(lastScreen(calls)).flat()).not.toContain("Статистика");
+    await bot.handleUpdate(press(statisticsData));
+    expect(lastScreen(calls).text).toContain(
+      "Не получилось прочитать эту кнопку.",
+    );
+  });
+
+  it("offers the host a retry when Auction does not answer the statistics", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      stage: "prebidding",
+      auctionChronicle: "down",
+    });
+    const { bot, calls } = harness("admin", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
     await bot.handleUpdate(press(statisticsData));
 
     expect(data(lastScreen(calls), "Повторить")).toBe(statisticsData);
-    await bot.handleUpdate(press(rootData));
-    expect(labels(lastScreen(calls))).toContainEqual([
-      "Хроники дня",
-      "Статистика",
-    ]);
   });
 
   it("offers no day chronicle before the online week", async () => {
