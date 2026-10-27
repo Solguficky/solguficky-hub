@@ -55,10 +55,12 @@ export function isTypedText(raw: unknown): boolean {
 
 // Ссылка «Копировать ссылку» клиента Telegram: публичный чат по имени или
 // закрытый по номеру `c/<чат>`, необязательная тема и номер сообщения.
-// Хвост запроса (`?single`, `?comment=`) не сохраняется: ссылка собирается
-// заново из разобранных частей, а не уезжает в материал как набрана.
+// Ссылка собирается заново из разобранных частей, а не уезжает в материал как
+// набрана: из хвоста запроса остаётся только `comment` — он ведёт на
+// комментарий, а не на сам пост, — а `?single` и прочее отбрасываются.
 const MessageLinkPattern =
-  /^https:\/\/t\.me\/(?:c\/([1-9]\d*)|([A-Za-z][A-Za-z0-9_]{3,31}))(?:\/([1-9]\d*))?\/([1-9]\d*)\/?(?:\?\S*)?$/;
+  /^https:\/\/t\.me\/(?:c\/([1-9]\d*)|([A-Za-z][A-Za-z0-9_]{3,31}))(?:\/([1-9]\d*))?\/([1-9]\d*)\/?(?:\?(\S*))?$/;
+const CommentIdPattern = /^[1-9]\d*$/;
 
 /**
  * Пересылка из группы чат и номер сообщения не несёт, поэтому сообщение чата
@@ -69,22 +71,29 @@ function parseMessageLink(raw: unknown): string | undefined {
   if (!parsed.success) return undefined;
   const match = MessageLinkPattern.exec(parsed.data.text.trim());
   if (match === null) return undefined;
-  const [, chatId, username, topicId, messageId] = match;
+  const [, chatId, username, topicId, messageId, query] = match;
   const chat = chatId === undefined ? username : `c/${chatId}`;
   const topic = topicId === undefined ? "" : `/${topicId}`;
-  return `https://t.me/${chat}${topic}/${messageId}`;
+  const commentId = new URLSearchParams(query ?? "").get("comment");
+  const comment =
+    commentId !== null && CommentIdPattern.test(commentId)
+      ? `?comment=${commentId}`
+      : "";
+  return `https://t.me/${chat}${topic}/${messageId}${comment}`;
 }
 
+// GIF в списке нет: Bot API кладёт у него и `document`, и он, как прежде,
+// становится документом. Место идёт раньше геопозиции: у `venue` заполнено и
+// `location`.
 const unsupportedKinds = [
   ["video", "Видео"],
-  ["animation", "GIF"],
   ["video_note", "Кружок"],
   ["voice", "Голосовое"],
   ["audio", "Аудио"],
   ["sticker", "Стикер"],
   ["poll", "Опрос"],
-  ["location", "Геопозиция"],
   ["venue", "Место"],
+  ["location", "Геопозиция"],
   ["contact", "Контакт"],
   ["dice", "Кубик"],
 ] as const;
@@ -140,7 +149,7 @@ export function materialRefusal(raw: unknown): MaterialRefusal {
     kind,
     text:
       media === undefined
-        ? `Пересылка из чата не даёт ссылку на сообщение: ${linkHint}`
+        ? `Сообщение из чата: ${linkHint}`
         : `${media[1]} не принимается материалом, а ${linkHint}`,
   };
 }
@@ -150,7 +159,7 @@ const typedTextRefusal =
 const hiddenSourceRefusal =
   "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.";
 const linkHint =
-  "из пересылки ссылку не собрать: скопируй ссылку на сообщение («Копировать ссылку») и пришли её.";
+  "из пересылки ссылку не собрать, скопируй ссылку на сообщение («Копировать ссылку») и пришли её.";
 
 export function parseMaterialInput(
   raw: unknown,

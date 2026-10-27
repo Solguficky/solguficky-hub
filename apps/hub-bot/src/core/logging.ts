@@ -26,7 +26,8 @@ export type LogFields = {
   posters_error?: string;
   meetup_id?: string;
   // Вид сообщения, которое не стало материалом сходки: `forward:<тип>`, вид
-  // медиа или `text`, без содержимого (PER-762).
+  // медиа, `text` или `other`, у пересланного медиа через запятую
+  // (`forward:user,video`), без содержимого (PER-762).
   message_kind?: string;
   signal?: string;
   timeout?: number;

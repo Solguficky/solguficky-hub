@@ -62,6 +62,11 @@ describe("material input", () => {
       " https://t.me/c/1234567890/12/77?thread=12 ",
       "https://t.me/c/1234567890/12/77",
     ],
+    [
+      "https://t.me/solguficky/77?single&comment=5",
+      "https://t.me/solguficky/77?comment=5",
+    ],
+    ["https://t.me/solguficky/77?comment=x", "https://t.me/solguficky/77"],
   ])("takes a typed message link %s", (text, url) => {
     expect(parseMaterialInput({ text })).toEqual({ kind: "message-link", url });
   });
@@ -104,6 +109,11 @@ describe("material input", () => {
     ],
     [{ forward_origin: { type: "новый" } }, "forward:other", "Источник скрыт"],
     [{ voice: { file_id: "v" } }, "voice", "Голосовое не принимается"],
+    [
+      { venue: { title: "т" }, location: { latitude: 0, longitude: 0 } },
+      "venue",
+      "Место не принимается",
+    ],
     [
       { forward_origin: { type: "chat" }, video: { file_id: "v" } },
       "forward:chat,video",
