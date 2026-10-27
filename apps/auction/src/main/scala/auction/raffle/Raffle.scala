@@ -13,7 +13,8 @@ import java.time.Instant
 
 /**
  * Условия, объявленные при открытии регистрации: момент закрытия, seed, раунд маяка и приз (ADR-066, дополнение
- * 2026-10-21; приза может не быть). После открытия не меняются.
+ * 2026-10-21; приза может не быть). После открытия не меняются, кроме приза: его меняет администратор, пока итога нет
+ * (ADR-066, дополнение 2026-10-25).
  */
 final case class RaffleTerms(closesAt: Instant, seed: Seed, round: Long, prize: Option[String] = None) {
   def commitment: String = seed.commitment
@@ -58,6 +59,7 @@ enum RaffleEvent {
   case RaffleDrawn(randomness: Randomness, at: Instant)
   case WinnerAssigned(ticket: Int, at: Instant)
   case RaffleCancelled(at: Instant)
+  case PrizeChanged(prize: String)
 }
 
 final case class RaffleEnvelope(sequence: Long, opId: OpId, event: RaffleEvent)
@@ -79,6 +81,12 @@ final case class DrawWinner(randomness: Randomness, at: Instant)
 
 /** Ручной итог: номер выигравшего билета от администратора, которого право уже проверила граница. */
 final case class AssignWinner(ticket: Int, opId: OpId)
+
+/**
+ * Смена приза администратором, которого право уже проверила граница (ADR-066, дополнение 2026-10-25). Текст граница
+ * проверила теми же правилами, что приз конфигурации: одна непустая строка без пробелов по краям.
+ */
+final case class ChangePrize(prize: String, opId: OpId)
 
 /** Отмена розыгрыша по команде аукциона, отменённого после старта торгов; `op_id` выводит аукцион. */
 final case class CancelRaffle(opId: OpId)
@@ -122,6 +130,17 @@ enum AssignRejected {
   case NotAwaitingWinner
   case TicketNotInPool(tickets: Int)
   case AlreadyDrawn(winningTicket: Int)
+  case OpIdTaken
+}
+
+/**
+ * Отказы смены приза: розыгрыша нет, итог уже есть — приз за победителем, итога не будет — розыгрыш не проводится, пул
+ * пуст или отменён, `op_id` занят другой командой.
+ */
+enum ChangePrizeRejected {
+  case RaffleNotFound
+  case AlreadyDrawn(winningTicket: Int)
+  case WithoutResult
   case OpIdTaken
 }
 
@@ -236,6 +255,34 @@ object Raffle {
     }
 
   /**
+   * Смена приза (ADR-066, дополнение 2026-10-25): пока итога нет — регистрация открыта или закрывается, пул ждёт маяка
+   * или администратора. После итога приз за победителем и не меняется. Тот же приз принят без события. Повтор `op_id`
+   * получает исходный конверт, если он ставил тот же приз.
+   */
+  def decide(raffle: Raffle, command: ChangePrize): Either[ChangePrizeRejected, RaffleDecision] =
+    raffle.seen.get(command.opId) match {
+      case Some(original) =>
+        original.event match {
+          case RaffleEvent.PrizeChanged(prize) if prize == command.prize => Right(RaffleDecision.Repeated(original))
+          case _ => Left(ChangePrizeRejected.OpIdTaken)
+        }
+      case None =>
+        def change(terms: RaffleTerms) =
+          if (terms.prize.contains(command.prize)) Right(RaffleDecision.Unchanged)
+          else Right(RaffleDecision.Accepted(RaffleEvent.PrizeChanged(command.prize)))
+        raffle.state match {
+          case RaffleState.Open(terms, _) => change(terms)
+          case RaffleState.Fixed(terms, tickets) if tickets.nonEmpty => change(terms)
+          case RaffleState.AwaitingWinner(terms, _) => change(terms)
+          case drawn @ (RaffleState.Drawn(_, _, _, _) | RaffleState.Assigned(_, _, _, _)) =>
+            Left(ChangePrizeRejected.AlreadyDrawn(winningTicket(drawn).getOrElse(0)))
+          case RaffleState.Initial => Left(ChangePrizeRejected.RaffleNotFound)
+          case RaffleState.NotHeld(_) | RaffleState.Fixed(_, _) | RaffleState.Cancelled(_, _, _) =>
+            Left(ChangePrizeRejected.WithoutResult)
+        }
+    }
+
+  /**
    * Отмена вместе с аукционом (ADR-066, дополнение 2026-10-12): что завершилось, остаётся. Отменяется розыгрыш с
    * открытой регистрацией и пул, ждущий маяка или администратора. Без события — розыгрыш, которого нет или который не
    * проводится, пул без билетов, проведённая жеребьёвка и уже отменённый: итог у них есть или его не будет и так.
@@ -313,6 +360,12 @@ object Raffle {
         RaffleState.Cancelled(terms, entries, at)
       case (RaffleState.Fixed(terms, tickets), RaffleEvent.RaffleCancelled(at)) =>
         RaffleState.Cancelled(terms, tickets, at)
+      case (RaffleState.Open(terms, entries), RaffleEvent.PrizeChanged(prize)) =>
+        RaffleState.Open(terms.copy(prize = Some(prize)), entries)
+      case (RaffleState.Fixed(terms, tickets), RaffleEvent.PrizeChanged(prize)) =>
+        RaffleState.Fixed(terms.copy(prize = Some(prize)), tickets)
+      case (RaffleState.AwaitingWinner(terms, tickets), RaffleEvent.PrizeChanged(prize)) =>
+        RaffleState.AwaitingWinner(terms.copy(prize = Some(prize)), tickets)
       case (state, event) =>
         throw new IllegalStateException(s"raffle event ${event.getClass.getSimpleName} does not apply to $state")
     }

@@ -96,9 +96,22 @@ public class JetStreamTopologyTests
     public void KeyValueBuckets_DeliveryJournal_OutlivesStreamRetention(string bucketName)
     {
         var journal = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == bucketName);
+        var deliveries = JetStreamTopology.Streams.Single(stream => stream.Name == "NOTIFICATIONS_EVENTS");
 
-        journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.MaxAge);
+        journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.ToConfig(deliveries).MaxAge);
     }
+
+    /// <summary>
+    /// Журнал доставки идёт за окном стрима, который боты читают, а не за самым
+    /// длинным в шине: свой срок <c>AUCTION_EVENTS</c> (PER-758) держал бы
+    /// записи доставки три месяца без повода.
+    /// </summary>
+    [Theory]
+    [InlineData("hub-bot-deliveries")]
+    [InlineData("auction-bot-deliveries")]
+    public void KeyValueBuckets_DeliveryJournal_LivesEightDays(string bucketName) =>
+        JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == bucketName)
+            .MaxAge.ShouldBe(TimeSpan.FromDays(8));
 
     /// <summary>
     /// Пара «человек ↔ тема» бота поддержки живёт 180 дней с последнего
@@ -186,6 +199,22 @@ public class JetStreamTopologyTests
         config.MaxAge.ShouldBe(TimeSpan.FromDays(7));
         config.DuplicateWindow.ShouldBe(TimeSpan.FromMinutes(2));
         config.Subjects.ShouldBe(["events.meetups.>"]);
+    }
+
+    /// <summary>
+    /// Факты аукциона ждут правил ачивок (ADR-077, PER-758) девяносто дней;
+    /// остальные стримы держат общее окно простоя потребителя.
+    /// </summary>
+    [Theory]
+    [InlineData("MEETUPS_EVENTS", 7)]
+    [InlineData("IDENTITY_EVENTS", 7)]
+    [InlineData("AUCTION_EVENTS", 90)]
+    [InlineData("NOTIFICATIONS_EVENTS", 7)]
+    public void ToConfig_Stream_KeepsMessagesForItsRetention(string streamName, int days)
+    {
+        var stream = JetStreamTopology.Streams.Single(candidate => candidate.Name == streamName);
+
+        JetStreamTopology.ToConfig(stream).MaxAge.ShouldBe(TimeSpan.FromDays(days));
     }
 
     /// <summary>

@@ -6,12 +6,16 @@ import { admittersLine } from "../../../core/entry.js";
 // одно — права хаба нет и человек не заблокирован: это `unapplied`, и ответ
 // на него — приветствие с кнопкой заявки, а не «заявка ждёт проверки»,
 // которой может и не быть (PER-592, дополнение ADR-060 от 2026-10-12).
+// `invitation-only` — тоже только после «Подать заявку»: очередь сообщества
+// закрыта настройкой Identity, и в хаб пускает только белый список (дополнение
+// ADR-060 от 2026-10-25).
 export type HubAccess =
   | "admitted"
   | "unapplied"
   | "pending"
   | "declined"
-  | "blocked";
+  | "blocked"
+  | "invitation-only";
 
 // Код заявки — хвост UUIDv7, а не голова: голова несёт время создания и у
 // профилей, заведённых в одну минуту, совпадает, а хвост случаен.
@@ -49,6 +53,20 @@ export const hubWelcome = {
   ],
 } as const;
 
+/**
+ * Ответ на «Подать заявку», когда очередь сообщества закрыта (дополнение
+ * ADR-060 от 2026-10-25): заявки нет, в хаб пускает только список
+ * администраторов. Кнопка «Подать заявку» под ним остаётся — ник, который
+ * добавили в список позже, она и пропустит. Аукционы — в боте аукциона.
+ */
+export const invitationOnlyHub = {
+  title: "Бот сообщества — только по приглашению.",
+  paragraphs: [
+    "Вход открыт по списку, который ведут администраторы сообщества, а заявки сюда не принимаются. Если ник уже в списке, кнопка ниже откроет бот.",
+    "Аукционы сообщества — в боте аукциона.",
+  ],
+} as const;
+
 export const blockedHubAccessText = `Доступ к Solguficky Hub закрыт.
 
 Если считаешь, что это ошибка, обратись к администратору в общем чате сообщества.`;
@@ -60,7 +78,7 @@ export const declinedHubAccessText = `Заявка на доступ откло�
 Если считаешь, что это ошибка, обратись к администратору в общем чате сообщества.`;
 
 export function hubAccessText(
-  access: Exclude<HubAccess, "admitted" | "unapplied">,
+  access: Exclude<HubAccess, "admitted" | "unapplied" | "invitation-only">,
   identityId: string,
   telegramUsername: string | undefined,
 ): string {
@@ -83,6 +101,7 @@ export const hubAccessErrors = {
   pending: "hub_access_pending",
   declined: "hub_access_declined",
   blocked: "hub_access_blocked",
+  "invitation-only": "hub_access_invitation_only",
 } as const;
 
 /**

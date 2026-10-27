@@ -500,6 +500,12 @@ enum AccessRequestOutcome {
 
   // The profile is blocked.
   ACCESS_REQUEST_OUTCOME_BLOCKED = 5;
+
+  // The queue is closed to applications by the service setting: access comes
+  // only from an allowed usernames entry, none matched, and no application was
+  // opened. Only the community queue closes. A consumer that does not know the
+  // value reads it as UNSPECIFIED, a refusal.
+  ACCESS_REQUEST_OUTCOME_INVITATION_ONLY = 6;
 }
 
 message RequestAccessResponse {

@@ -102,6 +102,33 @@ public class JetStreamTopologyScriptTests
         config.GetProperty("num_replicas").GetInt32().ShouldBe(1);
     }
 
+    /// <summary>
+    /// Срок хранения доходит до Job чарта конфигом стрима: <c>nats stream edit</c>
+    /// применяет его к живому стриму на следующем <c>helm upgrade</c> (PER-758).
+    /// </summary>
+    [Theory]
+    [InlineData("MEETUPS_EVENTS", 7)]
+    [InlineData("IDENTITY_EVENTS", 7)]
+    [InlineData("AUCTION_EVENTS", 90)]
+    [InlineData("NOTIFICATIONS_EVENTS", 7)]
+    public void Files_StreamConfig_CarriesItsRetention(string streamName, int days)
+    {
+        using var json = JsonDocument.Parse(JetStreamTopologyScript.Files()[JetStreamTopologyScript.StreamFile(streamName)]);
+
+        json.RootElement.GetProperty("max_age").GetInt64().ShouldBe((long)TimeSpan.FromDays(days).TotalNanoseconds);
+    }
+
+    [Fact]
+    public void Script_Stream_FallsBackToEditWithItsConfig()
+    {
+        var script = JetStreamTopologyScript.Script();
+
+        foreach (var stream in JetStreamTopology.Streams)
+        {
+            Occurrences(script, $"nats stream edit {stream.Name} --config \"$dir/{JetStreamTopologyScript.StreamFile(stream.Name)}\" -f").ShouldBe(1);
+        }
+    }
+
     [Fact]
     public void ConsumerConfig_Durable_AcksExplicitlyFromStreamStart()
     {

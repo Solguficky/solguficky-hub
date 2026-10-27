@@ -218,13 +218,15 @@ spec:
 EOF
 }
 
-# tree CASE - a rendered tree with the eight chart workloads and the topology Job
+# tree CASE - a rendered tree with the nine chart workloads and the topology
+# Job; Achievements and the tunnel are switched off
 tree() {
     work="$scratch/$1"
-    for name in identity meetups notifications hub-bot auction auction-bot support-bot; do
+    for name in identity meetups notifications hub-bot auction auction-bot support-bot achievements; do
         mkdir -p "$work/solguficky-hub/templates/$name"
         deployment "$name" > "$work/solguficky-hub/templates/$name/deployment.yaml"
     done
+    sed -i 's/  replicas: 1/  replicas: !!int "0"/' "$work/solguficky-hub/templates/achievements/deployment.yaml"
     auction_service > "$work/solguficky-hub/templates/auction/service.yaml"
     mkdir -p "$work/solguficky-hub/templates/cloudflared"
     tunnel > "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
@@ -258,11 +260,20 @@ assert_fails() {
 }
 
 work=$(tree good)
-assert_passes "eight workloads and the topology Job by the rules pass" "$work"
+assert_passes "nine workloads and the topology Job by the rules pass" "$work"
 
 work=$(tree tunnel-enabled)
-sed -i 's/replicas: !!int "0"/replicas: !!int "1"/' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
-assert_passes "the tunnel runs one replica where the environment enables it" "$work" --rendered-enabled
+sed -i 's/replicas: !!int "0"/replicas: !!int "1"/' "$work/solguficky-hub/templates/cloudflared/deployment.yaml" \
+    "$work/solguficky-hub/templates/achievements/deployment.yaml"
+assert_passes "the switched workloads run one replica where the environment enables them" "$work" --rendered-enabled
+
+work=$(tree achievements-on-without-key)
+sed -i 's/replicas: !!int "0"/replicas: !!int "1"/' "$work/solguficky-hub/templates/achievements/deployment.yaml"
+assert_fails "Achievements running in an environment that did not enable it" 'achievements: replicas must be !!int "0", got !!int "1"' "$work"
+
+work=$(tree achievements-plain-count)
+sed -i 's/replicas: !!int "0"/replicas: 1/' "$work/solguficky-hub/templates/achievements/deployment.yaml"
+assert_fails "Achievements running without a switch" 'achievements: replicas must be !!int "0", got 1' "$work"
 
 work=$(tree tunnel-on-without-key)
 sed -i 's/replicas: !!int "0"/replicas: !!int "1"/' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"

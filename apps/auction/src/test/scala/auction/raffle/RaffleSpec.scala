@@ -262,6 +262,67 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
     }
   }
 
+  "changing the prize" should {
+
+    val prize = "кружка и брелок"
+
+    def withPrize(raffle: Raffle): Option[String] =
+      raffle.state match {
+        case RaffleState.Open(terms, _) => terms.prize
+        case RaffleState.Fixed(terms, _) => terms.prize
+        case RaffleState.AwaitingWinner(terms, _) => terms.prize
+        case RaffleState.Drawn(terms, _, _, _) => terms.prize
+        case RaffleState.Assigned(terms, _, _, _) => terms.prize
+        case other => fail(s"raffle has no terms: $other")
+      }
+
+    def byHand(raffle: Raffle): Raffle =
+      Raffle.decide(raffle, FixPool(Set.empty, byHand = true), closesAt) match {
+        case Right(event) => step(raffle, op(90), event)
+        case Left(rejected) => fail(s"pool not fixed: $rejected")
+      }
+
+    "replaces the prize while registration is open, the pool waits for the beacon or for the winner by hand" in {
+      val registered = register(open, 1, 2)
+      for (raffle <- List(registered, fixed(registered), byHand(registered))) {
+        val changed = accepted(raffle, op(60), Raffle.decide(raffle, ChangePrize(prize, op(60))))
+        withPrize(changed) shouldBe Some(prize)
+        changed.state.getClass shouldBe raffle.state.getClass
+      }
+    }
+
+    "keeps the prize after the result and carries the changed one into it" in {
+      val waiting = byHand(register(open, 1, 2))
+      val changed = accepted(waiting, op(60), Raffle.decide(waiting, ChangePrize(prize, op(60))))
+      val assigned = accepted(changed, op(70), Raffle.decide(changed, AssignWinner(1, op(70)), closesAt))
+      withPrize(assigned) shouldBe Some(prize)
+      Raffle.decide(assigned, ChangePrize("другой", op(61))) shouldBe Left(ChangePrizeRejected.AlreadyDrawn(1))
+      val beacon = fixed(register(open, 1, 2))
+      val drawn = Raffle.decide(beacon, DrawWinner(randomness, closesAt.plusSeconds(61))) match {
+        case Right(event) => step(beacon, op(91), event)
+        case Left(rejected) => fail(s"draw refused: $rejected")
+      }
+      Raffle.decide(drawn, ChangePrize(prize, op(61))) shouldBe Left(ChangePrizeRejected.AlreadyDrawn(1))
+    }
+
+    "answers a repeat with the original, the same prize without an event and a taken op_id with a refusal" in {
+      val changed = accepted(open, op(60), Raffle.decide(open, ChangePrize(prize, op(60))))
+      Raffle.decide(changed, ChangePrize(prize, op(60))) shouldBe Right(RaffleDecision.Repeated(changed.seen(op(60))))
+      Raffle.decide(changed, ChangePrize(prize, op(61))) shouldBe Right(RaffleDecision.Unchanged)
+      Raffle.decide(changed, ChangePrize("другой", op(60))) shouldBe Left(ChangePrizeRejected.OpIdTaken)
+      Raffle.decide(changed, ChangePrize("другой", op(1))) shouldBe Left(ChangePrizeRejected.OpIdTaken)
+    }
+
+    "refuses a raffle that is not there and one that will have no result" in {
+      Raffle.decide(Raffle.initial, ChangePrize(prize, op(60))) shouldBe Left(ChangePrizeRejected.RaffleNotFound)
+      val notHeld = step(Raffle.initial, op(1), RaffleEvent.RaffleNotHeld(closesAt))
+      Raffle.decide(notHeld, ChangePrize(prize, op(60))) shouldBe Left(ChangePrizeRejected.WithoutResult)
+      Raffle.decide(fixed(open), ChangePrize(prize, op(60))) shouldBe Left(ChangePrizeRejected.WithoutResult)
+      val cancelled = step(open, op(80), RaffleEvent.RaffleCancelled(closesAt.minusSeconds(30)))
+      Raffle.decide(cancelled, ChangePrize(prize, op(60))) shouldBe Left(ChangePrizeRejected.WithoutResult)
+    }
+  }
+
   "cancelling with the auction" should {
 
     val cancelledAt = closesAt.plusSeconds(30)

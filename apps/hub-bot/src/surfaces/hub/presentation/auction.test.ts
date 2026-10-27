@@ -10,6 +10,7 @@ import {
 import {
   type AccessRight,
   type AuctionStageView,
+  type AuctionSummaryView,
   type DayChronicleView,
   encodeAuctionCallback,
   type FavoritesPort,
@@ -177,6 +178,10 @@ function fakeAuction(
     otherLot?: LotView;
     // Счета смотрящего (PER-322): выбор способа меняет счёт.
     invoices?: MyInvoicesView;
+    // Программа недели (PER-724): поля сводки поверх умолчаний и отказ
+    // чтения розыгрыша.
+    summary?: Partial<AuctionSummaryView>;
+    raffleFails?: true;
   } = {},
 ) {
   const invoices: { current: MyInvoicesView } = {
@@ -226,6 +231,7 @@ function fakeAuction(
     closesAt: "2026-10-29T18:00:00Z",
     final: true,
     ...(options.hidden === undefined ? {} : { hidden: options.hidden }),
+    ...options.summary,
   });
   // Корень аукциона (PER-605): Auction отдаёт аукцион, который у сходки есть.
   const getAuction = vi.fn(async (request: { auctionId: string }) =>
@@ -299,7 +305,12 @@ function fakeAuction(
             return { kind: "accepted", name: "@owl" };
           },
           getAuction,
-          getRaffle: async () => raffle.current,
+          getRaffle: async () => {
+            if (options.raffleFails === true) {
+              throw new Error("auction unavailable");
+            }
+            return raffle.current;
+          },
           registerForRaffle: async () => {
             if (raffle.current === undefined) throw new Error("no raffle");
             if (!named) {
@@ -836,6 +847,71 @@ describe("auction root and the way back", () => {
     expect(labels(root)).toContainEqual(["Итоги"]);
     await bot.handleUpdate(press(data(root, "Итоги") ?? ""));
     expect(lastScreen(calls).text).toContain("Итоги после финала.");
+  });
+
+  // Программа недели (PER-724): абзац под сроками, текст общий с ботом
+  // аукциона.
+  it("shows the week programme under the dates while the online week runs", async () => {
+    const inHours = (hours: number) =>
+      new Date(Date.now() + hours * 3_600_000)
+        .toISOString()
+        .replace(/\.\d{3}Z$/, "Z");
+    const auction = fakeAuction({
+      existing: true,
+      stage: "prebidding",
+      summary: {
+        closesAt: inHours(96),
+        finalAt: inHours(100),
+        stepWindows: [
+          { from: inHours(-1), until: inHours(1), lotIds: ["a", "b"] },
+        ],
+      },
+      raffle: {
+        auctionId,
+        status: "open",
+        closesAt: inHours(50),
+        commitment: "ab".repeat(32),
+        beaconRound: 12_345_678,
+        registered: false,
+        tickets: [],
+      },
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(root.text).toContain("<b>Программа недели</b>");
+    expect(root.text).toMatch(
+      /Счастливые часы: сейчас, до (?:.+, )?\d\d:\d\d — 2 лота/,
+    );
+    expect(root.text).toContain("Розыгрыш: ");
+    expect(root.text).toContain("Онлайн-торги до ");
+    expect(root.text).toContain("Финал: ориентировочно ");
+  });
+
+  it("keeps the root and the programme without the raffle when its read fails", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      stage: "prebidding",
+      summary: { closesAt: "2999-10-29T18:00:00Z" },
+      raffleFails: true,
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(root.text).toContain("<b>Программа недели</b>");
+    expect(root.text).toContain("Онлайн-торги до ");
+    expect(root.text).not.toContain("Розыгрыш");
+    expect(labels(root).flat()).not.toContain("Розыгрыш");
   });
 
   it("names an auction hidden from participants in its status", async () => {

@@ -88,6 +88,73 @@ const goneRoot: AuctionScreenBody = {
   keyboard: [],
 };
 
+// Лента с разделами и раздел (PER-719): разделы кнопками над общим списком,
+// раздел — свои лоты и возврат к разделам.
+const sectionedFeed: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "feed",
+      auctionId: "auc-1",
+      page: 0,
+      pageCount: 1,
+      lots: [
+        {
+          lotId: "lot-1",
+          title: "Банка солёных грибов",
+          status: { kind: "trading", currentPrice: rub(500), phase: "online" },
+        },
+      ],
+      sections: [{ sectionId: 2, name: "Книги", lotCount: 3 }],
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "feed.open-section",
+        sectionId: 2,
+        callbackData: "v1:auc:sec:auc-1:2:0",
+      },
+    ],
+    [
+      {
+        action: "feed.open-lot",
+        lotId: "lot-1",
+        callbackData: "v1:auc:lot:lot-1:0",
+      },
+    ],
+    [{ action: "feed.back", callbackData: "v1:auc:rt:auc-1" }],
+  ],
+};
+
+const section: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "feed",
+      auctionId: "auc-1",
+      page: 0,
+      pageCount: 1,
+      lots: [
+        {
+          lotId: "lot-2",
+          title: "Книга рецептов",
+          status: { kind: "trading", currentPrice: rub(300), phase: "online" },
+        },
+      ],
+      section: { sectionId: 2, name: "Книги" },
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "feed.open-lot",
+        lotId: "lot-2",
+        callbackData: "v1:auc:lot:lot-2:0",
+      },
+    ],
+    [{ action: "feed.back", callbackData: "v1:auc:feed:auc-1:0" }],
+  ],
+};
+
 const emptyFeed: AuctionScreenBody = {
   blocks: [
     { kind: "feed", auctionId: "auc-1", page: 0, pageCount: 1, lots: [] },
@@ -1194,6 +1261,8 @@ const shown: readonly {
   { screen: { kind: "past", list: middlePage } },
   { screen: { kind: "auction", body: feed } },
   { screen: { kind: "auction", body: emptyFeed } },
+  { screen: { kind: "auction", body: sectionedFeed } },
+  { screen: { kind: "auction", body: section } },
   { screen: { kind: "auction", body: predictionBody("catalog", "open") } },
   { screen: { kind: "auction", body: predictionBody("final", "not-open") } },
   {

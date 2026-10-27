@@ -101,6 +101,14 @@ export function dispatchAuctionIntent(input: {
         auctionId: intent.auctionId,
         page: intent.page,
       });
+    case "section":
+      return openFeed({
+        auction: input.auction,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+        page: intent.page,
+        sectionId: intent.sectionId,
+      });
     case "lot":
       return openLot({
         auction: input.auction,

@@ -9,6 +9,7 @@
 # Versions are not constants here. Each one is read from the file that already
 # pins it: the justfile (just, protoc, lefthook, skillshare, Node), global.json
 # (.NET SDK), apps/identity/go.mod (Go), apps/auction/.java-version (JDK),
+# apps/achievements/.tool-versions (Erlang/OTP and Elixir),
 # infra/apphost/AppHost/AppHost.csproj (Aspire CLI bundle); sbt
 # downloads the version from apps/auction/project/build.properties itself.
 #
@@ -83,9 +84,13 @@ NODE_MAJOR="$(pinned NODE_MAJOR)"
 DOTNET_SDK_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' global.json | head -n 1)"
 GO_VERSION="$(awk '/^go [0-9]/ {print $2; exit}' apps/identity/go.mod)"
 JAVA_MAJOR="$(tr -d '[:space:]' < apps/auction/.java-version)"
+ERLANG_VERSION="$(awk '$1 == "erlang" {print $2}' apps/achievements/.tool-versions)"
+ELIXIR_VERSION="$(awk '$1 == "elixir" {print $2}' apps/achievements/.tool-versions)"
+ERLANG_SHA256="$(pinned ERLANG_SHA256)"
+ELIXIR_SHA256="$(pinned ELIXIR_SHA256)"
 ASPIRE_SDK_VERSION="$(sed -n 's/.*<Sdk Name="Aspire.AppHost.Sdk" Version="\([^"]*\)".*/\1/p' infra/apphost/AppHost/AppHost.csproj)"
 
-for version in JUST_VERSION PROTOC_VERSION PROTOC_SHA256 LEFTHOOK_VERSION SKILLSHARE_VERSION NODE_MAJOR DOTNET_SDK_VERSION GO_VERSION JAVA_MAJOR ASPIRE_SDK_VERSION; do
+for version in JUST_VERSION PROTOC_VERSION PROTOC_SHA256 LEFTHOOK_VERSION SKILLSHARE_VERSION NODE_MAJOR DOTNET_SDK_VERSION GO_VERSION JAVA_MAJOR ERLANG_VERSION ELIXIR_VERSION ERLANG_SHA256 ELIXIR_SHA256 ASPIRE_SDK_VERSION; do
   if [ -z "${!version}" ]; then
     echo "install.sh: $version is not pinned where this script reads it" >&2
     exit 1
@@ -275,6 +280,45 @@ elif ! command -v sbt >/dev/null 2>&1; then
   apt_install sbt
 else
   log "sbt already installed"
+fi
+
+# --- Erlang/OTP and Elixir ----------------------------------------------------
+
+# Achievements (Elixir). Versions come from apps/achievements/.tool-versions,
+# the same file erlef/setup-beam reads in CI; checksums from the justfile.
+# Both are the prebuilt archives setup-beam installs: OTP built for Ubuntu
+# 24.04 (it runs on Debian trixie as well) and Elixir compiled for that OTP.
+otp_version() {
+  erl -noshell -eval '{ok, V} = file:read_file(filename:join([code:root_dir(), "releases", erlang:system_info(otp_release), "OTP_VERSION"])), io:put_chars(V), halt().' 2>/dev/null | tr -d '[:space:]'
+}
+if [ "$(otp_version)" != "$ERLANG_VERSION" ]; then
+  log "Installing Erlang/OTP $ERLANG_VERSION"
+  archive="OTP-${ERLANG_VERSION}.tar.gz"
+  curl -fsSL -o "$WORK_DIR/$archive" "https://builds.hex.pm/builds/otp/ubuntu-24.04/$archive"
+  echo "$ERLANG_SHA256  $WORK_DIR/$archive" | sha256sum -c -
+  $SUDO rm -rf /usr/local/lib/erlang
+  $SUDO mkdir -p /usr/local/lib/erlang
+  $SUDO tar -C /usr/local/lib/erlang --strip-components=1 -xzf "$WORK_DIR/$archive"
+  $SUDO /usr/local/lib/erlang/Install -minimal /usr/local/lib/erlang >/dev/null
+  for bin in erl erlc escript; do
+    $SUDO ln -sf "/usr/local/lib/erlang/bin/$bin" "/usr/local/bin/$bin"
+  done
+else
+  log "Erlang/OTP $ERLANG_VERSION already installed"
+fi
+
+if [ "$(elixir --short-version 2>/dev/null)" != "${ELIXIR_VERSION%%-otp-*}" ]; then
+  log "Installing Elixir $ELIXIR_VERSION"
+  archive="v${ELIXIR_VERSION}.zip"
+  curl -fsSL -o "$WORK_DIR/$archive" "https://builds.hex.pm/builds/elixir/$archive"
+  echo "$ELIXIR_SHA256  $WORK_DIR/$archive" | sha256sum -c -
+  $SUDO rm -rf /usr/local/lib/elixir
+  $SUDO unzip -q -d /usr/local/lib/elixir "$WORK_DIR/$archive"
+  for bin in elixir elixirc iex mix; do
+    $SUDO ln -sf "/usr/local/lib/elixir/bin/$bin" "/usr/local/bin/$bin"
+  done
+else
+  log "Elixir $ELIXIR_VERSION already installed"
 fi
 
 # --- lefthook and skillshare -------------------------------------------------

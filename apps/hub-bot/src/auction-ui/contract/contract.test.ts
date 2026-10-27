@@ -197,6 +197,8 @@ describe("auction contract self-check", () => {
       "feed",
       "feed: stale page",
       "feed: empty",
+      "feed: sections",
+      "section",
       "feed: before trading",
       "lot: trading",
       "lot: trading, led by the viewer",

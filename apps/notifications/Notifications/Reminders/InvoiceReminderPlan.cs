@@ -98,63 +98,35 @@ public static class InvoiceReminderPlan
 }
 
 /// <summary>
-/// Моменты напоминаний о счёте: первый — после победы, второй — перед сроком
-/// оплаты.
+/// Моменты напоминаний о счёте: за 24 часа, за 12 часов и за час до срока
+/// оплаты (PER-726).
 /// </summary>
 /// <remarks>
 /// Моменты считаются из неизменных значений счёта: момента выставления и срока
-/// оплаты. Второй момент отводится от первого зазором: срок оплаты — любое
-/// число секунд от суток до тридцати, поэтому «за сутки до срока» при
-/// коротком сроке совпало бы с первым напоминанием или оказалось раньше него.
-/// Срок не короче суток, поэтому зазор не выносит второе напоминание за срок
-/// оплаты.
+/// оплаты. Срок оплаты Auction считает от продажи, а счёт выставляется сразу
+/// за ней, поэтому при сроке в сутки момент «за 24 часа» приходится на саму
+/// продажу — рядом с вестью о покупке. Такой момент пропускается: напоминание
+/// уместно только позже выставления с допуском.
 /// </remarks>
 public static class InvoiceReminderMoments
 {
-    /// <summary>Первый момент: столько после победы.</summary>
-    public static DateTimeOffset First(DateTimeOffset issuedAt, TimeSpan firstLead) => issuedAt + firstLead;
-
     /// <summary>
-    /// Второй момент: столько до срока оплаты, но не раньше первого напоминания
-    /// с зазором.
+    /// Момент напоминания по виду. <c>null</c> — момент пропускается: он не
+    /// позже выставления счёта с допуском <paramref name="issueGap" /> или не
+    /// раньше срока оплаты.
     /// </summary>
-    public static DateTimeOffset Second(
-        DateTimeOffset issuedAt,
-        DateTimeOffset paymentDueAt,
-        TimeSpan firstLead,
-        TimeSpan dueLead,
-        TimeSpan minGap)
-    {
-        var earliest = First(issuedAt, firstLead) + minGap;
-        var moment = paymentDueAt - dueLead;
-
-        return moment < earliest ? earliest : moment;
-    }
-
-    /// <summary>
-    /// Момент напоминания по виду. <c>null</c> — напоминать не о чем: момент
-    /// выставления неизвестен или напоминание пришлось бы позже срока оплаты.
-    /// </summary>
-    /// <remarks>
-    /// Срок оплаты Auction считает от продажи, а счёт выставляется позже
-    /// продажи, поэтому при коротком сроке напоминание могло бы оказаться позже
-    /// него. Такое напоминание — шум, и релей снял бы такой факт по сроку
-    /// годности, оставив задание сработавшим.
-    /// </remarks>
     public static DateTimeOffset? For(
         InvoiceReminderKind kind,
         DateTimeOffset issuedAt,
         DateTimeOffset paymentDueAt,
-        TimeSpan firstLead,
-        TimeSpan dueLead,
-        TimeSpan minGap)
+        TimeSpan issueGap)
     {
-        var moment = kind switch
+        var moment = paymentDueAt - InvoiceReminderKinds.Lead(kind);
+
+        if (moment <= issuedAt + issueGap)
         {
-            InvoiceReminderKind.AfterWin => First(issuedAt, firstLead),
-            InvoiceReminderKind.BeforeDue => Second(issuedAt, paymentDueAt, firstLead, dueLead, minGap),
-            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
-        };
+            return null;
+        }
 
         return moment >= paymentDueAt ? null : moment;
     }

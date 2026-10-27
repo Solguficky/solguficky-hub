@@ -1,6 +1,6 @@
 # Stage хаба на VPS
 
-Stage — хаб с аукционом и три бота в namespace `stage` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454), [PER-624](https://linear.app/anticnvm/issue/per-624)): семь сервисов чарта из AppHost, PostgreSQL на CloudNativePG и NATS JetStream. Раз в сутки ветка `stage` догоняет `develop`, и новые образы и чарт из неё stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06, 2026-10-07, 2026-10-18 и 2026-10-20. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
+Stage — хаб с аукционом и три бота в namespace `stage` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454), [PER-624](https://linear.app/anticnvm/issue/per-624)): семь сервисов чарта из AppHost и выключенный workload Achievements, PostgreSQL на CloudNativePG и NATS JetStream. Раз в сутки ветка `stage` догоняет `develop`, и новые образы и чарт из неё stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06, 2026-10-07, 2026-10-18 и 2026-10-20. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
 
 Описание stage живёт в приватном ops-репозитории `solguficky-ops`, а не здесь: values с digest образов, манифесты PostgreSQL и NATS, сетевые разрешения и скрипты выкладки. Публичный репозиторий топологию среды не раскрывает (ADR-055, «Обоснование»). Этот файл — устойчивые правила работы со stage; команды и раскладка файлов — README ops-репозитория.
 
@@ -14,7 +14,7 @@ Stage — хаб с аукционом и три бота в namespace `stage` k
 | PostgreSQL 16 — кластер CNPG `hub-pg`, роль и база на сервис, роль `ops_readonly` | ops, `envs/stage/postgres.yaml` | выкладка |
 | NATS 2.12 с JetStream на томе | ops, `envs/stage/nats.yaml` | выкладка |
 | streams, durables, KV | чарт, Job `jetstream-topology` | Helm-hook при каждой выкладке |
-| семь сервисов, из них три бота | чарт из AppHost, версия — ops `envs/stage/release.yaml`, digest'ы — `envs/stage/values.yaml` | выкладка |
+| семь сервисов, из них три бота, и выключенный Achievements | чарт из AppHost, версия — ops `envs/stage/release.yaml`, digest'ы — `envs/stage/values.yaml` | выкладка |
 
 Выкладка — одна и та же: её запускает таймер на хосте после нового коммита в ops-репозитории или человек командой `bin/stage deploy`.
 
@@ -45,6 +45,13 @@ Stage — хаб с аукционом и три бота в namespace `stage` k
 - **Квота.** Под туннеля просит 10m и 32Mi, лимит 200m и 128Mi; лимит памяти ложится в квоту namespace.
 
 Готовность пода туннеля связи с Cloudflare не означает: пробы смотрят только порт метрик, чтобы выкладка не ждала чужую сеть. Связь видна в логе пода (`Registered tunnel connection`). Проверка после включения: страница `/screen/<auction_id>` открывается по публичному адресу, `curl -i https://<хост>/health` отвечает 404 от самого туннеля, а снаружи хоста по-прежнему открыт только SSH.
+
+## Achievements
+
+Чарт везёт workload `achievements` ([ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md), дополнение 2026-10-26) выключенным: без ключа `enabled.achievements: true` в values среды он стоит с нулём реплик, а включение — решение владельца, не выкладки.
+
+- **Значения.** Digest образа `parameters.achievements.achievements_image` приходит в values джобой `ops` из `image-achievements.yml`, как у остальных сервисов. Строка подключения `achievements-db` — URI PostgreSQL в форме libpq с `sslmode`; пока workload выключен, ей можно оставаться пустой.
+- **Квота.** Под просит 50m и 96Mi, лимит 500m и 192Mi.
 
 ## Автовыкладка
 

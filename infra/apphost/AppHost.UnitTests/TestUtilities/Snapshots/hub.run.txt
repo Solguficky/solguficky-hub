@@ -1,3 +1,5 @@
+achievements-db: PostgresDatabaseResource
+  health: achievements-db_check
 auction-bot-service-token: ParameterResource
   secret: True
 auction-db: PostgresDatabaseResource

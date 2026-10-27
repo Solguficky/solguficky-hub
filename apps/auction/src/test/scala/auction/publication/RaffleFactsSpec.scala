@@ -117,6 +117,22 @@ final class RaffleFactsSpec extends AnyWordSpec with Matchers {
         Some((pool.map(_.value.toString), 2, Some(prize)))
     }
 
+    "publish the prize the administrator changed before the result, and nothing for the change itself" in {
+      val changed = List(
+        RaffleEvent.RaffleOpened(closesAt, seed, 9000L, Some(prize)),
+        RaffleEvent.Registered(person(3)),
+        RaffleEvent.Registered(person(1)),
+        RaffleEvent.Registered(person(2)),
+        RaffleEvent.PoolFixed(pool, byHand = true),
+        RaffleEvent.PrizeChanged("кружка и брелок"),
+        RaffleEvent.WinnerAssigned(2, drawnAt)
+      ).zipWithIndex.map((event, index) => (index + 1).toLong -> stored(event, index + 1))
+      val published = facts(changed).map(_._2)
+      published.init.forall(_.isEmpty) shouldBe true
+      published.last.map(_.subject) shouldBe Some("events.auction.raffle_drawn")
+      message(published.last).state.flatMap(_.rafflePrize) shouldBe Some("кружка и брелок")
+    }
+
     "publish nothing for a raffle that is not held" in {
       val notHeld = List(1L -> stored(RaffleEvent.RaffleNotHeld(closesAt), 1))
       facts(notHeld).map(_._2) shouldBe List(None)

@@ -14,7 +14,9 @@ import {
   windowPrint,
 } from "../../application/auction-console.js";
 import { maxLotRubles } from "../../application/lot-form.js";
+import { layoutEditable } from "../../application/lot-layout.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
+import { prizeChangeable } from "../../application/raffle-prize-change.js";
 import type {
   AuctionConsoleView,
   AuctionWeek,
@@ -53,6 +55,7 @@ import {
   consoleFinalTimeData,
   consoleFinalTimeRemoveData,
   consoleInvoicesData,
+  consoleLayoutData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -61,6 +64,7 @@ import {
   consoleOpenData,
   consolePaymentTermData,
   consoleRaffleData,
+  consoleRafflePrizeChangeData,
   consoleRafflePrizeData,
   consoleRafflePrizeRemoveData,
   consoleRaffleRemoveData,
@@ -82,6 +86,7 @@ import {
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import { invoicesLabel } from "./auction-invoices.js";
+import { rafflePrizeChangeLabel } from "./auction-raffle-prize-change.js";
 import { raffleWinnerLabel } from "./auction-raffle-winner.js";
 import { auctionCancelConsequence } from "./auction-stage.js";
 import {
@@ -364,8 +369,14 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
 
 // Приз розыгрыша (PER-649) — строкой под розыгрышем: его видят участники на
 // экране розыгрыша, а победитель — в вести. Без приза строки нет.
-function rafflePrizeLines(week: AuctionWeek): string[] {
-  return week.rafflePrize === undefined ? [] : [`Приз: ${week.rafflePrize}`];
+// После открытия недели приз — у розыгрыша: он скопировал его из сроков и
+// меняется уже там (PER-737). Розыгрыш не прочитан — приз из сроков.
+function rafflePrizeLines(
+  week: AuctionWeek,
+  view: ConsoleScreenView,
+): string[] {
+  const prize = view.console.raffle?.prize ?? week.rafflePrize;
+  return prize === undefined ? [] : [`Приз: ${prize}`];
 }
 
 // Розыгрыш и прогнозы числами (PER-734), пока идёт онлайн-неделя: по ним
@@ -408,7 +419,7 @@ function raffleLines(view: ConsoleScreenView): string[] {
   const week = view.console.week;
   return week?.raffleClosesAt === undefined
     ? []
-    : [raffleLine(week, view), ...rafflePrizeLines(week)];
+    : [raffleLine(week, view), ...rafflePrizeLines(week, view)];
 }
 
 function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
@@ -486,7 +497,7 @@ function statusLines(view: ConsoleScreenView): string[] {
             ...finalTimeLines(view.console, view),
             ...windowsLines(view.console),
             raffleLine(week, view),
-            ...rafflePrizeLines(week),
+            ...rafflePrizeLines(week, view),
             ...paymentTermLines(week),
           ];
     case "prebidding":
@@ -501,7 +512,7 @@ function statusLines(view: ConsoleScreenView): string[] {
               ...finalTimeLines(view.console, view),
               ...windowsLines(view.console),
               raffleLine(week, view),
-              ...rafflePrizeLines(week),
+              ...rafflePrizeLines(week, view),
               ...participationLines(view.console),
               ...paymentTermLines(week),
             ]),
@@ -552,6 +563,17 @@ function invoicesShown(console: AuctionConsoleView): boolean {
     console.status === "finished" ||
     console.status === "cancelled"
   );
+}
+
+// Приз розыгрыша меняется с открытия недели, пока итога нет (PER-737).
+// Прочитанный розыгрыш решает сам; без него ряд стоит только в онлайн-торгах:
+// после них пульт читает розыгрыш всегда, и нет его — нет и розыгрыша.
+function prizeChangeShown(console: AuctionConsoleView): boolean {
+  if (console.week?.raffleClosesAt === undefined) return false;
+  if (console.raffle !== undefined) {
+    return console.status !== "cancelled" && prizeChangeable(console.raffle);
+  }
+  return console.status === "prebidding";
 }
 
 // Финал идёт, а ведущий ещё не открыл ни одного лота: активного нет, и ни
@@ -890,6 +912,10 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   // строк настройки. Снятие стоит в том же ряду: два «🗑» в один ряд не
   // встают, а пульт упирается в потолок рядов.
   const finalTimeSet = finalTimeEditable(console);
+  // Смена приза идущего розыгрыша (PER-737) встаёт в ряд времени финала, где
+  // он есть: пульт онлайн-торгов с окнами и полной страницей лотов уже стоит
+  // в потолке рядов. Без времени финала — свой ряд, и он помещается.
+  const prizeChange = prizeChangeShown(console);
   if (finalTimeSet || finalTimeRemovable(console)) {
     nextRow(keyboard);
     if (finalTimeSet) {
@@ -901,14 +927,30 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
         consoleFinalTimeRemoveData(auction),
       );
     }
+    if (prizeChange) {
+      keyboard.text(
+        rafflePrizeChangeLabel,
+        consoleRafflePrizeChangeData(auction),
+      );
+    }
+  } else if (prizeChange) {
+    nextRow(keyboard).text(
+      rafflePrizeChangeLabel,
+      consoleRafflePrizeChangeData(auction),
+    );
   }
   const windowsShown = scheduled || console.status === "prebidding";
   // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд
   // есть: в онлайн-торгах с окнами и восемью лотами отдельный ряд вывел бы
   // пульт за двенадцать. Без окон — сразу под сортировкой.
+  // «Порядок» ленты (PER-719) встаёт в конец ряда «Сводки дня»: этот ряд есть
+  // в каждом состоянии до финала, а пульт онлайн-торгов стоит в потолке
+  // рядов, и свой ряд вывел бы его за тринадцать.
+  const layout = layoutEditable(console.status);
   if (!windowsShown) {
     nextRow(keyboard).text("Сводка дня", consoleDaySummaryData(auction));
     withCancel(keyboard, console);
+    if (layout) keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (scheduled) {
     nextRow(keyboard).text(
@@ -917,7 +959,8 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     );
     nextRow(keyboard)
       .text("Счастливые часы", consoleWindowsData(auction))
-      .text("Сводка дня", consoleDaySummaryData(auction));
+      .text("Сводка дня", consoleDaySummaryData(auction))
+      .text(layoutLabel, consoleLayoutData(auction));
     // Срок оплаты счёта (PER-722) — парой с «Розыгрышем»: свой ряд вывел бы
     // пульт с призом за потолок рядов.
     nextRow(keyboard)
@@ -949,6 +992,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       .text("Счастливые часы", consoleWindowsData(auction))
       .text("Сводка дня", consoleDaySummaryData(auction));
     withCancel(keyboard, console);
+    keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (editable) {
     nextRow(keyboard).text(
@@ -1239,6 +1283,10 @@ function withCancel(keyboard: InlineKeyboard, console: AuctionConsoleView) {
 }
 
 const cancelLabel = "Отменить аукцион";
+
+// Вход в «Порядок и разделы» ленты (PER-719): короткая подпись, потому что
+// кнопка делит ряд со «Сводкой дня».
+const layoutLabel = "Порядок";
 
 // Отменить аукцион можно с открытия онлайн-недели до его конца (ADR-047,
 // дополнение 2026-10-12); до неё действует удаление.

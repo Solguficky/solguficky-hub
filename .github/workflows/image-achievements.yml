@@ -1,0 +1,78 @@
+name: Image Achievements
+
+# Production-образ Achievements по apps/achievements/Containerfile. Pull request
+# только собирает образ и проверяет его: в GHCR ничего не пишется, и права
+# записи код из PR не получает. Push в stage публикует образ для stage, push в
+# main — для прода: каждая среда собирается из своей ветки, и digest прода —
+# своя сборка, а не digest stage (дополнение ADR-055 от 2026-10-22).
+#
+# Отдельный файл, а не джоба в ci.yml: tools/verify/select-recipes.sh читает
+# фильтры путей ci.yml как карту механического гейта, а образ в гейт не входит.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/achievements/**'
+      - 'tools/image/**'
+      - '.github/workflows/image-achievements.yml'
+      - '.github/workflows/image-publish.yml'
+  push:
+    branches: [stage, main]
+    paths:
+      - 'apps/achievements/**'
+      - 'tools/image/**'
+      - '.github/workflows/image-achievements.yml'
+      - '.github/workflows/image-publish.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    if: ${{ github.ref != 'refs/heads/stage' && github.ref != 'refs/heads/main' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image-publish.yml
+    with:
+      image-name: achievements
+      builder: containerfile
+      containerfile: apps/achievements/Containerfile
+      publish: false
+
+  publish:
+    if: ${{ github.event_name != 'pull_request' && (github.ref == 'refs/heads/stage' || github.ref == 'refs/heads/main') }}
+    # Публикации одной ветки по очереди: тег sha-<коммит> одного прогона не
+    # должен перевесить другой, пока первый читает digest и аттестует его.
+    # Группа своя у каждой ветки: в общей группе ожидающий прогон отменяется
+    # следующим, и push в stage молча снял бы публикацию прода. Мерж в main —
+    # merge-коммит, поэтому тег sha-<коммит> у веток не совпадает; совпадёт —
+    # проверка attestation по ветке покраснеет, а не пропустит чужой образ.
+    concurrency:
+      group: image-achievements-publish-${{ github.ref_name }}
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: ./.github/workflows/image-publish.yml
+    with:
+      image-name: achievements
+      builder: containerfile
+      containerfile: apps/achievements/Containerfile
+      publish: true
+
+  # Digest уходит в данные среды ветки в ops-репозитории (ops-bump.yml): stage
+  # выкатывает его сам, прод — владелец (дополнение ADR-055 от 2026-10-22).
+  ops:
+    needs: publish
+    permissions: {}
+    uses: ./.github/workflows/ops-bump.yml
+    with:
+      file: values.yaml
+      key: .parameters.achievements.achievements_image
+      value: ${{ needs.publish.outputs.ref }}
+      what: achievements image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}
