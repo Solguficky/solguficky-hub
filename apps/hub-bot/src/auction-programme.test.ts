@@ -306,6 +306,21 @@ describe("auctionStatusLine", () => {
     }
   });
 
+  // Сутки идут от открытия торгов: неделя не с полуночи — тоже семь дней.
+  it("counts the days of a week that opens in the evening", () => {
+    const evening = {
+      opensAt: "2026-10-26T15:00:00Z",
+      closesAt: "2026-11-02T15:00:00Z",
+    };
+    expect(line(evening)).toBe("день 4 из 7");
+    expect(
+      auctionStatusLine(
+        { ...statusWeek, ...evening },
+        { ...statusOptions, now: new Date("2026-10-26T14:00:00Z") },
+      ),
+    ).toBeUndefined();
+  });
+
   it("counts the first and the last day of the week", () => {
     expect(
       auctionStatusLine(statusWeek, {

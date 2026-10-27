@@ -112,9 +112,9 @@ export function auctionStatusLine(
   return parts.length === 0 ? undefined : parts.join(" · ");
 }
 
-// «день 4 из 7» — дни сообщества от начала онлайн-торгов. Дедлайн ровно в
-// полночь последним днём не считается: неделя с понедельника 00:00 до
-// следующего понедельника 00:00 — семь дней, а не восемь.
+// «день 4 из 7» — сутки от открытия онлайн-торгов, а не календарные дни:
+// неделя, открытая в понедельник в 18:00 и закрытая в следующий понедельник
+// в 18:00, — семь дней, а не восемь. Неполные последние сутки — тоже день.
 function weekDayPart(
   auction: AuctionWeekFacts,
   options: StatusLineOptions,
@@ -126,11 +126,12 @@ function weekDayPart(
   const opens = Date.parse(auction.opensAt);
   const closes = Date.parse(auction.closesAt);
   if (now < opens || now >= closes) return [];
-  const first = dayNumber(new Date(opens), options.timeZone);
-  const total = dayNumber(new Date(closes - 1), options.timeZone) - first + 1;
-  const current = dayNumber(options.now, options.timeZone) - first + 1;
+  const total = Math.ceil((closes - opens) / DAY_MS);
+  const current = Math.floor((now - opens) / DAY_MS) + 1;
   return [`день ${current} из ${total}`];
 }
+
+const DAY_MS = 86_400_000;
 
 // Идущее окно — «до 22:00»; иначе ближайшее — «сегодня с 18:00» или «30.10 с
 // 18:00».
@@ -187,14 +188,6 @@ function shortDay(instant: string, timeZone: string): string {
     day: "2-digit",
     month: "2-digit",
   }).format(new Date(instant));
-}
-
-// Номер дня сообщества от эпохи: разница номеров — число календарных суток в
-// поясе.
-function dayNumber(at: Date, timeZone: string): number {
-  return (
-    Date.parse(`${dayOf(at.toISOString(), timeZone)}T00:00:00Z`) / 86_400_000
-  );
 }
 
 // Сегодняшние окна — идущее и те, что начнутся до конца дня сообщества, — и

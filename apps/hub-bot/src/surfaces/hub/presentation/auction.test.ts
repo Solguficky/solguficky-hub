@@ -2433,8 +2433,30 @@ describe("events of the hub", () => {
     expect(lastScreen(calls).text).toMatch(status);
   });
 
-  it("leaves the status line out while the auction has nothing to say", async () => {
-    const auction = fakeAuction({ existing: true, current: going("in-final") });
+  // Окно и розыгрыш вокруг часов бота: строку убирает стадия, а не данные.
+  it("leaves the status line out once the online week is over", async () => {
+    const inHours = (hours: number) =>
+      new Date(Date.now() + hours * 3_600_000)
+        .toISOString()
+        .replace(/\.\d{3}Z$/, "Z");
+    const auction = fakeAuction({
+      existing: true,
+      current: () => ({
+        kind: "ok",
+        auctionId,
+        auction: {
+          auctionId,
+          stage: "in-final",
+          opensAt: inHours(-30),
+          closesAt: inHours(140),
+          final: true,
+          stepWindows: [
+            { from: inHours(-1), until: inHours(1), lotIds: ["a"] },
+          ],
+          raffleClosesAt: inHours(100),
+        },
+      }),
+    });
     const { bot, calls } = harness("member", auction, {
       presentation: "plain",
     });
