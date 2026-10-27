@@ -16,6 +16,7 @@ import { createAuctionConsole } from "./auction-console.js";
 import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createFloorBids } from "./floor-bids.js";
+import { createHappyHours } from "./happy-hours.js";
 import { createLotForm } from "./lot-form.js";
 import { createLotLayout } from "./lot-layout.js";
 import { createLotSets } from "./lot-sets.js";
@@ -113,6 +114,17 @@ export function createDispatcher(
     consoles === undefined
       ? undefined
       : createRafflePrizePhoto(consoles.auctions);
+  // «Счастливые часы» периодами (PER-787) — тот же порт и то же право; лот
+  // карточки читается портом формы лота, по нему пульт узнаёт аукцион.
+  const happyHours =
+    consoles === undefined || lots === undefined
+      ? undefined
+      : createHappyHours(
+          consoles.auctions,
+          lots,
+          consoles.timeZone,
+          consoles.now,
+        );
   // Промо-видео (PER-774) — тот же порт и то же право.
   const promoVideo =
     consoles === undefined ? undefined : createPromoVideo(consoles.auctions);
@@ -437,6 +449,20 @@ export function createDispatcher(
           return rafflePrizePhoto === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : rafflePrizePhoto(request);
+        case "view-happy-hour-periods":
+        case "ask-happy-hour-period":
+        case "create-happy-hour-period":
+        case "view-happy-hour-period":
+        case "prepare-happy-hour-period-delete":
+        case "delete-happy-hour-period":
+        case "view-lot-happy-hours":
+        case "view-lot-happy-hour":
+        case "ask-lot-happy-hour":
+        case "set-lot-happy-hour":
+        case "clear-lot-happy-hour":
+          return happyHours === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : happyHours(request);
         case "view-promo-video":
         case "set-promo-video":
           return promoVideo === undefined

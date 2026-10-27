@@ -87,6 +87,7 @@ import {
 } from "../application/broadcasts.js";
 import type { Dispatcher } from "../application/dispatcher.js";
 import { fingerprint } from "../application/fingerprint.js";
+import { periodRef } from "../application/happy-hours.js";
 import {
   decideHubAccess,
   type HubAccess,
@@ -111,6 +112,7 @@ import type {
   FinalAskError,
   FinalTimeAskError,
   FormField,
+  HappyHourField,
   LotAmount,
   LotAskError,
   LotFormView,
@@ -130,6 +132,7 @@ import type {
   TradingHolder,
   WeekAskError,
   WindowAskError,
+  WindowRef,
 } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
@@ -235,6 +238,8 @@ import {
   consoleLayoutListData,
   consolePaymentTermData,
   consolePaymentTextData,
+  consolePeriodAskData,
+  consolePeriodsData,
   consolePromoVideoAskData,
   consolePromoVideoData,
   consoleRaffleData,
@@ -260,6 +265,8 @@ import {
   lotAskData,
   lotCopyData,
   lotFormData,
+  lotHappyHourAskData,
+  lotHappyHourData,
   lotNewData,
   lotSkipData,
   lotStepModeData,
@@ -415,6 +422,20 @@ import {
   floorSearchQuestionText,
   floorTitle,
 } from "./screens/floor-bids.js";
+import {
+  happyHourAmountErrorText,
+  happyHourOutcomeScreen,
+  happyHourPeriodRemoveScreen,
+  happyHourPeriodScreen,
+  happyHourPeriodsScreen,
+  lotHappyHourOutcomeScreen,
+  lotHappyHourQuestionText,
+  lotHappyHourScreen,
+  lotHappyHoursScreen,
+  periodAskErrorText,
+  periodQuestionText,
+  periodsTitle,
+} from "./screens/happy-hours.js";
 import {
   type AuctionEntry,
   auctionEntryOf,
@@ -914,6 +935,24 @@ type PendingConsoleRafflePrizeChange = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о сроках нового периода «Счастливых часов» (PER-787). Шаг —
+// аукцион — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePeriod = {
+  kind: "console-period";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о стартовой или шаге лота в периоде (PER-787). Шаг — лот, период
+// номером и отпечатком и что спрошено — лежит в кнопке вопроса.
+type PendingLotHappyHour = {
+  kind: "happy-hour-lot";
+  lotId: string;
+  period: WindowRef;
+  field: HappyHourField;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о промо-видео аукциона (PER-774). Шаг — аукцион — лежит в кнопке
 // вопроса, и ответ видео после рестарта принимается так же.
 type PendingConsolePromoVideo = {
@@ -1028,6 +1067,8 @@ type HubPendingInput =
   | PendingConsoleRafflePrizeChange
   | PendingConsoleRafflePrizePhoto
   | PendingConsolePromoVideo
+  | PendingConsolePeriod
+  | PendingLotHappyHour
   | PendingConsoleAnnouncement
   | PendingConsoleAnnouncementMedia
   | PendingConsoleWindow
@@ -1092,6 +1133,10 @@ const consoleQuestionIntents = {
   "console-section": {
     intent: "name-lot-section",
     foreign: "foreign lot section answer ignored",
+  },
+  "console-period": {
+    intent: "create-happy-hour-period",
+    foreign: "foreign happy hour period answer ignored",
   },
 } as const;
 
@@ -1936,7 +1981,9 @@ async function handleMessage(
             ? renderRafflePrizeChangeResult
             : pending.kind === "console-announcement"
               ? renderAnnouncementResult
-              : renderConsoleResult)(ctx, runtime, result, {
+              : pending.kind === "console-period"
+                ? renderHappyHourResult
+                : renderConsoleResult)(ctx, runtime, result, {
         person: identity.person,
         questions,
         replyId,
@@ -1954,8 +2001,67 @@ async function handleMessage(
         result.kind !== "step-window-ask" &&
         result.kind !== "step-window-launch-ask" &&
         result.kind !== "lot-set-ask" &&
-        result.kind !== "lot-section-ask"
+        result.kind !== "lot-section-ask" &&
+        result.kind !== "happy-hour-period-ask"
       ) {
+        await answered(result);
+      }
+      return;
+    }
+    // Стартовая или шаг лота в периоде «Счастливых часов» (PER-787): ответ
+    // текстом, ключ команды — из самого сообщения, как у вопросов пульта.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "happy-hour-lot" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_auction";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign happy hour terms answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!canRunAuctions(identity.person)) {
+        await answered();
+        outcome = await refuseConsole(ctx, identity.person);
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "set-lot-happy-hour",
+        lotId: pending.lotId,
+        period: pending.period,
+        field: pending.field,
+        value: ctx.message.text,
+        opId: answerOpId(ctx.message, "happy-hour-lot"),
+        ...rpcCall(ctx, useCase),
+      });
+      outcome = await renderHappyHourResult(ctx, runtime, result, {
+        person: identity.person,
+        questions,
+        replyId,
+      });
+      if (result.kind !== "lot-happy-hour-ask") {
         await answered(result);
       }
       return;
@@ -2961,6 +3067,25 @@ async function handleCallback(
             person,
             action,
           )
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // «Счастливые часы» периодами (PER-787): экраны пульта и карточки лота
+    // видит только держатель права вести аукцион, подделанная кнопка получает
+    // отказ до Auction.
+    if (
+      action.kind === "console-periods" ||
+      action.kind === "console-period-ask" ||
+      action.kind === "console-period" ||
+      action.kind === "console-period-remove" ||
+      action.kind === "console-period-remove-confirm" ||
+      action.kind === "lot-happy-hours" ||
+      action.kind === "lot-happy-hour" ||
+      action.kind === "lot-happy-hour-ask" ||
+      action.kind === "lot-happy-hour-clear"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleHappyHourCallback(ctx, runtime, questions, person, action)
         : await refuseConsole(ctx, person);
       return;
     }
@@ -9982,6 +10107,231 @@ async function handleRafflePrizeChangeCallback(
 // Промо-видео аукциона (PER-774): экран из корня аукциона, вопрос о видео,
 // подтверждение снятия и «Да». Своего состояния нет: аукцион едет в кнопке, а
 // ключ снятия рождается на нажатие «Да».
+// «Счастливые часы» периодами (PER-787): ключ удаления периода и снятия
+// условий рождается на нажатие — повтор застаёт период удалённым или лот без
+// условий, и Auction отвечает тем же исходом.
+async function handleHappyHourCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-periods"
+        | "console-period-ask"
+        | "console-period"
+        | "console-period-remove"
+        | "console-period-remove-confirm"
+        | "lot-happy-hours"
+        | "lot-happy-hour"
+        | "lot-happy-hour-ask"
+        | "lot-happy-hour-clear";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const base = { identity: person, ...rpcCall(ctx, useCase) };
+  const context = { person, questions, retry: ctx.callbackQuery?.data };
+  const run = async (request: ExecuteRequest) =>
+    renderHappyHourResult(
+      ctx,
+      runtime,
+      await runtime.dispatcher.execute(request),
+      context,
+    );
+  switch (action.kind) {
+    case "console-periods":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "view-happy-hour-periods",
+      });
+    case "console-period-ask":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "ask-happy-hour-period",
+      });
+    case "console-period":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "view-happy-hour-period",
+        period: action.period,
+      });
+    case "console-period-remove":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "prepare-happy-hour-period-delete",
+        period: action.period,
+      });
+    case "console-period-remove-confirm":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "delete-happy-hour-period",
+        period: action.period,
+        opId: createUuidV7(),
+      });
+    case "lot-happy-hours":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "view-lot-happy-hours",
+      });
+    case "lot-happy-hour":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "view-lot-happy-hour",
+        period: action.period,
+      });
+    case "lot-happy-hour-ask":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "ask-lot-happy-hour",
+        period: action.period,
+        field: action.field,
+      });
+    case "lot-happy-hour-clear":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "clear-lot-happy-hour",
+        period: action.period,
+        opId: createUuidV7(),
+      });
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Экраны периодов и условий лота (PER-787); отказ лота — кадр формы лота,
+// остальное — исходы пульта: отказы и сбои рисуются, как у его команд.
+async function renderHappyHourResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  const moments = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: communityToday(ctx),
+  };
+  switch (result.kind) {
+    case "happy-hour-periods":
+      await showScreen(ctx, happyHourPeriodsScreen({ ...result, ...moments }));
+      return handled("happy hour periods sent");
+    case "happy-hour-period":
+      await showScreen(ctx, happyHourPeriodScreen({ ...result, ...moments }));
+      return handled("happy hour period sent");
+    case "happy-hour-period-remove-confirm":
+      await showScreen(
+        ctx,
+        happyHourPeriodRemoveScreen({ ...result, ...moments }),
+      );
+      return handled("happy hour period removal confirmation sent");
+    case "happy-hour-period-ask": {
+      const pending: PendingBody = {
+        kind: "console-period",
+        auctionId: result.auctionId,
+        telegramUserId: ctx.from?.id ?? 0,
+      };
+      if (result.error !== undefined) {
+        await refuseAnswer(
+          ctx,
+          context.questions,
+          pending,
+          periodAskErrorText(result.error, {
+            timeZone: moments.timeZone,
+            week: result.week,
+          }),
+          context.replyId,
+        );
+        return handled("happy hour period asked again");
+      }
+      await askQuestion(
+        ctx,
+        context.questions,
+        pending,
+        periodQuestionText(moments.timeZone, result.week),
+        context.replyId,
+      );
+      return handled("happy hour period requested");
+    }
+    case "happy-hour-outcome":
+      await showScreen(ctx, happyHourOutcomeScreen({ ...result, ...moments }));
+      return handled(`happy hour: ${result.note.kind}`);
+    case "lot-happy-hours":
+      await showScreen(ctx, lotHappyHoursScreen({ ...result, ...moments }));
+      return handled("lot happy hours sent");
+    case "lot-happy-hour":
+      await showScreen(ctx, lotHappyHourScreen({ ...result, ...moments }));
+      return handled("lot happy hour sent");
+    case "lot-happy-hour-ask": {
+      const pending: PendingBody = {
+        kind: "happy-hour-lot",
+        lotId: result.lot.lotId,
+        period: periodRef(result.period, result.index),
+        field: result.field,
+        telegramUserId: ctx.from?.id ?? 0,
+      };
+      if (result.error !== undefined) {
+        await refuseAnswer(
+          ctx,
+          context.questions,
+          pending,
+          happyHourAmountErrorText(
+            result.error,
+            result.regular ??
+              (result.field === "start"
+                ? result.lot.regularStart
+                : result.lot.regularStep),
+          ),
+          context.replyId,
+        );
+        return handled("lot happy hour asked again");
+      }
+      await askQuestion(
+        ctx,
+        context.questions,
+        pending,
+        lotHappyHourQuestionText({ ...result, ...moments }),
+        context.replyId,
+      );
+      return handled("lot happy hour requested");
+    }
+    case "lot-happy-hour-outcome":
+      await showScreen(
+        ctx,
+        lotHappyHourOutcomeScreen({ ...result, ...moments }),
+      );
+      return handled(`lot happy hour: ${result.note.kind}`);
+    case "lot-refused":
+      return showLotFailure(ctx, result, context);
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
 async function handlePromoVideoCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
@@ -12954,6 +13304,18 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-promo-video",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-period":
+      return {
+        kind: "console-period",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "happy-hour-lot":
+      return {
+        kind: "happy-hour-lot",
+        lot: uuidToToken(pending.lotId),
+        period: pending.period,
+        field: pending.field,
+      };
     case "console-announcement":
       return {
         kind: "console-announcement",
@@ -13255,6 +13617,22 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-period":
+      return {
+        kind: "console-period",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "happy-hour-lot":
+      return {
+        kind: "happy-hour-lot",
+        lotId: tokenToUuid(step.lot),
+        period: step.period,
+        field: step.field,
+        telegramUserId,
+        expiresAt,
+      };
     case "console-announcement":
       return {
         kind: "console-announcement",
@@ -13387,6 +13765,12 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-promo-video":
       // Вопрос о видео задан с экрана «Промо-видео».
       return { kind: "console-promo-video", auction: step.auction };
+    case "console-period":
+      // Вопрос о сроках периода задан с «Периодов».
+      return { kind: "console-periods", auction: step.auction };
+    case "happy-hour-lot":
+      // Вопрос о сумме задан с условий лота в периоде.
+      return { kind: "lot-happy-hour", lot: step.lot, period: step.period };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -13578,6 +13962,10 @@ function reopenData(step: QuestionStep): string {
       return consoleRafflePrizePhotoAskData(step.auction);
     case "console-promo-video":
       return consolePromoVideoAskData(step.auction);
+    case "console-period":
+      return consolePeriodAskData(step.auction);
+    case "happy-hour-lot":
+      return lotHappyHourAskData(step.lot, step.period, step.field);
     case "console-announcement":
       return consoleAnnouncementAskData(step.auction, step.template, step.ref);
     // Текст объявления в кнопку не помещается: «Ввести заново» начинает
@@ -13681,6 +14069,13 @@ function answerParent(step: QuestionStep): Parent {
       return {
         name: "Промо-видео",
         data: consolePromoVideoData(step.auction),
+      };
+    case "console-period":
+      return { name: periodsTitle, data: consolePeriodsData(step.auction) };
+    case "happy-hour-lot":
+      return {
+        name: `Период ${step.period.index + 1}`,
+        data: lotHappyHourData(step.lot, step.period),
       };
     default: {
       const _exhaustive: never = step;
@@ -14017,6 +14412,15 @@ function callbackUseCase(
     | "console-promo-video-ask"
     | "console-promo-video-remove"
     | "console-promo-video-remove-confirm"
+    | "console-periods"
+    | "console-period-ask"
+    | "console-period"
+    | "console-period-remove"
+    | "console-period-remove-confirm"
+    | "lot-happy-hours"
+    | "lot-happy-hour"
+    | "lot-happy-hour-ask"
+    | "lot-happy-hour-clear"
     | "console-announcement"
     | "console-announcement-windows"
     | "console-announcement-lots"
@@ -14251,6 +14655,15 @@ function callbackUseCase(
     case "console-promo-video-ask":
     case "console-promo-video-remove":
     case "console-promo-video-remove-confirm":
+    case "console-periods":
+    case "console-period-ask":
+    case "console-period":
+    case "console-period-remove":
+    case "console-period-remove-confirm":
+    case "lot-happy-hours":
+    case "lot-happy-hour":
+    case "lot-happy-hour-ask":
+    case "lot-happy-hour-clear":
     case "console-announcement":
     case "console-announcement-windows":
     case "console-announcement-lots":
@@ -14314,6 +14727,7 @@ type AnswerKeyPurpose =
   | ConsoleQuestionPending["kind"]
   | "console-raffle-prize-photo"
   | "console-promo-video"
+  | "happy-hour-lot"
   | "final-ask"
   | "console-set-id";
 

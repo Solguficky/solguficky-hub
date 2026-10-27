@@ -133,6 +133,10 @@ const forgedAuctionPresses = {
   "lot-skip": `v1:lot:skip:${uuidToToken(vaseId)}`,
   "lot-keep-step": `v1:lot:sk:${uuidToToken(vaseId)}:100`,
   "lot-photos": `v1:lot:ph:${uuidToToken(vaseId)}`,
+  "lot-happy-hours": `v1:lot:hh:${uuidToToken(vaseId)}`,
+  "lot-happy-hour": `v1:lot:hv:${uuidToToken(vaseId)}:0:abcde`,
+  "lot-happy-hour-ask": `v1:lot:hk:${uuidToToken(vaseId)}:0:abcde:t`,
+  "lot-happy-hour-clear": `v1:lot:hc:${uuidToToken(vaseId)}:0:abcde`,
   "lot-photo-remove": `v1:lot:rm:${uuidToToken(vaseId)}:1`,
   "lot-photo-remove-confirm": `v1:lot:ry:${uuidToToken(vaseId)}:abcde`,
   "lot-scope": `v1:lot:sc:${uuidToToken(vaseId)}:title`,
@@ -164,6 +168,11 @@ const forgedAuctionPresses = {
   "console-window-ask": `v1:ac:ha:${auctionToken}`,
   "console-window-lot": `v1:ac:hs:${auctionToken}:0:abcde:${uuidToToken(vaseId)}`,
   "console-window-remove": `v1:ac:hx:${auctionToken}:0:abcde`,
+  "console-periods": `v1:ac:hh:${auctionToken}`,
+  "console-period-ask": `v1:ac:hq:${auctionToken}`,
+  "console-period": `v1:ac:hv:${auctionToken}:0:abcde`,
+  "console-period-remove": `v1:ac:hr:${auctionToken}:0:abcde`,
+  "console-period-remove-confirm": `v1:ac:hy:${auctionToken}:0:abcde`,
   "console-window-launch": `v1:ac:hl:${auctionToken}`,
   "console-window-launch-go": `v1:ac:hm:${auctionToken}:n000000000000000AAAAAAAAAAA`,
   "console-window-launch-lot": `v1:ac:ht:${auctionToken}:n000000000000000AAAAAAAAAAA:0`,
@@ -576,7 +585,14 @@ function fakeAuction(
     removeLotPhoto: notUsed,
     addLot: notUsed,
     scheduleLot: notUsed,
-    getLot: notUsed,
+    // Карточка лота «Счастливых часов» (PER-787) читает лот, чтобы узнать
+    // аукцион.
+    async getLot(_person, lotId) {
+      const found = state.lots.find((each) => each.lot.lotId === lotId);
+      return found === undefined
+        ? { kind: "not-found" }
+        : { kind: "ok", lot: found.lot };
+    },
     removeLot: notUsed,
     getLotImage: notUsed,
     getLotPhoto: notUsed,
@@ -4563,9 +4579,11 @@ describe("happy hours", () => {
     expect(plain(last(calls))).toContain("Счастливые часы: 1 окно.");
     await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
     expect(plain(last(calls))).toContain("лотов 1 из 2");
-    // В онлайн-торгах ряд запуска окна есть (PER-615).
+    // В онлайн-торгах ряд запуска окна есть (PER-615), а над ним — периоды
+    // (PER-787).
     expect(labels(last(calls))).toEqual([
       ["Окно 1"],
+      ["Периоды"],
       ["Запустить окно"],
       ["‹ Пульт"],
     ]);
@@ -9241,5 +9259,214 @@ describe("promo video", () => {
     expect(plain(last(calls))).toContain("канал медиа ботов не настроен");
     expect(() => question(calls)).toThrow();
     expect(auction.sent("getAuctionConsole")).toHaveLength(reads);
+  });
+});
+
+// «Счастливые часы» периодами (PER-787): периоды в пульте, условия лота с его
+// карточки. Новый бот на каждом шаге — рестарт посреди сценария ничего не
+// теряет: период едет в кнопке номером и отпечатком, вопрос — в «Отмене».
+describe("happy hour periods", () => {
+  // Ответ новым сообщением: ключ команды выводится из `message_id`.
+  let messageId = 100;
+  const reply = (history: RecordedCall[], text: string): Update => {
+    const update = answer(history, { text });
+    messageId += 1;
+    return {
+      ...update,
+      message: { ...update.message, message_id: messageId } as never,
+    };
+  };
+  const lotToken = (lotId: string) => uuidToToken(lotId);
+
+  it("creates two periods, sets terms of two lots in each, clears one and deletes a period before it starts", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, windows: [] },
+      lots: [vase, mug],
+    });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(`v1:ac:h:${auctionToken}`));
+    await next((history) => press(dataOf(last(history), "Периоды")));
+    expect(plain(last(calls))).toContain("Периодов пока нет.");
+    expect(labels(last(calls))).toEqual([
+      ["Создать период"],
+      ["‹ Счастливые часы"],
+    ]);
+
+    for (const [index, span] of [
+      "21.10.2026 18:00 — 21.10.2026 22:00",
+      "22.10.2026 18:00 — 22.10.2026 22:00",
+    ].entries()) {
+      await next((history) => press(dataOf(last(history), "Создать период")));
+      const asked = question(calls).payload;
+      expect(dataOf(asked, "Отмена")).toBe(`v1:q:hh:${auctionToken}:42`);
+      expect(asked.text).toContain(
+        "Неделя: 20.10.2026 18:00 — 27.10.2026 00:00",
+      );
+      await next((history) => reply(history, span));
+      expect(plain(last(calls))).toContain("Период создан");
+      await next((history) => press(dataOf(last(history), "‹ Периоды")));
+      expect(labels(last(calls))[index]).toEqual([`Период ${index + 1}`]);
+    }
+    expect(
+      auction.sent("createHappyHourPeriod").map((call) => call.args),
+    ).toEqual([
+      expect.objectContaining({
+        from: "2026-10-21T15:00:00Z",
+        until: "2026-10-21T19:00:00Z",
+      }),
+      expect.objectContaining({
+        from: "2026-10-22T15:00:00Z",
+        until: "2026-10-22T19:00:00Z",
+      }),
+    ]);
+
+    // Условия двух лотов под каждым периодом — с карточки лота.
+    for (const lotId of [vaseId, mugId]) {
+      for (const period of [1, 2]) {
+        await next(() => press(`v1:lot:hh:${lotToken(lotId)}`));
+        await next((history) =>
+          press(dataOf(last(history), `Период ${period}`)),
+        );
+        expect(labels(last(calls))).toEqual([
+          ["Стартовая цена"],
+          ["Шаг"],
+          ["‹ Счастливые часы"],
+        ]);
+        await next((history) => press(dataOf(last(history), "Стартовая цена")));
+        await next((history) => reply(history, "300"));
+        expect(plain(last(calls))).toContain("Условия сохранены: от 300 ₽");
+      }
+    }
+    expect(auction.sent("setHappyHourLotTerms")).toHaveLength(4);
+    expect(auction.sent("setHappyHourLotTerms")[0]?.args).toEqual({
+      auctionId,
+      periodId: expect.any(String),
+      lotId: vaseId,
+      opId: expect.any(String),
+      start: rub(30_000),
+    });
+
+    // Шаг добавляется к стартовой: прежние условия едут в команде целиком.
+    await next(() => press(`v1:lot:hh:${lotToken(vaseId)}`));
+    await next((history) => press(dataOf(last(history), "Период 1")));
+    await next((history) => press(dataOf(last(history), "Шаг")));
+    await next((history) => reply(history, "50"));
+    expect(auction.sent("setHappyHourLotTerms").at(-1)?.args).toEqual(
+      expect.objectContaining({ start: rub(30_000), step: rub(5_000) }),
+    );
+
+    // Снять условия одного лота.
+    await next((history) => press(dataOf(last(history), "‹ Период 1")));
+    await next((history) => press(dataOf(last(history), "🗑 Убрать условия")));
+    expect(plain(last(calls))).toContain("Условия сняты");
+    expect(auction.sent("clearHappyHourLotTerms")).toHaveLength(1);
+
+    // Период в пульте называет лоты с условиями.
+    await next(() => press(`v1:ac:hh:${auctionToken}`));
+    expect(plain(last(calls))).toContain("лотов: 1 · впереди");
+    expect(plain(last(calls))).toContain("лотов: 2 · впереди");
+    await next((history) => press(dataOf(last(history), "Период 2")));
+    expect(plain(last(calls))).toContain("• Ваза — от 300 ₽");
+    expect(plain(last(calls))).toContain("• Кружка — от 300 ₽");
+
+    // Удалить период до начала — после подтверждения.
+    await next((history) => press(dataOf(last(history), "🗑 Удалить период")));
+    expect(plain(last(calls))).toContain("Удалить период 2?");
+    await next((history) => press(dataOf(last(history), "✔️ Да, удалить")));
+    expect(plain(last(calls))).toContain("Период 2 удалён");
+    expect(auction.sent("deleteHappyHourPeriod")).toHaveLength(1);
+    await next((history) => press(dataOf(last(history), "‹ Периоды")));
+    expect(labels(last(calls))).toEqual([
+      ["Период 1"],
+      ["Создать период"],
+      ["‹ Счастливые часы"],
+    ]);
+  });
+
+  it("shows a started period without edits and answers a refusal of Auction with a text", async () => {
+    const started = {
+      periodId: "01929b7e-5c1d-5a3f-8e4b-0000000000aa",
+      from: "2026-10-06T08:00:00Z",
+      until: "2026-10-06T12:00:00Z",
+      lotTerms: [{ lotId: vaseId, start: rub(30_000) }],
+    };
+    const ahead = {
+      periodId: "01929b7e-5c1d-5a3f-8e4b-0000000000bb",
+      from: "2026-10-21T15:00:00Z",
+      until: "2026-10-21T19:00:00Z",
+      lotTerms: [],
+    };
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, windows: [] },
+      lots: [vase, mug],
+      periods: [started, ahead],
+      termsRefusal: {
+        kind: "windows-overlap",
+        from: "2026-10-21T15:00:00Z",
+        until: "2026-10-21T18:00:00Z",
+      },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:hh:${auctionToken}`));
+    expect(plain(last(calls))).toContain("лотов: 1 · идёт");
+    await bot.handleUpdate(press(dataOf(last(calls), "Период 1")));
+    expect(plain(last(calls))).toContain(
+      "Период начался — условия не меняются.",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Периоды"]]);
+
+    await bot.handleUpdate(press(`v1:lot:hh:${lotToken(vaseId)}`));
+    expect(plain(last(calls))).toContain("от 300 ₽ · идёт");
+    await bot.handleUpdate(press(dataOf(last(calls), "Период 1")));
+    // У лота со ставками стартовая уже не обещается.
+    expect(plain(last(calls))).toContain("Стартовая: 300 ₽");
+    expect(labels(last(calls))).toEqual([["‹ Счастливые часы"]]);
+
+    // Отказ Auction — экран с текстом, а не сбой.
+    await bot.handleUpdate(press(`v1:lot:hh:${lotToken(vaseId)}`));
+    await bot.handleUpdate(press(dataOf(last(calls), "Период 2")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Шаг")));
+    await bot.handleUpdate(answer(calls, { text: "50" }));
+    expect(plain(last(calls))).toContain(
+      "Период пересекается с другим окном этого лота",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Период 2"]]);
+  });
+
+  it("asks again when the amount is not below the regular one", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, windows: [] },
+      lots: [vase],
+      periods: [
+        {
+          periodId: "01929b7e-5c1d-5a3f-8e4b-0000000000bb",
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T19:00:00Z",
+          lotTerms: [],
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:lot:hh:${lotToken(vaseId)}`));
+    await bot.handleUpdate(press(dataOf(last(calls), "Период 1")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Стартовая цена")));
+    await bot.handleUpdate(answer(calls, { text: "1500" }));
+    expect(plain(last(calls))).toMatch(
+      /^Стартовая в периоде должна быть ниже обычной — 1\s200 ₽$/,
+    );
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Период 1"]]);
+    expect(auction.sent("setHappyHourLotTerms")).toHaveLength(0);
   });
 });

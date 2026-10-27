@@ -83,6 +83,7 @@ import {
   consoleViewData,
   floorData,
   lotFormData,
+  lotHappyHoursData,
   lotNewData,
   removalData,
 } from "../parse-callback.js";
@@ -216,6 +217,8 @@ export type AuctionView = {
 // нет, и тело у двух ботов остаётся одним.
 // Знак управления — 🛠 (PER-669): экраны аукциона видит и участник.
 const editLotLabel = adminLabel("Изменить лот");
+// «Счастливые часы» лота (PER-787) — тот же знак управления.
+const happyHoursLotLabel = adminLabel("Счастливые часы");
 
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
 const consoleLabel = adminLabel("Пульт");
@@ -899,6 +902,14 @@ function editRow(
   );
   if (placed) return;
   nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
+  // «Счастливые часы» лота (PER-787): условия под периоды задаются лоту в
+  // онлайн-торгах — своим рядом под правкой.
+  if (lot.status.kind === "trading" && lot.status.phase === "online") {
+    nextRow(keyboard).text(
+      happyHoursLotLabel,
+      lotHappyHoursData(uuidToToken(lot.lotId)),
+    );
+  }
 }
 
 function lotLabel(
