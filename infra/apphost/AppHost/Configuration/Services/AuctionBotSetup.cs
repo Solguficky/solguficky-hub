@@ -34,6 +34,7 @@ internal static class AuctionBotSetup
             context,
             environment,
             SupportBotLink.Local(configuration),
+            BotMediaChannel.Local(configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.AuctionBot));
     }
 
@@ -50,6 +51,7 @@ internal static class AuctionBotSetup
                 context,
                 TelegramEnvironment.Production,
                 SupportBotLink.Published(context.Builder),
+                BotMediaChannel.Published(context.Builder),
                 context.Builder.AddContainer(AppHostNames.Resources.AuctionBot, AppHostNames.Resources.HubBot))
             .AsClusterWorkload(Cluster);
 
@@ -57,12 +59,17 @@ internal static class AuctionBotSetup
         ServiceGraphContext context,
         TelegramEnvironment environment,
         SupportBotLink? support,
+        BotMediaChannel? media,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
         // Вход в бот поддержки из ожидания допуска и «Задать вопрос ↗» FAQ
         // (ADR-068, п. 2).
         support?.UsernameAndQuestionUrl(bot);
+
+        // Гостю объявление со своим фото доставляет этот бот копией поста того
+        // же канала, что у бота хаба (дополнение ADR-057 от 2026-10-27).
+        media?.ChannelId(bot);
 
         var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
 
