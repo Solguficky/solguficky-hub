@@ -534,6 +534,21 @@ export const screenCatalog = {
     title: "Убрать фото приза?",
     irreversible: true,
   },
+  // Промо-видео аукциона (PER-774): экран из корня аукциона — в пульте места
+  // нет, он в потолке рядов — и подтверждение снятия; видео прикрепляется
+  // заново, поэтому «Да» не красное.
+  "promo-video": {
+    class: "screen",
+    nav: "tree",
+    title: "Промо-видео",
+    parent: "auction-root",
+    backName: "Промо-видео",
+  },
+  "promo-video-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Убрать промо-видео?",
+  },
   // Объявление аукциона (PER-765): меню шаблонов из корня аукциона — в пульте
   // места нет, он в потолке рядов, — выбор окна и лота,
   // шаги кнопки и фото с текстом хвостом кадра и подтверждение, которое
@@ -936,6 +951,9 @@ export const screenCatalog = {
   // Файл материала (PER-644): подпись — название без разметки, под ним одна
   // кнопка «‹ Материалы».
   "material-file": { class: "trace", nav: "tree", parent: "materials" },
+  // Промо-видео под «🎬 Промо» (PER-774): копия поста чата медиа ботов с
+  // подписью и одной кнопкой «‹ Аукцион».
+  "auction-promo": { class: "trace", nav: "tree", parent: "auction-root" },
   "access-opened": { class: "trace", nav: "free" },
 } as const;
 

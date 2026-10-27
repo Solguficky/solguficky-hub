@@ -24,6 +24,7 @@ import {
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
+import { openPromo } from "./internal/use-cases/open-promo.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
 import { openSet } from "./internal/use-cases/open-set.js";
 import { openPredictionResults } from "./internal/use-cases/prediction-results.js";
@@ -68,6 +69,7 @@ export function dispatchAuctionIntent(input: {
   operations: OperationIdPort;
   favorites?: FavoritesPort;
   proxyExplainer?: ProxyExplainerPort;
+  media?: true;
   viewer: Viewer;
   user: TelegramUser;
   intent: AuctionIntent;
@@ -76,6 +78,7 @@ export function dispatchAuctionIntent(input: {
   const { intent } = input;
   const favorites =
     input.favorites === undefined ? {} : { favorites: input.favorites };
+  const media = input.media === undefined ? {} : { media: input.media };
   const context = {
     auction: input.auction,
     operations: input.operations,
@@ -91,6 +94,7 @@ export function dispatchAuctionIntent(input: {
       return openRoot({
         auction: input.auction,
         ...favorites,
+        ...media,
         viewer: input.viewer,
         auctionId: intent.auctionId,
       });
@@ -182,6 +186,13 @@ export function dispatchAuctionIntent(input: {
       return openPredictionResults(context, intent.auctionId);
     case "day-chronicle":
       return openDayChronicle(context, intent.auctionId);
+    case "promo":
+      return openPromo({
+        auction: input.auction,
+        ...media,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+      });
     case "raffle":
       return openRaffle(context, intent.auctionId);
     case "raffle-register":

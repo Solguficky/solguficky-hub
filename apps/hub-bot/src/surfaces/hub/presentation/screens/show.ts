@@ -147,7 +147,8 @@ async function deliverScreen(
   if (message === undefined || delivery === "new" || ctx.fresh === true) {
     return await send();
   }
-  if ("document" in message || "photo" in message) {
+  // Видео — промо-видео аукциона (PER-774) с «‹ Аукцион».
+  if ("document" in message || "photo" in message || "video" in message) {
     await leaveFileTrace(ctx, fileTrace);
     return await send();
   }

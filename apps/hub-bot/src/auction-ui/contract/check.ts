@@ -237,6 +237,8 @@ export type ContractAuction = {
   predictionResults?: PredictionResultsView;
   // Хроники дня (PER-725). Нет — чтение не ожидается.
   dayChronicle?: DayChronicleView;
+  // Чат медиа ботов включён (PER-774): порт `media` у приложения есть.
+  media?: true;
 };
 
 export type AuctionContractCase = {
@@ -5600,9 +5602,135 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Промо-видео (PER-774): «🎬 Промо» в корне — только при видео и чате медиа;
+// нажатие читает аукцион заново и отдаёт номер поста. Без чата медиа Auction
+// не зовут, и подделанная кнопка получает тело без поста.
+const promoCallback = () =>
+  encodeAuctionCallback({ kind: "promo", auctionId: CONTRACT_AUCTION_ID });
+
+const PROMO_SUMMARY: AuctionSummaryView = {
+  ...CONTRACT_SUMMARY,
+  promoVideo: 42,
+};
+
+const promoBody = (postId?: number): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "promo",
+      auctionId: CONTRACT_AUCTION_ID,
+      ...(postId === undefined ? {} : { postId }),
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "promo.back",
+        callbackData: rootCallback(CONTRACT_AUCTION_ID),
+      },
+    ],
+  ],
+});
+
+const promoReadCall = (): PortCall => ({
+  port: "auction",
+  method: "getAuction",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+});
+
+const PROMO_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "root: promo video with the media chat",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: PROMO_SUMMARY,
+      raffle: OPEN_RAFFLE,
+      media: true,
+    },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: PROMO_SUMMARY,
+          raffleClosesAt: OPEN_RAFFLE.closesAt,
+        },
+      ],
+      keyboard: [
+        [
+          ...rootLotsRow,
+          {
+            action: "root.raffle",
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
+          },
+        ],
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootChronicleRow,
+        [{ action: "root.promo", callbackData: promoCallback() }],
+      ],
+    },
+  },
+  {
+    intent: "root: promo video without the media chat",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, summary: PROMO_SUMMARY, raffle: OPEN_RAFFLE },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: PROMO_SUMMARY,
+          raffleClosesAt: OPEN_RAFFLE.closesAt,
+        },
+      ],
+      keyboard: [
+        [
+          ...rootLotsRow,
+          {
+            action: "root.raffle",
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
+          },
+        ],
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootChronicleRow,
+      ],
+    },
+  },
+  {
+    intent: "promo: the post of the auction",
+    callbackData: promoCallback(),
+    auction: { ...AUCTION, summary: PROMO_SUMMARY, media: true },
+    auctionCalls: [promoReadCall()],
+    body: promoBody(42),
+  },
+  {
+    intent: "promo: the video was taken back",
+    callbackData: promoCallback(),
+    auction: { ...AUCTION, summary: CONTRACT_SUMMARY, media: true },
+    auctionCalls: [promoReadCall()],
+    body: promoBody(),
+  },
+  {
+    intent: "promo: without the media chat",
+    callbackData: promoCallback(),
+    auction: { ...AUCTION, summary: PROMO_SUMMARY },
+    auctionCalls: [],
+    body: promoBody(),
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...SET_CASES,
   ...ROOT_CASES,
+  ...PROMO_CASES,
   ...PREDICTION_RESULTS_CASES,
   ...DAY_CHRONICLE_CASES,
   {
@@ -6153,6 +6281,7 @@ export function spyPorts(
     return outcome;
   };
   return {
+    ...(snapshot.media === undefined ? {} : { media: snapshot.media }),
     identity: {
       async resolveIdentity(request) {
         calls.push({ port: "identity", method: "resolveIdentity", request });
