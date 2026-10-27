@@ -197,6 +197,9 @@ describe("stepWindowAnnouncedNoticeOf", () => {
     expect(stepWindowAnnouncedNoticeOf(window(0))).toBeUndefined();
     expect(stepWindowAnnouncedNoticeOf(window(3, "вечером"))).toBeUndefined();
     expect(
+      stepWindowAnnouncedNoticeOf(window(3, "2026-10-21")),
+    ).toBeUndefined();
+    expect(
       stepWindowAnnouncedNoticeOf({ ...window(3), auctionId: "auction" }),
     ).toBeUndefined();
   });

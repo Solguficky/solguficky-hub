@@ -82,6 +82,10 @@ export function tradingOpenedNoticeOf(
   };
 }
 
+// Момент — RFC 3339 в UTC, как пишет его издатель: `Date.parse` берёт и
+// «2026-10-21», и «Oct 21», а выдуманное время читалось бы как конец окна.
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
 // Ноль лотов и конец не как момент — дефект издателя: весть «шаг ниже на 0
 // лотах» или без срока была бы неправдой, и разбор отвечает `undefined`.
 export function stepWindowAnnouncedNoticeOf(
@@ -89,7 +93,9 @@ export function stepWindowAnnouncedNoticeOf(
 ): AuctionAnnouncementNotice | undefined {
   if (!CANONICAL_UUID.test(value.auctionId)) return undefined;
   if (value.lotCount === 0) return undefined;
-  if (Number.isNaN(Date.parse(value.until))) return undefined;
+  if (!INSTANT.test(value.until) || Number.isNaN(Date.parse(value.until))) {
+    return undefined;
+  }
   return {
     kind: "step-window-announced",
     auctionId: value.auctionId,
