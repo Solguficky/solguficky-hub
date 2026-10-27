@@ -814,7 +814,12 @@ export function createAuctionConsole(
         meetupId,
         rpcMeta(request),
       );
-      return meetup.kind === "ok" && meetup.meetup.visibility === "hidden";
+      // Отменённую сходку не публикуют: её отказ пульт называет сам.
+      return (
+        meetup.kind === "ok" &&
+        meetup.meetup.visibility === "hidden" &&
+        meetup.meetup.lifecycle !== "cancelled"
+      );
     } catch {
       return false;
     }

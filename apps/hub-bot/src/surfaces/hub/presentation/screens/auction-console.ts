@@ -1032,7 +1032,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (editable) {
-    // У запланированного вход к сходке стоит рядом с открытием недели.
+    // У запланированного вход к сходке стоит на месте открытия недели.
     const meetup = scheduled ? undefined : meetupHiddenData(console);
     if (meetup !== undefined) {
       nextRow(keyboard).text(meetupHiddenLabel, meetup);

@@ -8387,8 +8387,31 @@ describe("auction announcement", () => {
       caption: text,
       ...photo,
     };
-    const sentFrom = calls.length;
+    // Сбой приёма: кадр с «Повторить» правит само подтверждение — повтор
+    // читает предпросмотр из ответа, и шаг не устаревает (PER-801).
+    const accept = notices.port.announceAuction;
+    notices.port.announceAuction = async () => ({
+      kind: "unavailable",
+      cause: new Error("down"),
+    });
+    const failedFrom = calls.length;
     await step(send);
+    notices.port.announceAuction = accept;
+    expect(
+      calls
+        .slice(failedFrom)
+        .map((call) => call.method)
+        .filter((method) => method !== "answerCallbackQuery"),
+    ).toEqual(["editMessageText"]);
+    expect(labels(last(calls)).flat()).toContain("Повторить");
+    const retry = pressUnder(dataOf(last(calls), "Повторить"), last(calls));
+    (
+      retry.callback_query as unknown as { message: Record<string, unknown> }
+    ).message["reply_to_message"] = (
+      send.callback_query as unknown as { message: Record<string, unknown> }
+    ).message["reply_to_message"];
+    const sentFrom = calls.length;
+    await step(retry);
     expect(plain(last(calls))).toContain("Объявление принято");
     // Подтверждение отвечает на предпросмотр с фото (PER-801): исход, правка
     // которого оставила бы над ним и над следующими экранами цитату фото,
