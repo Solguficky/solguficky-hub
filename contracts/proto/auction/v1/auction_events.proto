@@ -132,9 +132,10 @@ message LotState {
 }
 
 // A window of reduced bid step of one lot as the lot recorded it: the half-open
-// interval [from, until) with the step in force in it. It is not the window of
-// LotSnapshot: that one answers at an instant, while this one is the recorded
-// window itself.
+// interval [from, until) with the step and the starting price in force in it. It
+// is not the window of LotSnapshot: that one answers at an instant, while this
+// one is the recorded window itself. A window sets a step, a starting price or
+// both.
 message StepWindow {
   // RFC 3339 instant in UTC: the first instant of the window.
   string from = 1;
@@ -142,7 +143,12 @@ message StepWindow {
   // RFC 3339 instant in UTC: the first instant after the window.
   string until = 2;
 
+  // The bid step inside the window. Unset when the window does not change it.
   Money step = 3;
+
+  // The price of the first bid inside the window while the lot has no bid. Unset
+  // when the window does not change it.
+  Money start = 4;
 }
 
 // The lot came into existence: its auction recorded it in the registry and the lot

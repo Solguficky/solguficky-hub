@@ -121,6 +121,20 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(promoAnswer)
     }
 
+    var createPeriodAnswer: Either[CreateHappyHourPeriodRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def createHappyHourPeriod(auctionId: AuctionId, command: CreateHappyHourPeriod, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(createPeriodAnswer)
+    }
+
+    var deletePeriodAnswer: Either[DeleteHappyHourPeriodRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def deleteHappyHourPeriod(auctionId: AuctionId, command: DeleteHappyHourPeriod, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(deletePeriodAnswer)
+    }
+
     var layoutAnswer: Either[LotLayoutRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) = {
@@ -977,6 +991,91 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       auctions.launchAnswer = Left(LaunchStepWindowRejected.LotNotOpen(lot))
       AuctionCommands(auctions, noLots, granted).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
         Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.LotNotOpen(lot)))
+    }
+
+    // ADR-047, дополнение 2026-10-27: период «Счастливых часов» — команда администратора.
+    "answers a repeated happy hour period with the original period without asking meetups or the auction" in {
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(7)), deadline, deadline.plusSeconds(3600))
+      val repeated =
+        Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.HappyHourPeriodCreated(period))))
+      val meetups = Meetups(Authority.NotAdministrator)
+      val command = CreateHappyHourPeriod(period.from, period.until, op(7))
+
+      AuctionCommands(repeated, noLots, meetups)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe Right(period)
+      meetups.asked shouldBe 0
+      repeated.commands shouldBe empty
+    }
+
+    "hands a granted happy hour period to the auction and refuses one the meetup does not admit" in {
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(7)), deadline, deadline.plusSeconds(3600))
+      val command = CreateHappyHourPeriod(period.from, period.until, op(7))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.createPeriodAnswer =
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(7), AuctionEvent.HappyHourPeriodCreated(period))))
+
+      AuctionCommands(auctions, noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Right(period)
+      auctions.commands shouldBe List(command)
+      auctions.createPeriodAnswer = Left(CreateHappyHourPeriodRejected.PeriodInPast)
+      AuctionCommands(auctions, noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodInPast))
+      val cancelled = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(cancelled, noLots, Meetups(Authority.Granted(Standings.cancelled)))
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(HappyHourRefusal.Denied(Denial.MeetupCancelled))
+      cancelled.commands shouldBe empty
+    }
+
+    "refuses a happy hour period under the op_id of another auction command and on an absent auction" in {
+      val command = CreateHappyHourPeriod(deadline, deadline.plusSeconds(3600), op(7))
+      val taken = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(7), AuctionEvent.PrebiddingStarted)))
+
+      AuctionCommands(taken, noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Left(HappyHourRefusal.OpIdTaken)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(HappyHourRefusal.Denied(Denial.AuctionNotFound))
+    }
+
+    "answers a repeated deletion of its own period and refuses the op_id of another deletion" in {
+      val period = HappyHourPeriod.idOf(op(7))
+      val other = HappyHourPeriod.idOf(op(6))
+      val original = AuctionEnvelope(6, op(8), AuctionEvent.HappyHourPeriodDeleted(period))
+      val meetups = Meetups(Authority.NotAdministrator)
+
+      AuctionCommands(Auctions(Inspection.Repeated(original)), noLots, meetups)
+        .deleteHappyHourPeriod(auctionOfMeetup, DeleteHappyHourPeriod(period, op(8)), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(Auctions(Inspection.Repeated(original)), noLots, meetups)
+        .deleteHappyHourPeriod(auctionOfMeetup, DeleteHappyHourPeriod(other, op(8)), person)
+        .futureValue shouldBe Left(HappyHourDeletionRefusal.OpIdTaken)
+      meetups.asked shouldBe 0
+    }
+
+    "hands a granted deletion to the auction and returns its refusal" in {
+      val command = DeleteHappyHourPeriod(HappyHourPeriod.idOf(op(7)), op(8))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.deletePeriodAnswer =
+        Right(AuctionAnswer.Written(AuctionEnvelope(6, op(8), AuctionEvent.HappyHourPeriodDeleted(command.period))))
+
+      AuctionCommands(auctions, noLots, granted)
+        .deleteHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Right(())
+      auctions.deletePeriodAnswer = Left(DeleteHappyHourPeriodRejected.PeriodStarted)
+      AuctionCommands(auctions, noLots, granted)
+        .deleteHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.PeriodStarted))
+      auctions.commands shouldBe List(command, command)
     }
 
     // ADR-040, дополнение 2026-10-19: ориентировочное время финала — команда администратора.

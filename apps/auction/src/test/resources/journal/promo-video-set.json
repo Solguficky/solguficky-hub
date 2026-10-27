@@ -26,6 +26,8 @@
     "lotLayout": null,
     "promoVideo": {
       "messageId": 4321
-    }
+    },
+    "happyHourPeriodCreated": null,
+    "happyHourPeriodDeleted": null
   }
 }

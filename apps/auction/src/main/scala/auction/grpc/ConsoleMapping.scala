@@ -46,7 +46,10 @@ object ConsoleMapping {
       lotSets = lotSets(auction.auction),
       // Сходка аукциона (PER-782): пульт открыт только тому, чьё право на эту сходку проверено, и по ней бот адресует
       // объявление аукциона. Снимок аукциона и чтения участника её не называют.
-      meetupId = auction.auction.meetup.fold("")(_.value.toString)
+      meetupId = auction.auction.meetup.fold("")(_.value.toString),
+      // Периоды «Счастливых часов» (ADR-047, дополнение 2026-10-27) — из агрегата, по возрастанию начала, и прошедшие:
+      // удалённый период из агрегата уходит.
+      happyHourPeriods = auction.auction.happyHours.sortBy(_.from).map(ResponseMapping.happyHourPeriod)
     )
 
   /**

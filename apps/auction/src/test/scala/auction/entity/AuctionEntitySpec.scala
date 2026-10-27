@@ -442,6 +442,16 @@ final class AuctionEntitySpec
       AuctionEntity.Launch(LaunchStepWindow(from, until, LotFixtures.money(1), chosen, op(opN)), administrator, _)
     )
 
+  private def createPeriod(opN: Int, from: Instant, until: Instant) =
+    entity.runCommand[Either[CreateHappyHourPeriodRejected, AuctionAnswer]](
+      AuctionEntity.CreatePeriod(CreateHappyHourPeriod(from, until, op(opN)), administrator, _)
+    )
+
+  private def deletePeriod(opN: Int, created: Int) =
+    entity.runCommand[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]](
+      AuctionEntity.DeletePeriod(DeleteHappyHourPeriod(HappyHourPeriod.idOf(op(created)), op(opN)), administrator, _)
+    )
+
   private def discard(opN: Int) =
     entity.runCommand[Either[DiscardAuctionRejected, AuctionAnswer]](
       AuctionEntity.Discard(DiscardAuction(op(opN)), administrator, _)
@@ -1248,6 +1258,30 @@ final class AuctionEntitySpec
           trading.stepWindows shouldBe List(auction.lot.StepWindow(window.from, window.until, window.step))
         case other => fail(s"the lot is not trading: $other")
       }
+    }
+
+    // ADR-047, дополнение 2026-10-27: «в прошлом» и «начался» судят часы entity, а не вызывающий.
+    "records a happy hour period and deletes it only before its start by the clock of the entity" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      val from = opensAt.plusSeconds(7200)
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(opening + 1)), from, opensAt.plusSeconds(10800))
+
+      createPeriod(opening + 1, from, period.until).reply shouldBe
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(opening + 1), AuctionEvent.HappyHourPeriodCreated(period))))
+      entity.getState().auction.happyHours shouldBe List(period)
+      createPeriod(opening + 2, time.instant0.minusSeconds(1), period.until).reply shouldBe
+        Left(CreateHappyHourPeriodRejected.PeriodInPast)
+
+      time.instant0 = from
+      deletePeriod(opening + 3, created = opening + 1).reply shouldBe
+        Left(DeleteHappyHourPeriodRejected.PeriodStarted)
+      time.instant0 = from.minusSeconds(1)
+      deletePeriod(opening + 3, created = opening + 1).reply shouldBe Right(
+        AuctionAnswer.Written(AuctionEnvelope(6, op(opening + 3), AuctionEvent.HappyHourPeriodDeleted(period.id)))
+      )
+      entity.getState().auction.happyHours shouldBe empty
     }
 
     "answers a repeated launch with the original envelope and writes nothing" in {

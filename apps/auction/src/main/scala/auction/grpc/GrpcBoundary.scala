@@ -287,6 +287,10 @@ object GrpcBoundary {
     def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest): Future[wire.SetPaymentInstructionsResponse] =
       refuse
     def setPromoVideo(in: wire.SetPromoVideoRequest): Future[wire.SetPromoVideoResponse] = refuse
+    def createHappyHourPeriod(in: wire.CreateHappyHourPeriodRequest): Future[wire.CreateHappyHourPeriodResponse] =
+      refuse
+    def deleteHappyHourPeriod(in: wire.DeleteHappyHourPeriodRequest): Future[wire.DeleteHappyHourPeriodResponse] =
+      refuse
     def listAuctionEngagement(
         in: wire.ListAuctionEngagementRequest
     ): Future[wire.ListAuctionEngagementResponse] = refuse

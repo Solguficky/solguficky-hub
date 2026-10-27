@@ -68,6 +68,29 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
       SnapshotMapping.snapshot(view(drafted), participant(1), at("12:00")).lotSet shouldBe None
     }
 
+    // ADR-047, дополнение 2026-10-27: стартовая цена окна действует, пока у лота нет ставок.
+    "answer the starting price of the window as the next price of a lot without bids and drop it after the first bid" in {
+      val window = StepWindow(at("12:00"), at("14:00"), step = None, start = Some(money(60)))
+      val opening =
+        SnapshotMapping.snapshot(view(trading(price = 100, stepWindows = List(window))), participant(1), at("13:00"))
+      opening.nextPrice shouldBe Some(rub(60))
+      opening.activeWindow shouldBe Some(
+        wire.LotStepWindow("2026-10-07T12:00:00Z", "2026-10-07T14:00:00Z", None, Some(rub(60)))
+      )
+
+      val led = trading(price = 100, leader = Some(participant(2)), stepWindows = List(window))
+      val after = SnapshotMapping.snapshot(view(led), participant(1), at("13:00"))
+      after.nextPrice shouldBe Some(rub(110))
+      after.activeWindow shouldBe None
+
+      val upcoming =
+        SnapshotMapping.snapshot(view(trading(price = 100, stepWindows = List(window))), participant(1), at("11:00"))
+      upcoming.nextPrice shouldBe Some(rub(100))
+      upcoming.nextWindow shouldBe Some(
+        wire.LotStepWindow("2026-10-07T12:00:00Z", "2026-10-07T14:00:00Z", None, Some(rub(60)))
+      )
+    }
+
     "answer the next price, the regular step and the windows at the instant of the answer" in {
       val inside = SnapshotMapping.snapshot(view(windowed), participant(1), at("13:59:59"))
       inside.nextPrice shouldBe Some(rub(101))

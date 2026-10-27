@@ -89,7 +89,7 @@ object Lot {
           case LotState.Initial => Left(OpenLotRejected.LotNotFound)
           case LotState.Scheduled(schedule) =>
             val windows = command.stepWindows
-              .filter(_.step.currency == schedule.config.currency)
+              .filter(_.in(schedule.config.currency))
               .sortBy(_.from)
             Right(
               Decision.Accepted(
@@ -173,7 +173,7 @@ object Lot {
         case LotState.Held(held) if removedFrom(held.course, command.participant) =>
           Left(SetProxyLimitRejected.ParticipantRemovedFromLot)
         case LotState.Trading(trading) =>
-          proxyLimitSet(trading.config, floor(trading), command).map { set =>
+          proxyLimitSet(trading.config, limitFloor(trading, now), command).map { set =>
             val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
             val derived = resolve(after, proxyBidId, now).toList
             Decision.Accepted(set, if (derived.isEmpty) Nil else derived ++ extended(trading, now))
@@ -528,7 +528,7 @@ object Lot {
         case LotState.Initial => Left(AddStepWindowRejected.LotNotFound)
         case LotState.Trading(trading) if trading.phase == Phase.Online =>
           val window = command.window
-          if (window.step.currency != trading.config.currency || trading.stepWindows.exists(_.overlaps(window)))
+          if (!window.in(trading.config.currency) || trading.stepWindows.exists(_.overlaps(window)))
             Right(None)
           else Right(Some(Decision.Accepted(LotEvent.StepWindowAdded(window))))
         case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) |
@@ -556,15 +556,30 @@ object Lot {
   /**
    * Следующая цена в момент `at`: объявленный ask, если он выше текущей цены, иначе цена плюс шаг от неё (П-01, П-03).
    * До первой ставки — пока лидера нет (И-02) — шага нет: следующая цена равна стартовой, которая до первой ставки и
-   * есть текущая (решение владельца 14.10.2026, PER-618). `at` — серверное время команды, а у чтения — время ответа: в
-   * окне сниженного шага следующая цена ниже.
+   * есть текущая (решение владельца 14.10.2026, PER-618), а в окне со стартовой ценой — стартовой окна
+   * ([[openingPrice]]). `at` — серверное время команды, а у чтения — время ответа: в окне следующая цена ниже.
    */
   def minRequired(trading: TradingState, at: Instant): Money =
     trading.ask.filter(_ > trading.currentPrice) match {
       case Some(ask) => ask
-      case None if opening(trading) => trading.currentPrice
+      case None if opening(trading) => openingPrice(trading, at)
       case None => trading.currentPrice.plus(step(trading, trading.currentPrice, at))
     }
+
+  /**
+   * Цена первой ставки в момент `at` (ADR-047, дополнение 2026-10-27): стартовая окна, если `at` внутри окна лота с ней
+   * и лот в фазе `Online`, причём строго ниже обычной стартовой; иначе обычная — она до первой ставки и есть текущая
+   * цена. После первой ставки лидер есть, и стартовая окна ни на что не влияет: дальше цену ведёт шаг.
+   */
+  def openingPrice(trading: TradingState, at: Instant): Money =
+    activeWindow(trading, at).flatMap(_.start).filter(_ < trading.currentPrice).getOrElse(trading.currentPrice)
+
+  /**
+   * Нижняя граница прокси-лимита в торгах в момент `at`: до первой ставки — цена первой ставки, в окне со стартовой
+   * ценой — стартовая окна, как у ручной ставки; после неё — [[floor]].
+   */
+  private def limitFloor(trading: TradingState, at: Instant): Money =
+    if (opening(trading)) minRequired(trading, at) else floor(trading)
 
   /**
    * Ставок по лоту ещё не было: лидера нет только до первой принятой ставки (И-02), и текущая цена тогда — стартовая.
@@ -579,11 +594,12 @@ object Lot {
   /**
    * Шаг при цене `price` в момент `at` (П-03, дополнение 2026-10-08): сумма окна, если `at` внутри `[from, until)` окна
    * лота и лот в фазе `Online`, но не выше обычного шага; иначе обычный шаг. Окна одного лота не пересекаются (И-21),
-   * поэтому подходит не больше одного. Событий на границах окна нет: шаг вычисляется в момент команды.
+   * поэтому подходит не больше одного. Окно без шага шаг не меняет (дополнение 2026-10-27). Событий на границах окна
+   * нет: шаг вычисляется в момент команды.
    */
   def step(trading: TradingState, price: Money, at: Instant): Money = {
     val base = baseStep(trading, price)
-    activeWindow(trading, at).fold(base)(window => if (window.step < base) window.step else base)
+    activeWindow(trading, at).flatMap(_.step).fold(base)(step => if (step < base) step else base)
   }
 
   /** Окно, которое действует в момент `at`: только в фазе `Online` — в живом финале окна нет по фазе (П-03). */
@@ -697,7 +713,8 @@ object Lot {
    * окна, вне окна — по обычному, и шаги двух режимов в одном событии не смешиваются (П-03).
    *
    * До первой ставки лидера нет, и первая ставка равна `f` без шага, как у ручной (решение владельца 14.10.2026,
-   * PER-618): кандидат — лимит с `max ≥ f`, а производная ставка — ровно `f`.
+   * PER-618): кандидат — лимит с `max ≥ f`, а производная ставка — ровно `f`. В окне со стартовой ценой `f` до первой
+   * ставки — стартовая окна, как у ручной ставки (ADR-047, дополнение 2026-10-27).
    *
    * Так правило читается в фазе `Online`; в `Live` цель ложится на сетку ADR-049 — [[resolveLive]].
    */
@@ -708,7 +725,7 @@ object Lot {
     }
 
   private def resolveOnline(trading: TradingState, bidId: BidId, now: Instant): Option[LotEvent.BidPlaced] = {
-    val f = floor(trading)
+    val f = limitFloor(trading, now)
     val stepAbove = (price: Money) => {
       val step = Lot.step(trading, price, now).minorUnits
       if (price.minorUnits > Long.MaxValue - step) price.copy(minorUnits = Long.MaxValue)

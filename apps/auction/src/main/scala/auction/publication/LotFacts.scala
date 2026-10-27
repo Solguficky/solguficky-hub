@@ -136,11 +136,12 @@ object LotFacts {
     }
   }
 
-  /** Окно сниженного шага как данные факта: записанный полуинтервал `[from, until)` и его сумма. */
+  /** Окно лота как данные факта: записанный полуинтервал `[from, until)`, его шаг и стартовая цена, если заданы. */
   private def stepWindow(window: StepWindow): bus.StepWindow =
     bus.StepWindow(
       from = LotValues.instant(window.from),
       until = LotValues.instant(window.until),
-      step = Some(LotValues.money(window.step))
+      step = window.step.map(LotValues.money),
+      start = window.start.map(LotValues.money)
     )
 }

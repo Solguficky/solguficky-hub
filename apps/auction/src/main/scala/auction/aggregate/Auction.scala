@@ -271,7 +271,8 @@ object LotTerms {
  * `AuctionHidden` payload не несут. Сет лотов (ADR-073) пишется рядом с реестром: `LotSetDefined` несёт определение
  * целиком, `LotSetDeleted` — только идентификатор, `LotSetSettled` — итог сета, один раз. `LotLayoutSet` — порядок и
  * разделы ленты целиком (PER-719): снимок, а не правка, поэтому повтор и гонка двух администраторов оставляют одну
- * раскладку, а не смесь двух.
+ * раскладку, а не смесь двух. `HappyHourPeriodCreated` несёт период целиком, `HappyHourPeriodDeleted` — только его
+ * идентификатор (ADR-047, дополнение 2026-10-27).
  */
 enum AuctionEvent {
   case AuctionDrafted(meetup: MeetupId, hidden: Boolean = true)
@@ -301,6 +302,8 @@ enum AuctionEvent {
   case LotLayoutSet(layout: LotLayout)
   case PromoVideoSet(video: PromoVideo)
   case PromoVideoCleared
+  case HappyHourPeriodCreated(period: HappyHourPeriod)
+  case HappyHourPeriodDeleted(period: HappyHourPeriodId)
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -570,7 +573,8 @@ enum Inspection {
  * текст администратора «как оплатить и получить» (PER-322): не условие торгов, меняется в любом состоянии. `layout` —
  * порядок и разделы ленты (PER-719): показ, а не условие торгов, меняется до старта финала; лоты раскладки — всегда
  * лоты реестра. `promoVideo` — промо-видео аукциона (PER-781): номер поста чата медиа ботов, меняется в любом
- * состоянии.
+ * состоянии. `happyHours` — периоды «Счастливых часов» в порядке создания (ADR-047, дополнение 2026-10-27): создаются и
+ * удаляются только в онлайн-торгах, удалённый уходит из списка.
  */
 final case class Auction(
     state: AuctionState,
@@ -583,7 +587,8 @@ final case class Auction(
     sets: Map[LotSetId, LotSet] = Map.empty,
     paymentInstructions: Option[PaymentInstructions] = None,
     layout: LotLayout = LotLayout.empty,
-    promoVideo: Option[PromoVideo] = None
+    promoVideo: Option[PromoVideo] = None,
+    happyHours: List[HappyHourPeriod] = Nil
 )
 
 object Auction {
@@ -1135,6 +1140,69 @@ object Auction {
         .toLeft(AuctionDecision.Accepted(AuctionEvent.StepWindowLaunched(window)))
   }
 
+  /**
+   * Создание периода «Счастливых часов» (ADR-047, дополнение 2026-10-27) — только в онлайн-торгах, как запуск окна.
+   * Повтор `op_id` узнаётся раньше фазы и времени: иначе повтор после потерянного ответа получил бы `PeriodInPast`.
+   * `now` — серверный момент команды. Периоды друг с другом не сверяются: пересечение окон одного лота проверяют его
+   * условия, а не период.
+   */
+  def decide(
+      auction: Auction,
+      command: CreateHappyHourPeriod,
+      now: Instant
+  ): Either[CreateHappyHourPeriodRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(CreateHappyHourPeriodRejected.AuctionNotFound)
+          case AuctionState.Prebidding(config, _) =>
+            val within = config.onlinePhase.exists { phase =>
+              phase.closesAt.exists(closesAt =>
+                !command.from.isBefore(phase.opensAt) && !command.until.isAfter(closesAt)
+              )
+            }
+            if (command.from.isBefore(now)) Left(CreateHappyHourPeriodRejected.PeriodInPast)
+            else if (!command.from.isBefore(command.until)) Left(CreateHappyHourPeriodRejected.PeriodEmpty)
+            else if (!within) Left(CreateHappyHourPeriodRejected.PeriodOutsideOnlinePhase)
+            else {
+              val period = HappyHourPeriod(HappyHourPeriod.idOf(command.opId), command.from, command.until)
+              Right(AuctionDecision.Accepted(AuctionEvent.HappyHourPeriodCreated(period)))
+            }
+          case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(CreateHappyHourPeriodRejected.NotInPrebidding)
+        }
+    }
+
+  /**
+   * Удаление периода до его начала (ADR-047, дополнение 2026-10-27): с начала период заморожен — `PeriodStarted`,
+   * удалённый или чужой — `PeriodNotFound`. Повтор `op_id` отвечает исходным событием раньше проверок.
+   */
+  def decide(
+      auction: Auction,
+      command: DeleteHappyHourPeriod,
+      now: Instant
+  ): Either[DeleteHappyHourPeriodRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(DeleteHappyHourPeriodRejected.AuctionNotFound)
+          case AuctionState.Prebidding(_, _) =>
+            auction.happyHours.find(_.id == command.period) match {
+              case None => Left(DeleteHappyHourPeriodRejected.PeriodNotFound)
+              case Some(period) if period.startedAt(now) => Left(DeleteHappyHourPeriodRejected.PeriodStarted)
+              case Some(period) => Right(AuctionDecision.Accepted(AuctionEvent.HappyHourPeriodDeleted(period.id)))
+            }
+          case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(DeleteHappyHourPeriodRejected.NotInPrebidding)
+        }
+    }
+
   private def removable(auction: Auction, lot: LotId): Either[ParticipantRemovalRejected, Unit] =
     auction.state match {
       case AuctionState.Initial => Left(ParticipantRemovalRejected.AuctionNotFound)
@@ -1411,6 +1479,10 @@ object Auction {
         auction.copy(state = AuctionState.Finished(config, startedBy))
       case (AuctionState.Prebidding(_, _), AuctionEvent.StepWindowLaunched(window)) =>
         auction.copy(launched = auction.launched :+ LaunchedWindow(envelope.opId, window))
+      case (AuctionState.Prebidding(_, _), AuctionEvent.HappyHourPeriodCreated(period)) =>
+        auction.copy(happyHours = auction.happyHours :+ period)
+      case (AuctionState.Prebidding(_, _), AuctionEvent.HappyHourPeriodDeleted(period)) =>
+        auction.copy(happyHours = auction.happyHours.filterNot(_.id == period))
       // Ориентировочное время финала — подпись, а не условие торгов: состояние от него не меняется (ADR-040,
       // дополнение 2026-10-19).
       case (state, AuctionEvent.FinalTimeSet(at)) if state.finalTimeAhead => auction.copy(finalAt = Some(at))

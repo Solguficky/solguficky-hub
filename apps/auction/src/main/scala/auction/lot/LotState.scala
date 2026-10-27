@@ -94,14 +94,28 @@ enum Phase {
 }
 
 /**
- * Окно сниженного шага лота — полуинтервал `[from, until)` и сумма шага в нём (RFC-011, П-03; ADR-047, дополнение
- * 2026-10-08). Лот получает только окна, в которые организатор его выбрал, поэтому списка лотов здесь нет; валюта суммы
- * — валюта лота, окна в чужой валюте лот при открытии и при запуске отбрасывает (И-04).
+ * Окно «Счастливых часов» лота — полуинтервал `[from, until)` и условия в нём (RFC-011, П-03; ADR-047, дополнения
+ * 2026-10-08 и 2026-10-27): сумма шага и стартовая цена для лота без ставок, хотя бы одно из двух. Лот получает только
+ * окна, в которые организатор его выбрал, поэтому списка лотов здесь нет; валюта сумм — валюта лота, окна в чужой
+ * валюте лот при открытии и при запуске отбрасывает (И-04). Окно прежних событий — окно с одним шагом.
  */
-final case class StepWindow(from: Instant, until: Instant, step: Money) {
+final case class StepWindow(from: Instant, until: Instant, step: Option[Money], start: Option[Money]) {
+  require(step.isDefined || start.isDefined, "a step window sets a step, a starting price or both")
 
   /** Полуинтервалы пересекаются: каждое начинается раньше, чем кончается другое. */
   def overlaps(other: StepWindow): Boolean = from.isBefore(other.until) && other.from.isBefore(until)
+
+  /** Все суммы окна в валюте `currency`: окно в чужой валюте лот не записывает. */
+  def in(currency: CurrencyCode): Boolean = (step.toList ++ start.toList).forall(_.currency == currency)
+}
+
+object StepWindow {
+
+  /**
+   * Окно сниженного шага без стартовой цены — форма объявленного и запущенного окна (дополнения 2026-10-08,
+   * 2026-10-12).
+   */
+  def apply(from: Instant, until: Instant, step: Money): StepWindow = StepWindow(from, until, Some(step), None)
 }
 
 /**
