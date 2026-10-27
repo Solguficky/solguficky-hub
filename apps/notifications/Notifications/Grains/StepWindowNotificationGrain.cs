@@ -63,6 +63,17 @@ public sealed class StepWindowNotificationGrain(
             await tasks.Create(auctionId, window.From, StepWindowPlan.DueAt(window.From, now, Options.Hold), now, token);
         }
 
+        // Итоговые окна решают и снятие (PER-788): условия лота в периоде
+        // сняты или период удалён до начала — задание начала, у которого не
+        // осталось окон ни у одного лота в торгах, снимается, а не ждёт
+        // срабатывания вхолостую.
+        var cancelled = await tasks.CancelGone(auctionId, token);
+        if (cancelled > 0)
+        {
+            logger.LogInformation("Step window tasks cancelled {auction_id} {lot_id} {cancelled}", auctionId, lotId,
+                cancelled);
+        }
+
         await Settle(auctionId, token);
     }
 

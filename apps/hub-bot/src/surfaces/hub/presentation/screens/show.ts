@@ -152,6 +152,16 @@ async function deliverScreen(
     await leaveFileTrace(ctx, fileTrace);
     return await send();
   }
+  // Текст, который отвечает на сообщение с файлом, — подтверждение под
+  // предпросмотром объявления со своим фото или видео (PER-801): правка
+  // оставила бы цитату файла над каждым следующим экраном, и клиент помечает
+  // их медиа. Экран приходит новым сообщением, а подтверждение остаётся без
+  // клавиатуры. Кадр сбоя правит само подтверждение: его «Повторить» читает
+  // предпросмотр из ответа, а новое сообщение ответом не было бы.
+  if (id !== "refusal" && repliesToFile(message)) {
+    await clearCallbackKeyboard(ctx);
+    return await send();
+  }
   // Экран тот же, что под нажатой кнопкой: править нечем, и молчание человек
   // прочёл бы как несработавшую кнопку. Всплывающий текст говорит, что
   // нажатие дошло, — кадр E-09, а на повторе после сбоя — что сбой остался.
@@ -218,6 +228,19 @@ async function leaveFileTrace(
   } catch {
     // Экран всё равно уходит следом новым сообщением.
   }
+}
+
+function repliesToFile(message: object): boolean {
+  if (!("reply_to_message" in message)) return false;
+  const quoted = message.reply_to_message;
+  return (
+    typeof quoted === "object" &&
+    quoted !== null &&
+    ("document" in quoted ||
+      "photo" in quoted ||
+      "video" in quoted ||
+      "animation" in quoted)
+  );
 }
 
 // У размеченного сообщения Telegram возвращает видимый текст и сущности, а не

@@ -125,8 +125,12 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             // Окна сниженного шага заводят задание начала окна (PER-614): оно
             // живёт на пару «аукцион и момент начала», поэтому его грин — на
             // аукцион, а не на лот. Снимок без окон задания не заводит, и
-            // звать грин нечего.
-            if (decoded is AuctionDecoded.Lot { Value.Snapshot.Windows.Count: > 0 } windowed)
+            // звать грин нечего — кроме изменения условий лота в периоде
+            // (PER-786): после снятия окон у лота может не остаться, а задание
+            // их начала грин должен снять (PER-788).
+            if (decoded is AuctionDecoded.Lot windowed
+                && (windowed.Value.Snapshot.Windows.Count > 0
+                    || message.Subject == AuctionFeed.StepWindowChangedSubject))
             {
                 try
                 {

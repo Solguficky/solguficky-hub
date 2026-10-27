@@ -37,6 +37,7 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     auctionId: auction.id,
     status: statusOf(auction.status),
     hidden: auction.hidden,
+    ...(console.meetupId === "" ? {} : { meetupId: console.meetupId }),
     // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
     // торгов. Нет — анонса нет, и пульт говорит об этом строкой.
     ...(auction.finalAt === undefined || auction.finalAt === ""
