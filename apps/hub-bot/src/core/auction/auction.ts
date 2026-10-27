@@ -28,6 +28,7 @@ export function auctionSummaryViewOf(
     ...withLineup(snapshot.status),
     ...(snapshot.hidden ? { hidden: true as const } : {}),
     ...withLayout(snapshot.lotLayout),
+    ...withProgramme(snapshot),
   };
 }
 
@@ -82,6 +83,36 @@ export function lotLayoutOf(
     };
   });
   return { lotIds: lotsOf(layout.lotIds), sections };
+}
+
+// Программа недели (PER-724) — подсказка корню, как состав — ленте: кривой
+// момент окна или финала выпадает из программы, а не роняет сводку.
+function withProgramme(snapshot: AuctionSnapshot) {
+  const finalAt = lenientInstant(snapshot.finalAt);
+  const stepWindows = [
+    ...(snapshot.config?.stepWindows ?? []),
+    ...snapshot.launchedStepWindows,
+  ]
+    .flatMap((window) => {
+      const from = lenientInstant(window.from);
+      const until = lenientInstant(window.until);
+      return from === undefined || until === undefined
+        ? []
+        : [{ from, until, lotIds: [...window.lotIds] }];
+    })
+    .sort((left, right) => Date.parse(left.from) - Date.parse(right.from));
+  return {
+    ...(finalAt === undefined ? {} : { finalAt }),
+    ...(stepWindows.length === 0 ? {} : { stepWindows }),
+  };
+}
+
+function lenientInstant(value: string | undefined): string | undefined {
+  try {
+    return instantOf(value, "programme moment");
+  } catch {
+    return undefined;
+  }
 }
 
 // Состав в сводке — подсказка ленте (PER-639), а сводку читают ещё список

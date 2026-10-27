@@ -55,6 +55,7 @@ export type {
   AuctionBotPorts,
   AuctionPort,
   AuctionStageView,
+  AuctionStepWindowView,
   AuctionSummaryView,
   BidOriginView,
   BidRefusal,
