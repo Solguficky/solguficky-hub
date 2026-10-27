@@ -36,6 +36,9 @@ final case class StoredWinnerAssigned(ticket: Int, at: Instant)
 
 final case class StoredRaffleCancelled(at: Instant)
 
+/** Смена приза администратором (PER-737): новый текст целиком. */
+final case class StoredPrizeChanged(prize: String)
+
 final case class StoredRaffleEventBody(
     kind: String,
     raffleOpened: Option[StoredRaffleOpened],
@@ -45,7 +48,8 @@ final case class StoredRaffleEventBody(
     poolFixed: Option[StoredPoolFixed],
     raffleDrawn: Option[StoredRaffleDrawn],
     raffleCancelled: Option[StoredRaffleCancelled] = None,
-    winnerAssigned: Option[StoredWinnerAssigned] = None
+    winnerAssigned: Option[StoredWinnerAssigned] = None,
+    prizeChanged: Option[StoredPrizeChanged] = None
 )
 
 object StoredRaffleEventBody {
@@ -111,27 +115,31 @@ object RaffleJournal {
         StoredRaffleEventBody.of("WinnerAssigned").copy(winnerAssigned = Some(StoredWinnerAssigned(ticket, at)))
       case RaffleEvent.RaffleCancelled(at) =>
         StoredRaffleEventBody.of("RaffleCancelled").copy(raffleCancelled = Some(StoredRaffleCancelled(at)))
+      case RaffleEvent.PrizeChanged(prize) =>
+        StoredRaffleEventBody.of("PrizeChanged").copy(prizeChanged = Some(StoredPrizeChanged(prize)))
     }
 
   /** Ровно одна секция, и та, что названа `kind`. Иначе строка испорчена. */
   def restoreEvent(stored: StoredRaffleEventBody): RaffleEvent =
     stored match {
-      case StoredRaffleEventBody("RaffleOpened", Some(opened), None, None, None, None, None, None, None) =>
+      case StoredRaffleEventBody("RaffleOpened", Some(opened), None, None, None, None, None, None, None, None) =>
         RaffleEvent.RaffleOpened(opened.closesAt, seed(opened.seed), opened.round, opened.prize)
-      case StoredRaffleEventBody("RaffleNotHeld", None, Some(notHeld), None, None, None, None, None, None) =>
+      case StoredRaffleEventBody("RaffleNotHeld", None, Some(notHeld), None, None, None, None, None, None, None) =>
         RaffleEvent.RaffleNotHeld(notHeld.closesAt)
-      case StoredRaffleEventBody("Registered", None, None, Some(registered), None, None, None, None, None) =>
+      case StoredRaffleEventBody("Registered", None, None, Some(registered), None, None, None, None, None, None) =>
         RaffleEvent.Registered(ParticipantId(registered.participantId))
-      case StoredRaffleEventBody("RegistrationCancelled", None, None, None, Some(cancelled), None, None, None, None) =>
-        RaffleEvent.RegistrationCancelled(ParticipantId(cancelled.participantId))
-      case StoredRaffleEventBody("PoolFixed", None, None, None, None, Some(fixed), None, None, None) =>
+      case StoredRaffleEventBody("RegistrationCancelled", None, None, None, Some(left), None, None, None, None, None) =>
+        RaffleEvent.RegistrationCancelled(ParticipantId(left.participantId))
+      case StoredRaffleEventBody("PoolFixed", None, None, None, None, Some(fixed), None, None, None, None) =>
         RaffleEvent.PoolFixed(fixed.tickets.map(ParticipantId(_)).toVector, fixed.byHand.contains(true))
-      case StoredRaffleEventBody("RaffleDrawn", None, None, None, None, None, Some(drawn), None, None) =>
+      case StoredRaffleEventBody("RaffleDrawn", None, None, None, None, None, Some(drawn), None, None, None) =>
         RaffleEvent.RaffleDrawn(randomness(drawn.randomness), drawn.at)
-      case StoredRaffleEventBody("RaffleCancelled", None, None, None, None, None, None, Some(cancelled), None) =>
+      case StoredRaffleEventBody("RaffleCancelled", None, None, None, None, None, None, Some(cancelled), None, None) =>
         RaffleEvent.RaffleCancelled(cancelled.at)
-      case StoredRaffleEventBody("WinnerAssigned", None, None, None, None, None, None, None, Some(assigned)) =>
+      case StoredRaffleEventBody("WinnerAssigned", None, None, None, None, None, None, None, Some(assigned), None) =>
         RaffleEvent.WinnerAssigned(assigned.ticket, assigned.at)
+      case StoredRaffleEventBody("PrizeChanged", None, None, None, None, None, None, None, None, Some(changed)) =>
+        RaffleEvent.PrizeChanged(changed.prize)
       case other => corrupted(s"raffle event of kind ${other.kind} with sections that do not match it")
     }
 

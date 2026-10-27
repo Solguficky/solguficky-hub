@@ -1,4 +1,5 @@
 using Notifications.Facts;
+using Notifications.Reminders;
 using Notifications.V1;
 using Shouldly;
 using Xunit;
@@ -44,8 +45,8 @@ public class InvoiceReminderFactTests
     [Fact]
     public void InvoiceDueReminder_CarriesTheSameBodyUnderItsOwnType()
     {
-        // Второй момент напоминания о счёте — тип свой: два момента не должны
-        // совпасть на одном ключе повода.
+        // Ближние моменты напоминания о счёте — за 12 часов и за час — несут
+        // то же тело своим типом; ключ повода у каждого — своё задание.
         var notificationId = Guid.CreateVersion7();
         var recipientId = Guid.CreateVersion7();
         var taskId = Guid.CreateVersion7();
@@ -64,6 +65,16 @@ public class InvoiceReminderFactTests
         fact.InvoiceDueReminder.Amount.Currency.ShouldBe("RUB");
         fact.NotAfter.ShouldBe(NotificationFacts.Instant(dueAt));
         fact.HasRequestId.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void TypeOf_DueLeads_FarMomentIsReminderAndNearOnesAreDueReminders()
+    {
+        // Новых типов контракта PER-726 не заводит: дальний момент — тип
+        // первого напоминания, ближние — тип напоминания о сроке.
+        NotificationFacts.TypeOf(InvoiceReminderKind.DayBefore).ShouldBe(NotificationFacts.InvoiceReminderType);
+        NotificationFacts.TypeOf(InvoiceReminderKind.HalfDayBefore).ShouldBe(NotificationFacts.InvoiceDueReminderType);
+        NotificationFacts.TypeOf(InvoiceReminderKind.HourBefore).ShouldBe(NotificationFacts.InvoiceDueReminderType);
     }
 
     private static global::Auction.V1.Money Amount(long minorUnits, string currency) => new()

@@ -15,6 +15,12 @@ import auction.invoice.InvoiceView
 import auction.invoice.InvoiceViews
 import auction.aggregate.AdvanceLotAsk
 import auction.aggregate.AdvanceLotAskRejected
+import auction.aggregate.LotLayout
+import auction.aggregate.LotLayoutRejected
+import auction.aggregate.LotSection
+import auction.aggregate.LotSectionId
+import auction.aggregate.LotSectionName
+import auction.aggregate.SetLotLayout
 import auction.aggregate.Auction
 import auction.aggregate.AuctionEnvelope
 import auction.aggregate.AuctionEvent
@@ -168,8 +174,11 @@ import org.apache.pekko.pattern.AskTimeoutException
 import auction.raffle.AssignRejected
 import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
+import auction.raffle.ChangePrize
+import auction.raffle.ChangePrizeRejected
 import auction.raffle.Draw
 import auction.raffle.Raffle
+import auction.raffle.RaffleDecision
 import auction.raffle.RaffleEnvelope
 import auction.raffle.RaffleEvent
 import auction.raffle.RaffleGateway
@@ -380,6 +389,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def setFinalTime(auctionId: AuctionId, command: SetFinalTime, initiator: Initiator) =
       fail("the auction was reached")
     def setPaymentInstructions(auctionId: AuctionId, command: SetPaymentInstructions, initiator: Initiator) =
+      fail("the auction was reached")
+    def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) =
       fail("the auction was reached")
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) =
       fail("the auction was reached")
@@ -639,6 +650,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
    * объявленными, а объявленных в конфигурации он не знает.
    */
   private def consoleWithLaunchedWindow(registry: UUID*): Auctions = {
+    val running = withLaunchedWindow(registry*)
+    new Auctions {
+      override def get(auctionId: AuctionId) = Future.successful(running)
+    }
+  }
+
+  private def withLaunchedWindow(registry: UUID*): Auction = {
     val meetup = MeetupId(UUID.fromString(meetupId))
     val added = registry.toList.zipWithIndex.map { (lot, index) =>
       AuctionEnvelope(index + 2L, LotFixtures.op(index + 2), AuctionEvent.LotAdded(LotId(lot)))
@@ -650,7 +668,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       money(50),
       Set(LotId(registry.head))
     )
-    val running = Auction.replay(
+    Auction.replay(
       Auction.initial,
       AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)) :: added ++ List(
         AuctionEnvelope(next, LotFixtures.op(next), AuctionEvent.AuctionScheduled(AuctionFixtures.config())),
@@ -658,9 +676,6 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         AuctionEnvelope(next + 2, LotFixtures.op(next + 2), AuctionEvent.StepWindowLaunched(window))
       )
     )
-    new Auctions {
-      override def get(auctionId: AuctionId) = Future.successful(running)
-    }
   }
 
   // Пока SLF4J инициализирует backend, он отдаёт SubstituteLogger, и приведение к logback падает (как в GrpcBoundarySpec).
@@ -700,6 +715,15 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       reached :+= command
       Future.successful(assignRefusal.toLeft(raffle))
     }
+    // Смену приза решает настоящее ядро: ответ показывает, что граница отдала розыгрыш после команды.
+    def changePrize(auction: AuctionId, command: ChangePrize) = {
+      reached :+= command
+      Future.successful(Raffle.decide(raffle, command).map {
+        case RaffleDecision.Accepted(event) =>
+          Raffle.apply(raffle, RaffleEnvelope(raffle.seen.size.toLong + 1, command.opId, event))
+        case RaffleDecision.Repeated(_) | RaffleDecision.Unchanged => raffle
+      })
+    }
     def get(auction: AuctionId) = Future.successful(raffle)
   }
 
@@ -736,6 +760,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def register(auction: AuctionId, command: Register) = fail("the raffle was reached")
     def cancel(auction: AuctionId, command: CancelRegistration) = fail("the raffle was reached")
     def assign(auction: AuctionId, command: AssignWinner) = fail("the raffle was reached")
+    def changePrize(auction: AuctionId, command: ChangePrize) = fail("the raffle was reached")
     def get(auction: AuctionId) = fail("the raffle was read")
   }
 
@@ -1279,6 +1304,70 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .isNotMeetupAdministrator shouldBe true
     }
 
+    // PER-719: порядок и разделы ленты — команда администратора; раскладка едет целиком.
+    "sets the lot layout by the administrator, refuses a broken form as an argument and the rest as values" in {
+      val seen = scala.collection.mutable.ListBuffer.empty[SetLotLayout]
+      def gateway(answer: Either[LotLayoutRejected, AuctionAnswer]) = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(meetup, registryOpen = true))
+        override def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) = {
+          seen += command
+          Future.successful(answer)
+        }
+      }
+      def withAnswer(answer: Either[LotLayoutRejected, AuctionAnswer]) =
+        service(Unreachable, auctions = AuctionCommands(gateway(answer), Unreachable, granted))
+      val books = wire.LotSection(sectionId = 1, name = "Книги", lotIds = Seq(lot))
+      def request(layout: wire.LotLayout) = wire.SetLotLayoutRequest(Some(viewer), id.toString, op, Some(layout))
+
+      withAnswer(Right(AuctionAnswer.Unchanged))
+        .setLotLayout(request(wire.LotLayout(sections = Seq(books))))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      seen.toList.map(_.layout.sections.map(section => (section.id.value, section.name.value, section.lots))) shouldBe
+        List(List((1, "Книги", List(LotId(lotId)))))
+      // Без раскладки — пустая: лента в порядке создания.
+      withAnswer(Right(AuctionAnswer.Unchanged))
+        .setLotLayout(wire.SetLotLayoutRequest(Some(viewer), id.toString, op, None))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      seen.last.layout shouldBe LotLayout.empty
+
+      val untouched = withAnswer(Right(AuctionAnswer.Unchanged))
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(lotIds = Seq(lot), sections = Seq(books))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(sections = Seq(books, books.withLotIds(Nil)))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(sections = Seq(books.withSectionId(0)))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(sections = Seq(books.withName(" ")))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      seen.size shouldBe 2
+
+      withAnswer(Left(LotLayoutRejected.FinalAlreadyStarted))
+        .setLotLayout(request(wire.LotLayout(sections = Seq(books))))
+        .futureValue
+        .getRefused
+        .reason
+        .isFinalAlreadyStarted shouldBe true
+      withAnswer(Left(LotLayoutRejected.LotNotInAuction(LotId(lotId))))
+        .setLotLayout(request(wire.LotLayout(sections = Seq(books))))
+        .futureValue
+        .getRefused
+        .getLotNotInAuction
+        .lotId shouldBe lot
+    }
+
+    "shows the lot layout in the snapshot of the auction and leaves an empty one unset" in {
+      val books = LotSection(LotSectionId(1).get, LotSectionName("Книги").get, List(LotId(lotId)))
+      ResponseMapping.lotLayout(LotLayout.empty) shouldBe None
+      ResponseMapping.lotLayout(LotLayout.of(Nil, List(books)).toOption.get) shouldBe Some(
+        wire.LotLayout(sections = Seq(wire.LotSection(1, "Книги", Seq(lot))))
+      )
+    }
+
     // PER-322: текст «как оплатить и получить» — команда администратора без ворот по сходке.
     "sets the payment instructions by the administrator of a cancelled meetup and clears them without a text" in {
       val seen = scala.collection.mutable.ListBuffer.empty[SetPaymentInstructions]
@@ -1396,6 +1485,73 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       assigning(AssignRejected.AlreadyDrawn(1)).futureValue.getRefused.getAlreadyDrawn.winningTicket shouldBe 1
       assigning(AssignRejected.NotAwaitingWinner).futureValue.getRefused.reason.isNotAwaitingWinner shouldBe true
       statusOf(assigning(AssignRejected.OpIdTaken)) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "changes the prize after the meetup confirms the administrator and answers the raffle with the trimmed prize" in {
+      val raffles = Raffles(Raffle(RaffleState.AwaitingWinner(raffleTerms, Vector(ViewerId)), Map.empty))
+      val accepted = service(
+        Unreachable,
+        auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+        raffles = raffles
+      ).changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "  кружка и брелок ", raffleOp))
+        .futureValue
+        .getAccepted
+      accepted.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_AWAITING_WINNER
+      accepted.rafflePrize shouldBe Some("кружка и брелок")
+      raffles.reached shouldBe Vector(ChangePrize("кружка и брелок", OpId(UUID.fromString(raffleOp))))
+    }
+
+    "refuses a blank and an overlong prize as the configuration does, before the meetup and the raffle" in {
+      def changing(prize: String) =
+        service(Unreachable, raffles = UntouchableRaffles)
+          .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, prize, raffleOp))
+          .futureValue
+          .getRefused
+          .reason
+      changing("   ").isPrizeBlank shouldBe true
+      changing("я" * 201).isPrizeTooLong shouldBe true
+    }
+
+    "answers a repeat of its prize op_id before the meetup is asked and refuses a stranger before the raffle" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val op = OpId(UUID.fromString(raffleOp))
+      val changed = Raffle(
+        RaffleState.Open(raffleTerms.copy(prize = Some("кружка")), Vector(ViewerId)),
+        Map(op -> RaffleEnvelope(3, op, RaffleEvent.PrizeChanged("кружка")))
+      )
+      val again = Raffles(changed)
+      val grpc = service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = again)
+      grpc
+        .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+        .futureValue
+        .getAccepted
+        .rafflePrize shouldBe Some("кружка")
+      statusOf(
+        grpc.changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "другой", raffleOp))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+      again.reached shouldBe empty
+
+      val untouched = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty))
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), raffles = untouched)
+        .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      untouched.reached shouldBe empty
+    }
+
+    "refuses a prize change after the result and in a raffle that will have none, naming the reason" in {
+      def changing(raffle: Raffle) =
+        service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, granted), raffles = Raffles(raffle))
+          .changeRafflePrize(wire.ChangeRafflePrizeRequest(Some(viewer), raffleAuction, "кружка", raffleOp))
+          .futureValue
+          .getRefused
+      val assigned = Raffle(RaffleState.Assigned(raffleTerms, Vector(ViewerId), 1, Instant.EPOCH), Map.empty)
+      changing(assigned).getAlreadyDrawn.winningTicket shouldBe 1
+      val cancelled = Raffle(RaffleState.Cancelled(raffleTerms, Vector(ViewerId), Instant.EPOCH), Map.empty)
+      changing(cancelled).reason.isWithoutResult shouldBe true
+      changing(Raffle.initial).reason.isRaffleNotFound shouldBe true
     }
 
     "shows the candidates of a pool that waits for the winner by hand without the seed" in {
@@ -2548,6 +2704,25 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       read(scheduled, Some(Caller.HubBot)).map(_.id) shouldBe Some(id.toString)
       val other = Auction.idOf(MeetupId(UUID.fromString(lot))).value.toString
       read(scheduled, Some(Caller.HubBot), other) shouldBe None
+    }
+
+    "shows a participant the windows launched during the online phase, as the console does" in {
+      val id = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val first = new UUID(7L, 1L)
+      val running = withLaunchedWindow(first)
+      val views = new AuctionViews {
+        def byId(auctionId: UUID) = Future.successful(Option.when(auctionId == id)(AuctionSnapshotView(id, running)))
+        def byMeetup(meetup: MeetupId) = fail("a meetup auction was read")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("a list was read")
+      }
+      val read = service(Unreachable, auctionViews = views, caller = Some(Caller.AuctionBot))
+        .getAuction(wire.GetAuctionRequest(Some(viewer), id.toString))
+        .futureValue
+        .getAuction
+
+      read.launchedStepWindows.map(window => (window.from, window.until, window.lotIds)) shouldBe
+        Seq((deadline.plusSeconds(600).toString, deadline.plusSeconds(3600).toString, Seq(first.toString)))
     }
 
     "answers a meetup without an auction with an empty response, not an error" in {

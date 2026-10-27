@@ -29,6 +29,7 @@ jobs:
       bot-console: ${{ steps.filter.outputs.bot-console }}
       auction-seed: ${{ steps.filter.outputs.auction-seed }}
       auction: ${{ steps.filter.outputs.auction }}
+      achievements: ${{ steps.filter.outputs.achievements }}
       contour: ${{ steps.filter.outputs.contour }}
       nats-tester: ${{ steps.filter.outputs.nats-tester }}
     steps:
@@ -82,6 +83,10 @@ jobs:
               - 'apps/auction/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
+            achievements:
+              - 'apps/achievements/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
             community-site-api:
               - 'apps/community-site-api/**'
               # Тесты страницы и браузерные сценарии читают саму опубликованную
@@ -112,6 +117,7 @@ jobs:
               # правки графа ловит тест публикации.
               - 'apps/identity/Containerfile'
               - 'apps/hub-bot/Containerfile'
+              - 'apps/achievements/Containerfile'
               # CLI находит AppHost по этому файлу, путь в нём проверяет джоба.
               - 'aspire.config.json'
               - 'tools/apphost/**'
@@ -616,6 +622,46 @@ jobs:
         working-directory: apps/auction
         env:
           AUCTION_BROWSER_TESTS: "1"
+
+  # Achievements на Elixir: сборка и тесты с --warnings-as-errors, формат, L0 и
+  # L1. Версии Erlang/OTP и Elixir — apps/achievements/.tool-versions, тот же
+  # файл читает tools/env/install.sh; своих значений в workflow нет. Шаги идут
+  # рецептами, как у identity: порог и падение на пропуске живут в
+  # test_helper.exs, и копия здесь разошлась бы с `test-all` молча.
+  achievements:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.achievements == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@v1
+        with:
+          version-file: apps/achievements/.tool-versions
+          version-type: strict
+      # Скомпилированные зависимости по mix.lock и версиям BEAM: правка своего
+      # кода кэш не сбрасывает, смена библиотеки или OTP — сбрасывает.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            apps/achievements/deps
+            apps/achievements/_build
+          key: achievements-${{ runner.os }}-${{ hashFiles('apps/achievements/.tool-versions', 'apps/achievements/mix.lock') }}
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
+      - run: just achievements-tools
+      - run: just achievements-format-check
+      - run: just achievements-build
+      - run: just achievements-test
+      # L1: PostgreSQL и NATS поднимает сам тест в Testcontainers; Docker на
+      # ubuntu-latest есть. В `verify` уровень не входит.
+      - run: just achievements-test-integration
 
   # nats-tester — единственный потребитель схем, чей сгенерированный код лежит
   # в Git: инструмент ставится без protoc, поэтому классы обязаны совпадать со

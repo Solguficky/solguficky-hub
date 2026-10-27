@@ -107,6 +107,8 @@ object AuctionFacts {
       case AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared => None
       // Определение сета — рабочий выбор организатора до торгов, как отметка финалиста: фактом он не публикуется.
       case AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) => None
+      // Порядок и разделы ленты — показ для экрана, а не повод для шины (PER-719): читаются вместе с аукционом.
+      case AuctionEvent.LotLayoutSet(_) => None
       // Несобранный сет никому не сообщается (ADR-073, пп. 5–6): факта у него нет.
       case AuctionEvent.LotSetSettled(_, LotSetSettlement.NotCollected) => None
       case AuctionEvent.LotSetSettled(id, LotSetSettlement.Collected(by)) =>

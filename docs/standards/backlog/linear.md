@@ -40,7 +40,7 @@ Milestone и зонт отвечают на разные вопросы. Milesto
 
 | Ось | Метки |
 |---|---|
-| `SFG` — компонент | `Meetups`, `Identity`, `Notifications`, `Hub Bot`, `Auction`, `Auction Bot`, `Platform` |
+| `SFG` — компонент | `Meetups`, `Identity`, `Notifications`, `Hub Bot`, `Auction`, `Auction Bot`, `Achievements`, `Platform` |
 | `Type` — род задачи | `Feature`, `Bug`, `Epic`, `Incident`, `Refactoring` |
 | `Area` — характер работы | `Research`, `Chore`, `Infrastructure`, `Tech Debt` |
 | вне групп | `Decision`, `Improvement` |

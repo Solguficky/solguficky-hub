@@ -4,6 +4,10 @@ import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
+import auction.aggregate.LotLayout
+import auction.aggregate.LotSection
+import auction.aggregate.LotSectionId
+import auction.aggregate.LotSectionName
 import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
@@ -45,6 +49,7 @@ import auction.v1.auction_service.AssignRaffleWinnerRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
+import auction.v1.auction_service.ChangeRafflePrizeRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
@@ -91,6 +96,8 @@ import auction.v1.auction_service.SetPaymentInstructionsRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
+import auction.v1.auction_service.LotLayout as LotLayoutMessage
+import auction.v1.auction_service.SetLotLayoutRequest
 import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
@@ -196,6 +203,9 @@ final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
  */
 final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opId: OpId, acting: Acting)
 
+/** Порядок и разделы ленты (PER-719): раскладка целиком, форма уже проверена. */
+final case class LotLayoutCommand(auctionId: AuctionId, layout: LotLayout, opId: OpId, acting: Acting)
+
 /** Текст «как оплатить и получить» (PER-322): `text` пусто — текст снимается. */
 final case class PaymentInstructionsCommand(
     auctionId: AuctionId,
@@ -218,6 +228,9 @@ final case class RaffleCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /** Ручной итог розыгрыша: номер билета от администратора; диапазон судит розыгрыш по своему пулу. */
 final case class RaffleWinnerCommand(auctionId: AuctionId, ticket: Int, opId: OpId, acting: Acting)
+
+/** Смена приза розыгрыша: текст без пробелов по краям; пустоту и длину судит граница правилами конфигурации. */
+final case class RafflePrizeCommand(auctionId: AuctionId, prize: String, opId: OpId, acting: Acting)
 
 /** Чтение розыгрыша аукциона смотрящим. */
 final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
@@ -682,6 +695,38 @@ object RequestMapping {
       )
     } yield PaymentInstructionsCommand(auction, text, OpId(opId), acting)
 
+  /**
+   * Порядок и разделы ленты (PER-719). Пустое поле — пустая раскладка: порядок создания. Номер раздела вне диапазона,
+   * пустое название, повтор лота или номера — не форма запроса, а `INVALID_ARGUMENT`: название спрашивает вызывающий, и
+   * отказа значением у него нет.
+   */
+  def setLotLayout(request: SetLotLayoutRequest): Either[FormError, LotLayoutCommand] = {
+    val requested = request.layout.getOrElse(LotLayoutMessage())
+    def lotsOf(field: String, raw: Seq[String]): Either[FormError, List[LotId]] =
+      raw
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, id) =>
+          acc.flatMap(lots => uuidV7(field, id).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      lots <- lotsOf("layout.lot_ids", requested.lotIds)
+      sections <- requested.sections
+        .foldLeft[Either[FormError, List[LotSection]]](Right(Nil)) { (acc, section) =>
+          for {
+            done <- acc
+            id <- LotSectionId(section.sectionId).toRight(FormError("layout.sections.section_id"))
+            name <- LotSectionName(section.name).toRight(FormError("layout.sections.name"))
+            members <- lotsOf("layout.sections.lot_ids", section.lotIds)
+          } yield LotSection(id, name, members) :: done
+        }
+        .map(_.reverse)
+      layout <- LotLayout.of(lots, sections).left.map(_ => FormError("layout"))
+    } yield LotLayoutCommand(auction, layout, OpId(opId), acting)
+  }
+
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {
       acting <- acting(request.viewer)
@@ -725,6 +770,13 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       op <- uuidV7("op_id", request.opId)
     } yield RaffleWinnerCommand(auction, request.ticket, OpId(op), acting)
+
+  def changeRafflePrize(request: ChangeRafflePrizeRequest): Either[FormError, RafflePrizeCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      op <- uuidV7("op_id", request.opId)
+    } yield RafflePrizeCommand(auction, request.prize.trim, OpId(op), acting)
 
   /** Розыгрыш есть только у аукциона сходки: его открывает журнал аукциона, а у тестового аукциона журнала нет. */
   private def raffleCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =

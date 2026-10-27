@@ -11,5 +11,6 @@ Service brief описывает ответственность, жизненн�
 | Notifications | MVP | [notifications.md](notifications.md) |
 | Mini App | Вне MVP, Deferred | [mini-app.md](mini-app.md) |
 | Auction | Future | [auction.md](auction.md) |
+| Achievements | Future | [achievements.md](achievements.md) |
 
 Технические ТЗ и извлечённое знание выведенных из эксплуатации сервисов сохранены в [archive/services/](../archive/services/). Они используются только для истории и как отправная точка нового проектирования.
