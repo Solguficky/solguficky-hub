@@ -19,20 +19,25 @@ public enum LotStatus { Draft, Scheduled, Trading, Held, Sold, Unsold, Withdrawn
 /// называет извещение об отмене аукциона (PER-604). Окна не зависят от часов
 /// читающего и приходят данными — их пишут и объявленное окно в
 /// <c>lot_opened</c>, и запущенное в <c>step_window_added</c> (ADR-047,
-/// дополнение 2026-10-12).
+/// дополнение 2026-10-12), и условия лота в периоде «Счастливых часов» в
+/// <c>step_window_changed</c> (PER-786). Текущая цена есть только у лота в
+/// торгах: до первой ставки это его обычная стартовая, и её называет весть о
+/// начале окна со стартовой ценой (PER-788).
 /// </summary>
 public sealed record LotSnapshot(Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt, LotStatus Status,
-    DateTimeOffset? Deadline, Guid? Leader, IReadOnlyList<LotStepWindow> Windows, Money? SalePrice = null)
+    DateTimeOffset? Deadline, Guid? Leader, IReadOnlyList<LotStepWindow> Windows, Money? SalePrice = null,
+    Money? CurrentPrice = null)
 {
     public bool Terminal => Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn;
 }
 
 /// <summary>
-/// Окно сниженного шага, как его записал лот: полуинтервал <c>[From, Until)</c>
-/// и шаг, действующий внутри. Сверка пересечений и валюта — дело Auction: сюда
+/// Окно сниженного шага, как его записал лот: полуинтервал <c>[From, Until)</c>,
+/// шаг и стартовая цена первой ставки, действующие внутри. Окно задаёт хотя бы
+/// одно из двух (PER-785). Сверка пересечений и валюта — дело Auction: сюда
 /// окно приходит уже принятым лотом.
 /// </summary>
-public sealed record LotStepWindow(DateTimeOffset From, DateTimeOffset Until, Money Step);
+public sealed record LotStepWindow(DateTimeOffset From, DateTimeOffset Until, Money? Step, Money? Start = null);
 
 /// <summary>
 /// Лидер и цена лота на момент удержания для финала: из них собирается анонс
@@ -780,8 +785,13 @@ public static class AuctionMapping
                     if (!Instant(trading.Deadline, out var parsed)) return null;
                     deadline = parsed;
                 }
+                // Кривая текущая цена не отравляет снимок: она нужна только
+                // обещанию стартовой в вести о начале окна, и без неё весть
+                // стартовую не обещает.
+                var price = trading.CurrentPrice is { } current && Price(current) ? current.Clone() : null;
                 return Leader(trading.HasLeaderId, trading.LeaderId, out var leader)
-                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Trading, deadline, leader, windows)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Trading, deadline, leader, windows,
+                        CurrentPrice: price)
                     : null;
             }
             case LotState.StatusOneofCase.Held:
@@ -802,8 +812,10 @@ public static class AuctionMapping
         }
     }
 
-    // Окна в том виде, в каком их записал лот: с началами и концами в UTC и
-    // шагом в валюте лота. Пустой список — нормальное значение лота без окон.
+    // Окна в том виде, в каком их записал лот: с началами и концами в UTC,
+    // шагом и стартовой ценой в валюте лота. Окно без шага и без стартовой —
+    // яд: его не записал бы лот (PER-785). Пустой список — нормальное значение
+    // лота без окон.
     private static bool Windows(LotState state, out IReadOnlyList<LotStepWindow> windows)
     {
         windows = [];
@@ -816,11 +828,12 @@ public static class AuctionMapping
         foreach (var window in state.StepWindows)
         {
             if (!Instant(window.From, out var from) || !Instant(window.Until, out var until) ||
-                until <= from || window.Step is not { } step || !Price(step))
+                until <= from || (window.Step is null && window.Start is null) ||
+                (window.Step is { } step && !Price(step)) || (window.Start is { } start && !Price(start)))
             {
                 return false;
             }
-            parsed.Add(new LotStepWindow(from, until, step.Clone()));
+            parsed.Add(new LotStepWindow(from, until, window.Step?.Clone(), window.Start?.Clone()));
         }
 
         windows = parsed;

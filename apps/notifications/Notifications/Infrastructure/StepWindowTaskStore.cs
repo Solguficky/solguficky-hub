@@ -45,11 +45,18 @@ public sealed record StepWindowFireResult(StepWindowFireOutcome Outcome, StepWin
 public sealed class StepWindowTaskStore(NpgsqlDataSource source, StepWindowTelemetry telemetry)
 {
     // Конфликт по паре «аукцион и начало» — не ошибка, а повторный факт того же
-    // окна или сработавшее задание: оба исхода значат «делать нечего».
+    // окна или сработавшее задание: оба исхода значат «делать нечего». Задание,
+    // снятое потому, что окон этого начала не осталось, окно того же начала,
+    // заданное снова до него, возвращает в расписание с новым моментом
+    // (PER-788): условия лотов в периоде меняются до его начала (PER-786).
     private const string InsertSql = """
         INSERT INTO step_window_task (task_id, auction_id, starts_at, due_at, state, created_at)
         VALUES (@TaskId, @AuctionId, @StartsAt, @DueAt, 'scheduled', @Now)
-        ON CONFLICT (auction_id, starts_at) DO NOTHING;
+        ON CONFLICT (auction_id, starts_at) DO UPDATE SET
+            state = 'scheduled',
+            due_at = EXCLUDED.due_at,
+            reason = NULL
+        WHERE step_window_task.state = 'cancelled' AND step_window_task.reason = @WindowGone;
         """;
 
     private const string DueSql = """
@@ -74,6 +81,27 @@ public sealed class StepWindowTaskStore(NpgsqlDataSource source, StepWindowTelem
         WHERE auction_id = @AuctionId AND state = 'scheduled';
         """;
 
+    // Снимает несработавшие задания аукциона, у начала которых не осталось ни
+    // одного окна у лота в торгах (PER-788): условия лота в периоде сняты или
+    // период удалён до начала. Сверка идёт по репликам, а не по факту одного
+    // лота: окно того же начала может остаться у другого лота. Момент окна в
+    // строке реплики записан с точностью базы, как начало задания.
+    private const string CancelGoneSql = """
+        UPDATE step_window_task AS task
+        SET state = 'cancelled', reason = @WindowGone
+        WHERE task.auction_id = @AuctionId AND task.state = 'scheduled'
+            AND NOT EXISTS (
+                SELECT 1
+                FROM lot_replica AS replica,
+                     jsonb_array_elements(replica.step_windows) AS window_row
+                WHERE replica.auction_id = @AuctionId
+                    AND replica.status = 'trading'
+                    AND (window_row ->> 'from')::timestamptz = task.starts_at);
+        """;
+
+    /// <summary>Причина снятия задания, у начала которого не осталось окон; такое задание возвращается.</summary>
+    private const string WindowGone = "window gone";
+
     private const string NextDueSql = """
         SELECT MIN(due_at) FROM step_window_task
         WHERE auction_id = @AuctionId AND state = 'scheduled';
@@ -95,6 +123,7 @@ public sealed class StepWindowTaskStore(NpgsqlDataSource source, StepWindowTelem
                     StartsAt = startsAt.UtcDateTime,
                     DueAt = dueAt.UtcDateTime,
                     Now = now.UtcDateTime,
+                    WindowGone,
                 },
                 cancellationToken: cancellationToken));
 
@@ -102,6 +131,23 @@ public sealed class StepWindowTaskStore(NpgsqlDataSource source, StepWindowTelem
         {
             telemetry.Schedule();
         }
+    }
+
+    /// <summary>
+    /// Снимает несработавшие задания аукциона, у начала которых не осталось
+    /// окон у лотов в торгах. Возвращает, сколько снято.
+    /// </summary>
+    public async Task<int> CancelGone(Guid auctionId, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+
+        var cancelled = await connection.ExecuteAsync(
+            new CommandDefinition(CancelGoneSql, new { AuctionId = auctionId, WindowGone },
+                cancellationToken: cancellationToken));
+
+        telemetry.Cancel(cancelled);
+
+        return cancelled;
     }
 
     /// <summary>Наступившие задания аукциона: их может быть несколько, окна разные.</summary>

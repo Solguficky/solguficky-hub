@@ -100,7 +100,10 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         SELECT follower.identity_id AS IdentityId,
                CASE WHEN person.circle = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface,
                replica.lot_id AS LotId,
-               replica.step_windows AS Windows
+               replica.step_windows AS Windows,
+               replica.leader_id AS Leader,
+               replica.price_minor_units AS PriceMinorUnits,
+               replica.price_currency AS PriceCurrency
         FROM lot_favorite AS follower
         JOIN identity_replica AS person ON person.identity_id = follower.identity_id
         JOIN lot_replica AS replica ON replica.lot_id = follower.lot_id
@@ -112,9 +115,11 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         """;
 
     // Лоты аукциона в торгах с их окнами: общей вести о начале окна нужны
-    // число лотов окна и самый поздний конец, а не следящие за ними.
+    // число лотов окна и самый поздний конец, а не следящие за ними. Лидер и
+    // цена решают, даёт ли окно только со стартовой что-то лоту (PER-788).
     private const string StepWindowLotsSql = """
-        SELECT lot_id AS LotId, step_windows AS Windows
+        SELECT lot_id AS LotId, step_windows AS Windows, leader_id AS Leader,
+               price_minor_units AS PriceMinorUnits, price_currency AS PriceCurrency
         FROM lot_replica
         WHERE auction_id = @AuctionId AND status = 'trading'
         ORDER BY lot_id;
@@ -1015,9 +1020,12 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         foreach (var row in rows)
         {
             // Начало окна сравнивается по значению: и задание, и реплика
-            // хранят момент с точностью базы.
+            // хранят момент с точностью базы. Окно, которое лоту в этот момент
+            // ничего не даёт, лот в весть не приводит (PER-788).
             if (LotReplicaStore.WindowsOf(row.Windows).FirstOrDefault(window =>
-                    window.From == task.StartsAt && StepWindowPlan.Running(window, now)) is not { } window)
+                    window.From == task.StartsAt && StepWindowPlan.Running(window, now)) is not { } window
+                || StepWindowPlan.Terms(row.LotId, window, row.Leader,
+                    LotReplicaStore.PriceOf(row.PriceMinorUnits, row.PriceCurrency)) is not { } terms)
             {
                 continue;
             }
@@ -1028,7 +1036,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 people.Add(row.IdentityId, person);
             }
 
-            person.Lots.Add(new StepWindowNoticeLot(row.LotId, window.Until, window.Step));
+            person.Lots.Add(terms);
         }
 
         if (people.Count == 0)
@@ -1092,8 +1100,11 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         var lots = await work.Query<StepWindowLotRow>(StepWindowLotsSql, new { task.AuctionId }, cancellationToken);
         var windows = lots
             .Select(lot => LotReplicaStore.WindowsOf(lot.Windows).FirstOrDefault(window =>
-                window.From == task.StartsAt && StepWindowPlan.Running(window, now)))
-            .OfType<LotStepWindow>()
+                    window.From == task.StartsAt && StepWindowPlan.Running(window, now)) is { } window
+                ? StepWindowPlan.Terms(lot.LotId, window, lot.Leader,
+                    LotReplicaStore.PriceOf(lot.PriceMinorUnits, lot.PriceCurrency))
+                : null)
+            .OfType<StepWindowNoticeLot>()
             .ToArray();
 
         if (windows.Length == 0)
@@ -1830,6 +1841,12 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         /// <summary>Окна лота строкой реплики: их разбирает <see cref="LotReplicaStore.WindowsOf" />.</summary>
         public string? Windows { get; init; }
+
+        public Guid? Leader { get; init; }
+
+        public long? PriceMinorUnits { get; init; }
+
+        public string? PriceCurrency { get; init; }
     }
 
     private sealed class StepWindowLotRow
@@ -1838,6 +1855,12 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         /// <summary>Окна лота строкой реплики: их разбирает <see cref="LotReplicaStore.WindowsOf" />.</summary>
         public string? Windows { get; init; }
+
+        public Guid? Leader { get; init; }
+
+        public long? PriceMinorUnits { get; init; }
+
+        public string? PriceCurrency { get; init; }
     }
 
     private sealed record CircleTransition(string PreviousCircle, string CurrentCircle);

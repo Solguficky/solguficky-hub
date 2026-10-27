@@ -62,6 +62,33 @@ public class StepWindowStartFactTests
     }
 
     [Fact]
+    public void StepWindowStarted_StartWithoutStep_CarriesStartAndRegularStart()
+    {
+        // «от 800 ₽ вместо 1 600 ₽» (PER-788): шага нет, стартовая — парой с
+        // обычной.
+        var lotId = Guid.CreateVersion7();
+        var until = Now.AddMinutes(40);
+
+        var fact = NotificationFacts.StepWindowStarted(
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            Guid.CreateVersion7(),
+            Now,
+            [
+                new StepWindowNoticeLot(lotId, until, null, new Money { MinorUnits = 80000, Currency = "RUB" },
+                    new Money { MinorUnits = 160000, Currency = "RUB" }),
+            ],
+            Now,
+            until);
+
+        var lot = fact.StepWindowStarted.Lots.ShouldHaveSingleItem();
+        lot.Step.ShouldBeNull();
+        lot.Start.MinorUnits.ShouldBe(80000);
+        lot.RegularStart.MinorUnits.ShouldBe(160000);
+    }
+
+    [Fact]
     public void StepWindowAnnounced_CarriesTaskCauseLatestEndAndLotCount()
     {
         var notificationId = Guid.CreateVersion7();
