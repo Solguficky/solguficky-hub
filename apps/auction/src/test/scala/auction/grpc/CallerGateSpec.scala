@@ -12,7 +12,9 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
 
   private val table = CallerTable
     .fromConfig(
-      ConfigFactory.parseString("""auction.grpc.callers { hub-bot = "hub", auction-bot = "auction" }"""),
+      ConfigFactory.parseString(
+        """auction.grpc.callers { hub-bot = "hub", auction-bot = "auction", notifications = "notifications" }"""
+      ),
       MethodAccess.declared
     )
     .value

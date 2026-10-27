@@ -371,6 +371,7 @@ final class LotVolleyRestartIntegrationSpec
         "AUCTION_DATABASE_PASSWORD" -> database.password,
         "AUCTION_CALLER_TOKEN_HUB_BOT" -> hubToken,
         "AUCTION_CALLER_TOKEN_AUCTION_BOT" -> auctionToken,
+        "AUCTION_CALLER_TOKEN_NOTIFICATIONS" -> "volley-notifications",
         "AUCTION_MEETUPS_GRPC_URL" -> meetups.url,
         "AUCTION_SERVICE_TOKEN" -> ownToken
       ),

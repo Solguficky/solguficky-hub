@@ -97,4 +97,31 @@ final class PredictionsSpec extends AnyWordSpec with Matchers {
         Some(PredictionEvent.RoundOpened(PredictionRound.Catalog))
     }
   }
+
+  "the open round" should {
+
+    "is the catalog while only it accepts predictions, and none before it opens and after it closes" in {
+      Predictions.openRound(Predictions.initial) shouldBe None
+      Predictions.openRound(replay(PredictionEvent.RoundOpened(PredictionRound.Catalog))) shouldBe
+        Some(PredictionRound.Catalog)
+      Predictions.openRound(
+        replay(
+          PredictionEvent.RoundOpened(PredictionRound.Catalog),
+          PredictionEvent.RoundClosed(PredictionRound.Catalog)
+        )
+      ) shouldBe None
+    }
+
+    "is the final once it opens, even while the catalog is still open" in {
+      Predictions.openRound(
+        replay(PredictionEvent.RoundOpened(PredictionRound.Catalog), PredictionEvent.RoundOpened(PredictionRound.Final))
+      ) shouldBe Some(PredictionRound.Final)
+    }
+
+    "is none in a cancelled game" in {
+      Predictions.openRound(
+        replay(PredictionEvent.RoundOpened(PredictionRound.Final), PredictionEvent.PredictionsCancelled)
+      ) shouldBe None
+    }
+  }
 }

@@ -772,6 +772,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) =
       Future.successful(sent)
     def tally(auction: AuctionId) = Future.successful(counted)
+    def forecasters(auction: AuctionId) = Future.successful(None)
   }
 
   /** Розыгрыш, которого пульт не должен спросить: отказ права наступает до него. */
