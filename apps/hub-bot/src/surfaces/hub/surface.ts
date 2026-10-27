@@ -146,6 +146,8 @@ export const hubSurface: SurfaceDefinition = ({
           auctions: auction,
           timeZone: communityTimeZone,
           usernames: identity,
+          // Приём объявления аукциона (PER-765) — Notifications.
+          announcements: notifications.announcements,
         },
     releaseNotes,
   );

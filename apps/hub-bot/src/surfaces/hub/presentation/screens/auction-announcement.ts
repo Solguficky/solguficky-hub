@@ -31,6 +31,7 @@ import {
   buttonText,
   confirmKeyboard,
   escapeHtml,
+  exitToMeetups,
   outcomeText,
   type Parent,
   pagedTitle,
@@ -426,6 +427,22 @@ export function announcementOutcomeScreen(
     id: "outcome",
     text: outcomeText(text),
     keyboard: withNav(new InlineKeyboard(), toAuctionRoot(view.auctionId)),
+    format: "HTML",
+  };
+}
+
+/**
+ * Сходки аукциона процесс не знает — так бывает после рестарта: объявление
+ * адресуется сходкой, а Auction её по аукциону не отдаёт. Карточка сходки
+ * напомнит её процессу.
+ */
+export function announcementWithoutMeetupScreen(): ShownScreen {
+  return {
+    id: "outcome",
+    text: outcomeText(
+      "Открой аукцион с карточки сходки. Объявлению нужна сходка аукциона, а бот её сейчас не помнит: открой сходку, «🧩 Расширения» и аукцион — и нажми «🛠 Объявление» снова.",
+    ),
+    keyboard: exitToMeetups(),
     format: "HTML",
   };
 }

@@ -21,14 +21,16 @@ import type {
 // кнопках и в шаге вопроса номерами, текст — в сообщении бота, а ключ
 // рождается на «Отправить». Каждый шаг читает пульт заново: так право решает
 // Auction, а лот и его фото — сейчас, а не в момент вопроса. Приём, право и
-// рассылку держит Notifications (PER-764).
+// рассылку держит Notifications (PER-764), и адресует она объявление сходкой:
+// связи «аукцион — сходка» у неё нет, поэтому шаги, которые зовут
+// Notifications, несут сходку — её край берёт из памяти процесса.
 
 /** Порт приёма объявления; адаптер — клиент Notifications хаба. */
 export type AuctionAnnouncements = {
   // Сколько человек получит объявление аукциона сейчас.
   previewAuctionAnnouncement(
     person: Person,
-    auctionId: string,
+    meetupId: string,
     meta?: RpcMetadata,
   ): Promise<AnnouncementAudienceResult>;
   // Приём: `created` ложен на повторе того же ключа.
@@ -40,7 +42,7 @@ export type AuctionAnnouncements = {
 };
 
 export type AnnouncementCommand = {
-  auctionId: string;
+  meetupId: string;
   announcementId: string;
   text: string;
   button?: AnnouncementButton;
@@ -126,17 +128,20 @@ export type AuctionAnnouncementRequest =
     })
   | (Call & {
       intent: "pick-announcement-button";
+      meetupId: string;
       button: ButtonChoice;
       lot?: number;
     })
   | (Call & {
       intent: "preview-announcement";
+      meetupId: string;
       button: ButtonChoice;
       lot?: number;
       photo?: number;
     })
   | (Call & {
       intent: "send-announcement";
+      meetupId: string;
       announcementId: string;
       text: string;
       button: ButtonChoice;
@@ -465,13 +470,18 @@ export function createAuctionAnnouncements(
   }
 
   async function preview(
-    request: Call & { button: ButtonChoice; lot?: number; photo?: number },
+    request: Call & {
+      meetupId: string;
+      button: ButtonChoice;
+      lot?: number;
+      photo?: number;
+    },
   ): Promise<ExecuteResult> {
     const [found, audience] = await Promise.all([
       read(request),
       announcements.previewAuctionAnnouncement(
         request.identity,
-        request.auctionId,
+        request.meetupId,
         rpcMeta(request),
       ),
     ]);
@@ -502,7 +512,7 @@ export function createAuctionAnnouncements(
     const accepted = await announcements.announceAuction(
       request.identity,
       {
-        auctionId: request.auctionId,
+        meetupId: request.meetupId,
         announcementId: request.announcementId,
         text: request.text,
         ...(picked.button === undefined ? {} : { button: picked.button }),

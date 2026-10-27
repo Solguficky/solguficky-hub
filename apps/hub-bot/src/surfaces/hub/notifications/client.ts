@@ -16,6 +16,10 @@ import type {
 } from "../../../auction-ui/index.js";
 import { createFavoritesPort } from "../../../core/notifications/favorites.js";
 import {
+  wireAnnouncementButton,
+  wireAnnouncementPhoto,
+} from "../../../core/notifications/organizer-announcement.js";
+import {
   auctionNotificationsOf,
   auctionNotificationsToWire,
 } from "../../../core/notifications/outbid.js";
@@ -27,6 +31,7 @@ import {
   type RpcMetadata,
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
+import type { AuctionAnnouncements } from "../application/auction-announcements.js";
 import type {
   AuctionNotificationsResult,
   BroadcastAudienceCount,
@@ -56,6 +61,8 @@ type NotificationsRpc = Pick<
   | "broadcastToCommunity"
   | "previewMeetupBroadcast"
   | "previewCommunityBroadcast"
+  | "broadcastAuctionNotice"
+  | "previewAuctionNotice"
   | "reportReleaseNotes"
   | "listReleaseSummaries"
   | "getReleaseSummary"
@@ -74,6 +81,8 @@ export type NotificationsClient = Notifications & {
     meta?: RpcMetadata,
     onRefused?: (cause: unknown) => void,
   ): ProxyExplainerPort;
+  // Объявление аукциона (PER-765) на том же соединении.
+  announcements: AuctionAnnouncements;
   close(): void;
 };
 
@@ -112,7 +121,62 @@ export function createNotificationsClient(
         }),
         onRefused,
       ),
+    announcements: createAuctionAnnouncementsAdapter(rpc, timeoutMs),
     close: () => sessionManager.abort(),
+  };
+}
+
+// Объявление аукциона (PER-765, контракт PER-764): тот же механизм приёма и
+// счётчика, что у двух рассылок, и те же переводы отказов. Адресат —
+// сходка: связи «аукцион — сходка» у Notifications нет.
+export function createAuctionAnnouncementsAdapter(
+  rpc: Pick<
+    NotificationsRpc,
+    "broadcastAuctionNotice" | "previewAuctionNotice"
+  >,
+  timeoutMs = 3_000,
+): AuctionAnnouncements {
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
+  return {
+    async previewAuctionAnnouncement(person, meetupId, meta) {
+      try {
+        const response = await rpc.previewAuctionNotice(
+          { identityId: person.identityId, meetupId },
+          options(meta),
+        );
+        return Number.isInteger(response.recipientCount) &&
+          response.recipientCount >= 0
+          ? { kind: "ok", recipientCount: response.recipientCount }
+          : { kind: "invalid", cause: response.recipientCount };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async announceAuction(person, command, meta) {
+      try {
+        const response = await rpc.broadcastAuctionNotice(
+          {
+            identityId: person.identityId,
+            meetupId: command.meetupId,
+            id: command.announcementId,
+            body: command.text,
+            ...(command.button === undefined
+              ? {}
+              : { button: wireAnnouncementButton(command.button) }),
+            ...(command.photo === undefined
+              ? {}
+              : { photo: wireAnnouncementPhoto(command.photo) }),
+          },
+          options(meta),
+        );
+        return { kind: "ok", created: response.created };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
   };
 }
 

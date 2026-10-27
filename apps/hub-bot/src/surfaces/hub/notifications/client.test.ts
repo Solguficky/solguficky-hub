@@ -1,10 +1,14 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { AuctionNoticeView as WireNoticeView } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
   NotificationCategory as WireCategory,
   OutbidFrequency as WireOutbidFrequency,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
-import { createNotificationsAdapter } from "./client.js";
+import {
+  createAuctionAnnouncementsAdapter,
+  createNotificationsAdapter,
+} from "./client.js";
 
 type Rpc = Parameters<typeof createNotificationsAdapter>[0];
 
@@ -435,5 +439,84 @@ describe("auction notification settings", () => {
     expect(
       await notifications.getAuctionNotifications("identity-id"),
     ).toMatchObject({ kind: "unavailable" });
+  });
+});
+
+// Объявление аукциона (PER-765, контракт PER-764): адресат — сходка, кнопка и
+// фото необязательны, отказы — те же переводы, что у рассылок.
+describe("auction announcements", () => {
+  const person = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    rights: ["run-auctions"] as const,
+  };
+  const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
+  const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+
+  it("sends the meetup, the key, the text, the lot button and the lot photo", async () => {
+    const broadcastAuctionNotice = vi.fn().mockResolvedValue({ created: true });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await expect(
+      announcements.announceAuction(person, {
+        meetupId,
+        announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+        text: "Ваза ждёт",
+        button: { kind: "lot", lotId },
+        photo: { lotId, photoId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1" },
+      }),
+    ).resolves.toEqual({ kind: "ok", created: true });
+    const [request] = broadcastAuctionNotice.mock.calls[0] ?? [];
+    expect(request).toMatchObject({
+      identityId: person.identityId,
+      meetupId,
+      id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+      body: "Ваза ждёт",
+      button: { view: WireNoticeView.LOT, lotId },
+      photo: { source: { case: "lotPhoto", value: { lotId } } },
+    });
+  });
+
+  it("sends no button for «Без кнопки»", async () => {
+    const broadcastAuctionNotice = vi
+      .fn()
+      .mockResolvedValue({ created: false });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await expect(
+      announcements.announceAuction(person, {
+        meetupId,
+        announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+        text: "Текст",
+      }),
+    ).resolves.toEqual({ kind: "ok", created: false });
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).not.toHaveProperty(
+      "button",
+    );
+  });
+
+  it("counts the audience and maps refusals as the broadcasts do", async () => {
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice: vi
+        .fn()
+        .mockRejectedValue(new ConnectError("no", Code.PermissionDenied)),
+      previewAuctionNotice: vi.fn().mockResolvedValue({ recipientCount: 0 }),
+    } as never);
+
+    await expect(
+      announcements.previewAuctionAnnouncement(person, meetupId),
+    ).resolves.toEqual({ kind: "ok", recipientCount: 0 });
+    await expect(
+      announcements.announceAuction(person, {
+        meetupId,
+        announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+        text: "Текст",
+      }),
+    ).resolves.toEqual({ kind: "forbidden" });
   });
 });

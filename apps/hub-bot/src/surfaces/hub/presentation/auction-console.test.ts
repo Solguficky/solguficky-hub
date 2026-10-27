@@ -6989,11 +6989,20 @@ describe("auction announcement", () => {
     };
   }
 
+  const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
+
+  function knownMeetup() {
+    const parents = createAuctionParents();
+    parents.remember(auctionId, meetupId);
+    return parents;
+  }
+
   function bot(
     auction: ReturnType<typeof fakeAuction>,
     notices: ReturnType<typeof announcements>,
     calls: RecordedCall[],
     readable = true,
+    parents = knownMeetup(),
   ) {
     const port = withPhotos(auction, readable);
     return createHarness(
@@ -7011,6 +7020,7 @@ describe("auction announcement", () => {
       {
         auction: port,
         communityTimeZone: timeZone,
+        auctionParents: parents,
         // Фото с подписью отвечает сообщением: из него бот берёт номер
         // предпросмотра для подтверждения.
         respond: (method) =>
@@ -7091,7 +7101,7 @@ describe("auction announcement", () => {
     return update;
   }
 
-  it("goes from a template through an edit, another button and a lot photo to one broadcast over restarts", async () => {
+  it("goes from a template through an edit, another button and a lot photo to one broadcast with a new bot on every step", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
@@ -7099,8 +7109,9 @@ describe("auction announcement", () => {
     });
     const notices = announcements(7);
     const calls: RecordedCall[] = [];
+    const parents = knownMeetup();
     const step = async (update: Update) => {
-      const fresh = bot(auction, notices, calls);
+      const fresh = bot(auction, notices, calls, true, parents);
       await fresh.init();
       await fresh.handleUpdate(update);
     };
@@ -7110,7 +7121,7 @@ describe("auction announcement", () => {
     expect(labels(last(calls)).slice(-3)).toEqual([
       ["🛠 Пульт", "🛠 Сеты"],
       ["🛠 Объявление"],
-      ["‹ Сходки"],
+      ["‹ Расширения"],
     ]);
     await step(press(dataOf(last(calls), "🛠 Объявление")));
     expect(labels(last(calls))).toEqual([
@@ -7134,7 +7145,7 @@ describe("auction announcement", () => {
 
     // Правка черновика: ответом приходит свой текст.
     const text = "История лота «Ваза»: её обжигали трижды <и это видно>.";
-    const fresh = bot(auction, notices, calls);
+    const fresh = bot(auction, notices, calls, true, parents);
     await fresh.init();
     await fresh.handleUpdate(answer(calls, { text }));
     expect(labels(last(calls))).toEqual([
@@ -7178,7 +7189,7 @@ describe("auction announcement", () => {
     expect(notices.accepted[0]).toMatchObject({
       identityId,
       command: {
-        auctionId,
+        meetupId,
         text,
         button: { kind: "auction" },
         photo: { lotId: vaseId, photoId: photoIds[1] },
@@ -7284,5 +7295,24 @@ describe("auction announcement", () => {
 
     await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
     expect(plain(last(calls))).toContain("Объявлять некому");
+  });
+
+  // После рестарта процесс сходку аукциона не помнит: кадр ведёт открыть
+  // аукцион с карточки сходки, и Notifications не зовётся.
+  it("sends to the meetup card when the process does not know the meetup", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements();
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls, true, createAuctionParents());
+    await hub.init();
+    await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
+
+    expect(plain(last(calls))).toContain("Открой аукцион с карточки сходки");
+    expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
+    expect(notices.accepted).toEqual([]);
   });
 });
