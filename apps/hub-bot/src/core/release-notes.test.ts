@@ -71,7 +71,7 @@ describe("checkText", () => {
   });
 
   it("counts characters in code points", () => {
-    expect(checkText("🔨".repeat(maxTextLength))).toEqual([]);
+    expect(checkText("💰".repeat(maxTextLength))).toEqual([]);
   });
 });
 

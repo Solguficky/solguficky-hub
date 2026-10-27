@@ -779,7 +779,7 @@ describe("auction bot", () => {
         inline_keyboard: [
           [
             {
-              text: "🔨 Лоты",
+              text: "🏷️ Лоты",
               callback_data: encodeAuctionCallback({
                 kind: "feed",
                 auctionId,
