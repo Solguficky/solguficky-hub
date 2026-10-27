@@ -212,6 +212,32 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(without) shouldBe cleared
     }
 
+    "keeps the stored form of the lot layout and of a snapshot that holds it equal to their golden files" in {
+      def section(id: Int, name: String, lots: LotId*) =
+        LotSection(LotSectionId(id).get, LotSectionName(name).get, lots.toList)
+      val event = LotLayout.of(List(LotId(uuid(12))), List(section(1, "Книги и комиксы", lot))).toOption.get
+      keepsGolden("lot-layout-set", stored(AuctionEvent.LotLayoutSet(event), 5))
+
+      val books = LotLayout.of(Nil, List(section(1, "Книги", lot))).toOption.get
+      val withLayout = Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.LotLayoutSet(books)))
+      withLayout.layout shouldBe books
+      keepsGolden("auction-snapshot-layout", AuctionJournal.storeAuction(withLayout, sequence = 5))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(withLayout, sequence = 5)) shouldBe withLayout
+    }
+
+    // Строка, записанная до раскладки ленты (PER-719): лента в порядке создания.
+    "reads a snapshot written before the lot layout as an auction without one" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).layout shouldBe LotLayout.empty
+    }
+
+    "refuses a stored lot layout that names a lot twice" in {
+      val twice = StoredAuctionEventBody
+        .of("LotLayoutSet")
+        .copy(lotLayout = Some(StoredLotLayout(List(uuid(11)), List(StoredLotSection(1, "Книги", List(uuid(11)))))))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(twice)
+    }
+
     // Строка, записанная до текста оплаты (PER-322): аукцион без текста.
     "reads a snapshot written before the payment instructions as an auction without them" in {
       val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))

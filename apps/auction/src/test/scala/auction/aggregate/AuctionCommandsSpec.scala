@@ -114,6 +114,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(instructionsAnswer)
     }
 
+    var layoutAnswer: Either[LotLayoutRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(layoutAnswer)
+    }
+
     var cancelAnswer: Either[CancelAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) = {
@@ -1022,6 +1029,42 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .setPaymentInstructions(auctionOfMeetup, Some(text), op(7), person)
         .futureValue shouldBe Right(())
       auctions.commands shouldBe List(SetPaymentInstructions(Some(text), op(7)))
+    }
+
+    // PER-719: раскладка ленты — повтор своей раскладки принимается, другая под тем же `op_id` — чужая команда.
+    "hands the lot layout to the auction and answers it repeated under its op_id, refusing another one under it" in {
+      val books = LotSection(LotSectionId(1).get, LotSectionName("Книги").get, List(lot))
+      val layout = LotLayout.of(Nil, List(books)).toOption.get
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(auctions, noLots, granted)
+        .setLotLayout(auctionOfMeetup, layout, op(7), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SetLotLayout(layout, op(7)))
+
+      val repeated = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.LotLayoutSet(layout))))
+      AuctionCommands(repeated, noLots, granted)
+        .setLotLayout(auctionOfMeetup, layout, op(7), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(repeated, noLots, granted)
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(7), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.OpIdTaken)
+      repeated.commands shouldBe empty
+    }
+
+    "refuses the lot layout of a cancelled meetup and answers the refusal of the auction" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.cancelled)))
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(7), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.Denied(Denial.MeetupCancelled))
+      auctions.commands shouldBe empty
+      auctions.layoutAnswer = Left(LotLayoutRejected.LotNotInAuction(lot))
+      AuctionCommands(auctions, noLots, granted)
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(8), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.LotNotInAuction(lot))
+      auctions.layoutAnswer = Left(LotLayoutRejected.FinalAlreadyStarted)
+      AuctionCommands(auctions, noLots, granted)
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(9), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.FinalAlreadyStarted)
     }
 
     "refuses a foreign command that took the op_id of the time" in {

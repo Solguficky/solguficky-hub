@@ -2,6 +2,7 @@ import type {
   AuctionPort,
   AuctionSummaryView,
   LotImagePort,
+  LotLayoutView,
   LotPhotoView,
   LotView,
   Money,
@@ -410,6 +411,21 @@ export type DeleteLotSetResult =
   | { kind: "lots-frozen" }
   | { kind: "lot-set-not-found" }
   | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Порядок и разделы ленты (PER-719): раскладка целиком одной командой. Отказ
+// лота называет первый лот запроса вне реестра — сначала в разделах.
+export type LotLayoutResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  // Живой финал начался: лента идёт порядком зала (PER-639).
+  | { kind: "final-already-started" }
+  | { kind: "auction-already-finished" }
+  | { kind: "auction-already-cancelled" }
+  | { kind: "lot-not-in-auction"; lotId: string }
   | AuctionFailure;
 
 export type FinalistRefusal =
@@ -828,6 +844,14 @@ export type AuctionConsoles = {
     set: { auctionId: string; lotSetId: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<DeleteLotSetResult>;
+  // Порядок и разделы ленты (PER-719): раскладка заменяется целиком, поэтому
+  // команда несёт её всю. Повтор того же `opId` с той же раскладкой Auction
+  // принимает.
+  setLotLayout(
+    person: Person,
+    command: { auctionId: string; layout: LotLayoutView; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<LotLayoutResult>;
   selectForFinal(
     person: Person,
     mark: FinalistMark,

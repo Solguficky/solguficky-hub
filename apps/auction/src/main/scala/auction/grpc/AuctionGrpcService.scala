@@ -727,6 +727,20 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Порядок и разделы ленты (PER-719): право у Meetups, состояние решает аукцион. Раскладка заменяется целиком одной
+   * командой.
+   */
+  def setLotLayout(in: wire.SetLotLayoutRequest): Future[wire.SetLotLayoutResponse] =
+    RequestMapping.setLotLayout(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .setLotLayout(command.auctionId, command.layout, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setLotLayout(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Текст «как оплатить и получить» (PER-322): право у Meetups без ворот по сходке, затем аукцион. Текст выставляется,
    * меняется и снимается одной командой.
    */

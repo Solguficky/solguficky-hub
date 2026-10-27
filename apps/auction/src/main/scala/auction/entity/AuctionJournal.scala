@@ -75,6 +75,15 @@ final case class StoredLotSetRef(lotSetId: UUID)
 /** Payload `LotSetSettled`: `collector` — собравший сет; пусто — сет не собран никем. */
 final case class StoredLotSetSettled(lotSetId: UUID, collector: Option[UUID])
 
+/** Раздел ленты (PER-719): номер, который выбрал вызывающий, название и лоты в порядке администратора. */
+final case class StoredLotSection(sectionId: Int, name: String, lots: List[UUID])
+
+/**
+ * Payload `LotLayoutSet` и раскладка в snapshot (PER-719): лоты вне разделов и разделы, каждые в порядке
+ * администратора.
+ */
+final case class StoredLotLayout(lots: List[UUID], sections: List[StoredLotSection])
+
 /** Сет в snapshot: определение и, после итога, `settled` с собравшим или без него. */
 final case class StoredLotSet(
     lotSetId: UUID,
@@ -106,7 +115,8 @@ final case class StoredAuctionConfig(
  * (PER-334), секция завершения лота финала (PER-607) и секция запущенного окна (ADR-047, дополнение 2026-10-12);
  * `PrebiddingDeadlineReached`, `FinalStarted`, `AuctionCancelled`, `AuctionFinished`, `AuctionPublished` и
  * `AuctionHidden` пишутся одним `kind`. Секция `finalTime` добавлена в конец (ADR-040, дополнение 2026-10-19): строка,
- * записанная до неё, читается без ориентировочного времени финала. Секции сета лотов добавлены за ней (ADR-073).
+ * записанная до неё, читается без ориентировочного времени финала. Секции сета лотов добавлены за ней (ADR-073), а за
+ * секцией текста оплаты — секция раскладки ленты (PER-719).
  */
 final case class StoredAuctionEventBody(
     kind: String,
@@ -123,7 +133,8 @@ final case class StoredAuctionEventBody(
     lotSetDefined: Option[StoredLotSetDefined] = None,
     lotSetDeleted: Option[StoredLotSetRef] = None,
     lotSetSettled: Option[StoredLotSetSettled] = None,
-    paymentInstructions: Option[StoredPaymentInstructions] = None
+    paymentInstructions: Option[StoredPaymentInstructions] = None,
+    lotLayout: Option[StoredLotLayout] = None
 )
 
 object StoredAuctionEventBody {
@@ -160,7 +171,8 @@ final case class StoredAuctionSeen(sequence: Long, opId: UUID, event: StoredAuct
  * аукцион. `finalAt` — ориентировочное время финала (ADR-040, дополнение 2026-10-19); добавлен в конец: snapshot без
  * него — аукцион без времени финала. `sets` — сеты лотов по возрастанию идентификатора и только непустым; добавлен в
  * конец (ADR-073): snapshot без него — аукцион без сетов. `paymentInstructions` — текст «как оплатить и получить»;
- * добавлен в конец (PER-322): snapshot без него — аукцион без текста.
+ * добавлен в конец (PER-322): snapshot без него — аукцион без текста. `layout` — порядок и разделы ленты, только
+ * непустым; добавлен в конец (PER-719): snapshot без него — лента в порядке создания.
  */
 final case class StoredAuction(
     sequence: Long,
@@ -178,7 +190,8 @@ final case class StoredAuction(
     hidden: Option[Boolean] = None,
     finalAt: Option[Instant] = None,
     sets: Option[List[StoredLotSet]] = None,
-    paymentInstructions: Option[String] = None
+    paymentInstructions: Option[String] = None,
+    layout: Option[StoredLotLayout] = None
 ) extends JournalSerializable
 
 object AuctionJournal {
@@ -246,7 +259,31 @@ object AuctionJournal {
       sets = Option.when(auction.sets.nonEmpty)(
         auction.sets.toList.sortBy(_._1.value).map((id, set) => storeLotSet(id, set))
       ),
-      paymentInstructions = auction.paymentInstructions.map(_.value)
+      paymentInstructions = auction.paymentInstructions.map(_.value),
+      layout = Option.unless(auction.layout.isEmpty)(storeLayout(auction.layout))
+    )
+  }
+
+  private def storeLayout(layout: LotLayout): StoredLotLayout =
+    StoredLotLayout(
+      lots = layout.lots.map(_.value),
+      sections = layout.sections.map(section =>
+        StoredLotSection(section.id.value, section.name.value, section.lots.map(_.value))
+      )
+    )
+
+  /** Раскладка восстанавливается через ту же проверку формы, что у команды: журнал лот в двух местах не обходит. */
+  private def restoreLayout(stored: StoredLotLayout): LotLayout =
+    LotLayout
+      .of(stored.lots.map(LotId(_)), stored.sections.map(restoreSection))
+      .fold(invalid => corrupted(s"lot layout violates $invalid"), layout => layout)
+
+  private def restoreSection(stored: StoredLotSection): LotSection = {
+    def broken(what: String): Nothing = corrupted(s"lot section ${stored.sectionId} $what")
+    LotSection(
+      LotSectionId(stored.sectionId).getOrElse(broken("out of range")),
+      LotSectionName(stored.name).getOrElse(broken("with a blank name")),
+      stored.lots.map(LotId(_))
     )
   }
 
@@ -341,9 +378,19 @@ object AuctionJournal {
       hidden = hidden,
       finalAt = stored.finalAt,
       sets = restoreSets(stored),
-      paymentInstructions = stored.paymentInstructions.map(PaymentInstructions.of)
+      paymentInstructions = stored.paymentInstructions.map(PaymentInstructions.of),
+      layout = restoreSnapshotLayout(stored)
     )
   }
+
+  /** Раскладка snapshot с инвариантом агрегата: лоты раскладки — лоты реестра (PER-719). */
+  private def restoreSnapshotLayout(stored: StoredAuction): LotLayout =
+    stored.layout.fold(LotLayout.empty) { layout =>
+      val restored = restoreLayout(layout)
+      if (!restored.members.forall(lot => stored.lots.contains(lot.value)))
+        corrupted(s"auction snapshot with a lot layout outside its registry")
+      restored
+    }
 
   /** Сеты snapshot с инвариантами агрегата: лоты сета — лоты реестра, и лот не больше чем в одном сете (ADR-073). */
   private def restoreSets(stored: StoredAuction): Map[LotSetId, LotSet] = {
@@ -415,6 +462,8 @@ object AuctionJournal {
           case LotSetSettlement.NotCollected => None
         }
         StoredAuctionEventBody.of("LotSetSettled").copy(lotSetSettled = Some(StoredLotSetSettled(set.value, collector)))
+      case AuctionEvent.LotLayoutSet(layout) =>
+        StoredAuctionEventBody.of("LotLayoutSet").copy(lotLayout = Some(storeLayout(layout)))
     }
 
   /**
@@ -437,11 +486,13 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionDrafted(MeetupId(drafted.meetupId), drafted.hidden.getOrElse(false))
       case StoredAuctionEventBody(
             "AuctionPublished",
+            None,
             None,
             None,
             None,
@@ -473,6 +524,7 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionHidden
@@ -480,6 +532,7 @@ object AuctionJournal {
             "LotAdded",
             None,
             Some(added),
+            None,
             None,
             None,
             None,
@@ -509,6 +562,7 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.LotRemoved(LotId(removed.lotId))
@@ -527,11 +581,13 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionScheduled(restoreConfig(config))
       case StoredAuctionEventBody(
             "PrebiddingStarted",
+            None,
             None,
             None,
             None,
@@ -563,11 +619,13 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionDiscarded
       case StoredAuctionEventBody(
             "AuctionCancelled",
+            None,
             None,
             None,
             None,
@@ -599,6 +657,7 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.PrebiddingDeadlineReached
@@ -609,6 +668,7 @@ object AuctionJournal {
             None,
             None,
             Some(ended),
+            None,
             None,
             None,
             None,
@@ -635,11 +695,13 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) if lineup.order.nonEmpty && lineup.order.distinct.size == lineup.order.size =>
         AuctionEvent.FinalLineupFrozen(lineup.order.map(LotId(_)))
       case StoredAuctionEventBody(
             "FinalStarted",
+            None,
             None,
             None,
             None,
@@ -671,6 +733,7 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.FinalLotActivated(LotId(activated.lotId))
@@ -689,11 +752,13 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.FinalLotCompleted(LotId(completed.lotId))
       case StoredAuctionEventBody(
             "AuctionFinished",
+            None,
             None,
             None,
             None,
@@ -726,6 +791,7 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) if window.from.isBefore(window.until) && window.lots.nonEmpty =>
         AuctionEvent.StepWindowLaunched(restoreWindow(window))
@@ -745,12 +811,14 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
             None
           ) =>
         AuctionEvent.FinalTimeSet(time.at)
       // Снятие времени: payload у него пуст, как у `AuctionPublished`.
       case StoredAuctionEventBody(
             "FinalTimeCleared",
+            None,
             None,
             None,
             None,
@@ -783,12 +851,14 @@ object AuctionJournal {
             None,
             None,
             None,
-            Some(instructions)
+            Some(instructions),
+            None
           ) =>
         AuctionEvent.PaymentInstructionsSet(PaymentInstructions.of(instructions.text))
       // Снятие текста: payload у него пуст, как у `FinalTimeCleared`.
       case StoredAuctionEventBody(
             "PaymentInstructionsCleared",
+            None,
             None,
             None,
             None,
@@ -820,6 +890,7 @@ object AuctionJournal {
             Some(set),
             None,
             None,
+            None,
             None
           ) if set.lots.distinct.size == set.lots.size =>
         AuctionEvent.LotSetDefined(LotSetId(set.lotSetId), restoreName(set.lotSetId, set.name), set.lots.map(LotId(_)))
@@ -837,6 +908,7 @@ object AuctionJournal {
             None,
             None,
             Some(set),
+            None,
             None,
             None
           ) =>
@@ -856,11 +928,32 @@ object AuctionJournal {
             None,
             None,
             Some(set),
+            None,
             None
           ) =>
         val settlement =
           set.collector.fold(LotSetSettlement.NotCollected)(by => LotSetSettlement.Collected(ParticipantId(by)))
         AuctionEvent.LotSetSettled(LotSetId(set.lotSetId), settlement)
+      // Порядок и разделы ленты (PER-719): раскладка целиком; лот в двух местах и повтор раздела — испорченная строка.
+      case StoredAuctionEventBody(
+            "LotLayoutSet",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(layout)
+          ) =>
+        AuctionEvent.LotLayoutSet(restoreLayout(layout))
       case other => corrupted(s"auction event of kind ${other.kind} with sections that do not match it")
     }
 

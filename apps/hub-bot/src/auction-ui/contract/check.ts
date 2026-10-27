@@ -576,7 +576,7 @@ const PRE_TRADING_AUCTION: ContractAuction = {
   predictions: OPEN_PREDICTION_ROUNDS,
 };
 
-// По цене: стартовая 700; без цены — по `lotId`.
+// В порядке создания — порядке `lotId` (PER-719).
 const PRE_TRADING_ORDER = [
   TIERED_SCHEDULED_LOT,
   PRE_TRADING_WITHDRAWN,
@@ -663,15 +663,45 @@ const feedBackRow = (auctionId: string) => [
   },
 ];
 
-// По цене: стартовая 500, текущая 1200, продажа 3000; без цены — в конце по
-// `lotId`.
+// Администратор лоты не упорядочивал: порядок создания — порядок `lotId`
+// (PER-719), а цена лот не двигает.
 const FEED_ORDER = [
-  SCHEDULED_LOT,
   CONTRACT_LOT,
   SOLD_LOT,
   UNSOLD_LOT,
   WITHDRAWN_LOT,
+  SCHEDULED_LOT,
 ];
+
+// Порядок и разделы администратора (PER-719): раздел из двух лотов, снятый лот
+// первым в общем списке, остальные — за ним в порядке создания.
+const SECTIONED_AUCTION: ContractAuction = {
+  ...AUCTION,
+  summary: {
+    auctionId: CONTRACT_AUCTION_ID,
+    stage: "prebidding",
+    final: true,
+    layout: {
+      lotIds: [WITHDRAWN_LOT.lotId],
+      sections: [
+        {
+          sectionId: 2,
+          name: "Книги",
+          lotIds: [SCHEDULED_LOT.lotId, CONTRACT_LOT.lotId],
+        },
+      ],
+    },
+  },
+};
+
+const sectionCallback = (auctionId: string, sectionId: number) =>
+  encodeAuctionCallback({ kind: "section", auctionId, sectionId, page: 0 });
+
+const feedItemOfLot = (lot: LotView) => ({
+  lotId: lot.lotId,
+  ...(lot.card === undefined ? {} : { title: lot.card.title }),
+  status: lot.status,
+});
 
 const FEED_BODY: AuctionScreenBody = {
   blocks: [
@@ -5603,6 +5633,77 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [feedBackRow(EMPTY_AUCTION_ID)],
+    },
+  },
+  // Разделы администратора (PER-719): кнопками над лотами, под ними общий
+  // список — лот вне разделов, а за ним неупорядоченные в порядке создания.
+  {
+    intent: "feed: sections",
+    callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+    auction: SECTIONED_AUCTION,
+    auctionCalls: feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: CONTRACT_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: [WITHDRAWN_LOT, SOLD_LOT, UNSOLD_LOT].map(feedItemOfLot),
+          sections: [{ sectionId: 2, name: "Книги", lotCount: 2 }],
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "feed.open-section",
+            sectionId: 2,
+            callbackData: sectionCallback(CONTRACT_AUCTION_ID, 2),
+          },
+        ],
+        ...[WITHDRAWN_LOT, SOLD_LOT, UNSOLD_LOT].map((lot) => [
+          {
+            action: "feed.open-lot" as const,
+            lotId: lot.lotId,
+            callbackData: lotCallback(lot.lotId, 0),
+          },
+        ]),
+        feedBackRow(CONTRACT_AUCTION_ID),
+      ],
+    },
+  },
+  // Раздел — свои лоты в порядке администратора и возврат к разделам.
+  {
+    intent: "section",
+    callbackData: sectionCallback(CONTRACT_AUCTION_ID, 2),
+    auction: SECTIONED_AUCTION,
+    auctionCalls: feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: CONTRACT_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: [SCHEDULED_LOT, CONTRACT_LOT].map(feedItemOfLot),
+          section: { sectionId: 2, name: "Книги" },
+        },
+      ],
+      keyboard: [
+        ...[SCHEDULED_LOT, CONTRACT_LOT].map((lot) => [
+          {
+            action: "feed.open-lot" as const,
+            lotId: lot.lotId,
+            callbackData: lotCallback(lot.lotId, 0),
+          },
+        ]),
+        [
+          {
+            action: "feed.back" as const,
+            callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+          },
+        ],
+      ],
     },
   },
   // Ни один лот не торговался: сводка не о лидерстве, а о том, что торги не

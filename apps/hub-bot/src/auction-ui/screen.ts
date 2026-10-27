@@ -81,6 +81,13 @@ export type HistoryItem =
       leaderName?: string;
     };
 
+// Раздел в ленте: название и число лотов для подписи кнопки.
+export type FeedSectionItem = {
+  sectionId: number;
+  name: string;
+  lotCount: number;
+};
+
 export type AuctionBlock =
   | {
       // Корень аукциона (PER-605): стадия и сроки, вход в лоты и розыгрыш.
@@ -106,9 +113,16 @@ export type AuctionBlock =
       beforeTrading?: true;
       // Идёт живой финал (PER-639): лот, который ведущий торгует сейчас, — нет
       // его между лотами. Кнопки тогда стоят в порядке зала: активный лот,
-      // оставшиеся лоты состава по порядку выхода, затем остальные по цене.
+      // оставшиеся лоты состава по порядку выхода, затем остальные по цене:
+      // раскладку администратора (PER-719) финал не читает.
       // Нет поля — финал не идёт или стадию прочитать не удалось.
       final?: { active?: FeedItem };
+      // Разделы ленты (PER-719) в порядке администратора: кнопки над лотами,
+      // а лоты блока — общий список вне разделов. Нет — разделов нет, это
+      // экран раздела или идёт финал.
+      sections?: readonly FeedSectionItem[];
+      // Экран раздела: лоты блока — лоты раздела. Нет — это лента.
+      section?: { sectionId: number; name: string };
     }
   | {
       kind: "lot";
@@ -530,6 +544,8 @@ export type InvoiceItem = WinnerInvoiceView & { title?: string };
 // текстом у кнопки нет; лот кнопки ленты рендерер находит в блоке по `lotId`.
 export type AuctionButton =
   | { action: "feed.open-lot"; lotId: string; callbackData: string }
+  // Раздел ленты (PER-719): подпись — название раздела из блока.
+  | { action: "feed.open-section"; sectionId: number; callbackData: string }
   | { action: "favorites.open-lot"; lotId: string; callbackData: string }
   | { action: "prediction.select-lot"; lotId: string; callbackData: string }
   // Лот сета на его экране: открывает карточку лота (ADR-073, п. 7).

@@ -206,6 +206,8 @@ import {
   consoleFinalTimeData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
+  consoleLayoutData,
+  consoleLayoutListData,
   consolePaymentTermData,
   consolePaymentTextData,
   consoleRaffleData,
@@ -214,6 +216,7 @@ import {
   consoleRaffleWinnerAskData,
   consoleRaffleWinnerData,
   consoleRaffleWinnerPickData,
+  consoleSectionAskData,
   consoleSetAskData,
   consoleSetsData,
   consoleViewData,
@@ -402,6 +405,16 @@ import {
   toLot,
   toLots,
 } from "./screens/lot-form.js";
+import {
+  lotLayoutListScreen,
+  lotLayoutLotScreen,
+  lotLayoutMovedToast,
+  lotLayoutScreen,
+  lotSectionAskErrorText,
+  lotSectionDeleteConfirmScreen,
+  lotSectionPrompt,
+  lotSectionRenamePrompt,
+} from "./screens/lot-layout.js";
 import {
   lotSetAskErrorText,
   lotSetDeleteConfirmScreen,
@@ -863,6 +876,16 @@ type PendingConsoleSet = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о названии раздела ленты (PER-719): нового либо, с `sectionId`,
+// переименуемого. Шаг лежит в кнопке вопроса, и ответ после рестарта
+// принимается так же.
+type PendingConsoleSection = {
+  kind: "console-section";
+  auctionId: string;
+  sectionId?: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о следующей цене лота финала (PER-337). Шаг — аукцион и номер лота в
 // составе — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingFinalAsk = {
@@ -903,6 +926,7 @@ type HubPendingInput =
   | PendingConsoleWindow
   | PendingConsoleLaunch
   | PendingConsoleSet
+  | PendingConsoleSection
   | PendingFinalAsk
   | PendingFloorSearch;
 
@@ -953,6 +977,10 @@ const consoleQuestionIntents = {
   "console-set": {
     intent: "add-lot-set",
     foreign: "foreign lot set answer ignored",
+  },
+  "console-section": {
+    intent: "name-lot-section",
+    foreign: "foreign lot section answer ignored",
   },
 } as const;
 
@@ -1709,7 +1737,20 @@ async function handleMessage(
               intent: "add-lot-set",
               lotSetId: answerOpId(ctx.message, "console-set-id"),
             }
-          : { ...answer, intent: consoleQuestionIntents[pending.kind].intent },
+          : pending.kind === "console-section"
+            ? // Раздел ленты (PER-719): номер переименуемого раздела едет в
+              // шаге вопроса.
+              {
+                ...answer,
+                intent: "name-lot-section",
+                ...(pending.sectionId === undefined
+                  ? {}
+                  : { sectionId: pending.sectionId }),
+              }
+            : {
+                ...answer,
+                intent: consoleQuestionIntents[pending.kind].intent,
+              },
       );
       // Текст оплаты (PER-322) отвечает сводкой счетов, номер победителя
       // (PER-727) — подтверждением итога, а новый приз (PER-737) —
@@ -1736,7 +1777,8 @@ async function handleMessage(
         result.kind !== "raffle-prize-change-ask" &&
         result.kind !== "step-window-ask" &&
         result.kind !== "step-window-launch-ask" &&
-        result.kind !== "lot-set-ask"
+        result.kind !== "lot-set-ask" &&
+        result.kind !== "lot-section-ask"
       ) {
         await answered(result);
       }
@@ -2189,6 +2231,7 @@ async function handleMessage(
         pending.kind === "console-window" ||
         pending.kind === "console-launch" ||
         pending.kind === "console-set" ||
+        pending.kind === "console-section" ||
         pending.kind === "final-ask" ||
         pending.kind === "floor-search") &&
       ctx.message?.text === undefined
@@ -2212,6 +2255,7 @@ async function handleMessage(
                 pending.kind === "console-window" ||
                 pending.kind === "console-launch" ||
                 pending.kind === "console-set" ||
+                pending.kind === "console-section" ||
                 pending.kind === "final-ask" ||
                 pending.kind === "floor-search"
               ? "manage_auction"
@@ -2658,7 +2702,16 @@ async function handleCallback(
       action.kind === "console-set" ||
       action.kind === "console-set-lot" ||
       action.kind === "console-set-delete" ||
-      action.kind === "console-set-delete-confirm"
+      action.kind === "console-set-delete-confirm" ||
+      action.kind === "console-layout" ||
+      action.kind === "console-layout-list" ||
+      action.kind === "console-layout-lot" ||
+      action.kind === "console-layout-lot-move" ||
+      action.kind === "console-layout-lot-place" ||
+      action.kind === "console-section-ask" ||
+      action.kind === "console-section-move" ||
+      action.kind === "console-section-delete" ||
+      action.kind === "console-section-delete-confirm"
     ) {
       outcome = canRunAuctions(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
@@ -7880,7 +7933,16 @@ async function handleConsoleCallback(
         | "console-set"
         | "console-set-lot"
         | "console-set-delete"
-        | "console-set-delete-confirm";
+        | "console-set-delete-confirm"
+        | "console-layout"
+        | "console-layout-list"
+        | "console-layout-lot"
+        | "console-layout-lot-move"
+        | "console-layout-lot-place"
+        | "console-section-ask"
+        | "console-section-move"
+        | "console-section-delete"
+        | "console-section-delete-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -8219,6 +8281,90 @@ async function handleConsoleCallback(
           ...call,
           intent: "delete-lot-set",
           set: action.set,
+          opId: createUuidV7(),
+        }),
+      );
+    // Порядок и разделы ленты (PER-719). Ключ команды рождается на нажатие:
+    // кнопка несёт лот и направление либо место назначения, и в 64 байта ключ
+    // не помещается. Повтор нажатия — новая правка от прочитанной раскладки.
+    case "console-layout":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-layout",
+        }),
+      );
+    case "console-layout-list":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-layout-list",
+          place: action.place,
+          page: action.page,
+        }),
+      );
+    case "console-layout-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-layout-lot",
+          lotId: tokenToUuid(action.lot),
+        }),
+      );
+    case "console-layout-lot-move":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "move-lot-layout-lot",
+          lotId: tokenToUuid(action.lot),
+          direction: action.direction,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-layout-lot-place":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "place-lot-layout-lot",
+          lotId: tokenToUuid(action.lot),
+          place: action.place,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-section-ask":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-lot-section",
+          ...(action.section === undefined
+            ? {}
+            : { sectionId: action.section }),
+        }),
+      );
+    case "console-section-move":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "move-lot-section",
+          sectionId: action.section,
+          direction: action.direction,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-section-delete":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-lot-section-delete",
+          sectionId: action.section,
+        }),
+      );
+    case "console-section-delete-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "delete-lot-section",
+          sectionId: action.section,
           opId: createUuidV7(),
         }),
       );
@@ -8589,6 +8735,57 @@ async function renderConsoleResult(
         }),
       );
       return handled("lot set delete confirmation sent");
+    case "lot-layout":
+      await showScreen(
+        ctx,
+        lotLayoutScreen({ console: result.console, note: result.note }),
+      );
+      return handled(
+        result.note === undefined
+          ? "lot layout sent"
+          : `lot layout sent: ${result.note.kind}`,
+      );
+    case "lot-layout-list":
+      await showScreen(
+        ctx,
+        lotLayoutListScreen({
+          console: result.console,
+          place: result.place,
+          at: result.at,
+        }),
+      );
+      return handled("lot layout list sent");
+    case "lot-layout-lot":
+      // Принятый перенос подтверждает себя всплывающим текстом, как сет.
+      if (result.moved === true) {
+        await ctx.waiting?.answer(lotLayoutMovedToast);
+      }
+      await showScreen(
+        ctx,
+        lotLayoutLotScreen({ console: result.console, lotId: result.lotId }),
+      );
+      return handled("lot layout lot sent");
+    case "lot-section-delete-confirm":
+      await showScreen(
+        ctx,
+        lotSectionDeleteConfirmScreen({
+          console: result.console,
+          sectionId: result.sectionId,
+        }),
+      );
+      return handled("lot section delete confirmation sent");
+    case "lot-section-ask":
+      await askConsoleSection(ctx, context.questions, {
+        auctionId: result.auctionId,
+        sectionId: result.sectionId,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "lot section name requested"
+          : "lot section name asked again",
+      );
     case "lot-set-ask":
       await askConsoleSet(ctx, context.questions, {
         auctionId: result.auctionId,
@@ -8939,6 +9136,42 @@ function askConsoleSet(
     );
   }
   return askQuestion(ctx, questions, pending, lotSetPrompt, ask.replaces);
+}
+
+// Вопрос о названии раздела ленты (PER-719): нового или переименуемого.
+function askConsoleSection(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    sectionId?: number | undefined;
+    error?: "name-empty" | "name-taken" | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-section",
+    auctionId: ask.auctionId,
+    ...(ask.sectionId === undefined ? {} : { sectionId: ask.sectionId }),
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      lotSectionAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    ask.sectionId === undefined ? lotSectionPrompt : lotSectionRenamePrompt,
+    ask.replaces,
+  );
 }
 
 // Вопрос о запуске окна по ходу торгов (PER-615): отказ приходит текстом
@@ -11274,6 +11507,14 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-set",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-section":
+      return {
+        kind: "console-section",
+        auction: uuidToToken(pending.auctionId),
+        ...(pending.sectionId === undefined
+          ? {}
+          : { section: pending.sectionId }),
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -11526,6 +11767,14 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-section":
+      return {
+        kind: "console-section",
+        auctionId: tokenToUuid(step.auction),
+        ...(step.section === undefined ? {} : { sectionId: step.section }),
+        telegramUserId,
+        expiresAt,
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -11641,6 +11890,16 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-set":
       // Вопрос о названии сета задан с «Сетов».
       return { kind: "console-sets", auction: step.auction };
+    case "console-section":
+      // Новый раздел заводят с «Порядка», переименовывают — со списка раздела.
+      return step.section === undefined
+        ? { kind: "console-layout", auction: step.auction }
+        : {
+            kind: "console-layout-list",
+            auction: step.auction,
+            place: step.section,
+            page: 0,
+          };
     case "console-payment-text":
       // Вопрос о тексте оплаты задан со «Счетов».
       return { kind: "console-invoices", auction: step.auction, page: 0 };
@@ -11821,6 +12080,8 @@ function reopenData(step: QuestionStep): string {
       return consoleWindowLaunchData(step.auction);
     case "console-set":
       return consoleSetAskData(step.auction);
+    case "console-section":
+      return consoleSectionAskData(step.auction, step.section);
     case "final-ask":
       return consoleAskData(step.auction, step.position);
     case "floor-search":
@@ -11894,6 +12155,13 @@ function answerParent(step: QuestionStep): Parent {
       };
     case "console-set":
       return { name: "Сеты", data: consoleSetsData(step.auction) };
+    case "console-section":
+      return step.section === undefined
+        ? { name: "Порядок", data: consoleLayoutData(step.auction) }
+        : {
+            name: "Список",
+            data: consoleLayoutListData(step.auction, step.section),
+          };
     case "console-payment-text":
       return {
         name: invoicesLabel,
@@ -12218,6 +12486,15 @@ function callbackUseCase(
     | "console-set-lot"
     | "console-set-delete"
     | "console-set-delete-confirm"
+    | "console-layout"
+    | "console-layout-list"
+    | "console-layout-lot"
+    | "console-layout-lot-move"
+    | "console-layout-lot-place"
+    | "console-section-ask"
+    | "console-section-move"
+    | "console-section-delete"
+    | "console-section-delete-confirm"
     | "manage-publish"
     | "manage-confirm-publish"
     | "manage-unpublish"
@@ -12427,6 +12704,15 @@ function callbackUseCase(
     case "console-set-lot":
     case "console-set-delete":
     case "console-set-delete-confirm":
+    case "console-layout":
+    case "console-layout-list":
+    case "console-layout-lot":
+    case "console-layout-lot-move":
+    case "console-layout-lot-place":
+    case "console-section-ask":
+    case "console-section-move":
+    case "console-section-delete":
+    case "console-section-delete-confirm":
       return "manage_auction";
     case "home":
     case "apply":

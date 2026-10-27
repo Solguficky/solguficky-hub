@@ -88,6 +88,7 @@ service AuctionService {
   rpc ListAuctionInvoices(ListAuctionInvoicesRequest) returns (ListAuctionInvoicesResponse);
   rpc SetPaymentInstructions(SetPaymentInstructionsRequest) returns (SetPaymentInstructionsResponse);
   rpc GetAuctionDayChronicle(GetAuctionDayChronicleRequest) returns (GetAuctionDayChronicleResponse);
+  rpc SetLotLayout(SetLotLayoutRequest) returns (SetLotLayoutResponse);
 }
 
 message Viewer {
@@ -1501,6 +1502,87 @@ message FinalTimeRefusal {
 // The live final has started: the announcement is over.
 message FinalAlreadyStarted {}
 
+// The order of the lots in the feed and its sections (PER-719). A lot is in at
+// most one place: in one section or in the lots outside every section.
+message LotLayout {
+  // Canonical lowercase UUIDv7 with hyphens each: the lots outside every
+  // section, in the order of the administrator. The feed shows them after the
+  // sections, as one more list.
+  repeated string lot_ids = 1;
+
+  // The sections in the order of the administrator. Empty is a real value: the
+  // feed is one flat list.
+  repeated LotSection sections = 2;
+}
+
+// A section of the feed: its own screen with its own lots.
+message LotSection {
+  // Chosen by the caller, positive and unique within the layout: the same id
+  // names the same section from one SetLotLayout to the next, so a button may
+  // carry it.
+  uint32 section_id = 1;
+
+  // The name of the section as the administrator typed it. Never empty.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots of the section in
+  // the order of the administrator. Empty is a real value: a section not yet
+  // filled.
+  repeated string lot_ids = 3;
+}
+
+// The order and sections of the feed, replaced as a whole (PER-719): the
+// request carries the complete layout, and the layout it names is the one the
+// feed shows from then on. A display, not a trading condition: it is accepted
+// until the live final starts.
+message SetLotLayoutRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // The complete layout. Unset is the empty layout: no section, no arranged
+  // lot, the order of creation. A lot named twice, a section_id of 0, a
+  // section_id named twice and a name that is empty or only spaces are
+  // INVALID_ARGUMENT: the caller checks the name it asks for.
+  LotLayout layout = 4;
+}
+
+message SetLotLayoutResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotLayoutAccepted accepted = 1;
+    SetLotLayoutRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionSnapshot.lot_layout tells the layout.
+message LotLayoutAccepted {}
+
+message SetLotLayoutRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    FinalAlreadyStarted final_already_started = 4;
+    AuctionAlreadyFinished auction_already_finished = 5;
+    AuctionAlreadyCancelled auction_already_cancelled = 6;
+    LotLayoutLotNotInAuction lot_not_in_auction = 7;
+  }
+}
+
+// A lot of the request is not in the registry of the auction.
+message LotLayoutLotNotInAuction {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot in the order of
+  // the request, sections first.
+  string lot_id = 1;
+}
+
 // The auction was cancelled: its final will not start.
 message AuctionAlreadyCancelled {}
 
@@ -2360,6 +2442,15 @@ message AuctionSnapshot {
   // nothing (ADR-040, addition 2026-10-19). Unset when the administrator has
   // not set it.
   optional string final_at = 6;
+
+  // How the feed shows the lots of the registry, as the administrator arranged
+  // them with SetLotLayout (PER-719). It is a display, not a trading condition:
+  // it opens and closes nothing, and the live final shows the order of its
+  // lineup instead. Unset when the administrator has not arranged the lots:
+  // the feed then shows them in the order of creation, which is the order of
+  // their UUIDv7 ids. Every lot it names is in lot_ids; a lot of lot_ids it
+  // does not name follows the arranged ones in the order of creation.
+  LotLayout lot_layout = 7;
 
   // Where the auction is. Exactly one is set.
   oneof status {

@@ -14,6 +14,7 @@ import {
   windowPrint,
 } from "../../application/auction-console.js";
 import { maxLotRubles } from "../../application/lot-form.js";
+import { layoutEditable } from "../../application/lot-layout.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
 import { prizeChangeable } from "../../application/raffle-prize-change.js";
 import type {
@@ -54,6 +55,7 @@ import {
   consoleFinalTimeData,
   consoleFinalTimeRemoveData,
   consoleInvoicesData,
+  consoleLayoutData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -941,9 +943,14 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд
   // есть: в онлайн-торгах с окнами и восемью лотами отдельный ряд вывел бы
   // пульт за двенадцать. Без окон — сразу под сортировкой.
+  // «Порядок» ленты (PER-719) встаёт в конец ряда «Сводки дня»: этот ряд есть
+  // в каждом состоянии до финала, а пульт онлайн-торгов стоит в потолке
+  // рядов, и свой ряд вывел бы его за тринадцать.
+  const layout = layoutEditable(console.status);
   if (!windowsShown) {
     nextRow(keyboard).text("Сводка дня", consoleDaySummaryData(auction));
     withCancel(keyboard, console);
+    if (layout) keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (scheduled) {
     nextRow(keyboard).text(
@@ -952,7 +959,8 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     );
     nextRow(keyboard)
       .text("Счастливые часы", consoleWindowsData(auction))
-      .text("Сводка дня", consoleDaySummaryData(auction));
+      .text("Сводка дня", consoleDaySummaryData(auction))
+      .text(layoutLabel, consoleLayoutData(auction));
     // Срок оплаты счёта (PER-722) — парой с «Розыгрышем»: свой ряд вывел бы
     // пульт с призом за потолок рядов.
     nextRow(keyboard)
@@ -984,6 +992,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       .text("Счастливые часы", consoleWindowsData(auction))
       .text("Сводка дня", consoleDaySummaryData(auction));
     withCancel(keyboard, console);
+    keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (editable) {
     nextRow(keyboard).text(
@@ -1274,6 +1283,10 @@ function withCancel(keyboard: InlineKeyboard, console: AuctionConsoleView) {
 }
 
 const cancelLabel = "Отменить аукцион";
+
+// Вход в «Порядок и разделы» ленты (PER-719): короткая подпись, потому что
+// кнопка делит ряд со «Сводкой дня».
+const layoutLabel = "Порядок";
 
 // Отменить аукцион можно с открытия онлайн-недели до его конца (ADR-047,
 // дополнение 2026-10-12); до неё действует удаление.

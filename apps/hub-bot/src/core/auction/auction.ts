@@ -3,6 +3,7 @@ import type {
   AuctionStageView,
   AuctionSummaryView,
   FinalLineupView,
+  LotLayoutView,
 } from "../../auction-ui/index.js";
 
 // Снимок аукциона для его корня (PER-605) в словаре пакета. Перевод общий у
@@ -26,7 +27,61 @@ export function auctionSummaryViewOf(
     final: (snapshot.config?.finalBlocks ?? 0) > 0,
     ...withLineup(snapshot.status),
     ...(snapshot.hidden ? { hidden: true as const } : {}),
+    ...withLayout(snapshot.lotLayout),
   };
+}
+
+// Раскладка в сводке — подсказка ленте (PER-719), как состав финала: кривая
+// раскладка сводку не роняет, и лента идёт в порядке создания.
+function withLayout(layout: AuctionSnapshot["lotLayout"]) {
+  let view: LotLayoutView | undefined;
+  try {
+    view = lotLayoutOf(layout);
+  } catch {
+    view = undefined;
+  }
+  return view === undefined ? {} : { layout: view };
+}
+
+/**
+ * Порядок и разделы ленты из снимка (PER-719) или `undefined`, если
+ * администратор лоты не упорядочивал. Неканонический идентификатор, номер
+ * раздела ноль, повтор номера или лота и пустое название — дефект соседа:
+ * перевод бросает, и пульт показывает «недоступно», а не выдуманный порядок.
+ */
+export function lotLayoutOf(
+  layout: AuctionSnapshot["lotLayout"],
+): LotLayoutView | undefined {
+  if (layout === undefined) return undefined;
+  if (layout.lotIds.length === 0 && layout.sections.length === 0) {
+    return undefined;
+  }
+  const seenLots = new Set<string>();
+  const seenSections = new Set<number>();
+  const lotsOf = (ids: readonly string[]): string[] =>
+    ids.map((id) => {
+      if (!CANONICAL_UUID.test(id)) {
+        throw new Error("lot layout names a lot id that is not canonical");
+      }
+      if (seenLots.has(id)) throw new Error("lot layout names a lot twice");
+      seenLots.add(id);
+      return id;
+    });
+  const sections = layout.sections.map((section) => {
+    if (section.sectionId === 0 || seenSections.has(section.sectionId)) {
+      throw new Error("lot layout section id is zero or repeated");
+    }
+    seenSections.add(section.sectionId);
+    if (section.name.trim() === "") {
+      throw new Error("lot layout section name is blank");
+    }
+    return {
+      sectionId: section.sectionId,
+      name: section.name,
+      lotIds: lotsOf(section.lotIds),
+    };
+  });
+  return { lotIds: lotsOf(layout.lotIds), sections };
 }
 
 // Состав в сводке — подсказка ленте (PER-639), а сводку читают ещё список

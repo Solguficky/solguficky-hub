@@ -107,6 +107,7 @@ import {
   type LotAdministration,
   type LotCardResult,
   type LotImageResult,
+  type LotLayoutResult,
   type LotParticipant,
   type LotPhotoResult,
   type LotStatisticsReadResult,
@@ -176,6 +177,7 @@ type AuctionRpc = Pick<
   | "setFinalTime"
   | "saveLotSet"
   | "deleteLotSet"
+  | "setLotLayout"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -799,6 +801,30 @@ export function createAuctionAdapter(
           options(meta),
         );
         return saveLotSetResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Порядок и разделы ленты (PER-719): раскладка уходит целиком.
+    async setLotLayout(person, command, meta) {
+      try {
+        const response = await rpc.setLotLayout(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            opId: command.opId,
+            layout: {
+              lotIds: [...command.layout.lotIds],
+              sections: command.layout.sections.map((section) => ({
+                sectionId: section.sectionId,
+                name: section.name,
+                lotIds: [...section.lotIds],
+              })),
+            },
+          },
+          options(meta),
+        );
+        return lotLayoutResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -2105,6 +2131,47 @@ function cancelAuctionResult(
       }
     case undefined:
       return defect("cancel auction response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Раскладка ленты (PER-719): принятие без полей, отказ лота называет лот.
+function lotLayoutResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setLotLayout"]>>["outcome"],
+): LotLayoutResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "finalAlreadyStarted":
+          return { kind: "final-already-started" };
+        case "auctionAlreadyFinished":
+          return { kind: "auction-already-finished" };
+        case "auctionAlreadyCancelled":
+          return { kind: "auction-already-cancelled" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction", lotId: reason.value.lotId };
+        case undefined:
+          return defect("lot layout refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("lot layout response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

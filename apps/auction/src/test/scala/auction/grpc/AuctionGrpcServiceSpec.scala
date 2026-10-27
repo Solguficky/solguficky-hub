@@ -15,6 +15,12 @@ import auction.invoice.InvoiceView
 import auction.invoice.InvoiceViews
 import auction.aggregate.AdvanceLotAsk
 import auction.aggregate.AdvanceLotAskRejected
+import auction.aggregate.LotLayout
+import auction.aggregate.LotLayoutRejected
+import auction.aggregate.LotSection
+import auction.aggregate.LotSectionId
+import auction.aggregate.LotSectionName
+import auction.aggregate.SetLotLayout
 import auction.aggregate.Auction
 import auction.aggregate.AuctionEnvelope
 import auction.aggregate.AuctionEvent
@@ -383,6 +389,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def setFinalTime(auctionId: AuctionId, command: SetFinalTime, initiator: Initiator) =
       fail("the auction was reached")
     def setPaymentInstructions(auctionId: AuctionId, command: SetPaymentInstructions, initiator: Initiator) =
+      fail("the auction was reached")
+    def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) =
       fail("the auction was reached")
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) =
       fail("the auction was reached")
@@ -1290,6 +1298,70 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .getRefused
         .reason
         .isNotMeetupAdministrator shouldBe true
+    }
+
+    // PER-719: порядок и разделы ленты — команда администратора; раскладка едет целиком.
+    "sets the lot layout by the administrator, refuses a broken form as an argument and the rest as values" in {
+      val seen = scala.collection.mutable.ListBuffer.empty[SetLotLayout]
+      def gateway(answer: Either[LotLayoutRejected, AuctionAnswer]) = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(meetup, registryOpen = true))
+        override def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) = {
+          seen += command
+          Future.successful(answer)
+        }
+      }
+      def withAnswer(answer: Either[LotLayoutRejected, AuctionAnswer]) =
+        service(Unreachable, auctions = AuctionCommands(gateway(answer), Unreachable, granted))
+      val books = wire.LotSection(sectionId = 1, name = "Книги", lotIds = Seq(lot))
+      def request(layout: wire.LotLayout) = wire.SetLotLayoutRequest(Some(viewer), id.toString, op, Some(layout))
+
+      withAnswer(Right(AuctionAnswer.Unchanged))
+        .setLotLayout(request(wire.LotLayout(sections = Seq(books))))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      seen.toList.map(_.layout.sections.map(section => (section.id.value, section.name.value, section.lots))) shouldBe
+        List(List((1, "Книги", List(LotId(lotId)))))
+      // Без раскладки — пустая: лента в порядке создания.
+      withAnswer(Right(AuctionAnswer.Unchanged))
+        .setLotLayout(wire.SetLotLayoutRequest(Some(viewer), id.toString, op, None))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      seen.last.layout shouldBe LotLayout.empty
+
+      val untouched = withAnswer(Right(AuctionAnswer.Unchanged))
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(lotIds = Seq(lot), sections = Seq(books))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(sections = Seq(books, books.withLotIds(Nil)))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(sections = Seq(books.withSectionId(0)))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOf(untouched.setLotLayout(request(wire.LotLayout(sections = Seq(books.withName(" ")))))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      seen.size shouldBe 2
+
+      withAnswer(Left(LotLayoutRejected.FinalAlreadyStarted))
+        .setLotLayout(request(wire.LotLayout(sections = Seq(books))))
+        .futureValue
+        .getRefused
+        .reason
+        .isFinalAlreadyStarted shouldBe true
+      withAnswer(Left(LotLayoutRejected.LotNotInAuction(LotId(lotId))))
+        .setLotLayout(request(wire.LotLayout(sections = Seq(books))))
+        .futureValue
+        .getRefused
+        .getLotNotInAuction
+        .lotId shouldBe lot
+    }
+
+    "shows the lot layout in the snapshot of the auction and leaves an empty one unset" in {
+      val books = LotSection(LotSectionId(1).get, LotSectionName("Книги").get, List(LotId(lotId)))
+      ResponseMapping.lotLayout(LotLayout.empty) shouldBe None
+      ResponseMapping.lotLayout(LotLayout.of(Nil, List(books)).toOption.get) shouldBe Some(
+        wire.LotLayout(sections = Seq(wire.LotSection(1, "Книги", Seq(lot))))
+      )
     }
 
     // PER-322: текст «как оплатить и получить» — команда администратора без ворот по сходке.

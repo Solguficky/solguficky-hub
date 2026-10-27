@@ -285,6 +285,15 @@ export const screenCatalog = {
     parent: "auction-root",
     backName: "Лоты",
   },
+  // Раздел ленты (PER-719): лоты раздела в порядке администратора, возврат —
+  // к списку разделов.
+  "lot-section": {
+    class: "screen",
+    nav: "tree",
+    title: "Лоты",
+    parent: "lots",
+    backName: "Лоты",
+  },
   // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
   // корня аукциона и возврат туда же (PER-644).
   "prediction-results": {
@@ -551,6 +560,37 @@ export const screenCatalog = {
     nav: "tree",
     title: "Сет",
     parent: "lot-sets",
+  },
+  // Порядок и разделы ленты (PER-719): разделы и общий список, вход — с
+  // пульта, пока финал впереди.
+  "lot-layout": {
+    class: "screen",
+    nav: "tree",
+    title: "Порядок и разделы",
+    parent: "auction-console",
+    backName: "Порядок",
+  },
+  // Список раздела или общий список: лоты в порядке ленты кнопками. Заголовок
+  // — «Раздел «Название»» или «Без раздела», линтер сверяет начало.
+  "lot-layout-list": {
+    class: "screen",
+    nav: "tree",
+    parent: "lot-layout",
+    backName: "Список",
+  },
+  // Лот в раскладке: выше, ниже и перенос в другой раздел.
+  "lot-layout-lot": {
+    class: "screen",
+    nav: "tree",
+    title: "Лот",
+    parent: "lot-layout-list",
+  },
+  // Удаление раздела: лоты уходят в общий список, раздел заводится заново,
+  // поэтому «Да» без красного.
+  "lot-layout-section-delete-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Удалить раздел?",
   },
   // Удаление сета: сет задаётся заново, поэтому «Да» без красного.
   "lot-set-delete-confirm": {

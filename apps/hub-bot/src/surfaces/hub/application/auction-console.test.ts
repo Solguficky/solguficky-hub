@@ -160,6 +160,9 @@ function fake(answers: {
     deleteLotSet: async () => {
       throw new Error("not used");
     },
+    setLotLayout: async () => {
+      throw new Error("not used");
+    },
     setPaymentInstructions: async () => {
       throw new Error("not used");
     },
