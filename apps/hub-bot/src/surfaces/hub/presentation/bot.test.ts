@@ -944,6 +944,7 @@ describe("presentation adapter", () => {
         "https://t.me/c/1234567890/4321/77",
       ],
       ["https://t.me/solguficky/77?single", "https://t.me/solguficky/77"],
+      ["t.me/solguficky/77", "https://t.me/solguficky/77"],
     ])("attaches %s and opens it from the materials", async (typed, url) => {
       const { bot, calls, execute } = materialHarness();
       await bot.init();
@@ -1013,10 +1014,14 @@ describe("presentation adapter", () => {
     });
 
     it.each([
-      "https://example.com/solguficky/77",
-      "https://t.me/solguficky",
-      "посмотри https://t.me/solguficky/77",
-    ])("refuses %s without a material", async (typed) => {
+      ["https://example.com/solguficky/77", "Текст сам по себе не материал"],
+      ["https://t.me/solguficky", "Текст сам по себе не материал"],
+      // Фраза со ссылкой — не текст без ссылки (PER-793).
+      [
+        "посмотри t.me/solguficky/77",
+        "Ссылку на сообщение пришли отдельно, без другого текста",
+      ],
+    ])("refuses %s without a material", async (typed, refusal) => {
       const { bot, calls, execute, records } = materialHarness();
       await bot.init();
 
@@ -1032,9 +1037,10 @@ describe("presentation adapter", () => {
         }),
       );
 
-      expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
-        "Текст сам по себе не материал",
-      );
+      const rejection = JSON.stringify(sentMessages(calls).at(-1)?.payload);
+      expect(rejection).toContain(refusal);
+      // Пересылку из чата бот не принимает и не предлагает (PER-793).
+      expect(rejection).not.toContain("из канала или чата");
       expect(
         execute.mock.calls.some(
           ([request]) => request.intent === "attach-material",

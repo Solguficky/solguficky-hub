@@ -1,5 +1,5 @@
 import type { Update } from "grammy/types";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createHarness,
   type HarnessOptions,
@@ -26,6 +26,7 @@ import {
 } from "../../../core/bot/edit-limiter.js";
 import { createMediaChat } from "../../../core/media-chat.js";
 import { pictogram } from "../../../core/pictograms.js";
+import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type {
   AnnouncementAudience,
   AnnouncementCommand,
@@ -77,6 +78,7 @@ import {
   announcementAudienceScreen,
   announcementButtonScreen,
 } from "./screens/auction-announcement.js";
+import { actionBudgetMs } from "./waiting.js";
 
 // Пульт аукциона администратора в боте хаба (PER-320): вход из ленты, сроки
 // недели и финал, открытие недели через подтверждение, отметка лотов для
@@ -354,6 +356,9 @@ function fakeAuction(
     // принятия команды.
     promoVideo?: number;
     promoVideoRefusal?: PromoVideoResult;
+    // Бюджет действия, как у настоящего клиента: `SetPromoVideo` после
+    // дедлайна не уходит в Auction и отказывает таймаутом (PER-793).
+    promoVideoBudget?: true;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -1161,7 +1166,18 @@ function fakeAuction(
     async setPromoVideo(
       _person: unknown,
       command: { auctionId: string; opId: string; postId?: number },
+      meta?: RpcMetadata,
     ) {
+      if (
+        options.promoVideoBudget === true &&
+        meta?.deadlineAt !== undefined &&
+        meta.deadlineAt <= Date.now()
+      ) {
+        return {
+          kind: "timeout" as const,
+          cause: new Error("the action budget is exhausted"),
+        };
+      }
       commands.push({ method: "setPromoVideo", args: command });
       if (options.promoVideoRefusal !== undefined) {
         return options.promoVideoRefusal;
@@ -8527,6 +8543,93 @@ describe("promo video", () => {
     expect(plain(last(calls))).toMatch(/^Видео убрано\n/);
     await step(press(rootData));
     expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+  });
+
+  // Повтор доставки того же ответа (PER-793): ключ выводится из сообщения, а
+  // пост — из памяти процесса, поэтому второго поста нет, а Auction получает
+  // ту же команду с тем же `op_id`.
+  it("repeats the same command without a second post when the answer is delivered again", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, calls, {});
+    await hub.init();
+    await hub.handleUpdate(press(`v1:ac:vq:${auctionToken}`));
+    const reply = answer(calls, video);
+
+    await hub.handleUpdate(reply);
+    await hub.handleUpdate(reply);
+
+    const posted = copies(calls).filter(
+      (copy) => copy.chat_id === mediaChannelId,
+    );
+    expect(posted).toHaveLength(1);
+    const commands = auction.sent("setPromoVideo").map((sent) => sent.args);
+    expect(commands).toHaveLength(2);
+    expect(commands[1]).toEqual(commands[0]);
+    expect(commands[0]).toMatchObject({ postId: posted[0]?.sentId });
+    expect(plain(last(calls))).toMatch(/^Видео прикреплено\n/);
+
+    // Новый ответ — новое сообщение: новый пост и новый ключ.
+    await hub.handleUpdate(press(`v1:ac:vq:${auctionToken}`));
+    const next = answer(calls, video);
+    await hub.handleUpdate({
+      ...next,
+      message: { ...next.message, message_id: 11 } as never,
+    });
+    const after = auction
+      .sent("setPromoVideo")
+      .map((sent) => sent.args as { opId: string });
+    expect(
+      copies(calls).filter((copy) => copy.chat_id === mediaChannelId),
+    ).toHaveLength(2);
+    expect(after.at(-1)?.opId).not.toBe((commands[0] as { opId: string }).opId);
+  });
+
+  describe("under a slow Telegram", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    // Бюджет `SetPromoVideo` считается после `copyMessage` (PER-793), как у
+    // фото после `getFile` (PER-728).
+    it("attaches the video after a copyMessage slower than the action budget", async () => {
+      const auction = fakeAuction({
+        status: "prebidding",
+        week: { ...week, final: true },
+        lots: [vase],
+        promoVideoBudget: true,
+      });
+      const calls: RecordedCall[] = [];
+      const slow = actionBudgetMs + 1_000;
+      const hub = bot(auction, calls, {
+        respond: (method, payload) =>
+          method === "copyMessage" &&
+          (payload as { chat_id?: number }).chat_id === mediaChannelId
+            ? new Promise((resolve) =>
+                setTimeout(() => resolve({ message_id: 500 }), slow),
+              )
+            : undefined,
+      });
+      await hub.init();
+      await hub.handleUpdate(press(`v1:ac:vq:${auctionToken}`));
+
+      vi.useFakeTimers();
+      const handled = hub.handleUpdate(answer(calls, video));
+      await vi.advanceTimersByTimeAsync(slow + 1);
+      await handled;
+      vi.useRealTimers();
+
+      expect(auction.sent("setPromoVideo")).toEqual([
+        expect.objectContaining({
+          args: expect.objectContaining({ postId: 500 }),
+        }),
+      ]);
+      expect(plain(last(calls))).toMatch(/^Видео прикреплено\n/);
+    });
   });
 
   it("answers that the video is unavailable and keeps the root when the post is gone", async () => {
