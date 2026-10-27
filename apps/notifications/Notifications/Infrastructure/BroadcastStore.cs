@@ -35,8 +35,11 @@ public abstract record NoticePhoto
     public sealed record ChannelPost(long MessageId) : NoticePhoto;
 }
 
-/// <summary>Чем объявление аукциона богаче тела (PER-764): кнопка и необязательное фото.</summary>
-public sealed record AuctionNoticeContent(NoticeButton Button, NoticePhoto? Photo);
+/// <summary>
+/// Чем объявление аукциона богаче тела (PER-764): необязательные кнопка и
+/// картинка. Без кнопки объявление уходит одним текстом.
+/// </summary>
+public sealed record AuctionNoticeContent(NoticeButton? Button, NoticePhoto? Photo);
 
 /// <summary>Чем кончился приём рассылки.</summary>
 public abstract record BroadcastOutcome
@@ -126,8 +129,8 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
                 broadcast.MeetupId,
                 broadcast.Body,
                 Now = now.UtcDateTime,
-                ButtonView = broadcast.Notice?.Button.View,
-                ButtonLotId = broadcast.Notice?.Button.LotId,
+                ButtonView = broadcast.Notice?.Button?.View,
+                ButtonLotId = broadcast.Notice?.Button?.LotId,
                 PhotoLotId = (broadcast.Notice?.Photo as NoticePhoto.LotPhoto)?.LotId,
                 PhotoId = (broadcast.Notice?.Photo as NoticePhoto.LotPhoto)?.PhotoId,
                 PhotoMessageId = (broadcast.Notice?.Photo as NoticePhoto.ChannelPost)?.MessageId,
@@ -282,10 +285,14 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
 
         public long? PhotoMessageId { get; init; }
 
+        // Содержимое объявления узнаётся по виду рассылки, а не по кнопке:
+        // кнопка у объявления необязательна.
         public AuctionNoticeContent? Notice =>
-            ButtonView is null
-                ? null
-                : new AuctionNoticeContent(new NoticeButton(ButtonView, ButtonLotId), Photo);
+            Kind == NotificationFacts.AuctionNoticeType
+                ? new AuctionNoticeContent(
+                    ButtonView is { } view ? new NoticeButton(view, ButtonLotId) : null,
+                    Photo)
+                : null;
 
         private NoticePhoto? Photo =>
             (PhotoLotId, PhotoId, PhotoMessageId) switch

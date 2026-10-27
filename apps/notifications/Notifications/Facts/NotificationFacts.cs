@@ -564,11 +564,13 @@ public static class NotificationFacts
             MeetupTitle = meetupTitle,
             SenderId = senderId.ToString(),
             Body = body,
-            Button = new AuctionNoticeButton
-            {
-                View = AuctionNoticeViews.Contract(content.Button.View),
-                LotId = content.Button.LotId?.ToString() ?? "",
-            },
+            Button = content.Button is { } button
+                ? new AuctionNoticeButton
+                {
+                    View = AuctionNoticeViews.Contract(button.View),
+                    LotId = button.LotId?.ToString() ?? "",
+                }
+                : null,
             Photo = content.Photo switch
             {
                 NoticePhoto.LotPhoto lot => new AuctionNoticePhoto

@@ -38,7 +38,11 @@ public class OwnerAuthorityTests
         public DateTime Deadline { get; set; }
     }
 
-    private static OwnerAuthority Authority(Recorded seen, Func<Task>? meetupsOutcome = null, Func<Task<bool>>? identityOutcome = null) =>
+    private static OwnerAuthority Authority(
+        Recorded seen,
+        Func<Task>? meetupsOutcome = null,
+        Func<Task<bool>>? identityOutcome = null,
+        MeetupAuthority? standing = null) =>
         new(
             async (request, headers, deadline, _) =>
             {
@@ -46,7 +50,7 @@ public class OwnerAuthorityTests
                 seen.Headers = headers;
                 seen.Deadline = deadline;
                 await (meetupsOutcome ?? (() => Task.CompletedTask))();
-                return new MeetupAuthority();
+                return standing ?? new MeetupAuthority();
             },
             async (request, headers, deadline, _) =>
             {
@@ -85,6 +89,29 @@ public class OwnerAuthorityTests
         seen.Meetups.Id.ShouldBe(MeetupId.ToString("D"));
         seen.Meetups.AcceptedRelations.ShouldBe([MeetupRelation.AuctionRunner]);
         seen.Identity.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(MeetupLifecycle.Cancelled, AuthorityVerdict.Closed)]
+    [InlineData(MeetupLifecycle.Planned, AuthorityVerdict.Granted)]
+    [InlineData(MeetupLifecycle.Held, AuthorityVerdict.Granted)]
+    public async Task AuctionNotice_ClosesOnlyCancelledMeetup(MeetupLifecycle lifecycle, AuthorityVerdict expected)
+    {
+        var standing = new MeetupAuthority { Lifecycle = lifecycle, Visibility = MeetupVisibility.Hidden };
+
+        var answer = await Authority(new Recorded(), standing: standing).AuctionNotice(Author, MeetupId, Chain());
+
+        answer.Verdict.ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task MeetupBroadcast_CancelledMeetup_IsStillGranted()
+    {
+        var standing = new MeetupAuthority { Lifecycle = MeetupLifecycle.Cancelled };
+
+        var answer = await Authority(new Recorded(), standing: standing).MeetupBroadcast(Author, MeetupId, Chain());
+
+        answer.Verdict.ShouldBe(AuthorityVerdict.Granted);
     }
 
     [Fact]

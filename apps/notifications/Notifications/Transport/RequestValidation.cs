@@ -73,27 +73,16 @@ public static class RequestValidation
     }
 
     /// <summary>
-    /// Кнопка и фото объявления аукциона (PER-764). Кнопка обязательна, лот у
-    /// неё ровно у вида «лот»; фото — одна ссылка целиком или ничего: фото лота
-    /// или пост чата медиа ботов с положительным номером сообщения.
+    /// Кнопка и фото объявления аукциона (PER-764). Кнопка необязательна: без
+    /// неё объявление уходит одним текстом, а у названной лот ровно у вида
+    /// «лот»; фото — одна ссылка целиком или ничего: фото лота или пост чата
+    /// медиа ботов с положительным номером сообщения.
     /// Принадлежность лота аукциону и существование фото граница не проверяет:
     /// звонка в Auction на команде нет, а канал отвечает за то, что откроет.
     /// </summary>
     public static AuctionNoticeContent AuctionNotice(AuctionNoticeButton? button, AuctionNoticePhoto? photo)
     {
-        if (button is null)
-        {
-            throw Invalid("button", "must be set");
-        }
-
-        var view = AuctionNoticeViews.Storage(button.View)
-            ?? throw Invalid("button.view", "must be a known view");
-
-        Guid? buttonLot = view == AuctionNoticeViews.Lot
-            ? UuidV7("button.lot_id", button.LotId)
-            : button.LotId.Length == 0
-                ? null
-                : throw Invalid("button.lot_id", "must be empty unless the view is a lot");
+        var leadsTo = button is null ? null : NoticeButton(button);
 
         NoticePhoto? picture = photo switch
         {
@@ -107,7 +96,21 @@ public static class RequestValidation
             _ => throw Invalid("photo", "must name its source"),
         };
 
-        return new AuctionNoticeContent(new NoticeButton(view, buttonLot), picture);
+        return new AuctionNoticeContent(leadsTo, picture);
+    }
+
+    private static NoticeButton NoticeButton(AuctionNoticeButton button)
+    {
+        var view = AuctionNoticeViews.Storage(button.View)
+            ?? throw Invalid("button.view", "must be a known view");
+
+        Guid? lot = view == AuctionNoticeViews.Lot
+            ? UuidV7("button.lot_id", button.LotId)
+            : button.LotId.Length == 0
+                ? null
+                : throw Invalid("button.lot_id", "must be empty unless the view is a lot");
+
+        return new NoticeButton(view, lot);
     }
 
     /// <summary>
