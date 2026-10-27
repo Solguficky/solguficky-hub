@@ -86,6 +86,8 @@ export type MenuEvents = {
   events: readonly HubEvent[];
   timeZone: string;
   today: CommunityDay;
+  // Часы строки состояния аукциона (PER-767). Нет — часы процесса.
+  now?: Date;
 };
 
 /**
@@ -109,7 +111,7 @@ export function menuScreen(person: Viewer, current?: MenuEvents): ShownScreen {
   const lines =
     current === undefined
       ? []
-      : eventLines(events, current.timeZone, current.today);
+      : eventLines(events, current.timeZone, current.today, current.now);
   return {
     id: "menu",
     text: screenText(

@@ -185,6 +185,7 @@ import {
   isTypedText,
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationHtml,
+  materialRefusal,
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
@@ -1035,6 +1036,7 @@ type BoundaryOutcome =
       use_case?: ProductUseCase;
       meetup_id?: string;
       identity_id?: string;
+      message_kind?: string;
     }
   | {
       level: "warn" | "error";
@@ -1365,15 +1367,8 @@ async function handleMessage(
       if (pending.kind === "material-source") {
         const source = parseMaterialInput(ctx.message);
         if (source === undefined) {
-          await refuseAnswer(
-            ctx,
-            questions,
-            pending,
-            isTypedText(ctx.message)
-              ? "Текст сам по себе не материал: перешли сообщение из канала или чата, фото или документ."
-              : "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.",
-            replyId,
-          );
+          const refusal = materialRefusal(ctx.message);
+          await refuseAnswer(ctx, questions, pending, refusal.text, replyId);
           outcome = {
             level: "info",
             message: "material source rejected",
@@ -1381,6 +1376,7 @@ async function handleMessage(
             use_case: useCase,
             meetup_id: pending.meetupId,
             identity_id: identity.person.identityId,
+            message_kind: refusal.kind,
           };
           return;
         }
@@ -3102,7 +3098,7 @@ async function handleCallback(
             version: current.meetup.version,
             telegramUserId: ctx.from?.id ?? 0,
           },
-          `Перешли сообщение или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
+          `Перешли сообщение из канала, пришли ссылку на сообщение чата или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
         );
       } else {
         const materialId = tokenToUuid(action.materialToken);
@@ -11389,14 +11385,20 @@ async function renderFormResult(
 // пересылает без ответа. Пересылка, фото или документ без ответа идут ответом
 // на открытый вопрос об источнике материала того же человека. Набранный текст
 // так не идёт: подпись к пересылке приходит отдельным сообщением до неё и
-// иначе сняла бы вопрос отказом. Вопрос, заданный до рестарта, карта уже не
+// иначе сняла бы вопрос отказом. Набранная ссылка на сообщение — идёт: она
+// сама источник (PER-762). Вопрос, заданный до рестарта, карта уже не
 // знает, и такое сообщение получает подсказку, как раньше.
 function openMaterialSourceQuestion(
   ctx: UpdateContext,
   questions: Map<string, PendingInput>,
 ): number | undefined {
   const message = ctx.message;
-  if (message === undefined || isTypedText(message)) return undefined;
+  if (
+    message === undefined ||
+    (isTypedText(message) && parseMaterialInput(message) === undefined)
+  ) {
+    return undefined;
+  }
   const prefix = `${ctx.chat?.id ?? "unknown"}:`;
   let found: number | undefined;
   for (const [key, question] of questions) {
@@ -13028,6 +13030,9 @@ function writeBoundary(
   }
   if (ctx.postersRejected !== undefined) {
     fields.posters_error = ctx.postersRejected;
+  }
+  if (outcome.result === "ok" && outcome.message_kind !== undefined) {
+    fields.message_kind = outcome.message_kind;
   }
   if (outcome.result === "error") {
     countFailure(outcome.error_category);

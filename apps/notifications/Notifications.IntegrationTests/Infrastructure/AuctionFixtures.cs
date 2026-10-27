@@ -154,7 +154,31 @@ public static class AuctionFixtures
     public static async Task PruneEventKeys(IsolatedDatabase db, DateTimeOffset threshold)
     {
         await using var source = NpgsqlDataSource.Create(db.ConnectionString);
-        await new ConsumedEventStore(source).Prune(threshold, Cancellation);
+        // Один порог на все источники: тест сдвигает время сам, а сроки по
+        // потокам проверяет чистка силоса (FactReplicaTests).
+        await new ConsumedEventStore(source).Prune(
+            NotificationsHost.EventFeeds.ToDictionary(feed => feed.Source, _ => threshold), Cancellation);
+    }
+
+    /// <summary>
+    /// Оба прохода чистки силоса — ключей событий и адресных фактов — со
+    /// штатными сроками на момент <paramref name="now" /> (PER-761).
+    /// </summary>
+    public static async Task PruneAsService(IsolatedDatabase db, DateTimeOffset now)
+    {
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var consumer = new ConsumerOptions();
+        await new ConsumedEventStore(source).Prune(
+            ConsumedEventPruner.Thresholds(NotificationsHost.EventFeeds, consumer, now), Cancellation);
+        var (thresholds, fallback) = NotificationPruner.Thresholds(new DispatchOptions(), consumer, now);
+        await new NotificationStore(source).Prune(thresholds, fallback, Cancellation);
+    }
+
+    /// <summary>Отмечает все адресные факты вынесенными в момент <paramref name="at" />.</summary>
+    public static async Task MarkDispatched(IsolatedDatabase db, DateTimeOffset at)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        await connection.ExecuteAsync("UPDATE notification SET dispatched_at = @At;", new { At = at.UtcDateTime });
     }
 
     private static async Task<T> Scalar<T>(IsolatedDatabase db, string sql)
