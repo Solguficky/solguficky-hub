@@ -3,10 +3,6 @@ import { maxLotRubles } from "../application/lot-form.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
   auctionFaqData,
-  lotHappyHourAskData,
-  lotHappyHourClearData,
-  lotHappyHourData,
-  lotHappyHoursData,
   type CallbackAction,
   cardCursorData,
   consoleAnnouncementAudienceData,
@@ -65,6 +61,10 @@ import {
   lotAskData,
   lotCopyData,
   lotFormData,
+  lotHappyHourAskData,
+  lotHappyHourClearData,
+  lotHappyHourData,
+  lotHappyHoursData,
   lotKeepStepData,
   lotNewData,
   lotPhotoRemoveConfirmData,
@@ -2059,10 +2059,7 @@ describe("auction announcement audience callbacks", () => {
         { kind: "console-period-remove-confirm", auction, period },
       ],
       [lotHappyHoursData(lot), { kind: "lot-happy-hours", lot }],
-      [
-        lotHappyHourData(lot, period),
-        { kind: "lot-happy-hour", lot, period },
-      ],
+      [lotHappyHourData(lot, period), { kind: "lot-happy-hour", lot, period }],
       [
         lotHappyHourAskData(lot, period, "start"),
         { kind: "lot-happy-hour-ask", lot, period, field: "start" },
