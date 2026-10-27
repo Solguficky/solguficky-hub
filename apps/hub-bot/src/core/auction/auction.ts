@@ -85,10 +85,14 @@ export function lotLayoutOf(
   return { lotIds: lotsOf(layout.lotIds), sections };
 }
 
-// Программа недели (PER-724) — подсказка корню, как состав — ленте: кривой
-// момент окна или финала выпадает из программы, а не роняет сводку.
+// Программа недели (PER-724) и строка состояния (PER-767) — подсказка корню
+// и спискам, как состав — ленте: кривой момент окна, розыгрыша или финала
+// выпадает из программы, а не роняет сводку.
 function withProgramme(snapshot: AuctionSnapshot) {
   const finalAt = lenientInstant(snapshot.finalAt);
+  const raffleClosesAt = lenientInstant(
+    snapshot.config?.onlinePhase?.raffleClosesAt,
+  );
   const stepWindows = [
     ...(snapshot.config?.stepWindows ?? []),
     ...snapshot.launchedStepWindows,
@@ -104,6 +108,7 @@ function withProgramme(snapshot: AuctionSnapshot) {
   return {
     ...(finalAt === undefined ? {} : { finalAt }),
     ...(stepWindows.length === 0 ? {} : { stepWindows }),
+    ...(raffleClosesAt === undefined ? {} : { raffleClosesAt }),
   };
 }
 

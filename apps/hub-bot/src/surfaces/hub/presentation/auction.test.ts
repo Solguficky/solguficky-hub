@@ -2395,6 +2395,56 @@ describe("events of the hub", () => {
     );
   });
 
+  // Строка состояния (PER-767): под строкой аукциона в меню и «Событиях» —
+  // день недели, идущее окно и розыгрыш; текст общий с ботом аукциона.
+  it("shows the status line of the auction in the menu and the events", async () => {
+    const inHours = (hours: number) =>
+      new Date(Date.now() + hours * 3_600_000)
+        .toISOString()
+        .replace(/\.\d{3}Z$/, "Z");
+    const auction = fakeAuction({
+      existing: true,
+      current: () => ({
+        kind: "ok",
+        auctionId,
+        auction: {
+          auctionId,
+          stage: "prebidding",
+          opensAt: inHours(-30),
+          closesAt: inHours(140),
+          final: true,
+          stepWindows: [
+            { from: inHours(-1), until: inHours(1), lotIds: ["a"] },
+          ],
+          raffleClosesAt: inHours(100),
+        },
+      }),
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(menuData));
+    const status =
+      /день \d из \d · 🔥 Счастливые часы до (?:\d\d\.\d\d )?\d\d:\d\d · розыгрыш: регистрация до \d\d\.\d\d/;
+    expect(lastScreen(calls).text).toMatch(status);
+
+    await bot.handleUpdate(press(eventsData));
+    expect(lastScreen(calls).text).toMatch(status);
+  });
+
+  it("leaves the status line out while the auction has nothing to say", async () => {
+    const auction = fakeAuction({ existing: true, current: going("in-final") });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(menuData));
+    const menu = lastScreen(calls).text;
+    expect(menu).toContain("🔨 Аукцион: идёт финал");
+    expect(menu).not.toContain(" · ");
+  });
+
   // Меню — горячий путь: медленный Auction его не держит дольше срока.
   it("opens the menu without the events when Auction is slow", async () => {
     const auction = fakeAuction({
@@ -2465,6 +2515,9 @@ describe("events of the hub", () => {
       ["Настройки", "Помощь"],
       ["🛠 Управление"],
     ]);
+
+    // Сбой Auction убирает строки аукциона, а не меню (PER-767).
+    expect(lastScreen(calls).text).not.toContain("Аукцион");
 
     await bot.handleUpdate(press(eventsData));
     expect(labels(lastScreen(calls))).toContainEqual(["Повторить"]);

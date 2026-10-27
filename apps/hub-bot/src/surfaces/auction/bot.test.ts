@@ -919,6 +919,51 @@ describe("auction bot", () => {
     });
   });
 
+  // Строка состояния (PER-767): под строкой аукциона в «Аукционах» — день
+  // недели, идущее окно и розыгрыш; текст общий с хабом. Экран идёт через
+  // линтер харнесса.
+  it("shows the status line under the active auction", async () => {
+    vi.useFakeTimers({
+      toFake: ["Date"],
+      now: new Date("2026-10-13T16:00:00Z"),
+    });
+    try {
+      const { bot, calls } = makeBot(
+        portsWith({
+          auctions: {
+            active: [
+              {
+                ...activeAuction,
+                week: {
+                  stage: "prebidding",
+                  opensAt: "2026-10-09T21:00:00Z",
+                  closesAt: "2026-10-16T21:00:00Z",
+                  stepWindows: [
+                    {
+                      from: "2026-10-13T15:00:00Z",
+                      until: "2026-10-13T19:00:00Z",
+                      lotIds: ["lot"],
+                    },
+                  ],
+                  raffleClosesAt: "2026-10-15T18:00:00Z",
+                },
+              },
+            ],
+          },
+        }),
+      );
+      await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
+      const text = String(
+        (calls.at(-1)?.payload as { text?: string } | undefined)?.text,
+      );
+      expect(text).toContain(
+        "\nдень 4 из 7 · 🔥 Счастливые часы до 22:00 · розыгрыш: регистрация до 15.10",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("answers unavailable when the auction list cannot be read", async () => {
     const ports: PortsFactory = (requestId) => ({
       ...publicPorts(requestId),

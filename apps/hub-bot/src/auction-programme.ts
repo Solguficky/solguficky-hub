@@ -1,6 +1,7 @@
 import type {
   AuctionBlock,
   AuctionStepWindowView,
+  AuctionSummaryView,
 } from "./auction-ui/index.js";
 
 // Программа недели (PER-724; решение владельца 26.10.2026) — короткий абзац
@@ -69,6 +70,132 @@ const finalAhead: ReadonlySet<string> = new Set([
   "on-break",
   "lineup-frozen",
 ]);
+
+// Строка состояния аукциона (PER-767; постановка согласована владельцем
+// 27.10.2026) — пассивная реклама недели в меню и «Событиях» хаба и в
+// «Аукционах» бота аукциона: «день 4 из 7 · 🔥 Счастливые часы до 22:00 ·
+// розыгрыш: регистрация до 30.10». Данные — та же сводка, что у программы, без
+// своих чтений. Части, которых нет, пропадают, а не пустеют.
+
+/** Поля сводки, из которых складывается строка состояния. */
+export type AuctionWeekFacts = Pick<
+  AuctionSummaryView,
+  "stage" | "opensAt" | "closesAt" | "stepWindows" | "raffleClosesAt"
+>;
+
+export type StatusLineOptions = { timeZone: string; now: Date };
+
+/**
+ * Строка состояния или `undefined`, когда сказать нечего. День недели — пока
+ * идут онлайн-торги; «Счастливые часы» — идущее окно или ближайшее, пока
+ * онлайн-неделя впереди или идёт; розыгрыш — пока идут торги и регистрация
+ * открыта. С итогов онлайн-торгов строки нет: финал строка не рекламирует.
+ */
+export function auctionStatusLine(
+  auction: AuctionWeekFacts,
+  options: StatusLineOptions,
+): string | undefined {
+  const now = options.now.getTime();
+  const trading = auction.stage === "prebidding";
+  const online = trading || auction.stage === "scheduled";
+  const parts = [
+    ...(trading ? weekDayPart(auction, options) : []),
+    ...(online ? windowPart(auction.stepWindows ?? [], options) : []),
+    ...(trading &&
+    auction.raffleClosesAt !== undefined &&
+    Date.parse(auction.raffleClosesAt) > now
+      ? [
+          `розыгрыш: регистрация до ${shortMoment(auction.raffleClosesAt, options)}`,
+        ]
+      : []),
+  ];
+  return parts.length === 0 ? undefined : parts.join(" · ");
+}
+
+// «день 4 из 7» — дни сообщества от начала онлайн-торгов. Дедлайн ровно в
+// полночь последним днём не считается: неделя с понедельника 00:00 до
+// следующего понедельника 00:00 — семь дней, а не восемь.
+function weekDayPart(
+  auction: AuctionWeekFacts,
+  options: StatusLineOptions,
+): string[] {
+  if (auction.opensAt === undefined || auction.closesAt === undefined) {
+    return [];
+  }
+  const now = options.now.getTime();
+  const opens = Date.parse(auction.opensAt);
+  const closes = Date.parse(auction.closesAt);
+  if (now < opens || now >= closes) return [];
+  const first = dayNumber(new Date(opens), options.timeZone);
+  const total = dayNumber(new Date(closes - 1), options.timeZone) - first + 1;
+  const current = dayNumber(options.now, options.timeZone) - first + 1;
+  return [`день ${current} из ${total}`];
+}
+
+// Идущее окно — «до 22:00»; иначе ближайшее — «сегодня с 18:00» или «30.10 с
+// 18:00».
+function windowPart(
+  windows: readonly AuctionStepWindowView[],
+  options: StatusLineOptions,
+): string[] {
+  const now = options.now.getTime();
+  const upcoming = windows
+    .filter((window) => Date.parse(window.until) > now)
+    .sort((left, right) => Date.parse(left.from) - Date.parse(right.from));
+  const running = upcoming.find((window) => Date.parse(window.from) <= now);
+  if (running !== undefined) {
+    // Окно через полночь называет и дату конца: «до 31.10 02:00».
+    const until = timeOf(running.until, options.timeZone);
+    return [
+      `🔥 Счастливые часы до ${
+        isToday(running.until, options)
+          ? until
+          : `${shortDay(running.until, options.timeZone)} ${until}`
+      }`,
+    ];
+  }
+  const [next] = upcoming;
+  if (next === undefined) return [];
+  return [
+    `🔥 Счастливые часы ${
+      isToday(next.from, options)
+        ? "сегодня"
+        : shortDay(next.from, options.timeZone)
+    } с ${timeOf(next.from, options.timeZone)}`,
+  ];
+}
+
+// Момент короче, чем в корне: сегодня — время «22:00», в другой день — дата
+// «30.10».
+function shortMoment(instant: string, options: StatusLineOptions): string {
+  return isToday(instant, options)
+    ? timeOf(instant, options.timeZone)
+    : shortDay(instant, options.timeZone);
+}
+
+function isToday(instant: string, options: StatusLineOptions): boolean {
+  return (
+    dayOf(instant, options.timeZone) ===
+    dayOf(options.now.toISOString(), options.timeZone)
+  );
+}
+
+// «30.10» в поясе сообщества.
+function shortDay(instant: string, timeZone: string): string {
+  return new Intl.DateTimeFormat("ru-RU", {
+    timeZone,
+    day: "2-digit",
+    month: "2-digit",
+  }).format(new Date(instant));
+}
+
+// Номер дня сообщества от эпохи: разница номеров — число календарных суток в
+// поясе.
+function dayNumber(at: Date, timeZone: string): number {
+  return (
+    Date.parse(`${dayOf(at.toISOString(), timeZone)}T00:00:00Z`) / 86_400_000
+  );
+}
 
 // Сегодняшние окна — идущее и те, что начнутся до конца дня сообщества, — и
 // одно ближайшее после них; без сегодняшних — только ближайшее.
