@@ -482,6 +482,58 @@ describe("auction announcements", () => {
     });
   });
 
+  // Своё фото или видео (PER-776) — пост чата медиа на месте фото лота: без
+  // него получатели обоих ботов видят голый текст (PER-791).
+  it("sends the media chat post as the photo source", async () => {
+    const broadcastAuctionNotice = vi.fn().mockResolvedValue({ created: true });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await announcements.announceAuction(person, {
+      meetupId,
+      announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+      text: "Смотри видео",
+      audience: "all",
+      post: 42,
+    });
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).toMatchObject({
+      photo: { source: { case: "channelPost", value: { messageId: 42n } } },
+    });
+
+    // Источник в контракте один: пост стоит на месте фото лота.
+    await announcements.announceAuction(person, {
+      meetupId,
+      announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34fe",
+      text: "Смотри видео",
+      audience: "all",
+      photo: { lotId, photoId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1" },
+      post: 42,
+    });
+    expect(broadcastAuctionNotice.mock.calls[1]?.[0]).toMatchObject({
+      photo: { source: { case: "channelPost", value: { messageId: 42n } } },
+    });
+  });
+
+  it("sends no photo without a lot photo or a post", async () => {
+    const broadcastAuctionNotice = vi.fn().mockResolvedValue({ created: true });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await announcements.announceAuction(person, {
+      meetupId,
+      announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+      text: "Текст",
+      audience: "all",
+    });
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).not.toHaveProperty(
+      "photo",
+    );
+  });
+
   it("sends no button for «Без кнопки»", async () => {
     const broadcastAuctionNotice = vi
       .fn()
