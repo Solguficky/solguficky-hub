@@ -7075,13 +7075,16 @@ describe("auction announcement", () => {
         (call.payload as { reply_parameters?: unknown }).reply_parameters !==
           undefined,
     );
+    if (confirm === undefined) throw new Error("no confirmation");
     const previewId = (
-      confirm?.payload as { reply_parameters: { message_id: number } }
+      confirm.payload as { reply_parameters: { message_id: number } }
     ).reply_parameters.message_id;
     // Предпросмотр — сообщение прямо перед подтверждением.
-    const shownPreview = calls[calls.indexOf(confirm as RecordedCall) - 1]
-      ?.payload as { caption?: string; text?: string };
-    const update = press(dataOf(confirm?.payload as Sent, label));
+    const shownPreview = calls[calls.indexOf(confirm) - 1]?.payload as {
+      caption?: string;
+      text?: string;
+    };
+    const update = press(dataOf(confirm.payload as Sent, label));
     const query = update.callback_query as unknown as {
       message: Record<string, unknown>;
     };
