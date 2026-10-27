@@ -7,6 +7,7 @@ import {
 import type { ReleaseSummary as WireReleaseSummary } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
   NotificationsService,
+  AuctionNoticeAudience as WireAudience,
   type AuctionNotificationPreferences as WireAuctionPreferences,
   NotificationCategory as WireCategory,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
@@ -31,7 +32,10 @@ import {
   type RpcMetadata,
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
-import type { AuctionAnnouncements } from "../application/auction-announcements.js";
+import type {
+  AnnouncementAudience,
+  AuctionAnnouncements,
+} from "../application/auction-announcements.js";
 import type {
   AuctionNotificationsResult,
   BroadcastAudienceCount,
@@ -126,6 +130,16 @@ export function createNotificationsClient(
   };
 }
 
+// Аудитория объявления (PER-778): «всем» уходит явным значением, а не
+// пустым полем.
+const wireAudiences: Readonly<Record<AnnouncementAudience, WireAudience>> = {
+  all: WireAudience.ALL,
+  "not-in-raffle": WireAudience.NOT_IN_RAFFLE,
+  "without-predictions": WireAudience.WITHOUT_PREDICTIONS,
+  "not-in-raffle-or-without-predictions":
+    WireAudience.NOT_IN_RAFFLE_OR_WITHOUT_PREDICTIONS,
+};
+
 // Объявление аукциона (PER-765, контракт PER-764): тот же механизм приёма и
 // счётчика, что у двух рассылок, и те же переводы отказов. Адресат —
 // сходка: связи «аукцион — сходка» у Notifications нет.
@@ -141,10 +155,14 @@ export function createAuctionAnnouncementsAdapter(
     ...callHeaders(meta),
   });
   return {
-    async previewAuctionAnnouncement(person, meetupId, meta) {
+    async previewAuctionAnnouncement(person, meetupId, audience, meta) {
       try {
         const response = await rpc.previewAuctionNotice(
-          { identityId: person.identityId, meetupId },
+          {
+            identityId: person.identityId,
+            meetupId,
+            audience: wireAudiences[audience],
+          },
           options(meta),
         );
         return Number.isInteger(response.recipientCount) &&
@@ -163,6 +181,7 @@ export function createAuctionAnnouncementsAdapter(
             meetupId: command.meetupId,
             id: command.announcementId,
             body: command.text,
+            audience: wireAudiences[command.audience],
             ...(command.button === undefined
               ? {}
               : { button: wireAnnouncementButton(command.button) }),

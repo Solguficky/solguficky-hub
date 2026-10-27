@@ -27,6 +27,7 @@ import {
 import { createMediaChat } from "../../../core/media-chat.js";
 import { pictogram } from "../../../core/pictograms.js";
 import type {
+  AnnouncementAudience,
   AnnouncementCommand,
   AuctionAnnouncements,
 } from "../application/auction-announcements.js";
@@ -72,7 +73,10 @@ import type { IdentityResolver } from "../identity/port.js";
 import { createAuctionParents } from "./auction-parents.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { type CallbackAction, parseCallback } from "./parse-callback.js";
-import { announcementButtonScreen } from "./screens/auction-announcement.js";
+import {
+  announcementAudienceScreen,
+  announcementButtonScreen,
+} from "./screens/auction-announcement.js";
 
 // Пульт аукциона администратора в боте хаба (PER-320): вход из ленты, сроки
 // недели и финал, открытие недели через подтверждение, отметка лотов для
@@ -215,6 +219,8 @@ const forgedAuctionPresses = {
   "console-announcement-photo": `v1:ac:np:${auctionToken}:a:00000:0:-`,
   "console-announcement-media": `v1:ac:nm:${auctionToken}:a:00000:-`,
   "console-announcement-send": `v1:ac:ns:${auctionToken}:a:00000:-:-`,
+  "console-announcement-audience": `v1:ac:nc:${auctionToken}:a:00000:-:-:a`,
+  "console-announcement-recipients": `v1:ac:nk:${auctionToken}:a:00000:-:-:r`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -7308,6 +7314,8 @@ describe("auction announcement", () => {
     // Чат медиа ботов (PER-776): номер канала и ответ Telegram на копию.
     media?: { respond?: (method: string, payload: unknown) => unknown },
     parents = knownMeetup(),
+    // Часы бота: момент T розыгрыша решает, какие аудитории есть (PER-779).
+    clock = now,
   ) {
     const port = withPhotos(auction, readable);
     return createHarness(
@@ -7315,7 +7323,7 @@ describe("auction announcement", () => {
       createDispatcher(undefined, undefined, today, port, port, {
         auctions: port,
         timeZone,
-        now: () => now,
+        now: () => clock,
         announcements: notices.port,
         media: media !== undefined,
       }),
@@ -7487,6 +7495,15 @@ describe("auction announcement", () => {
     ]);
 
     await step(pressUnder(dataOf(last(calls), "Фото 2"), last(calls)));
+    // «Кому» (PER-779): регистрация в розыгрыше идёт, а «История лота»
+    // предвыбирает всех.
+    expect(labels(last(calls))).toEqual([
+      ["Всем"],
+      ["Не в розыгрыше"],
+      ["‹ Объявление"],
+    ]);
+    expect(visible(last(calls))).toContain(`Текст объявления:\n${text}`);
+    await step(pressUnder(dataOf(last(calls), "Всем"), last(calls)));
     const preview = calls.findLast((call) => call.method === "sendPhoto")
       ?.payload as { caption: string; reply_markup: Sent["reply_markup"] };
     expect(preview.caption).toBe(text);
@@ -7509,6 +7526,7 @@ describe("auction announcement", () => {
       command: {
         meetupId,
         text,
+        audience: "all",
         button: { kind: "auction" },
         photo: { lotId: vaseId, photoId: photoIds[1] },
       },
@@ -7521,6 +7539,261 @@ describe("auction announcement", () => {
       notices.accepted[0]?.command.announcementId,
     );
     expect(plain(last(calls))).toContain("Это объявление уже отправлено");
+  });
+
+  // Счётчик по аудитории (PER-779): число считает Notifications, а пульт
+  // только называет фильтр.
+  function audienceCounts(counts: Partial<Record<AnnouncementAudience, number>>) {
+    const asked: AnnouncementAudience[] = [];
+    const accepted: AnnouncementCommand[] = [];
+    const port: AuctionAnnouncements = {
+      async previewAuctionAnnouncement(_person, _meetupId, audience) {
+        asked.push(audience);
+        return { kind: "ok", recipientCount: counts[audience] ?? 0 };
+      },
+      async announceAuction(_person, command) {
+        accepted.push(command);
+        return { kind: "ok", created: true };
+      },
+    };
+    return { port, asked, accepted };
+  }
+
+  const tallied = { participants: 2, answers: 5 };
+
+  it("preselects the raffle audience, changes it after the preview and sends to the chosen one", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+      lots: [mug],
+      predictionTally: tallied,
+    });
+    const notices = audienceCounts({
+      all: 40,
+      "not-in-raffle-or-without-predictions": 12,
+      "without-predictions": 9,
+    });
+    const calls: RecordedCall[] = [];
+    const parents = knownMeetup();
+    const fresh = async () => {
+      const hub = bot(
+        auction,
+        { port: notices.port, accepted: [] },
+        calls,
+        true,
+        undefined,
+        parents,
+      );
+      await hub.init();
+      return hub;
+    };
+    const step = async (update: Update) => (await fresh()).handleUpdate(update);
+
+    await step(press(`v1:ac:na:${auctionToken}`));
+    await step(press(dataOf(last(calls), "Розыгрыш и прогнозы")));
+    const text = "Розыгрыш и прогнозы ждут тебя.";
+    await step(answer(calls, { text }));
+    expect(labels(last(calls))[0]).toEqual(["К розыгрышу"]);
+    await step(pressUnder(dataOf(last(calls), "К розыгрышу"), last(calls)));
+
+    // Шаблон предвыбирает «не в розыгрыше или без прогнозов» — первой.
+    expect(labels(last(calls))).toEqual([
+      ["Не в розыгрыше или без прогнозов"],
+      ["Всем"],
+      ["Не в розыгрыше"],
+      ["Без прогнозов"],
+      ["‹ Объявление"],
+    ]);
+    expect(plain(last(calls))).toContain(
+      "Первым — выбор шаблона: «Не в розыгрыше или без прогнозов»",
+    );
+    await step(
+      pressUnder(
+        dataOf(last(calls), "Не в розыгрыше или без прогнозов"),
+        last(calls),
+      ),
+    );
+    expect(plain(last(calls))).toContain(
+      "Получат 12 человек с правом ставок — те, кто ещё не в розыгрыше или без прогноза",
+    );
+
+    // «Нет» возвращает в «Кому», и там аудитория меняется.
+    await step(pressSend(calls, "✖️ Нет"));
+    expect(labels(last(calls))[0]).toEqual([
+      "Не в розыгрыше или без прогнозов",
+    ]);
+    await step(pressUnder(dataOf(last(calls), "Без прогнозов"), last(calls)));
+    expect(plain(last(calls))).toContain(
+      "Получат 9 человек с правом ставок — те, у кого нет прогноза",
+    );
+    expect(notices.asked).toEqual([
+      "not-in-raffle-or-without-predictions",
+      "without-predictions",
+    ]);
+
+    await step(pressSend(calls, "✔️ Да, отправить 9"));
+    expect(plain(last(calls))).toContain("Объявление принято");
+    expect(notices.accepted).toEqual([
+      expect.objectContaining({
+        meetupId,
+        text,
+        audience: "without-predictions",
+        button: { kind: "raffle" },
+      }),
+    ]);
+  });
+
+  it("turns the raffle template into predictions after the moment T and offers no raffle filters", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+      lots: [mug],
+      predictionTally: tallied,
+    });
+    const notices = audienceCounts({ "without-predictions": 4 });
+    const calls: RecordedCall[] = [];
+    const parents = knownMeetup();
+    const afterT = new Date("2026-10-23T09:00:00Z");
+    const step = async (update: Update) => {
+      const hub = bot(
+        auction,
+        { port: notices.port, accepted: [] },
+        calls,
+        true,
+        undefined,
+        parents,
+        afterT,
+      );
+      await hub.init();
+      await hub.handleUpdate(update);
+    };
+
+    await step(press(`v1:ac:na:${auctionToken}`));
+    expect(labels(last(calls))).toContainEqual(["Прогнозы"]);
+    expect(labels(last(calls))).not.toContainEqual(["Розыгрыш и прогнозы"]);
+    await step(press(dataOf(last(calls), "Прогнозы")));
+    expect(question(calls).payload.text).toContain("Прогнозы аукциона");
+    expect(question(calls).payload.text).not.toContain("розыгрыш");
+    await step(answer(calls, { text: "Сделай прогноз!" }));
+    expect(labels(last(calls))[0]).toEqual(["Прогнозы"]);
+    await step(pressUnder(dataOf(last(calls), "Прогнозы"), last(calls)));
+
+    expect(labels(last(calls))).toEqual([
+      ["Без прогнозов"],
+      ["Всем"],
+      ["‹ Объявление"],
+    ]);
+    await step(pressUnder(dataOf(last(calls), "Без прогнозов"), last(calls)));
+    expect(plain(last(calls))).toContain("Получат 4 человека");
+    await step(pressSend(calls, "✔️ Да, отправить 4"));
+    expect(notices.accepted[0]?.audience).toBe("without-predictions");
+  });
+
+  it("refuses a raffle filter after the moment T instead of sending it to everyone", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+      lots: [mug],
+    });
+    const notices = audienceCounts({ "not-in-raffle": 3 });
+    const calls: RecordedCall[] = [];
+    const hub = bot(
+      auction,
+      { port: notices.port, accepted: [] },
+      calls,
+      true,
+      undefined,
+      knownMeetup(),
+      new Date("2026-10-23T09:00:00Z"),
+    );
+    await hub.init();
+    const shown = announcementAudienceScreen({
+      auctionId,
+      text: "Успей в розыгрыш",
+      button: "auction",
+      audience: "not-in-raffle",
+      audiences: ["all", "not-in-raffle"],
+    });
+    const frame: Sent = {
+      text: shown.text,
+      reply_markup: { inline_keyboard: shown.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "Не в розыгрыше"), frame));
+
+    expect(plain(last(calls))).toContain("Этих получателей больше не выбрать");
+    expect(notices.accepted).toEqual([]);
+  });
+
+  it("shows a retry frame and sends nothing when Notifications cannot count the audience", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+      lots: [mug],
+    });
+    const accepted: AnnouncementCommand[] = [];
+    const port: AuctionAnnouncements = {
+      async previewAuctionAnnouncement() {
+        return { kind: "unavailable", cause: new Error("auction down") };
+      },
+      async announceAuction(_person, command) {
+        accepted.push(command);
+        return { kind: "ok", created: true };
+      },
+    };
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, { port, accepted: [] }, calls);
+    await hub.init();
+    const shown = announcementAudienceScreen({
+      auctionId,
+      text: "Успей в розыгрыш",
+      button: "auction",
+      audience: "not-in-raffle",
+      audiences: ["all", "not-in-raffle"],
+    });
+    const frame: Sent = {
+      text: shown.text,
+      reply_markup: { inline_keyboard: shown.keyboard.inline_keyboard },
+    };
+    const pressed = dataOf(frame, "Не в розыгрыше");
+    await hub.handleUpdate(pressUnder(pressed, frame));
+
+    expect(labels(last(calls)).flat()).toContain("Повторить");
+    expect(dataOf(last(calls), "Повторить")).toBe(pressed);
+    expect(calls.some((call) => call.method === "sendPhoto")).toBe(false);
+    expect(
+      calls.some(
+        (call) =>
+          (call.payload as { reply_parameters?: unknown }).reply_parameters !==
+          undefined,
+      ),
+    ).toBe(false);
+    expect(accepted).toEqual([]);
+  });
+
+  it("skips «Кому» when the auction can name no narrower audience", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [mug],
+    });
+    const notices = audienceCounts({ all: 5 });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, { port: notices.port, accepted: [] }, calls);
+    await hub.init();
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text: "Торги идут",
+      buttons: ["auction"],
+      audience: "all",
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+
+    expect(plain(last(calls))).toContain("Получат 5 человек");
+    expect(notices.asked).toEqual(["all"]);
   });
 
   it("previews the announcement as text when the lot photo cannot be read", async () => {
@@ -7538,6 +7811,7 @@ describe("auction announcement", () => {
       auctionId,
       text,
       buttons: ["lot"],
+      audience: "all",
       lot: { index: 0, lotId: vaseId, title: "Ваза" },
     });
     const frame: Sent = {
@@ -7571,6 +7845,7 @@ describe("auction announcement", () => {
       auctionId,
       text: "Первый текст",
       buttons: ["auction"],
+      audience: "all",
     });
     const frame: Sent = {
       text: shownButtons.text.replace("Первый текст", "Чужой текст"),
@@ -7793,6 +8068,7 @@ describe("auction announcement", () => {
       auctionId,
       text,
       buttons: ["lot"],
+      audience: "all",
       lot: { index: 0, lotId: vaseId, title: "Ваза" },
     });
     const frame: Sent = {
@@ -7867,6 +8143,7 @@ describe("auction announcement", () => {
       auctionId,
       text,
       buttons: ["auction"],
+      audience: "all",
     });
     const frame: Sent = {
       text: buttons.text,
@@ -7902,6 +8179,7 @@ describe("auction announcement", () => {
       auctionId,
       text,
       buttons: ["auction"],
+      audience: "all",
     });
     const frame: Sent = {
       text: buttons.text,
@@ -7951,6 +8229,7 @@ describe("auction announcement", () => {
       auctionId,
       text,
       buttons: ["auction"],
+      audience: "all",
     });
     const frame: Sent = {
       text: buttons.text,
@@ -7994,6 +8273,7 @@ describe("auction announcement", () => {
       auctionId,
       text,
       buttons: ["auction"],
+      audience: "all",
     });
     const frame: Sent = {
       text: buttons.text,
@@ -8045,6 +8325,7 @@ describe("auction announcement", () => {
       auctionId,
       text,
       buttons: ["auction"],
+      audience: "all",
     });
     const frame: Sent = {
       text: buttons.text,

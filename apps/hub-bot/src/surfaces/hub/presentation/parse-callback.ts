@@ -5,6 +5,7 @@ import {
   type OutbidFrequency,
 } from "../../../core/notifications/outbid.js";
 import type {
+  AnnouncementAudience,
   AnnouncementTemplate,
   ButtonChoice,
 } from "../application/auction-announcements.js";
@@ -768,11 +769,14 @@ export type AnnouncementAction =
       template: AnnouncementTemplate;
       ref?: number;
     }
+  // `audience` (PER-779) — последняя часть кнопки; у кнопок до неё её нет, и
+  // они значат «всем».
   | {
       kind: "console-announcement-button";
       auction: string;
       button: ButtonChoice;
       print: string;
+      audience: AnnouncementAudience;
       lot?: number;
     }
   | {
@@ -780,6 +784,7 @@ export type AnnouncementAction =
       auction: string;
       button: ButtonChoice;
       print: string;
+      audience: AnnouncementAudience;
       lot?: number;
       photo?: number;
     }
@@ -789,17 +794,24 @@ export type AnnouncementAction =
       auction: string;
       button: ButtonChoice;
       print: string;
+      audience: AnnouncementAudience;
       lot?: number;
     }
-  | {
-      kind: "console-announcement-send";
-      auction: string;
-      button: ButtonChoice;
-      print: string;
-      lot?: number;
-      photo?: number;
-      post?: number;
-    };
+  // «Отправить N» и шаг «Кому» (PER-779) — одной формы: кнопка аудитории
+  // ведёт к предпросмотру, а «Нет» подтверждения — обратно в «Кому».
+  | ({ kind: "console-announcement-send" } & AnnouncementSendStep)
+  | ({ kind: "console-announcement-audience" } & AnnouncementSendStep)
+  | ({ kind: "console-announcement-recipients" } & AnnouncementSendStep);
+
+type AnnouncementSendStep = {
+  auction: string;
+  button: ButtonChoice;
+  print: string;
+  audience: AnnouncementAudience;
+  lot?: number;
+  photo?: number;
+  post?: number;
+};
 
 /** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
 export type QuestionStep =
@@ -810,6 +822,7 @@ export type QuestionStep =
       auction: string;
       button: ButtonChoice;
       print: string;
+      audience: AnnouncementAudience;
       lot?: number;
     }
   // Видео промо аукциона (PER-774): аукцион; ответ — видео, а не текст.
@@ -1192,6 +1205,22 @@ const buttonCodes: Readonly<Record<ButtonChoice, string>> = {
   none: "n",
 };
 
+const audienceCodes: Readonly<Record<AnnouncementAudience, string>> = {
+  all: "a",
+  "not-in-raffle": "r",
+  "without-predictions": "p",
+  "not-in-raffle-or-without-predictions": "e",
+};
+
+// Аудитория — последняя часть кнопки (PER-779): кнопка без неё, выданная до
+// шага «Кому», значит «всем», как объявление до него.
+function audienceOf(
+  raw: string | undefined,
+): AnnouncementAudience | "malformed" {
+  if (raw === undefined) return "all";
+  return codeOf(audienceCodes, raw) ?? "malformed";
+}
+
 function codeOf<T extends string>(
   codes: Readonly<Record<T, string>>,
   code: string | undefined,
@@ -1267,14 +1296,15 @@ export function consoleAnnouncementAskData(
   return `v1:ac:nq:${auction}:${templateCodes[template]}${ref === undefined ? "" : `:${ref}`}`;
 }
 
-/** Кнопка объявления: выбор, отпечаток текста и лот шаблона. */
+/** Кнопка объявления: выбор, отпечаток текста, лот шаблона и аудитория. */
 export function consoleAnnouncementButtonData(
   auction: string,
   button: ButtonChoice,
   print: string,
+  audience: AnnouncementAudience,
   lot?: number,
 ): string {
-  return `v1:ac:nb:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}`;
+  return `v1:ac:nb:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${audienceCodes[audience]}`;
 }
 
 /** Фото лота объявления; без номера — «Пропустить». */
@@ -1282,10 +1312,11 @@ export function consoleAnnouncementPhotoData(
   auction: string,
   button: ButtonChoice,
   print: string,
+  audience: AnnouncementAudience,
   lot?: number,
   photo?: number,
 ): string {
-  return `v1:ac:np:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${refPart(photo)}`;
+  return `v1:ac:np:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${refPart(photo)}:${audienceCodes[audience]}`;
 }
 
 /** «Своё фото или видео» (PER-776): вопрос о медиа с тем же шагом. */
@@ -1293,9 +1324,23 @@ export function consoleAnnouncementMediaData(
   auction: string,
   button: ButtonChoice,
   print: string,
+  audience: AnnouncementAudience,
   lot?: number,
 ): string {
-  return `v1:ac:nm:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}`;
+  return `v1:ac:nm:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${audienceCodes[audience]}`;
+}
+
+type SendChoice = {
+  button: ButtonChoice;
+  print: string;
+  audience: AnnouncementAudience;
+  lot?: number | undefined;
+  photo?: number | undefined;
+  post?: number | undefined;
+};
+
+function sendPart(choice: SendChoice): string {
+  return `${buttonCodes[choice.button]}:${choice.print}:${refPart(choice.lot)}:${mediaPart(choice.photo, choice.post)}:${audienceCodes[choice.audience]}`;
 }
 
 /**
@@ -1304,14 +1349,35 @@ export function consoleAnnouncementMediaData(
  */
 export function consoleAnnouncementSendData(
   auction: string,
-  button: ButtonChoice,
-  print: string,
-  lot?: number,
-  photo?: number,
-  post?: number,
+  choice: SendChoice,
 ): string {
-  return `v1:ac:ns:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${mediaPart(photo, post)}`;
+  return `v1:ac:ns:${auction}:${sendPart(choice)}`;
 }
+
+/**
+ * Шаг «Кому» (PER-779) с выбранной аудиторией: так его открывает «Нет»
+ * подтверждения, а текст читается из предпросмотра.
+ */
+export function consoleAnnouncementAudienceData(
+  auction: string,
+  choice: SendChoice,
+): string {
+  return `v1:ac:nc:${auction}:${sendPart(choice)}`;
+}
+
+/** Аудитория шага «Кому»: предпросмотр с числом её получателей. */
+export function consoleAnnouncementRecipientsData(
+  auction: string,
+  choice: SendChoice,
+): string {
+  return `v1:ac:nk:${auction}:${sendPart(choice)}`;
+}
+
+const sendKinds = {
+  ns: "console-announcement-send",
+  nk: "console-announcement-recipients",
+  nc: "console-announcement-audience",
+} as const;
 
 function parseAnnouncement(
   parts: readonly string[],
@@ -1353,31 +1419,35 @@ function parseAnnouncement(
   const button = codeOf(buttonCodes, parts[4]);
   const print = WindowPrintSchema.safeParse(parts[5]);
   const lot = refOf(parts[6]);
-  const media = mediaOf(parts[7]);
+  // Части до аудитории: у шагов кнопки и медиа — семь, у фото и «Отправить» —
+  // восемь; кнопка шага «Кому» обязана нести аудиторию.
+  const length = parts[2] === "nb" || parts[2] === "nm" ? 7 : 8;
+  const lengths =
+    parts[2] === "nk" || parts[2] === "nc" ? [length + 1] : [length, length + 1];
+  const media = length === 8 ? mediaOf(parts[7]) : {};
+  const audience = audienceOf(parts[length]);
   if (
+    !lengths.includes(parts.length) ||
     button === undefined ||
     !print.success ||
     lot === "malformed" ||
-    media === "malformed"
+    media === "malformed" ||
+    audience === "malformed"
   ) {
     return malformed;
   }
   const { photo, post } = media;
-  const common = { auction, button, print: print.data };
+  const common = { auction, button, print: print.data, audience };
   switch (parts[2]) {
     case "nb":
-      return parts.length === 7
-        ? {
-            kind: "console-announcement-button",
-            ...common,
-            ...(lot === undefined ? {} : { lot }),
-          }
-        : malformed;
+      return {
+        kind: "console-announcement-button",
+        ...common,
+        ...(lot === undefined ? {} : { lot }),
+      };
     // Без лота шаг фото несёт только «Пропустить» (PER-776).
     case "np":
-      return parts.length === 8 &&
-        post === undefined &&
-        (photo === undefined || lot !== undefined)
+      return post === undefined && (photo === undefined || lot !== undefined)
         ? {
             kind: "console-announcement-photo",
             ...common,
@@ -1386,17 +1456,17 @@ function parseAnnouncement(
           }
         : malformed;
     case "nm":
-      return parts.length === 7
-        ? {
-            kind: "console-announcement-media",
-            ...common,
-            ...(lot === undefined ? {} : { lot }),
-          }
-        : malformed;
+      return {
+        kind: "console-announcement-media",
+        ...common,
+        ...(lot === undefined ? {} : { lot }),
+      };
     case "ns":
-      return parts.length === 8 && (photo === undefined || lot !== undefined)
+    case "nk":
+    case "nc":
+      return photo === undefined || lot !== undefined
         ? {
-            kind: "console-announcement-send",
+            kind: sendKinds[parts[2]],
             ...common,
             ...(lot === undefined ? {} : { lot }),
             ...(photo === undefined ? {} : { photo }),
@@ -1930,7 +2000,7 @@ function stepData(step: QuestionStep): string {
     case "console-set":
       return `v1:q:as:${step.auction}`;
     case "console-announcement-media":
-      return `v1:q:am:${step.auction}:${buttonCodes[step.button]}:${step.print}:${refPart(step.lot)}`;
+      return `v1:q:am:${step.auction}:${buttonCodes[step.button]}:${step.print}:${refPart(step.lot)}:${audienceCodes[step.audience]}`;
     case "console-announcement":
       return `v1:q:ao:${step.auction}:${templateCodes[step.template]}${step.ref === undefined ? "" : `:${step.ref}`}`;
     case "console-section":
@@ -3178,20 +3248,23 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
     }
   }
   // Своё медиа объявления (PER-776): кнопка, отпечаток текста и лот — семь
-  // частей.
+  // частей, восьмая — аудитория (PER-779); вопрос до неё значит «всем».
   if (parts[2] === "am") {
     const button = codeOf(buttonCodes, parts[4]);
     const print = WindowPrintSchema.safeParse(parts[5]);
     const lot = refOf(parts[6]);
-    return parts.length === 7 &&
+    const audience = audienceOf(parts[7]);
+    return (parts.length === 7 || parts.length === 8) &&
       button !== undefined &&
       print.success &&
-      lot !== "malformed"
+      lot !== "malformed" &&
+      audience !== "malformed"
       ? {
           kind: "console-announcement-media",
           auction: token.data,
           button,
           print: print.data,
+          audience,
           ...(lot === undefined ? {} : { lot }),
         }
       : undefined;

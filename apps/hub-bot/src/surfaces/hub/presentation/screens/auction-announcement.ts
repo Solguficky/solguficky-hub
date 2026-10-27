@@ -7,6 +7,7 @@ import {
 } from "../../../../core/notifications/organizer-announcement.js";
 import { marked, pictogram } from "../../../../core/pictograms.js";
 import type {
+  AnnouncementAudience,
   AnnouncementDraft,
   AnnouncementLot,
   AnnouncementTemplate,
@@ -20,11 +21,13 @@ import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleAnnouncementAskData,
+  consoleAnnouncementAudienceData,
   consoleAnnouncementButtonData,
   consoleAnnouncementData,
   consoleAnnouncementLotsData,
   consoleAnnouncementMediaData,
   consoleAnnouncementPhotoData,
+  consoleAnnouncementRecipientsData,
   consoleAnnouncementSendData,
   consoleAnnouncementWindowsData,
 } from "../parse-callback.js";
@@ -74,6 +77,27 @@ const templateLabels: Readonly<Record<AnnouncementTemplate, string>> = {
   chronicle: "Хроники дня",
 };
 
+// Шаблон розыгрыша после закрытия регистрации (PER-779): о розыгрыше больше
+// не объявить, а прогнозы ещё идут.
+const predictionsTemplateLabel = "Прогнозы";
+
+/** Аудитории шага «Кому» (PER-779, решение PER-768). */
+export const audienceLabels: Readonly<Record<AnnouncementAudience, string>> = {
+  all: "Всем",
+  "not-in-raffle": "Не в розыгрыше",
+  "without-predictions": "Без прогнозов",
+  "not-in-raffle-or-without-predictions": "Не в розыгрыше или без прогнозов",
+};
+
+// Кто получит объявление — в тексте подтверждения.
+const audienceWords: Readonly<Record<AnnouncementAudience, string>> = {
+  all: "",
+  "not-in-raffle": "кто ещё не в розыгрыше",
+  "without-predictions": "у кого нет прогноза",
+  "not-in-raffle-or-without-predictions":
+    "кто ещё не в розыгрыше или без прогноза",
+};
+
 const noButtonLabel = "Без кнопки";
 const editTextLabel = "Изменить текст";
 const skipPhotoLabel = "Пропустить";
@@ -105,11 +129,13 @@ export function announcementMenuScreen(
     templateLabels.own,
     consoleAnnouncementAskData(auction, "own"),
   );
-  if (view.raffle) {
+  if (view.raffle !== undefined) {
     keyboard
       .row()
       .text(
-        templateLabels.raffle,
+        view.raffle === "raffle"
+          ? templateLabels.raffle
+          : predictionsTemplateLabel,
         consoleAnnouncementAskData(auction, "raffle"),
       );
   }
@@ -136,7 +162,7 @@ export function announcementMenuScreen(
     text: screenText(
       "Объявление",
       escapeHtml(
-        "Сообщение всем, у кого есть право ставок: участникам — в этом боте, гостям — в боте аукциона. Выбери своё объявление или шаблон — черновик текста можно поправить.",
+        "Сообщение тем, у кого есть право ставок: участникам — в этом боте, гостям — в боте аукциона. Выбери своё объявление или шаблон — черновик текста можно поправить, а кому отправить, спросим перед предпросмотром.",
       ),
     ),
     keyboard: withNav(keyboard, toAuctionRoot(view.auctionId)),
@@ -217,6 +243,10 @@ export function draftText(
     case "own":
       return undefined;
     case "raffle":
+      // После закрытия регистрации шаблон — «Прогнозы» (PER-779).
+      if (!draft.raffle) {
+        return "Прогнозы аукциона: угадай, как закончатся торги. Жми кнопку ниже.";
+      }
       return truncate(
         [
           `Бесплатный розыгрыш среди участников аукциона${draft.prize === undefined ? "" : `: разыгрываем «${draft.prize}»`}.`,
@@ -304,6 +334,7 @@ export function announcementButtonScreen(view: {
   auctionId: string;
   text: string;
   buttons: readonly AnnouncementButtonKind[];
+  audience: AnnouncementAudience;
   lot?: AnnouncementLot | undefined;
 }): ShownScreen {
   const auction = uuidToToken(view.auctionId);
@@ -314,7 +345,13 @@ export function announcementButtonScreen(view: {
     if (index > 0) keyboard.row();
     keyboard.text(
       choice === "none" ? noButtonLabel : announcementButtonLabels[choice],
-      consoleAnnouncementButtonData(auction, choice, print, view.lot?.index),
+      consoleAnnouncementButtonData(
+        auction,
+        choice,
+        print,
+        view.audience,
+        view.lot?.index,
+      ),
     );
   });
   keyboard.row().text(
@@ -345,6 +382,7 @@ export function announcementPhotoScreen(view: {
   auctionId: string;
   text: string;
   button: ButtonChoice;
+  audience: AnnouncementAudience;
   lot?: AnnouncementLot | undefined;
   photos: number;
   media: boolean;
@@ -363,6 +401,7 @@ export function announcementPhotoScreen(view: {
         auction,
         view.button,
         print,
+        view.audience,
         lot?.index,
         index,
       ),
@@ -372,14 +411,26 @@ export function announcementPhotoScreen(view: {
     if (photos > 0) keyboard.row();
     keyboard.text(
       ownMediaLabel,
-      consoleAnnouncementMediaData(auction, view.button, print, lot?.index),
+      consoleAnnouncementMediaData(
+        auction,
+        view.button,
+        print,
+        view.audience,
+        lot?.index,
+      ),
     );
   }
   keyboard
     .row()
     .text(
       skipPhotoLabel,
-      consoleAnnouncementPhotoData(auction, view.button, print, lot?.index),
+      consoleAnnouncementPhotoData(
+        auction,
+        view.button,
+        print,
+        view.audience,
+        lot?.index,
+      ),
     );
   const question =
     lot === undefined || photos === 0
@@ -400,9 +451,62 @@ export function announcementPhotoScreen(view: {
 }
 
 /**
+ * Шаг «Кому» (PER-779): аудитории, которые аукцион может назвать сейчас, по
+ * одной в ряд, выбранная — первой. Число получателей назовёт предпросмотр:
+ * считает его Notifications, а людей шаг не видит.
+ */
+export function announcementAudienceScreen(view: {
+  auctionId: string;
+  text: string;
+  button: ButtonChoice;
+  lot?: AnnouncementLot | undefined;
+  photo?: number | undefined;
+  post?: number | undefined;
+  audience: AnnouncementAudience;
+  audiences: readonly AnnouncementAudience[];
+}): ShownScreen {
+  const auction = uuidToToken(view.auctionId);
+  const print = fingerprint(view.text);
+  const keyboard = new InlineKeyboard();
+  const ordered = [
+    view.audience,
+    ...view.audiences.filter((audience) => audience !== view.audience),
+  ];
+  ordered.forEach((audience, index) => {
+    if (index > 0) keyboard.row();
+    keyboard.text(
+      audienceLabels[audience],
+      consoleAnnouncementRecipientsData(auction, {
+        button: view.button,
+        print,
+        audience,
+        lot: view.lot?.index,
+        photo: view.photo,
+        post: view.post,
+      }),
+    );
+  });
+  return {
+    id: "announcement-audience",
+    text: screenText(
+      "Кому",
+      escapeHtml(
+        view.audience === "all"
+          ? "Кому отправить объявление? Сколько человек его получит, покажет предпросмотр."
+          : `Кому отправить объявление? Первым — выбор шаблона: «${audienceLabels[view.audience]}». Сколько человек его получит, покажет предпросмотр.`,
+      ),
+      textBlock(view.text),
+    ),
+    keyboard: withNav(keyboard, toAnnouncement(view.auctionId)),
+    format: "HTML",
+  };
+}
+
+/**
  * Подтверждение отправки — ответ на предпросмотр, который выглядит ровно как
  * у получателя. Текст «Отправить» читает из предпросмотра, а кнопка несёт его
- * отпечаток, выбор кнопки и номера лота и фото.
+ * отпечаток, выбор кнопки, номера лота и фото и аудиторию. «Нет» возвращает
+ * в «Кому», когда выбирать было из чего.
  */
 export function announcementConfirmScreen(view: {
   auctionId: string;
@@ -411,6 +515,8 @@ export function announcementConfirmScreen(view: {
   lot?: AnnouncementLot | undefined;
   photo?: number | undefined;
   post?: number | undefined;
+  audience: AnnouncementAudience;
+  audiences: readonly AnnouncementAudience[];
   recipientCount: number;
 }): ShownScreen {
   const auction = uuidToToken(view.auctionId);
@@ -419,27 +525,37 @@ export function announcementConfirmScreen(view: {
     "человека",
     "человек",
   ]);
+  const choice = {
+    button: view.button,
+    print: fingerprint(view.text),
+    audience: view.audience,
+    lot: view.lot?.index,
+    photo: view.photo,
+    post: view.post,
+  };
+  const narrowed = view.audience !== "all";
+  const who = audienceWords[view.audience];
   return {
     id: "announcement-confirm",
     text: screenText(
       "Отправить объявление?",
       escapeHtml(
         view.recipientCount === 0
-          ? "Выше — как его увидят. Сейчас его никто не получит: держателей права ставок нет или все выключили вести об аукционе."
-          : `Выше — как его увидят. Получат ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
+          ? narrowed
+            ? `Выше — как его увидят. Сейчас его никто не получит: среди держателей права ставок нет тех, ${who}, или они выключили вести об аукционе.`
+            : "Выше — как его увидят. Сейчас его никто не получит: держателей права ставок нет или все выключили вести об аукционе."
+          : narrowed
+            ? `Выше — как его увидят. Получат ${people} с правом ставок — те, ${who}, кроме выключивших вести об аукционе.`
+            : `Выше — как его увидят. Получат ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
       ),
     ),
     keyboard: confirmKeyboard({
       yes: `Да, отправить ${view.recipientCount}`,
-      yesData: consoleAnnouncementSendData(
-        auction,
-        view.button,
-        fingerprint(view.text),
-        view.lot?.index,
-        view.photo,
-        view.post,
-      ),
-      noData: consoleAnnouncementData(auction),
+      yesData: consoleAnnouncementSendData(auction, choice),
+      noData:
+        view.audiences.length > 1
+          ? consoleAnnouncementAudienceData(auction, choice)
+          : consoleAnnouncementData(auction),
       irreversible: true,
     }),
     format: "HTML",
@@ -472,6 +588,8 @@ export function announcementOutcomeScreen(
             "Своё фото или видео сейчас приложить нельзя: канал медиа ботов не настроен. Объявление не отправлено.",
           "media-failed":
             "Не получилось сохранить фото или видео в канал медиа ботов. Объявление не отправлено: проверь, что бот — администратор канала, и начни заново.",
+          "audience-gone":
+            "Этих получателей больше не выбрать: регистрация в розыгрыше закрылась или раунд прогнозов кончился. Объявление не отправлено: начни заново и выбери, кому.",
         }[view.note];
   return {
     id: "outcome",

@@ -27,6 +27,9 @@ import type {
 // Notifications, несут сходку — её край берёт из памяти процесса.
 // Своё фото или видео (PER-776) приходит сюда уже постом чата медиа ботов —
 // номером поста: публикует его представление, потому что это вызов Telegram.
+// Аудитория (PER-779, решение PER-768) — шаг любого объявления: шаблон её
+// предвыбирает, подтверждение её меняет, а считает и сужает Notifications по
+// Auction. Список людей край не получает.
 
 /** Порт приёма объявления; адаптер — клиент Notifications хаба. */
 export type AuctionAnnouncements = {
@@ -34,6 +37,7 @@ export type AuctionAnnouncements = {
   previewAuctionAnnouncement(
     person: Person,
     meetupId: string,
+    audience: AnnouncementAudience,
     meta?: RpcMetadata,
   ): Promise<AnnouncementAudienceResult>;
   // Приём: `created` ложен на повторе того же ключа.
@@ -48,6 +52,7 @@ export type AnnouncementCommand = {
   meetupId: string;
   announcementId: string;
   text: string;
+  audience: AnnouncementAudience;
   button?: AnnouncementButton;
   photo?: AnnouncementPhoto;
   post?: AnnouncementPost;
@@ -61,6 +66,16 @@ export type AnnouncementAcceptResult =
   | { kind: "ok"; created: boolean }
   | NotificationFailure;
 
+/**
+ * Кому из держателей права ставок уходит объявление (PER-768): все или те,
+ * кто ещё не в розыгрыше, без прогноза открытого раунда или то либо другое.
+ */
+export type AnnouncementAudience =
+  | "all"
+  | "not-in-raffle"
+  | "without-predictions"
+  | "not-in-raffle-or-without-predictions";
+
 /** Шаблоны эпика и своё объявление. */
 export type AnnouncementTemplate =
   | "own"
@@ -72,16 +87,29 @@ export type AnnouncementTemplate =
 /** Выбор кнопки: вид или «Без кнопки». */
 export type ButtonChoice = AnnouncementButtonKind | "none";
 
-// Кнопка, которую шаблон предлагает первой: её ведёт текст черновика.
-const templateButtons: Readonly<
-  Record<AnnouncementTemplate, AnnouncementButtonKind | undefined>
-> = {
-  own: undefined,
-  raffle: "raffle",
-  windows: "lots",
-  lot: "lot",
-  chronicle: "chronicle",
-};
+// Кнопка, которую шаблон предлагает первой: её ведёт текст черновика. После
+// закрытия регистрации шаблон розыгрыша говорит только о прогнозах.
+function templateButton(
+  template: AnnouncementTemplate,
+  raffleOpen: boolean,
+): AnnouncementButtonKind | undefined {
+  switch (template) {
+    case "own":
+      return undefined;
+    case "raffle":
+      return raffleOpen ? "raffle" : "predictions";
+    case "windows":
+      return "lots";
+    case "lot":
+      return "lot";
+    case "chronicle":
+      return "chronicle";
+    default: {
+      const _exhaustive: never = template;
+      return _exhaustive;
+    }
+  }
+}
 
 /**
  * Откуда черновик берёт слова. Сам текст черновика — представления: моменты
@@ -89,8 +117,10 @@ const templateButtons: Readonly<
  */
 export type AnnouncementDraft =
   | { kind: "own" }
+  // `raffle` ложен после закрытия регистрации: шаблон тогда — «Прогнозы».
   | {
       kind: "raffle";
+      raffle: boolean;
       prize?: string;
       closesAt?: string;
       predictions: boolean;
@@ -130,22 +160,36 @@ export type AuctionAnnouncementRequest =
       ref?: number;
       value: string;
     })
+  // `audience` — предвыбор шаблона или выбор в подтверждении (PER-779).
   | (Call & {
       intent: "pick-announcement-button";
       meetupId: string;
       button: ButtonChoice;
+      audience: AnnouncementAudience;
       lot?: number;
     })
   // Вопрос о своём фото или видео (PER-776): шаг тот же, что у выбора фото.
   | (Call & {
       intent: "ask-announcement-media";
       button: ButtonChoice;
+      audience: AnnouncementAudience;
       lot?: number;
+    })
+  // Шаг «Кому» (PER-779): после кнопки и фото, а из подтверждения — «Нет».
+  | (Call & {
+      intent: "ask-announcement-audience";
+      meetupId: string;
+      button: ButtonChoice;
+      audience: AnnouncementAudience;
+      lot?: number;
+      photo?: number;
+      post?: AnnouncementPost;
     })
   | (Call & {
       intent: "preview-announcement";
       meetupId: string;
       button: ButtonChoice;
+      audience: AnnouncementAudience;
       lot?: number;
       photo?: number;
       post?: AnnouncementPost;
@@ -156,6 +200,7 @@ export type AuctionAnnouncementRequest =
       announcementId: string;
       text: string;
       button: ButtonChoice;
+      audience: AnnouncementAudience;
       lot?: number;
       photo?: number;
       post?: AnnouncementPost;
@@ -165,7 +210,9 @@ export type AuctionAnnouncementResult =
   | {
       kind: "announcement-menu";
       auctionId: string;
-      raffle: boolean;
+      // Шаблон розыгрыша: до закрытия регистрации — «Розыгрыш и прогнозы»,
+      // после — «Прогнозы», пока открыт раунд; иначе его нет.
+      raffle: "raffle" | "predictions" | undefined;
       windows: number;
       lots: number;
       chronicle: boolean;
@@ -195,6 +242,8 @@ export type AuctionAnnouncementResult =
       // Кнопки, которые аукцион сейчас может нести, — первой та, что ведёт
       // текст шаблона.
       buttons: readonly AnnouncementButtonKind[];
+      // Предвыбор шаблона: его шаги несут дальше до подтверждения.
+      audience: AnnouncementAudience;
       lot?: AnnouncementLot;
     }
   // Фото лота шаблона и, при включённом чате медиа, своё фото или видео
@@ -203,6 +252,7 @@ export type AuctionAnnouncementResult =
       kind: "announcement-photo-ask";
       auctionId: string;
       button: ButtonChoice;
+      audience: AnnouncementAudience;
       lot?: AnnouncementLot;
       photos: number;
       media: boolean;
@@ -211,7 +261,20 @@ export type AuctionAnnouncementResult =
       kind: "announcement-media-ask";
       auctionId: string;
       button: ButtonChoice;
+      audience: AnnouncementAudience;
       lot?: AnnouncementLot;
+    }
+  // Шаг «Кому»: аудитории, которые аукцион может назвать сейчас, и та, что
+  // выбрана, — предвыбор шаблона или выбор до «Нет» подтверждения.
+  | {
+      kind: "announcement-audience-ask";
+      auctionId: string;
+      button: ButtonChoice;
+      lot?: AnnouncementLot;
+      photo?: number;
+      post?: AnnouncementPost;
+      audience: AnnouncementAudience;
+      audiences: readonly AnnouncementAudience[];
     }
   | {
       kind: "announcement-preview";
@@ -220,12 +283,17 @@ export type AuctionAnnouncementResult =
       lot?: AnnouncementLot;
       photo?: { index: number } & AnnouncementPhoto;
       post?: AnnouncementPost;
+      // Выбранная аудитория и те, что аукцион может назвать сейчас: на них
+      // подтверждение предлагает её сменить.
+      audience: AnnouncementAudience;
+      audiences: readonly AnnouncementAudience[];
       recipientCount: number;
     }
   | { kind: "announcement-sent"; auctionId: string; repeated: boolean }
   // Шаг устарел: окна, лота или фото, на которые он ссылался, в пульте больше
   // нет, либо объявлять аукцион уже некому. Своё медиа (PER-776): чат медиа
-  // выключен — `media-off`, пост не опубликовался — `media-failed`.
+  // выключен — `media-off`, пост не опубликовался — `media-failed`. Аудиторию
+  // шага аукцион больше назвать не может — `audience-gone` (PER-779).
   | {
       kind: "announcement-outcome";
       auctionId: string;
@@ -238,7 +306,8 @@ export type AnnouncementOutcomeNote =
   | "photo-gone"
   | "closed"
   | "media-off"
-  | "media-failed";
+  | "media-failed"
+  | "audience-gone";
 
 const notAdministrator: ExecuteResult = {
   kind: "auction-console-refused",
@@ -279,6 +348,66 @@ export function announceable(console: AuctionConsoleSnapshot): boolean {
     default:
       return false;
   }
+}
+
+// Регистрация в розыгрыше закрыта: момент T прошёл (ADR-066).
+function raffleClosed(console: AuctionConsoleSnapshot, now: Date): boolean {
+  const closesAt = console.week?.raffleClosesAt;
+  return closesAt !== undefined && Date.parse(closesAt) <= now.getTime();
+}
+
+// Регистрация идёт: розыгрыш открывается с онлайн-торгами, а T впереди.
+function raffleOpen(console: AuctionConsoleSnapshot, now: Date): boolean {
+  return (
+    console.status !== "scheduled" &&
+    console.week?.raffleClosesAt !== undefined &&
+    !raffleClosed(console, now)
+  );
+}
+
+// Раунд прогнозов открыт: каталог — всю онлайн-неделю (PER-723). Раунд финала
+// открывается с составом, когда объявление пульт уже не предлагает.
+function predictionRoundOpen(console: AuctionConsoleSnapshot): boolean {
+  return (
+    console.status === "prebidding" && console.predictionTally !== undefined
+  );
+}
+
+/**
+ * Аудитории, которые аукцион может назвать сейчас, в порядке подтверждения.
+ * Фильтр розыгрыша живёт до T, фильтр прогнозов — пока открыт раунд, а
+ * смешанный — пока открыты оба: иначе Notifications откажет.
+ */
+export function announcementAudiences(
+  console: AuctionConsoleSnapshot,
+  now: Date,
+): AnnouncementAudience[] {
+  const raffle = raffleOpen(console, now);
+  const predictions = predictionRoundOpen(console);
+  return [
+    "all",
+    ...(raffle ? (["not-in-raffle"] as const) : []),
+    ...(predictions ? (["without-predictions"] as const) : []),
+    ...(raffle && predictions
+      ? (["not-in-raffle-or-without-predictions"] as const)
+      : []),
+  ];
+}
+
+// Предвыбор шаблона: «Розыгрыш и прогнозы» зовёт тех, кто ещё не в розыгрыше
+// или без прогнозов, — самым широким из открытых сейчас фильтров; остальные
+// шаблоны — всех.
+function templateAudience(
+  template: AnnouncementTemplate,
+  available: readonly AnnouncementAudience[],
+): AnnouncementAudience {
+  if (template !== "raffle") return "all";
+  const preferred: readonly AnnouncementAudience[] = [
+    "not-in-raffle-or-without-predictions",
+    "not-in-raffle",
+    "without-predictions",
+  ];
+  return preferred.find((audience) => available.includes(audience)) ?? "all";
 }
 
 /** Лоты реестра по порядку заведения — идентификатор лота UUIDv7. */
@@ -394,9 +523,11 @@ export function createAuctionAnnouncements(
   consoles: Pick<AuctionConsoles, "getAuctionConsole" | "consoleRaffle">,
   announcements: AuctionAnnouncements,
   // Чат медиа ботов включён (PER-776): шаг фото предлагает своё медиа.
-  options: { media?: boolean } = {},
+  // Часы решают, прошёл ли момент T розыгрыша; тест их подменяет.
+  options: { media?: boolean; now?: () => Date } = {},
 ) {
   const media = options.media === true;
+  const clock = options.now ?? (() => new Date());
   type Read =
     | { kind: "ok"; console: AuctionConsoleSnapshot }
     | { kind: "refused"; result: ExecuteResult };
@@ -494,6 +625,7 @@ export function createAuctionAnnouncements(
         const closesAt = console.week?.raffleClosesAt;
         return ok({
           kind: "raffle",
+          raffle: !raffleClosed(console, clock()),
           ...(prize === undefined ? {} : { prize }),
           ...(closesAt === undefined ? {} : { closesAt }),
           predictions: console.predictionTally !== undefined,
@@ -510,23 +642,27 @@ export function createAuctionAnnouncements(
     request: Call & {
       meetupId: string;
       button: ButtonChoice;
+      audience: AnnouncementAudience;
       lot?: number;
       photo?: number;
       post?: AnnouncementPost;
     },
   ): Promise<ExecuteResult> {
-    const [found, audience] = await Promise.all([
+    const [found, counted] = await Promise.all([
       read(request),
       announcements.previewAuctionAnnouncement(
         request.identity,
         request.meetupId,
+        request.audience,
         rpcMeta(request),
       ),
     ]);
     if (found.kind === "refused") return found.result;
     const picked = pick(found.console, request.auctionId, request);
     if (!picked.ok) return picked.result;
-    if (audience.kind !== "ok") return failed(audience);
+    const audiences = announcementAudiences(found.console, clock());
+    if (!audiences.includes(request.audience)) return audienceGone(request);
+    if (counted.kind !== "ok") return failed(counted);
     return {
       kind: "announcement-preview",
       auctionId: request.auctionId,
@@ -534,7 +670,49 @@ export function createAuctionAnnouncements(
       ...(picked.lot === undefined ? {} : { lot: picked.lot }),
       ...(picked.photo === undefined ? {} : { photo: picked.photo }),
       ...(request.post === undefined ? {} : { post: request.post }),
-      recipientCount: audience.recipientCount,
+      audience: request.audience,
+      audiences,
+      recipientCount: counted.recipientCount,
+    };
+  }
+
+  // Шаг «Кому». Выбирать не из чего — до розыгрыша и прогнозов или после них
+  // — шаг ведёт сразу к предпросмотру «всем». Выбор, которого аукцион больше
+  // не назовёт, шаг не держит: первой тогда стоит «всем».
+  async function askAudience(
+    request: Call & {
+      meetupId: string;
+      button: ButtonChoice;
+      audience: AnnouncementAudience;
+      lot?: number;
+      photo?: number;
+      post?: AnnouncementPost;
+    },
+    console: AuctionConsoleSnapshot,
+  ): Promise<ExecuteResult> {
+    const picked = pick(console, request.auctionId, request);
+    if (!picked.ok) return picked.result;
+    const audiences = announcementAudiences(console, clock());
+    if (audiences.length === 1) return preview({ ...request, audience: "all" });
+    return {
+      kind: "announcement-audience-ask",
+      auctionId: request.auctionId,
+      button: request.button,
+      ...(picked.lot === undefined ? {} : { lot: picked.lot }),
+      ...(picked.photo === undefined ? {} : { photo: picked.photo.index }),
+      ...(request.post === undefined ? {} : { post: request.post }),
+      audience: audiences.includes(request.audience) ? request.audience : "all",
+      audiences,
+    };
+  }
+
+  // Аудитория шага устарела — T прошёл или раунд закрылся: объявление не
+  // уходит ни ей, ни молча всем.
+  function audienceGone(request: Call): ExecuteResult {
+    return {
+      kind: "announcement-outcome",
+      auctionId: request.auctionId,
+      note: "audience-gone",
     };
   }
 
@@ -548,12 +726,15 @@ export function createAuctionAnnouncements(
     if (found.kind === "refused") return found.result;
     const picked = pick(found.console, request.auctionId, request);
     if (!picked.ok) return picked.result;
+    const audiences = announcementAudiences(found.console, clock());
+    if (!audiences.includes(request.audience)) return audienceGone(request);
     const accepted = await announcements.announceAuction(
       request.identity,
       {
         meetupId: request.meetupId,
         announcementId: request.announcementId,
         text: request.text,
+        audience: request.audience,
         ...(picked.button === undefined ? {} : { button: picked.button }),
         ...(picked.photo === undefined
           ? {}
@@ -583,10 +764,18 @@ export function createAuctionAnnouncements(
         const found = await read(request);
         if (found.kind === "refused") return found.result;
         const { console } = found;
+        const raffle =
+          console.week?.raffleClosesAt === undefined
+            ? undefined
+            : !raffleClosed(console, clock())
+              ? ("raffle" as const)
+              : predictionRoundOpen(console)
+                ? ("predictions" as const)
+                : undefined;
         return {
           kind: "announcement-menu",
           auctionId: request.auctionId,
-          raffle: console.week?.raffleClosesAt !== undefined,
+          raffle,
           windows: announcementWindows(console).length,
           lots: console.lots.length,
           chronicle: console.status === "prebidding",
@@ -638,8 +827,12 @@ export function createAuctionAnnouncements(
           text: checked.text,
           buttons: availableButtons(
             console,
-            templateButtons[template],
+            templateButton(template, !raffleClosed(console, clock())),
             lot !== undefined,
+          ),
+          audience: templateAudience(
+            template,
+            announcementAudiences(console, clock()),
           ),
           ...(lot === undefined ? {} : { lot }),
         };
@@ -650,19 +843,24 @@ export function createAuctionAnnouncements(
         const picked = pick(found.console, request.auctionId, request);
         if (!picked.ok) return picked.result;
         // Фото — одно из фото выбранного лота или своё фото или видео через
-        // чат медиа (PER-776); выбирать нечего — шаг сразу ведёт к
-        // предпросмотру.
+        // чат медиа (PER-776); выбирать нечего — шаг сразу ведёт к «Кому».
         if (media || (picked.lot !== undefined && picked.photos > 0)) {
           return {
             kind: "announcement-photo-ask",
             auctionId: request.auctionId,
             button: request.button,
+            audience: request.audience,
             ...(picked.lot === undefined ? {} : { lot: picked.lot }),
             photos: picked.photos,
             media,
           };
         }
-        return preview(request);
+        return askAudience(request, found.console);
+      }
+      case "ask-announcement-audience": {
+        const found = await read(request);
+        if (found.kind === "refused") return found.result;
+        return askAudience(request, found.console);
       }
       case "ask-announcement-media": {
         // Подделанная кнопка при выключенном чате медиа вопроса не задаёт.
@@ -681,6 +879,7 @@ export function createAuctionAnnouncements(
           kind: "announcement-media-ask",
           auctionId: request.auctionId,
           button: request.button,
+          audience: request.audience,
           ...(picked.lot === undefined ? {} : { lot: picked.lot }),
         };
       }

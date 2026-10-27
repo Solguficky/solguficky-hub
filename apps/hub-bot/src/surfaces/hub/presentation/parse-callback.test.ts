@@ -5,6 +5,10 @@ import {
   auctionFaqData,
   type CallbackAction,
   cardCursorData,
+  consoleAnnouncementAudienceData,
+  consoleAnnouncementButtonData,
+  consoleAnnouncementRecipientsData,
+  consoleAnnouncementSendData,
   consoleAskData,
   consoleCloseConfirmData,
   consoleCloseData,
@@ -1910,6 +1914,75 @@ describe("auction console callbacks", () => {
       `v1:ac:k:${auction}:0:${op}:X`,
       `v1:ac:k:${auction}:0:${op}:0abc`,
       `v1:ac:k:${auction}:x:${op}`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+});
+
+describe("auction announcement audience callbacks", () => {
+  const auction = uuidToToken("0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd");
+
+  it("carries the audience through every step and reads a button without it as everyone", () => {
+    const choice = {
+      button: "raffle" as const,
+      print: "a1b2c",
+      audience: "not-in-raffle-or-without-predictions" as const,
+      lot: 3,
+      post: 1_234_567,
+    };
+    const step = {
+      auction,
+      button: "raffle",
+      print: "a1b2c",
+      audience: "not-in-raffle-or-without-predictions",
+      lot: 3,
+      post: 1_234_567,
+    };
+    expect(
+      parseCallback(consoleAnnouncementSendData(auction, choice)),
+    ).toEqual({ kind: "console-announcement-send", ...step });
+    expect(
+      parseCallback(consoleAnnouncementRecipientsData(auction, choice)),
+    ).toEqual({ kind: "console-announcement-recipients", ...step });
+    expect(
+      parseCallback(consoleAnnouncementAudienceData(auction, choice)),
+    ).toEqual({ kind: "console-announcement-audience", ...step });
+    expect(
+      parseCallback(
+        consoleAnnouncementButtonData(auction, "lots", "a1b2c", "not-in-raffle"),
+      ),
+    ).toEqual({
+      kind: "console-announcement-button",
+      auction,
+      button: "lots",
+      print: "a1b2c",
+      audience: "not-in-raffle",
+    });
+    // Худший случай «Отправить» укладывается в 64 байта.
+    const longest = consoleAnnouncementSendData(auction, {
+      ...choice,
+      lot: 999,
+      post: 36 ** 10 - 1,
+    });
+    expect(Buffer.byteLength(longest)).toBeLessThanOrEqual(64);
+    // Кнопки до шага «Кому» в чатах остаются и значат «всем».
+    expect(parseCallback(`v1:ac:ns:${auction}:a:a1b2c:-:-`)).toMatchObject({
+      kind: "console-announcement-send",
+      audience: "all",
+    });
+    expect(parseCallback(`v1:ac:nb:${auction}:a:a1b2c:-`)).toMatchObject({
+      kind: "console-announcement-button",
+      audience: "all",
+    });
+  });
+
+  it("refuses an unknown audience and a step of «Кому» without one", () => {
+    for (const data of [
+      `v1:ac:ns:${auction}:a:a1b2c:-:-:x`,
+      `v1:ac:nk:${auction}:a:a1b2c:-:-`,
+      `v1:ac:nc:${auction}:a:a1b2c:-:-`,
+      `v1:ac:nb:${auction}:a:a1b2c:-:r:r`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }
