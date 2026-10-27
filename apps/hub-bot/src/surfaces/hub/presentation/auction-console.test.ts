@@ -3319,7 +3319,7 @@ describe("opening the online week", () => {
     }));
     expect(plain(down.screen)).not.toContain(line);
     expect(plain(down.screen)).toContain(
-      "? Сходка — открой аукцион с карточки сходки.",
+      "? Сходка: не получилось проверить, опубликована ли она.",
     );
     expect(labels(down.screen).flat()).toContain("Открыть онлайн-неделю");
 
@@ -3503,7 +3503,7 @@ describe("preparation checklist", () => {
     expect(checklist(last(calls))).toEqual([
       "✗ Без цены и шага: 1 лот из 1.",
       "✗ Сроки недели не заданы.",
-      "? Сходка — открой аукцион с карточки сходки.",
+      "? Сходка: не получилось проверить, опубликована ли она.",
       "— Розыгрыш не назначен.",
       "✗ Аукцион скрыт от участников: они его не видят, пока не опубликуешь.",
     ]);
@@ -5678,6 +5678,35 @@ describe("live console of the auctioneer", () => {
       ["‹ Аукцион"],
     ]);
     expect(auction.sent("getAuctionConsole")).toHaveLength(reads + 1);
+  });
+
+  // «Промо-видео» пульта ведущего (PER-802) при чате медиа не пропадает
+  // после живой правки по потоку.
+  it("keeps the promo video row after a live edit", async () => {
+    const watch = stream();
+    const auction = running();
+    const { bot, calls } = harness("admin", auction, [], undefined, undefined, {
+      live: {
+        watches: watch.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({}) },
+      },
+      mediaChat: createMediaChat({
+        channelId: -100500,
+        logger: { warn: () => {} },
+      }),
+    });
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(labels(last(calls))).toContainEqual(["Промо-видео"]);
+    const before = edits(calls).length;
+
+    watch.emit(bid(auction, 4, 130_000));
+    await flush();
+
+    expect(edits(calls)).toHaveLength(before + 1);
+    const edited = edits(calls).at(-1)?.payload as Sent;
+    expect(labels(edited)).toContainEqual(["Промо-видео"]);
   });
 
   it("does not read the console again for a state it already shows", async () => {

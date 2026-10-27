@@ -917,7 +917,11 @@ function sectionParent(view: ConsoleScreenView): Parent {
   switch (view.section) {
     case "raffle":
       return { name: raffleLabel, data: consoleRaffleScreenData(auction) };
+    // До открытия недели время финала стоит в самом пульте.
     case "final":
+      if (preparing(view.console)) {
+        return toConsole(view.console.auctionId, view.page, view.sort);
+      }
       return {
         name: finalSectionLabel,
         data: consoleFinalScreenData(auction, view.page, view.sort),
@@ -976,7 +980,7 @@ function checklistLines(view: ConsoleScreenView): string[] {
       ? `${checkNo} Сходка скрыта — неделя не откроется, пока её не опубликуют.`
       : console.meetupPublished === true
         ? `${checkYes} Сходка опубликована.`
-        : `${checkUnknown} Сходка — открой аукцион с карточки сходки.`,
+        : `${checkUnknown} Сходка: не получилось проверить, опубликована ли она.`,
     week?.raffleClosesAt === undefined
       ? `${checkNone} Розыгрыш не назначен.`
       : week.rafflePrize === undefined

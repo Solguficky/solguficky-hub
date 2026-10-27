@@ -1947,7 +1947,9 @@ async function handleMessage(
         ...(pending.kind === "console-raffle" ||
         pending.kind === "console-raffle-prize"
           ? { section: "raffle" as const }
-          : {}),
+          : pending.kind === "console-final-time"
+            ? { section: "final" as const }
+            : {}),
       });
       if (
         result.kind !== "auction-week-ask" &&
@@ -8313,6 +8315,8 @@ async function handleConsoleCallback(
           intent: "ask-auction-final-time",
         }),
       );
+    // С открытия недели время финала живёт на «Финале» пульта (PER-802):
+    // исход возвращает туда, а до открытия — в пульт.
     case "console-final-time-remove":
       return render(
         await runtime.dispatcher.execute({
@@ -8320,6 +8324,9 @@ async function handleConsoleCallback(
           intent: "remove-auction-final-time",
           opId: createUuidV7(),
         }),
+        0,
+        defaultConsoleSort,
+        "final",
       );
     case "console-visibility":
       return render(
@@ -11913,6 +11920,8 @@ async function readLiveConsole(
           console: result.console,
           page: entry.view.page,
           sort: entry.view.sort,
+          // «Промо-видео» пульта ведущего (PER-802) живёт и в живой правке.
+          ...(entry.view.media === true ? { media: true } : {}),
           timeZone: runtime.communityTimeZone ?? "UTC",
           today: (runtime.today ?? utcToday)(),
         },
