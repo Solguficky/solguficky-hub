@@ -26,8 +26,55 @@ describe("auctionSummaryOf", () => {
       stage: "on-break",
       opensAt: "2026-10-10T16:00:00Z",
       lotCount: 2,
+      week: { stage: "on-break", opensAt: "2026-10-10T16:00:00Z" },
     });
     expect(auctionSummaryOf(snapshot({}))).not.toHaveProperty("opensAt");
+  });
+
+  // Строка состояния (PER-767) берёт неделю общим переводом сводки: конец
+  // онлайн-фазы — и без финала, окна конфигурации и запущенные, розыгрыш.
+  it("carries the week of the status line", () => {
+    const window = {
+      from: "2026-10-12T15:00:00Z",
+      until: "2026-10-12T19:00:00Z",
+      lotIds: ["lot-1"],
+    };
+    expect(
+      auctionSummaryOf(
+        snapshot({
+          config: {
+            onlinePhase: {
+              opensAt: "2026-10-10T16:00:00Z",
+              closesAt: "2026-10-17T21:00:00Z",
+              raffleClosesAt: "2026-10-15T18:00:00Z",
+            },
+            stepWindows: [window],
+          },
+          launchedStepWindows: [{ ...window, from: "2026-10-11T15:00:00Z" }],
+        }),
+      ).week,
+    ).toEqual({
+      stage: "prebidding",
+      opensAt: "2026-10-10T16:00:00Z",
+      closesAt: "2026-10-17T21:00:00Z",
+      stepWindows: [{ ...window, from: "2026-10-11T15:00:00Z" }, window],
+      raffleClosesAt: "2026-10-15T18:00:00Z",
+    });
+  });
+
+  // Кривой конец фазы у аукциона без финала строка списка не показывает: он
+  // убирает строку состояния, а не список.
+  it("drops the week when the shared translation refuses it", () => {
+    const summary = auctionSummaryOf(
+      snapshot({
+        config: {
+          finalBlocks: 0,
+          onlinePhase: { opensAt: "2026-10-10T16:00:00Z", closesAt: "soon" },
+        },
+      }),
+    );
+    expect(summary).toMatchObject({ opensAt: "2026-10-10T16:00:00Z" });
+    expect(summary).not.toHaveProperty("week");
   });
 
   // Общий дедлайн лотов — источник отсчёта до финала (PER-518).
