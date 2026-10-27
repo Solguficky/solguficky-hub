@@ -43,6 +43,7 @@ function auctionOf(
     getMyPredictions: predictions,
     getPredictionResults: notUsed,
     getDayChronicle: notUsed,
+    getAuctionChronicle: notUsed,
     submitPrediction: notUsed,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
@@ -144,6 +145,7 @@ describe("root predictions entry", () => {
     expect(unopened.keyboard.flat().map((button) => button.action)).toEqual([
       "root.lots",
       "root.day-chronicle",
+      "root.auction-chronicle",
     ]);
   });
 
@@ -184,6 +186,7 @@ describe("root predictions entry", () => {
     expect(body.keyboard.flat().map((button) => button.action)).toEqual([
       "root.lots",
       "root.day-chronicle",
+      "root.auction-chronicle",
     ]);
   });
 });
@@ -238,6 +241,73 @@ describe("root day chronicle entry", () => {
 
     expect(body.keyboard.flat().map((button) => button.action)).not.toContain(
       "root.day-chronicle",
+    );
+  });
+});
+
+// Статистика аукциона (PER-770): вход с открытия торгов и до конца аукциона,
+// тем же рядом, что хроники дня, и тому же праву.
+describe("root auction chronicle entry", () => {
+  const stages: readonly AuctionSummaryView["stage"][] = [
+    "draft",
+    "scheduled",
+    "prebidding",
+    "settling",
+    "on-break",
+    "lineup-frozen",
+    "in-final",
+    "finished",
+    "cancelled",
+  ];
+
+  it("offers the statistics from the opening of the trading on", async () => {
+    const offered: AuctionSummaryView["stage"][] = [];
+    for (const stage of stages) {
+      const body = await openRoot({
+        auction: {
+          ...auctionOf(async () => []),
+          getAuction: async () => ({ ...SUMMARY, stage }),
+        },
+        viewer: VIEWER,
+        auctionId: AUCTION_ID,
+      });
+      const row = body.keyboard.find((each) =>
+        each.some((button) => button.action === "root.auction-chronicle"),
+      );
+      if (row === undefined) continue;
+      offered.push(stage);
+      expect(row.at(-1)?.callbackData).toBe(
+        encodeAuctionCallback({
+          kind: "auction-chronicle",
+          auctionId: AUCTION_ID,
+        }),
+      );
+      expect(row.map((button) => button.action)).toEqual(
+        stage === "prebidding" || stage === "settling"
+          ? ["root.day-chronicle", "root.auction-chronicle"]
+          : ["root.auction-chronicle"],
+      );
+    }
+
+    expect(offered).toEqual([
+      "prebidding",
+      "settling",
+      "on-break",
+      "lineup-frozen",
+      "in-final",
+      "finished",
+    ]);
+  });
+
+  it("offers no statistics to a viewer without place_bids", async () => {
+    const body = await openRoot({
+      auction: auctionOf(async () => []),
+      viewer: { ...VIEWER, rights: ["run-auctions"] },
+      auctionId: AUCTION_ID,
+    });
+
+    expect(body.keyboard.flat().map((button) => button.action)).not.toContain(
+      "root.auction-chronicle",
     );
   });
 });

@@ -1,4 +1,7 @@
 import {
+  auctionChronicleButtonLabel,
+  auctionChronicleParagraphs,
+  auctionChronicleTitle,
   dayChronicleButtonLabel,
   dayChronicleParagraphs,
   dayChronicleTitle,
@@ -1002,6 +1005,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "prediction-results";
       case "day-chronicle":
         return "day-chronicle";
+      case "auction-chronicle":
+        return "auction-chronicle";
       case "promo":
         return "promo";
       case "raffle":
@@ -1212,6 +1217,15 @@ function renderLeaf(
           text: screenText(
             dayChronicleTitle,
             ...dayChronicleParagraphs(block, { money }),
+          ),
+        };
+      // Статистика аукциона (PER-770): тексты общие с хабом.
+      case "auction-chronicle":
+        return {
+          format: "html",
+          text: screenText(
+            auctionChronicleTitle,
+            ...auctionChronicleParagraphs(block, { money }),
           ),
         };
       case "raffle": {
@@ -1993,6 +2007,10 @@ function renderButton(
     case "root.day-chronicle":
       return text(dayChronicleButtonLabel);
     case "day-chronicle.back":
+      return text("‹ Аукцион");
+    case "root.auction-chronicle":
+      return text(auctionChronicleButtonLabel);
+    case "auction-chronicle.back":
       return text("‹ Аукцион");
     case "root.promo":
       return text(promoButtonLabel);

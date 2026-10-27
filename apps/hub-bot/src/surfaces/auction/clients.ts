@@ -33,7 +33,10 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../core/auction/commands.js";
-import { dayChronicleOf } from "../../core/auction/day-chronicle.js";
+import {
+  auctionChronicleOf,
+  dayChronicleOf,
+} from "../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
 import {
@@ -120,6 +123,7 @@ export type AuctionRpc = Pick<
   | "getMyPredictions"
   | "getPredictionResults"
   | "getAuctionDayChronicle"
+  | "getAuctionChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
@@ -478,6 +482,16 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return dayChronicleOf(response);
+        },
+        async getAuctionChronicle(request) {
+          const response = await auction.getAuctionChronicle(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return auctionChronicleOf(response);
         },
         submitPrediction(request) {
           return unansweredOn(async () =>

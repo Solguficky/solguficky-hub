@@ -134,6 +134,8 @@ export type AuctionIntent =
   | { kind: "prediction-results"; auctionId: string }
   // Хроники дня (PER-725): номинации последних суток из корня аукциона.
   | { kind: "day-chronicle"; auctionId: string }
+  // Статистика аукциона (PER-770): все торги из корня аукциона.
+  | { kind: "auction-chronicle"; auctionId: string }
   // Промо-видео аукциона (PER-774): пост чата медиа ботов новым сообщением.
   | { kind: "promo"; auctionId: string }
   | { kind: "raffle"; auctionId: string }
@@ -228,6 +230,7 @@ export type AuctionIntent =
 const AUCTION_ACTION = {
   "prediction-results": "pi",
   "day-chronicle": "dc",
+  "auction-chronicle": "as",
   promo: "pv",
   raffle: "rf",
   "raffle-register": "rr",
@@ -481,6 +484,7 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       ].join(":");
     case "prediction-results":
     case "day-chronicle":
+    case "auction-chronicle":
     case "promo":
     case "raffle":
     case "raffle-register":
