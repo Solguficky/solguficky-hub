@@ -9,6 +9,7 @@ import {
 } from "../../../gen/auction/v1/auction_events_pb.js";
 import {
   AuctionConfigSchema,
+  AuctionStepWindowSchema,
   OnlinePhaseSchema,
 } from "../../../gen/auction/v1/auction_pb.js";
 import { AuctionSnapshotSchema } from "../../../gen/auction/v1/auction_service_pb.js";
@@ -57,6 +58,75 @@ describe("auction snapshot for the root", () => {
         }),
       ),
     ).toEqual({ auctionId: AUCTION_ID, stage: "draft", final: false });
+  });
+
+  // Программа недели (PER-724): окна конфигурации и запущенные одним списком
+  // по началу, ориентировочное время финала — как есть.
+  it("reads the windows of the week and the estimated final for the programme", () => {
+    const stepWindow = (from: string, until: string, lotIds: string[]) =>
+      create(AuctionStepWindowSchema, { from, until, lotIds });
+    expect(
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          finalAt: "2026-10-31T16:00:00Z",
+          config: create(AuctionConfigSchema, {
+            finalBlocks: 1,
+            stepWindows: [
+              stepWindow("2026-10-28T15:00:00Z", "2026-10-28T17:00:00Z", [
+                "lot-1",
+              ]),
+            ],
+          }),
+          launchedStepWindows: [
+            stepWindow("2026-10-27T15:00:00Z", "2026-10-27T16:00:00Z", [
+              "lot-2",
+              "lot-3",
+            ]),
+          ],
+          status: {
+            case: "prebidding",
+            value: create(AuctionState_PrebiddingSchema, {}),
+          },
+        }),
+      ),
+    ).toMatchObject({
+      finalAt: "2026-10-31T16:00:00Z",
+      stepWindows: [
+        {
+          from: "2026-10-27T15:00:00Z",
+          until: "2026-10-27T16:00:00Z",
+          lotIds: ["lot-2", "lot-3"],
+        },
+        {
+          from: "2026-10-28T15:00:00Z",
+          until: "2026-10-28T17:00:00Z",
+          lotIds: ["lot-1"],
+        },
+      ],
+    });
+  });
+
+  // Программа — подсказка: кривой момент выпадает из неё, а не роняет корень.
+  it("drops a window or a final time it cannot read instead of throwing", () => {
+    const view = auctionSummaryViewOf(
+      create(AuctionSnapshotSchema, {
+        id: AUCTION_ID,
+        finalAt: "soon",
+        launchedStepWindows: [
+          create(AuctionStepWindowSchema, {
+            from: "2026-10-27",
+            until: "2026-10-27T16:00:00Z",
+          }),
+        ],
+        status: {
+          case: "prebidding",
+          value: create(AuctionState_PrebiddingSchema, {}),
+        },
+      }),
+    );
+    expect(view).not.toHaveProperty("finalAt");
+    expect(view).not.toHaveProperty("stepWindows");
   });
 
   // Видимость (PER-673): признак есть только у скрытого и только `true`.

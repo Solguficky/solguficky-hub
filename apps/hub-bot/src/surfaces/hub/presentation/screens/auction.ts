@@ -8,6 +8,7 @@ import {
 } from "../../../../auction-final.js";
 import { predictionButtonLabel } from "../../../../auction-prediction.js";
 import { predictionResultsButtonLabel } from "../../../../auction-prediction-results.js";
+import { programmeParagraph } from "../../../../auction-programme.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   collectedLine,
@@ -573,6 +574,13 @@ function rootScreen(
         `Статус: <b>${escapeHtml(stageLine(auction))}</b>`,
         ...(fields.length === 0 ? [] : ["", ...fields]),
       ].join("\n"),
+      // Программа недели (PER-724) — абзацем под сроками, текст общий с ботом
+      // аукциона.
+      programmeParagraph(root, {
+        moment,
+        timeZone: view.timeZone,
+        now: new Date(),
+      }),
     ),
     keyboard: withNav(keyboard, view.rootParent),
     format: "HTML",
