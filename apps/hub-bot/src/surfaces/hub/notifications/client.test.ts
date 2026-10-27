@@ -2,6 +2,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { AuctionNoticeView as WireNoticeView } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
+  AuctionNoticeAudience as WireAudience,
   NotificationCategory as WireCategory,
   OutbidFrequency as WireOutbidFrequency,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
@@ -464,6 +465,7 @@ describe("auction announcements", () => {
         meetupId,
         announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
         text: "Ваза ждёт",
+        audience: "not-in-raffle-or-without-predictions",
         button: { kind: "lot", lotId },
         photo: { lotId, photoId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1" },
       }),
@@ -474,6 +476,7 @@ describe("auction announcements", () => {
       meetupId,
       id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
       body: "Ваза ждёт",
+      audience: WireAudience.NOT_IN_RAFFLE_OR_WITHOUT_PREDICTIONS,
       button: { view: WireNoticeView.LOT, lotId },
       photo: { source: { case: "lotPhoto", value: { lotId } } },
     });
@@ -493,29 +496,55 @@ describe("auction announcements", () => {
         meetupId,
         announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
         text: "Текст",
+        audience: "all",
       }),
     ).resolves.toEqual({ kind: "ok", created: false });
     expect(broadcastAuctionNotice.mock.calls[0]?.[0]).not.toHaveProperty(
       "button",
     );
+    // «Всем» уходит явным значением, а не пустым полем.
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).toMatchObject({
+      audience: WireAudience.ALL,
+    });
   });
 
   it("counts the audience and maps refusals as the broadcasts do", async () => {
+    const previewAuctionNotice = vi
+      .fn()
+      .mockResolvedValueOnce({ recipientCount: 0 })
+      .mockRejectedValueOnce(new ConnectError("no", Code.Unavailable));
     const announcements = createAuctionAnnouncementsAdapter({
       broadcastAuctionNotice: vi
         .fn()
         .mockRejectedValue(new ConnectError("no", Code.PermissionDenied)),
-      previewAuctionNotice: vi.fn().mockResolvedValue({ recipientCount: 0 }),
+      previewAuctionNotice,
     } as never);
 
     await expect(
-      announcements.previewAuctionAnnouncement(person, meetupId),
+      announcements.previewAuctionAnnouncement(
+        person,
+        meetupId,
+        "without-predictions",
+      ),
     ).resolves.toEqual({ kind: "ok", recipientCount: 0 });
+    expect(previewAuctionNotice.mock.calls[0]?.[0]).toMatchObject({
+      meetupId,
+      audience: WireAudience.WITHOUT_PREDICTIONS,
+    });
+    // Auction недоступен для сужения (PER-778): отказ, а не счёт «всем».
+    await expect(
+      announcements.previewAuctionAnnouncement(
+        person,
+        meetupId,
+        "not-in-raffle",
+      ),
+    ).resolves.toMatchObject({ kind: "unavailable" });
     await expect(
       announcements.announceAuction(person, {
         meetupId,
         announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
         text: "Текст",
+        audience: "all",
       }),
     ).resolves.toEqual({ kind: "forbidden" });
   });

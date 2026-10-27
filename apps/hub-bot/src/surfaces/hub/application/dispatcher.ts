@@ -122,6 +122,7 @@ export function createDispatcher(
       ? undefined
       : createAuctionAnnouncements(consoles.auctions, consoles.announcements, {
           media: consoles.media === true,
+          ...(consoles.now === undefined ? {} : { now: consoles.now }),
         });
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
@@ -447,6 +448,7 @@ export function createDispatcher(
         case "answer-announcement":
         case "pick-announcement-button":
         case "ask-announcement-media":
+        case "ask-announcement-audience":
         case "preview-announcement":
         case "send-announcement":
           return auctionAnnouncements === undefined
