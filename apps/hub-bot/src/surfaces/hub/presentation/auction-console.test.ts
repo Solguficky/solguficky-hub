@@ -71,6 +71,7 @@ import type {
   SaveLotSetResult,
 } from "../auction/port.js";
 import type { IdentityResolver } from "../identity/port.js";
+import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
 import { createAuctionParents } from "./auction-parents.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { type CallbackAction, parseCallback } from "./parse-callback.js";
@@ -322,6 +323,8 @@ function fakeAuction(
     // принятия публикации или снятия.
     hidden?: boolean;
     visibility?: AuctionVisibilityResult;
+    // Сходка аукциона, которую называет пульт (PER-801).
+    meetupId?: string;
     // Ориентировочное время финала (PER-663): выставленный анонс и отказ
     // Auction вместо принятия.
     finalAt?: string;
@@ -573,6 +576,9 @@ function fakeAuction(
           auctionId,
           status: state.status,
           hidden: state.hidden,
+          ...(options.meetupId === undefined
+            ? {}
+            : { meetupId: options.meetupId }),
           ...(state.finalAt === undefined ? {} : { finalAt: state.finalAt }),
           ...(state.week === undefined ? {} : { week: state.week }),
           ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
@@ -3100,6 +3106,119 @@ describe("opening the online week", () => {
 
     expect(await confirmOf(true)).toContain(publication);
     expect(await confirmOf(false)).not.toContain(publication);
+  });
+
+  // Скрытая сходка закрывает открытие недели (PER-801): пульт говорит это
+  // строкой до «Открыть онлайн-неделю» и ведёт к сходке, где её публикуют.
+  it("names a hidden meetup before the week opens and leads to it", async () => {
+    const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+    const line = "Сходка скрыта — неделя не откроется, пока её не опубликуют.";
+    const notUsed = async (): Promise<never> => {
+      throw new Error("not used");
+    };
+    const consoleOf = async (
+      status: ConsoleAuctionStatus,
+      visibility: MeetupSnapshot["visibility"],
+      read: Meetups["get"] = async () => ({
+        kind: "ok",
+        meetup: {
+          id: meetupId,
+          author: identityId,
+          title: "Осенняя сходка",
+          description: "",
+          venue: "",
+          lifecycle: "planned",
+          visibility,
+          version: 1,
+          materials: [],
+        },
+      }),
+    ) => {
+      const auction = fakeAuction({
+        status,
+        ...(status === "draft" ? {} : { week: { ...week, final: true } }),
+        lots: [priced],
+        meetupId,
+      });
+      const reads: string[] = [];
+      const meetups: Meetups = {
+        listVisible: notUsed,
+        listArchived: notUsed,
+        createDraft: notUsed,
+        get: async (person, id, meta) => {
+          reads.push(id);
+          return read(person, id, meta);
+        },
+        changeAttributes: notUsed,
+        setSchedule: notUsed,
+        publish: notUsed,
+        unpublish: notUsed,
+        cancel: notUsed,
+        markHeld: notUsed,
+        schedulePublication: notUsed,
+        cancelPublication: notUsed,
+        attachMaterial: notUsed,
+        removeMaterial: notUsed,
+      };
+      const calls: RecordedCall[] = [];
+      const { bot } = createHarness(
+        identity("admin"),
+        createDispatcher(
+          meetups,
+          undefined,
+          today,
+          auction.port,
+          auction.port,
+          {
+            auctions: auction.port,
+            timeZone,
+            now: () => now,
+          },
+        ),
+        calls,
+        undefined,
+        "plain",
+        today,
+        { auction: auction.port, communityTimeZone: timeZone },
+      );
+      await bot.init();
+      await bot.handleUpdate(press(consoleData));
+      return { screen: last(calls), reads };
+    };
+    const card = `v1:view:${uuidToToken(meetupId)}`;
+
+    const scheduled = await consoleOf("scheduled", "hidden");
+    expect(plain(scheduled.screen)).toContain(line);
+    // Неделя не откроется: на месте открытия — вход к сходке.
+    expect(labels(scheduled.screen)).toContainEqual(["Сходка"]);
+    expect(labels(scheduled.screen).flat()).not.toContain(
+      "Открыть онлайн-неделю",
+    );
+    expect(dataOf(scheduled.screen, "Сходка")).toBe(card);
+    expect(scheduled.reads).toEqual([meetupId]);
+
+    const draft = await consoleOf("draft", "hidden");
+    expect(plain(draft.screen)).toContain(line);
+    expect(dataOf(draft.screen, "Сходка")).toBe(card);
+
+    const visible = await consoleOf("scheduled", "visible");
+    expect(plain(visible.screen)).not.toContain(line);
+    expect(labels(visible.screen).flat()).not.toContain("Сходка");
+    expect(labels(visible.screen).flat()).toContain("Открыть онлайн-неделю");
+
+    // Сбой Meetups строку не выдумывает и пульт не роняет: страховкой
+    // остаётся отказ «Да».
+    const down = await consoleOf("scheduled", "hidden", async () => ({
+      kind: "unavailable",
+      cause: new Error("down"),
+    }));
+    expect(plain(down.screen)).not.toContain(line);
+    expect(labels(down.screen).flat()).toContain("Открыть онлайн-неделю");
+
+    // После открытия недели сходку пульт не читает.
+    const open = await consoleOf("prebidding", "hidden");
+    expect(open.reads).toEqual([]);
+    expect(plain(open.screen)).not.toContain(line);
   });
 
   it("shows a refusal of an already opened auction as an open week outcome, not as an error", async () => {
@@ -8266,9 +8385,51 @@ describe("auction announcement", () => {
       chat: { id: 42, type: "private", first_name: "tester" },
       from: { id: 1, is_bot: true, first_name: "stub" },
       caption: text,
+      ...photo,
     };
+    // Сбой приёма: кадр с «Повторить» правит само подтверждение — повтор
+    // читает предпросмотр из ответа, и шаг не устаревает (PER-801).
+    const accept = notices.port.announceAuction;
+    notices.port.announceAuction = async () => ({
+      kind: "unavailable",
+      cause: new Error("down"),
+    });
+    const failedFrom = calls.length;
     await step(send);
+    notices.port.announceAuction = accept;
+    expect(
+      calls
+        .slice(failedFrom)
+        .map((call) => call.method)
+        .filter((method) => method !== "answerCallbackQuery"),
+    ).toEqual(["editMessageText"]);
+    expect(labels(last(calls)).flat()).toContain("Повторить");
+    const retry = pressUnder(dataOf(last(calls), "Повторить"), last(calls));
+    (
+      retry.callback_query as unknown as { message: Record<string, unknown> }
+    ).message["reply_to_message"] = (
+      send.callback_query as unknown as { message: Record<string, unknown> }
+    ).message["reply_to_message"];
+    const sentFrom = calls.length;
+    await step(retry);
     expect(plain(last(calls))).toContain("Объявление принято");
+    // Подтверждение отвечает на предпросмотр с фото (PER-801): исход, правка
+    // которого оставила бы над ним и над следующими экранами цитату фото,
+    // приходит новым сообщением, а у подтверждения снимается клавиатура.
+    const screens = (from: number) =>
+      calls
+        .slice(from)
+        .map((call) => call.method)
+        .filter((method) => method !== "answerCallbackQuery");
+    expect(screens(sentFrom)).toEqual([
+      "editMessageReplyMarkup",
+      "sendMessage",
+    ]);
+    expect(calls.at(-1)?.payload).not.toHaveProperty("reply_parameters");
+    // Дальше экраны правят уже исход — сообщение без цитаты.
+    const backFrom = calls.length;
+    await step(pressUnder(dataOf(last(calls), "‹ Аукцион"), last(calls)));
+    expect(screens(backFrom)).toEqual(["editMessageText"]);
     expect(notices.accepted).toHaveLength(1);
     expect(notices.accepted[0]?.command).toMatchObject({
       meetupId,
@@ -8277,6 +8438,54 @@ describe("auction announcement", () => {
       post: published?.sentId,
     });
     expect(notices.accepted[0]?.command.photo).toBeUndefined();
+  });
+
+  // Видео без звуковой дорожки Telegram присылает анимацией (PER-801): оно —
+  // тоже видео объявления, и пост уходит в канал тем же `copyMessage`.
+  it("takes a silent video that Telegram sends as an animation", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements(3);
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls, true, {});
+    await hub.init();
+    const text = "Смотрите ролик.";
+    await hub.handleUpdate(press(`v1:ac:nq:${auctionToken}:o`));
+    await hub.handleUpdate(answer(calls, { text }));
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "К аукциону"), last(calls)),
+    );
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+
+    await hub.handleUpdate(
+      reply(calls, {
+        animation: {
+          file_id: "silent-video",
+          file_unique_id: "a",
+          width: 1,
+          height: 1,
+          duration: 3,
+        },
+        document: { file_id: "silent-video", file_unique_id: "a" },
+      }),
+    );
+    const [published, shown] = copies(calls);
+    expect(published).toMatchObject({
+      chat_id: mediaChannelId,
+      from_chat_id: 42,
+    });
+    expect(shown).toMatchObject({ chat_id: 42, caption: text });
+    expect(
+      parseCallback(dataOf(last(calls), "✔️ Да, отправить 3")),
+    ).toMatchObject({
+      kind: "console-announcement-send",
+      post: published?.sentId,
+    });
   });
 
   it("asks again for a reply that is neither a photo nor a video and takes a video of a lot story", async () => {
@@ -8748,6 +8957,48 @@ describe("promo video", () => {
     expect(plain(last(calls))).toMatch(/^Видео убрано\n/);
     await step(press(rootData));
     expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+  });
+
+  // Видео без звуковой дорожки Telegram присылает анимацией (PER-801): оно —
+  // тоже видео, и пост уходит в канал тем же `copyMessage`.
+  it("takes a silent video that Telegram sends as an animation", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, calls, {});
+    await hub.init();
+    await hub.handleUpdate(press(rootData));
+    await hub.handleUpdate(press(dataOf(last(calls), "🛠 Промо-видео")));
+    await hub.handleUpdate(press(dataOf(last(calls), "Прикрепить видео")));
+    expect(question(calls).payload.text).toContain("Пришли одно видео");
+
+    await hub.handleUpdate(
+      answer(calls, {
+        animation: {
+          file_id: "silent-video",
+          file_unique_id: "a",
+          width: 1,
+          height: 1,
+          duration: 3,
+        },
+        document: { file_id: "silent-video", file_unique_id: "a" },
+      }),
+    );
+    const [published] = copies(calls);
+    expect(published).toMatchObject({
+      chat_id: mediaChannelId,
+      from_chat_id: 42,
+      message_id: 10,
+    });
+    expect(auction.sent("setPromoVideo")).toEqual([
+      expect.objectContaining({
+        args: expect.objectContaining({ postId: published?.sentId }),
+      }),
+    ]);
+    expect(plain(last(calls))).toMatch(/^Видео прикреплено\n/);
   });
 
   // Повтор доставки того же ответа (PER-793): ключ выводится из сообщения, а
