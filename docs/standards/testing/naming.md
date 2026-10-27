@@ -1,7 +1,7 @@
 # Standard: именование тестов
 
 > **Статус:** Active  
-> **Применимость:** автоматические тесты Go, TypeScript, F#, C# и Scala-компонентов  
+> **Применимость:** автоматические тесты Go, TypeScript, F#, C#, Scala- и Elixir-компонентов  
 > **Связанные документы:** [testing-strategy.md](testing-strategy.md), [fsharp.md](fsharp.md), service-local `AGENTS.md`
 
 Имя теста является спецификацией: из него понятно, что проверяется и какой результат ожидается, без чтения тела. Standard фиксирует форму имени теста, файла и группы для каждого языка репозитория.
@@ -62,6 +62,12 @@
 - Property-тест остаётся в том же блоке и формулирует инвариант декларативно: `carries an error category exactly when the result is an error`.
 - Файл `<SUT>Spec.scala` лежит в `src/test/scala/` по пути пакета SUT, рядом с ним в дереве тестов. Суффикс `Spec` — форма ScalaTest; `Tests` не используется, чтобы имя не читалось как .NET-проект. Интеграционный сьют (L1) называется `<SUT>IntegrationSpec.scala`: суффикс отбирает уровень в сборке, поэтому он часть имени, а не украшение. Раскладку уровней задаёт [testing-strategy.md](testing-strategy.md).
 
+## Elixir
+
+- Модуль теста — `<SUT>Test`, где SUT — модуль ровно как в коде: `Achievements.Grpc.BoundaryTest`, `Achievements.SettingsTest`. Строка `test` называет наблюдаемое поведение предложением со строчной буквы и глаголом в третьем лице настоящего времени, без `should`: `test "liveness serves without asking the database"`, `test "an unknown connection parameter fails instead of being ignored"`.
+- Отрицательный случай называет наблюдаемое бездействие или отказ: `refuses`, `stays unpublished`, `is omitted rather than written empty`.
+- Файл `<unit>_test.exs` лежит в `test/` по пути модуля SUT, как `lib/` раскладывает исходники. L1 лежит в `test/integration/` с `@moduletag :integration`, и `test_helper.exs` отбирает его переменной уровня ([testing-strategy.md](testing-strategy.md)); модуль L1 называется `<SUT>IntegrationTest`, как `*IntegrationSpec` в Scala: имя модуля в проекте одно, и L0 того же SUT уже занял `<SUT>Test`.
+
 ## Пример
 
 | Язык | Так | Не так |
@@ -71,6 +77,7 @@
 | TypeScript | `describe("parseUpdate")` + `it("treats garbage as malformed")` | `describe("tests")` + `it("should work")` |
 | F# | ``Every operation carries the viewer as field one`` | ``test mapping``, ``Mapping works`` |
 | C# | `Map_RequestHasNoDrivers_MapsToUnlimitedDrivers` | `MapTest`, `TestMapping2` |
+| Elixir | `test "readiness does not serve when the database is down"` | `test "health"`, `test "should work"` |
 
 ## Проверка
 

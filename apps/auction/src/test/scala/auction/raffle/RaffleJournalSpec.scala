@@ -59,6 +59,12 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
         stored(RaffleEvent.PoolFixed(Vector(person(1), person(2)), byHand = true))
       )
       keepsGolden("raffle-winner-assigned", stored(RaffleEvent.WinnerAssigned(2, closesAt.plusSeconds(5400))))
+      keepsGolden("raffle-prize-changed", stored(RaffleEvent.PrizeChanged("кружка и брелок")))
+    }
+
+    "reads a row written before the prize could change as the same event" in {
+      val assigned = stored(RaffleEvent.WinnerAssigned(2, closesAt.plusSeconds(5400)))
+      legacy("raffle-winner-assigned", assigned) shouldBe assigned
     }
 
     "reads a pool fixed before the winner by hand existed as a pool that waits for the beacon" in {

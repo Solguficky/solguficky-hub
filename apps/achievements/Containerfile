@@ -1,0 +1,52 @@
+# Production-образ Achievements: `mix release` в образе сборки hexpm/elixir,
+# рантайм — debian bookworm-slim без Erlang и Elixir: ERTS едет в release.
+# Контекст сборки — корень репозитория, как у остальных сервисов: контракт
+# сервиса принесёт кодогенерацию из contracts/proto. Что попадает в контекст,
+# решает соседний Containerfile.dockerignore — список разрешённого.
+#
+# Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
+# роняет сборку на теге. Версии Elixir и OTP в теге базы сборки обязаны
+# совпадать с apps/achievements/.tool-versions, по которому CI гоняет тесты:
+# сверка ниже роняет сборку на расхождении. Обновить базу — заменить тег и
+# digest целиком тем же изменением, что .tool-versions.
+
+FROM docker.io/hexpm/elixir:1.20.4-erlang-28.5.0.8-debian-bookworm-20261005-slim@sha256:60112cdaea82fe99fcda9918faabb0bfca317cb2ac865ee526ea9774608b897d AS build
+ENV MIX_ENV=prod LANG=C.UTF-8
+WORKDIR /src/apps/achievements
+COPY apps/achievements/.tool-versions ./
+RUN want="$(awk '$1 == "erlang" {print $2}' .tool-versions)/$(awk '$1 == "elixir" {sub(/-otp-.*/, "", $2); print $2}' .tool-versions)" \
+    && have="$(cat "$(erl -noshell -eval 'io:put_chars(code:root_dir()), halt().')/releases/$(erl -noshell -eval 'io:put_chars(erlang:system_info(otp_release)), halt().')/OTP_VERSION")/$(elixir --short-version)" \
+    && [ "$want" = "$have" ] || { echo "OTP/Elixir в базе $have, в .tool-versions $want" >&2; exit 1; }
+RUN mix local.hex --force && mix local.rebar --force
+# Зависимости — отдельным слоем до исходников: их версии закреплены в
+# mix.lock, и слой переживает правку кода.
+COPY apps/achievements/mix.exs apps/achievements/mix.lock ./
+COPY apps/achievements/config/config.exs apps/achievements/config/prod.exs config/
+RUN mix deps.get --only prod && mix deps.compile
+COPY apps/achievements/config/runtime.exs config/
+COPY apps/achievements/lib lib
+COPY apps/achievements/priv priv
+RUN mix compile --warnings-as-errors && mix release
+
+# База со shell и coreutils, как у Identity: канарейки tools/image/check-test.sh
+# исполняют RUN, а критерий `podman run <образ> id` — `id` из образа. Release
+# принадлежит root, процесс идёт от uid 1000; сервис на диск не пишет —
+# миграции едут в release, — поэтому образ работает с --read-only.
+FROM docker.io/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251
+# ERTS слинкован с libstdc++ и OpenSSL; в slim их нет. Они берутся из стадии
+# сборки той же bookworm, а не apt: сборка не зависит от зеркал Debian.
+# Корневые сертификаты — оттуда же: TLS к PostgreSQL с sslmode=verify-full и к
+# OTLP по https проверяет цепочку ими.
+COPY --from=build /usr/lib/x86_64-linux-gnu/libstdc++.so.6* /usr/lib/x86_64-linux-gnu/libssl.so.3 /usr/lib/x86_64-linux-gnu/libcrypto.so.3 /usr/lib/x86_64-linux-gnu/
+COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=build /src/apps/achievements/_build/prod/rel/achievements /app
+# Interactive-режим release грузит модули по первому вызову, а не все разом:
+# узел без нагрузки держит около 60 МиБ против 140 в embedded (замер PER-750).
+# HOME — каталог, куда VM пишет cookie; в образе с --read-only это tmpfs пода.
+ENV LANG=C.UTF-8 HOME=/tmp RELEASE_MODE=interactive
+# uid числом: runtime проверяет non-root без чтения /etc/passwd образа.
+USER 1000:1000
+EXPOSE 50051
+# Команда в CMD, а не в ENTRYPOINT: `podman run <образ> id` тогда исполняет
+# `id`. Конфигурация идёт только переменными окружения ACHIEVEMENTS_* и OTEL_*.
+CMD ["/app/bin/achievements", "start"]

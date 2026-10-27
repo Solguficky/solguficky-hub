@@ -255,6 +255,9 @@ async function routeEntry(input: {
             screen: { kind: "denied", reason: entry.reason },
             identityId: entry.identityId,
           };
+        // Политика отдаёт `invitation-only` только хабу; ветка здесь ради
+        // полноты типа и отвечает, как на незнакомый исход.
+        case "invitation-only":
         case "unknown-outcome":
           return {
             screen: unavailable,

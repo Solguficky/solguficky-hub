@@ -8,6 +8,7 @@ import {
 } from "../../../../auction-final.js";
 import { predictionButtonLabel } from "../../../../auction-prediction.js";
 import { predictionResultsButtonLabel } from "../../../../auction-prediction-results.js";
+import { programmeParagraph } from "../../../../auction-programme.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   collectedLine,
@@ -22,6 +23,8 @@ import {
   awaitsFirstBid,
   favoritesEmptyText,
   favoritesSummary,
+  feedSectionLabel,
+  feedSectionTitle,
   feedSummary,
   finalFeedLabel,
   followLabel,
@@ -43,6 +46,7 @@ import type {
   AuctionButton,
   AuctionScreenBody,
   FeedItem,
+  FeedSectionItem,
   LotStatusView,
 } from "../../../../auction-ui/index.js";
 import { invoicesButtonLabel } from "../../../../auction-winner-invoices.js";
@@ -399,27 +403,44 @@ function feedScreen(
   if (view.canManage === true && view.canAddLots !== false) {
     keyboard.text(addLotLabel, lotNewData(auction)).row();
   }
+  const sections = new Map<number, FeedSectionItem>(
+    (feed.sections ?? []).map((section) => [section.sectionId, section]),
+  );
   let back: Parent | undefined;
   for (const row of view.body.keyboard) {
     const content = row.filter((button) => {
       if (button.action !== "feed.back") return true;
-      back = { name: "Аукцион", data: button.callbackData };
+      // С раздела возврат — к списку разделов ленты (PER-719).
+      back = {
+        name: feed.section === undefined ? "Аукцион" : "Лоты",
+        data: button.callbackData,
+      };
       return false;
     });
     if (content.length === 0) continue;
     nextRow(keyboard);
     for (const button of content) {
-      keyboard.text(feedLabel(button, items, feed.final), button.callbackData);
+      keyboard.text(
+        feedLabel(button, items, sections, feed.final),
+        button.callbackData,
+      );
     }
   }
   // Текст не повторяет кнопки (PER-595): в нём сводка своих лотов — где
   // смотрящий лидер и что он купил, — а все лоты стоят кнопками в порядке
   // ленты.
   return {
-    id: "lots",
+    id: feed.section === undefined ? "lots" : "lot-section",
     text: screenText(
-      pagedTitle("Лоты", { items: feed.lots, ...feed }),
-      ...(feed.lots.length === 0
+      pagedTitle(
+        feed.section === undefined
+          ? "Лоты"
+          : feedSectionTitle(feed.section.name),
+        { items: feed.lots, ...feed },
+      ),
+      // Пустой общий список при заполненных разделах — не пустой аукцион
+      // (PER-719): сводка своих лотов остаётся.
+      ...(feed.lots.length === 0 && (feed.sections?.length ?? 0) === 0
         ? ["Лотов пока нет."]
         : feedSummary(feed, mineOptions)),
     ),
@@ -553,6 +574,13 @@ function rootScreen(
         `Статус: <b>${escapeHtml(stageLine(auction))}</b>`,
         ...(fields.length === 0 ? [] : ["", ...fields]),
       ].join("\n"),
+      // Программа недели (PER-724) — абзацем под сроками, текст общий с ботом
+      // аукциона.
+      programmeParagraph(root, {
+        moment,
+        timeZone: view.timeZone,
+        now: new Date(),
+      }),
     ),
     keyboard: withNav(keyboard, view.rootParent),
     format: "HTML",
@@ -562,9 +590,14 @@ function rootScreen(
 function feedLabel(
   button: AuctionButton,
   items: ReadonlyMap<string, FeedItem>,
+  sections: ReadonlyMap<number, FeedSectionItem>,
   final?: { active?: FeedItem },
 ): string {
   switch (button.action) {
+    case "feed.open-section": {
+      const section = sections.get(button.sectionId);
+      return section === undefined ? untitled : feedSectionLabel(section);
+    }
     case "feed.open-lot": {
       const item = items.get(button.lotId);
       if (item === undefined) return untitled;
@@ -828,6 +861,7 @@ function lotLabel(
     case "favorites.next":
     case "favorites.back":
     case "feed.open-lot":
+    case "feed.open-section":
     case "feed.prev":
     case "feed.next":
     case "lot.back":
@@ -958,6 +992,7 @@ function setLotLabelOf(
     }
     case "lot.set":
     case "feed.open-lot":
+    case "feed.open-section":
     case "favorites.open-lot":
     case "prediction.select-lot":
     case "lot.bid-step":
@@ -1193,6 +1228,7 @@ function historyLabel(button: AuctionButton): string {
     case "history.next":
       return "→";
     case "feed.open-lot":
+    case "feed.open-section":
     case "feed.prev":
     case "feed.next":
     case "lot.refresh":

@@ -14,10 +14,11 @@ using static Notifications.IntegrationTests.Infrastructure.FactFixtures;
 namespace Notifications.IntegrationTests.Scenarios;
 
 /// <summary>
-/// Напоминание о неоплаченном счёте (PER-330) от факта Auction до адресного
-/// факта в стриме уведомлений: реплика счёта даёт момент и адресата, грин ведёт
-/// два задания, срабатывание пишет факт победителю, а оплата снимает
-/// несработавшие задания.
+/// Напоминание о неоплаченном счёте (PER-330, моменты — PER-726) от факта
+/// Auction до адресного факта в стриме уведомлений: реплика счёта даёт моменты
+/// и адресата, грин ведёт задания за 24 часа, за 12 часов и за час до срока
+/// оплаты, срабатывание пишет факт победителю, а оплата снимает несработавшие
+/// задания.
 /// </summary>
 /// <remarks>
 /// Время двигается данными, как у напоминания о сходке: момент срабатывания
@@ -38,12 +39,12 @@ public class InvoiceReminderTests
         ["--Notifications:Reminders:SweepPeriod=00:00:01", "--Notifications:Dispatch:Period=01:00:00"];
 
     /// <summary>
-    /// Выставленный счёт заводит два задания, а наступившее даёт один факт
-    /// победителю. Повторное срабатывание второго факта не даёт: сработавшее
-    /// задание не воскресает.
+    /// Счёт со сроком семь суток заводит три задания — за 24, 12 и 1 час до
+    /// срока, — а наступившее даёт один факт победителю. Повторное срабатывание
+    /// второго факта не даёт: сработавшее задание не воскресает.
     /// </summary>
     [Fact]
-    public async Task When_InvoiceRaised_Expect_TwoTasksAndOneReminderAfterSweep()
+    public async Task When_InvoiceRaisedWithSevenDayTerm_Expect_ThreeTasksAndOneReminderAfterSweep()
     {
         await using var env = await BusScenario.Start(Sweeping);
         var winner = await Person(env.Db, MemberHolding);
@@ -52,20 +53,24 @@ public class InvoiceReminderTests
 
         var tasks = await Eventually(
             () => Task.FromResult(env.Tasks()),
-            rows => rows.Count == 2);
+            rows => rows.Count == 3);
         tasks.Select(task => task.Kind).ShouldBe(
-            [InvoiceReminderProbe.AfterWin, InvoiceReminderProbe.BeforeDue], ignoreOrder: true);
+            [InvoiceReminderProbe.DayBefore, InvoiceReminderProbe.HalfDayBefore, InvoiceReminderProbe.HourBefore],
+            ignoreOrder: true);
         tasks.ShouldAllBe(task => task.State == "scheduled");
+        DueOf(tasks, InvoiceReminderProbe.DayBefore).ShouldBe(env.PaymentDueAt.AddHours(-24), TimeSpan.FromMilliseconds(1));
+        DueOf(tasks, InvoiceReminderProbe.HalfDayBefore).ShouldBe(env.PaymentDueAt.AddHours(-12), TimeSpan.FromMilliseconds(1));
+        DueOf(tasks, InvoiceReminderProbe.HourBefore).ShouldBe(env.PaymentDueAt.AddHours(-1), TimeSpan.FromMilliseconds(1));
 
         // Простоя не изображаем вызовом грина: момент сдвигается данными, а
         // напоминание достаёт sweeper — путь «кластер лежал» целиком.
         InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
-            InvoiceReminderProbe.AfterWin);
+            InvoiceReminderProbe.DayBefore);
 
         var rows = await Eventually(() => env.Reminders(), facts => facts.Count == 1);
         var fact = rows.Single();
         fact.RecipientId.ShouldBe(winner.ToString());
-        fact.Cause.ReminderTaskId.ShouldBe(tasks.Single(task => task.Kind == InvoiceReminderProbe.AfterWin).TaskId
+        fact.Cause.ReminderTaskId.ShouldBe(tasks.Single(task => task.Kind == InvoiceReminderProbe.DayBefore).TaskId
             .ToString());
         fact.InvoiceReminder.InvoiceId.ShouldBe(env.InvoiceId);
         fact.InvoiceReminder.LotId.ShouldBe(env.LotId);
@@ -83,8 +88,49 @@ public class InvoiceReminderTests
         // задачи.
         (await env.Grain.FireDue()).ShouldBeFalse();
         (await env.Facts(NotificationFacts.InvoiceReminderType)).ShouldBe(1);
-        env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.AfterWin).State.ShouldBe("fired");
-        env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.BeforeDue).State.ShouldBe("scheduled");
+        env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.DayBefore).State.ShouldBe("fired");
+        env.Tasks().Where(task => task.Kind != InvoiceReminderProbe.DayBefore)
+            .ShouldAllBe(task => task.State == "scheduled");
+    }
+
+    /// <summary>
+    /// Счёт со сроком сутки: момент «за 24 часа» приходится на выставление —
+    /// рядом с вестью о покупке — и пропускается; напоминания приходят за 12
+    /// часов и за час, по факту на момент.
+    /// </summary>
+    [Fact]
+    public async Task When_InvoiceRaisedWithOneDayTerm_Expect_RemindersTwelveAndOneHourBeforeOnly()
+    {
+        await using var env = await BusScenario.Start(Sweeping);
+        var winner = await Person(env.Db, MemberHolding);
+        var dueAt = DateTimeOffset.UtcNow.AddDays(1);
+
+        await env.Publish(IssuedSubject, env.Invoice(winner, dueAt));
+
+        var tasks = await Eventually(
+            () => Task.FromResult(env.Tasks()),
+            rows => rows.Count == 2);
+        tasks.Select(task => task.Kind).ShouldBe(
+            [InvoiceReminderProbe.HalfDayBefore, InvoiceReminderProbe.HourBefore], ignoreOrder: true);
+        DueOf(tasks, InvoiceReminderProbe.HalfDayBefore).ShouldBe(dueAt.AddHours(-12), TimeSpan.FromMilliseconds(1));
+        DueOf(tasks, InvoiceReminderProbe.HourBefore).ShouldBe(dueAt.AddHours(-1), TimeSpan.FromMilliseconds(1));
+
+        InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
+            InvoiceReminderProbe.HalfDayBefore);
+        await Eventually(() => env.Facts(NotificationFacts.InvoiceDueReminderType), count => count == 1);
+
+        InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
+            InvoiceReminderProbe.HourBefore);
+        await Eventually(() => env.Facts(NotificationFacts.InvoiceDueReminderType), count => count == 2);
+
+        var published = await Eventually(() => env.DueReminders(), facts => facts.Count == 2);
+        published.Select(fact => fact.Cause.ReminderTaskId).ShouldBe(
+            tasks.Select(task => task.TaskId.ToString()), ignoreOrder: true);
+        published.ShouldAllBe(fact => fact.RecipientId == winner.ToString());
+
+        // Дальнего напоминания нет: его момент совпал бы с вестью о покупке.
+        (await env.Facts(NotificationFacts.InvoiceReminderType)).ShouldBe(0);
+        env.Tasks().ShouldAllBe(task => task.State == "fired");
     }
 
     /// <summary>
@@ -98,16 +144,68 @@ public class InvoiceReminderTests
         var winner = await Person(env.Db, MemberHolding);
 
         await env.Publish(IssuedSubject, env.Invoice(winner));
-        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 2);
+        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 3);
 
         await env.Publish(PaidSubject, env.Paid(winner));
 
         await Eventually(
             () => Task.FromResult(env.Tasks()),
-            rows => rows.Count == 2 && rows.All(task => task.State == "cancelled"));
+            rows => rows.Count == 3 && rows.All(task => task.State == "cancelled"));
 
         (await env.Facts(NotificationFacts.InvoiceReminderType)).ShouldBe(0);
         (await env.Facts(NotificationFacts.InvoiceDueReminderType)).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// Задания схемы PER-330 пересчитываются миграцией 044 под новые моменты:
+    /// живые старые снимаются, новые заводятся по сроку оплаты, сработавшие не
+    /// трогаются, прошедший момент пропускается, а повтор миграции ничего не
+    /// меняет.
+    /// </summary>
+    [Fact]
+    public void When_OldSchemeTasksMigrated_Expect_RescheduledToDueLeads()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        var now = DateTimeOffset.UtcNow;
+
+        // Неделя срока: первое напоминание старой схемы уже ушло, второе ждёт.
+        var week = Guid.NewGuid();
+        var weekDue = now.AddDays(6);
+        Seed(db, week, issuedAt: now.AddDays(-1), dueAt: weekDue);
+        SeedTask(db, week, "after_win", now.AddHours(-12), "fired");
+        SeedTask(db, week, "before_due", weekDue.AddDays(-1), "scheduled");
+
+        // Сутки срока, выставлен 13 часов назад: «за 12 часов» уже прошёл.
+        var day = Guid.NewGuid();
+        var dayDue = now.AddHours(11);
+        Seed(db, day, issuedAt: now.AddHours(-13), dueAt: dayDue);
+        SeedTask(db, day, "after_win", now.AddMinutes(-30), "scheduled");
+        SeedTask(db, day, "before_due", now.AddHours(-12), "scheduled");
+
+        var script = Migrations.List().Single(migration => migration.Name == "invoice_reminder_due_leads").Sql;
+        using (var connection = new NpgsqlConnection(db.ConnectionString))
+        {
+            connection.Execute(script);
+            connection.Execute(script);
+        }
+
+        var weekTasks = InvoiceReminderProbe.Tasks(db.ConnectionString, week);
+        weekTasks.Single(task => task.Kind == InvoiceReminderProbe.AfterWin).State.ShouldBe("fired");
+        weekTasks.Single(task => task.Kind == InvoiceReminderProbe.BeforeDue).State.ShouldBe("cancelled");
+        weekTasks.Where(task => task.State == "scheduled").Select(task => task.Kind).ShouldBe(
+            [InvoiceReminderProbe.DayBefore, InvoiceReminderProbe.HalfDayBefore, InvoiceReminderProbe.HourBefore],
+            ignoreOrder: true);
+        DueOf(weekTasks, InvoiceReminderProbe.DayBefore).ShouldBe(weekDue.AddHours(-24), TimeSpan.FromMilliseconds(1));
+        DueOf(weekTasks, InvoiceReminderProbe.HalfDayBefore).ShouldBe(weekDue.AddHours(-12), TimeSpan.FromMilliseconds(1));
+        DueOf(weekTasks, InvoiceReminderProbe.HourBefore).ShouldBe(weekDue.AddHours(-1), TimeSpan.FromMilliseconds(1));
+
+        var dayTasks = InvoiceReminderProbe.Tasks(db.ConnectionString, day);
+        dayTasks.Where(task => task.Kind is InvoiceReminderProbe.AfterWin or InvoiceReminderProbe.BeforeDue)
+            .ShouldAllBe(task => task.State == "cancelled");
+        var live = dayTasks.Where(task => task.State == "scheduled").ToList();
+        live.Select(task => task.Kind).ShouldBe([InvoiceReminderProbe.HourBefore]);
+        DueOf(live, InvoiceReminderProbe.HourBefore).ShouldBe(dayDue.AddHours(-1), TimeSpan.FromMilliseconds(1));
     }
 
     /// <summary>
@@ -123,18 +221,18 @@ public class InvoiceReminderTests
         var winner = await Person(env.Db, MemberHolding);
 
         await env.Publish(IssuedSubject, env.Invoice(winner));
-        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 2);
+        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 3);
 
         await Execute(env.Db,
             "UPDATE invoice_replica SET status = 'paid' WHERE invoice_id = @Invoice;",
             new { Invoice = Guid.Parse(env.InvoiceId) });
 
         InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
-            InvoiceReminderProbe.AfterWin);
+            InvoiceReminderProbe.DayBefore);
 
         // Наступившее задание снимается, а факта нет: счёт оплачен.
         var fired = await Eventually(
-            () => Task.FromResult(env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.AfterWin)),
+            () => Task.FromResult(env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.DayBefore)),
             row => row.State != "scheduled");
         fired.State.ShouldBe("cancelled");
 
@@ -153,10 +251,10 @@ public class InvoiceReminderTests
         var winner = await Person(env.Db, MemberHolding);
 
         await env.Publish(IssuedSubject, env.Invoice(winner));
-        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 2);
+        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 3);
 
         InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
-            InvoiceReminderProbe.AfterWin);
+            InvoiceReminderProbe.DayBefore);
 
         await Eventually(() => env.Facts(NotificationFacts.InvoiceReminderType), count => count == 1);
         var pending = (await env.Rows()).Single();
@@ -200,17 +298,47 @@ public class InvoiceReminderTests
         var winner = await Person(env.Db, MemberHolding);
 
         await env.Publish(IssuedSubject, env.Invoice(winner));
-        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 2);
+        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 3);
 
         InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
-            InvoiceReminderProbe.AfterWin);
+            InvoiceReminderProbe.DayBefore);
         await Eventually(() => env.Facts(NotificationFacts.InvoiceReminderType), count => count == 1);
 
         await env.Restart();
 
         (await env.Grain.FireDue()).ShouldBeFalse();
         (await env.Facts(NotificationFacts.InvoiceReminderType)).ShouldBe(1);
-        env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.AfterWin).State.ShouldBe("fired");
+        env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.DayBefore).State.ShouldBe("fired");
+    }
+
+    private static DateTimeOffset DueOf(IEnumerable<InvoiceReminderTaskRow> tasks, string kind) =>
+        new(tasks.Single(task => task.Kind == kind && task.State == "scheduled").DueAt.ToUniversalTime());
+
+    /// <summary>Реплика неоплаченного счёта такой, какой её оставил факт выставления.</summary>
+    private static void Seed(IsolatedDatabase db, Guid invoiceId, DateTimeOffset issuedAt, DateTimeOffset dueAt)
+    {
+        using var connection = new NpgsqlConnection(db.ConnectionString);
+        connection.Execute(
+            """
+            INSERT INTO invoice_replica (invoice_id, version, status, winner_id, lot_id, auction_id,
+                amount_minor_units, amount_currency, payment_due_at, issued_at, applied_at)
+            VALUES (@invoiceId, 1, 'awaiting_payment', gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),
+                45600, 'RUB', @dueAt, @issuedAt, @issuedAt);
+            """,
+            new { invoiceId, issuedAt = issuedAt.UtcDateTime, dueAt = dueAt.UtcDateTime });
+    }
+
+    /// <summary>Задание старой схемы так, как его записал прежний образ.</summary>
+    private static void SeedTask(IsolatedDatabase db, Guid invoiceId, string kind, DateTimeOffset dueAt, string state)
+    {
+        using var connection = new NpgsqlConnection(db.ConnectionString);
+        connection.Execute(
+            """
+            INSERT INTO invoice_reminder_task (task_id, invoice_id, kind, due_at, state, created_at, fired_at)
+            VALUES (gen_random_uuid(), @invoiceId, @kind, @dueAt, @state, now() - interval '1 day',
+                CASE WHEN @state = 'fired' THEN @dueAt END);
+            """,
+            new { invoiceId, kind, dueAt = dueAt.UtcDateTime, state });
     }
 
     /// <summary>База, шина и силос одного счёта. Люди — через настоящую реплику.</summary>
@@ -309,6 +437,12 @@ public class InvoiceReminderTests
             (await nats.PublishedFacts())
                 .Select(fact => fact.Fact)
                 .Where(fact => fact.TypeCase == Notification.TypeOneofCase.InvoiceReminder)
+                .ToArray();
+
+        public async Task<IReadOnlyList<Notification>> DueReminders() =>
+            (await nats.PublishedFacts())
+                .Select(fact => fact.Fact)
+                .Where(fact => fact.TypeCase == Notification.TypeOneofCase.InvoiceDueReminder)
                 .ToArray();
 
         public Task<long> Facts(string type) =>

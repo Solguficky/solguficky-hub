@@ -24,6 +24,7 @@
     "lotSetSettled": null,
     "paymentInstructions": {
       "text": "Перевод на карту организатора до срока.\nСамовывоз — на сходке."
-    }
+    },
+    "lotLayout": null
   }
 }

@@ -31,10 +31,19 @@ public sealed class InvoiceReminderFactRow
 /// </summary>
 public static class InvoiceReminderProbe
 {
-    /// <summary>Вид задания после победы: примерно через 12 часов.</summary>
+    /// <summary>Вид задания за 24 часа до срока оплаты.</summary>
+    public const string DayBefore = "before_24h";
+
+    /// <summary>Вид задания за 12 часов до срока оплаты.</summary>
+    public const string HalfDayBefore = "before_12h";
+
+    /// <summary>Вид задания за час до срока оплаты.</summary>
+    public const string HourBefore = "before_1h";
+
+    /// <summary>Схема PER-330: через 12 часов после выставления.</summary>
     public const string AfterWin = "after_win";
 
-    /// <summary>Вид задания перед сроком оплаты: за сутки.</summary>
+    /// <summary>Схема PER-330: за сутки до срока оплаты.</summary>
     public const string BeforeDue = "before_due";
 
     public static IReadOnlyList<InvoiceReminderTaskRow> Tasks(string connectionString, Guid invoiceId)
