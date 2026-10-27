@@ -5,7 +5,7 @@ package notifications.v1;
 import "notifications/v1/notifications.proto";
 
 // Manages a person's meetup subscriptions, their notification category
-// settings, the two manual broadcasts and the release-notes summaries of a
+// settings, the three manual broadcasts and the release-notes summaries of a
 // bot's surface. Most callers present the internal identity of the person the
 // command belongs to; the release-notes operations belong to no person and are
 // the one exception. Outgoing notifications are not described here: this
@@ -49,6 +49,13 @@ service NotificationsService {
   // A read. No idempotency key, no body and no names.
   rpc PreviewMeetupBroadcast(PreviewMeetupBroadcastRequest) returns (BroadcastAudience);
   rpc PreviewCommunityBroadcast(PreviewCommunityBroadcastRequest) returns (BroadcastAudience);
+
+  // The announcement of an auction from a person who runs it, to every holder
+  // of the auction right. The same mechanism as the two broadcasts above, and
+  // the same acceptance and audience messages; its own pair because its right,
+  // its audience and its content differ.
+  rpc BroadcastAuctionNotice(BroadcastAuctionNoticeRequest) returns (BroadcastAccepted);
+  rpc PreviewAuctionNotice(PreviewAuctionNoticeRequest) returns (BroadcastAudience);
 
   // Release notes: what the image of the caller's bot carries. These three
   // operations belong to no person, and none of them carries the surface: the
@@ -360,6 +367,43 @@ message PreviewCommunityBroadcastRequest {
   string identity_id = 1;
 
   // The audience is deliberately absent, as in BroadcastToCommunity.
+}
+
+message BroadcastAuctionNoticeRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author: the right to
+  // run the auction of this meetup is checked with Meetups on every call,
+  // repeats included.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens. The meetup whose auction
+  // is announced. The auction id is absent: the service derives it from the
+  // meetup id by the rule of auction.v1, as Auction does.
+  string meetup_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 string with hyphens. Both the
+  // broadcast id and the idempotency key, as in BroadcastToMeetupSubscribers.
+  string id = 3;
+
+  // Author-written content, as in BroadcastToMeetupSubscribers.
+  string body = 4;
+
+  // Required: view is not UNSPECIFIED, lot_id is set exactly for the lot view.
+  AuctionNoticeButton button = 5;
+
+  // Optional: unset means a message without a picture.
+  AuctionNoticePhoto photo = 6;
+
+  // The audience is deliberately absent, as in BroadcastToCommunity: the
+  // holders of the auction right, chosen by this service.
+}
+
+message PreviewAuctionNoticeRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author asking.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens, as in
+  // BroadcastAuctionNoticeRequest.
+  string meetup_id = 2;
 }
 
 // Names are absent. Zero is a present value, not an absent field.
