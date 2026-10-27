@@ -36,6 +36,13 @@ public sealed class StubAuthority : IBroadcastAuthority
         Asked.Enqueue(("identity", authorId, null, forwarded.RequestId));
         return Task.FromResult(Identity);
     }
+
+    /// <summary>Право вести аукцион — у Meetups, тем же вердиктом, что рассылка по сходке.</summary>
+    public Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded)
+    {
+        Asked.Enqueue(("meetups:auction", authorId, meetupId, forwarded.RequestId));
+        return Task.FromResult(Meetups);
+    }
 }
 
 /// <summary>Строка адресного факта в том виде, в каком её прочтёт релей.</summary>
@@ -146,6 +153,21 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
             new { Id = broadcastId });
 
         return rows.ToList();
+    }
+
+    /// <summary>Круг доставки каждого факта рассылки <paramref name="broadcastId" />: бот, который его выносит.</summary>
+    public async Task<IReadOnlyDictionary<Guid, string>> Surfaces(string broadcastId)
+    {
+        await using var connection = new NpgsqlConnection(Db.ConnectionString);
+        var rows = await connection.QueryAsync<(Guid RecipientId, string Surface)>(
+            """
+            SELECT recipient_id, delivery_surface
+            FROM notification
+            WHERE cause_kind = 'command_request' AND cause_id = @Id;
+            """,
+            new { Id = broadcastId });
+
+        return rows.ToDictionary(row => row.RecipientId, row => row.Surface);
     }
 
     /// <summary>Сколько рассылок принято: отказ не должен оставлять ключ.</summary>

@@ -73,6 +73,28 @@ public class OwnerAuthorityTests
         seen.Meetups.AcceptedRelations.ShouldBe([MeetupRelation.CommunityAdministrator]);
     }
 
+    [Fact]
+    public async Task AuctionNotice_Granted_AsksMeetupsForAuctionRunnerRelation()
+    {
+        var seen = new Recorded();
+
+        var answer = await Authority(seen).AuctionNotice(Author, MeetupId, Chain());
+
+        answer.Verdict.ShouldBe(AuthorityVerdict.Granted);
+        seen.Meetups!.IdentityId.ShouldBe(Author.ToString("D"));
+        seen.Meetups.Id.ShouldBe(MeetupId.ToString("D"));
+        seen.Meetups.AcceptedRelations.ShouldBe([MeetupRelation.AuctionRunner]);
+        seen.Identity.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task AuctionNotice_MeetupsDenies_IsDenied()
+    {
+        var answer = await Authority(new Recorded(), Fails(StatusCode.PermissionDenied)).AuctionNotice(Author, MeetupId, Chain());
+
+        answer.Verdict.ShouldBe(AuthorityVerdict.Denied);
+    }
+
     [Theory]
     [InlineData(StatusCode.PermissionDenied, AuthorityVerdict.Denied)]
     [InlineData(StatusCode.NotFound, AuthorityVerdict.Denied)]

@@ -255,6 +255,38 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         return Map(broadcastId, result);
     }
 
+    /// <summary>
+    /// Объявление аукциона сходки держателям права ставок (PER-764). Право
+    /// вести аукцион проверяет Meetups синхронным вызовом на самой команде;
+    /// аудиторию задаёт сервис.
+    /// </summary>
+    public override async Task<BroadcastAccepted> BroadcastAuctionNotice(
+        BroadcastAuctionNoticeRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var meetupId = RequestValidation.MeetupId(request.MeetupId);
+        var broadcastId = RequestValidation.BroadcastId(request.Id);
+        var body = RequestValidation.Body(request.Body);
+        var notice = RequestValidation.AuctionNotice(request.Button, request.Photo);
+
+        var result = await broadcasts.ToAuctionParticipants(
+            broadcastId, authorId, meetupId, body, notice, Chain(context));
+
+        return Map(broadcastId, result);
+    }
+
+    public override async Task<BroadcastAudience> PreviewAuctionNotice(
+        PreviewAuctionNoticeRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var meetupId = RequestValidation.MeetupId(request.MeetupId);
+        var result = await broadcasts.PreviewAuctionNotice(authorId, meetupId, Chain(context));
+
+        return Map(result);
+    }
+
     public override async Task<BroadcastAudience> PreviewMeetupBroadcast(
         PreviewMeetupBroadcastRequest request,
         ServerCallContext context)
@@ -380,7 +412,7 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
             (_, BroadcastOutcome.Repeated repeated) => Accepted(broadcastId, repeated.AcceptedAt, created: false),
             (_, BroadcastOutcome.Conflict) => throw Refused(
                 StatusCode.AlreadyExists,
-                "id is already accepted with a different body, meetup or author"),
+                "id is already accepted with a different body, meetup, button, photo or author"),
 
             // Право подтверждено, но реплика ещё не знает сходку: временное
             // «не сейчас», и повтор с тем же id безопасен.
