@@ -10,6 +10,7 @@ import type {
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
+  consoleViewData,
   floorConfirmData,
   floorData,
   floorLeaderData,
@@ -21,10 +22,10 @@ import {
   confirmKeyboard,
   escapeHtml,
   nextRow,
+  type Parent,
   pagedTitle,
   paginate,
   screenText,
-  toAuctionRoot,
   withNav,
   withPager,
 } from "./kit.js";
@@ -213,7 +214,7 @@ export function floorScreen(view: FloorScreenView): ShownScreen {
     keyboard: withNav(
       keyboard,
       view.search === undefined
-        ? toAuctionRoot(floor.auctionId)
+        ? toConsole(floor.auctionId)
         : { name: floorTitle, data: floorData(auction) },
     ),
     format: "HTML",
@@ -248,4 +249,9 @@ export function floorConfirmScreen(confirm: {
     }),
     format: "HTML",
   };
+}
+
+// Вход — из пульта (PER-802), и возврат — в пульт.
+function toConsole(auctionId: string): Parent {
+  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
 }

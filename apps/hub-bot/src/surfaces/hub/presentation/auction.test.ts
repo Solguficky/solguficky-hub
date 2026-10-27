@@ -1140,9 +1140,8 @@ describe("auction root and the way back", () => {
     expect(labels(lastScreen(calls))).toEqual([
       ["🏷️ Лоты"],
       ["Правила и FAQ"],
-      ["🛠 Пульт", "🛠 Сеты"],
-      // Объявление аукциона (PER-765) — своим рядом, пока аукцион виден.
-      ["🛠 Объявление"],
+      // Единственный вход управления в корне (PER-802).
+      ["🛠 Пульт"],
       ["‹ Сходки"],
     ]);
     await bot.handleUpdate(press(feedData));
