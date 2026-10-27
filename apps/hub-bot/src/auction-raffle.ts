@@ -62,6 +62,24 @@ function provableLines(raffle: RaffleView): string[] {
   return raffle.drawnByHand === true ? [] : [provableLine];
 }
 
+/**
+ * Экран розыгрыша rich-сообщением — так он идёт, когда у приза есть фото
+ * (PER-773): фото оболочка ставит первым блоком, над заголовком, как у
+ * карточки лота. Перенос строки в `html` rich-сообщения не рисуется, поэтому
+ * абзац — свой блок, а строки внутри — `<br>`. Абзацы уже экранированы.
+ */
+export function raffleRichText(
+  title: string,
+  paragraphs: readonly string[],
+): string {
+  return [
+    `<h1>${escapeHtml(title)}</h1>`,
+    ...paragraphs
+      .filter((paragraph) => paragraph !== "")
+      .map((paragraph) => `<p>${paragraph.split("\n").join("<br>")}</p>`),
+  ].join("");
+}
+
 /** Абзацы тела экрана под заголовком, уже экранированные. */
 export function raffleParagraphs(
   raffle: RaffleView | undefined,

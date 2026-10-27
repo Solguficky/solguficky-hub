@@ -124,6 +124,7 @@ import type {
   PublishMomentRetry,
   RaffleAskError,
   RafflePrizeAskError,
+  RafflePrizePhotoAskError,
   RaffleWinnerAskError,
   TradingHolder,
   WeekAskError,
@@ -238,6 +239,8 @@ import {
   consoleRaffleData,
   consoleRafflePrizeChangeData,
   consoleRafflePrizeData,
+  consoleRafflePrizePhotoAskData,
+  consoleRafflePrizePhotoData,
   consoleRaffleWinnerAskData,
   consoleRaffleWinnerData,
   consoleRaffleWinnerPickData,
@@ -363,6 +366,14 @@ import {
   rafflePrizeChangeOutcomeScreen,
   rafflePrizeChangeStaleScreen,
 } from "./screens/auction-raffle-prize-change.js";
+import {
+  rafflePrizePhotoAskErrorText,
+  rafflePrizePhotoLabel,
+  rafflePrizePhotoOutcomeScreen,
+  rafflePrizePhotoPrompt,
+  rafflePrizePhotoRemoveConfirmScreen,
+  rafflePrizePhotoScreen,
+} from "./screens/auction-raffle-prize-photo.js";
 import {
   raffleWinnerAskErrorText,
   raffleWinnerConfirmScreen,
@@ -931,6 +942,14 @@ type PendingConsoleAnnouncementMedia = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о фото приза идущего розыгрыша (PER-773). Шаг — аукцион — лежит в
+// кнопке вопроса, а можно ли ещё ставить фото, решает Auction на ответе.
+type PendingConsoleRafflePrizePhoto = {
+  kind: "console-raffle-prize-photo";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
@@ -1002,6 +1021,7 @@ type HubPendingInput =
   | PendingConsolePaymentText
   | PendingConsoleRaffleWinner
   | PendingConsoleRafflePrizeChange
+  | PendingConsoleRafflePrizePhoto
   | PendingConsolePromoVideo
   | PendingConsoleAnnouncement
   | PendingConsoleAnnouncementMedia
@@ -1747,6 +1767,25 @@ async function handleMessage(
           : "Канал с этим кодом уже есть, подпись прежняя.",
       );
       outcome = adminOutcome(result, identity.person.identityId);
+      return;
+    }
+    // Фото приза идущего розыгрыша (PER-773): ответ любого вида — не фото
+    // задаёт вопрос заново.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "console-raffle-prize-photo" &&
+      ctx.message !== undefined
+    ) {
+      useCase = "manage_auction";
+      outcome = await answerRafflePrizePhoto(
+        ctx,
+        runtime,
+        questions,
+        photos,
+        pending,
+        replyId,
+        answered,
+      );
       return;
     }
     // Промо-видео (PER-774): ответ любого вида — не видео задаёт вопрос
@@ -2945,6 +2984,26 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleRafflePrizeChangeCallback(
+            ctx,
+            runtime,
+            questions,
+            person,
+            action,
+          )
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Фото приза идущего розыгрыша (PER-773): ряд пульта видит только
+    // держатель права вести аукцион, подделанная кнопка получает отказ до
+    // Auction.
+    if (
+      action.kind === "console-raffle-prize-photo" ||
+      action.kind === "console-raffle-prize-photo-ask" ||
+      action.kind === "console-raffle-prize-photo-remove" ||
+      action.kind === "console-raffle-prize-photo-remove-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleRafflePrizePhotoCallback(
             ctx,
             runtime,
             questions,
@@ -10717,6 +10776,273 @@ async function sendAnnouncementPreview(
   });
 }
 
+// Фото приза идущего розыгрыша (PER-773). Сюда доходит только держатель
+// права вести аукцион; право на фото решает Auction у Meetups. Своего
+// состояния нет: аукцион едет в кнопке, а ключ снятия рождается на «Да».
+async function handleRafflePrizePhotoCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-raffle-prize-photo"
+        | "console-raffle-prize-photo-ask"
+        | "console-raffle-prize-photo-remove"
+        | "console-raffle-prize-photo-remove-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const auctionId = tokenToUuid(action.auction);
+  const call = { identity: person, ...rpcCall(ctx, useCase), auctionId };
+  // «Повторить» после сбоя ведёт на экран фото: он прочитает розыгрыш заново,
+  // а снятие, ответ на которое потерялся, могло пройти.
+  const context = {
+    person,
+    questions,
+    retry: consoleRafflePrizePhotoData(action.auction),
+  };
+  switch (action.kind) {
+    case "console-raffle-prize-photo":
+      return renderRafflePrizePhotoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-raffle-prize-photo",
+        }),
+        context,
+      );
+    case "console-raffle-prize-photo-ask":
+      return renderRafflePrizePhotoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-raffle-prize-photo",
+        }),
+        context,
+      );
+    // Подтверждение Auction не читает: розыгрыш, приз которого уже не
+    // меняется, ответит отказом на «Да».
+    case "console-raffle-prize-photo-remove":
+      await showScreen(ctx, rafflePrizePhotoRemoveConfirmScreen(auctionId));
+      return {
+        level: "info",
+        message: "raffle prize photo removal confirmation sent",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
+    case "console-raffle-prize-photo-remove-confirm":
+      return renderRafflePrizePhotoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-raffle-prize-photo",
+          opId: createUuidV7(),
+        }),
+        context,
+      );
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Экраны фото приза (PER-773); остальное — исходы пульта: отказы и сбои
+// рисуются, как у его команд.
+async function renderRafflePrizePhotoResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  switch (result.kind) {
+    case "raffle-prize-photo":
+      await showScreen(ctx, rafflePrizePhotoScreen(result));
+      return handled("raffle prize photo sent");
+    case "raffle-prize-photo-ask":
+      await askRafflePrizePhoto(ctx, context.questions, {
+        auctionId: result.auctionId,
+        error: result.error,
+        maxBytes: result.maxBytes,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "raffle prize photo requested"
+          : "raffle prize photo asked again",
+      );
+    case "raffle-prize-photo-outcome":
+      await showScreen(ctx, rafflePrizePhotoOutcomeScreen(result));
+      return handled(`raffle prize photo: ${result.note}`);
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
+// Вопрос о фото приза (PER-773): ответ — фотография; отказ — тот же вопрос с
+// причиной, как у фото лота.
+function askRafflePrizePhoto(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    error?: RafflePrizePhotoAskError | undefined;
+    maxBytes?: number | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-raffle-prize-photo",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      rafflePrizePhotoAskErrorText(ask.error, ask.maxBytes),
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    rafflePrizePhotoPrompt,
+    ask.replaces,
+  );
+}
+
+// Ответ на вопрос о фото приза (PER-773). Фото скачивается здесь, на краю,
+// как фото лота: путь даёт `getFile`, байты — порт скачивания, а юзкейс
+// получает только байты. `photoId` выводится из самого ответа (PER-699):
+// повторная доставка того же сообщения приходит в Auction повтором, а то же
+// фото, присланное заново после замены, — новой командой, и Auction не
+// примет его за повтор старой. Альбом даёт приз одним фото — первым
+// снимком: остальные пропускает проверка альбомов в начале `handleMessage`.
+async function answerRafflePrizePhoto(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  photos: { files: TelegramFiles; albums: SeenAlbums },
+  pending: PendingConsoleRafflePrizePhoto,
+  replyId: number,
+  answered: (result?: ExecuteResult) => Promise<void>,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  if (ctx.from?.id !== pending.telegramUserId) {
+    return {
+      level: "info",
+      message: "foreign raffle prize photo answer ignored",
+      result: "ok",
+      use_case: useCase,
+    };
+  }
+  const identity = await resolvePerson(ctx, runtime, useCase);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    false,
+  );
+  if (denied !== undefined) return denied;
+  const { person } = identity;
+  if (!canRunAuctions(person)) {
+    await answered();
+    return refuseConsole(ctx, person);
+  }
+  const message = ctx.message;
+  const { auctionId } = pending;
+  const album = message?.media_group_id;
+  if (album !== undefined) photos.albums.remember(album);
+  const again = (error: RafflePrizePhotoAskError) =>
+    askRafflePrizePhoto(ctx, questions, {
+      auctionId,
+      error,
+      replaces: replyId,
+    });
+  const input = parseLotPhoto(message);
+  if (message === undefined || input.kind === "not-photo") {
+    await again("photo-needed");
+    return {
+      level: "info",
+      message: "raffle prize photo asked again",
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  // Скачивание — тоже ожидание человека: «печатает…» идёт с него.
+  ctx.waiting?.begin();
+  const downloaded = await downloadPhoto(ctx, photos.files, input.fileId);
+  if (downloaded.kind === "failed") {
+    await again("photo-unavailable");
+    return {
+      level: "warn",
+      message: "raffle prize photo download failed",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category:
+        downloaded.reason === "timeout" ? "timeout" : "dependency_unavailable",
+      error: downloaded.cause.message,
+    };
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    auctionId,
+    intent: "set-raffle-prize-photo",
+    photoId: answerOpId(message, "console-raffle-prize-photo"),
+    image: downloaded.bytes,
+    ...afterTelegram(rpcCall(ctx, useCase)),
+  });
+  if (retryable(result)) {
+    await again("photo-not-saved");
+    return {
+      level: "warn",
+      message: "raffle prize photo not saved",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category:
+        result.kind === "dependency-rejected" && result.reason === "timeout"
+          ? "timeout"
+          : "dependency_unavailable",
+      error: "set_raffle_prize_photo_failed",
+    };
+  }
+  const outcome = await renderRafflePrizePhotoResult(ctx, runtime, result, {
+    person,
+    questions,
+    replyId,
+  });
+  if (result.kind !== "raffle-prize-photo-ask") await answered(result);
+  return outcome;
+}
+
 // «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
 // права вести аукцион; право на чтение и ставку решает Auction. Своего
 // состояния нет: лот, человек и цена едут в кнопке, а ключ ставки рождается
@@ -12476,6 +12802,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle-prize-change",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-raffle-prize-photo":
+      return {
+        kind: "console-raffle-prize-photo",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-promo-video":
       return {
         kind: "console-promo-video",
@@ -12767,6 +13098,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-raffle-prize-photo":
+      return {
+        kind: "console-raffle-prize-photo",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "console-promo-video":
       return {
         kind: "console-promo-video",
@@ -12895,6 +13233,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-raffle-winner":
       // Вопрос о номере победителя задан с «Итога розыгрыша».
       return { kind: "console-raffle-winner", auction: step.auction, page: 0 };
+    case "console-raffle-prize-photo":
+      // Вопрос о фото приза задан с экрана «Фото приза».
+      return { kind: "console-raffle-prize-photo", auction: step.auction };
     case "console-announcement":
     case "console-announcement-media":
       // Вопросы объявления заданы с меню «Объявления» и его шагов.
@@ -13089,6 +13430,8 @@ function reopenData(step: QuestionStep): string {
       return consoleRaffleWinnerAskData(step.auction);
     case "console-raffle-prize-change":
       return consoleRafflePrizeChangeData(step.auction);
+    case "console-raffle-prize-photo":
+      return consoleRafflePrizePhotoAskData(step.auction);
     case "console-promo-video":
       return consolePromoVideoAskData(step.auction);
     case "console-announcement":
@@ -13178,6 +13521,11 @@ function answerParent(step: QuestionStep): Parent {
       return {
         name: raffleWinnerLabel,
         data: consoleRaffleWinnerData(step.auction),
+      };
+    case "console-raffle-prize-photo":
+      return {
+        name: rafflePrizePhotoLabel,
+        data: consoleRafflePrizePhotoData(step.auction),
       };
     case "console-announcement":
     case "console-announcement-media":
@@ -13490,6 +13838,10 @@ function callbackUseCase(
     | "console-raffle-winner-confirm"
     | "console-raffle-prize-change"
     | "console-raffle-prize-change-confirm"
+    | "console-raffle-prize-photo"
+    | "console-raffle-prize-photo-ask"
+    | "console-raffle-prize-photo-remove"
+    | "console-raffle-prize-photo-remove-confirm"
     | "console-promo-video"
     | "console-promo-video-ask"
     | "console-promo-video-remove"
@@ -13718,6 +14070,10 @@ function callbackUseCase(
     case "console-raffle-winner-confirm":
     case "console-raffle-prize-change":
     case "console-raffle-prize-change-confirm":
+    case "console-raffle-prize-photo":
+    case "console-raffle-prize-photo-ask":
+    case "console-raffle-prize-photo-remove":
+    case "console-raffle-prize-photo-remove-confirm":
     case "console-promo-video":
     case "console-promo-video-ask":
     case "console-promo-video-remove":
@@ -13781,6 +14137,7 @@ function callbackUseCase(
 // идентификатор нового сета — у одного сообщения бывает и ключ команды, и id.
 type AnswerKeyPurpose =
   | ConsoleQuestionPending["kind"]
+  | "console-raffle-prize-photo"
   | "final-ask"
   | "console-set-id";
 

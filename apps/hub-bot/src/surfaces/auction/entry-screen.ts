@@ -40,6 +40,7 @@ import {
   raffleProofTitle,
   raffleRegisteredParagraphs,
   raffleRegisteredTitle,
+  raffleRichText,
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
@@ -111,6 +112,7 @@ import {
 import {
   type LotPhotoKey,
   lotPhotoKeys,
+  rafflePrizePhotoKeys,
 } from "../../core/auction/lot-photos.js";
 import type { Presentation } from "../../core/config.js";
 import {
@@ -591,11 +593,7 @@ export function renderEntryScreen(
           screen.subject === "notifications"
             ? "Настройка уведомлений сейчас недоступна."
             : "Аукцион сейчас недоступен."
-        }</b> ${
-          exit.kind === "answer"
-            ? "Пришли ответ ещё раз через минуту."
-            : "Попробуй ещё раз через минуту."
-        }`,
+        }</b> ${exit.kind === "answer" ? "Пришли ответ ещё раз через минуту." : "Попробуй ещё раз через минуту."}`,
         // Сбой самих «Аукционов» несёт только повтор: возврат вёл бы туда же.
         keyboard: [
           exit.kind === "retry"
@@ -1116,7 +1114,9 @@ type FavoritesBlock = Extract<AuctionBlock, { kind: "favorites" }>;
 function renderLeaf(
   blocks: readonly AuctionBlock[],
   options: RenderOptions,
-): Pick<RenderedScreen, "text" | "format" | "asks" | "promo"> | undefined {
+):
+  | Pick<RenderedScreen, "text" | "format" | "asks" | "photos" | "promo">
+  | undefined {
   for (const block of blocks) {
     switch (block.kind) {
       // Промо-видео (PER-774): текст — подпись копии поста, слова общие с
@@ -1214,17 +1214,25 @@ function renderLeaf(
             ...dayChronicleParagraphs(block, { money }),
           ),
         };
-      case "raffle":
-        return {
-          format: "html",
-          text: screenText(
-            raffleTitle,
-            ...raffleParagraphs(block.raffle, {
-              moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
-            }),
-          ),
-        };
+      case "raffle": {
+        const paragraphs = raffleParagraphs(block.raffle, {
+          moment: (instant) =>
+            readableMoment(instant, options.timeZone, options.now),
+        });
+        // Приз с фото (PER-773) — rich-сообщение, фото над заголовком ставит
+        // адаптер, как у карточки лота; в `plain` фото нет.
+        const photos =
+          (options.presentation ?? "rich") === "rich"
+            ? rafflePrizePhotoKeys(block.raffle)
+            : [];
+        return photos.length === 0
+          ? { format: "html", text: screenText(raffleTitle, ...paragraphs) }
+          : {
+              format: "rich",
+              text: raffleRichText(raffleTitle, paragraphs),
+              photos,
+            };
+      }
       case "raffle-registered":
         return {
           format: "html",

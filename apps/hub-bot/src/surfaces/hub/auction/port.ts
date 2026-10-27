@@ -756,6 +756,22 @@ export type ChangeRafflePrizeResult =
   | { kind: "without-result" }
   | AuctionFailure;
 
+// Фото приза идущего розыгрыша (PER-773): поставить и убрать — тем же правилом,
+// что приз. Отказы изображения бывают только у постановки.
+export type RafflePrizePhotoResult =
+  | { kind: "ok"; raffle: RaffleView }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | { kind: "raffle-not-found" }
+  | { kind: "already-drawn" }
+  | { kind: "without-result" }
+  | { kind: "image-too-large"; maxBytes: number }
+  | { kind: "unsupported-image" }
+  | { kind: "photo-conflict" }
+  | AuctionFailure;
+
 // Аукционы сообщества от запланированного до финала (`ListAuctions` ACTIVE):
 // по ним пульт узнаёт, у кого идут торги, до подтверждения открытия недели.
 export type ActiveAuctionsResult =
@@ -926,6 +942,18 @@ export type AuctionConsoles = {
     command: { auctionId: string; prize: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<ChangeRafflePrizeResult>;
+  // Фото приза идущего розыгрыша (PER-773): `photoId` — ключ повтора, его
+  // выводит край из ответа с фото; ключ снятия рождается на нажатие «Да».
+  setRafflePrizePhoto(
+    person: Person,
+    command: { auctionId: string; photoId: string; image: Uint8Array },
+    meta?: RpcMetadata,
+  ): Promise<RafflePrizePhotoResult>;
+  removeRafflePrizePhoto(
+    person: Person,
+    command: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<RafflePrizePhotoResult>;
   // Активные аукционы сообщества: слот торгов один (PER-603), и пульт
   // предупреждает об идущих торгах до подтверждения открытия (PER-618).
   activeAuctions(

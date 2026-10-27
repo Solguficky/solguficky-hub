@@ -228,6 +228,12 @@ function fake(answers: {
     changeRafflePrize: async () => {
       throw new Error("raffle prize change not used by the console");
     },
+    setRafflePrizePhoto: async () => {
+      throw new Error("raffle prize photo not used by the console");
+    },
+    removeRafflePrizePhoto: async () => {
+      throw new Error("raffle prize photo not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };

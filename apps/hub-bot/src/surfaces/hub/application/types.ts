@@ -383,6 +383,7 @@ export type ExecuteRequest =
   | AuctionInvoicesRequest
   | RaffleWinnerRequest
   | RafflePrizeChangeRequest
+  | RafflePrizePhotoRequest
   | PromoVideoRequest
   | AuctionAnnouncementRequest;
 
@@ -853,7 +854,7 @@ export type FinalAskError =
   | "amount-range"
   | "ask-below-current-price";
 
-type AuctionConsoleCall = LotFormCall & { auctionId: string };
+export type AuctionConsoleCall = LotFormCall & { auctionId: string };
 
 // `opId` рождает край: у открытия недели — в кнопке подтверждения, у
 // остальных команд — на каждое нажатие и каждый ответ.
@@ -1377,6 +1378,40 @@ export type RafflePrizeChangeOutcome =
   | { note: "without-result" }
   | { note: "no-raffle" };
 
+// Фото приза идущего розыгрыша (PER-773): экран фото, вопрос о фото, ответ
+// фотографией с `photoId` из самого ответа и снятие с ключом, рождённым на
+// нажатие «Да».
+export type RafflePrizePhotoRequest =
+  | (AuctionConsoleCall & { intent: "view-raffle-prize-photo" })
+  | (AuctionConsoleCall & { intent: "ask-raffle-prize-photo" })
+  | (AuctionConsoleCall & {
+      intent: "set-raffle-prize-photo";
+      photoId: string;
+      image: Uint8Array;
+    })
+  | (AuctionConsoleCall & {
+      intent: "remove-raffle-prize-photo";
+      opId: string;
+    });
+
+// Непринятый ответ на вопрос о фото приза: не фотография, Telegram файл не
+// отдал, Auction не ответил, файл велик или не изображение.
+export type RafflePrizePhotoAskError =
+  | "photo-needed"
+  | "photo-unavailable"
+  | "photo-not-saved"
+  | "image-too-large"
+  | "unsupported-image";
+
+// Исход фото приза — свой экран. `set` и `removed` — команда принята,
+// остальное — как у смены приза: итог есть, итога не будет, розыгрыша нет.
+export type RafflePrizePhotoOutcome =
+  | { note: "set" }
+  | { note: "removed" }
+  | { note: "already-drawn" }
+  | { note: "without-result" }
+  | { note: "no-raffle" };
+
 // Непринятый ответ о номере победителя: не номер или вне пула.
 export type RaffleWinnerAskError = "winner-format" | "winner-range";
 
@@ -1829,6 +1864,18 @@ export type ExecuteResult =
       kind: "raffle-prize-change-outcome";
       auctionId: string;
     } & RafflePrizeChangeOutcome)
+  // Фото приза идущего розыгрыша (PER-773): экран фото, вопрос и исход.
+  | { kind: "raffle-prize-photo"; auctionId: string; hasPhoto: boolean }
+  | {
+      kind: "raffle-prize-photo-ask";
+      auctionId: string;
+      error?: RafflePrizePhotoAskError;
+      maxBytes?: number;
+    }
+  | ({
+      kind: "raffle-prize-photo-outcome";
+      auctionId: string;
+    } & RafflePrizePhotoOutcome)
   // Промо-видео (PER-774): экран из корня аукциона и исход команды.
   | { kind: "promo-video"; auctionId: string; video: boolean }
   | { kind: "promo-video-outcome"; auctionId: string; note: PromoVideoNote }
