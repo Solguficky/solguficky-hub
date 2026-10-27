@@ -56,6 +56,7 @@ auction-bot: ContainerResource
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
+  env: BOT_MEDIA_CHANNEL_ID={bot-media-channel-id.value}
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={auction-bot-service-token.value}
   env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
@@ -70,6 +71,7 @@ auction-bot: ContainerResource
   relationship: Reference auction
   relationship: Reference auction-bot-service-token
   relationship: Reference auction-bot-token
+  relationship: Reference bot-media-channel-id
   relationship: Reference identity
   relationship: Reference nats
   relationship: Reference notifications
@@ -92,6 +94,8 @@ auction-raffle-draw: ParameterResource
   secret: False
 auction-service-token: ParameterResource
   secret: True
+bot-media-channel-id: ParameterResource
+  secret: False
 cloudflared: ContainerResource
   image: docker.io/cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
   arg: tunnel
@@ -109,6 +113,7 @@ hub-bot: ContainerResource
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
+  env: BOT_MEDIA_CHANNEL_ID={bot-media-channel-id.value}
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
   env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
@@ -123,6 +128,7 @@ hub-bot: ContainerResource
   waits: nats WaitUntilHealthy
   waits: notifications WaitUntilHealthy
   relationship: Reference auction
+  relationship: Reference bot-media-channel-id
   relationship: Reference hub-bot-service-token
   relationship: Reference hub-bot-token
   relationship: Reference identity

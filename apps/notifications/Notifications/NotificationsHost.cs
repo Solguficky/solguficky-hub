@@ -267,8 +267,13 @@ public static class NotificationsHost
         // Срок хранения ключей сверяет с настоящим стримом сам потребитель при
         // привязке: копия настройки стрима здесь прошла бы молча, когда
         // топология поднимет окно хранения.
-        builder.Services.Configure<ConsumerOptions>(builder.Configuration.GetSection(ConsumerOptions.SectionName));
-        builder.Services.AddHostedService<ConsumedEventPruner>();
+        builder.Services.AddOptions<ConsumerOptions>()
+            .Bind(builder.Configuration.GetSection(ConsumerOptions.SectionName))
+            .Validate(ConsumerOptions.IsValid, ConsumerOptions.ValidationMessage)
+            .ValidateOnStart();
+        // Порог чистки у каждого источника — срок ключей его стрима (PER-761).
+        builder.Services.AddHostedService(services =>
+            ActivatorUtilities.CreateInstance<ConsumedEventPruner>(services, EventFeeds));
 
         // Адресные факты (PER-216). Порождаются в транзакции реплики, а в шину
         // их выносит релей — он есть только там, где есть шина.
@@ -280,14 +285,12 @@ public static class NotificationsHost
             .Bind(builder.Configuration.GetSection(FactOptions.SectionName))
             .Validate(FactOptions.IsValid, FactOptions.ValidationMessage)
             .ValidateOnStart();
-        // Горизонт короче срока жизни ключей события сломал бы дедупликацию
-        // повода, а ноль попыток вычеркнул бы строку без публикации: оба
-        // ловятся на старте, а не на первой чистке.
+        // Ноль попыток вычеркнул бы строку без публикации: ловится на старте,
+        // а не на первой чистке. Горизонт против срока ключей события держит
+        // построение горизонта строки по её потоку (PER-761).
         builder.Services.AddOptions<DispatchOptions>()
             .Bind(builder.Configuration.GetSection(DispatchOptions.SectionName))
-            .Validate<IOptions<ConsumerOptions>>(
-                (dispatch, consumer) => DispatchOptions.IsValid(dispatch, consumer.Value),
-                DispatchOptions.ValidationMessage)
+            .Validate(DispatchOptions.IsValid, DispatchOptions.ValidationMessage)
             .ValidateOnStart();
         // Чистка, как и ключей событий, шины не требует.
         builder.Services.AddHostedService<NotificationPruner>();

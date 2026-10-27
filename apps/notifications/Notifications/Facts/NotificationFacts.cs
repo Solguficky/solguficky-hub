@@ -1,4 +1,7 @@
+using Notifications.Auction;
+using Notifications.Broadcasts;
 using Notifications.Domain;
+using Notifications.Infrastructure;
 using Notifications.Reminders;
 using Notifications.Replica;
 using Notifications.V1;
@@ -91,6 +94,9 @@ public static class NotificationFacts
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string CommunityAnnouncementType = "community_announcement";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string AuctionNoticeType = "auction_notice";
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string AccessRequestedType = "access_requested";
@@ -527,6 +533,58 @@ public static class NotificationFacts
         {
             SenderId = senderId.ToString(),
             Body = body,
+        };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Объявление аукциона одному держателю права ставок (PER-764). Повод и
+    /// цепочка — как у <see cref="OrganizerMessage" />; аукцион выведен из
+    /// сходки правилом Auction, название сходки — из реплики на момент приёма.
+    /// </summary>
+    public static Notification AuctionNotice(
+        Guid notificationId,
+        Guid recipientId,
+        Guid broadcastId,
+        Guid senderId,
+        Guid meetupId,
+        string meetupTitle,
+        string body,
+        AuctionNoticeContent content,
+        string? requestId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(notificationId, recipientId, Broadcast(broadcastId), requestId, now, notAfter);
+        notification.AuctionNotice = new V1.AuctionNotice
+        {
+            AuctionId = AuctionOfMeetup.Of(meetupId).ToString(),
+            MeetupId = meetupId.ToString(),
+            MeetupTitle = meetupTitle,
+            SenderId = senderId.ToString(),
+            Body = body,
+            Button = new AuctionNoticeButton
+            {
+                View = AuctionNoticeViews.Contract(content.Button.View),
+                LotId = content.Button.LotId?.ToString() ?? "",
+            },
+            Photo = content.Photo switch
+            {
+                NoticePhoto.LotPhoto lot => new AuctionNoticePhoto
+                {
+                    LotPhoto = new AuctionNoticeLotPhoto
+                    {
+                        LotId = lot.LotId.ToString(),
+                        PhotoId = lot.PhotoId.ToString(),
+                    },
+                },
+                NoticePhoto.ChannelPost post => new AuctionNoticePhoto
+                {
+                    ChannelPost = new AuctionNoticeChannelPost { MessageId = post.MessageId },
+                },
+                _ => null,
+            },
         };
 
         return notification;

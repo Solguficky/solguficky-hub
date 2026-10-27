@@ -1,3 +1,4 @@
+import type { AuctionWeekFacts } from "../../auction-programme.js";
 import type { Viewer } from "../../auction-ui/index.js";
 import { MAX_LIST_PAGE } from "./faq.js";
 
@@ -33,6 +34,10 @@ export type AuctionSummary = {
   // отсчёта нет.
   closesAt?: string;
   lotCount: number;
+  // Данные строки состояния (PER-767) из той же сводки, что корень аукциона.
+  // Нет — сводку для строки перевести не вышло: строка пропадает, а список
+  // остаётся.
+  week?: AuctionWeekFacts;
 };
 
 export type AuctionCatalogPort = {

@@ -46,6 +46,12 @@ public interface IBroadcastAuthority
 
     /// <summary>Право на объявление сообществу. Спрашивается у Identity.</summary>
     Task<AuthorityAnswer> CommunityAnnouncement(Guid authorId, Forwarded forwarded);
+
+    /// <summary>
+    /// Право вести аукцион сходки (<c>run_auctions</c>) для объявления аукциона.
+    /// Спрашивается у Meetups тем же вопросом, что задаёт Auction (PER-764).
+    /// </summary>
+    Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded);
 }
 
 /// <summary>Один вызов <c>CheckMeetupAuthority</c>.</summary>
@@ -94,21 +100,35 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
     /// </summary>
     public static readonly TimeSpan CallDeadline = TimeSpan.FromSeconds(2);
 
-    public async Task<AuthorityAnswer> MeetupBroadcast(Guid authorId, Guid meetupId, Forwarded forwarded)
+    // Отношения, которые принимает рассылка по сходке. В MVP словарь Meetups
+    // несёт одно — держатель права вести сходки; организаторов конкретной
+    // сходки нет (ADR-031), и выбирать пока не из чего.
+    public Task<AuthorityAnswer> MeetupBroadcast(Guid authorId, Guid meetupId, Forwarded forwarded) =>
+        AskMeetups(authorId, meetupId, MeetupRelation.CommunityAdministrator, forwarded);
+
+    // Объявление аукциона принимает то же отношение, что команды аукциона у
+    // Auction, — «ведущий аукциона», держатель run_auctions (ADR-070, PER-652).
+    // Состояние сходки из ответа не читается: объявление ворот Auction не
+    // наследует, а об отменённой сходке ведущий вправе сказать, как организатор.
+    public Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded) =>
+        AskMeetups(authorId, meetupId, MeetupRelation.AuctionRunner, forwarded);
+
+    private async Task<AuthorityAnswer> AskMeetups(
+        Guid authorId,
+        Guid meetupId,
+        MeetupRelation relation,
+        Forwarded forwarded)
     {
         if (meetups is null)
         {
             return new AuthorityAnswer(AuthorityVerdict.Unavailable, "meetups address is not configured");
         }
 
-        // Отношения, которые принимает рассылка по сходке. В MVP словарь Meetups
-        // несёт одно — держатель права вести сходки; организаторов конкретной
-        // сходки нет (ADR-031), и выбирать пока не из чего.
         var request = new CheckMeetupAuthorityRequest
         {
             Id = meetupId.ToString("D"),
             IdentityId = authorId.ToString("D"),
-            AcceptedRelations = { MeetupRelation.CommunityAdministrator },
+            AcceptedRelations = { relation },
         };
 
         try

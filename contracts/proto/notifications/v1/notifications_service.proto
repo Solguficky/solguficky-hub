@@ -387,7 +387,8 @@ message BroadcastAuctionNoticeRequest {
   // Author-written content, as in BroadcastToMeetupSubscribers.
   string body = 4;
 
-  // Required: view is not UNSPECIFIED, lot_id is set exactly for the lot view.
+  // Optional: unset means a message without a button. When set, view is not
+  // UNSPECIFIED and lot_id is set exactly for the lot view.
   AuctionNoticeButton button = 5;
 
   // Optional: unset means a message without a picture.

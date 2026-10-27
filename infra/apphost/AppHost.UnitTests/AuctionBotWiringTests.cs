@@ -194,6 +194,28 @@ public class AuctionBotWiringTests
         environment.ShouldNotContainKey("AUCTION_FAQ_QUESTION_URL");
     }
 
+    /// <summary>
+    /// Канал медиа ботов (дополнение ADR-057 от 2026-10-27): гостю объявление со
+    /// своим фото доставляет этот бот копией поста того же канала, что у хаба.
+    /// </summary>
+    [Fact]
+    public async Task AuctionBot_GetsTheConfiguredMediaChannel()
+    {
+        var (bot, _) = Materialize("prod", mediaChannelId: " -1001234567890 ");
+        var environment = await EnvironmentAsync(bot);
+
+        environment["BOT_MEDIA_CHANNEL_ID"].ShouldBe("-1001234567890");
+    }
+
+    [Fact]
+    public async Task AuctionBot_WithoutMediaChannel_GetsNoVariable()
+    {
+        var (bot, _) = Materialize("prod");
+        var environment = await EnvironmentAsync(bot);
+
+        environment.ShouldNotContainKey("BOT_MEDIA_CHANNEL_ID");
+    }
+
     [Fact]
     public async Task AuctionBot_TestEnvironment_TakesTheTestToken()
     {
@@ -208,7 +230,8 @@ public class AuctionBotWiringTests
         string telegramEnvironment,
         string? staleAuctionId = null,
         bool withNotifications = true,
-        string? supportBotUsername = null)
+        string? supportBotUsername = null,
+        string? mediaChannelId = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -230,6 +253,7 @@ public class AuctionBotWiringTests
             ["Parameters:hub-bot-test-token"] = "333:hub-test",
             ["AuctionBot:AuctionId"] = staleAuctionId,
             [SupportBotLink.UsernameKey] = supportBotUsername,
+            [BotMediaChannel.ChannelIdKey] = mediaChannelId,
         });
         if (withNotifications)
         {

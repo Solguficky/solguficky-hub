@@ -53,9 +53,119 @@ export function isTypedText(raw: unknown): boolean {
   return TypedTextSchema.safeParse(raw).success;
 }
 
+// Ссылка «Копировать ссылку» клиента Telegram: публичный чат по имени или
+// закрытый по номеру `c/<чат>`, необязательная тема и номер сообщения.
+// Ссылка собирается заново из разобранных частей, а не уезжает в материал как
+// набрана: из хвоста запроса остаётся только `comment` — он ведёт на
+// комментарий, а не на сам пост, — а `?single` и прочее отбрасываются.
+const MessageLinkPattern =
+  /^https:\/\/t\.me\/(?:c\/([1-9]\d*)|([A-Za-z][A-Za-z0-9_]{3,31}))(?:\/([1-9]\d*))?\/([1-9]\d*)\/?(?:\?(\S*))?$/;
+const CommentIdPattern = /^[1-9]\d*$/;
+
+/**
+ * Пересылка из группы чат и номер сообщения не несёт, поэтому сообщение чата
+ * приходит набранной ссылкой на него (PER-762).
+ */
+function parseMessageLink(raw: unknown): string | undefined {
+  const parsed = TypedTextSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  const match = MessageLinkPattern.exec(parsed.data.text.trim());
+  if (match === null) return undefined;
+  const [, chatId, username, topicId, messageId, query] = match;
+  const chat = chatId === undefined ? username : `c/${chatId}`;
+  const topic = topicId === undefined ? "" : `/${topicId}`;
+  const commentId = new URLSearchParams(query ?? "").get("comment");
+  const comment =
+    commentId !== null && CommentIdPattern.test(commentId)
+      ? `?comment=${commentId}`
+      : "";
+  return `https://t.me/${chat}${topic}/${messageId}${comment}`;
+}
+
+// GIF в списке нет: Bot API кладёт у него и `document`, и он, как прежде,
+// становится документом. Место идёт раньше геопозиции: у `venue` заполнено и
+// `location`.
+const unsupportedKinds = [
+  ["video", "Видео"],
+  ["video_note", "Кружок"],
+  ["voice", "Голосовое"],
+  ["audio", "Аудио"],
+  ["sticker", "Стикер"],
+  ["poll", "Опрос"],
+  ["venue", "Место"],
+  ["location", "Геопозиция"],
+  ["contact", "Контакт"],
+  ["dice", "Кубик"],
+] as const;
+
+const forwardTypes = new Set(["user", "hidden_user", "chat", "channel"]);
+
+export type MaterialRefusal = {
+  // Вид сообщения для записи отказа — `forward:<тип>`, вид медиа, `text` или
+  // `other`, у пересланного медиа через запятую. Содержимого в нём нет.
+  kind: string;
+  text: string;
+};
+
+/**
+ * Почему сообщение не стало материалом. Пересылка из группы получает подсказку
+ * про ссылку: Bot API не даёт у неё чат и номер, и «источник скрыт» был бы
+ * неправдой (прод, 27.10.2026).
+ */
+export function materialRefusal(raw: unknown): MaterialRefusal {
+  const message =
+    typeof raw === "object" && raw !== null
+      ? (raw as Record<string, unknown>)
+      : {};
+  const origin = z
+    .object({ type: z.string() })
+    .safeParse(message["forward_origin"]);
+  // Тип вне словаря Bot API в запись не попадает как есть.
+  const forward = origin.success
+    ? forwardTypes.has(origin.data.type)
+      ? origin.data.type
+      : "other"
+    : undefined;
+  const media = unsupportedKinds.find(([key]) => message[key] !== undefined);
+  if (forward === undefined) {
+    if (media !== undefined) {
+      return {
+        kind: media[0],
+        text: `${media[1]} не принимается материалом: нужна фотография, документ, ссылка на сообщение или пересылка из канала.`,
+      };
+    }
+    return isTypedText(raw)
+      ? { kind: "text", text: typedTextRefusal }
+      : { kind: "other", text: hiddenSourceRefusal };
+  }
+  const kind = [
+    `forward:${forward}`,
+    ...(media === undefined ? [] : [media[0]]),
+  ].join(",");
+  if (forward !== "user" && forward !== "chat") {
+    return { kind, text: hiddenSourceRefusal };
+  }
+  return {
+    kind,
+    text:
+      media === undefined
+        ? `Сообщение из чата: ${linkHint}`
+        : `${media[1]} не принимается материалом, а ${linkHint}`,
+  };
+}
+
+const typedTextRefusal =
+  "Текст сам по себе не материал: перешли сообщение из канала или чата, фото или документ.";
+const hiddenSourceRefusal =
+  "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.";
+const linkHint =
+  "из пересылки ссылку не собрать, скопируй ссылку на сообщение («Копировать ссылку») и пришли её.";
+
 export function parseMaterialInput(
   raw: unknown,
 ): PendingMaterialSource | undefined {
+  const link = parseMessageLink(raw);
+  if (link !== undefined) return { kind: "message-link", url: link };
   const parsed = MaterialInputSchema.safeParse(raw);
   if (!parsed.success) return undefined;
   const origin = parsed.data.forward_origin;
