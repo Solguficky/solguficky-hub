@@ -116,8 +116,13 @@ internal static class AuctionSetup
         return auction
             // Вызывающие — по колонке Caller в integration.md. Без полной таблицы
             // сервис не стартует, поэтому она приходит и в профиле без ботов, и в
-            // чарте, куда бот аукциона не входит.
-            .AcceptCallers(context, AppHostNames.Resources.HubBot, AppHostNames.Resources.AuctionBot)
+            // чарте, куда бот аукциона не входит. Notifications читает участников
+            // розыгрыша и прогнозов для аудитории объявления (PER-777).
+            .AcceptCallers(
+                context,
+                AppHostNames.Resources.HubBot,
+                AppHostNames.Resources.AuctionBot,
+                AppHostNames.Resources.Notifications)
             // Auction и вызываемый, и вызывающий: право администратора сходки он
             // спрашивает у Meetups (CheckMeetupAuthority, ADR-047). Профиль без
             // meetups оставляет адрес пустым — bind молчит, и команды

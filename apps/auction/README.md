@@ -45,6 +45,7 @@ just aspire auction
 | `AUCTION_GRPC_PORT` | `8081` | порт gRPC-границы, h2c |
 | `AUCTION_CALLER_TOKEN_HUB_BOT` | нет, обязательна | токен бота хаба как вызывающего ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) |
 | `AUCTION_CALLER_TOKEN_AUCTION_BOT` | нет, обязательна | токен бота аукциона как вызывающего; значение отличается от токена бота хаба |
+| `AUCTION_CALLER_TOKEN_NOTIFICATIONS` | нет, обязательна | токен Notifications как вызывающего `ListAuctionEngagement` ([PER-777](https://linear.app/anticnvm/issue/per-777)); значение отличается от токенов ботов |
 | `AUCTION_MEETUPS_GRPC_URL` | нет | адрес gRPC Meetups, `http://<хост>:<порт>`, для проверки права администратора сходки; без него команды администратора аукциону отвечают `UNAVAILABLE` |
 | `AUCTION_IDENTITY_GRPC_URL` | нет | адрес gRPC Identity, `http://<хост>:<порт>`, для проверки права `place_bids` кандидатов розыгрыша при закрытии регистрации (ADR-066); тот же собственный токен `AUCTION_SERVICE_TOKEN`; без адреса пул фиксируется без исключений |
 | `AUCTION_RAFFLE_BEACON_URLS` | нет | зеркала маяка drand через запятую, не меньше двух разных; по умолчанию четыре публичных зеркала `quicknet`; значение раунда принимается при согласии двух |
@@ -76,7 +77,7 @@ IMAGE_ENGINE=docker just auction-image
 ## Проверка
 
 ```bash
-AUCTION_HTTP_PORT=8080 AUCTION_DATABASE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/auction AUCTION_DATABASE_USER=postgres AUCTION_DATABASE_PASSWORD=postgres AUCTION_CALLER_TOKEN_HUB_BOT=hub-local AUCTION_CALLER_TOKEN_AUCTION_BOT=auction-local just auction-run
+AUCTION_HTTP_PORT=8080 AUCTION_DATABASE_JDBC_URL=jdbc:postgresql://127.0.0.1:5432/auction AUCTION_DATABASE_USER=postgres AUCTION_DATABASE_PASSWORD=postgres AUCTION_CALLER_TOKEN_HUB_BOT=hub-local AUCTION_CALLER_TOKEN_AUCTION_BOT=auction-local AUCTION_CALLER_TOKEN_NOTIFICATIONS=notifications-local just auction-run
 ```
 
 ```bash

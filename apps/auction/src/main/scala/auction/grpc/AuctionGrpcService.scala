@@ -1406,6 +1406,31 @@ final class AuctionGrpcService(
         }
     }
 
+  /**
+   * Участники розыгрыша и прогнозов аукциона для аудитории объявления (PER-777, решение PER-768). Вызывающий — только
+   * Notifications (`MethodAccess`), смотрящего нет: право администратора проверил он. Аукцион — у entity, розыгрыш — из
+   * entity, а не из read model, и прогнозы — из строк после ответа игры: регистрация, её отмена, прогноз и его очистка
+   * видны сразу, а стёртого субъекта в строках нет. Скрытый аукцион не прячется: экранов у чтения нет.
+   */
+  def listAuctionEngagement(in: wire.ListAuctionEngagementRequest): Future[wire.ListAuctionEngagementResponse] =
+    RequestMapping.listAuctionEngagement(in) match {
+      case Left(error) => invalid(error)
+      case Right(auctionId) =>
+        auctions.current(auctionId).recoverWith(awaited).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case Some(auction) =>
+            val raffle = raffles.get(auctionId).recoverWith(awaited)
+            val forecasters = predictions.forecasters(auctionId).recoverWith(awaited)
+            for {
+              found <- raffle
+              open <- forecasters
+            } yield EngagementMapping.response(
+              EngagementMapping.registration(auction.state, found.state, clock.instant()),
+              open
+            )
+        }
+    }
+
   /** Свои прогнозы смотрящего по раундам; чужих это чтение не отдаёт (ADR-067, п. 9). */
   def getMyPredictions(in: wire.GetMyPredictionsRequest): Future[wire.GetMyPredictionsResponse] =
     PredictionMapping.mine(in) match {
@@ -1836,6 +1861,7 @@ object AuctionGrpcService {
     def mine(auction: AuctionId, participant: ParticipantId) = none
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) = none
     def tally(auction: AuctionId) = none
+    def forecasters(auction: AuctionId) = none
   }
 
   /** Узел без итогов: тесты границы, которым подсчёт не нужен. */
