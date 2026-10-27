@@ -768,8 +768,16 @@ export type AnnouncementAction =
       auction: string;
       button: ButtonChoice;
       print: string;
-      lot: number;
+      lot?: number;
       photo?: number;
+    }
+  // «Своё фото или видео» шага фото (PER-776): вопрос о медиа.
+  | {
+      kind: "console-announcement-media";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      lot?: number;
     }
   | {
       kind: "console-announcement-send";
@@ -778,9 +786,19 @@ export type AnnouncementAction =
       print: string;
       lot?: number;
       photo?: number;
+      post?: number;
     };
 
 export type QuestionStep =
+  // Своё фото или видео объявления (PER-776): выбор кнопки, отпечаток текста
+  // и лот шаблона; сам текст едет хвостом вопроса, как в кадре шага.
+  | {
+      kind: "console-announcement-media";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      lot?: number;
+    }
   // Текст объявления аукциона (PER-765): аукцион, шаблон и номер окна или лота
   // шаблона; черновик ответ читает у Auction заново.
   | {
@@ -1160,6 +1178,33 @@ function refPart(ref: number | undefined): string {
   return ref === undefined ? "-" : String(ref);
 }
 
+// Место фото в кнопке «Отправить»: номер фото лота или `m` и номер поста чата
+// медиа в base36 (PER-776) — источник фото у объявления один.
+const PostPartSchema = z
+  .string()
+  .regex(/^m[1-9a-z][0-9a-z]{0,9}$/)
+  .transform((raw) => Number.parseInt(raw.slice(1), 36))
+  .refine((post) => Number.isSafeInteger(post));
+
+function mediaPart(
+  photo: number | undefined,
+  post: number | undefined,
+): string {
+  return post === undefined ? refPart(photo) : `m${post.toString(36)}`;
+}
+
+function mediaOf(
+  raw: string | undefined,
+): { photo?: number; post?: number } | "malformed" {
+  if (raw?.startsWith("m") === true) {
+    const post = PostPartSchema.safeParse(raw);
+    return post.success ? { post: post.data } : "malformed";
+  }
+  const photo = refOf(raw);
+  if (photo === "malformed") return "malformed";
+  return photo === undefined ? {} : { photo };
+}
+
 /** «📣 Объявление» пульта (PER-765): своё объявление или шаблон. */
 export function consoleAnnouncementData(auction: string): string {
   return `v1:ac:na:${auction}`;
@@ -1199,21 +1244,35 @@ export function consoleAnnouncementPhotoData(
   auction: string,
   button: ButtonChoice,
   print: string,
-  lot: number,
+  lot?: number,
   photo?: number,
 ): string {
-  return `v1:ac:np:${auction}:${buttonCodes[button]}:${print}:${lot}:${refPart(photo)}`;
+  return `v1:ac:np:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${refPart(photo)}`;
 }
 
-/** «Отправить N»: всё, кроме текста, — его «Отправить» читает из предпросмотра. */
+/** «Своё фото или видео» (PER-776): вопрос о медиа с тем же шагом. */
+export function consoleAnnouncementMediaData(
+  auction: string,
+  button: ButtonChoice,
+  print: string,
+  lot?: number,
+): string {
+  return `v1:ac:nm:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}`;
+}
+
+/**
+ * «Отправить N»: всё, кроме текста, — его «Отправить» читает из предпросмотра.
+ * Своё медиа — номером поста на месте фото (PER-776).
+ */
 export function consoleAnnouncementSendData(
   auction: string,
   button: ButtonChoice,
   print: string,
   lot?: number,
   photo?: number,
+  post?: number,
 ): string {
-  return `v1:ac:ns:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${refPart(photo)}`;
+  return `v1:ac:ns:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${mediaPart(photo, post)}`;
 }
 
 function parseAnnouncement(
@@ -1256,15 +1315,16 @@ function parseAnnouncement(
   const button = codeOf(buttonCodes, parts[4]);
   const print = WindowPrintSchema.safeParse(parts[5]);
   const lot = refOf(parts[6]);
-  const photo = refOf(parts[7]);
+  const media = mediaOf(parts[7]);
   if (
     button === undefined ||
     !print.success ||
     lot === "malformed" ||
-    photo === "malformed"
+    media === "malformed"
   ) {
     return malformed;
   }
+  const { photo, post } = media;
   const common = { auction, button, print: print.data };
   switch (parts[2]) {
     case "nb":
@@ -1275,13 +1335,24 @@ function parseAnnouncement(
             ...(lot === undefined ? {} : { lot }),
           }
         : malformed;
+    // Без лота шаг фото несёт только «Пропустить» (PER-776).
     case "np":
-      return parts.length === 8 && lot !== undefined
+      return parts.length === 8 &&
+        post === undefined &&
+        (photo === undefined || lot !== undefined)
         ? {
             kind: "console-announcement-photo",
             ...common,
-            lot,
+            ...(lot === undefined ? {} : { lot }),
             ...(photo === undefined ? {} : { photo }),
+          }
+        : malformed;
+    case "nm":
+      return parts.length === 7
+        ? {
+            kind: "console-announcement-media",
+            ...common,
+            ...(lot === undefined ? {} : { lot }),
           }
         : malformed;
     case "ns":
@@ -1291,6 +1362,7 @@ function parseAnnouncement(
             ...common,
             ...(lot === undefined ? {} : { lot }),
             ...(photo === undefined ? {} : { photo }),
+            ...(post === undefined ? {} : { post }),
           }
         : malformed;
     default:
@@ -1793,6 +1865,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:al:${step.auction}`;
     case "console-set":
       return `v1:q:as:${step.auction}`;
+    case "console-announcement-media":
+      return `v1:q:am:${step.auction}:${buttonCodes[step.button]}:${step.print}:${refPart(step.lot)}`;
     case "console-announcement":
       return `v1:q:ao:${step.auction}:${templateCodes[step.template]}${step.ref === undefined ? "" : `:${step.ref}`}`;
     case "console-section":
@@ -2993,6 +3067,25 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       default:
         return undefined;
     }
+  }
+  // Своё медиа объявления (PER-776): кнопка, отпечаток текста и лот — семь
+  // частей.
+  if (parts[2] === "am") {
+    const button = codeOf(buttonCodes, parts[4]);
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    const lot = refOf(parts[6]);
+    return parts.length === 7 &&
+      button !== undefined &&
+      print.success &&
+      lot !== "malformed"
+      ? {
+          kind: "console-announcement-media",
+          auction: token.data,
+          button,
+          print: print.data,
+          ...(lot === undefined ? {} : { lot }),
+        }
+      : undefined;
   }
   // Текст объявления (PER-765): шаблон и, у окна и лота, номер — шагу нужно
   // пять или шесть частей.

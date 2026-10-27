@@ -53,6 +53,9 @@ export function createDispatcher(
     // Приём объявления аукциона (PER-765) — Notifications; нет — пульт без
     // «Объявления».
     announcements?: AuctionAnnouncements;
+    // Чат медиа ботов включён (PER-776): шаг фото объявления предлагает своё
+    // фото или видео.
+    media?: boolean;
   },
   releaseNotes?: ReleaseNotes,
 ): Dispatcher {
@@ -107,7 +110,9 @@ export function createDispatcher(
   const auctionAnnouncements =
     consoles?.announcements === undefined
       ? undefined
-      : createAuctionAnnouncements(consoles.auctions, consoles.announcements);
+      : createAuctionAnnouncements(consoles.auctions, consoles.announcements, {
+          media: consoles.media === true,
+        });
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -419,6 +424,7 @@ export function createDispatcher(
         case "ask-announcement":
         case "answer-announcement":
         case "pick-announcement-button":
+        case "ask-announcement-media":
         case "preview-announcement":
         case "send-announcement":
           return auctionAnnouncements === undefined

@@ -9,6 +9,7 @@ import {
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
+import { createMediaChat } from "../../core/media-chat.js";
 import {
   createFinalNoticeRender,
   isFinalNotice,
@@ -71,6 +72,12 @@ export const hubSurface: SurfaceDefinition = ({
   if (!loaded.ok) return loaded;
   const hub = loaded.config;
   const { token, serviceToken, environment, communityTimeZone } = config;
+  // Чат медиа ботов (ADR-057, дополнение 2026-10-27): своё фото или видео
+  // объявления аукциона (PER-776) публикуется в него и показывается оттуда.
+  const mediaChat = createMediaChat({
+    channelId: config.mediaChannelId,
+    logger,
+  });
   const meetups = createMeetupsClient(hub.meetupsUrl, {
     communityTimeZone,
     tracing,
@@ -146,6 +153,7 @@ export const hubSurface: SurfaceDefinition = ({
           auctions: auction,
           timeZone: communityTimeZone,
           usernames: identity,
+          media: mediaChat.enabled,
         },
     releaseNotes,
   );
@@ -190,6 +198,7 @@ export const hubSurface: SurfaceDefinition = ({
     faq: hub.faq,
     today,
     build,
+    mediaChat,
     ...(hub.auctionBotUsername === undefined
       ? {}
       : { auctionBotUsername: hub.auctionBotUsername }),
@@ -322,6 +331,7 @@ export const hubSurface: SurfaceDefinition = ({
     today,
     communityTimeZone,
     announcementPhotos,
+    mediaChat,
   );
   return {
     ok: true,
