@@ -110,8 +110,9 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       // PER-646), поэтому исключения у него больше нет. Ориентировочное время финала — только у чтения: факта у него
       // нет вовсе, оно меняется без повода на шине (ADR-040, дополнение 2026-10-19). Порядок и разделы ленты — тоже
       // только у чтения: это показ, а не повод для шины (PER-719). Запущенные окна сниженного шага — тоже только у
-      // чтения (PER-724): шина несёт их фактами лота `step_window_added`.
-      val readOnly = Set("final_at", "lot_layout", "launched_step_windows")
+      // чтения (PER-724): шина несёт их фактами лота `step_window_added`. Промо-видео — тоже показ без повода на шине
+      // (PER-781).
+      val readOnly = Set("final_at", "lot_layout", "launched_step_windows", "promo_video")
         .map(AuctionSnapshot.javaDescriptor.findFieldByName(_).getNumber)
 
       (snapshot -- readOnly).foreach { case (number, field) => state.get(number) shouldBe Some(field) }

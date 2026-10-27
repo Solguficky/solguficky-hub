@@ -89,6 +89,7 @@ service AuctionService {
   rpc SetPaymentInstructions(SetPaymentInstructionsRequest) returns (SetPaymentInstructionsResponse);
   rpc GetAuctionDayChronicle(GetAuctionDayChronicleRequest) returns (GetAuctionDayChronicleResponse);
   rpc SetLotLayout(SetLotLayoutRequest) returns (SetLotLayoutResponse);
+  rpc SetPromoVideo(SetPromoVideoRequest) returns (SetPromoVideoResponse);
 }
 
 message Viewer {
@@ -2458,6 +2459,10 @@ message AuctionSnapshot {
   // participant reads (PER-724). Empty is a real value: no window was launched.
   repeated AuctionStepWindow launched_step_windows = 8;
 
+  // The promo video of the auction, as the administrator set it with
+  // SetPromoVideo (PER-781). Unset when there is none.
+  AuctionPromoVideo promo_video = 9;
+
   // Where the auction is. Exactly one is set.
   oneof status {
     AuctionState.Draft draft = 10;
@@ -3243,4 +3248,51 @@ message DayChronicleLot {
   // Current price minus starting price over the life of the lot, as
   // LotStatistics.price_growth, with the same unset cases.
   Money price_growth = 3;
+}
+
+// The promo video of an auction: a post in the media chat of the bots (PER-775).
+// The service knows neither the chat nor the post: it keeps the number the bots
+// gave it, because the bots have no storage of their own.
+message AuctionPromoVideo {
+  // The message_id of the post in the media chat of the bots, positive.
+  int64 message_id = 1;
+}
+
+// Sets, replaces or takes back the promo video of an auction. It is a display,
+// not a trading condition: it opens and closes nothing.
+message SetPromoVideoRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // The video to show. Unset takes the video back. Set with a message_id that
+  // is not positive is INVALID_ARGUMENT. The video may be set and changed in
+  // every state of the auction.
+  AuctionPromoVideo video = 4;
+}
+
+message SetPromoVideoResponse {
+  // Exactly one is set.
+  oneof outcome {
+    PromoVideoAccepted accepted = 1;
+    PromoVideoRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionSnapshot.promo_video tells the video.
+message PromoVideoAccepted {}
+
+message PromoVideoRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+  }
 }

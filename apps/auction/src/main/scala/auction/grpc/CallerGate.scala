@@ -44,6 +44,7 @@ object MethodAccess {
     "CancelAuction" -> Set(Caller.HubBot),
     "SetFinalTime" -> Set(Caller.HubBot),
     "SetLotLayout" -> Set(Caller.HubBot),
+    "SetPromoVideo" -> Set(Caller.HubBot),
     "SelectForFinal" -> Set(Caller.HubBot),
     "DeselectForFinal" -> Set(Caller.HubBot),
     "PreviewParticipantRemoval" -> Set(Caller.HubBot),

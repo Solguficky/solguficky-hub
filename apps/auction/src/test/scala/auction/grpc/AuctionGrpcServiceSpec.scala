@@ -30,6 +30,8 @@ import auction.aggregate.DeleteLotSet
 import auction.aggregate.SaveLotSet
 import auction.aggregate.SetPaymentInstructions
 import auction.aggregate.PaymentInstructions
+import auction.aggregate.PromoVideo
+import auction.aggregate.SetPromoVideo
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.Standings
@@ -391,6 +393,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def setPaymentInstructions(auctionId: AuctionId, command: SetPaymentInstructions, initiator: Initiator) =
       fail("the auction was reached")
     def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) =
+      fail("the auction was reached")
+    def setPromoVideo(auctionId: AuctionId, command: SetPromoVideo, initiator: Initiator) =
       fail("the auction was reached")
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) =
       fail("the auction was reached")
@@ -1404,6 +1408,52 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .reason
         .isNotMeetupAdministrator shouldBe true
       seen.size shouldBe 2
+    }
+
+    // PER-781: промо-видео — команда держателя `run_auctions` с воротами «сходка не отменена».
+    "sets and clears the promo video and refuses it to a cancelled meetup and to whom does not run the auction" in {
+      val seen = scala.collection.mutable.ListBuffer.empty[SetPromoVideo]
+      val gateway = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(meetup, registryOpen = false))
+        override def setPromoVideo(auctionId: AuctionId, command: SetPromoVideo, initiator: Initiator) = {
+          seen += command
+          Future.successful(Right(AuctionAnswer.Unchanged))
+        }
+      }
+      def request(video: Option[Long]) =
+        wire.SetPromoVideoRequest(Some(viewer), id.toString, op, video.map(wire.AuctionPromoVideo(_)))
+      val published: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      val auction = service(Unreachable, auctions = AuctionCommands(gateway, Unreachable, published))
+      auction.setPromoVideo(request(Some(4321))).futureValue.outcome.isAccepted shouldBe true
+      auction.setPromoVideo(request(None)).futureValue.outcome.isAccepted shouldBe true
+      seen.map(_.video.map(_.messageId)).toList shouldBe List(Some(4321L), None)
+
+      val cancelledMeetup: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.cancelled))
+      service(Unreachable, auctions = AuctionCommands(gateway, Unreachable, cancelledMeetup))
+        .setPromoVideo(request(Some(4321)))
+        .futureValue
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      val denied: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(Unreachable, auctions = AuctionCommands(gateway, Unreachable, denied))
+        .setPromoVideo(request(Some(4321)))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      seen.size shouldBe 2
+    }
+
+    "refuses a promo video without a positive message id before meetups or the auction" in {
+      val auction = service(Unreachable)
+      for (messageId <- List(0L, -5L))
+        statusOf(
+          auction.setPromoVideo(
+            wire.SetPromoVideoRequest(Some(viewer), id.toString, op, Some(wire.AuctionPromoVideo(messageId)))
+          )
+        ) shouldBe Status.Code.INVALID_ARGUMENT
     }
 
     "refuses a blank and an overlong payment text before meetups or the auction" in {
@@ -2723,6 +2773,31 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
       read.launchedStepWindows.map(window => (window.from, window.until, window.lotIds)) shouldBe
         Seq((deadline.plusSeconds(600).toString, deadline.plusSeconds(3600).toString, Seq(first.toString)))
+    }
+
+    "shows the promo video of the auction in its snapshot, by id and by meetup" in {
+      val id = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val promoted = withLaunchedWindow(new UUID(7L, 1L)).copy(promoVideo = PromoVideo.parse(4321))
+      val views = new AuctionViews {
+        def byId(auctionId: UUID) = Future.successful(Option.when(auctionId == id)(AuctionSnapshotView(id, promoted)))
+        def byMeetup(meetup: MeetupId) = Future.successful(Some(AuctionSnapshotView(id, promoted)))
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("a list was read")
+      }
+      val auction = service(Unreachable, auctionViews = views, caller = Some(Caller.AuctionBot))
+      auction
+        .getAuction(wire.GetAuctionRequest(Some(viewer), id.toString))
+        .futureValue
+        .getAuction
+        .promoVideo shouldBe Some(wire.AuctionPromoVideo(4321))
+      auction
+        .getMeetupAuction(wire.GetMeetupAuctionRequest(Some(viewer), meetupId))
+        .futureValue
+        .getAuction
+        .promoVideo shouldBe Some(wire.AuctionPromoVideo(4321))
+      ResponseMapping
+        .auctionSnapshot(AuctionSnapshotView(id, withLaunchedWindow(new UUID(7L, 1L))))
+        .promoVideo shouldBe None
     }
 
     "answers a meetup without an auction with an empty response, not an error" in {

@@ -26,6 +26,7 @@
     },
     "finalTime": null,
     "paymentInstructions": null,
-    "lotLayout": null
+    "lotLayout": null,
+    "promoVideo": null
   }
 }

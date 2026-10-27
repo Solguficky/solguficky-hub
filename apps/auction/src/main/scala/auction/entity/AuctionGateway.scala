@@ -93,6 +93,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]]
 
+  /** Промо-видео аукциона (PER-781): выставить, заменить или снять. */
+  def setPromoVideo(
+      auctionId: AuctionId,
+      command: SetPromoVideo,
+      initiator: Initiator
+  ): Future[Either[PromoVideoRejected, AuctionAnswer]]
+
   /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
   def cancel(
       auctionId: AuctionId,
@@ -272,6 +279,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Instruct(command, initiator, _))
+
+      def setPromoVideo(
+          auctionId: AuctionId,
+          command: SetPromoVideo,
+          initiator: Initiator
+      ): Future[Either[PromoVideoRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Promote(command, initiator, _))
 
       def cancel(
           auctionId: AuctionId,

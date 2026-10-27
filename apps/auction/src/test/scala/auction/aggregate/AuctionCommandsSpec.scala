@@ -114,6 +114,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(instructionsAnswer)
     }
 
+    var promoAnswer: Either[PromoVideoRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setPromoVideo(auctionId: AuctionId, command: SetPromoVideo, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(promoAnswer)
+    }
+
     var layoutAnswer: Either[LotLayoutRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) = {
@@ -1029,6 +1036,55 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .setPaymentInstructions(auctionOfMeetup, Some(text), op(7), person)
         .futureValue shouldBe Right(())
       auctions.commands shouldBe List(SetPaymentInstructions(Some(text), op(7)))
+    }
+
+    // PER-781: промо-видео — повтор своего видео принимается мимо Meetups и без второго события, другое — чужая команда.
+    "hands the promo video to the auction and answers it repeated under its op_id, refusing another one under it" in {
+      val video = PromoVideo.parse(4321).get
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(auctions, noLots, granted)
+        .setPromoVideo(auctionOfMeetup, Some(video), op(7), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SetPromoVideo(Some(video), op(7)))
+
+      val repeated = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.PromoVideoSet(video))))
+      val meetups = Meetups(Authority.NotAdministrator)
+      AuctionCommands(repeated, noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, Some(video), op(7), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(repeated, noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, PromoVideo.parse(4322), op(7), person)
+        .futureValue shouldBe Left(PromoVideoRefusal.OpIdTaken)
+      AuctionCommands(repeated, noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(PromoVideoRefusal.OpIdTaken)
+      meetups.asked shouldBe 0
+      repeated.commands shouldBe empty
+    }
+
+    "refuses the promo video to whom meetups does not confirm as running the auction" in {
+      for (
+        (answer, denial) <- List(
+          Authority.NotAdministrator -> Denial.NotAdministrator,
+          Authority.MeetupNotFound -> Denial.MeetupNotFound,
+          Authority.Unavailable -> Denial.Unavailable,
+          Authority.Granted(Standings.cancelled) -> Denial.MeetupCancelled
+        )
+      ) {
+        val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+        AuctionCommands(auctions, noLots, Meetups(answer))
+          .setPromoVideo(auctionOfMeetup, PromoVideo.parse(4321), op(7), person)
+          .futureValue shouldBe Left(PromoVideoRefusal.Denied(denial))
+        auctions.commands shouldBe empty
+      }
+    }
+
+    "refuses the promo video of an auction without a journal before asking meetups" in {
+      val meetups = granted
+      AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound))
+      meetups.asked shouldBe 0
     }
 
     // PER-719: раскладка ленты — повтор своей раскладки принимается, другая под тем же `op_id` — чужая команда.

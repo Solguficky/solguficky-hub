@@ -109,6 +109,8 @@ object AuctionFacts {
       case AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) => None
       // Порядок и разделы ленты — показ для экрана, а не повод для шины (PER-719): читаются вместе с аукционом.
       case AuctionEvent.LotLayoutSet(_) => None
+      // Промо-видео — показ, а не повод для шины (PER-781): читается вместе с аукционом.
+      case AuctionEvent.PromoVideoSet(_) | AuctionEvent.PromoVideoCleared => None
       // Несобранный сет никому не сообщается (ADR-073, пп. 5–6): факта у него нет.
       case AuctionEvent.LotSetSettled(_, LotSetSettlement.NotCollected) => None
       case AuctionEvent.LotSetSettled(id, LotSetSettlement.Collected(by)) =>

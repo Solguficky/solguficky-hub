@@ -12,6 +12,7 @@ import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
 import auction.aggregate.PaymentInstructions
+import auction.aggregate.PromoVideo
 import auction.aggregate.PreviewLotParticipantRemoval
 import auction.aggregate.RemoveLotParticipant
 import auction.aggregate.StepWindowConfig
@@ -93,6 +94,7 @@ import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.SetFinalTimeRequest
 import auction.v1.auction_service.SetPaymentInstructionsRequest
+import auction.v1.auction_service.SetPromoVideoRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
@@ -205,6 +207,9 @@ final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opI
 
 /** Порядок и разделы ленты (PER-719): раскладка целиком, форма уже проверена. */
 final case class LotLayoutCommand(auctionId: AuctionId, layout: LotLayout, opId: OpId, acting: Acting)
+
+/** Промо-видео аукциона (PER-781): `video` пусто — видео снимается. */
+final case class PromoVideoCommand(auctionId: AuctionId, video: Option[PromoVideo], opId: OpId, acting: Acting)
 
 /** Текст «как оплатить и получить» (PER-322): `text` пусто — текст снимается. */
 final case class PaymentInstructionsCommand(
@@ -694,6 +699,20 @@ object RequestMapping {
         PaymentInstructions.parse(raw).map(Some(_)).toRight(FormError("text"))
       )
     } yield PaymentInstructionsCommand(auction, text, OpId(opId), acting)
+
+  /**
+   * Промо-видео аукциона (PER-781). Пустое поле — снятие видео; номер сообщения не больше нуля — не форма запроса, а
+   * `INVALID_ARGUMENT`: снятие называет отсутствие поля, а не ноль.
+   */
+  def setPromoVideo(request: SetPromoVideoRequest): Either[FormError, PromoVideoCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      video <- request.video.fold[Either[FormError, Option[PromoVideo]]](Right(None))(raw =>
+        PromoVideo.parse(raw.messageId).map(Some(_)).toRight(FormError("video.message_id"))
+      )
+    } yield PromoVideoCommand(auction, video, OpId(opId), acting)
 
   /**
    * Порядок и разделы ленты (PER-719). Пустое поле — пустая раскладка: порядок создания. Номер раздела вне диапазона,

@@ -25,6 +25,7 @@
     "lotSetDeleted": null,
     "lotSetSettled": null,
     "paymentInstructions": null,
-    "lotLayout": null
+    "lotLayout": null,
+    "promoVideo": null
   }
 }

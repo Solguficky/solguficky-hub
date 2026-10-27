@@ -25,6 +25,7 @@ import auction.aggregate.LotSetRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.ParticipantRemovalRefusal
 import auction.aggregate.PaymentInstructionsRefusal
+import auction.aggregate.PromoVideoRefusal
 import auction.aggregate.RemovalRefusal
 import auction.aggregate.SchedulingRefusal
 import auction.aggregate.VisibilityRefusal
@@ -732,6 +733,28 @@ object ResponseMapping {
     }
   }
 
+  /** Промо-видео аукциона (PER-781): ворота «сходка не отменена», поэтому отказов значением три. */
+  def setPromoVideo(outcome: Either[PromoVideoRefusal, Unit]): Either[Status, wire.SetPromoVideoResponse] = {
+    import wire.PromoVideoRefusal.Reason
+    def refused(reason: Reason) = Right(wire.SetPromoVideoResponse().withRefused(wire.PromoVideoRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SetPromoVideoResponse().withAccepted(wire.PromoVideoAccepted()))
+      case Left(PromoVideoRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(PromoVideoRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(PromoVideoRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(PromoVideoRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(PromoVideoRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            PromoVideoRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"auction promo video answered $denial")
+    }
+  }
+
   def cancelAuction(outcome: Either[CancellationRefusal, Unit]): Either[Status, wire.CancelAuctionResponse] =
     outcome match {
       case Right(()) => Right(wire.CancelAuctionResponse().withAccepted(wire.AuctionCancelAccepted()))
@@ -1228,6 +1251,7 @@ object ResponseMapping {
       // Запущенные по ходу торгов окна (PER-724): участник видит их в программе недели рядом с объявленными, как
       // администратор в пульте.
       launchedStepWindows = view.auction.launched.map(_.window).map(AuctionValues.stepWindow),
+      promoVideo = view.auction.promoVideo.map(video => wire.AuctionPromoVideo(video.messageId)),
       status = status
     )
   }

@@ -212,6 +212,31 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(without) shouldBe cleared
     }
 
+    "keeps the stored form of the promo video and reads it back" in {
+      keepsGolden("promo-video-set", stored(AuctionEvent.PromoVideoSet(PromoVideo.parse(4321).get), 7))
+      keepsGolden("promo-video-cleared", stored(AuctionEvent.PromoVideoCleared, 8))
+    }
+
+    // Номер шире `Int`: Jackson, стерев тип внутри `Option`, прочёл бы его другим числом или упал.
+    "keeps the promo video in the snapshot and reads it back" in {
+      val video = PromoVideo.parse(3_000_000_000L).get
+      val withVideo = Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.PromoVideoSet(video)))
+      val stored = AuctionJournal.storeAuction(withVideo, sequence = 5)
+      stored.promoVideo shouldBe Some(StoredPromoVideo(3_000_000_000L))
+      read(kit.system, write(kit.system, stored)) shouldBe stored
+      AuctionJournal.restoreAuction(stored) shouldBe withVideo
+      val cleared = Auction.apply(withVideo, AuctionEnvelope(6, op(6), AuctionEvent.PromoVideoCleared))
+      val without = AuctionJournal.storeAuction(cleared, sequence = 6)
+      without.promoVideo shouldBe None
+      AuctionJournal.restoreAuction(without) shouldBe cleared
+    }
+
+    // Строка, записанная до промо-видео (PER-781): аукцион без видео.
+    "reads a snapshot written before the promo video as an auction without one" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).promoVideo shouldBe None
+    }
+
     "keeps the stored form of the lot layout and of a snapshot that holds it equal to their golden files" in {
       def section(id: Int, name: String, lots: LotId*) =
         LotSection(LotSectionId(id).get, LotSectionName(name).get, lots.toList)

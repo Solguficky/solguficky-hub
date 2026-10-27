@@ -892,6 +892,56 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
     }
   }
 
+  // PER-781: промо-видео — показ, а не условие торгов, живёт в любом рождённом аукционе.
+  "promo video" should {
+    val video = PromoVideo.parse(4321).get
+    val other = PromoVideo.parse(4322).get
+
+    "sets, replaces and clears the video" in {
+      val set = Auction.decide(scheduled, SetPromoVideo(Some(video), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoSet(video)))
+      val withVideo = applied(scheduled, set.toOption.get, 10, 10)
+      withVideo.promoVideo shouldBe Some(video)
+      withVideo.state shouldBe scheduled.state
+
+      val replaced = Auction.decide(withVideo, SetPromoVideo(Some(other), op(11)))
+      replaced shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoSet(other)))
+      val withOther = applied(withVideo, replaced.toOption.get, 11, 11)
+      withOther.promoVideo shouldBe Some(other)
+
+      val cleared = Auction.decide(withOther, SetPromoVideo(None, op(12)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoCleared))
+      applied(withOther, cleared.toOption.get, 12, 12).promoVideo shouldBe None
+    }
+
+    "sets the video in every state of a born auction" in {
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      List(scheduled, started, inFinal, finished, cancelled).foreach { auction =>
+        val decided = Auction.decide(auction, SetPromoVideo(Some(video), op(10)))
+        decided shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoSet(video)))
+        applied(auction, decided.toOption.get, 10, 10).promoVideo shouldBe Some(video)
+      }
+    }
+
+    "refuses the video of an auction that does not exist" in {
+      Auction.decide(Auction.initial, SetPromoVideo(Some(video), op(10))) shouldBe
+        Left(PromoVideoRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope instead of a second event" in {
+      val set = applied(scheduled, Auction.decide(scheduled, SetPromoVideo(Some(video), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetPromoVideo(Some(video), op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.PromoVideoSet(video))))
+    }
+
+    "refuses a message id that is not positive" in {
+      PromoVideo.parse(0) shouldBe None
+      PromoVideo.parse(-1) shouldBe None
+    }
+  }
+
   // PER-719: порядок и разделы ленты — показ, а не условие торгов; меняются, пока финал впереди.
   "lot layout" should {
 
