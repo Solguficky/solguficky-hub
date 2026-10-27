@@ -24,7 +24,10 @@ import {
   predictionResultsParagraphs,
   predictionResultsTitle,
 } from "../../auction-prediction-results.js";
-import { programmeParagraph } from "../../auction-programme.js";
+import {
+  auctionStatusLine,
+  programmeParagraph,
+} from "../../auction-programme.js";
 import {
   cancelRegistrationLabel,
   raffleBackName,
@@ -672,9 +675,23 @@ function renderList(
       list.auctions.length === 0
         ? empty
         : list.auctions
-            .map((auction) =>
-              bullet(auctionLine(auction, options.timeZone, options.now)),
-            )
+            .map((auction) => {
+              // Строка состояния (PER-767) — под строкой аукциона, текст
+              // общий с хабом.
+              const status =
+                auction.week === undefined
+                  ? undefined
+                  : auctionStatusLine(auction.week, {
+                      timeZone: options.timeZone,
+                      now: options.now ?? new Date(),
+                    });
+              const line = bullet(
+                auctionLine(auction, options.timeZone, options.now),
+              );
+              return status === undefined
+                ? line
+                : `${line}\n${escapeHtml(status)}`;
+            })
             .join("\n"),
     ),
     keyboard: [

@@ -1,4 +1,6 @@
 import type { AuctionSnapshot } from "../../../gen/auction/v1/auction_service_pb.js";
+import type { AuctionWeekFacts } from "../../auction-programme.js";
+import { auctionSummaryViewOf } from "../../core/auction/auction.js";
 import type { AuctionStage, AuctionSummary } from "./auctions.js";
 
 // Перевод снимка лота — общий у поверхностей (`src/core/auction/snapshot.ts`);
@@ -35,7 +37,29 @@ export function auctionSummaryOf(snapshot: AuctionSnapshot): AuctionSummary {
     ...(opensAt === undefined ? {} : { opensAt }),
     ...(closesAt === undefined ? {} : { closesAt }),
     lotCount: snapshot.lotIds.length,
+    ...withWeek(snapshot),
   };
+}
+
+// Строка состояния (PER-767) берёт сводку общим переводом, тем же, что у
+// корня аукциона и меню хаба. Его отказ — дефект соседа в поле, которого
+// список сам не показывает: пропадает строка, а не список.
+function withWeek(snapshot: AuctionSnapshot): { week?: AuctionWeekFacts } {
+  try {
+    const { stage, opensAt, closesAt, stepWindows, raffleClosesAt } =
+      auctionSummaryViewOf(snapshot);
+    return {
+      week: {
+        stage,
+        ...(opensAt === undefined ? {} : { opensAt }),
+        ...(closesAt === undefined ? {} : { closesAt }),
+        ...(stepWindows === undefined ? {} : { stepWindows }),
+        ...(raffleClosesAt === undefined ? {} : { raffleClosesAt }),
+      },
+    };
+  } catch {
+    return {};
+  }
 }
 
 // Момент онлайн-фазы — RFC 3339 в UTC, как обещает `auction.v1.OnlinePhase`:

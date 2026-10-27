@@ -55,11 +55,12 @@ public sealed class DurableConsumer(
             {
                 var stream = await jetStream.GetStreamAsync(feed.Stream, cancellationToken: stoppingToken);
                 var maxAge = stream.Info.Config.MaxAge;
-                if (maxAge <= TimeSpan.Zero || maxAge > options.Value.KeyRetention)
+                var keyRetention = options.Value.KeyRetentionFor(feed.Stream);
+                if (maxAge <= TimeSpan.Zero || maxAge > keyRetention)
                 {
                     throw new InvalidOperationException(
                         $"Stream {feed.Stream} keeps messages for {(maxAge <= TimeSpan.Zero ? "unlimited time" : maxAge)}, " +
-                        $"longer than {ConsumerOptions.SectionName}:KeyRetention {options.Value.KeyRetention}: a redelivery after key pruning would apply twice.");
+                        $"longer than {ConsumerOptions.SectionName}:KeyRetention:{feed.Stream} {keyRetention}: a redelivery after key pruning would apply twice.");
                 }
 
                 var consumer = await jetStream.GetConsumerAsync(feed.Stream, feed.Durable, stoppingToken);
