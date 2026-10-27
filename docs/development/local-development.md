@@ -68,6 +68,12 @@ dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "SupportB
 aspire run -- --profile support-bot
 ```
 
+Канал медиа ботов ([ADR-057](../decisions/ADR-057-auction-lot-catalog-as-state.md), дополнение 2026-10-27, временное) — настройка `BotMedia:ChannelId`, id закрытого канала вида `-100…`, где бот хаба и бот аукциона администраторы с правом публикации. С ней оба бота получают `BOT_MEDIA_CHANNEL_ID`, без неё переменной нет, медиа выключены, а боты стартуют как прежде. Это настройка, а не параметр Aspire: пустой параметр дашборд спросил бы, и бот ждал бы ввода. Канал — той среды Telegram, в которую ходит запуск. В чарте значение — параметр `bot-media-channel-id`, общий у двух ботов. Проводку держат `HubBotWiringTests` и `AuctionBotWiringTests`.
+
+```powershell
+dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "BotMedia:ChannelId" "<id канала медиа, -100…>"
+```
+
 Профиль `hub-auction` — живой прогон ботов с Auction в одном запуске: состав `hub` целиком, с ботом поддержки, плюс `auction` и `auction-bot` на той же инфраструктуре. Это единственный локальный профиль, где бот хаба получает `AUCTION_GRPC_URL` и показывает ряд аукциона у сходки, а бот аукциона — факты, которые порождает Notifications, и с ними настройку их частоты. Запуск спрашивает оба токена, `hub-bot-token` и `auction-bot-token`, и те же гейты, что в `auction-bot`: пустой или совпавший с ботом хаба токен роняет граф до старта ресурсов. Ник бота аукциона для второй ссылки экрана каналов прихода задаётся ключом `HubBot:AuctionBotUsername` ([hub-bot.md](../services/hub-bot.md)). Из-за Auction профилю нужны JDK и sbt, как `auction`; `hub` этого требования по-прежнему не несёт, и аукцион в него не входит. Живым прогоном профиль подтверждён 6 октября 2026 года ([PER-468](https://linear.app/anticnvm/issue/per-468), пункт 66 списка ниже) — до переезда ботов в один пакет; узлы из одного пакета с общим шагом `bot-build` живым прогоном не подтверждены. Состав держит тест `HubAuctionProfile_IsHubPlusAuctionBotProfile` AppHost.
 
 ```powershell

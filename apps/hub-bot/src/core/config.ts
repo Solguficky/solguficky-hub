@@ -30,6 +30,10 @@ export type ProcessConfig = {
   identityUrl: string;
   // Шина: адресные факты Notifications, которые бот доставляет.
   natsUrl: string;
+  // Закрытый канал медиа ботов (дополнение ADR-057 от 2026-10-27, временное):
+  // посты с фото и видео, которые бот показывает `copyMessage`. Без
+  // переменной медиа выключены, и бот работает без них.
+  mediaChannelId: number | undefined;
   logLevel: string;
 };
 
@@ -51,6 +55,25 @@ export function readBotUsername(
     return { ok: false, error: `${name} must be a Telegram bot username` };
   }
   return { ok: true, config: username };
+}
+
+// Id канала в Bot API — `-100` и номер, как у супергруппы. Значение в
+// чужой форме — отказ старта: иначе медиа молча пропали бы на первом показе.
+const channelId = /^-100\d+$/;
+
+function readMediaChannelId(env: Env): Loaded<number | undefined> {
+  const raw = reader(env)("BOT_MEDIA_CHANNEL_ID");
+  if (raw === undefined) {
+    return { ok: true, config: undefined };
+  }
+  const id = Number(raw);
+  if (!channelId.test(raw) || !Number.isSafeInteger(id)) {
+    return {
+      ok: false,
+      error: "BOT_MEDIA_CHANNEL_ID must be a channel id like -100…",
+    };
+  }
+  return { ok: true, config: id };
 }
 
 // Отказ называет только имя переменной: значения токенов в запись не попадают.
@@ -95,6 +118,10 @@ export function readProcessConfig(
       error: "BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
     };
   }
+  const mediaChannel = readMediaChannelId(env);
+  if (!mediaChannel.ok) {
+    return mediaChannel;
+  }
   return {
     ok: true,
     config: {
@@ -107,6 +134,7 @@ export function readProcessConfig(
       communityTimeZone,
       identityUrl: read("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051",
       natsUrl: read("BOT_NATS_URL") ?? "nats://127.0.0.1:4222",
+      mediaChannelId: mediaChannel.config,
       logLevel: read("BOT_LOG_LEVEL") ?? "info",
     },
   };
