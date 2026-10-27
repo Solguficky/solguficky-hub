@@ -686,7 +686,8 @@ auction-format:
 # оставляет блокировку сервера sbt.
 #
 # Локальный запуск вне Aspire; адреса — AUCTION_HTTP_* и AUCTION_GRPC_*, токены
-# вызывающих — AUCTION_CALLER_TOKEN_HUB_BOT и AUCTION_CALLER_TOKEN_AUCTION_BOT
+# вызывающих — AUCTION_CALLER_TOKEN_HUB_BOT, AUCTION_CALLER_TOKEN_AUCTION_BOT и
+# AUCTION_CALLER_TOKEN_NOTIFICATIONS
 auction-run:
     cd apps/auction && sbt -batch run
 

@@ -53,6 +53,7 @@ import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.ChangeRafflePrizeRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
+import auction.v1.auction_service.ListAuctionEngagementRequest
 import auction.v1.auction_service.GetRafflePrizePhotoRequest
 import auction.v1.auction_service.GetRaffleRequest
 import auction.v1.auction_service.HideAuctionRequest
@@ -916,6 +917,10 @@ object RequestMapping {
   private def instant(field: String, value: String): Either[FormError, Instant] =
     try Right(Instant.parse(value))
     catch { case _: DateTimeParseException => Left(FormError(field)) }
+
+  /** Аудитория объявления (PER-777): смотрящего нет — вызывающий процесс, право администратора проверил он. */
+  def listAuctionEngagement(request: ListAuctionEngagementRequest): Either[FormError, AuctionId] =
+    meetupAuction(request.auctionId)
 
   /** Аукцион сходки — только UUIDv5: у тестового аукциона из настройки бота журнала аукциона нет. */
   private def meetupAuction(value: String): Either[FormError, AuctionId] =

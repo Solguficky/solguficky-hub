@@ -49,6 +49,12 @@ trait PredictionStore {
    */
   def tally(auction: AuctionId): Future[PredictionTally]
 
+  /**
+   * Кто из участников держит непустой прогноз раунда — для аудитории объявления Notifications (PER-777). Только
+   * участники, без ответов: очищенный прогноз строк не оставляет, и его держатель здесь не назван.
+   */
+  def forecasters(auction: AuctionId, round: PredictionRound): Future[Set[ParticipantId]]
+
   /** Удаляет прогнозы и окно отправок аукциона: аукцион удалён до торгов (ADR-067, п. 4). */
   def discard(auction: AuctionId): Future[Unit]
 

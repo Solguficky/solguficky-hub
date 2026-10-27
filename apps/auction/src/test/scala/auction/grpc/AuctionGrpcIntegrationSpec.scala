@@ -118,7 +118,9 @@ final class AuctionGrpcIntegrationSpec
 
   private val callers = CallerTable
     .fromConfig(
-      ConfigFactory.parseString(s"""auction.grpc.callers { hub-bot = "$hubToken", auction-bot = "auction" }"""),
+      ConfigFactory.parseString(
+        s"""auction.grpc.callers { hub-bot = "$hubToken", auction-bot = "auction", notifications = "notifications" }"""
+      ),
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)

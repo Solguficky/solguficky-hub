@@ -93,6 +93,7 @@ service AuctionService {
   rpc GetAuctionDayChronicle(GetAuctionDayChronicleRequest) returns (GetAuctionDayChronicleResponse);
   rpc SetLotLayout(SetLotLayoutRequest) returns (SetLotLayoutResponse);
   rpc SetPromoVideo(SetPromoVideoRequest) returns (SetPromoVideoResponse);
+  rpc ListAuctionEngagement(ListAuctionEngagementRequest) returns (ListAuctionEngagementResponse);
 }
 
 message Viewer {
@@ -3375,4 +3376,51 @@ message PromoVideoRefusal {
     MeetupNotFound meetup_not_found = 2;
     MeetupCancelled meetup_cancelled = 3;
   }
+}
+
+// Who of the auction is in its raffle and who has a prediction in the round open
+// now, for Notifications to narrow the audience of an auction announcement
+// (PER-768, PER-777). It is a read between services: no viewer, no screen and no
+// bot reads it, and only Notifications is admitted. Read at the moment of the
+// call, from the raffle and the prediction rows themselves: a registration, its
+// cancellation, a prediction and its clearing show at once, and an erased
+// subject is absent. An auction without a journal is NOT_FOUND.
+message ListAuctionEngagementRequest {
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 1;
+}
+
+message ListAuctionEngagementResponse {
+  // Where registration in the raffle of the auction is. UNSPECIFIED is not a
+  // value.
+  RaffleRegistration raffle_registration = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the identities registered in the
+  // raffle, in registration order. Set only with RAFFLE_REGISTRATION_OPEN:
+  // once registration closes the audience of the raffle is no longer asked.
+  repeated string raffle_registrants = 2;
+
+  // The round of the predictions game that accepts predictions now: the final
+  // once it opens, otherwise the catalog. Unset when no round is open.
+  optional PredictionRound open_prediction_round = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the identities with a non-empty
+  // prediction in open_prediction_round, in no particular order. Empty when no
+  // round is open; a cleared prediction is not one.
+  repeated string forecasters = 4;
+}
+
+enum RaffleRegistration {
+  RAFFLE_REGISTRATION_UNSPECIFIED = 0;
+
+  // Registration has not opened yet and still may: the auction is a draft, or
+  // its raffle opens with prebidding that has not started.
+  RAFFLE_REGISTRATION_NOT_OPEN = 1;
+
+  // Registration is open: closes_at of the raffle has not passed.
+  RAFFLE_REGISTRATION_OPEN = 2;
+
+  // Registration will not open again: closes_at has passed, the raffle was not
+  // held or was cancelled, or the auction has no raffle.
+  RAFFLE_REGISTRATION_CLOSED = 3;
 }

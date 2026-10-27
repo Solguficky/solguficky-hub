@@ -74,7 +74,9 @@ final class GrpcBoundarySpec
 
   private val table = CallerTable
     .fromConfig(
-      ConfigFactory.parseString("""auction.grpc.callers { hub-bot = "hub", auction-bot = "auction" }"""),
+      ConfigFactory.parseString(
+        """auction.grpc.callers { hub-bot = "hub", auction-bot = "auction", notifications = "notifications" }"""
+      ),
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)
@@ -163,6 +165,7 @@ final class GrpcBoundarySpec
     def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest) = unused
     def setLotLayout(in: wire.SetLotLayoutRequest) = unused
     def setPromoVideo(in: wire.SetPromoVideoRequest) = unused
+    def listAuctionEngagement(in: wire.ListAuctionEngagementRequest) = unused
   }
 
   private lazy val binding =
