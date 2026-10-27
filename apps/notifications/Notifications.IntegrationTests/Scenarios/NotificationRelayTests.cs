@@ -111,7 +111,7 @@ public class NotificationRelayTests
 
         await using var source = NpgsqlDataSource.Create(db.ConnectionString);
         var removed = await new NotificationStore(source).Prune(
-            new DateTimeOffset(now.AddDays(-30)), TestContext.Current.CancellationToken);
+            new Dictionary<string, DateTimeOffset>(), new DateTimeOffset(now.AddDays(-30)), TestContext.Current.CancellationToken);
 
         removed.ShouldBe(3);
         var left = await Ids(db);

@@ -1565,7 +1565,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     /// <summary>
     /// Удаляет строки, исход которых — вынос, снятие или вычёркивание — старше
-    /// <paramref name="threshold" />. Строка без исхода остаётся при любом
+    /// порога их причины. Строка без исхода остаётся при любом
     /// возрасте. Возвращает число удалённых.
     /// </summary>
     /// <remarks>
@@ -1574,9 +1574,6 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// снова: это держит горизонт строки по её потоку
     /// (<see cref="DispatchOptions.HorizonFor" />, PER-761).
     /// </remarks>
-    public Task<int> Prune(DateTimeOffset threshold, CancellationToken cancellationToken) =>
-        Prune(new Dictionary<string, DateTimeOffset>(), threshold, cancellationToken);
-
     /// <param name="thresholds">Порог по <c>cause_kind</c> строки.</param>
     /// <param name="fallback">Порог причины, которой в <paramref name="thresholds" /> нет.</param>
     public async Task<int> Prune(

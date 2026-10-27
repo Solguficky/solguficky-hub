@@ -267,7 +267,10 @@ public static class NotificationsHost
         // Срок хранения ключей сверяет с настоящим стримом сам потребитель при
         // привязке: копия настройки стрима здесь прошла бы молча, когда
         // топология поднимет окно хранения.
-        builder.Services.Configure<ConsumerOptions>(builder.Configuration.GetSection(ConsumerOptions.SectionName));
+        builder.Services.AddOptions<ConsumerOptions>()
+            .Bind(builder.Configuration.GetSection(ConsumerOptions.SectionName))
+            .Validate(ConsumerOptions.IsValid, ConsumerOptions.ValidationMessage)
+            .ValidateOnStart();
         // Порог чистки у каждого источника — срок ключей его стрима (PER-761).
         builder.Services.AddHostedService(services =>
             ActivatorUtilities.CreateInstance<ConsumedEventPruner>(services, EventFeeds));

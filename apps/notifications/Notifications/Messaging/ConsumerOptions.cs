@@ -36,6 +36,17 @@ public sealed class ConsumerOptions
             ? retention
             : throw new InvalidOperationException($"{SectionName}:KeyRetention has no entry for stream {stream}");
 
+    public const string ValidationMessage =
+        "Notifications:Replica:KeyRetention must name MEETUPS_EVENTS, IDENTITY_EVENTS and AUCTION_EVENTS with positive retentions";
+
+    /// <summary>
+    /// Неположительный срок снял бы свежие ключи на первой же чистке, раньше,
+    /// чем привязка потребителя остановила бы сервис: ловится на старте.
+    /// </summary>
+    public static bool IsValid(ConsumerOptions options) =>
+        new[] { "MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS" }.All(options.KeyRetention.ContainsKey)
+        && options.KeyRetention.Values.All(retention => retention > TimeSpan.Zero);
+
     /// <summary>Наибольший срок ключей: им меряется то, что свой поток не знает.</summary>
     public TimeSpan LongestKeyRetention => KeyRetention.Values.Max();
 }

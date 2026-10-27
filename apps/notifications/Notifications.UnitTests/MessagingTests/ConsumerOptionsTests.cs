@@ -20,6 +20,18 @@ public class ConsumerOptionsTests
     }
 
     [Fact]
+    public void IsValid_Defaults_Accepted() => ConsumerOptions.IsValid(new ConsumerOptions()).ShouldBeTrue();
+
+    [Fact]
+    public void IsValid_NonPositiveRetention_Rejected()
+    {
+        var options = new ConsumerOptions();
+        options.KeyRetention["MEETUPS_EVENTS"] = TimeSpan.Zero;
+
+        ConsumerOptions.IsValid(options).ShouldBeFalse();
+    }
+
+    [Fact]
     public void KeyRetention_UnknownStream_Throws() =>
         Should.Throw<InvalidOperationException>(() => new ConsumerOptions().KeyRetentionFor("OTHER_EVENTS"));
 
