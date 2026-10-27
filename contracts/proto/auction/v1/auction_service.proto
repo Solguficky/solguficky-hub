@@ -3251,15 +3251,13 @@ message DayChronicleLot {
 }
 
 // The promo video of an auction: a post in the media chat of the bots (PER-775).
-// The service knows neither the chat nor the post: it keeps the number the bots
-// gave it, because the bots have no storage of their own.
+// Only the number of the post: the chat is not here.
 message AuctionPromoVideo {
   // The message_id of the post in the media chat of the bots, positive.
   int64 message_id = 1;
 }
 
-// Sets, replaces or takes back the promo video of an auction. It is a display,
-// not a trading condition: it opens and closes nothing.
+// Sets, replaces or takes back the promo video of an auction.
 message SetPromoVideoRequest {
   // The holder of run_auctions for the meetup of the auction, checked with the
   // meetup.
@@ -3272,8 +3270,7 @@ message SetPromoVideoRequest {
   string op_id = 3;
 
   // The video to show. Unset takes the video back. Set with a message_id that
-  // is not positive is INVALID_ARGUMENT. The video may be set and changed in
-  // every state of the auction.
+  // is not positive is INVALID_ARGUMENT.
   AuctionPromoVideo video = 4;
 }
 
