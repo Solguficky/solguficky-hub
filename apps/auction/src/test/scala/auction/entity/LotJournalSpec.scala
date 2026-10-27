@@ -252,6 +252,34 @@ final class LotJournalSpec
       LotJournal.envelope(6, stored).event shouldBe added
     }
 
+    "keep the stored form of a period window and of its removal equal to their golden files and read them back" in {
+      val period = WindowPeriod(new java.util.UUID(7L, 1L))
+      val window = StepWindow(
+        Instant.parse("2026-10-05T12:00:00Z"),
+        Instant.parse("2026-10-05T14:00:00Z"),
+        step = Some(money(50)),
+        start = Some(money(5000)),
+        period = Some(period)
+      )
+      val set = storedEvent(LotEvent.PeriodWindowSet(window), opN = 7)
+      val cleared = storedEvent(LotEvent.PeriodWindowCleared(period), opN = 8)
+
+      keepsGolden("period-window-set", set)
+      keepsGolden("period-window-cleared", cleared)
+      LotJournal.envelope(7, set).event shouldBe LotEvent.PeriodWindowSet(window)
+      LotJournal.envelope(8, cleared).event shouldBe LotEvent.PeriodWindowCleared(period)
+    }
+
+    "refuse a period window without its period instead of trading on it" in {
+      val period = Some(WindowPeriod(new java.util.UUID(7L, 1L)))
+      val window = StepWindow(deadline.minusSeconds(60), deadline, money(100)).copy(period = period)
+      val body = storedEvent(LotEvent.PeriodWindowSet(window))
+      val section = body.event.periodWindowSet.map(_.copy(period = None))
+      val bare = body.copy(event = body.event.copy(periodWindowSet = section))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, bare)
+    }
+
     "keep the stored form of a window with a starting price and no step equal to its golden file and read it back" in {
       val added = LotEvent.StepWindowAdded(
         StepWindow(

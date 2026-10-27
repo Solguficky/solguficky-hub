@@ -49,7 +49,9 @@ object ConsoleMapping {
       meetupId = auction.auction.meetup.fold("")(_.value.toString),
       // Периоды «Счастливых часов» (ADR-047, дополнение 2026-10-27) — из агрегата, по возрастанию начала, и прошедшие:
       // удалённый период из агрегата уходит.
-      happyHourPeriods = auction.auction.happyHours.sortBy(_.from).map(ResponseMapping.happyHourPeriod)
+      happyHourPeriods = auction.auction.happyHours
+        .sortBy(_.from)
+        .map(period => ResponseMapping.happyHourPeriod(period, Auction.termsOf(auction.auction, period.id)))
     )
 
   /**

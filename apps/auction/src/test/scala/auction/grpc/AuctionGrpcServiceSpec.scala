@@ -37,6 +37,12 @@ import auction.aggregate.DeleteHappyHourPeriod
 import auction.aggregate.DeleteHappyHourPeriodRejected
 import auction.aggregate.CreateHappyHourPeriodRejected
 import auction.aggregate.HappyHourPeriod
+import auction.aggregate.ClearHappyHourLotTerms
+import auction.aggregate.ClearHappyHourLotTermsRejected
+import auction.aggregate.HappyHourTerms
+import auction.aggregate.LotRegulars
+import auction.aggregate.SetHappyHourLotTerms
+import auction.aggregate.SetHappyHourLotTermsRejected
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.Standings
@@ -411,6 +417,17 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       fail("the auction was reached")
     def deleteHappyHourPeriod(auctionId: AuctionId, command: DeleteHappyHourPeriod, initiator: Initiator) =
       fail("the auction was reached")
+    def setHappyHourLotTerms(
+        auctionId: AuctionId,
+        command: SetHappyHourLotTerms,
+        regulars: Option[LotRegulars],
+        initiator: Initiator
+    ): Future[Either[SetHappyHourLotTermsRejected, AuctionAnswer]] = fail("the auction was reached")
+    def clearHappyHourLotTerms(
+        auctionId: AuctionId,
+        command: ClearHappyHourLotTerms,
+        initiator: Initiator
+    ): Future[Either[ClearHappyHourLotTermsRejected, AuctionAnswer]] = fail("the auction was reached")
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) =
       fail("the auction was reached")
     def scheduleLot(
@@ -2980,6 +2997,67 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       )
       auction.deleteHappyHourPeriod(delete).futureValue.outcome.isAccepted shouldBe true
       statusOf(auction.deleteHappyHourPeriod(delete.withPeriodId(op))) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    // PER-786: обычные условия лота граница читает у лота, а отказы аукциона — значения ответа.
+    "sets the terms of a lot in a period, names their refusals and clears them" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val period = HappyHourPeriod.idOf(OpId(UUID.fromString(op)))
+      val lot = LotId(UUID.fromString("01890a5d-ac98-7ddd-8eee-0000000000a1"))
+      val terms = HappyHourTerms(None, Some(money(600)))
+      val termsOp = "01890a5d-ac98-7ddd-8eee-ffffffffff02"
+      @volatile var set: Either[SetHappyHourLotTermsRejected, AuctionAnswer] = Right(
+        AuctionAnswer.Written(
+          AuctionEnvelope(6, OpId(UUID.fromString(termsOp)), AuctionEvent.HappyHourLotTermsSet(period, lot, terms))
+        )
+      )
+      val gateway = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def setHappyHourLotTerms(
+            auctionId: AuctionId,
+            command: SetHappyHourLotTerms,
+            regulars: Option[LotRegulars],
+            initiator: Initiator
+        ) = Future.successful(set)
+        override def clearHappyHourLotTerms(
+            auctionId: AuctionId,
+            command: ClearHappyHourLotTerms,
+            initiator: Initiator
+        ) = Future.successful(Right(AuctionAnswer.Unchanged))
+      }
+      val lots = new Gateway {
+        override def stateOf(lotId: UUID): Future[LotState] = Future.successful(trading(price = 1000).state)
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      val auction = service(Unreachable, auctions = AuctionCommands(gateway, lots, granted))
+      val request = wire.SetHappyHourLotTermsRequest(
+        viewer = Some(viewer),
+        auctionId = meetupAuction.toString,
+        periodId = period.value.toString,
+        lotId = lot.value.toString,
+        start = Some(LotValues.money(money(600))),
+        opId = termsOp
+      )
+
+      auction.setHappyHourLotTerms(request).futureValue.getAccepted shouldBe
+        wire.HappyHourLotTerms(lot.value.toString, None, Some(LotValues.money(money(600))))
+      set = Left(SetHappyHourLotTermsRejected.StepNotLower(money(10)))
+      auction.setHappyHourLotTerms(request).futureValue.getRefused.getStepNotLower.regularStep shouldBe
+        Some(LotValues.money(money(10)))
+      statusOf(auction.setHappyHourLotTerms(request.withLotId("lot"))) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.setHappyHourLotTerms(request.withStart(MoneyMessage(600, "rub")))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+
+      val clear = wire.ClearHappyHourLotTermsRequest(
+        viewer = Some(viewer),
+        auctionId = meetupAuction.toString,
+        periodId = period.value.toString,
+        lotId = lot.value.toString,
+        opId = termsOp
+      )
+      auction.clearHappyHourLotTerms(clear).futureValue.outcome.isAccepted shouldBe true
+      statusOf(auction.clearHappyHourLotTerms(clear.withPeriodId(op))) shouldBe Status.Code.INVALID_ARGUMENT
     }
 
     "answers a deletion under the op_id of the creation of a period with ALREADY_EXISTS" in {
