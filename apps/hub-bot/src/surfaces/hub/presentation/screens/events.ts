@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { auctionStatusLine } from "../../../../auction-programme.js";
 import type {
   AuctionStageView,
   AuctionSummaryView,
@@ -53,15 +54,24 @@ export const eventsTitle = "События";
 const noEventsText = "Сейчас не идут события, привязанные к сходкам.";
 const auctionEventLabel = marked(pictogram.auction, "Аукцион");
 
-/** Строки событий: в «Событиях» и в тексте меню — одни и те же. */
+/**
+ * Строки событий: в «Событиях» и в тексте меню — одни и те же. Под строкой
+ * аукциона — его строка состояния (PER-767), общая с ботом аукциона, если ей
+ * есть что сказать.
+ */
 export function eventLines(
   events: readonly HubEvent[],
   timeZone: string,
   today: CommunityDay,
+  now: Date = new Date(),
 ): string[] {
-  return events.map((event) =>
-    auctionStateLine(event.auction, timeZone, today),
-  );
+  return events.flatMap((event) => {
+    const status = auctionStatusLine(event.auction, { timeZone, now });
+    return [
+      auctionStateLine(event.auction, timeZone, today),
+      ...(status === undefined ? [] : [status]),
+    ];
+  });
 }
 
 /**
@@ -73,6 +83,7 @@ export function eventsScreen(
   events: readonly HubEvent[],
   timeZone: string,
   today: CommunityDay,
+  now: Date = new Date(),
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
   for (const event of events) {
@@ -81,7 +92,7 @@ export function eventsScreen(
       viaEvents(auctionRootData(event.auctionId)),
     );
   }
-  const lines = eventLines(events, timeZone, today);
+  const lines = eventLines(events, timeZone, today, now);
   return {
     id: "events",
     text: screenText(

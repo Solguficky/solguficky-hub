@@ -111,7 +111,7 @@ public class NotificationRelayTests
 
         await using var source = NpgsqlDataSource.Create(db.ConnectionString);
         var removed = await new NotificationStore(source).Prune(
-            new DateTimeOffset(now.AddDays(-30)), TestContext.Current.CancellationToken);
+            new Dictionary<string, DateTimeOffset>(), new DateTimeOffset(now.AddDays(-30)), TestContext.Current.CancellationToken);
 
         removed.ShouldBe(3);
         var left = await Ids(db);
@@ -122,17 +122,52 @@ public class NotificationRelayTests
     }
 
     /// <summary>
-    /// Горизонт короче срока жизни ключей событий сломал бы дедупликацию
-    /// повода, и сервис отказывает на старте, а не на первой чистке.
+    /// Горизонт строки — по потоку её причины (PER-761): факт события аукциона
+    /// живёт не меньше срока ключей <c>AUCTION_EVENTS</c>, факт события сходки
+    /// и факт без события — базовые тридцать дней.
     /// </summary>
     [Fact]
-    public async Task When_RetentionShorterThanKeyRetention_Expect_StartFails()
+    public async Task When_PrunedByServiceHorizons_Expect_AuctionFactOutlivesMeetupAndReminderFacts()
     {
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
 
-        await Should.ThrowAsync<Microsoft.Extensions.Options.OptionsValidationException>(() =>
-            SiloUnderTest.Start(db.ConnectionString, "--Notifications:Dispatch:Retention=1.00:00:00"));
+        var now = DateTime.UtcNow;
+        var fortyDaysAgo = now.AddDays(-40);
+
+        await Closed(db, fortyDaysAgo, dispatchedAt: fortyDaysAgo);
+        await Closed(db, fortyDaysAgo, dispatchedAt: fortyDaysAgo,
+            type: NotificationFacts.MeetupReminderType, causeKind: NotificationFacts.ReminderTaskCause);
+        var auction = await Closed(db, fortyDaysAgo, dispatchedAt: fortyDaysAgo,
+            type: Notifications.Auction.AuctionFacts.OutbidType, causeKind: Notifications.Auction.AuctionFacts.CauseKind);
+
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = new NotificationStore(source);
+        var consumer = new Notifications.Messaging.ConsumerOptions();
+
+        var (thresholds, fallback) = NotificationPruner.Thresholds(new DispatchOptions(), consumer, now);
+        (await store.Prune(thresholds, fallback, TestContext.Current.CancellationToken)).ShouldBe(2);
+        (await Ids(db)).ShouldBe([auction]);
+
+        // За сроком ключей аукциона уходит и его строка.
+        (thresholds, fallback) = NotificationPruner.Thresholds(new DispatchOptions(), consumer, now.AddDays(52));
+        (await store.Prune(thresholds, fallback, TestContext.Current.CancellationToken)).ShouldBe(1);
+        (await Ids(db)).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Короткий базовый горизонт сервис принимает: строку события он сам
+    /// растягивает до срока ключей её стрима (PER-761).
+    /// </summary>
+    [Fact]
+    public async Task When_RetentionShorterThanKeyRetention_Expect_ServiceStarts()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+
+        await using var silo = await SiloUnderTest.Start(db.ConnectionString, "--Notifications:Dispatch:Retention=1.00:00:00");
+
+        silo.Service<Microsoft.Extensions.Options.IOptions<DispatchOptions>>().Value.Retention.ShouldBe(TimeSpan.FromDays(1));
     }
 
     /// <summary>Один исход у строки держит схема, а не порядок операций в коде.</summary>
@@ -167,6 +202,8 @@ public class NotificationRelayTests
         await Execute(db, Insert, new
         {
             Id = id,
+            Type = NotificationFacts.MeetupChangedType,
+            CauseKind = NotificationFacts.MeetupEventCause,
             Payload = payload,
             CreatedAt = createdAt,
             DispatchedAt = (DateTime?)null,
@@ -184,12 +221,16 @@ public class NotificationRelayTests
         DateTime createdAt,
         DateTime? dispatchedAt = null,
         DateTime? withdrawnAt = null,
-        DateTime? rejectedAt = null)
+        DateTime? rejectedAt = null,
+        string type = NotificationFacts.MeetupChangedType,
+        string causeKind = NotificationFacts.MeetupEventCause)
     {
         var id = Guid.CreateVersion7();
         await Execute(db, Insert, new
         {
             Id = id,
+            Type = type,
+            CauseKind = causeKind,
             Payload = Fact(),
             CreatedAt = createdAt,
             DispatchedAt = dispatchedAt,
@@ -206,7 +247,7 @@ public class NotificationRelayTests
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, payload, created_at,
             dispatched_at, withdrawn_at, withdrawal_reason, rejected_at, rejection_error)
-        VALUES (@Id, gen_random_uuid(), 'meetup_changed', 'meetup_event', gen_random_uuid()::text,
+        VALUES (@Id, gen_random_uuid(), @Type, @CauseKind, gen_random_uuid()::text,
                 @Payload, @CreatedAt, @DispatchedAt, @WithdrawnAt, @Reason, @RejectedAt, @Error);
         """;
 
