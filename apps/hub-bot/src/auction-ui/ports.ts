@@ -459,7 +459,32 @@ export interface AuctionPort {
     viewer: Viewer;
     auctionId: string;
   }): Promise<DayChronicleView>;
+  // Статистика аукциона (PER-770): те же агрегаты за все торги. Право —
+  // `place_bids`, как у хроник дня.
+  getAuctionChronicle(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<AuctionChronicleView>;
 }
+
+// Статистика аукциона (PER-770) — срез `GetAuctionChronicle`: счётчики всех
+// торгов, рекорд роста, который выбрал Auction, и агрегаты каждого лота
+// реестра без значимого порядка. Людей в срезе нет — только их число.
+export type AuctionChronicleView = {
+  bidCount: number;
+  participantCount: number;
+  tradedLotCount: number;
+  // Нет — ни один лот не вырос.
+  growthRecord?: { lotId: string; growth: Money };
+  lots: readonly AuctionChronicleLot[];
+};
+
+export type AuctionChronicleLot = {
+  lotId: string;
+  bidCount: number;
+  leaderChanges: number;
+  longestDuel: number;
+};
 
 // Хроники дня (PER-725) — срез `GetAuctionDayChronicle`: агрегаты окна каждого
 // лота реестра без значимого порядка, а из жизни лота — только число ставок и

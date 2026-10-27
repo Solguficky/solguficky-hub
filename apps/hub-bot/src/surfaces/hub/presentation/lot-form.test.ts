@@ -354,6 +354,9 @@ function fakeAuction(
           getDayChronicle: async () => {
             throw new Error("not used");
           },
+          getAuctionChronicle: async () => {
+            throw new Error("not used");
+          },
           submitPrediction: async () => {
             throw new Error("not used");
           },

@@ -310,6 +310,9 @@ function portsWith(
       getDayChronicle: async () => {
         throw new Error("not used");
       },
+      getAuctionChronicle: async () => {
+        throw new Error("not used");
+      },
       submitPrediction: async () => {
         throw new Error("not used");
       },
@@ -791,12 +794,20 @@ describe("auction bot", () => {
               }),
             },
           ],
-          // Онлайн-неделя: вход в «Хроники дня» (PER-725).
+          // Онлайн-неделя: вход в «Хроники дня» (PER-725) и рядом
+          // «Статистика» (PER-770).
           [
             {
               text: "Хроники дня",
               callback_data: encodeAuctionCallback({
                 kind: "day-chronicle",
+                auctionId,
+              }),
+            },
+            {
+              text: "Статистика",
+              callback_data: encodeAuctionCallback({
+                kind: "auction-chronicle",
                 auctionId,
               }),
             },

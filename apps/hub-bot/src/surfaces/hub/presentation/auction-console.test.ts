@@ -1286,6 +1286,9 @@ function fakeAuction(
           getDayChronicle: async () => {
             throw new Error("not used");
           },
+          getAuctionChronicle: async () => {
+            throw new Error("not used");
+          },
           submitPrediction: notUsed,
         },
         operations: { newOperationId: () => "unused" },

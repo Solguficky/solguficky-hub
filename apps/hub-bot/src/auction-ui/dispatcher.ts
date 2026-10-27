@@ -1,4 +1,5 @@
 import type { AuctionIntent } from "./callback-data.js";
+import { openAuctionChronicle } from "./internal/use-cases/auction-chronicle.js";
 import {
   answerQuestion,
   askQuestion,
@@ -186,6 +187,8 @@ export function dispatchAuctionIntent(input: {
       return openPredictionResults(context, intent.auctionId);
     case "day-chronicle":
       return openDayChronicle(context, intent.auctionId);
+    case "auction-chronicle":
+      return openAuctionChronicle(context, intent.auctionId);
     case "promo":
       return openPromo({
         auction: input.auction,

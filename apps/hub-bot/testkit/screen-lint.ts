@@ -1,3 +1,7 @@
+import {
+  auctionChronicleButtonLabel,
+  dayChronicleButtonLabel,
+} from "../src/auction-day-chronicle.js";
 import { raffleButtonLabel } from "../src/auction-raffle.js";
 import {
   followLabel,
@@ -79,8 +83,12 @@ const lotCardPairs = [
 
 // Корень аукциона у обоих ботов (решение владельца по прогону 14.10, №66;
 // пересматривает «Розыгрыш своим рядом» PER-669): лоты и розыгрыш — одним
-// рядом.
-const auctionRootPairs = [`${lotsLabel}|${raffleButtonLabel}`];
+// рядом. «Хроники дня» и «Статистика» (PER-770) — торги аукциона за сутки и
+// за всё время, одна группа.
+const auctionRootPairs = [
+  `${lotsLabel}|${raffleButtonLabel}`,
+  `${dayChronicleButtonLabel}|${auctionChronicleButtonLabel}`,
+];
 
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению

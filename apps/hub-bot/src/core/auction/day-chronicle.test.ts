@@ -1,7 +1,10 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { GetAuctionDayChronicleResponseSchema } from "../../../gen/auction/v1/auction_service_pb.js";
-import { dayChronicleOf } from "./day-chronicle.js";
+import {
+  GetAuctionChronicleResponseSchema,
+  GetAuctionDayChronicleResponseSchema,
+} from "../../../gen/auction/v1/auction_service_pb.js";
+import { auctionChronicleOf, dayChronicleOf } from "./day-chronicle.js";
 
 const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
 
@@ -64,5 +67,62 @@ describe("dayChronicleOf", () => {
         }),
       ),
     ).toThrow("day chronicle bid count out of range");
+  });
+});
+
+describe("auctionChronicleOf", () => {
+  it("maps the counters, the growth record and every lot", () => {
+    expect(
+      auctionChronicleOf(
+        create(GetAuctionChronicleResponseSchema, {
+          until: "2026-10-27T12:00:00Z",
+          bidCount: 12n,
+          participantCount: 4n,
+          tradedLotCount: 1n,
+          growthRecord: {
+            lotId,
+            growth: { minorUnits: 30_000n, currency: "RUB" },
+          },
+          lots: [
+            {
+              lotId,
+              bidCount: 12n,
+              leaderChangeCount: 7n,
+              longestDuel: 5n,
+              maxPrice: { minorUnits: 40_000n, currency: "RUB" },
+              growth: { minorUnits: 30_000n, currency: "RUB" },
+            },
+            { lotId: "quiet" },
+          ],
+        }),
+      ),
+    ).toEqual({
+      bidCount: 12,
+      participantCount: 4,
+      tradedLotCount: 1,
+      growthRecord: {
+        lotId,
+        growth: { minorUnits: 30_000, currency: "RUB" },
+      },
+      lots: [
+        { lotId, bidCount: 12, leaderChanges: 7, longestDuel: 5 },
+        { lotId: "quiet", bidCount: 0, leaderChanges: 0, longestDuel: 0 },
+      ],
+    });
+  });
+
+  it("leaves the growth record out when no lot grew", () => {
+    expect(
+      auctionChronicleOf(create(GetAuctionChronicleResponseSchema, {}))
+        .growthRecord,
+    ).toBeUndefined();
+  });
+
+  it("refuses a growth record without growth", () => {
+    expect(() =>
+      auctionChronicleOf(
+        create(GetAuctionChronicleResponseSchema, { growthRecord: { lotId } }),
+      ),
+    ).toThrow("growth record without growth");
   });
 });
