@@ -2981,6 +2981,15 @@ const REGISTERED_RAFFLE: RaffleView = { ...OPEN_RAFFLE, registered: true };
 
 const CLOSING_RAFFLE: RaffleView = { ...REGISTERED_RAFFLE, status: "closing" };
 
+// Ручной итог по настройке сервиса (PER-799): до фиксации пула Auction
+// называет режим, и кнопки проверки нет ни в окне регистрации, ни после.
+const BY_HAND_RAFFLE: RaffleView = { ...OPEN_RAFFLE, drawnByHand: true };
+
+const BY_HAND_CLOSING_RAFFLE: RaffleView = {
+  ...CLOSING_RAFFLE,
+  drawnByHand: true,
+};
+
 const DRAWN_RAFFLE: RaffleView = {
   ...REGISTERED_RAFFLE,
   status: "drawn",
@@ -3064,11 +3073,13 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
             ],
           ];
   // «Как проверить честность» (PER-618) — пока у розыгрыша есть отпечаток;
-  // у отменённого seed не раскроется, и проверять нечего (PER-698).
+  // у отменённого seed не раскроется, и проверять нечего (PER-698), а ручной
+  // итог маяка не берёт (PER-727, PER-799).
   const proof =
     raffle === undefined ||
     raffle.status === "not-held" ||
-    raffle.status === "cancelled"
+    raffle.status === "cancelled" ||
+    raffle.drawnByHand === true
       ? []
       : [
           [
@@ -3199,6 +3210,20 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     auction: { ...AUCTION, raffle: OPEN_RAFFLE },
     auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
     body: raffleScreen(OPEN_RAFFLE),
+  },
+  {
+    intent: "raffle: open, winner by hand",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: BY_HAND_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(BY_HAND_RAFFLE),
+  },
+  {
+    intent: "raffle: closing, winner by hand",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: BY_HAND_CLOSING_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(BY_HAND_CLOSING_RAFFLE),
   },
   {
     intent: "raffle: registered",

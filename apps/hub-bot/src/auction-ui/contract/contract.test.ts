@@ -287,6 +287,8 @@ describe("auction contract self-check", () => {
       "lot: feed unavailable",
       "feed: the raffle stays in the root",
       "raffle: open",
+      "raffle: open, winner by hand",
+      "raffle: closing, winner by hand",
       "raffle: registered",
       "raffle: drawn",
       "raffle: absent",

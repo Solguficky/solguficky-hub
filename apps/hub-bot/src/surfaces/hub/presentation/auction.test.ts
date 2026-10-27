@@ -2134,6 +2134,34 @@ describe("raffle screens in the hub", () => {
     ]);
   });
 
+  // Ручной итог по настройке сервиса (PER-799): до и после закрытия
+  // регистрации ни минут, ни проверки по маяку, ни её кнопки.
+  it.each([
+    [
+      { ...base, drawnByHand: true as const },
+      "Итог подведёт организатор после закрытия регистрации.",
+    ],
+    [
+      {
+        ...base,
+        registered: true,
+        status: "closing" as const,
+        drawnByHand: true as const,
+      },
+      "итог подведёт организатор.",
+    ],
+  ])("promises the result by hand in status %#", async (raffle, text) => {
+    const auction = fakeAuction({ existing: true, raffle });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(press(raffleData));
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain(text);
+    expect(screen.text).not.toContain("пару минут");
+    expect(screen.text).not.toContain("проверяемый");
+    expect(labels(screen).flat()).not.toContain("Как проверить честность");
+  });
+
   // Фото приза (PER-773): первым блоком rich-сообщения, над заголовком, как
   // фото лота, и `file_id` из ответа — в тот же кэш.
   it("shows the prize photo above the raffle and reuses its file_id", async () => {
