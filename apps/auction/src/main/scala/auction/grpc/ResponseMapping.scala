@@ -1178,6 +1178,20 @@ object ResponseMapping {
     }
   }
 
+  /** Отказ права на фото приза розыгрыша — та же пара, что у смены приза (PER-772). */
+  def prizePhotoDenied(denial: Denial): Either[Status, wire.RafflePrizePhotoRefusal.Reason] = {
+    import wire.RafflePrizePhotoRefusal.Reason
+    denial match {
+      case Denial.NotAdministrator => Right(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => Right(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => Right(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle prize photo authority answered $denial")
+    }
+  }
+
   /** Ручная отметка принята: подсчёт подавлен, значения номинаций не несутся (ADR-067, п. 8). */
   val settleResultsAccepted: wire.SettlePredictionResultsManuallyResponse =
     wire.SettlePredictionResultsManuallyResponse().withAccepted(wire.PredictionResultsByHand())

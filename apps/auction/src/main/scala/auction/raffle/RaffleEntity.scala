@@ -95,6 +95,13 @@ object RaffleEntity {
   final case class SetPrize(command: ChangePrize, replyTo: ActorRef[Either[ChangePrizeRejected, Raffle]])
       extends Command
 
+  /** Фото приза администратора (PER-772). Ответ — после записи или сразу на повтор и отказ. */
+  final case class SetPhoto(command: SetPrizePhoto, replyTo: ActorRef[Either[ChangePrizeRejected, Raffle]])
+      extends Command
+
+  final case class RemovePhoto(command: RemovePrizePhoto, replyTo: ActorRef[Either[ChangePrizeRejected, Raffle]])
+      extends Command
+
   final case class Get(replyTo: ActorRef[Raffle]) extends Command
 
   private[raffle] case object CloseDue extends Command
@@ -222,6 +229,32 @@ object RaffleEntity {
               Effect.reply(replyTo)(Right(state.raffle))
           }
 
+        /**
+         * Правка приза или его фото администратором. Ход розыгрыша она не меняет: таймеры и шаги без человека остаются,
+         * как были, и `follow` не нужен.
+         */
+        def amendPrize(
+            state: State,
+            decision: Either[ChangePrizeRejected, RaffleDecision],
+            opId: OpId,
+            message: String,
+            replyTo: ActorRef[Either[ChangePrizeRejected, Raffle]]
+        ): Effect[StoredRaffleEvent, State] =
+          decision match {
+            case Left(rejected) =>
+              Effect.none.thenRun { after =>
+                replyTo ! Left(rejected)
+                forgetIfAbsent(after)
+              }
+            case Right(RaffleDecision.Accepted(event)) =>
+              persist(opId, event).thenRun { after =>
+                context.log.info(message, StructuredArguments.keyValue("auction_id", auctionId))
+                replyTo ! Right(after.raffle)
+              }
+            case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
+              Effect.reply(replyTo)(Right(state.raffle))
+          }
+
         def onCommand(state: State, command: Command): Effect[StoredRaffleEvent, State] =
           command match {
             case Open(open, replyTo) =>
@@ -270,22 +303,12 @@ object RaffleEntity {
                 case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
                   Effect.reply(replyTo)(Right(state.raffle))
               }
-            // Приз ход розыгрыша не меняет: таймеры и шаги без человека остаются, как были, и `follow` не нужен.
             case SetPrize(change, replyTo) =>
-              Raffle.decide(state.raffle, change) match {
-                case Left(rejected) =>
-                  Effect.none.thenRun { after =>
-                    replyTo ! Left(rejected)
-                    forgetIfAbsent(after)
-                  }
-                case Right(RaffleDecision.Accepted(event)) =>
-                  persist(change.opId, event).thenRun { after =>
-                    context.log.info("raffle prize changed", StructuredArguments.keyValue("auction_id", auctionId))
-                    replyTo ! Right(after.raffle)
-                  }
-                case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
-                  Effect.reply(replyTo)(Right(state.raffle))
-              }
+              amendPrize(state, Raffle.decide(state.raffle, change), change.opId, "raffle prize changed", replyTo)
+            case SetPhoto(change, replyTo) =>
+              amendPrize(state, Raffle.decide(state.raffle, change), change.opId, "raffle prize photo set", replyTo)
+            case RemovePhoto(change, replyTo) =>
+              amendPrize(state, Raffle.decide(state.raffle, change), change.opId, "raffle prize photo removed", replyTo)
             case Get(replyTo) =>
               Effect.none.thenRun { after =>
                 replyTo ! after.raffle

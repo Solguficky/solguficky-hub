@@ -9,6 +9,7 @@ import {
 import { predictionButtonLabel } from "../../../../auction-prediction.js";
 import { predictionResultsButtonLabel } from "../../../../auction-prediction-results.js";
 import { programmeParagraph } from "../../../../auction-programme.js";
+import { promoButtonLabel } from "../../../../auction-promo.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   collectedLine,
@@ -53,6 +54,7 @@ import { invoicesButtonLabel } from "../../../../auction-winner-invoices.js";
 import {
   type LotPhotoKey,
   lotPhotoKeys,
+  rafflePrizePhotoKeys,
   richPhotoBlock,
 } from "../../../../core/auction/lot-photos.js";
 import { money, truncate } from "../../../../core/format.js";
@@ -68,6 +70,7 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
   consoleAnnouncementData,
+  consolePromoVideoData,
   consoleSetsData,
   consoleViewData,
   floorData,
@@ -98,6 +101,7 @@ import {
   predictionNumberQuestionScreen,
   predictionScreen,
 } from "./auction-predictions.js";
+import { auctionPromoScreen, promoVideoLabel } from "./auction-promo.js";
 import {
   raffleAnswerRefusedScreen,
   raffleNameChoiceScreen,
@@ -173,6 +177,11 @@ export type AuctionView = {
    */
   canManage?: boolean;
   /**
+   * Чат медиа ботов включён (PER-774): держатель права вести аукцион видит в
+   * корне вход в промо-видео.
+   */
+  media?: boolean;
+  /**
    * Принимает ли аукцион новые лоты: `false` — онлайн-неделя открыта, и ряда
    * «Добавить лот» в ленте нет (PER-468). Статус аукциона лента тела не несёт,
    * его читает адаптер у пульта; не прочитал — отдаёт `true`, и ряд остаётся,
@@ -217,6 +226,9 @@ export type AuctionShown = {
   screen: ShownScreen;
   images?: readonly LotPhotoKey[];
   asks?: true;
+  // Промо-видео (PER-774): экран — копия поста чата медиа ботов новым
+  // сообщением, а `postId` нет — видео недоступно, и экран не уходит.
+  promo?: { postId?: number };
 };
 
 // Пометка предпросмотра — последним абзацем: над заголовком у карточки только
@@ -276,8 +288,23 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
         return { screen: predictionResultsScreen(block) };
       case "day-chronicle":
         return { screen: dayChronicleScreen(block) };
-      case "raffle":
-        return { screen: raffleScreen(block, view.body.keyboard, view) };
+      case "promo":
+        return {
+          screen: auctionPromoScreen(block),
+          promo: block.postId === undefined ? {} : { postId: block.postId },
+        };
+      // Фото приза (PER-773) — как фото лота: ключи отдаются адаптеру, а
+      // готовые фото приходят обратно полем `photos`.
+      case "raffle": {
+        const images =
+          view.presentation === "rich"
+            ? rafflePrizePhotoKeys(block.raffle)
+            : [];
+        return {
+          screen: raffleScreen(block, view.body.keyboard, view),
+          ...(images.length > 0 ? { images } : {}),
+        };
+      }
       case "raffle-registered":
         return {
           screen: raffleRegisteredScreen(block, view.body.keyboard, view),
@@ -508,6 +535,7 @@ function rootScreen(
     (button) => button.action === "root.favorites",
   );
   const invoices = buttons.find((button) => button.action === "root.invoices");
+  const promo = buttons.find((button) => button.action === "root.promo");
   // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
   // №66; пересматривает «Розыгрыш своим рядом» PER-669).
   if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData);
@@ -530,6 +558,10 @@ function rootScreen(
   // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
   if (invoices !== undefined) {
     nextRow(keyboard).text(invoicesButtonLabel, invoices.callbackData).row();
+  }
+  // «🎬 Промо» (PER-774) — своим рядом, пока у аукциона есть видео.
+  if (promo !== undefined) {
+    nextRow(keyboard).text(promoButtonLabel, promo.callbackData).row();
   }
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);
@@ -558,6 +590,11 @@ function rootScreen(
       auction.stage === "on-break"
     ) {
       nextRow(keyboard).text(announcementLabel, consoleAnnouncementData(token));
+    }
+    // Промо-видео (PER-774) — своим рядом под объявлением, пока есть чат
+    // медиа ботов: в пульте места нет. У отменённого аукциона видео не задать.
+    if (view.media === true && auction.stage !== "cancelled") {
+      nextRow(keyboard).text(promoVideoLabel, consolePromoVideoData(token));
     }
   }
   const moment = (instant: string) =>
@@ -676,6 +713,8 @@ function feedLabel(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
     case "lot.set":
     case "set.open-lot":
@@ -913,6 +952,8 @@ function lotLabel(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
     case "root.invoices":
     case "invoices.open":
@@ -1056,6 +1097,8 @@ function setLotLabelOf(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
     case "set.back":
     case "root.invoices":
@@ -1290,6 +1333,8 @@ function historyLabel(button: AuctionButton): string {
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
     case "lot.set":
     case "set.open-lot":

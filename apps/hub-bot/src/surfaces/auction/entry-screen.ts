@@ -28,6 +28,7 @@ import {
   auctionStatusLine,
   programmeParagraph,
 } from "../../auction-programme.js";
+import { promoButtonLabel, promoCaption } from "../../auction-promo.js";
 import {
   cancelRegistrationLabel,
   raffleBackName,
@@ -39,6 +40,7 @@ import {
   raffleProofTitle,
   raffleRegisteredParagraphs,
   raffleRegisteredTitle,
+  raffleRichText,
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
@@ -110,6 +112,7 @@ import {
 import {
   type LotPhotoKey,
   lotPhotoKeys,
+  rafflePrizePhotoKeys,
 } from "../../core/auction/lot-photos.js";
 import type { Presentation } from "../../core/config.js";
 import {
@@ -227,6 +230,10 @@ export type RenderedScreen = {
   // Вопрос: адаптер шлёт его новым сообщением с `force_reply` (дизайн-код,
   // «Вопросы»).
   asks?: true;
+  // Промо-видео (PER-774): адаптер присылает копию поста чата медиа ботов с
+  // текстом подписью новым сообщением, а без `postId` отвечает на нажатие
+  // «видео недоступно» и ничего не шлёт.
+  promo?: { postId?: number };
 };
 
 export type RenderOptions = {
@@ -586,11 +593,7 @@ export function renderEntryScreen(
           screen.subject === "notifications"
             ? "Настройка уведомлений сейчас недоступна."
             : "Аукцион сейчас недоступен."
-        }</b> ${
-          exit.kind === "answer"
-            ? "Пришли ответ ещё раз через минуту."
-            : "Попробуй ещё раз через минуту."
-        }`,
+        }</b> ${exit.kind === "answer" ? "Пришли ответ ещё раз через минуту." : "Попробуй ещё раз через минуту."}`,
         // Сбой самих «Аукционов» несёт только повтор: возврат вёл бы туда же.
         keyboard: [
           exit.kind === "retry"
@@ -999,6 +1002,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "prediction-results";
       case "day-chronicle":
         return "day-chronicle";
+      case "promo":
+        return "promo";
       case "raffle":
         return "raffle";
       case "raffle-registered":
@@ -1109,9 +1114,19 @@ type FavoritesBlock = Extract<AuctionBlock, { kind: "favorites" }>;
 function renderLeaf(
   blocks: readonly AuctionBlock[],
   options: RenderOptions,
-): Pick<RenderedScreen, "text" | "format" | "asks"> | undefined {
+):
+  | Pick<RenderedScreen, "text" | "format" | "asks" | "photos" | "promo">
+  | undefined {
   for (const block of blocks) {
     switch (block.kind) {
+      // Промо-видео (PER-774): текст — подпись копии поста, слова общие с
+      // хабом.
+      case "promo":
+        return {
+          format: "html",
+          text: screenText(promoCaption),
+          promo: block.postId === undefined ? {} : { postId: block.postId },
+        };
       case "confirm":
         return { format: "html", text: confirmText(block) };
       case "accepted":
@@ -1199,17 +1214,25 @@ function renderLeaf(
             ...dayChronicleParagraphs(block, { money }),
           ),
         };
-      case "raffle":
-        return {
-          format: "html",
-          text: screenText(
-            raffleTitle,
-            ...raffleParagraphs(block.raffle, {
-              moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
-            }),
-          ),
-        };
+      case "raffle": {
+        const paragraphs = raffleParagraphs(block.raffle, {
+          moment: (instant) =>
+            readableMoment(instant, options.timeZone, options.now),
+        });
+        // Приз с фото (PER-773) — rich-сообщение, фото над заголовком ставит
+        // адаптер, как у карточки лота; в `plain` фото нет.
+        const photos =
+          (options.presentation ?? "rich") === "rich"
+            ? rafflePrizePhotoKeys(block.raffle)
+            : [];
+        return photos.length === 0
+          ? { format: "html", text: screenText(raffleTitle, ...paragraphs) }
+          : {
+              format: "rich",
+              text: raffleRichText(raffleTitle, paragraphs),
+              photos,
+            };
+      }
       case "raffle-registered":
         return {
           format: "html",
@@ -1970,6 +1993,10 @@ function renderButton(
     case "root.day-chronicle":
       return text(dayChronicleButtonLabel);
     case "day-chronicle.back":
+      return text("‹ Аукцион");
+    case "root.promo":
+      return text(promoButtonLabel);
+    case "promo.back":
       return text("‹ Аукцион");
     case "lot.refresh":
       return text(refreshLabel);

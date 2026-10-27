@@ -2,9 +2,12 @@ using System.Collections.Concurrent;
 using Dapper;
 using Grpc.Net.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Notifications.Auction;
 using Notifications.Broadcasts;
 using Notifications.V1;
 using Npgsql;
+using Shouldly;
+using Xunit;
 
 namespace Notifications.IntegrationTests.Infrastructure;
 
@@ -168,6 +171,55 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
             new { Id = broadcastId });
 
         return rows.ToDictionary(row => row.RecipientId, row => row.Surface);
+    }
+
+    /// <summary>
+    /// Применяет факт аукциона так же, как потребитель <c>AUCTION_EVENTS</c>:
+    /// разбор и хранилище те же, шины нет. Нужен объявлению аукциона (PER-780),
+    /// которое читает положение аукциона из реплики.
+    /// </summary>
+    public async Task ApplyAuctionFact(string subject, Google.Protobuf.IMessage fact)
+    {
+        var store = silo.Service<AuctionStore>();
+        var now = DateTimeOffset.UtcNow;
+        var cancellation = TestContext.Current.CancellationToken;
+        var application = AuctionMapping.Decode(subject, Google.Protobuf.MessageExtensions.ToByteArray(fact)) switch
+        {
+            AuctionDecoded.Announcement { Value: var announcement } => await store.Apply(announcement, now, cancellation),
+            AuctionDecoded.Closed { Value: var closed } => await store.Apply(closed, now, cancellation),
+            var other => throw new InvalidOperationException($"{subject} is not a visibility or end fact: {other}"),
+        };
+
+        application.Outcome.ShouldNotBe(AuctionOutcome.Duplicate);
+    }
+
+    /// <summary>Строки фактов рассылки со снятием и выносом.</summary>
+    public async Task<IReadOnlyList<(Guid RecipientId, DateTime? DispatchedAt, DateTime? WithdrawnAt, string? Reason)>>
+        Lifecycle(string broadcastId)
+    {
+        await using var connection = new NpgsqlConnection(Db.ConnectionString);
+        var rows = await connection.QueryAsync<(Guid, DateTime?, DateTime?, string?)>(
+            """
+            SELECT recipient_id, dispatched_at, withdrawn_at, withdrawal_reason
+            FROM notification
+            WHERE cause_kind = 'command_request' AND cause_id = @Id
+            ORDER BY recipient_id;
+            """,
+            new { Id = broadcastId });
+
+        return rows.ToList();
+    }
+
+    /// <summary>Отмечает факт получателя вынесенным, как отметил бы релей.</summary>
+    public async Task MarkDispatched(string broadcastId, Guid recipientId)
+    {
+        await using var connection = new NpgsqlConnection(Db.ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            UPDATE notification SET dispatched_at = now()
+            WHERE cause_kind = 'command_request' AND cause_id = @Id AND recipient_id = @RecipientId;
+            """,
+            new { Id = broadcastId, RecipientId = recipientId });
     }
 
     /// <summary>Сколько рассылок принято: отказ не должен оставлять ключ.</summary>

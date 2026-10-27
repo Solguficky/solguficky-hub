@@ -307,6 +307,9 @@ export type AuctionSummaryView = {
   // Порядок и разделы ленты, которые выставил администратор (PER-719). Нет —
   // администратор лоты не упорядочивал, и лента идёт в порядке создания.
   layout?: LotLayoutView;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов, который
+  // выставил администратор. Нет — видео нет.
+  promoVideo?: number;
 };
 
 // Порядок и разделы ленты (PER-719): лоты вне разделов и разделы, каждые в
@@ -622,6 +625,10 @@ export type RaffleView = {
   // Итог называет администратор, а не маяк (PER-727): известно с фиксации
   // пула, и пересчитывать такой итог нечего. Нет поля — итог по маяку.
   drawnByHand?: true;
+  // Фото приза без байтов (PER-773): байты читает край через
+  // `LotImagePort.getRafflePrizePhoto`, версия — ключ кэша `file_id`. Нет —
+  // приз без фото.
+  prizePhoto?: { photoId: string; version: string };
 };
 
 export type RaffleRegistrationRefusal =
@@ -724,6 +731,12 @@ export interface LotImagePort {
     lotId: string;
     photoId: string;
   }): Promise<LotImage>;
+  // Фото приза розыгрыша аукциона (PER-773) в той же форме. Нет метода —
+  // экран розыгрыша идёт без фото.
+  getRafflePrizePhoto?(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<LotImage>;
 }
 
 // Избранные лоты (ADR-063): отметка «человек следит за лотом» живёт в
@@ -762,4 +775,8 @@ export type AuctionBotPorts = {
   operations: OperationIdPort;
   favorites?: FavoritesPort;
   proxyExplainer?: ProxyExplainerPort;
+  // Чат медиа ботов включён (PER-774): корень аукциона с видео ставит
+  // «🎬 Промо». Нет — кнопки нет, а подделанная кнопка отвечает «видео
+  // недоступно». Показ поста — вызов Telegram, его делает поверхность.
+  media?: true;
 };

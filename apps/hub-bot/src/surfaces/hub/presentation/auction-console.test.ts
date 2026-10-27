@@ -25,6 +25,7 @@ import {
   type EditLimiter,
 } from "../../../core/bot/edit-limiter.js";
 import { createMediaChat } from "../../../core/media-chat.js";
+import { pictogram } from "../../../core/pictograms.js";
 import type {
   AnnouncementCommand,
   AuctionAnnouncements,
@@ -62,6 +63,8 @@ import type {
   LotLayoutResult,
   MeetupAuctions,
   PaymentInstructionsResult,
+  PromoVideoResult,
+  RafflePrizePhotoResult,
   RemovalTarget,
   SaveLotSetResult,
 } from "../auction/port.js";
@@ -196,6 +199,14 @@ const forgedAuctionPresses = {
   "console-raffle-winner-confirm": `v1:ac:ry:${auctionToken}:2`,
   "console-raffle-prize-change": `v1:ac:rn:${auctionToken}`,
   "console-raffle-prize-change-confirm": `v1:ac:rv:${auctionToken}:00000`,
+  "console-raffle-prize-photo": `v1:ac:rf:${auctionToken}`,
+  "console-raffle-prize-photo-ask": `v1:ac:rg:${auctionToken}`,
+  "console-raffle-prize-photo-remove": `v1:ac:rd:${auctionToken}`,
+  "console-raffle-prize-photo-remove-confirm": `v1:ac:rr:${auctionToken}`,
+  "console-promo-video": `v1:ac:vo:${auctionToken}`,
+  "console-promo-video-ask": `v1:ac:vq:${auctionToken}`,
+  "console-promo-video-remove": `v1:ac:vr:${auctionToken}`,
+  "console-promo-video-remove-confirm": `v1:ac:vy:${auctionToken}`,
   "console-announcement": `v1:ac:na:${auctionToken}`,
   "console-announcement-windows": `v1:ac:nw:${auctionToken}`,
   "console-announcement-lots": `v1:ac:nl:${auctionToken}:0`,
@@ -325,12 +336,18 @@ function fakeAuction(
     paymentTextRefusal?: PaymentInstructionsResult;
     // Итог розыгрыша вручную (PER-727): отказ Auction вместо назначения.
     raffleWinnerRefusal?: AssignRaffleWinnerResult;
+    // Фото приза (PER-773): отказ Auction вместо принятия фото.
+    prizePhotoRefusal?: RafflePrizePhotoResult;
     // Срок оплаты счёта (PER-722): Auction отказывает в конфигурации, хотя бот
     // её принял, — так выглядит расхождение пределов.
     paymentTermRefused?: true;
     // Розыгрыш и прогнозы числами (PER-734): что отдаёт пульт Auction.
     raffleRegistrations?: number;
     predictionTally?: PredictionTally;
+    // Промо-видео (PER-774): номер поста до теста и отказ Auction вместо
+    // принятия команды.
+    promoVideo?: number;
+    promoVideoRefusal?: PromoVideoResult;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -370,6 +387,8 @@ function fakeAuction(
     // Розыгрыш глазами администратора (PER-618): ручной итог (PER-727)
     // переводит его в «итог подведён».
     raffle?: RaffleView;
+    // Промо-видео (PER-774): номер поста в чате медиа ботов.
+    promoVideo?: number;
   } = {
     status: options.status ?? "draft",
     hidden: options.hidden ?? false,
@@ -396,6 +415,9 @@ function fakeAuction(
     ...(options.consoleRaffle === undefined
       ? {}
       : { raffle: options.consoleRaffle }),
+    ...(options.promoVideo === undefined
+      ? {}
+      : { promoVideo: options.promoVideo }),
   };
   // Сеты как в Auction (ADR-073): меняются до открытия недели, лот — в одном
   // сете и только из реестра, тот же идентификатор заменяет сет целиком.
@@ -547,6 +569,9 @@ function fakeAuction(
           lots: state.lots,
           lotSets: state.lotSets,
           ...(state.layout === undefined ? {} : { layout: state.layout }),
+          ...(state.promoVideo === undefined
+            ? {}
+            : { promoVideo: state.promoVideo }),
           ...(options.raffleRegistrations === undefined
             ? {}
             : { raffleRegistrations: options.raffleRegistrations }),
@@ -949,6 +974,42 @@ function fakeAuction(
       state.raffle = { ...raffle, prize: command.prize };
       return { kind: "ok", raffle: state.raffle };
     },
+    // Фото приза как в Auction (PER-773): до итога ставится и снимается,
+    // после — `already-drawn`, у розыгрыша без итога — `without-result`.
+    async setRafflePrizePhoto(
+      _person: unknown,
+      command: { auctionId: string; photoId: string; image: Uint8Array },
+    ): Promise<RafflePrizePhotoResult> {
+      commands.push({ method: "setRafflePrizePhoto", args: command });
+      if (options.prizePhotoRefusal !== undefined) {
+        return options.prizePhotoRefusal;
+      }
+      const raffle = state.raffle;
+      if (raffle === undefined) return { kind: "raffle-not-found" };
+      if (raffle.status === "drawn") return { kind: "already-drawn" };
+      if (!prizeChangeable(raffle)) return { kind: "without-result" };
+      state.raffle = {
+        ...raffle,
+        prizePhoto: {
+          photoId: command.photoId,
+          version: `v-${command.photoId}`,
+        },
+      };
+      return { kind: "ok", raffle: state.raffle };
+    },
+    async removeRafflePrizePhoto(
+      _person: unknown,
+      command: { auctionId: string; opId: string },
+    ): Promise<RafflePrizePhotoResult> {
+      commands.push({ method: "removeRafflePrizePhoto", args: command });
+      const raffle = state.raffle;
+      if (raffle === undefined) return { kind: "raffle-not-found" };
+      if (raffle.status === "drawn") return { kind: "already-drawn" };
+      if (!prizeChangeable(raffle)) return { kind: "without-result" };
+      const { prizePhoto: _removed, ...rest } = raffle;
+      state.raffle = rest;
+      return { kind: "ok", raffle: state.raffle };
+    },
     async listAuctionNames() {
       commands.push({ method: "listAuctionNames", args: auctionId });
       return options.peopleFail === true
@@ -1090,6 +1151,19 @@ function fakeAuction(
       else state.paymentText = command.text;
       return { kind: "ok" as const };
     },
+    // Промо-видео (PER-774): Auction хранит номер поста; без него — снятие.
+    async setPromoVideo(
+      _person: unknown,
+      command: { auctionId: string; opId: string; postId?: number },
+    ) {
+      commands.push({ method: "setPromoVideo", args: command });
+      if (options.promoVideoRefusal !== undefined) {
+        return options.promoVideoRefusal;
+      }
+      if (command.postId === undefined) delete state.promoVideo;
+      else state.promoVideo = command.postId;
+      return { kind: "ok" as const };
+    },
     // Счёт решает отметку, как в Auction: выдача — только после оплаты,
     // повтор уже стоящей отметки принимается без перехода.
     async markInvoice(
@@ -1179,6 +1253,9 @@ function fakeAuction(
             final: false,
             // Скрытый аукцион корень называет держателю `run_auctions`.
             ...(state.hidden ? { hidden: true as const } : {}),
+            ...(state.promoVideo === undefined
+              ? {}
+              : { promoVideo: state.promoVideo }),
           }),
           // Розыгрыш открывается с онлайн-неделей, если у недели есть момент
           // закрытия регистрации, — как в сервисе.
@@ -1234,7 +1311,7 @@ function harness(
   rights?: readonly AccessRight[],
   auctionBotUsername?: string,
   // Живой пульт (PER-566): поток, темп правок и ответы Telegram на правки.
-  extra: Pick<HarnessOptions, "live" | "respond"> = {},
+  extra: Pick<HarnessOptions, "live" | "respond" | "files"> = {},
 ) {
   return createHarness(
     identity(holder, rights),
@@ -6828,7 +6905,11 @@ describe("prize change of a running raffle", () => {
     );
     expect(dataOf(console, "Изменить приз")).toBe(changeData);
     expect(labels(console).length).toBeLessThanOrEqual(13);
-    expect(labels(console)).toContainEqual(["Время финала", "Изменить приз"]);
+    expect(labels(console)).toContainEqual([
+      "Время финала",
+      "Изменить приз",
+      "Фото приза",
+    ]);
   });
 
   it("asks the text, confirms was and will be and changes the prize after yes over restarts", async () => {
@@ -6922,6 +7003,225 @@ describe("prize change of a running raffle", () => {
     const outcome = await step(drawn, [], () => press(changeData));
     expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
     expect(drawn.sent("changeRafflePrize")).toEqual([]);
+  });
+});
+
+// Фото приза идущего розыгрыша (PER-773): «Фото приза» рядом с «Изменить
+// приз», ответ фотографией, замена и снятие с подтверждением — пока у
+// розыгрыша нет итога. Шаги идут новым ботом над той же историей чата: так
+// выглядит рестарт.
+describe("prize photo of a running raffle", () => {
+  const raffleWeek = {
+    opensAt: "2026-10-01T15:00:00Z",
+    closesAt: "2099-10-05T15:00:00Z",
+    final: true,
+    windows: [],
+    raffleClosesAt: "2099-10-05T14:00:00Z",
+    rafflePrize: "Сертификат",
+  };
+  const open: RaffleView = {
+    auctionId,
+    status: "open",
+    closesAt: raffleWeek.raffleClosesAt,
+    registered: false,
+    tickets: [],
+    prize: "Сертификат",
+  };
+  const photoData = `v1:ac:rf:${auctionToken}`;
+  const removeLabel = `${pictogram.remove} Убрать фото`;
+  const uuidV7 =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+  const bytes = {
+    first: new Uint8Array([1, 2, 3]),
+    second: new Uint8Array([4, 5, 6]),
+  };
+  const stored: Readonly<Record<string, Uint8Array>> = bytes;
+  // `getFile` отвечает путём по `file_id`, скачивание отдаёт байты пути.
+  const files = {
+    files: {
+      async download(path: string) {
+        const found = stored[path.replace(/^photos\//, "")];
+        return found === undefined
+          ? {
+              kind: "failed" as const,
+              reason: "unavailable" as const,
+              cause: new Error("not found"),
+            }
+          : { kind: "ok" as const, bytes: found };
+      },
+    },
+    respond: (method: string, payload: unknown) => {
+      if (method !== "getFile") return undefined;
+      const fileId = (payload as { file_id: string }).file_id;
+      return {
+        file_id: fileId,
+        file_unique_id: `u-${fileId}`,
+        file_path: `photos/${fileId}`,
+      };
+    },
+  };
+  const trading = (
+    raffle: RaffleView = open,
+    refusal?: RafflePrizePhotoResult,
+  ) =>
+    fakeAuction({
+      status: "prebidding",
+      week: raffleWeek,
+      consoleRaffle: raffle,
+      ...(refusal === undefined ? {} : { prizePhotoRefusal: refusal }),
+    });
+  const step = async (
+    auction: ReturnType<typeof fakeAuction>,
+    calls: RecordedCall[],
+    update: (history: RecordedCall[]) => Update,
+  ) => {
+    const { bot } = harness(
+      "admin",
+      auction,
+      calls,
+      undefined,
+      undefined,
+      files,
+    );
+    await bot.init();
+    await bot.handleUpdate(update(calls));
+    return last(calls);
+  };
+  const photoAnswer = (
+    history: RecordedCall[],
+    fileId: string,
+    messageId: number,
+  ) =>
+    answer(history, {
+      message_id: messageId,
+      photo: [{ file_id: fileId, file_unique_id: fileId, width: 1, height: 1 }],
+    });
+
+  it("sets, replaces and removes the photo next to the prize change", async () => {
+    const auction = trading();
+    const calls: RecordedCall[] = [];
+    const console = await step(auction, calls, () => press(consoleData));
+    expect(labels(console)).toContainEqual([
+      "Время финала",
+      "Изменить приз",
+      "Фото приза",
+    ]);
+    expect(dataOf(console, "Фото приза")).toBe(photoData);
+
+    const empty = await step(auction, calls, () => press(photoData));
+    expect(plain(empty)).toContain("Фото у приза нет");
+    expect(labels(empty)).toEqual([["Прислать фото"], ["‹ Пульт"]]);
+
+    await step(auction, calls, (history) =>
+      press(dataOf(last(history), "Прислать фото")),
+    );
+    const asked = question(calls).payload;
+    expect(asked.text).toContain("Пришли фото приза");
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:rf:${auctionToken}:42`);
+
+    const text = await step(auction, calls, (history) =>
+      answer(history, { text: "вот" }),
+    );
+    expect(plain(text)).toContain("Нужна фотография");
+    expect(auction.sent("setRafflePrizePhoto")).toEqual([]);
+
+    const set = await step(auction, calls, (history) =>
+      photoAnswer(history, "first", 11),
+    );
+    expect(plain(set)).toContain("Фото приза сохранено");
+    expect(labels(set)).toEqual([["‹ Пульт"]]);
+    const [first] = auction.sent("setRafflePrizePhoto");
+    expect(first).toEqual({
+      method: "setRafflePrizePhoto",
+      args: {
+        auctionId,
+        photoId: expect.stringMatching(uuidV7),
+        image: bytes.first,
+      },
+    });
+
+    const shown = await step(auction, calls, () => press(photoData));
+    expect(plain(shown)).toContain("Фото у приза есть");
+    expect(labels(shown)).toEqual([
+      ["Заменить фото"],
+      [removeLabel],
+      ["‹ Пульт"],
+    ]);
+
+    // Замена — новое сообщение с фото: новый ключ, а не повтор прежнего.
+    await step(auction, calls, (history) =>
+      press(dataOf(last(history), "Заменить фото")),
+    );
+    await step(auction, calls, (history) => photoAnswer(history, "second", 12));
+    const photoIds = auction
+      .sent("setRafflePrizePhoto")
+      .map((sent) => sent.args as { photoId: string; image: Uint8Array });
+    expect(photoIds.map((sent) => sent.image)).toEqual([
+      bytes.first,
+      bytes.second,
+    ]);
+    expect(new Set(photoIds.map((sent) => sent.photoId)).size).toBe(2);
+
+    await step(auction, calls, () => press(photoData));
+    const confirm = await step(auction, calls, (history) =>
+      press(dataOf(last(history), removeLabel)),
+    );
+    expect(plain(confirm)).toContain("Убрать фото приза?");
+    expect(dataOf(confirm, "✖️ Нет")).toBe(photoData);
+    expect(auction.sent("removeRafflePrizePhoto")).toEqual([]);
+
+    const removed = await step(auction, calls, () =>
+      press(dataOf(confirm, "✔️ Да, убрать фото")),
+    );
+    expect(plain(removed)).toContain("Фото приза убрано");
+    expect(auction.sent("removeRafflePrizePhoto")).toEqual([
+      {
+        method: "removeRafflePrizePhoto",
+        args: { auctionId, opId: expect.stringMatching(uuidV7) },
+      },
+    ]);
+    const after = await step(auction, calls, () => press(photoData));
+    expect(plain(after)).toContain("Фото у приза нет");
+  });
+
+  it("asks again with the limit when Auction refuses a large photo", async () => {
+    const auction = trading(open, {
+      kind: "image-too-large",
+      maxBytes: 1024 * 1024,
+    });
+    const calls: RecordedCall[] = [];
+    await step(auction, calls, () => press(`v1:ac:rg:${auctionToken}`));
+    const refused = await step(auction, calls, (history) =>
+      photoAnswer(history, "first", 11),
+    );
+    expect(plain(refused)).toContain("Фото больше 1 МБ");
+  });
+
+  it("drops the buttons once the raffle has its result", async () => {
+    const result = {
+      ...open,
+      status: "drawn" as const,
+      tickets: [{ number: 1 }],
+      reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+    };
+    const console = await step(
+      fakeAuction({
+        status: "settling",
+        week: { ...raffleWeek, raffleClosesAt: "2026-10-05T14:00:00Z" },
+        consoleRaffle: result,
+      }),
+      [],
+      () => press(consoleData),
+    );
+    expect(labels(console).flat()).not.toContain("Фото приза");
+    const drawn = trading(result);
+    const outcome = await step(drawn, [], () => press(photoData));
+    expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
+    const removal = await step(drawn, [], () =>
+      press(`v1:ac:rr:${auctionToken}`),
+    );
+    expect(plain(removal)).toContain("Итог розыгрыша уже подведён");
+    expect(drawn.sent("removeRafflePrizePhoto")).toHaveLength(1);
   });
 });
 
@@ -7761,5 +8061,252 @@ describe("auction announcement", () => {
     );
     expect(copies(calls)).toHaveLength(1);
     expect(notices.accepted).toEqual([]);
+  });
+});
+
+// Промо-видео аукциона (PER-774): вход «🛠 Промо-видео» корня — в пульте места
+// нет, — видео ответом в чат медиа ботов, замена и снятие; участник открывает
+// видео кнопкой «🎬 Промо» корня копией поста.
+describe("promo video", () => {
+  const mediaChannelId = -1001234567890;
+  const video = {
+    video: {
+      file_id: "promo-video",
+      file_unique_id: "v",
+      width: 1,
+      height: 1,
+      duration: 3,
+    },
+  };
+
+  function bot(
+    auction: ReturnType<typeof fakeAuction>,
+    calls: RecordedCall[],
+    media?: { respond?: (method: string, payload: unknown) => unknown },
+  ) {
+    return createHarness(
+      identity("admin"),
+      createDispatcher(
+        undefined,
+        undefined,
+        today,
+        auction.port,
+        auction.port,
+        {
+          auctions: auction.port,
+          timeZone,
+          now: () => now,
+        },
+      ),
+      calls,
+      undefined,
+      "plain",
+      today,
+      {
+        auction: auction.port,
+        communityTimeZone: timeZone,
+        ...(media === undefined
+          ? {}
+          : {
+              mediaChat: createMediaChat({
+                channelId: mediaChannelId,
+                logger: { warn: () => {} },
+              }),
+            }),
+        ...(media?.respond === undefined ? {} : { respond: media.respond }),
+      },
+    ).bot;
+  }
+
+  type Copied = {
+    chat_id?: number;
+    from_chat_id?: number;
+    message_id?: number;
+    caption?: string;
+    parse_mode?: string;
+    reply_markup?: Sent["reply_markup"];
+    sentId: number;
+  };
+
+  function copies(calls: readonly RecordedCall[]): Copied[] {
+    return calls.flatMap((call, index) =>
+      call.method === "copyMessage"
+        ? [{ ...(call.payload as Omit<Copied, "sentId">), sentId: 101 + index }]
+        : [],
+    );
+  }
+
+  it("attaches, shows, replaces and removes the video with a new bot on every step", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const step = async (update: Update) => {
+      const fresh = bot(auction, calls, {});
+      await fresh.init();
+      await fresh.handleUpdate(update);
+    };
+
+    // Без видео участнику смотреть нечего, а вход организатора — своим рядом
+    // под объявлением.
+    await step(press(rootData));
+    expect(labels(last(calls)).slice(-4)).toEqual([
+      ["🛠 Пульт", "🛠 Сеты"],
+      ["🛠 Объявление"],
+      ["🛠 Промо-видео"],
+      ["‹ Сходки"],
+    ]);
+    expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+
+    await step(press(dataOf(last(calls), "🛠 Промо-видео")));
+    expect(plain(last(calls))).toContain("Видео нет.");
+    expect(labels(last(calls))).toEqual([["Прикрепить видео"], ["‹ Аукцион"]]);
+
+    await step(press(dataOf(last(calls), "Прикрепить видео")));
+    expect(question(calls).payload.reply_markup?.force_reply).toBe(true);
+    expect(question(calls).payload.text).toContain("Пришли одно видео");
+
+    // Не видео — тот же вопрос заново, в канал ничего не уходит.
+    await step(answer(calls, { text: "вот" }));
+    expect(question(calls).payload.text).toContain("Это не видео.");
+    expect(copies(calls)).toEqual([]);
+
+    await step(answer(calls, video));
+    const [published] = copies(calls);
+    expect(published).toMatchObject({
+      chat_id: mediaChannelId,
+      from_chat_id: 42,
+      message_id: 10,
+    });
+    const promoArgs = () =>
+      auction.sent("setPromoVideo").map(
+        (command) =>
+          command.args as {
+            auctionId: string;
+            opId: string;
+            postId?: number;
+          },
+      );
+    expect(promoArgs()).toEqual([
+      expect.objectContaining({ auctionId, postId: published?.sentId }),
+    ]);
+    expect(plain(last(calls))).toMatch(/^Видео прикреплено\n\nУчастники/);
+    expect(labels(last(calls))).toEqual([["‹ Промо-видео"]]);
+
+    // Участник видит «🎬 Промо» своим рядом, а нажатие присылает копию поста
+    // новым сообщением: корень остаётся.
+    await step(press(rootData));
+    expect(labels(last(calls))).toContainEqual(["🎬 Промо"]);
+    const root = last(calls);
+    await step(press(dataOf(root, "🎬 Промо")));
+    const promo = copies(calls).at(-1);
+    expect(promo).toMatchObject({
+      chat_id: 42,
+      from_chat_id: mediaChannelId,
+      message_id: published?.sentId,
+      caption: "<b>Промо-видео</b>",
+      parse_mode: "HTML",
+    });
+    expect(
+      promo?.reply_markup?.inline_keyboard.map((row) =>
+        row.map((button) => button.text),
+      ),
+    ).toEqual([["‹ Аукцион"]]);
+    expect(last(calls)).toBe(root);
+
+    // Замена — тот же вопрос: новый пост и новый номер у Auction.
+    await step(press(dataOf(last(calls), "🛠 Промо-видео")));
+    expect(plain(last(calls))).toContain("Видео прикреплено:");
+    expect(labels(last(calls))).toEqual([
+      ["Заменить видео"],
+      ["🗑 Убрать видео"],
+      ["‹ Аукцион"],
+    ]);
+    await step(press(dataOf(last(calls), "Заменить видео")));
+    await step(answer(calls, video));
+    const replaced = copies(calls).at(-1);
+    expect(replaced).toMatchObject({ chat_id: mediaChannelId });
+    expect(promoArgs().at(-1)).toMatchObject({ postId: replaced?.sentId });
+
+    // Снятие — подтверждение и «Да» с ключом, рождённым на нажатие.
+    await step(press(dataOf(last(calls), "‹ Промо-видео")));
+    await step(press(dataOf(last(calls), "🗑 Убрать видео")));
+    expect(plain(last(calls))).toContain("Убрать промо-видео?");
+    await step(press(dataOf(last(calls), "✔️ Да, убрать")));
+    const removal = promoArgs().at(-1);
+    expect(removal?.postId).toBeUndefined();
+    expect(removal?.opId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(plain(last(calls))).toMatch(/^Видео убрано\n/);
+    await step(press(rootData));
+    expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+  });
+
+  it("answers that the video is unavailable and keeps the root when the post is gone", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+      promoVideo: 77,
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, calls, {
+      respond: (method, payload) =>
+        method === "copyMessage" &&
+        (payload as { from_chat_id?: number }).from_chat_id === mediaChannelId
+          ? {
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: message to copy not found",
+            }
+          : undefined,
+    });
+    await hub.init();
+    await hub.handleUpdate(press(rootData));
+    const root = last(calls);
+    const before = calls.length;
+    await hub.handleUpdate(press(dataOf(root, "🎬 Промо")));
+
+    expect(copies(calls).at(-1)).toMatchObject({ message_id: 77 });
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(
+      calls
+        .slice(before)
+        .filter((call) =>
+          ["sendMessage", "editMessageText", "deleteMessage"].includes(
+            call.method,
+          ),
+        ),
+    ).toEqual([]);
+  });
+
+  it("offers neither button nor question without the media chat", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+      promoVideo: 77,
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, calls);
+    await hub.init();
+    await hub.handleUpdate(press(rootData));
+    const flat = labels(last(calls)).flat();
+    expect(flat).not.toContain("🎬 Промо");
+    expect(flat).not.toContain("🛠 Промо-видео");
+
+    // Подделанные кнопки: участника — «видео недоступно» без Auction,
+    // организатора — исход без вопроса.
+    const reads = auction.sent("getAuctionConsole").length;
+    await hub.handleUpdate(
+      press(encodeAuctionCallback({ kind: "promo", auctionId })),
+    );
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(copies(calls)).toEqual([]);
+    await hub.handleUpdate(press(`v1:ac:vq:${auctionToken}`));
+    expect(plain(last(calls))).toContain("канал медиа ботов не настроен");
+    expect(() => question(calls)).toThrow();
+    expect(auction.sent("getAuctionConsole")).toHaveLength(reads);
   });
 });

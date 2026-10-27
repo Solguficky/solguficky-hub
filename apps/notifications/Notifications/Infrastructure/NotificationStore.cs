@@ -293,6 +293,20 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         RETURNING type;
         """;
 
+    // Аукцион скрыли, отменили или удалили, пока его объявление ждало релея
+    // (PER-780): кнопка объявления повела бы к «не найдено». Объявление —
+    // команда, а не факт аукциона, поэтому признак — тип и сходка, а не повод.
+    // Без SKIP LOCKED по той же причине, что снятие при отмене.
+    private const string WithdrawAuctionNoticesSql = """
+        UPDATE notification
+        SET withdrawn_at = @Now, withdrawal_reason = @Reason
+        WHERE meetup_id = @MeetupId
+            AND type = @Type
+            AND dispatched_at IS NULL
+            AND withdrawn_at IS NULL
+            AND rejected_at IS NULL;
+        """;
+
     // SKIP LOCKED: второй экземпляр сервиса берёт другие строки, а не ждёт
     // блокировки, и счётчик попыток одной строки два прохода не делят. Порядок
     // между фактами контракт не обещает — каждый факт самостоятелен.
@@ -1229,6 +1243,27 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             cancellationToken);
         return types.Count;
     }
+
+    /// <summary>
+    /// Снимает неотправленные объявления аукциона сходки, который скрыли,
+    /// отменили или удалили (PER-780). Отправленное не отзывается.
+    /// </summary>
+    internal static Task<int> WithdrawAuctionNotices(
+        UnitOfWork work,
+        Guid meetupId,
+        string reason,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        work.Execute(
+            WithdrawAuctionNoticesSql,
+            new
+            {
+                MeetupId = meetupId,
+                Type = NotificationFacts.AuctionNoticeType,
+                Now = now.UtcDateTime,
+                Reason = reason,
+            },
+            cancellationToken);
 
     // Категории, которые требуют подписки: разворот идёт по подписчикам этой
     // сходки, а не по всему кругу.

@@ -24,7 +24,9 @@ import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { createParticipantRemoval } from "./participant-removal.js";
+import { createPromoVideo } from "./promo-video.js";
 import { createRafflePrizeChange } from "./raffle-prize-change.js";
+import { createRafflePrizePhoto } from "./raffle-prize-photo.js";
 import { createRaffleWinner } from "./raffle-winner.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
@@ -105,6 +107,14 @@ export function createDispatcher(
     consoles === undefined
       ? undefined
       : createRafflePrizeChange(consoles.auctions);
+  // Фото приза идущего розыгрыша (PER-773) — тот же порт и то же право.
+  const rafflePrizePhoto =
+    consoles === undefined
+      ? undefined
+      : createRafflePrizePhoto(consoles.auctions);
+  // Промо-видео (PER-774) — тот же порт и то же право.
+  const promoVideo =
+    consoles === undefined ? undefined : createPromoVideo(consoles.auctions);
   // Объявление аукциона (PER-765): пульт читает тот же порт, а приём —
   // Notifications.
   const auctionAnnouncements =
@@ -418,6 +428,18 @@ export function createDispatcher(
           return rafflePrizeChange === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : rafflePrizeChange(request);
+        case "view-raffle-prize-photo":
+        case "ask-raffle-prize-photo":
+        case "set-raffle-prize-photo":
+        case "remove-raffle-prize-photo":
+          return rafflePrizePhoto === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : rafflePrizePhoto(request);
+        case "view-promo-video":
+        case "set-promo-video":
+          return promoVideo === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : promoVideo(request);
         case "open-announcement":
         case "list-announcement-windows":
         case "list-announcement-lots":

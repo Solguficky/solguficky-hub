@@ -41,12 +41,14 @@ import {
   RaffleSchema,
   RaffleStatus,
   RemoveLotResponseSchema,
+  RemoveRafflePrizePhotoResponseSchema,
   SaveLotSetResponseSchema,
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
   SelectForFinalResponseSchema,
   SetFinalTimeResponseSchema,
   SetLotLayoutResponseSchema,
+  SetRafflePrizePhotoResponseSchema,
   StartFinalResponseSchema,
   StartNextLotResponseSchema,
   StartPrebiddingResponseSchema,
@@ -123,12 +125,16 @@ function adapter(rpc: {
   markInvoicePaid?: Call;
   markInvoiceHandedOver?: Call;
   setPaymentInstructions?: Call;
+  setPromoVideo?: Call;
   listMyInvoices?: Call;
   chooseFulfillment?: Call;
   removeLot?: Call;
   getLotPhoto?: Call;
   addLotPhoto?: Call;
   removeLotPhoto?: Call;
+  getRafflePrizePhoto?: Call;
+  setRafflePrizePhoto?: Call;
+  removeRafflePrizePhoto?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -161,6 +167,9 @@ function adapter(rpc: {
     getLotPhoto: (rpc.getLotPhoto ?? notUsed) as never,
     addLotPhoto: (rpc.addLotPhoto ?? notUsed) as never,
     removeLotPhoto: (rpc.removeLotPhoto ?? notUsed) as never,
+    getRafflePrizePhoto: (rpc.getRafflePrizePhoto ?? notUsed) as never,
+    setRafflePrizePhoto: (rpc.setRafflePrizePhoto ?? notUsed) as never,
+    removeRafflePrizePhoto: (rpc.removeRafflePrizePhoto ?? notUsed) as never,
     getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,
     getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
     getAuctionDaySummary: (rpc.getAuctionDaySummary ?? notUsed) as never,
@@ -189,6 +198,7 @@ function adapter(rpc: {
     markInvoicePaid: (rpc.markInvoicePaid ?? notUsed) as never,
     markInvoiceHandedOver: (rpc.markInvoiceHandedOver ?? notUsed) as never,
     setPaymentInstructions: (rpc.setPaymentInstructions ?? notUsed) as never,
+    setPromoVideo: (rpc.setPromoVideo ?? notUsed) as never,
     listMyInvoices: (rpc.listMyInvoices ?? notUsed) as never,
     chooseFulfillment: (rpc.chooseFulfillment ?? notUsed) as never,
   });
@@ -1520,6 +1530,111 @@ describe("auction console adapter", () => {
           Promise.reject(new ConnectError("down", Code.Unavailable)),
       }).changeRafflePrize(admin, command),
     ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  // Фото приза идущего розыгрыша (PER-773): принятая — розыгрыш с фото,
+  // каждый именованный отказ — свой ответ, а в Auction едут смотрящий,
+  // аукцион, ключ фото и байты.
+  it("sets and removes the raffle prize photo and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const raffle = create(RaffleSchema, {
+      auctionId,
+      status: RaffleStatus.OPEN,
+      closesAt: "2026-10-05T16:12:00Z",
+      prizePhoto: { photoId: opId, version: "v1" },
+    });
+    const accepted = adapter({
+      setRafflePrizePhoto: async (request: unknown) => {
+        sent.push(request);
+        return create(SetRafflePrizePhotoResponseSchema, {
+          outcome: { case: "accepted", value: raffle },
+        });
+      },
+      removeRafflePrizePhoto: async (request: unknown) => {
+        sent.push(request);
+        return create(RemoveRafflePrizePhotoResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: create(RaffleSchema, {
+              auctionId,
+              status: RaffleStatus.OPEN,
+              closesAt: "2026-10-05T16:12:00Z",
+            }),
+          },
+        });
+      },
+    });
+    const image = new Uint8Array([1, 2, 3]);
+    const command = { auctionId, photoId: opId, image };
+    await expect(
+      accepted.setRafflePrizePhoto(admin, command),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      raffle: { prizePhoto: { photoId: opId, version: "v1" } },
+    });
+    const removed = await accepted.removeRafflePrizePhoto(admin, {
+      auctionId,
+      opId,
+    });
+    expect(removed.kind === "ok" && removed.raffle.prizePhoto).toBe(undefined);
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        photoId: opId,
+        photo: expect.objectContaining({ content: image }),
+      }),
+      expect.objectContaining({ viewer: wireAdmin, auctionId, opId }),
+    ]);
+
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "raffleNotFound", value: {} }, { kind: "raffle-not-found" }],
+      [
+        { case: "alreadyDrawn", value: { winningTicket: 3 } },
+        { kind: "already-drawn" },
+      ],
+      [{ case: "withoutResult", value: {} }, { kind: "without-result" }],
+      [
+        { case: "imageTooLarge", value: { maxBytes: 1024n } },
+        { kind: "image-too-large", maxBytes: 1024 },
+      ],
+      [{ case: "unsupportedImage", value: {} }, { kind: "unsupported-image" }],
+      [{ case: "photoConflict", value: {} }, { kind: "photo-conflict" }],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(
+        adapter({
+          setRafflePrizePhoto: async () =>
+            create(SetRafflePrizePhotoResponseSchema, {
+              outcome: { case: "refused", value: { reason } },
+            }),
+        }).setRafflePrizePhoto(admin, command),
+      ).resolves.toEqual(result);
+    }
+    // Отказ изображения у снятия — дефект соседа.
+    await expect(
+      adapter({
+        removeRafflePrizePhoto: async () =>
+          create(RemoveRafflePrizePhotoResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: "unsupportedImage", value: {} } },
+            },
+          }),
+      }).removeRafflePrizePhoto(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        setRafflePrizePhoto: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).setRafflePrizePhoto(admin, command),
+    ).resolves.toEqual({ kind: "auction-not-found" });
   });
 
   // Отмена после старта торгов (PER-606): каждый именованный отказ — свой
@@ -2907,6 +3022,67 @@ describe("auction invoices adapter", () => {
         setPaymentInstructions: () =>
           Promise.reject(new ConnectError("meetups", Code.Unavailable)),
       }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  it("sets and takes back the promo video and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      setPromoVideo: async (request: unknown) => {
+        sent.push(request);
+        return { outcome: { case: "accepted", value: {} } };
+      },
+    });
+    await expect(
+      accepted.setPromoVideo(admin, { auctionId, opId, postId: 42 }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      accepted.setPromoVideo(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        opId,
+        video: expect.objectContaining({ messageId: 42n }),
+      }),
+      expect.not.objectContaining({ video: expect.anything() }),
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      await expect(
+        adapter({
+          setPromoVideo: async () => ({
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+        }).setPromoVideo(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    await expect(
+      adapter({
+        setPromoVideo: async () => ({ outcome: { case: undefined } }),
+      }).setPromoVideo(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        setPromoVideo: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).setPromoVideo(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    await expect(
+      adapter({
+        setPromoVideo: () =>
+          Promise.reject(new ConnectError("meetups", Code.Unavailable)),
+      }).setPromoVideo(admin, { auctionId, opId, postId: 7 }),
     ).resolves.toMatchObject({ kind: "unavailable" });
   });
 

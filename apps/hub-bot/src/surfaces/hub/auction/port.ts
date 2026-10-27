@@ -704,6 +704,16 @@ export type PaymentInstructionsResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// Промо-видео аукциона (PER-774, PER-781): задать, заменить и снять одной
+// командой. Ворота — сходка не отменена, как у команд пульта.
+export type PromoVideoResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 // Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
 // розыгрыша нет.
 export type ConsoleRaffleResult =
@@ -744,6 +754,22 @@ export type ChangeRafflePrizeResult =
   | { kind: "prize-too-long" }
   | { kind: "already-drawn"; winningTicket: number }
   | { kind: "without-result" }
+  | AuctionFailure;
+
+// Фото приза идущего розыгрыша (PER-773): поставить и убрать — тем же правилом,
+// что приз. Отказы изображения бывают только у постановки.
+export type RafflePrizePhotoResult =
+  | { kind: "ok"; raffle: RaffleView }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | { kind: "raffle-not-found" }
+  | { kind: "already-drawn" }
+  | { kind: "without-result" }
+  | { kind: "image-too-large"; maxBytes: number }
+  | { kind: "unsupported-image" }
+  | { kind: "photo-conflict" }
   | AuctionFailure;
 
 // Аукционы сообщества от запланированного до финала (`ListAuctions` ACTIVE):
@@ -916,6 +942,18 @@ export type AuctionConsoles = {
     command: { auctionId: string; prize: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<ChangeRafflePrizeResult>;
+  // Фото приза идущего розыгрыша (PER-773): `photoId` — ключ повтора, его
+  // выводит край из ответа с фото; ключ снятия рождается на нажатие «Да».
+  setRafflePrizePhoto(
+    person: Person,
+    command: { auctionId: string; photoId: string; image: Uint8Array },
+    meta?: RpcMetadata,
+  ): Promise<RafflePrizePhotoResult>;
+  removeRafflePrizePhoto(
+    person: Person,
+    command: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<RafflePrizePhotoResult>;
   // Активные аукционы сообщества: слот торгов один (PER-603), и пульт
   // предупреждает об идущих торгах до подтверждения открытия (PER-618).
   activeAuctions(
@@ -988,6 +1026,13 @@ export type AuctionConsoles = {
     command: { auctionId: string; opId: string; text?: string },
     meta?: RpcMetadata,
   ): Promise<PaymentInstructionsResult>;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов; без
+  // `postId` — снять. Повтор того же `opId` Auction принимает.
+  setPromoVideo(
+    person: Person,
+    command: { auctionId: string; opId: string; postId?: number },
+    meta?: RpcMetadata,
+  ): Promise<PromoVideoResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

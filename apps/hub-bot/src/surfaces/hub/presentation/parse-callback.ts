@@ -493,6 +493,18 @@ type PlainAction =
       auction: string;
       print: string;
     }
+  // Фото приза идущего розыгрыша (PER-773): экран фото, вопрос о фото,
+  // подтверждение снятия и «Да» снятия; ключ снятия — на нажатие.
+  | { kind: "console-raffle-prize-photo"; auction: string }
+  | { kind: "console-raffle-prize-photo-ask"; auction: string }
+  | { kind: "console-raffle-prize-photo-remove"; auction: string }
+  | { kind: "console-raffle-prize-photo-remove-confirm"; auction: string }
+  // Промо-видео аукциона (PER-774): экран, вопрос о видео, подтверждение
+  // снятия и «Да»; ключ снятия рождается на нажатие «Да».
+  | { kind: "console-promo-video"; auction: string }
+  | { kind: "console-promo-video-ask"; auction: string }
+  | { kind: "console-promo-video-remove"; auction: string }
+  | { kind: "console-promo-video-remove-confirm"; auction: string }
   // Объявление аукциона (PER-765): меню, выбор окна и лота, вопрос о тексте,
   // кнопка, фото и «Отправить N». Текст едет в сообщении бота, кнопки несут
   // его отпечаток; лот — номером в реестре по порядку заведения, фото — номером
@@ -800,6 +812,8 @@ export type QuestionStep =
       print: string;
       lot?: number;
     }
+  // Видео промо аукциона (PER-774): аукцион; ответ — видео, а не текст.
+  | { kind: "console-promo-video"; auction: string }
   // Текст объявления аукциона (PER-765): аукцион, шаблон и номер окна или лота
   // шаблона; черновик ответ читает у Auction заново.
   | {
@@ -876,6 +890,9 @@ export type QuestionStep =
   // Новый приз идущего розыгрыша (PER-737): аукцион, а текущий приз ответ
   // читает у Auction заново.
   | { kind: "console-raffle-prize-change"; auction: string }
+  // Фото приза идущего розыгрыша (PER-773): аукцион, а можно ли ещё ставить
+  // фото, ответ читает у Auction заново.
+  | { kind: "console-raffle-prize-photo"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
@@ -1129,6 +1146,26 @@ export function consoleRafflePrizeChangeData(auction: string): string {
   return `v1:ac:rn:${auction}`;
 }
 
+/** Экран промо-видео аукциона (PER-774) из корня аукциона. */
+export function consolePromoVideoData(auction: string): string {
+  return `v1:ac:vo:${auction}`;
+}
+
+/** «Прикрепить видео» и «Заменить видео»: вопрос о видео ответом. */
+export function consolePromoVideoAskData(auction: string): string {
+  return `v1:ac:vq:${auction}`;
+}
+
+/** «Убрать видео»: подтверждение снятия. */
+export function consolePromoVideoRemoveData(auction: string): string {
+  return `v1:ac:vr:${auction}`;
+}
+
+/** «Да» снятия промо-видео; ключ — на нажатие. */
+export function consolePromoVideoRemoveConfirmData(auction: string): string {
+  return `v1:ac:vy:${auction}`;
+}
+
 /** «Да» смены приза: аукцион и отпечаток нового текста; ключ — на нажатие. */
 export function consoleRafflePrizeChangeConfirmData(
   auction: string,
@@ -1369,6 +1406,28 @@ function parseAnnouncement(
     default:
       return malformed;
   }
+}
+
+/** «Фото приза» идущего розыгрыша (PER-773): экран фото. */
+export function consoleRafflePrizePhotoData(auction: string): string {
+  return `v1:ac:rf:${auction}`;
+}
+
+/** Вопрос о фото приза: прислать или заменить. */
+export function consoleRafflePrizePhotoAskData(auction: string): string {
+  return `v1:ac:rg:${auction}`;
+}
+
+/** «Убрать фото» приза: подтверждение. */
+export function consoleRafflePrizePhotoRemoveData(auction: string): string {
+  return `v1:ac:rd:${auction}`;
+}
+
+/** «Да» снятия фото приза; ключ — на нажатие. */
+export function consoleRafflePrizePhotoRemoveConfirmData(
+  auction: string,
+): string {
+  return `v1:ac:rr:${auction}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1860,6 +1919,10 @@ function stepData(step: QuestionStep): string {
       return `v1:q:rw:${step.auction}`;
     case "console-raffle-prize-change":
       return `v1:q:rn:${step.auction}`;
+    case "console-raffle-prize-photo":
+      return `v1:q:rf:${step.auction}`;
+    case "console-promo-video":
+      return `v1:q:vp:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
@@ -2408,7 +2471,10 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`, итог вручную (PER-727):
 // `v1:ac:rw:<аукцион>[:<страница>]`, `v1:ac:ra:<аукцион>` и
 // `v1:ac:<rc|ry>:<аукцион>:<билет>`, смена приза (PER-737): `v1:ac:rn:<аукцион>`
-// и `v1:ac:rv:<аукцион>:<отпечаток>`. Видимость (PER-673):
+// и `v1:ac:rv:<аукцион>:<отпечаток>`, фото приза (PER-773):
+// `v1:ac:<rf|rg|rd|rr>:<аукцион>`. Видимость (PER-673):
+// и `v1:ac:rv:<аукцион>:<отпечаток>`, промо-видео (PER-774):
+// `v1:ac:<vo|vq|vr|vy>:<аукцион>`. Видимость (PER-673):
 // `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
@@ -2506,6 +2572,25 @@ function parseConsole(parts: readonly string[]): CallbackAction {
         ticket: ticket.data,
       };
     }
+    // Промо-видео (PER-774): экран `vo`, вопрос `vq`, подтверждение снятия
+    // `vr` и «Да» `vy`.
+    case "vo":
+    case "vq":
+    case "vr":
+    case "vy":
+      return parts.length === 4
+        ? {
+            kind:
+              parts[2] === "vo"
+                ? "console-promo-video"
+                : parts[2] === "vq"
+                  ? "console-promo-video-ask"
+                  : parts[2] === "vr"
+                    ? "console-promo-video-remove"
+                    : "console-promo-video-remove-confirm",
+            auction: auction.data,
+          }
+        : { kind: "malformed" };
     // Смена приза идущего розыгрыша (PER-737): вопрос `rn` и «Да» `rv` с
     // отпечатком текста.
     case "rn":
@@ -2522,6 +2607,25 @@ function parseConsole(parts: readonly string[]): CallbackAction {
           }
         : { kind: "malformed" };
     }
+    // Фото приза идущего розыгрыша (PER-773): экран `rf`, вопрос `rg`,
+    // подтверждение снятия `rd` и «Да» `rr`.
+    case "rf":
+    case "rg":
+    case "rd":
+    case "rr":
+      return parts.length === 4
+        ? {
+            kind: (
+              {
+                rf: "console-raffle-prize-photo",
+                rg: "console-raffle-prize-photo-ask",
+                rd: "console-raffle-prize-photo-remove",
+                rr: "console-raffle-prize-photo-remove-confirm",
+              } as const
+            )[parts[2]],
+            auction: auction.data,
+          }
+        : { kind: "malformed" };
     // Текст «Как оплатить и получить» (PER-322): вопрос `it` и снятие `ix`.
     case "it":
       return parts.length === 4
@@ -3047,6 +3151,10 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-raffle-winner", auction: token.data };
       case "rn":
         return { kind: "console-raffle-prize-change", auction: token.data };
+      case "rf":
+        return { kind: "console-raffle-prize-photo", auction: token.data };
+      case "vp":
+        return { kind: "console-promo-video", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":

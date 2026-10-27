@@ -138,9 +138,10 @@ public sealed class BroadcastOperations(
             return new BroadcastPreview(answer, null);
         }
 
-        var read = await store.ReadAuctionNoticeAudience(forwarded.Cancellation);
+        var read = await store.ReadAuctionNoticeAudience(meetupId, forwarded.Cancellation);
         var count = read is AudienceRead.Counted counted ? counted.RecipientCount : (int?)null;
-        WritePreview(forwarded, "counted", NotificationFacts.AuctionNoticeType, authorId, meetupId, answer, count);
+        WritePreview(forwarded, read is AudienceRead.AuctionClosed ? "auction_closed" : "counted",
+            NotificationFacts.AuctionNoticeType, authorId, meetupId, answer, count);
 
         return new BroadcastPreview(answer, read);
     }
@@ -172,8 +173,14 @@ public sealed class BroadcastOperations(
             BroadcastOutcome.Repeated => "repeated",
             BroadcastOutcome.Conflict => "conflict",
             BroadcastOutcome.MeetupNotReplicated => "meetup_not_replicated",
+            BroadcastOutcome.AuctionClosed => "auction_closed",
             _ => "unknown",
         });
+
+        if (outcome is BroadcastOutcome.AuctionClosed closed)
+        {
+            fields["auction_standing"] = closed.Standing.ToString();
+        }
 
         if (outcome is BroadcastOutcome.Accepted accepted)
         {

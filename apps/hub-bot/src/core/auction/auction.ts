@@ -29,7 +29,30 @@ export function auctionSummaryViewOf(
     ...(snapshot.hidden ? { hidden: true as const } : {}),
     ...withLayout(snapshot.lotLayout),
     ...withProgramme(snapshot),
+    ...withPromoVideo(snapshot.promoVideo),
   };
+}
+
+// Промо-видео (PER-774) — украшение корня, как раскладка — подсказка ленте:
+// кривой номер поста сводку не роняет, и кнопки «🎬 Промо» тогда нет.
+function withPromoVideo(video: AuctionSnapshot["promoVideo"]) {
+  const postId = promoVideoOf(video);
+  return postId === undefined ? {} : { promoVideo: postId };
+}
+
+/**
+ * Номер поста промо-видео в чате медиа ботов (PER-774, PER-781) или
+ * `undefined`, если видео нет. Номер не положительный или шире номера
+ * сообщения Telegram — тоже `undefined`: такого поста бот не покажет.
+ */
+export function promoVideoOf(
+  video: AuctionSnapshot["promoVideo"],
+): number | undefined {
+  if (video === undefined) return undefined;
+  const { messageId } = video;
+  return messageId > 0n && messageId <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(messageId)
+    : undefined;
 }
 
 // Раскладка в сводке — подсказка ленте (PER-719), как состав финала: кривая

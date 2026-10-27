@@ -23,6 +23,7 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
     Randomness.fromHex("d7941e7b5bcaf8742bfc7136d38c5ab8274286629ffe43081dbda1f05d798300").get
   private val round = Quicknet.roundFor(closesAt)
   private def person(n: Int) = ParticipantId(uuid(100 + n))
+  private val photo = PrizePhoto(uuid(3), "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08")
 
   private def golden(name: String): Array[Byte] =
     Using.resource(getClass.getResourceAsStream(s"/journal/$name.json"))(_.readAllBytes())
@@ -60,6 +61,25 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
       )
       keepsGolden("raffle-winner-assigned", stored(RaffleEvent.WinnerAssigned(2, closesAt.plusSeconds(5400))))
       keepsGolden("raffle-prize-changed", stored(RaffleEvent.PrizeChanged("кружка и брелок")))
+      keepsGolden("raffle-prize-photo-set", stored(RaffleEvent.PrizePhotoSet(photo)))
+      keepsGolden("raffle-prize-photo-removed", stored(RaffleEvent.PrizePhotoRemoved))
+    }
+
+    "reads a row written before the prize photo existed as the same event" in {
+      val changed = stored(RaffleEvent.PrizeChanged("кружка и брелок"))
+      legacy("raffle-prize-changed", changed) shouldBe changed
+    }
+
+    "restores the same raffle from a snapshot that carries the prize photo" in {
+      val raffle = Raffle.replay(
+        Raffle.initial,
+        List(
+          RaffleEnvelope(1, OpId(uuid(2)), RaffleEvent.RaffleOpened(closesAt, seed, round, Some("кружка"))),
+          RaffleEnvelope(2, OpId(uuid(3)), RaffleEvent.PrizePhotoSet(photo))
+        )
+      )
+      Raffle.prizePhoto(raffle.state) shouldBe Some(photo)
+      RaffleJournal.restoreRaffle(RaffleJournal.storeRaffle(raffle, sequence = 2)) shouldBe raffle
     }
 
     "reads a row written before the prize could change as the same event" in {

@@ -166,6 +166,9 @@ function fake(answers: {
     setPaymentInstructions: async () => {
       throw new Error("not used");
     },
+    setPromoVideo: async () => {
+      throw new Error("not used");
+    },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
     setFinalTime: async (_person, command) => {
@@ -224,6 +227,12 @@ function fake(answers: {
     },
     changeRafflePrize: async () => {
       throw new Error("raffle prize change not used by the console");
+    },
+    setRafflePrizePhoto: async () => {
+      throw new Error("raffle prize photo not used by the console");
+    },
+    removeRafflePrizePhoto: async () => {
+      throw new Error("raffle prize photo not used by the console");
     },
     consoleRaffle: async () => {
       reads.raffle += 1;

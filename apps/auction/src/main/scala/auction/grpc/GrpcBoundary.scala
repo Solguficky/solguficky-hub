@@ -267,6 +267,10 @@ object GrpcBoundary {
     def getRaffle(in: wire.GetRaffleRequest): Future[wire.GetRaffleResponse] = refuse
     def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest): Future[wire.AssignRaffleWinnerResponse] = refuse
     def changeRafflePrize(in: wire.ChangeRafflePrizeRequest): Future[wire.ChangeRafflePrizeResponse] = refuse
+    def setRafflePrizePhoto(in: wire.SetRafflePrizePhotoRequest): Future[wire.SetRafflePrizePhotoResponse] = refuse
+    def removeRafflePrizePhoto(in: wire.RemoveRafflePrizePhotoRequest): Future[wire.RemoveRafflePrizePhotoResponse] =
+      refuse
+    def getRafflePrizePhoto(in: wire.GetRafflePrizePhotoRequest): Future[wire.LotImage] = refuse
     def submitPrediction(in: wire.SubmitPredictionRequest): Future[wire.SubmitPredictionResponse] = refuse
     def getMyPredictions(in: wire.GetMyPredictionsRequest): Future[wire.GetMyPredictionsResponse] = refuse
     def getPredictionResults(in: wire.GetPredictionResultsRequest): Future[wire.GetPredictionResultsResponse] = refuse

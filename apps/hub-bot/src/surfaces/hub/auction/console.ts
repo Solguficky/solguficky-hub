@@ -6,7 +6,11 @@ import type {
   ConsoleLot as WireConsoleLot,
   ConsoleLotSet as WireConsoleLotSet,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
-import { finalLineupOf, lotLayoutOf } from "../../../core/auction/auction.js";
+import {
+  finalLineupOf,
+  lotLayoutOf,
+  promoVideoOf,
+} from "../../../core/auction/auction.js";
 import { lotViewOf, moneyOf } from "../../../core/auction/snapshot.js";
 import type {
   AuctionConsoleSnapshot,
@@ -28,6 +32,7 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
   const week = weekOf(auction);
   const lineup = finalLineupOf(auction.status);
   const layout = lotLayoutOf(auction.lotLayout);
+  const promoVideo = promoVideoOf(auction.promoVideo);
   return {
     auctionId: auction.id,
     status: statusOf(auction.status),
@@ -46,6 +51,8 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     lotSets: console.lotSets.map(lotSetOf),
     // Порядок и разделы ленты (PER-719); нет — лента в порядке создания.
     ...(layout === undefined ? {} : { layout }),
+    // Промо-видео (PER-774): номер поста в чате медиа ботов.
+    ...(promoVideo === undefined ? {} : { promoVideo }),
     // Розыгрыш и прогнозы числами (PER-734): организаторы подбирают призы по
     // числу участников. Нет поля — строки нет.
     ...(console.raffleRegistrations === undefined
