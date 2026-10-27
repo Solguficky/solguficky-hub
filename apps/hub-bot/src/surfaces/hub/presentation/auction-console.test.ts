@@ -9408,7 +9408,17 @@ describe("happy hour periods", () => {
       status: "prebidding",
       week: { ...week, final: true, windows: [] },
       lots: [vase, mug],
-      periods: [started, ahead],
+      // Прошедший период строкой остаётся, а ряда у него нет.
+      periods: [
+        {
+          periodId: "01929b7e-5c1d-5a3f-8e4b-0000000000a0",
+          from: "2026-10-05T08:00:00Z",
+          until: "2026-10-05T12:00:00Z",
+          lotTerms: [],
+        },
+        started,
+        ahead,
+      ],
       termsRefusal: {
         kind: "windows-overlap",
         from: "2026-10-21T15:00:00Z",
@@ -9419,8 +9429,15 @@ describe("happy hour periods", () => {
     await bot.init();
 
     await bot.handleUpdate(press(`v1:ac:hh:${auctionToken}`));
+    expect(plain(last(calls))).toContain("лотов: 0 · прошёл");
     expect(plain(last(calls))).toContain("лотов: 1 · идёт");
-    await bot.handleUpdate(press(dataOf(last(calls), "Период 1")));
+    expect(labels(last(calls))).toEqual([
+      ["Период 2"],
+      ["Период 3"],
+      ["Создать период"],
+      ["‹ Счастливые часы"],
+    ]);
+    await bot.handleUpdate(press(dataOf(last(calls), "Период 2")));
     expect(plain(last(calls))).toContain(
       "Период начался — условия не меняются.",
     );
@@ -9428,20 +9445,20 @@ describe("happy hour periods", () => {
 
     await bot.handleUpdate(press(`v1:lot:hh:${lotToken(vaseId)}`));
     expect(plain(last(calls))).toContain("от 300 ₽ · идёт");
-    await bot.handleUpdate(press(dataOf(last(calls), "Период 1")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Период 2")));
     // У лота со ставками стартовая уже не обещается.
     expect(plain(last(calls))).toContain("Стартовая: 300 ₽");
     expect(labels(last(calls))).toEqual([["‹ Счастливые часы"]]);
 
     // Отказ Auction — экран с текстом, а не сбой.
     await bot.handleUpdate(press(`v1:lot:hh:${lotToken(vaseId)}`));
-    await bot.handleUpdate(press(dataOf(last(calls), "Период 2")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Период 3")));
     await bot.handleUpdate(press(dataOf(last(calls), "Шаг")));
     await bot.handleUpdate(answer(calls, { text: "50" }));
     expect(plain(last(calls))).toContain(
       "Период пересекается с другим окном этого лота",
     );
-    expect(labels(last(calls))).toEqual([["‹ Период 2"]]);
+    expect(labels(last(calls))).toEqual([["‹ Период 3"]]);
   });
 
   it("asks again when the amount is not below the regular one", async () => {

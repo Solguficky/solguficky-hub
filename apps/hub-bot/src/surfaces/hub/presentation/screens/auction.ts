@@ -1522,7 +1522,10 @@ function stepLines(
       ? undefined
       : happyHourTerms(active, regularStart(block), money);
   const current =
-    active === undefined || activeTerms === undefined
+    // Окно только со стартовой шаг не меняет: строка шага остаётся.
+    active === undefined ||
+    activeTerms === undefined ||
+    active.step === undefined
       ? block.tiers === undefined
         ? block.fixedStep === undefined
           ? []
@@ -1535,16 +1538,24 @@ function stepLines(
           ]
       : [
           activeHappyHourLine(at(active.until), activeTerms),
-          ...(block.baseStep === undefined || active.step === undefined
+          ...(block.baseStep === undefined
             ? []
             : [`Обычный шаг: ${money(block.baseStep)}`]),
         ];
+  const startOnly =
+    active !== undefined &&
+    activeTerms !== undefined &&
+    active.step === undefined
+      ? [activeHappyHourLine(at(active.until), activeTerms)]
+      : [];
   const next = block.nextWindow;
   const nextTerms =
     next === undefined
       ? undefined
       : happyHourTerms(next, regularStart(block), money);
-  if (next === undefined || nextTerms === undefined) return current;
+  if (next === undefined || nextTerms === undefined) {
+    return [...startOnly, ...current];
+  }
   // Окно внутри одного дня называет день один раз.
   const from = local(next.from);
   const until = local(next.until);
@@ -1554,6 +1565,7 @@ function stepLines(
     from.day === until.day;
   const pad = (part: number) => String(part).padStart(2, "0");
   return [
+    ...startOnly,
     ...current,
     `Счастливые часы: с ${at(next.from)} до ${
       sameDay ? `${pad(until.hours)}:${pad(until.minutes)}` : at(next.until)

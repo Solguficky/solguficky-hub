@@ -2,6 +2,7 @@ import { InlineKeyboard } from "grammy";
 import {
   lotTermsIn,
   periodLimit,
+  periodOpen,
   periodRef,
   periodStarted,
 } from "../../application/happy-hours.js";
@@ -98,6 +99,16 @@ export function termsText(terms: HappyHourLotTerms): string {
   ].join(", ");
 }
 
+// Непрошедшие периоды с их номером в общем списке: кнопка называет его.
+function openPeriods(
+  periods: readonly HappyHourPeriod[],
+  now: string,
+): { period: HappyHourPeriod; index: number }[] {
+  return periods
+    .map((period, index) => ({ period, index }))
+    .filter(({ period }) => periodOpen(period, now));
+}
+
 function toPeriods(auction: string): Parent {
   return { name: periodsTitle, data: consolePeriodsData(auction) };
 }
@@ -118,14 +129,14 @@ export function happyHourPeriodsScreen(
 ): ShownScreen {
   const auction = uuidToToken(view.auctionId);
   const keyboard = new InlineKeyboard();
-  const shown = view.periods.slice(0, periodLimit);
-  shown.forEach((period, index) => {
+  const open = openPeriods(view.periods, view.now);
+  for (const { period, index } of open.slice(0, periodLimit)) {
     nextRow(keyboard).text(
       `Период ${index + 1}`,
       consolePeriodData(auction, periodRef(period, index)),
     );
-  });
-  if (view.periods.length < periodLimit) {
+  }
+  if (open.length < periodLimit) {
     nextRow(keyboard).text("Создать период", consolePeriodAskData(auction));
   }
   return {
@@ -135,9 +146,9 @@ export function happyHourPeriodsScreen(
       escapeHtml(
         "В период у выбранных лотов свои условия: стартовая цена ниже обычной, пока у лота нет ставок, и шаг меньше обычного. Условия лота задаются с его карточки — «🛠 Счастливые часы». С начала периода его не изменить.",
       ),
-      shown.length === 0
+      view.periods.length === 0
         ? "Периодов пока нет."
-        : shown
+        : view.periods
             .map((period, index) =>
               escapeHtml(
                 `${index + 1}. ${periodSpan(period, view)} · лотов: ${period.lotTerms.length} · ${stateOf(period, view.now)}`,
@@ -287,7 +298,7 @@ function noteText(note: HappyHourNote, view: Moments): string {
     case "changed":
       return "Периоды изменились, пока был открыт экран. Проверь заново.";
     case "limit":
-      return `Периодов уже ${periodLimit}. Удали лишний, чтобы создать новый.`;
+      return `Впереди уже ${periodLimit} периодов. Удали лишний, чтобы создать новый.`;
     case "started":
       return `Период ${note.period} уже начался. С начала период не меняется.`;
     case "closed":
@@ -354,13 +365,15 @@ export function lotHappyHoursScreen(
   const { lot } = view;
   const token = uuidToToken(lot.lotId);
   const keyboard = new InlineKeyboard();
-  const shown = view.periods.slice(0, periodLimit);
-  shown.forEach((period, index) => {
+  for (const { period, index } of openPeriods(view.periods, view.now).slice(
+    0,
+    periodLimit,
+  )) {
     nextRow(keyboard).text(
       `Период ${index + 1}`,
       lotHappyHourData(token, periodRef(period, index)),
     );
-  });
+  }
   const regular = regularLine(lot);
   return {
     id: "lot-happy-hours",
@@ -368,11 +381,11 @@ export function lotHappyHoursScreen(
       lotHappyHoursTitle,
       lotTitle(lot),
       regular === undefined ? undefined : escapeHtml(regular),
-      shown.length === 0
+      view.periods.length === 0
         ? escapeHtml(
             "Периодов пока нет. Создай их в пульте: «Счастливые часы» → «Периоды».",
           )
-        : shown
+        : view.periods
             .map((period, index) => {
               const terms = lotTermsIn(period, lot.lotId);
               return escapeHtml(

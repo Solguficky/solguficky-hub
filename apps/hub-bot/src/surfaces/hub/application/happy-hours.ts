@@ -11,6 +11,7 @@ import type {
   AuctionConsoleSnapshot,
   ExecuteResult,
   HappyHourAmountError,
+  HappyHourField,
   HappyHourLot,
   HappyHourLotTerms,
   HappyHourPeriod,
@@ -29,9 +30,20 @@ import type {
 // команда условий читает прежние условия и шлёт их целиком. Право решает
 // Auction у Meetups; пускает сюда край — держателя права вести аукцион.
 
-// Периодов на экране не больше десяти: ряд на период, «Создать период» и
+// Непрошедших периодов не больше десяти: ряд на период, «Создать период» и
 // возврат укладываются в двенадцать рядов (дизайн-код, «Пульт аукциона»).
+// Прошедший период рядом не стоит: изменить его нельзя, и место он не
+// занимает.
 export const periodLimit = 10;
+
+/** Период ещё не кончился: у него есть ряд на экране. */
+export function periodOpen(period: HappyHourPeriod, now: string): boolean {
+  return Date.parse(period.until) > Date.parse(now);
+}
+
+function openCount(periods: readonly HappyHourPeriod[], now: string): number {
+  return periods.filter((period) => periodOpen(period, now)).length;
+}
 
 // Сумма ответа — целые рубли, как шаг окна: копеек у торгов нет.
 const amountPattern = /^\d{1,7}$/;
@@ -259,7 +271,10 @@ export function createHappyHours(
     if (found.console.status !== "prebidding") {
       return outcome(request.auctionId, { kind: "closed" });
     }
-    if (found.console.happyHourPeriods.length >= periodLimit) {
+    if (
+      openCount(found.console.happyHourPeriods, now().toISOString()) >=
+      periodLimit
+    ) {
       return outcome(request.auctionId, { kind: "limit" });
     }
     // Сроки периода — в формате сроков недели: начало и конец через тире.
@@ -362,15 +377,18 @@ export function createHappyHours(
         note: { kind: "started", period: number },
       };
     }
+    // Отказ о сумме спрашивает то поле, о котором он: команда везёт и
+    // прежнее значение другого поля, и отказ может быть о нём.
     const asked = (
       error: HappyHourAmountError,
       regular?: LotAmount,
+      field: HappyHourField = request.field,
     ): ExecuteResult => ({
       kind: "lot-happy-hour-ask",
       lot,
       index: request.period.index,
       period,
-      field: request.field,
+      field,
       error,
       ...(regular === undefined ? {} : { regular }),
     });
@@ -430,9 +448,9 @@ export function createHappyHours(
           note: { kind: "saved", period: number, terms: answer.terms },
         };
       case "step-not-lower":
-        return asked("step-not-lower", answer.regularStep);
+        return asked("step-not-lower", answer.regularStep, "step");
       case "start-not-lower":
-        return asked("start-not-lower", answer.regularStart);
+        return asked("start-not-lower", answer.regularStart, "start");
       case "amount-invalid":
       case "terms-empty":
         return asked("amount-invalid");
@@ -527,7 +545,10 @@ export function createHappyHours(
         if (found.console.status !== "prebidding") {
           return outcome(request.auctionId, { kind: "closed" });
         }
-        if (found.console.happyHourPeriods.length >= periodLimit) {
+        if (
+          openCount(found.console.happyHourPeriods, now().toISOString()) >=
+          periodLimit
+        ) {
           return outcome(request.auctionId, { kind: "limit" });
         }
         const week = found.console.week;
