@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import type { LotStatusView } from "../../../../auction-ui/index.js";
 import { refreshLabel } from "../../../../core/pictograms.js";
+import { announceable } from "../../application/auction-announcements.js";
 import {
   acceptsLots,
   activeLot,
@@ -42,6 +43,7 @@ import type {
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
+  consoleAnnouncementData,
   consoleAskData,
   consoleCancelConfirmData,
   consoleCancelData,
@@ -85,6 +87,7 @@ import {
   defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
+import { announcementLabel } from "./auction-announcement.js";
 import { invoicesLabel } from "./auction-invoices.js";
 import { rafflePrizeChangeLabel } from "./auction-raffle-prize-change.js";
 import { raffleWinnerLabel } from "./auction-raffle-winner.js";
@@ -993,6 +996,11 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       .text("Сводка дня", consoleDaySummaryData(auction));
     withCancel(keyboard, console);
     keyboard.text(layoutLabel, consoleLayoutData(auction));
+  }
+  // Объявление аукциона (PER-765): пока участники видят аукцион и он не
+  // кончился. Свой ряд над удалением и счетами.
+  if (announceable(console)) {
+    nextRow(keyboard).text(announcementLabel, consoleAnnouncementData(auction));
   }
   if (editable) {
     nextRow(keyboard).text(

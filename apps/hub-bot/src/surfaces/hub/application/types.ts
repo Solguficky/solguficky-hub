@@ -23,6 +23,10 @@ import type {
   MeetupCategory,
   NotificationCategory,
 } from "../notifications/port.js";
+import type {
+  AuctionAnnouncementRequest,
+  AuctionAnnouncementResult,
+} from "./auction-announcements.js";
 
 // Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
 // решают `rights` (RFC-016); те же права уходят смотрящим в Meetups и Auction,
@@ -378,7 +382,8 @@ export type ExecuteRequest =
   | LotLayoutRequest
   | AuctionInvoicesRequest
   | RaffleWinnerRequest
-  | RafflePrizeChangeRequest;
+  | RafflePrizeChangeRequest
+  | AuctionAnnouncementRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -1548,6 +1553,8 @@ export function startExecuteRequest(
 
 export type ExecuteResult =
   | { kind: "message"; text: string }
+  // Объявление аукциона в пульте (PER-765): шаги и исходы.
+  | AuctionAnnouncementResult
   | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
   | { kind: "archived-meetup-list"; meetups: readonly ArchivedMeetupSummary[] }
   // `subscribed` отсутствует, когда Notifications не ответил или не настроен:

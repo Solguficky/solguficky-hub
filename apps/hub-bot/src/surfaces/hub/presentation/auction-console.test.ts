@@ -189,6 +189,13 @@ const forgedAuctionPresses = {
   "console-raffle-winner-confirm": `v1:ac:ry:${auctionToken}:2`,
   "console-raffle-prize-change": `v1:ac:rn:${auctionToken}`,
   "console-raffle-prize-change-confirm": `v1:ac:rv:${auctionToken}:00000`,
+  "console-announcement": `v1:ac:na:${auctionToken}`,
+  "console-announcement-windows": `v1:ac:nw:${auctionToken}`,
+  "console-announcement-lots": `v1:ac:nl:${auctionToken}:0`,
+  "console-announcement-ask": `v1:ac:nq:${auctionToken}:o`,
+  "console-announcement-button": `v1:ac:nb:${auctionToken}:a:00000:-`,
+  "console-announcement-photo": `v1:ac:np:${auctionToken}:a:00000:0:-`,
+  "console-announcement-send": `v1:ac:ns:${auctionToken}:a:00000:-:-`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });

@@ -68,6 +68,8 @@ export const pictogram = {
    * «Сходками» хаба и «Прошедшие» под «Аукционами» бота аукциона.
    */
   history: "🗂",
+  /** Объявление аукциона из пульта (PER-765). */
+  announcement: "📣",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -119,6 +121,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.description]: ["Описание"],
   [pictogram.photo]: ["Фото"],
   [pictogram.history]: ["Архив", "Прошедшие"],
+  [pictogram.announcement]: ["Объявление"],
 };
 
 /**

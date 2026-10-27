@@ -518,6 +518,46 @@ export const screenCatalog = {
     nav: "confirm",
     title: "Изменить приз?",
   },
+  // Объявление аукциона (PER-765): меню шаблонов с пульта, выбор окна и лота,
+  // шаги кнопки и фото с текстом хвостом кадра и подтверждение, которое
+  // отвечает на предпросмотр. Рассылку не отменить — «Да» красное.
+  announcement: {
+    class: "screen",
+    nav: "tree",
+    title: "Объявление",
+    parent: "auction-console",
+    backName: "Объявление",
+  },
+  "announcement-windows": {
+    class: "screen",
+    nav: "tree",
+    title: "Счастливые часы",
+    parent: "announcement",
+  },
+  "announcement-lots": {
+    class: "screen",
+    nav: "tree",
+    title: "История лота",
+    parent: "announcement",
+  },
+  "announcement-button": {
+    class: "screen",
+    nav: "tree",
+    title: "Кнопка объявления",
+    parent: "announcement",
+  },
+  "announcement-photo": {
+    class: "screen",
+    nav: "tree",
+    title: "Фото объявления",
+    parent: "announcement",
+  },
+  "announcement-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Отправить объявление?",
+    irreversible: true,
+  },
   // «Счастливые часы» (PER-504): окна сниженного шага онлайн-недели.
   // Открываются с пульта, пока неделя не открыта, а после — только для
   // просмотра.

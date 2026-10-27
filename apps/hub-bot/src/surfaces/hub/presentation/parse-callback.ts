@@ -5,6 +5,10 @@ import {
   type OutbidFrequency,
 } from "../../../core/notifications/outbid.js";
 import type {
+  AnnouncementTemplate,
+  ButtonChoice,
+} from "../application/auction-announcements.js";
+import type {
   CloseQuote,
   ConsoleSort,
   FormField,
@@ -489,6 +493,11 @@ type PlainAction =
       auction: string;
       print: string;
     }
+  // Объявление аукциона (PER-765): меню, выбор окна и лота, вопрос о тексте,
+  // кнопка, фото и «Отправить N». Текст едет в сообщении бота, кнопки несут
+  // его отпечаток; лот — номером в реестре по порядку заведения, фото — номером
+  // у лота с нуля.
+  | AnnouncementAction
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -737,7 +746,49 @@ type PlainAction =
 export type NewMeetupOrigin = "manage" | "meetups";
 
 /** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
+export type AnnouncementAction =
+  | { kind: "console-announcement"; auction: string }
+  | { kind: "console-announcement-windows"; auction: string }
+  | { kind: "console-announcement-lots"; auction: string; page: number }
+  | {
+      kind: "console-announcement-ask";
+      auction: string;
+      template: AnnouncementTemplate;
+      ref?: number;
+    }
+  | {
+      kind: "console-announcement-button";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      lot?: number;
+    }
+  | {
+      kind: "console-announcement-photo";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      lot: number;
+      photo?: number;
+    }
+  | {
+      kind: "console-announcement-send";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      lot?: number;
+      photo?: number;
+    };
+
 export type QuestionStep =
+  // Текст объявления аукциона (PER-765): аукцион, шаблон и номер окна или лота
+  // шаблона; черновик ответ читает у Auction заново.
+  | {
+      kind: "console-announcement";
+      auction: string;
+      template: AnnouncementTemplate;
+      ref?: number;
+    }
   // `fresh` — вопрос о названии новой сходки с кнопки «Создать сходку»
   // (прогон 14.10, №14): сходки ещё нет, её рождает ответ. Значение — откуда
   // задан вопрос: группа «Сходки и объявления» (`fg`) или «Сходки» (`fn`);
@@ -1065,6 +1116,186 @@ export function consoleRafflePrizeChangeConfirmData(
   print: string,
 ): string {
   return `v1:ac:rv:${auction}:${print}`;
+}
+
+const templateCodes: Readonly<Record<AnnouncementTemplate, string>> = {
+  own: "o",
+  raffle: "r",
+  windows: "w",
+  lot: "l",
+  chronicle: "c",
+};
+
+const buttonCodes: Readonly<Record<ButtonChoice, string>> = {
+  auction: "a",
+  lots: "s",
+  lot: "l",
+  raffle: "r",
+  predictions: "p",
+  chronicle: "c",
+  none: "n",
+};
+
+function codeOf<T extends string>(
+  codes: Readonly<Record<T, string>>,
+  code: string | undefined,
+): T | undefined {
+  return (Object.keys(codes) as T[]).find((key) => codes[key] === code);
+}
+
+// Номер окна, лота реестра или фото лота в кнопке объявления: трёх цифр
+// хватает любому реестру; «-» — номера нет.
+const AnnouncementRefSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,2})$/)
+  .transform(Number);
+
+function refOf(raw: string | undefined): number | undefined | "malformed" {
+  if (raw === undefined || raw === "-") return undefined;
+  const parsed = AnnouncementRefSchema.safeParse(raw);
+  return parsed.success ? parsed.data : "malformed";
+}
+
+function refPart(ref: number | undefined): string {
+  return ref === undefined ? "-" : String(ref);
+}
+
+/** «📣 Объявление» пульта (PER-765): своё объявление или шаблон. */
+export function consoleAnnouncementData(auction: string): string {
+  return `v1:ac:na:${auction}`;
+}
+
+/** Выбор окна «Счастливых часов» для шаблона. */
+export function consoleAnnouncementWindowsData(auction: string): string {
+  return `v1:ac:nw:${auction}`;
+}
+
+/** Выбор лота для «Истории лота». */
+export function consoleAnnouncementLotsData(auction: string, page = 0): string {
+  return `v1:ac:nl:${auction}:${page}`;
+}
+
+/** Вопрос о тексте: шаблон и номер окна или лота. */
+export function consoleAnnouncementAskData(
+  auction: string,
+  template: AnnouncementTemplate,
+  ref?: number,
+): string {
+  return `v1:ac:nq:${auction}:${templateCodes[template]}${ref === undefined ? "" : `:${ref}`}`;
+}
+
+/** Кнопка объявления: выбор, отпечаток текста и лот шаблона. */
+export function consoleAnnouncementButtonData(
+  auction: string,
+  button: ButtonChoice,
+  print: string,
+  lot?: number,
+): string {
+  return `v1:ac:nb:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}`;
+}
+
+/** Фото лота объявления; без номера — «Пропустить». */
+export function consoleAnnouncementPhotoData(
+  auction: string,
+  button: ButtonChoice,
+  print: string,
+  lot: number,
+  photo?: number,
+): string {
+  return `v1:ac:np:${auction}:${buttonCodes[button]}:${print}:${lot}:${refPart(photo)}`;
+}
+
+/** «Отправить N»: всё, кроме текста, — его «Отправить» читает из предпросмотра. */
+export function consoleAnnouncementSendData(
+  auction: string,
+  button: ButtonChoice,
+  print: string,
+  lot?: number,
+  photo?: number,
+): string {
+  return `v1:ac:ns:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${refPart(photo)}`;
+}
+
+function parseAnnouncement(
+  parts: readonly string[],
+  auction: string,
+): AnnouncementAction | { kind: "malformed" } {
+  const malformed = { kind: "malformed" } as const;
+  switch (parts[2]) {
+    case "na":
+      return parts.length === 4
+        ? { kind: "console-announcement", auction }
+        : malformed;
+    case "nw":
+      return parts.length === 4
+        ? { kind: "console-announcement-windows", auction }
+        : malformed;
+    case "nl": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-announcement-lots", auction, page: page.data }
+        : malformed;
+    }
+    case "nq": {
+      const template = codeOf(templateCodes, parts[4]);
+      const ref = refOf(parts[5]);
+      return (parts.length === 5 || parts.length === 6) &&
+        template !== undefined &&
+        ref !== "malformed"
+        ? {
+            kind: "console-announcement-ask",
+            auction,
+            template,
+            ...(ref === undefined ? {} : { ref }),
+          }
+        : malformed;
+    }
+    default:
+      break;
+  }
+  const button = codeOf(buttonCodes, parts[4]);
+  const print = WindowPrintSchema.safeParse(parts[5]);
+  const lot = refOf(parts[6]);
+  const photo = refOf(parts[7]);
+  if (
+    button === undefined ||
+    !print.success ||
+    lot === "malformed" ||
+    photo === "malformed"
+  ) {
+    return malformed;
+  }
+  const common = { auction, button, print: print.data };
+  switch (parts[2]) {
+    case "nb":
+      return parts.length === 7
+        ? {
+            kind: "console-announcement-button",
+            ...common,
+            ...(lot === undefined ? {} : { lot }),
+          }
+        : malformed;
+    case "np":
+      return parts.length === 8 && lot !== undefined
+        ? {
+            kind: "console-announcement-photo",
+            ...common,
+            lot,
+            ...(photo === undefined ? {} : { photo }),
+          }
+        : malformed;
+    case "ns":
+      return parts.length === 8 && (photo === undefined || lot !== undefined)
+        ? {
+            kind: "console-announcement-send",
+            ...common,
+            ...(lot === undefined ? {} : { lot }),
+            ...(photo === undefined ? {} : { photo }),
+          }
+        : malformed;
+    default:
+      return malformed;
+  }
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1562,6 +1793,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:al:${step.auction}`;
     case "console-set":
       return `v1:q:as:${step.auction}`;
+    case "console-announcement":
+      return `v1:q:ao:${step.auction}:${templateCodes[step.template]}${step.ref === undefined ? "" : `:${step.ref}`}`;
     case "console-section":
       return step.section === undefined
         ? `v1:q:aq:${step.auction}`
@@ -2113,6 +2346,10 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     index.success && print.success
       ? { index: index.data, print: print.data }
       : undefined;
+  // Объявление аукциона (PER-765): двухбуквенные коды на «n».
+  if (parts[2]?.length === 2 && parts[2].startsWith("n")) {
+    return parseAnnouncement(parts, auction.data);
+  }
   switch (parts[2]) {
     case "b": {
       const page = PageSchema.safeParse(parts[4] ?? "0");
@@ -2776,6 +3013,20 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
           mode: stepCode[2] === "s" ? "single" : "tiered",
           ...(lead === "c" ? { chain: true as const } : {}),
           ...(lead === "s" ? { set: true as const } : {}),
+        }
+      : undefined;
+  }
+  if (parts[2] === "ao") {
+    const template = codeOf(templateCodes, parts[4]);
+    const ref = refOf(parts[5]);
+    return (parts.length === 5 || parts.length === 6) &&
+      template !== undefined &&
+      ref !== "malformed"
+      ? {
+          kind: "console-announcement",
+          auction: token.data,
+          template,
+          ...(ref === undefined ? {} : { ref }),
         }
       : undefined;
   }

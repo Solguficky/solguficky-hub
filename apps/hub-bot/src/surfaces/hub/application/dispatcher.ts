@@ -8,6 +8,10 @@ import type {
 import type { ParticipantUsernameResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
+import {
+  type AuctionAnnouncements,
+  createAuctionAnnouncements,
+} from "./auction-announcements.js";
 import { createAuctionConsole } from "./auction-console.js";
 import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
@@ -46,6 +50,9 @@ export function createDispatcher(
     // Настоящий аккаунт победителя для пульта (PER-648): его отдаёт Identity
     // по праву ведущего.
     usernames?: ParticipantUsernameResolver;
+    // Приём объявления аукциона (PER-765) — Notifications; нет — пульт без
+    // «Объявления».
+    announcements?: AuctionAnnouncements;
   },
   releaseNotes?: ReleaseNotes,
 ): Dispatcher {
@@ -95,6 +102,12 @@ export function createDispatcher(
     consoles === undefined
       ? undefined
       : createRafflePrizeChange(consoles.auctions);
+  // Объявление аукциона (PER-765): пульт читает тот же порт, а приём —
+  // Notifications.
+  const auctionAnnouncements =
+    consoles?.announcements === undefined
+      ? undefined
+      : createAuctionAnnouncements(consoles.auctions, consoles.announcements);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -400,6 +413,17 @@ export function createDispatcher(
           return rafflePrizeChange === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : rafflePrizeChange(request);
+        case "open-announcement":
+        case "list-announcement-windows":
+        case "list-announcement-lots":
+        case "ask-announcement":
+        case "answer-announcement":
+        case "pick-announcement-button":
+        case "preview-announcement":
+        case "send-announcement":
+          return auctionAnnouncements === undefined
+            ? { kind: "rejected", reason: "notifications-not-configured" }
+            : auctionAnnouncements(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

@@ -24,6 +24,10 @@ import {
   logMissingTitle,
 } from "../../core/notifications/lot-notice.js";
 import {
+  createAnnouncementPhotos,
+  logMissingAnnouncementPhoto,
+} from "../../core/notifications/organizer-announcement.js";
+import {
   createStepWindowNoticeRender,
   isStepWindowNotice,
 } from "../../core/notifications/step-window-notice.js";
@@ -293,11 +297,31 @@ export const hubSurface: SurfaceDefinition = ({
     now: Date.now,
     onBodyMissing: logBodyMissing(logger),
   });
+  // Фото лота объявления аукциона (PER-765) — правами получателя: адресата
+  // выбрал издатель по праву ставок. Без Auction объявление уходит текстом.
+  const announcementPhotos =
+    auction === undefined
+      ? undefined
+      : createAnnouncementPhotos(async (photo, identityId) => {
+          const image = await auction.getLotPhoto(
+            { identityId, rights: ["place-bids"] },
+            photo,
+          );
+          if (image.kind !== "ok") {
+            throw new Error(`lot photo ${image.kind}`);
+          }
+          return {
+            content: image.content,
+            mediaType: "",
+            version: image.version,
+          };
+        }, logMissingAnnouncementPhoto(logger));
   const sender = createNotificationSender(
     createNotificationApi(token, environment),
     hub.auctionBotUsername,
     today,
     communityTimeZone,
+    announcementPhotos,
   );
   return {
     ok: true,
@@ -360,6 +384,14 @@ export const hubSurface: SurfaceDefinition = ({
                         },
                       }
                     : rendered;
+                }
+                // Объявление аукциона (PER-765): фото лота отправитель читает
+                // правами получателя.
+                if (content.kind === "organizer-announcement") {
+                  return {
+                    kind: "ready",
+                    message: { ...content, viewerId: context.recipientId },
+                  };
                 }
                 if (
                   !isLotNotice(content) &&
