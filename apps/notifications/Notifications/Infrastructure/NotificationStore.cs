@@ -800,7 +800,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// <paramref name="work" /> — той же, что переводит задание в «сработало».
     /// </summary>
     /// <param name="taskId">Сработавшее задание — повод факта.</param>
-    /// <param name="kind">Вид момента: после победы или перед сроком оплаты.</param>
+    /// <param name="kind">Вид момента: за сколько до срока оплаты.</param>
     /// <param name="replica">Снимок счёта: адресат, сумма и срок оплаты.</param>
     /// <remarks>
     /// Получатель один — победитель продажи, и он же адресат счёта. Категории у
@@ -863,7 +863,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             },
             cancellationToken);
 
-    /// <summary>Факт напоминания о счёте по виду момента: два момента — два типа.</summary>
+    /// <summary>Факт напоминания о счёте по типу вида: дальний момент и ближние.</summary>
     private static Notification InvoiceReminderFact(InvoiceReminderKind kind, Guid id, Guid recipient, Guid taskId,
         InvoiceReplica replica, DateTimeOffset now)
     {
@@ -873,11 +873,11 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             Currency = replica.AmountCurrency,
         };
 
-        return kind switch
+        return NotificationFacts.TypeOf(kind) switch
         {
-            InvoiceReminderKind.AfterWin => NotificationFacts.InvoiceReminder(id, recipient, taskId, replica.InvoiceId,
-                replica.LotId, amount, replica.PaymentDueAt, now),
-            InvoiceReminderKind.BeforeDue => NotificationFacts.InvoiceDueReminder(id, recipient, taskId,
+            NotificationFacts.InvoiceReminderType => NotificationFacts.InvoiceReminder(id, recipient, taskId,
+                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt, now),
+            NotificationFacts.InvoiceDueReminderType => NotificationFacts.InvoiceDueReminder(id, recipient, taskId,
                 replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt, now),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };

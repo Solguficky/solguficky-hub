@@ -61,8 +61,8 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
         LIMIT 1;
         """;
 
-    // Живое задание с наступившим моментом: их два, и срабатывает то, что
-    // ждало дольше.
+    // Живое задание с наступившим моментом: их до трёх, и срабатывает то,
+    // что ждало дольше.
     private const string DueSql = """
         SELECT task_id, invoice_id, kind, due_at, state
         FROM invoice_reminder_task
@@ -134,9 +134,9 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
     /// <param name="cancelReason">Причина снятия: она встаёт в строку.</param>
     /// <param name="now">Момент записи.</param>
     /// <remarks>
-    /// Одна транзакция, а не по записи на задание: два задания счёта —
-    /// два момента одного напоминания, и падение между их записями оставило бы
-    /// счёт без второго момента навсегда — факт счёта приходит один раз, а
+    /// Одна транзакция, а не по записи на задание: задания счёта — моменты
+    /// одного напоминания, и падение между их записями оставило бы счёт без
+    /// части моментов навсегда — факт счёта приходит один раз, а
     /// повтор по шине не обещан.
     /// </remarks>
     public async Task<int> Apply(
