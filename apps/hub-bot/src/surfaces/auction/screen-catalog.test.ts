@@ -1065,6 +1065,33 @@ const predictionResultsBody = (
   ],
 });
 
+// Статистика аукциона (PER-770): счётчики и номинации всех торгов.
+const auctionChronicleBody = (
+  chronicle: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "auction-chronicle" }
+  >["chronicle"],
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "auction-chronicle",
+      auctionId: predictionResultsAuctionId,
+      chronicle,
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "auction-chronicle.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: predictionResultsAuctionId,
+        }),
+      },
+    ],
+  ],
+});
+
 // Хроники дня (PER-725): номинации последних суток и пустые сутки.
 const dayChronicleBody = (
   chronicle: Extract<
@@ -1373,6 +1400,31 @@ const shown: readonly {
     screen: {
       kind: "auction" as const,
       body: dayChronicleBody({ kind: "no-bids" }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: auctionChronicleBody({
+        kind: "counted",
+        bidCount: 42,
+        participantCount: 12,
+        tradedLotCount: 8,
+        lotCount: 10,
+        growthRecord: {
+          title: "Плакат",
+          growth: { minorUnits: 500_000, currency: "RUB" },
+        },
+        contested: { title: "Кружка с совой", leaderChanges: 5 },
+        // Лот без названия: оболочка подставит «лот без названия».
+        duel: { longestDuel: 4 },
+      }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: auctionChronicleBody({ kind: "no-bids" }),
     },
   },
   // Промо-видео (PER-774): подпись копии поста и «‹ Аукцион».

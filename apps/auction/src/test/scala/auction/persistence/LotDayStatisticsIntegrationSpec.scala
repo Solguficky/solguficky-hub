@@ -225,5 +225,57 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
         lots.map(_.lotId) should not contain born
       }
     }
+
+    // PER-769: хроники всего аукциона — то же чтение без окна суток; ставки разных дней складываются в итог.
+    "sums the bids of separate days into the statistics of the whole trading" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        startingPrice(connection, id, 100)
+        bid(connection, id, 300, before)
+        bid(connection, id, 900, windowFrom.plusSeconds(60))
+        bid(connection, id, 1_500, windowFrom.plusSeconds(120))
+        bid(connection, id, 1_700, pastWindow)
+        id
+      }
+      val now = pastWindow.plusSeconds(3600)
+      withViews(database) { views =>
+        val days = List(before.minusSeconds(3 * 3600) -> windowFrom, windowFrom -> windowUntil, windowUntil -> now)
+          .map((from, until) => views.dayStatistics(auctionId, from, until).futureValue.head)
+        val whole = views.dayStatistics(auctionId, Instant.EPOCH, now).futureValue.head
+        whole.lotId shouldBe lotId
+        whole.bidCount shouldBe days.map(_.bidCount).sum
+        whole.bidCount shouldBe 4
+        whole.maxPrice shouldBe Some(Money(1_700, CurrencyCode("RUB")))
+        // Цена к открытию «окна от начала времён» — стартовая, поэтому рост — от старта.
+        whole.growth shouldBe Some(Money(1_600, CurrencyCode("RUB")))
+      }
+    }
+
+    "counts every participant of the registry once and leaves a removed one out" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val (a, b, removed) = (UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
+      withConnection(database) { connection =>
+        def participant(lotId: UUID, person: UUID, gone: Boolean = false): Unit = {
+          connection
+            .createStatement()
+            .executeUpdate(
+              s"""INSERT INTO lot_participant (lot_id, participant_id, removed)
+                  VALUES ('$lotId', '$person', $gone)"""
+            )
+          ()
+        }
+        val (first, second, outside) =
+          (lot(connection, registered = true), lot(connection, registered = true), lot(connection, registered = false))
+        participant(first, a)
+        participant(second, a)
+        participant(second, b)
+        participant(first, removed, gone = true)
+        participant(outside, UUID.randomUUID())
+      }
+      withViews(database)(_.participantCount(auctionId).futureValue shouldBe 2)
+    }
   }
 }

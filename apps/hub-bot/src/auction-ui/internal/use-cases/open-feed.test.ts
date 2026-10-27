@@ -67,6 +67,9 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     getDayChronicle: async () => {
       throw new Error("not used");
     },
+    getAuctionChronicle: async () => {
+      throw new Error("not used");
+    },
     submitPrediction: async () => {
       throw new Error("not used");
     },

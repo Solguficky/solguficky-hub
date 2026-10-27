@@ -53,6 +53,8 @@ export type {
   AntiSnipeView,
   ApplicationQueue,
   AuctionBotPorts,
+  AuctionChronicleLot,
+  AuctionChronicleView,
   AuctionPort,
   AuctionStageView,
   AuctionStepWindowView,

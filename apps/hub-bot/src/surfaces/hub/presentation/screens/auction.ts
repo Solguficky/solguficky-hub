@@ -1,5 +1,8 @@
 import { InlineKeyboard } from "grammy";
-import { dayChronicleButtonLabel } from "../../../../auction-day-chronicle.js";
+import {
+  auctionChronicleButtonLabel,
+  dayChronicleButtonLabel,
+} from "../../../../auction-day-chronicle.js";
 import {
   finalBidLabel,
   finalBidLine,
@@ -91,6 +94,7 @@ import {
   oneLine,
   questionScreen,
 } from "./auction-bid.js";
+import { auctionChronicleScreen } from "./auction-chronicle.js";
 import { dayChronicleScreen } from "./auction-day-chronicle.js";
 import { predictionResultsScreen } from "./auction-prediction-results.js";
 import {
@@ -288,6 +292,8 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
         return { screen: predictionResultsScreen(block) };
       case "day-chronicle":
         return { screen: dayChronicleScreen(block) };
+      case "auction-chronicle":
+        return { screen: auctionChronicleScreen(block) };
       case "promo":
         return {
           screen: auctionPromoScreen(block),
@@ -530,6 +536,9 @@ function rootScreen(
   const dayChronicle = buttons.find(
     (button) => button.action === "root.day-chronicle",
   );
+  const auctionChronicle = buttons.find(
+    (button) => button.action === "root.auction-chronicle",
+  );
   const raffle = buttons.find((button) => button.action === "root.raffle");
   const favorites = buttons.find(
     (button) => button.action === "root.favorites",
@@ -551,10 +560,15 @@ function rootScreen(
       .text(predictionResultsButtonLabel, predictionResults.callbackData)
       .row();
   }
-  // «Хроники дня» (PER-725) — своим рядом, пока идёт онлайн-неделя.
+  // «Хроники дня» (PER-725), пока идёт онлайн-неделя, и «Статистика»
+  // (PER-770) с открытия торгов — одним рядом.
   if (dayChronicle !== undefined) {
-    keyboard.text(dayChronicleButtonLabel, dayChronicle.callbackData).row();
+    keyboard.text(dayChronicleButtonLabel, dayChronicle.callbackData);
   }
+  if (auctionChronicle !== undefined) {
+    keyboard.text(auctionChronicleButtonLabel, auctionChronicle.callbackData);
+  }
+  nextRow(keyboard);
   // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
   if (invoices !== undefined) {
     nextRow(keyboard).text(invoicesButtonLabel, invoices.callbackData).row();
@@ -713,6 +727,8 @@ function feedLabel(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.auction-chronicle":
+    case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":
     case "root.raffle":
@@ -952,6 +968,8 @@ function lotLabel(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.auction-chronicle":
+    case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":
     case "root.raffle":
@@ -1097,6 +1115,8 @@ function setLotLabelOf(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.auction-chronicle":
+    case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":
     case "root.raffle":
@@ -1333,6 +1353,8 @@ function historyLabel(button: AuctionButton): string {
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "root.auction-chronicle":
+    case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":
     case "root.raffle":

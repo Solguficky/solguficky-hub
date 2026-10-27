@@ -312,6 +312,15 @@ export const screenCatalog = {
     parent: "auction-root",
     backName: "Хроники дня",
   },
+  // Статистика аукциона (PER-770) — тело общего аукционного дерева: вход из
+  // корня аукциона с открытия торгов и возврат туда же.
+  "auction-chronicle": {
+    class: "screen",
+    nav: "tree",
+    title: "Статистика аукциона",
+    parent: "auction-root",
+    backName: "Статистика",
+  },
   predictions: {
     class: "screen",
     nav: "tree",

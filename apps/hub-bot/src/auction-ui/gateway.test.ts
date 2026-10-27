@@ -120,6 +120,9 @@ function surfaceFor(
         getDayChronicle: async () => {
           throw new Error("not used");
         },
+        getAuctionChronicle: async () => {
+          throw new Error("not used");
+        },
         async submitPrediction() {
           throw new Error("not used");
         },

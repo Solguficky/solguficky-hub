@@ -218,6 +218,7 @@ describe("auction callback_data", () => {
   it("encodes the raffle actions and parses them back", () => {
     const cases = [
       [{ kind: "prediction-results" as const, auctionId: AUCTION_ID }, "pi"],
+      [{ kind: "auction-chronicle" as const, auctionId: AUCTION_ID }, "as"],
       [{ kind: "raffle" as const, auctionId: AUCTION_ID }, "rf"],
       [{ kind: "raffle-register" as const, auctionId: AUCTION_ID }, "rr"],
       [{ kind: "raffle-cancel" as const, auctionId: AUCTION_ID }, "rc"],

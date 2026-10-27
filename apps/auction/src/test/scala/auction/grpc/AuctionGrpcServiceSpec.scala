@@ -369,6 +369,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def statistics(auctionId: UUID): Future[List[LotStatisticsView]] = fail("the statistics were read")
     def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]] =
       fail("the day statistics were read")
+    def participantCount(auctionId: UUID): Future[Long] = fail("the participants were counted")
   }
 
   private object UntouchableViews extends Views
@@ -1074,6 +1075,136 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(
         service(Unreachable, auctions = AuctionCommands(absent, Unreachable, NoMeetups))
           .getAuctionDayChronicle(wire.GetAuctionDayChronicleRequest(Some(viewer), meetupAuction.toString))
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+  }
+
+  // PER-769: хроники всего аукциона — те же агрегаты лотов без окна суток, итоги аукциона и рекорд роста; право и
+  // скрытый аукцион — как у хроник дня.
+  "the chronicle of the whole auction" should {
+
+    val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+    val (busy, steady, quiet) = (new UUID(7L, 1L), new UUID(7L, 2L), new UUID(7L, 3L))
+    val now = Instant.parse("2026-10-27T12:00:00Z")
+
+    final class Chronicled extends Views {
+      var windows: List[(Instant, Instant)] = Nil
+      override def dayStatistics(auctionId: UUID, from: Instant, until: Instant) =
+        if (auctionId != meetupAuction) fail(s"day statistics of $auctionId")
+        else {
+          windows :+= (from, until)
+          Future.successful(
+            List(
+              DayLotStatisticsView(busy, 6, Some(money(900)), Some(money(300)), LotContest(5, 4)),
+              DayLotStatisticsView(steady, 2, Some(money(700)), Some(money(100))),
+              DayLotStatisticsView(quiet, 0, None, Some(money(300)))
+            )
+          )
+        }
+      override def participantCount(auctionId: UUID) =
+        if (auctionId != meetupAuction) fail(s"participants of $auctionId") else Future.successful(3L)
+    }
+
+    def chronicle(read: Views) =
+      service(
+        Unreachable,
+        views = read,
+        auctions = AuctionCommands(consoleOf(busy, steady, quiet), Unreachable, NoMeetups),
+        clock = Clock.fixed(now, java.time.ZoneOffset.UTC)
+      ).getAuctionChronicle(wire.GetAuctionChronicleRequest(Some(viewer), meetupAuction.toString))
+
+    "reads the lots from the beginning of time to the service clock and sums them into the auction" in {
+      val read = Chronicled()
+      val answer = chronicle(read).futureValue
+
+      read.windows shouldBe List((Instant.EPOCH, now))
+      answer.until shouldBe now.toString
+      (answer.bidCount, answer.participantCount, answer.tradedLotCount) shouldBe ((8L, 3L, 2L))
+      answer.lots.map(lot => (lot.lotId, lot.bidCount, lot.leaderChangeCount, lot.longestDuel)) shouldBe Seq(
+        (busy.toString, 6L, 5L, 4L),
+        (steady.toString, 2L, 0L, 0L),
+        (quiet.toString, 0L, 0L, 0L)
+      )
+    }
+
+    "names the lot with the greatest growth as the record, the first of equal ones" in {
+      chronicle(Chronicled()).futureValue.growthRecord shouldBe
+        Some(wire.AuctionGrowthRecord(busy.toString, Some(LotValues.money(money(600)))))
+      val tied = new Views {
+        override def dayStatistics(auctionId: UUID, from: Instant, until: Instant) =
+          Future.successful(
+            List(
+              DayLotStatisticsView(busy, 1, Some(money(400)), Some(money(300))),
+              DayLotStatisticsView(steady, 1, Some(money(200)), Some(money(100)))
+            )
+          )
+        override def participantCount(auctionId: UUID) = Future.successful(1L)
+      }
+      chronicle(tied).futureValue.growthRecord.map(_.lotId) shouldBe Some(busy.toString)
+    }
+
+    "has no record when no lot grew" in {
+      val flat = new Views {
+        override def dayStatistics(auctionId: UUID, from: Instant, until: Instant) =
+          Future.successful(
+            List(
+              DayLotStatisticsView(busy, 1, Some(money(300)), Some(money(300))),
+              DayLotStatisticsView(quiet, 0, None, None)
+            )
+          )
+        override def participantCount(auctionId: UUID) = Future.successful(1L)
+      }
+      chronicle(flat).futureValue.growthRecord shouldBe None
+    }
+
+    "carries aggregates only: no participant id, display name or username of any kind" in {
+      wire.GetAuctionChronicleResponse.scalaDescriptor.fields.map(_.name) shouldBe
+        Seq("until", "bid_count", "participant_count", "traded_lot_count", "growth_record", "lots")
+      wire.AuctionGrowthRecord.scalaDescriptor.fields.map(_.name) shouldBe Seq("lot_id", "growth")
+    }
+
+    "refuses a viewer without place_bids before any read, the organizer of the console too" in {
+      val organizer = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS))
+      statusOf(
+        service(Unreachable)
+          .getAuctionChronicle(wire.GetAuctionChronicleRequest(Some(organizer), meetupAuction.toString))
+      ) shouldBe Status.Code.PERMISSION_DENIED
+    }
+
+    "answers NOT_FOUND for an auction hidden from the participant and reads no lot" in {
+      val hidden = new AuctionViews {
+        def byId(auctionId: UUID) =
+          Future.successful(
+            Some(
+              AuctionSnapshotView(
+                auctionId,
+                Auction(
+                  AuctionState.Draft,
+                  Some(MeetupId(UUID.fromString(meetupId))),
+                  Set.empty,
+                  Map.empty,
+                  hidden = true
+                )
+              )
+            )
+          )
+        def byMeetup(meetup: MeetupId) = fail("the auction read model was touched")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("the auction read model was touched")
+      }
+      statusOf(
+        service(Unreachable, auctionViews = hidden)
+          .getAuctionChronicle(wire.GetAuctionChronicleRequest(Some(viewer), meetupAuction.toString))
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "answers NOT_FOUND for an auction without a journal and reads no lot" in {
+      val absent = new Auctions {
+        override def get(auctionId: AuctionId) = Future.successful(Auction.initial)
+      }
+      statusOf(
+        service(Unreachable, auctions = AuctionCommands(absent, Unreachable, NoMeetups))
+          .getAuctionChronicle(wire.GetAuctionChronicleRequest(Some(viewer), meetupAuction.toString))
       ) shouldBe Status.Code.NOT_FOUND
     }
   }
