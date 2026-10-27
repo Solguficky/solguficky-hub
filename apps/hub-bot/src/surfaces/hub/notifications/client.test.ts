@@ -533,7 +533,11 @@ describe("auction announcements", () => {
     });
     // Auction недоступен для сужения (PER-778): отказ, а не счёт «всем».
     await expect(
-      announcements.previewAuctionAnnouncement(person, meetupId, "not-in-raffle"),
+      announcements.previewAuctionAnnouncement(
+        person,
+        meetupId,
+        "not-in-raffle",
+      ),
     ).resolves.toMatchObject({ kind: "unavailable" });
     await expect(
       announcements.announceAuction(person, {

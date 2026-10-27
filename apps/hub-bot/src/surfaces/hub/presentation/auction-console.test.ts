@@ -7546,7 +7546,9 @@ describe("auction announcement", () => {
 
   // Счётчик по аудитории (PER-779): число считает Notifications, а пульт
   // только называет фильтр.
-  function audienceCounts(counts: Partial<Record<AnnouncementAudience, number>>) {
+  function audienceCounts(
+    counts: Partial<Record<AnnouncementAudience, number>>,
+  ) {
     const asked: AnnouncementAudience[] = [];
     const accepted: AnnouncementCommand[] = [];
     const port: AuctionAnnouncements = {

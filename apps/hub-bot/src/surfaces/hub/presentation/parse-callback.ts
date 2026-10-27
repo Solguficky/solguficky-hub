@@ -1423,7 +1423,9 @@ function parseAnnouncement(
   // восемь; кнопка шага «Кому» обязана нести аудиторию.
   const length = parts[2] === "nb" || parts[2] === "nm" ? 7 : 8;
   const lengths =
-    parts[2] === "nk" || parts[2] === "nc" ? [length + 1] : [length, length + 1];
+    parts[2] === "nk" || parts[2] === "nc"
+      ? [length + 1]
+      : [length, length + 1];
   const media = length === 8 ? mediaOf(parts[7]) : {};
   const audience = audienceOf(parts[length]);
   if (

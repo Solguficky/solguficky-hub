@@ -7,8 +7,8 @@ import {
 import type { ReleaseSummary as WireReleaseSummary } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
   NotificationsService,
-  AuctionNoticeAudience as WireAudience,
   type AuctionNotificationPreferences as WireAuctionPreferences,
+  AuctionNoticeAudience as WireAudience,
   NotificationCategory as WireCategory,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
 import type {

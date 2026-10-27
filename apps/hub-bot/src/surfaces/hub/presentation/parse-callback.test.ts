@@ -1939,9 +1939,9 @@ describe("auction announcement audience callbacks", () => {
       lot: 3,
       post: 1_234_567,
     };
-    expect(
-      parseCallback(consoleAnnouncementSendData(auction, choice)),
-    ).toEqual({ kind: "console-announcement-send", ...step });
+    expect(parseCallback(consoleAnnouncementSendData(auction, choice))).toEqual(
+      { kind: "console-announcement-send", ...step },
+    );
     expect(
       parseCallback(consoleAnnouncementRecipientsData(auction, choice)),
     ).toEqual({ kind: "console-announcement-recipients", ...step });
@@ -1950,7 +1950,12 @@ describe("auction announcement audience callbacks", () => {
     ).toEqual({ kind: "console-announcement-audience", ...step });
     expect(
       parseCallback(
-        consoleAnnouncementButtonData(auction, "lots", "a1b2c", "not-in-raffle"),
+        consoleAnnouncementButtonData(
+          auction,
+          "lots",
+          "a1b2c",
+          "not-in-raffle",
+        ),
       ),
     ).toEqual({
       kind: "console-announcement-button",
