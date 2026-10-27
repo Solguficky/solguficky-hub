@@ -3501,6 +3501,9 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
           kind: "root",
           auctionId: CONTRACT_AUCTION_ID,
           auction: CONTRACT_SUMMARY,
+          // Программа недели (PER-724): открытая регистрация — строка
+          // розыгрыша.
+          raffleClosesAt: OPEN_RAFFLE.closesAt,
         },
       ],
       // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).

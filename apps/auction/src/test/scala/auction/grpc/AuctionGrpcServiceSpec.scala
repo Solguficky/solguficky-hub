@@ -650,6 +650,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
    * объявленными, а объявленных в конфигурации он не знает.
    */
   private def consoleWithLaunchedWindow(registry: UUID*): Auctions = {
+    val running = withLaunchedWindow(registry*)
+    new Auctions {
+      override def get(auctionId: AuctionId) = Future.successful(running)
+    }
+  }
+
+  private def withLaunchedWindow(registry: UUID*): Auction = {
     val meetup = MeetupId(UUID.fromString(meetupId))
     val added = registry.toList.zipWithIndex.map { (lot, index) =>
       AuctionEnvelope(index + 2L, LotFixtures.op(index + 2), AuctionEvent.LotAdded(LotId(lot)))
@@ -661,7 +668,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       money(50),
       Set(LotId(registry.head))
     )
-    val running = Auction.replay(
+    Auction.replay(
       Auction.initial,
       AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)) :: added ++ List(
         AuctionEnvelope(next, LotFixtures.op(next), AuctionEvent.AuctionScheduled(AuctionFixtures.config())),
@@ -669,9 +676,6 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         AuctionEnvelope(next + 2, LotFixtures.op(next + 2), AuctionEvent.StepWindowLaunched(window))
       )
     )
-    new Auctions {
-      override def get(auctionId: AuctionId) = Future.successful(running)
-    }
   }
 
   // Пока SLF4J инициализирует backend, он отдаёт SubstituteLogger, и приведение к logback падает (как в GrpcBoundarySpec).
@@ -2700,6 +2704,25 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       read(scheduled, Some(Caller.HubBot)).map(_.id) shouldBe Some(id.toString)
       val other = Auction.idOf(MeetupId(UUID.fromString(lot))).value.toString
       read(scheduled, Some(Caller.HubBot), other) shouldBe None
+    }
+
+    "shows a participant the windows launched during the online phase, as the console does" in {
+      val id = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val first = new UUID(7L, 1L)
+      val running = withLaunchedWindow(first)
+      val views = new AuctionViews {
+        def byId(auctionId: UUID) = Future.successful(Option.when(auctionId == id)(AuctionSnapshotView(id, running)))
+        def byMeetup(meetup: MeetupId) = fail("a meetup auction was read")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("a list was read")
+      }
+      val read = service(Unreachable, auctionViews = views, caller = Some(Caller.AuctionBot))
+        .getAuction(wire.GetAuctionRequest(Some(viewer), id.toString))
+        .futureValue
+        .getAuction
+
+      read.launchedStepWindows.map(window => (window.from, window.until, window.lotIds)) shouldBe
+        Seq((deadline.plusSeconds(600).toString, deadline.plusSeconds(3600).toString, Seq(first.toString)))
     }
 
     "answers a meetup without an auction with an empty response, not an error" in {

@@ -6,6 +6,7 @@ import type {
   LotStatusView,
   LotView,
   Money,
+  RaffleView,
   Viewer,
 } from "../../ports.js";
 import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
@@ -171,22 +172,20 @@ export async function openFeed(input: {
 }
 
 // Кнопка «Розыгрыш» стоит, только пока розыгрыш есть: Auction отдаёт его с
-// открытия онлайн-торгов (ADR-066). Отказ чтения убирает кнопку, а не роняет
-// ленту — как отказ имён на карточке.
-export async function hasRaffle(input: {
+// открытия онлайн-торгов (ADR-066). Отказ чтения убирает кнопку и строку
+// программы недели (PER-724), а не роняет корень — как отказ имён на карточке.
+export async function readRaffle(input: {
   auction: AuctionPort;
   viewer: Viewer;
   auctionId: string;
-}): Promise<boolean> {
+}): Promise<RaffleView | undefined> {
   try {
-    return (
-      (await input.auction.getRaffle({
-        viewer: input.viewer,
-        auctionId: input.auctionId,
-      })) !== undefined
-    );
+    return await input.auction.getRaffle({
+      viewer: input.viewer,
+      auctionId: input.auctionId,
+    });
   } catch {
-    return false;
+    return undefined;
   }
 }
 

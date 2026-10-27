@@ -95,6 +95,10 @@ export type AuctionBlock =
       kind: "root";
       auctionId: string;
       auction?: AuctionSummaryView;
+      // Момент закрытия регистрации в розыгрыше (PER-724) — строка программы
+      // недели. Нет — регистрация не открыта, розыгрыша нет или его чтение
+      // отказало.
+      raffleClosesAt?: string;
     }
   | {
       kind: "feed";
