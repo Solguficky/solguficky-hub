@@ -4,6 +4,7 @@ import { truncate } from "./core/format.js";
 // Хроники дня (PER-725): тексты «Спорнее всех», «Тёмной лошадки» и «Эпичной
 // дуэли», общие у сводки дня пульта хаба и у экрана участника в обоих ботах.
 // Выбор лотов — `dayNominations` аукционного дерева; здесь только слова.
+// Те же номинации и слова называет статистика всего аукциона (PER-770).
 
 export const dayChronicleButtonLabel = "Хроники дня";
 export const dayChronicleTitle = "Хроники дня";
@@ -16,6 +17,12 @@ export const dayChronicleNoNominee =
 export const contestedName = "Спорнее всех:";
 export const darkHorseName = "Тёмная лошадка:";
 export const duelName = "Эпичная дуэль:";
+
+export const auctionChronicleButtonLabel = "Статистика";
+export const auctionChronicleTitle = "Статистика аукциона";
+export const auctionChronicleWindow = "За всё время торгов.";
+export const auctionChronicleNoBids = "Ставок в аукционе пока не было.";
+export const growthRecordName = "Рекорд роста:";
 
 const untitled = "Лот без названия";
 const titleLimit = 120;
@@ -63,13 +70,7 @@ export function dayChronicleParagraphs(
     case "nominated": {
       const { contested, darkHorse, duel } = chronicle;
       const sections = [
-        contested === undefined
-          ? undefined
-          : section(
-              contestedName,
-              contested.title,
-              contestedTail(contested.leaderChanges),
-            ),
+        contestedSection(contested),
         darkHorse === undefined
           ? undefined
           : section(
@@ -80,9 +81,7 @@ export function dayChronicleParagraphs(
                 window: "last-day",
               }),
             ),
-        duel === undefined
-          ? undefined
-          : section(duelName, duel.title, duelTail(duel.longestDuel)),
+        duelSection(duel),
       ].filter((paragraph) => paragraph !== undefined);
       return [
         dayChronicleWindow,
@@ -94,6 +93,80 @@ export function dayChronicleParagraphs(
       return _exhaustive;
     }
   }
+}
+
+type AuctionChronicleBlock = Extract<
+  AuctionBlock,
+  { kind: "auction-chronicle" }
+>;
+
+/**
+ * Абзацы статистики аукциона: окно, счётчики торгов, рекорд роста и
+ * номинации; раздел без лота выпадает.
+ */
+export function auctionChronicleParagraphs(
+  block: AuctionChronicleBlock,
+  options: { money: (amount: Money) => string },
+): string[] {
+  const { chronicle } = block;
+  switch (chronicle.kind) {
+    case "no-lots":
+      return [dayChronicleNoLots];
+    case "no-bids":
+      return [auctionChronicleNoBids];
+    case "counted": {
+      const { growthRecord, contested, duel } = chronicle;
+      const counters = [
+        counted(chronicle.bidCount, ["ставка", "ставки", "ставок"]),
+        counted(chronicle.participantCount, [
+          "участник",
+          "участника",
+          "участников",
+        ]),
+        `${chronicle.tradedLotCount} из ${counted(chronicle.lotCount, ["лота", "лотов", "лотов"])} со ставками`,
+      ];
+      const sections = [
+        growthRecord === undefined
+          ? undefined
+          : section(
+              growthRecordName,
+              growthRecord.title,
+              `+${options.money(growthRecord.growth)} от старта`,
+            ),
+        contestedSection(contested),
+        duelSection(duel),
+      ].filter((paragraph) => paragraph !== undefined);
+      return [
+        auctionChronicleWindow,
+        counters.map((line) => `• ${line}`).join("\n"),
+        ...sections,
+      ];
+    }
+    default: {
+      const _exhaustive: never = chronicle;
+      return _exhaustive;
+    }
+  }
+}
+
+function contestedSection(
+  contested: { title?: string; leaderChanges: number } | undefined,
+) {
+  return contested === undefined
+    ? undefined
+    : section(
+        contestedName,
+        contested.title,
+        contestedTail(contested.leaderChanges),
+      );
+}
+
+function duelSection(
+  duel: { title?: string; longestDuel: number } | undefined,
+) {
+  return duel === undefined
+    ? undefined
+    : section(duelName, duel.title, duelTail(duel.longestDuel));
 }
 
 function section(name: string, title: string | undefined, tail: string) {

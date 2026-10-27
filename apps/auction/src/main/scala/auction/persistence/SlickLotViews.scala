@@ -341,6 +341,13 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     )
   }
 
+  def participantCount(auctionId: UUID): Future[Long] =
+    database.run(
+      sql"""SELECT COUNT(DISTINCT p.participant_id)
+            FROM auction_lot r JOIN lot_participant p ON p.lot_id = r.lot_id
+            WHERE r.auction_id = ${auctionId.toString}::uuid AND NOT p.removed""".as[Long].head
+    )
+
   // Та же защита, что у SlickLotCatalogStore: строка с пустым по типу названием — запись в обход сервиса.
   private def restored(lotId: UUID, title: String): LotTitle =
     LotTitle(title).getOrElse(throw IllegalStateException(s"lot_catalog holds a blank title for lot $lotId"))
