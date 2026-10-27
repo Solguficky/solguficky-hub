@@ -576,12 +576,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 928. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 935. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "630"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "298"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "635"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "300"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает
@@ -745,6 +745,11 @@ dotnet-tools:
 # Исследовательский зонд Rich Messages; не входит в verify
 telegram-rich-probe:
     node tools/telegram-rich-probe/probe.mjs
+
+# Зонд шёпота и невидимых команд в группе (PER-680): HUB_BOT_TOKEN и
+# GROUP_CHAT_ID без умолчаний, бот без второго поллера; не входит в verify
+telegram-whisper-probe:
+    node tools/telegram-rich-probe/whisper.mjs
 
 # Сквозной контур (L2): Identity и Meetups вместе на топологии, поднятой
 # AppHost через Aspire.Hosting.Testing. В `verify` намеренно не входит —

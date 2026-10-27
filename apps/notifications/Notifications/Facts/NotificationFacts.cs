@@ -49,27 +49,29 @@ public static class NotificationFacts
     public const string StepWindowStartedType = "step_window_started";
 
     /// <summary>
-    /// Напоминание о неоплаченном счёте: первый момент, примерно через 12 часов
-    /// после победы (PER-330). Категории у повода нет: счёт — дело победителя,
-    /// а деньги через продукт не проходят.
+    /// Напоминание о неоплаченном счёте: момент за 24 часа до срока оплаты
+    /// (PER-726; до него — через 12 часов после победы, PER-330). Категории у
+    /// повода нет: счёт — дело победителя, а деньги через продукт не проходят.
     /// </summary>
     public const string InvoiceReminderType = "invoice_reminder";
 
     /// <summary>
-    /// Второй момент того же напоминания о счёте — перед сроком оплаты
-    /// (PER-330). Тип свой: два момента не должны совпасть на одном ключе
-    /// повода.
+    /// Ближние моменты того же напоминания о счёте — за 12 часов и за час до
+    /// срока оплаты (PER-726). Текст канала называет срок, а не остаток
+    /// времени, поэтому одно тело верно для обоих моментов.
     /// </summary>
     public const string InvoiceDueReminderType = "invoice_due_reminder";
 
     /// <summary>
-    /// Тип факта по виду напоминания о счёте: у вида свой тип, иначе два момента
-    /// напоминания совпали бы на одном ключе повода.
+    /// Тип факта по виду напоминания о счёте. Ключ повода — сработавшее
+    /// задание, поэтому два вида на одном типе не совпадают на ключе: у
+    /// каждого момента своё задание. Новых типов контракта PER-726 не заводит.
     /// </summary>
     public static string TypeOf(InvoiceReminderKind kind) => kind switch
     {
-        InvoiceReminderKind.AfterWin => InvoiceReminderType,
-        InvoiceReminderKind.BeforeDue => InvoiceDueReminderType,
+        InvoiceReminderKind.AfterWin or InvoiceReminderKind.DayBefore => InvoiceReminderType,
+        InvoiceReminderKind.BeforeDue or InvoiceReminderKind.HalfDayBefore or InvoiceReminderKind.HourBefore =>
+            InvoiceDueReminderType,
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
 
@@ -352,8 +354,8 @@ public static class NotificationFacts
     }
 
     /// <summary>
-    /// Напоминание о неоплаченном счёте одному получателю: первый момент, после
-    /// победы.
+    /// Напоминание о неоплаченном счёте одному получателю: момент за 24 часа до
+    /// срока оплаты.
     /// </summary>
     /// <param name="taskId">Сработавшее задание — повод факта.</param>
     /// <param name="invoiceId">Счёт проданного лота.</param>
@@ -397,9 +399,9 @@ public static class NotificationFacts
     }
 
     /// <summary>
-    /// Второе напоминание о неоплаченном счёте одному получателю: перед сроком
-    /// оплаты. Тело то же, что у первого: счёт, лот, сумма и срок — те же
-    /// значения, различаются моменты.
+    /// Ближнее напоминание о неоплаченном счёте одному получателю: за 12 часов
+    /// или за час до срока оплаты. Тело то же, что у дальнего: счёт, лот, сумма
+    /// и срок — те же значения, различаются моменты.
     /// </summary>
     public static Notification InvoiceDueReminder(
         Guid notificationId,

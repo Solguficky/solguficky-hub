@@ -13,11 +13,20 @@ namespace AppHost.Configuration.Infrastructure;
 internal static class JetStreamTopology
 {
     /// <summary>
-    /// Стрим не источник истины: потерявший позицию потребитель собирает
-    /// состояние с нуля (PER-70). Окно хранения задаёт только, сколько простоя
-    /// потребитель переживает без пересборки.
+    /// Окно хранения стрима, у которого своего срока нет. Стрим не источник
+    /// истины: потерявший позицию потребитель собирает состояние с нуля (PER-70).
+    /// Окно задаёт только, сколько простоя потребитель переживает без пересборки.
     /// </summary>
     public static readonly TimeSpan MaxAge = TimeSpan.FromDays(7);
+
+    /// <summary>
+    /// Свой срок <c>AUCTION_EVENTS</c> (PER-758). Ачивки (ADR-077) выдадут по
+    /// фактам аукциона 2026 правилами, когда появится сервис Achievements, а при
+    /// общем окне факты недели торгов истекли бы задолго до первого правила.
+    /// Это запас до переотправки фактов из журнала модуля (PER-757), а не
+    /// гарантия хранения: источником истины стрим от этого не становится.
+    /// </summary>
+    public static readonly TimeSpan AuctionFactsMaxAge = TimeSpan.FromDays(90);
 
     /// <summary>
     /// Окно серверной дедупликации по заголовку <c>Nats-Msg-Id</c>. Это
@@ -30,7 +39,7 @@ internal static class JetStreamTopology
     [
         new("MEETUPS_EVENTS", "events.meetups.>"),
         new("IDENTITY_EVENTS", "events.identity.>"),
-        new("AUCTION_EVENTS", "events.auction.>"),
+        new("AUCTION_EVENTS", "events.auction.>", AuctionFactsMaxAge),
 
         // Адресные факты Notifications (PER-216). Стрим заведён раньше
         // первого канала: retention limits держит опубликованное до появления
@@ -82,10 +91,12 @@ internal static class JetStreamTopology
     /// платформа, бот к нему только привязывается.
     /// </summary>
     /// <remarks>
-    /// Запись обязана пережить любую повторную выдачу своего сообщения, а стрим
-    /// держит сообщение <see cref="MaxAge" />. Поэтому срок жизни записи —
-    /// окно стрима с запасом в сутки: при равных сроках запись могла бы истечь
-    /// раньше последней повторной выдачи.
+    /// Запись обязана пережить любую повторную выдачу своего сообщения, а
+    /// <c>NOTIFICATIONS_EVENTS</c>, который читают боты, держит сообщение
+    /// <see cref="MaxAge" />. Поэтому срок жизни записи — окно этого стрима с
+    /// запасом в сутки: при равных сроках запись могла бы истечь раньше
+    /// последней повторной выдачи. Свой срок <c>AUCTION_EVENTS</c> журналов не
+    /// касается: боты этот стрим не читают.
     ///
     /// Пары «человек ↔ тема» бота поддержки (ADR-068, п. 8) живут по тому же
     /// правилу владения, но не журнал доставки: срок жизни — 180 дней с
@@ -122,7 +133,7 @@ internal static class JetStreamTopology
             Retention = StreamConfigRetention.Limits,
             Storage = StreamConfigStorage.File,
             Discard = StreamConfigDiscard.Old,
-            MaxAge = MaxAge,
+            MaxAge = spec.MaxAge ?? MaxAge,
             DuplicateWindow = DuplicateWindow,
             NumReplicas = 1,
         };
@@ -136,7 +147,9 @@ internal static class JetStreamTopology
         };
 
     /// <summary>
-    /// Идемпотентно: повторный старт на том же томе не меняет ничего. Правку,
+    /// Идемпотентно: повторный старт на том же томе не меняет ничего. Смену
+    /// <c>max_age</c> сервер принимает на живом стриме, и новый срок действует
+    /// и на уже лежащие сообщения. Правку,
     /// которую JetStream на живом объекте не принимает — storage стрима, переход
     /// retention в workqueue или из него, deliver policy durable, — сервер
     /// отвергает, и применение падает;
@@ -177,7 +190,8 @@ internal static class JetStreamTopology
 
 internal sealed record KeyValueSpec(string Bucket, TimeSpan MaxAge);
 
-internal sealed record StreamSpec(string Name, string Subject);
+/// <param name="MaxAge">Свой срок хранения; без него — <see cref="JetStreamTopology.MaxAge" />.</param>
+internal sealed record StreamSpec(string Name, string Subject, TimeSpan? MaxAge = null);
 
 internal sealed record ConsumerStreams(
     string Consumer,
