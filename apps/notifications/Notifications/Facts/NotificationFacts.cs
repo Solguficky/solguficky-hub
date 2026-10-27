@@ -156,6 +156,16 @@ public static class NotificationFacts
     public const string WithdrawnOnInvoicePaid = "invoice_paid";
 
     /// <summary>
+    /// Аукцион отменили, пока его объявление ждало релея (PER-780).
+    /// </summary>
+    public const string WithdrawnOnAuctionCancelled = "auction_cancelled";
+
+    /// <summary>
+    /// Аукцион удалили до торгов, пока его объявление ждало релея (PER-780).
+    /// </summary>
+    public const string WithdrawnOnAuctionDiscarded = "auction_discarded";
+
+    /// <summary>
     /// Категория, которой человек отказывается от «новой сходки». Настраивается
     /// только глобально: подписаться на ещё не созданную сходку нельзя.
     /// </summary>

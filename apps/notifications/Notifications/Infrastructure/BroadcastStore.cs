@@ -1,3 +1,4 @@
+using Notifications.Auction;
 using Notifications.Facts;
 using Notifications.Replica;
 using Npgsql;
@@ -63,6 +64,13 @@ public abstract record BroadcastOutcome
     /// реплика догонит.
     /// </summary>
     public sealed record MeetupNotReplicated : BroadcastOutcome;
+
+    /// <summary>
+    /// Право подтверждено, но аукцион сходки по реплике скрыт, отменён или
+    /// удалён (PER-780): кнопка объявления привела бы к «не найдено». Ключ не
+    /// принят.
+    /// </summary>
+    public sealed record AuctionClosed(AuctionStanding Standing) : BroadcastOutcome;
 }
 
 public abstract record AudienceRead
@@ -74,6 +82,9 @@ public abstract record AudienceRead
     public sealed record Counted(int RecipientCount) : AudienceRead;
 
     public sealed record MeetupNotReplicated : AudienceRead;
+
+    /// <inheritdoc cref="BroadcastOutcome.AuctionClosed" />
+    public sealed record AuctionClosed(AuctionStanding Standing) : AudienceRead;
 }
 
 /// <summary>
@@ -151,6 +162,19 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
 
         if (broadcast.Notice is not null && broadcast.MeetupId is { } auctionMeetupId)
         {
+            // Положение аукциона читается под разделяемой блокировкой аукциона
+            // (PER-780): скрытие и конец берут исключительную, поэтому они либо
+            // ждут коммита этого объявления и снимают его неотправленные факты,
+            // либо закоммичены раньше и видны здесь. Отказ откатывает ключ:
+            // повтор с тем же id после новой публикации пройдёт.
+            var auctionId = AuctionOfMeetup.Of(auctionMeetupId);
+            await AuctionEndStore.LockShared(work, auctionId, cancellationToken);
+            var standing = await AuctionStandingStore.Read(work, auctionId, cancellationToken);
+            if (AuctionStandingStore.ClosedForNotice(standing))
+            {
+                return new BroadcastOutcome.AuctionClosed(standing!.Value);
+            }
+
             // Реплика сходки здесь не обязательна: она даёт объявлению только
             // название, и без неё весть уходит без названия, как весть о новом
             // аукционе (PER-646). Право уже подтвердил Meetups.
@@ -225,10 +249,19 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
         return new AudienceRead.Counted(count);
     }
 
-    /// <summary>Число держателей права ставок, которым уйдёт объявление аукциона.</summary>
-    public async Task<AudienceRead> ReadAuctionNoticeAudience(CancellationToken cancellationToken)
+    /// <summary>
+    /// Число держателей права ставок, которым уйдёт объявление аукциона, —
+    /// или отказ, которым ответит команда, если аукцион закрыт для объявления.
+    /// </summary>
+    public async Task<AudienceRead> ReadAuctionNoticeAudience(Guid meetupId, CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        var standing = await AuctionStandingStore.Read(work, AuctionOfMeetup.Of(meetupId), cancellationToken);
+        if (AuctionStandingStore.ClosedForNotice(standing))
+        {
+            return new AudienceRead.AuctionClosed(standing!.Value);
+        }
+
         var count = await NotificationStore.CountAuctionNoticeRecipients(work, cancellationToken);
 
         return new AudienceRead.Counted(count);

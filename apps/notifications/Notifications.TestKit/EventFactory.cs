@@ -655,6 +655,20 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Аукцион рождён у сходки: снимок черновика, с PER-609 скрытого. Рождение
+    /// заново после удаления идёт тем же фактом со старшей версией.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent AuctionDrafted(string auction, string meetup, bool hidden = true,
+        long version = 1)
+    {
+        var message = AuctionFact(auction, meetup, version);
+        message.State.Hidden = hidden;
+        message.State.Draft = new global::Auction.V1.AuctionState.Types.Draft();
+        message.AuctionDrafted = new global::Auction.V1.AuctionDrafted();
+        return message;
+    }
+
     /// <summary>Аукцион снят с публикации до торгов (PER-646): снимок скрытого черновика.</summary>
     public static global::Auction.V1.AuctionEvent AuctionHidden(string auction, string meetup)
     {
