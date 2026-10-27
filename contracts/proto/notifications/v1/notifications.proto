@@ -613,7 +613,19 @@ message AuctionNoticePhoto {
   oneof source {
     // A photo of a lot as Auction stores it.
     AuctionNoticeLotPhoto lot_photo = 1;
+
+    // A post of the bots' media chat, copied by the channel.
+    AuctionNoticeChannelPost channel_post = 2;
   }
+}
+
+// A post of the media chat of the bots, which the channel copies into the
+// message. The chat itself is the bots' configuration, not the contract: only
+// the post is named here. Notifications does not check that the post exists:
+// the channel sends the message without the picture when the copy fails.
+message AuctionNoticeChannelPost {
+  // Telegram message id of the post in the media chat. Positive.
+  int64 message_id = 1;
 }
 
 // A photo of a lot, fetched by the channel with auction.v1 GetLotPhoto.
