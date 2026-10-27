@@ -810,6 +810,8 @@ type AnnouncementSendStep = {
   audience: AnnouncementAudience;
   lot?: number;
   photo?: number;
+  // Только у «Отправить»: отпечаток `photoId` фото предпросмотра (PER-792).
+  photoPrint?: string;
   post?: number;
 };
 
@@ -1253,23 +1255,36 @@ const PostPartSchema = z
   .transform((raw) => Number.parseInt(raw.slice(1), 36))
   .refine((post) => Number.isSafeInteger(post));
 
+// Фото с отпечатком `photoId` — `<номер>.<отпечаток>` (PER-792): так его
+// несёт «Отправить», чтобы взять одобренное фото, а не то, что стоит под
+// номером сейчас.
 function mediaPart(
   photo: number | undefined,
   post: number | undefined,
+  photoPrint?: string,
 ): string {
-  return post === undefined ? refPart(photo) : `m${post.toString(36)}`;
+  if (post !== undefined) return `m${post.toString(36)}`;
+  return photo !== undefined && photoPrint !== undefined
+    ? `${refPart(photo)}.${photoPrint}`
+    : refPart(photo);
 }
 
 function mediaOf(
   raw: string | undefined,
-): { photo?: number; post?: number } | "malformed" {
+): { photo?: number; photoPrint?: string; post?: number } | "malformed" {
   if (raw?.startsWith("m") === true) {
     const post = PostPartSchema.safeParse(raw);
     return post.success ? { post: post.data } : "malformed";
   }
-  const photo = refOf(raw);
+  const [ref, print, ...rest] = (raw ?? "").split(".");
+  if (rest.length > 0) return "malformed";
+  const photo = refOf(raw === undefined ? undefined : ref);
   if (photo === "malformed") return "malformed";
-  return photo === undefined ? {} : { photo };
+  if (print === undefined) return photo === undefined ? {} : { photo };
+  const photoPrint = WindowPrintSchema.safeParse(print);
+  return photo === undefined || !photoPrint.success
+    ? "malformed"
+    : { photo, photoPrint: photoPrint.data };
 }
 
 /** «🛠 Объявление» корня аукциона (PER-765): своё объявление или шаблон. */
@@ -1336,16 +1351,18 @@ type SendChoice = {
   audience: AnnouncementAudience;
   lot?: number | undefined;
   photo?: number | undefined;
+  photoPrint?: string | undefined;
   post?: number | undefined;
 };
 
 function sendPart(choice: SendChoice): string {
-  return `${buttonCodes[choice.button]}:${choice.print}:${refPart(choice.lot)}:${mediaPart(choice.photo, choice.post)}:${audienceCodes[choice.audience]}`;
+  return `${buttonCodes[choice.button]}:${choice.print}:${refPart(choice.lot)}:${mediaPart(choice.photo, choice.post, choice.photoPrint)}:${audienceCodes[choice.audience]}`;
 }
 
 /**
  * «Отправить N»: всё, кроме текста, — его «Отправить» читает из предпросмотра.
- * Своё медиа — номером поста на месте фото (PER-776).
+ * Своё медиа — номером поста на месте фото (PER-776), фото лота — номером с
+ * отпечатком его `photoId` (PER-792).
  */
 export function consoleAnnouncementSendData(
   auction: string,
@@ -1438,7 +1455,15 @@ function parseAnnouncement(
   ) {
     return malformed;
   }
-  const { photo, post } = media;
+  const { photo, photoPrint, post } = media;
+  // Отпечаток фото несёт только «Отправить», и с фото он обязателен: без
+  // него номер снова решал бы, какое фото уйдёт (PER-792).
+  if (
+    (photoPrint !== undefined || photo !== undefined) &&
+    (parts[2] === "ns") !== (photoPrint !== undefined)
+  ) {
+    return malformed;
+  }
   const common = { auction, button, print: print.data, audience };
   switch (parts[2]) {
     case "nb":
@@ -1472,6 +1497,7 @@ function parseAnnouncement(
             ...common,
             ...(lot === undefined ? {} : { lot }),
             ...(photo === undefined ? {} : { photo }),
+            ...(photoPrint === undefined ? {} : { photoPrint }),
             ...(post === undefined ? {} : { post }),
           }
         : malformed;

@@ -600,4 +600,52 @@ describe("auction announcements", () => {
       }),
     ).resolves.toEqual({ kind: "forbidden" });
   });
+
+  // FAILED_PRECONDITION по причине (PER-792): тексты статуса Notifications
+  // (`NotificationsGrpcService`) — исходы шага, незнакомый — прежний отказ.
+  it("tells the hidden auction, the closed one and the gone audience apart", async () => {
+    const refusals: readonly [string, unknown][] = [
+      ["the auction is hidden", { kind: "refused", reason: "auction-hidden" }],
+      [
+        "the auction is cancelled",
+        { kind: "refused", reason: "auction-closed" },
+      ],
+      [
+        "the auction is discarded",
+        { kind: "refused", reason: "auction-closed" },
+      ],
+      [
+        "the meetup is cancelled",
+        { kind: "refused", reason: "auction-closed" },
+      ],
+      [
+        "the audience cannot be narrowed now: raffle registration is closed",
+        { kind: "refused", reason: "audience-gone" },
+      ],
+      ["something new", expect.objectContaining({ kind: "invalid" })],
+    ];
+    for (const [message, expected] of refusals) {
+      const refused = new ConnectError(message, Code.FailedPrecondition);
+      const announcements = createAuctionAnnouncementsAdapter({
+        broadcastAuctionNotice: vi.fn().mockRejectedValue(refused),
+        previewAuctionNotice: vi.fn().mockRejectedValue(refused),
+      } as never);
+
+      await expect(
+        announcements.previewAuctionAnnouncement(
+          person,
+          meetupId,
+          "not-in-raffle",
+        ),
+      ).resolves.toEqual(expected);
+      await expect(
+        announcements.announceAuction(person, {
+          meetupId,
+          announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+          text: "Текст",
+          audience: "not-in-raffle",
+        }),
+      ).resolves.toEqual(expected);
+    }
+  });
 });
