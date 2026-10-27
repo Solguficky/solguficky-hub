@@ -1234,9 +1234,11 @@ function finalSectionShown(console: AuctionConsoleView): boolean {
   );
 }
 
+// Экраны под пультом (PER-802).
 const raffleLabel = "Розыгрыш";
 const finalSectionLabel = "Финал";
 const moreLabel = "Ещё";
+
 // Входы, которые жили в корне аукциона (PER-802): в пульте знак управления не
 // нужен — экран видит только держатель права.
 export const lotSetsLabel = "Сеты";

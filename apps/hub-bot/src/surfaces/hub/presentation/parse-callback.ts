@@ -1195,7 +1195,7 @@ export function consoleRafflePrizeChangeData(auction: string): string {
   return `v1:ac:rn:${auction}`;
 }
 
-/** Экран промо-видео аукциона (PER-774) из корня аукциона. */
+/** Экран промо-видео аукциона (PER-774) из пульта (PER-802). */
 export function consolePromoVideoData(auction: string): string {
   return `v1:ac:vo:${auction}`;
 }

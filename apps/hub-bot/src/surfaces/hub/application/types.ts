@@ -1369,7 +1369,7 @@ export type RafflePrizeChangeRequest =
       opId: string;
     });
 
-// Промо-видео аукциона (PER-774): экран видео из корня аукциона и одна
+// Промо-видео аукциона (PER-774): экран видео из пульта (PER-802) и одна
 // команда — задать, заменить или, без `postId`, убрать. Пост в чате медиа
 // публикует край до команды: это вызов Telegram. Ключ рождается на ответ с
 // видео и на «Да» снятия.
@@ -1893,7 +1893,7 @@ export type ExecuteResult =
       kind: "raffle-prize-photo-outcome";
       auctionId: string;
     } & RafflePrizePhotoOutcome)
-  // Промо-видео (PER-774): экран из корня аукциона и исход команды.
+  // Промо-видео (PER-774): экран из пульта (PER-802) и исход команды.
   | { kind: "promo-video"; auctionId: string; video: boolean }
   | { kind: "promo-video-outcome"; auctionId: string; note: PromoVideoNote }
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
