@@ -10193,7 +10193,7 @@ async function sendAnnouncementPreview(
     await clearCallbackKeyboard(ctx);
   }
   const chatId = ctx.chat?.id ?? 0;
-  const previewId = await sendOrganizerAnnouncement(
+  const sent = await sendOrganizerAnnouncement(
     ctx.api,
     chatId,
     {
@@ -10212,11 +10212,12 @@ async function sendAnnouncementPreview(
     text: preview.text,
     button: preview.button,
     lot: preview.lot,
-    photo: preview.photo?.index,
+    // Фото, которого автор не увидел, получатели тоже не получат.
+    photo: sent.withPhoto ? preview.photo?.index : undefined,
     recipientCount: preview.recipientCount,
   });
   await ctx.reply(confirm.text, {
-    reply_parameters: { message_id: previewId },
+    reply_parameters: { message_id: sent.messageId },
     parse_mode: "HTML",
     ...screenMark(confirm.id),
     reply_markup: confirm.keyboard,

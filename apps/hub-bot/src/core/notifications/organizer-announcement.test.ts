@@ -156,7 +156,12 @@ describe("sendOrganizerAnnouncement", () => {
     const telegram = api();
     const options = { photos, viewerId: "viewer", mark: {} };
 
-    expect(await sendOrganizerAnnouncement(telegram, 1, view, options)).toBe(6);
+    expect(await sendOrganizerAnnouncement(telegram, 1, view, options)).toEqual(
+      {
+        messageId: 6,
+        withPhoto: true,
+      },
+    );
     await sendOrganizerAnnouncement(telegram, 2, view, options);
 
     expect(load).toHaveBeenCalledTimes(1);
@@ -182,7 +187,7 @@ describe("sendOrganizerAnnouncement", () => {
         viewerId: "viewer",
         mark: {},
       }),
-    ).toBe(5);
+    ).toEqual({ messageId: 5, withPhoto: false });
     expect(telegram.sendPhoto).not.toHaveBeenCalled();
     expect(telegram.sendMessage).toHaveBeenCalledWith(1, "Ваза", {
       link_preview_options: { is_disabled: true },
@@ -224,5 +229,36 @@ describe("sendOrganizerAnnouncement", () => {
       }),
     ).rejects.toThrow("network");
     expect(blocked.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("forgets a cached file id Telegram refuses and uploads the photo again", async () => {
+    const load = vi.fn(async () => bytes);
+    const photos = createAnnouncementPhotos(load, () => {});
+    photos.remember(view.photo, "stale");
+    const refused = api(
+      new GrammyError(
+        "bad file id",
+        {
+          ok: false,
+          error_code: 400,
+          description: "Bad Request: wrong file id",
+        },
+        "sendPhoto",
+        {},
+      ),
+    );
+    await sendOrganizerAnnouncement(refused, 1, view, {
+      photos,
+      viewerId: "viewer",
+      mark: {},
+    });
+    expect(load).not.toHaveBeenCalled();
+
+    await sendOrganizerAnnouncement(api(), 2, view, {
+      photos,
+      viewerId: "viewer",
+      mark: {},
+    });
+    expect(load).toHaveBeenCalledOnce();
   });
 });

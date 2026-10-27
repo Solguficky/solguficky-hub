@@ -258,6 +258,9 @@ export type AnnouncementPhotos = {
     viewerId: string,
   ): Promise<InputFile | string | undefined>;
   remember(photo: AnnouncementPhoto, fileId: string): void;
+  // `file_id`, который Telegram не принял, выпадает из кэша: следующий
+  // получатель получит фото загрузкой, а не текст до рестарта.
+  forget(photo: AnnouncementPhoto): void;
 };
 
 const photoCacheLimit = 200;
@@ -300,6 +303,9 @@ export function createAnnouncementPhotos(
         if (oldest !== undefined) cache.delete(oldest);
       }
     },
+    forget(photo) {
+      cache.delete(keyOf(photo));
+    },
   };
 }
 
@@ -326,7 +332,8 @@ export type AnnouncementMarkup = { inline_keyboard: readonly unknown[] };
  * подписью; фото, которое не загрузилось или которое Telegram не принял, —
  * объявление уходит текстом. Отказ отправки текста бросается: его классифицирует
  * вызывающий — доставка своими классами, предпросмотр своим экраном сбоя.
- * Ответ — номер сообщения.
+ * Ответ — номер сообщения и ушло ли фото: предпросмотр без фото не должен
+ * обещать фото рассылке.
  */
 export async function sendOrganizerAnnouncement(
   api: AnnouncementApi,
@@ -339,7 +346,7 @@ export async function sendOrganizerAnnouncement(
     // Метка каталога экранов: линтер test kit видит и эту отправку.
     mark: Record<string, unknown>;
   },
-): Promise<number> {
+): Promise<{ messageId: number; withPhoto: boolean }> {
   const keyboard =
     options.markup === undefined ? {} : { reply_markup: options.markup };
   if (view.photo !== undefined) {
@@ -353,7 +360,7 @@ export async function sendOrganizerAnnouncement(
         });
         const largest = sent.photo?.at(-1)?.file_id;
         if (largest !== undefined) options.photos.remember(view.photo, largest);
-        return sent.message_id;
+        return { messageId: sent.message_id, withPhoto: true };
       } catch (cause) {
         // 400 у загрузки — отказ в самом изображении: объявление уходит
         // текстом. Прочий сбой — сеть, лимит или блокировка — общий исход
@@ -361,6 +368,7 @@ export async function sendOrganizerAnnouncement(
         if (!(cause instanceof GrammyError) || cause.error_code !== 400) {
           throw cause;
         }
+        if (typeof file === "string") options.photos.forget(view.photo);
       }
     }
   }
@@ -369,5 +377,5 @@ export async function sendOrganizerAnnouncement(
     ...keyboard,
     link_preview_options: { is_disabled: true },
   });
-  return sent.message_id;
+  return { messageId: sent.message_id, withPhoto: false };
 }

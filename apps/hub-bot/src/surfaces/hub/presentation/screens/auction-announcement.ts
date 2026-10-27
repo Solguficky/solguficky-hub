@@ -297,9 +297,14 @@ export function announcementButtonScreen(view: {
       consoleAnnouncementButtonData(auction, choice, print, view.lot?.index),
     );
   });
-  keyboard
-    .row()
-    .text(editTextLabel, consoleAnnouncementAskData(auction, "own"));
+  keyboard.row().text(
+    editTextLabel,
+    // Правка текста «Истории лота» остаётся при лоте: иначе «К лоту» и фото
+    // лота пропали бы со следующего шага.
+    view.lot === undefined
+      ? consoleAnnouncementAskData(auction, "own")
+      : consoleAnnouncementAskData(auction, "lot", view.lot.index),
+  );
   return {
     id: "announcement-button",
     text: screenText(
@@ -381,7 +386,9 @@ export function announcementConfirmScreen(view: {
     text: screenText(
       "Отправить объявление?",
       escapeHtml(
-        `Выше — как его увидят. Получат ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
+        view.recipientCount === 0
+          ? "Выше — как его увидят. Сейчас его никто не получит: держателей права ставок нет или все выключили вести об аукционе."
+          : `Выше — как его увидят. Получат ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
       ),
     ),
     keyboard: confirmKeyboard({
@@ -401,7 +408,7 @@ export function announcementConfirmScreen(view: {
   };
 }
 
-/** Исход отправки и устаревшие шаги — свой экран с возвратом в пульт. */
+/** Исход отправки и устаревшие шаги — свой экран с возвратом в корень аукциона. */
 export function announcementOutcomeScreen(
   view: Extract<
     AuctionAnnouncementResult,

@@ -280,7 +280,10 @@ export function availableButtons(
     "auction",
     "lots",
     ...(withLot ? (["lot"] as const) : []),
-    ...(console.week?.raffleClosesAt === undefined
+    // Розыгрыш открывается вместе с онлайн-торгами (ADR-066): до них кнопке
+    // вести некуда.
+    ...(console.week?.raffleClosesAt === undefined ||
+    console.status === "scheduled"
       ? []
       : (["raffle"] as const)),
     ...(console.predictionTally === undefined
