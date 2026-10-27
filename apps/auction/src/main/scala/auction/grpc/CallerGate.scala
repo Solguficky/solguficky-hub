@@ -50,6 +50,8 @@ object MethodAccess {
     "PreviewParticipantRemoval" -> Set(Caller.HubBot),
     "RemoveParticipant" -> Set(Caller.HubBot),
     "LaunchStepWindow" -> Set(Caller.HubBot),
+    "CreateHappyHourPeriod" -> Set(Caller.HubBot),
+    "DeleteHappyHourPeriod" -> Set(Caller.HubBot),
     "FreezeFinalLineup" -> Set(Caller.HubBot),
     "StartFinal" -> Set(Caller.HubBot),
     "StartNextLot" -> Set(Caller.HubBot),

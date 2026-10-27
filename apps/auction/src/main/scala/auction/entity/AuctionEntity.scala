@@ -371,6 +371,20 @@ object AuctionEntity {
       replyTo: ActorRef[Either[LaunchStepWindowRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Создание периода «Счастливых часов» (ADR-047, дополнение 2026-10-27) по часам entity. Ответ — после записи. */
+  final case class CreatePeriod(
+      command: CreateHappyHourPeriod,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[CreateHappyHourPeriodRejected, AuctionAnswer]]
+  ) extends Command
+
+  /** Удаление периода «Счастливых часов» до его начала по часам entity. Ответ — после записи. */
+  final case class DeletePeriod(
+      command: DeleteHappyHourPeriod,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Auction]) extends Command
 
   /** Что аукцион сейчас знает о лотах реестра. Ничего не пишет и лотов не спрашивает. */
@@ -1392,6 +1406,26 @@ object AuctionEntity {
                 state.auction,
                 Auction.decide(state.auction, promote),
                 promote.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
+            case CreatePeriod(create, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, create, clock.instant()),
+                create.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
+            case DeletePeriod(delete, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, delete, clock.instant()),
+                delete.opId,
                 initiator,
                 replyTo,
                 clock,

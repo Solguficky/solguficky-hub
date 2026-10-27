@@ -47,8 +47,17 @@ final case class StoredConfig(
 /** Секция `LotScheduled` и состояния `Scheduled`: `Schedule` снимком. */
 final case class StoredSchedule(startingPrice: StoredMoney, config: StoredConfig)
 
-/** Окно сниженного шага лота: полуинтервал `[from, until)` и сумма шага в нём (ADR-047, дополнение 2026-10-08). */
-final case class StoredStepWindow(from: Instant, until: Instant, step: StoredMoney)
+/**
+ * Окно «Счастливых часов» лота: полуинтервал `[from, until)`, сумма шага и стартовая цена для лота без ставок (ADR-047,
+ * дополнения 2026-10-08 и 2026-10-27), хотя бы одно из двух. `start` добавлен в конец, а `step` стал необязательным:
+ * строка, записанная до них, — окно с одним шагом. Строку без шага образ до дополнения 2026-10-27 не читает.
+ */
+final case class StoredStepWindow(
+    from: Instant,
+    until: Instant,
+    step: Option[StoredMoney],
+    start: Option[StoredMoney] = None
+)
 
 /**
  * `stepWindows` пишется только непустым (ADR-047, дополнение 2026-10-08): строка без него — торги без окна, и так
@@ -726,10 +735,11 @@ object LotJournal {
     Option.when(windows.nonEmpty)(windows.map(storeWindow))
 
   private def storeWindow(window: StepWindow): StoredStepWindow =
-    StoredStepWindow(window.from, window.until, storeMoney(window.step))
+    StoredStepWindow(window.from, window.until, window.step.map(storeMoney), window.start.map(storeMoney))
 
   private def restoreWindow(stored: StoredStepWindow): StepWindow =
-    StepWindow(stored.from, stored.until, restoreMoney(stored.step))
+    if (stored.step.isEmpty && stored.start.isEmpty) corrupted("step window with neither a step nor a starting price")
+    else StepWindow(stored.from, stored.until, stored.step.map(restoreMoney), stored.start.map(restoreMoney))
 
   /**
    * Окна И-21: в валюте лота, `from` раньше `until`, без пересечений. Иное — испорченный журнал, а не торги без окна.
@@ -737,7 +747,7 @@ object LotJournal {
    */
   private def restoreWindows(stored: Option[List[StoredStepWindow]], config: LotConfig): List[StepWindow] = {
     val windows = stored.getOrElse(Nil).map(restoreWindow)
-    if (windows.exists(_.step.currency != config.currency)) corrupted("step window in another currency than the lot")
+    if (windows.exists(!_.in(config.currency))) corrupted("step window in another currency than the lot")
     if (windows.exists(window => !window.from.isBefore(window.until)))
       corrupted("step window that ends before it starts")
     val ordered = windows.sortBy(_.from)

@@ -111,6 +111,9 @@ object AuctionFacts {
       case AuctionEvent.LotLayoutSet(_) => None
       // Промо-видео — показ, а не повод для шины (PER-781): читается вместе с аукционом.
       case AuctionEvent.PromoVideoSet(_) | AuctionEvent.PromoVideoCleared => None
+      // Период «Счастливых часов» сам торгов не меняет: весть о старте идёт по окнам лотов (ADR-047, дополнение
+      // 2026-10-27), а не по периоду.
+      case AuctionEvent.HappyHourPeriodCreated(_) | AuctionEvent.HappyHourPeriodDeleted(_) => None
       // Несобранный сет никому не сообщается (ADR-073, пп. 5–6): факта у него нет.
       case AuctionEvent.LotSetSettled(_, LotSetSettlement.NotCollected) => None
       case AuctionEvent.LotSetSettled(id, LotSetSettlement.Collected(by)) =>

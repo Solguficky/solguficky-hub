@@ -57,7 +57,8 @@
           "step": {
             "minorUnits": 100,
             "currency": "RUB"
-          }
+          },
+          "start": null
         }
       ]
     },

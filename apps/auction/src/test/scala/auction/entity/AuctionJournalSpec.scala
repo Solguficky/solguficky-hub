@@ -237,6 +237,35 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).promoVideo shouldBe None
     }
 
+    "keeps the stored form of the happy hour periods and of a snapshot that holds one equal to their golden files" in {
+      def at(time: String) = java.time.Instant.parse(time)
+      val kept = HappyHourPeriod(HappyHourPeriod.idOf(op(5)), at("2026-10-05T12:00:00Z"), at("2026-10-05T14:00:00Z"))
+      val dropped = HappyHourPeriod(HappyHourPeriod.idOf(op(6)), at("2026-10-06T12:00:00Z"), at("2026-10-06T13:00:00Z"))
+      val created = AuctionEnvelope(5, op(5), AuctionEvent.HappyHourPeriodCreated(kept))
+      val deleted = AuctionEnvelope(7, op(7), AuctionEvent.HappyHourPeriodDeleted(dropped.id))
+      keepsGolden("happy-hour-period-created", stored(created.event, 5))
+      keepsGolden("happy-hour-period-deleted", stored(deleted.event, 7))
+      val after = Auction.replay(
+        prebidding,
+        List(created, AuctionEnvelope(6, op(6), AuctionEvent.HappyHourPeriodCreated(dropped)), deleted)
+      )
+      after.happyHours shouldBe List(kept)
+      keepsGolden("auction-snapshot-happy-hours", AuctionJournal.storeAuction(after, sequence = 7))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 7)) shouldBe after
+    }
+
+    // Снимок, записанный до периодов «Счастливых часов»: аукцион без периодов.
+    "reads a snapshot written before the happy hour periods as an auction without one" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).happyHours shouldBe empty
+    }
+
+    "refuses a happy hour period that ends before it starts instead of recording it" in {
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(5)), decidedAt, decidedAt)
+      val body = stored(AuctionEvent.HappyHourPeriodCreated(period), 5).event
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(body)
+    }
+
     "keeps the stored form of the lot layout and of a snapshot that holds it equal to their golden files" in {
       def section(id: Int, name: String, lots: LotId*) =
         LotSection(LotSectionId(id).get, LotSectionName(name).get, lots.toList)

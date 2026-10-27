@@ -1,6 +1,11 @@
 package auction.grpc
 
 import auction.aggregate.AskRefusal
+import auction.aggregate.HappyHourPeriod
+import auction.aggregate.HappyHourRefusal
+import auction.aggregate.HappyHourDeletionRefusal
+import auction.aggregate.CreateHappyHourPeriodRejected
+import auction.aggregate.DeleteHappyHourPeriodRejected
 import auction.aggregate.AuctionState
 import auction.aggregate.CancellationRefusal
 import auction.aggregate.CloseAuctionLotRejected
@@ -1127,6 +1132,78 @@ object ResponseMapping {
             LaunchRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
           ) =>
         throw new IllegalStateException(s"step window launch answered $denial")
+    }
+  }
+
+  /** Период «Счастливых часов» в форме контракта. */
+  def happyHourPeriod(period: HappyHourPeriod): wire.HappyHourPeriod =
+    wire.HappyHourPeriod(period.id.value.toString, LotValues.instant(period.from), LotValues.instant(period.until))
+
+  /** Создание периода «Счастливых часов»: принятый период отдаётся, как его записал аукцион. */
+  def createHappyHourPeriod(
+      outcome: Either[HappyHourRefusal, HappyHourPeriod]
+  ): Either[Status, wire.CreateHappyHourPeriodResponse] = {
+    import wire.CreateHappyHourPeriodRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.CreateHappyHourPeriodResponse().withRefused(wire.CreateHappyHourPeriodRefusal(reason)))
+    outcome match {
+      case Right(period) => Right(wire.CreateHappyHourPeriodResponse().withAccepted(happyHourPeriod(period)))
+      case Left(HappyHourRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.NotInPrebidding)) =>
+        refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodInPast)) =>
+        refused(Reason.PeriodInPast(wire.HappyHourPeriodInPast()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodEmpty)) =>
+        refused(Reason.PeriodEmpty(wire.HappyHourPeriodEmpty()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodOutsideOnlinePhase)) =>
+        refused(Reason.PeriodOutsideOnlinePhase(wire.HappyHourPeriodOutsideOnlinePhase()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(HappyHourRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(HappyHourRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(HappyHourRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(HappyHourRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(HappyHourRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            HappyHourRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"happy hour period creation answered $denial")
+    }
+  }
+
+  /** Удаление периода «Счастливых часов»: отказы домена — значения ответа, `OpIdTaken` — статус. */
+  def deleteHappyHourPeriod(
+      outcome: Either[HappyHourDeletionRefusal, Unit]
+  ): Either[Status, wire.DeleteHappyHourPeriodResponse] = {
+    import wire.DeleteHappyHourPeriodRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.DeleteHappyHourPeriodResponse().withRefused(wire.DeleteHappyHourPeriodRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.DeleteHappyHourPeriodResponse().withAccepted(wire.HappyHourPeriodDeleted()))
+      case Left(HappyHourDeletionRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.NotInPrebidding)) =>
+        refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.PeriodNotFound)) =>
+        refused(Reason.PeriodNotFound(wire.HappyHourPeriodNotFound()))
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.PeriodStarted)) =>
+        refused(Reason.PeriodStarted(wire.HappyHourPeriodStarted()))
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.AuctionNotFound)) =>
+        Left(auctionNotFound)
+      case Left(HappyHourDeletionRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(HappyHourDeletionRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(HappyHourDeletionRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(HappyHourDeletionRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(HappyHourDeletionRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            HappyHourDeletionRefusal.Denied(
+              denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
+        throw new IllegalStateException(s"happy hour period deletion answered $denial")
     }
   }
 

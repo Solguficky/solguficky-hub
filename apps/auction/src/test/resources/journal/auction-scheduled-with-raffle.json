@@ -57,6 +57,8 @@
     "lotSetSettled": null,
     "paymentInstructions": null,
     "lotLayout": null,
-    "promoVideo": null
+    "promoVideo": null,
+    "happyHourPeriodCreated": null,
+    "happyHourPeriodDeleted": null
   }
 }

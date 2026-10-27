@@ -37,6 +37,8 @@
         }
       ]
     },
-    "promoVideo": null
+    "promoVideo": null,
+    "happyHourPeriodCreated": null,
+    "happyHourPeriodDeleted": null
   }
 }
