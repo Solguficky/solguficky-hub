@@ -5,8 +5,13 @@ using LotStepWindow = Notifications.Auction.LotStepWindow;
 
 namespace Notifications.Reminders;
 
-/// <summary>Лот окна в сообщении о его начале: свой шаг и свой конец.</summary>
-public sealed record StepWindowNoticeLot(Guid LotId, DateTimeOffset Until, Money Step);
+/// <summary>
+/// Лот окна в сообщении о его начале: свой конец и свои условия — шаг окна,
+/// стартовая окна и обычная стартовая рядом с ней. Хотя бы одно из шага и
+/// стартовой задано; стартовая и обычная стартовая — парой.
+/// </summary>
+public sealed record StepWindowNoticeLot(Guid LotId, DateTimeOffset Until, Money? Step, Money? Start = null,
+    Money? RegularStart = null);
 
 /// <summary>
 /// Чистое ядро задания начала окна сниженного шага: когда оно срабатывает и
@@ -38,4 +43,28 @@ public static class StepWindowPlan
     /// срабатывания, сообщения не даёт — человеку нечего с ним делать.
     /// </summary>
     public static bool Running(LotStepWindow window, DateTimeOffset now) => window.Until > now;
+
+    /// <summary>
+    /// Условия, которые окно даёт лоту в момент своего начала (PER-788), или
+    /// <c>null</c>, если не даёт ничего. Стартовая окна действует только у лота
+    /// без ставок (PER-785), поэтому лоту с лидером она не обещается, а лот
+    /// с лидером и окном только стартовой из вести выпадает. Без текущей цены
+    /// реплики сравнить не с чем, и стартовая тоже не обещается: весть не
+    /// говорит «вместо», не зная, вместо чего. Стартовая не ниже обычной — не
+    /// условие, а ошибка соседа, и её весть тоже не обещает.
+    /// </summary>
+    public static StepWindowNoticeLot? Terms(Guid lotId, LotStepWindow window, Guid? leader, Money? price)
+    {
+        var start = window.Start is { } windowStart && leader is null && price is { } regular
+            && regular.Currency == windowStart.Currency && windowStart.MinorUnits < regular.MinorUnits
+            ? windowStart
+            : null;
+
+        if (window.Step is null && start is null)
+        {
+            return null;
+        }
+
+        return new StepWindowNoticeLot(lotId, window.Until, window.Step, start, start is null ? null : price);
+    }
 }

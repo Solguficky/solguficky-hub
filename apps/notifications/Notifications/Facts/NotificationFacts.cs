@@ -495,7 +495,9 @@ public static class NotificationFacts
         {
             LotId = lot.LotId.ToString(),
             Until = Instant(lot.Until),
-            Step = lot.Step.Clone(),
+            Step = lot.Step?.Clone(),
+            Start = lot.Start?.Clone(),
+            RegularStart = lot.RegularStart?.Clone(),
         }));
         notification.StepWindowStarted = body;
 
