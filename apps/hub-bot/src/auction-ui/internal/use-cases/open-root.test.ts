@@ -101,6 +101,57 @@ describe("root prediction results entry", () => {
       },
     ]);
   });
+
+  // Без «Прогнозов» розыгрышу в пару идут «Итоги», а при обоих «Итоги» —
+  // своим рядом под парой (PER-798).
+  it("pairs the raffle with the results only without the predictions", async () => {
+    const finishedWith = (rounds: readonly PredictionRoundView[]) =>
+      openRoot({
+        auction: {
+          ...auctionOf(async () => rounds),
+          getAuction: async () => ({ ...SUMMARY, stage: "finished" }),
+          getRaffle: async () => ({
+            auctionId: AUCTION_ID,
+            status: "drawn",
+            closesAt: "2026-10-29T18:00:00Z",
+            commitment: "ab".repeat(32),
+            beaconRound: 1,
+            registered: false,
+            tickets: [],
+          }),
+        },
+        viewer: VIEWER,
+        auctionId: AUCTION_ID,
+      });
+    const rows = (body: {
+      keyboard: readonly (readonly { action: string }[])[];
+    }) => body.keyboard.map((row) => row.map((button) => button.action));
+
+    expect(rows(await finishedWith([])).slice(0, 2)).toEqual([
+      ["root.lots"],
+      ["root.raffle", "root.prediction-results"],
+    ]);
+    expect(
+      rows(
+        await finishedWith([
+          {
+            round: "catalog",
+            status: "closed",
+            answers: [
+              {
+                nomination: "catalog-total-sales",
+                answer: { kind: "number", value: 120_000 },
+              },
+            ],
+          },
+        ]),
+      ).slice(0, 3),
+    ).toEqual([
+      ["root.lots"],
+      ["root.raffle", "root.predictions"],
+      ["root.prediction-results"],
+    ]);
+  });
 });
 
 describe("root predictions entry", () => {

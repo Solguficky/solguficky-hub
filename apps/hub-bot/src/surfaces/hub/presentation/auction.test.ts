@@ -17,6 +17,7 @@ import {
   type FavoritesPort,
   type LotView,
   type MyInvoicesView,
+  type PredictionRoundView,
   type RaffleView,
 } from "../../../auction-ui/index.js";
 import type {
@@ -185,6 +186,8 @@ function fakeAuction(
     // чтения розыгрыша.
     summary?: Partial<AuctionSummaryView>;
     raffleFails?: true;
+    // Свои раунды прогнозов (ADR-067): по умолчанию — ни одного.
+    predictions?: readonly PredictionRoundView[];
     // Фото приза (PER-773): байты, которые отдаёт `GetRafflePrizePhoto`.
     prizePhoto?: () => Promise<{ content: Uint8Array; version: string }>;
   } = {},
@@ -343,7 +346,7 @@ function fakeAuction(
             };
             return { kind: "accepted" as const };
           },
-          getMyPredictions: async () => [],
+          getMyPredictions: async () => options.predictions ?? [],
           getPredictionResults: async () => ({ kind: "after-final" as const }),
           getDayChronicle: async () => {
             if (options.chronicle === undefined) throw new Error("not used");
@@ -1871,6 +1874,33 @@ describe("raffle among the participants", () => {
     tickets: [],
   };
 
+  // «🏷️ Лоты» — своим рядом, «Розыгрыш» и «Прогнозы» — парой под ним
+  // (решение владельца по прогону stage 27.10, PER-798).
+  it("puts the raffle and the predictions in one row under the lots", async () => {
+    const predictions: readonly PredictionRoundView[] = [
+      { round: "catalog", status: "open", answers: [] },
+    ];
+    const both = harness(
+      "member",
+      fakeAuction({ existing: true, raffle: openRaffle, predictions }),
+    );
+    await both.bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(both.calls)).slice(0, 2)).toEqual([
+      ["🏷️ Лоты"],
+      ["Розыгрыш", "Прогнозы"],
+    ]);
+
+    const predictionsOnly = harness(
+      "member",
+      fakeAuction({ existing: true, predictions }),
+    );
+    await predictionsOnly.bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(predictionsOnly.calls)).slice(0, 2)).toEqual([
+      ["🏷️ Лоты"],
+      ["Прогнозы"],
+    ]);
+  });
+
   it("registers from the auction root and shows the result with the recomputation", async () => {
     const auction = fakeAuction({ existing: true, raffle: openRaffle });
     // Пояс сообщества задан явно: момент жеребьёвки проверяется по нему (PER-641).
@@ -1879,8 +1909,11 @@ describe("raffle among the participants", () => {
     });
 
     await bot.handleUpdate(press(rootData));
-    // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).
-    expect(labels(lastScreen(calls))[0]).toEqual(["🏷️ Лоты", "Розыгрыш"]);
+    // Без прогнозов «Розыгрыш» — своим рядом под «Лотами» (PER-798).
+    expect(labels(lastScreen(calls)).slice(0, 2)).toEqual([
+      ["🏷️ Лоты"],
+      ["Розыгрыш"],
+    ]);
     const raffleData = data(lastScreen(calls), "Розыгрыш");
     expect(raffleData).toBeDefined();
     await bot.handleUpdate(press(raffleData ?? ""));

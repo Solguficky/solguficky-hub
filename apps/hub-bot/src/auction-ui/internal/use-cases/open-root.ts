@@ -52,6 +52,53 @@ export async function openRoot(input: {
       keyboard: [],
     };
   }
+  const raffleButtons =
+    raffle !== undefined
+      ? [
+          {
+            action: "root.raffle" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: input.auctionId,
+            }),
+          },
+        ]
+      : [];
+  const predictionsButtons =
+    predictionRound !== undefined
+      ? [
+          {
+            action: "root.predictions" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "prediction",
+              auctionId: input.auctionId,
+              round: predictionRound,
+            }),
+          },
+        ]
+      : [];
+  const resultsButtons =
+    auction.stage === "finished"
+      ? [
+          {
+            action: "root.prediction-results" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "prediction-results",
+              auctionId: input.auctionId,
+            }),
+          },
+        ]
+      : [];
+  // «Розыгрыш» и «Прогнозы» — парой под «Лотами» (решение владельца по
+  // прогону stage 27.10, PER-798; пересматривает №66 прогона 14.10): без
+  // «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему пары не нашлось, —
+  // своим рядом.
+  const hasPredictions = predictionsButtons.length > 0;
+  const paired = hasPredictions ? predictionsButtons : resultsButtons;
+  const rest = hasPredictions ? resultsButtons : [];
+  const raffleAndPredictionRows = [[...raffleButtons, ...paired], rest].filter(
+    (row) => row.length > 0,
+  );
   return {
     blocks: [
       {
@@ -66,8 +113,7 @@ export async function openRoot(input: {
       },
     ],
     keyboard: [
-      // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
-      // №66; пересматривает «Розыгрыш своим рядом» PER-669).
+      // «🏷️ Лоты» — главный вход, своим первым рядом (PER-798).
       [
         {
           action: "root.lots",
@@ -77,45 +123,8 @@ export async function openRoot(input: {
             page: 0,
           }),
         },
-        ...(raffle !== undefined
-          ? [
-              {
-                action: "root.raffle" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "raffle",
-                  auctionId: input.auctionId,
-                }),
-              },
-            ]
-          : []),
       ],
-      ...(predictionRound === undefined
-        ? []
-        : [
-            [
-              {
-                action: "root.predictions" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "prediction",
-                  auctionId: input.auctionId,
-                  round: predictionRound,
-                }),
-              },
-            ],
-          ]),
-      ...(auction.stage === "finished"
-        ? [
-            [
-              {
-                action: "root.prediction-results" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "prediction-results",
-                  auctionId: input.auctionId,
-                }),
-              },
-            ],
-          ]
-        : []),
+      ...raffleAndPredictionRows,
       // Хроники дня (PER-725): сводка последних суток, пока идёт онлайн-неделя
       // — от открытия торгов до закрытия последнего лота по дедлайну. Читает её
       // только держатель `place_bids`: держатель одного `run_auctions`, которого

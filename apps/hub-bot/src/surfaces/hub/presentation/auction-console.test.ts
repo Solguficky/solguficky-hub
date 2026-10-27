@@ -1541,9 +1541,9 @@ describe("entry into the auction console", () => {
     }
   });
 
-  // Розыгрыш открыт с онлайн-недели: он встаёт в корне одним рядом с «Лотами»
-  // (прогон 14.10, №66), и «🛠 Пульт» ряд с ним не делит (PER-669).
-  it("puts the raffle next to the lots apart from the console once the online week is open", async () => {
+  // Розыгрыш открыт с онлайн-недели: без прогнозов он встаёт в корне своим
+  // рядом под «Лотами» (PER-798), и «🛠 Пульт» ряд с ним не делит (PER-669).
+  it("puts the raffle under the lots apart from the console once the online week is open", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       lots: [vase],
@@ -1552,8 +1552,9 @@ describe("entry into the auction console", () => {
     const admin = harness("admin", auction);
     await admin.bot.init();
     await admin.bot.handleUpdate(press(rootData));
-    expect(labels(last(admin.calls)).slice(0, 3)).toEqual([
-      ["🏷️ Лоты", "Розыгрыш"],
+    expect(labels(last(admin.calls)).slice(0, 4)).toEqual([
+      ["🏷️ Лоты"],
+      ["Розыгрыш"],
       ["Правила и FAQ"],
       ["🛠 Пульт", "🛠 Сеты"],
     ]);
@@ -1561,8 +1562,9 @@ describe("entry into the auction console", () => {
     const member = harness("member", auction);
     await member.bot.init();
     await member.bot.handleUpdate(press(rootData));
-    expect(labels(last(member.calls)).slice(0, 2)).toEqual([
-      ["🏷️ Лоты", "Розыгрыш"],
+    expect(labels(last(member.calls)).slice(0, 3)).toEqual([
+      ["🏷️ Лоты"],
+      ["Розыгрыш"],
       ["Правила и FAQ"],
     ]);
   });
@@ -2263,7 +2265,7 @@ describe("raffle of the week", () => {
     await next((history) => press(dataOf(question(history).payload, "Отмена")));
 
     // Неделя с моментом после открытия торгов ставит «Розыгрыш» в корень
-    // аукциона парой к «Пульту» (PER-605).
+    // аукциона (PER-605) — без прогнозов своим рядом под «Лотами» (PER-798).
     await next(() => press(consoleData));
     await next((history) =>
       press(dataOf(last(history), "Открыть онлайн-неделю")),
@@ -2272,7 +2274,7 @@ describe("raffle of the week", () => {
       press(dataOf(last(history), "✔️ Да, открыть неделю")),
     );
     await next(() => press(rootData));
-    expect(labels(last(calls))[0]).toEqual(["🏷️ Лоты", "Розыгрыш"]);
+    expect(labels(last(calls)).slice(0, 2)).toEqual([["🏷️ Лоты"], ["Розыгрыш"]]);
   });
 
   it("keeps the moment over new dates and the final and names it when new dates cut it off", async () => {

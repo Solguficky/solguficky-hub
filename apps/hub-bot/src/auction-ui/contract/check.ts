@@ -3537,6 +3537,14 @@ const rootLotsRow = [
   },
 ];
 
+const rootRaffleButton = {
+  action: "root.raffle" as const,
+  callbackData: encodeAuctionCallback({
+    kind: "raffle",
+    auctionId: CONTRACT_AUCTION_ID,
+  }),
+};
+
 const ROOT_CASES: readonly AuctionContractCase[] = [
   {
     intent: "root: with a raffle",
@@ -3554,19 +3562,11 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
           raffleClosesAt: OPEN_RAFFLE.closesAt,
         },
       ],
-      // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).
+      // «Лоты» своим рядом, «Розыгрыш» и «Прогнозы» — парой под ним
+      // (PER-798).
       keyboard: [
-        [
-          ...rootLotsRow,
-          {
-            action: "root.raffle",
-            callbackData: encodeAuctionCallback({
-              kind: "raffle",
-              auctionId: CONTRACT_AUCTION_ID,
-            }),
-          },
-        ],
-        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootLotsRow,
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
         rootChronicleRow,
       ],
     },
@@ -3591,17 +3591,8 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [
-        [
-          ...rootLotsRow,
-          {
-            action: "root.raffle",
-            callbackData: encodeAuctionCallback({
-              kind: "raffle",
-              auctionId: CONTRACT_AUCTION_ID,
-            }),
-          },
-        ],
-        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootLotsRow,
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
       ],
     },
   },
@@ -5863,17 +5854,8 @@ const PROMO_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [
-        [
-          ...rootLotsRow,
-          {
-            action: "root.raffle",
-            callbackData: encodeAuctionCallback({
-              kind: "raffle",
-              auctionId: CONTRACT_AUCTION_ID,
-            }),
-          },
-        ],
-        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootLotsRow,
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
         rootChronicleRow,
         [{ action: "root.promo", callbackData: promoCallback() }],
       ],
@@ -5894,17 +5876,8 @@ const PROMO_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [
-        [
-          ...rootLotsRow,
-          {
-            action: "root.raffle",
-            callbackData: encodeAuctionCallback({
-              kind: "raffle",
-              auctionId: CONTRACT_AUCTION_ID,
-            }),
-          },
-        ],
-        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootLotsRow,
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
         rootChronicleRow,
       ],
     },
