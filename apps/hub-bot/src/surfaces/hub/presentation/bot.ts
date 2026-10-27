@@ -1742,6 +1742,7 @@ async function handleMessage(
         ctx,
         runtime,
         questions,
+        photos.albums,
         pending,
         replyId,
         answered,
@@ -10103,6 +10104,7 @@ async function handleAnnouncementMedia(
   ctx: UpdateContext,
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
+  albums: SeenAlbums,
   pending: PendingConsoleAnnouncementMedia,
   replyId: number,
   answered: (result?: ExecuteResult) => Promise<void>,
@@ -10174,6 +10176,11 @@ async function handleAnnouncementMedia(
       identity_id: person.identityId,
     };
   }
+  // Альбом приходит сообщением на каждый снимок, а объявление несёт одно
+  // медиа: берётся первый снимок, остальные пропускает проверка альбомов в
+  // начале `handleMessage`, и второго поста в канале нет.
+  const album = ctx.message?.media_group_id;
+  if (album !== undefined) albums.remember(album);
   const media = runtime.mediaChat;
   const published =
     media === undefined || !media.enabled

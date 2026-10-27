@@ -135,7 +135,9 @@ export const auctionSurface: SurfaceDefinition = ({
   const sender = createNotificationSender(
     createNotificationApi(config.token, config.environment),
     announcementPhotos,
-    createMediaChat({ channelId: config.mediaChannelId, logger }),
+    config.mediaChannelId === undefined
+      ? undefined
+      : createMediaChat({ channelId: config.mediaChannelId, logger }),
   );
   return {
     ok: true,

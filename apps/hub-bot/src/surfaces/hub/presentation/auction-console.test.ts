@@ -7550,6 +7550,42 @@ describe("auction announcement", () => {
     expect(copies(calls)).toEqual([]);
   });
 
+  it("publishes one post for an album sent as the answer", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, announcements(), calls, true, {});
+    await hub.init();
+    const text = "Альбом.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["auction"],
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+    const first = reply(calls, { ...photo, media_group_id: "album-1" });
+    const second = reply(calls, { ...photo, media_group_id: "album-1" });
+    (second.message as { message_id: number }).message_id = 11;
+    await hub.handleUpdate(first);
+    await hub.handleUpdate(second);
+
+    const published = copies(calls).filter(
+      (copy) => copy.chat_id === mediaChannelId,
+    );
+    expect(published).toHaveLength(1);
+    expect(published[0]?.message_id).toBe(10);
+  });
+
   it("sends nothing and says so when the media chat refuses the post", async () => {
     const auction = fakeAuction({
       status: "prebidding",

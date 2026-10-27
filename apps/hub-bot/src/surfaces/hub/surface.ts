@@ -331,7 +331,9 @@ export const hubSurface: SurfaceDefinition = ({
     today,
     communityTimeZone,
     announcementPhotos,
-    mediaChat,
+    // Выключенный чат медиа не пишет отказ на каждого получателя: пост тогда
+    // уходит текстом молча.
+    mediaChat.enabled ? mediaChat : undefined,
   );
   return {
     ok: true,
