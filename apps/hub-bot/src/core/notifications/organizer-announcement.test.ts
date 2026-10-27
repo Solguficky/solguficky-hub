@@ -195,6 +195,7 @@ describe("sendOrganizerAnnouncement", () => {
       {
         messageId: 6,
         withPhoto: true,
+        withPost: false,
       },
     );
     await sendOrganizerAnnouncement(telegram, 2, view, options);
@@ -222,7 +223,7 @@ describe("sendOrganizerAnnouncement", () => {
         viewerId: "viewer",
         mark: {},
       }),
-    ).toEqual({ messageId: 5, withPhoto: false });
+    ).toEqual({ messageId: 5, withPhoto: false, withPost: false });
     expect(telegram.sendPhoto).not.toHaveBeenCalled();
     expect(telegram.sendMessage).toHaveBeenCalledWith(1, "Ваза", {
       link_preview_options: { is_disabled: true },
@@ -318,7 +319,7 @@ describe("sendOrganizerAnnouncement", () => {
           mark: { tag: "notification" },
         },
       ),
-    ).toEqual({ messageId: 7, withPhoto: false });
+    ).toEqual({ messageId: 7, withPhoto: false, withPost: true });
     expect(telegram.copyMessage).toHaveBeenCalledWith(1, -1001, 42, {
       tag: "notification",
       caption: "Ваза",
@@ -357,7 +358,7 @@ describe("sendOrganizerAnnouncement", () => {
           mark: {},
         },
       ),
-    ).toEqual({ messageId: 5, withPhoto: false });
+    ).toEqual({ messageId: 5, withPhoto: false, withPost: false });
     expect(telegram.sendMessage).toHaveBeenCalledWith(1, "Ваза", {
       link_preview_options: { is_disabled: true },
     });

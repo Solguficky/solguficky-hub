@@ -489,7 +489,7 @@ describe("meetup card extensions entry", () => {
     // Кнопка без состояния, а состояние аукциона — строка текста (PER-594):
     // карточка читает аукцион один раз.
     expect(card.rich_message?.html ?? card.text).toContain(
-      "🔨 Аукцион: скоро старт",
+      "🏷️ Аукцион: скоро старт",
     );
     expect(auction.lookups).toEqual([meetupId]);
   });
@@ -505,12 +505,12 @@ describe("meetup card extensions entry", () => {
         closesAt: "2026-10-29T18:00:00Z",
         final: false,
       },
-      /\n\n🔨 Аукцион: идут онлайн-торги до 29 октября( 2026)?, чт, \d\d:00\n\n/,
+      /\n\n🏷️ Аукцион: идут онлайн-торги до 29 октября( 2026)?, чт, \d\d:00\n\n/,
     ],
     [
       "finished",
       { auctionId, stage: "finished" as const, final: false },
-      /\n\n🔨 Аукцион: завершён\n\n/,
+      /\n\n🏷️ Аукцион: завершён\n\n/,
     ],
   ])("names the %s auction on the meetup card", async (_, summary, line) => {
     const auction = fakeAuction({
@@ -601,8 +601,8 @@ describe("meetup extensions menu", () => {
     const menu = lastScreen(calls);
     expect(menu.text).toMatch(/^<b>Расширения<\/b>\n<i>Ярмарка<\/i>\n\n/);
     expect(menu.text).toContain("<i>Ярмарка</i>");
-    expect(labels(menu)).toEqual([["🔨 Аукцион"], ["‹ Сходка"]]);
-    expect(data(menu, "🔨 Аукцион")).toBe(rootData);
+    expect(labels(menu)).toEqual([["🏷️ Аукцион"], ["‹ Сходка"]]);
+    expect(data(menu, "🏷️ Аукцион")).toBe(rootData);
     expect(data(menu, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
   });
 
@@ -716,11 +716,11 @@ describe("enabling the auction", () => {
     // Первый шаг после включения — лот (прогон 12.10, №16).
     expect(labels(outcome)).toEqual([
       ["🛠 Добавить лот"],
-      ["🔨 Аукцион"],
+      ["🏷️ Аукцион"],
       ["‹ Расширения"],
     ]);
     expect(data(outcome, "🛠 Добавить лот")).toMatch(/^v1:lot:new:[\w-]+$/);
-    expect(data(outcome, "🔨 Аукцион")).toBe(rootData);
+    expect(data(outcome, "🏷️ Аукцион")).toBe(rootData);
     expect(data(outcome, "‹ Расширения")).toBe(extensionsData);
     expect(records.at(-1)?.fields).toMatchObject({
       result: "ok",
@@ -943,14 +943,14 @@ describe("auction root and the way back", () => {
     expect(root.text).toContain("📅 Когда: онлайн-торги с ");
     expect(root.text).toContain("Финал: в зале");
     expect(labels(root)).toEqual([
-      ["🔨 Лоты"],
+      ["🏷️ Лоты"],
       ["Правила и FAQ"],
       ["‹ Расширения"],
     ]);
     expect(data(root, "‹ Расширения")).toBe(extensionsData);
     expect(root.text).not.toContain("скрыт от участников");
 
-    await bot.handleUpdate(press(data(root, "🔨 Лоты") ?? ""));
+    await bot.handleUpdate(press(data(root, "🏷️ Лоты") ?? ""));
     const feed = lastScreen(calls);
     expect(feed.text).toMatch(/^<b>Лоты<\/b>/);
     // Лента — просто список лотов: входов корня в ней нет.
@@ -1019,7 +1019,7 @@ describe("auction root and the way back", () => {
     await bot.init();
     await bot.handleUpdate(press(rootData));
     expect(labels(lastScreen(calls))).toEqual([
-      ["🔨 Лоты"],
+      ["🏷️ Лоты"],
       ["Правила и FAQ"],
       ["🛠 Пульт", "🛠 Сеты"],
       // Объявление аукциона (PER-765) — своим рядом, пока аукцион виден.
@@ -1783,7 +1783,7 @@ describe("raffle among the participants", () => {
 
     await bot.handleUpdate(press(rootData));
     // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).
-    expect(labels(lastScreen(calls))[0]).toEqual(["🔨 Лоты", "Розыгрыш"]);
+    expect(labels(lastScreen(calls))[0]).toEqual(["🏷️ Лоты", "Розыгрыш"]);
     const raffleData = data(lastScreen(calls), "Розыгрыш");
     expect(raffleData).toBeDefined();
     await bot.handleUpdate(press(raffleData ?? ""));
@@ -2348,22 +2348,22 @@ describe("events of the hub", () => {
       ["Настройки", "Помощь"],
     ]);
     expect(menu.text).toContain("Идут события:");
-    expect(menu.text).toContain("🔨 Аукцион: идут онлайн-торги до");
+    expect(menu.text).toContain("🏷️ Аукцион: идут онлайн-торги до");
 
     await bot.handleUpdate(press(eventsData));
     const events = lastScreen(calls);
-    expect(labels(events)).toEqual([["🔨 Аукцион"], ["‹ Меню"]]);
-    expect(data(events, "🔨 Аукцион")).toBe(
+    expect(labels(events)).toEqual([["🏷️ Аукцион"], ["‹ Меню"]]);
+    expect(data(events, "🏷️ Аукцион")).toBe(
       rootData.replace("v1:auc:", "v1:aue:"),
     );
 
-    await bot.handleUpdate(press(data(events, "🔨 Аукцион") ?? ""));
+    await bot.handleUpdate(press(data(events, "🏷️ Аукцион") ?? ""));
     const root = lastScreen(calls);
     expect(labels(root).at(-1)).toEqual(["‹ События"]);
     expect(data(root, "‹ События")).toBe(eventsData);
     // Кнопки дерева несут вход: лента возвращает в корень, а корень — в
     // «События».
-    const lots = data(root, "🔨 Лоты") ?? "";
+    const lots = data(root, "🏷️ Лоты") ?? "";
     expect(lots.startsWith("v1:aue:")).toBe(true);
     await bot.handleUpdate(press(lots));
     const feed = lastScreen(calls);
@@ -2465,7 +2465,7 @@ describe("events of the hub", () => {
     await bot.init();
     await bot.handleUpdate(press(menuData));
     const menu = lastScreen(calls).text;
-    expect(menu).toContain("🔨 Аукцион: идёт финал");
+    expect(menu).toContain("🏷️ Аукцион: идёт финал");
     expect(menu).not.toContain(" · ");
   });
 
@@ -2496,7 +2496,7 @@ describe("events of the hub", () => {
     await bot.handleUpdate(press(rootData));
     const root = lastScreen(calls);
     expect(labels(root).at(-1)).toEqual(["‹ Расширения"]);
-    expect((data(root, "🔨 Лоты") ?? "").startsWith("v1:auc:")).toBe(true);
+    expect((data(root, "🏷️ Лоты") ?? "").startsWith("v1:auc:")).toBe(true);
   });
 
   it("hides the events from the menu while nothing goes and keeps /events with an empty state", async () => {
