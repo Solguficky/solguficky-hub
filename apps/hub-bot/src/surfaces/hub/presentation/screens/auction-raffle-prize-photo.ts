@@ -9,7 +9,7 @@ import {
   consoleRafflePrizePhotoData,
   consoleRafflePrizePhotoRemoveConfirmData,
   consoleRafflePrizePhotoRemoveData,
-  consoleViewData,
+  consoleRaffleScreenData,
 } from "../parse-callback.js";
 import {
   confirmKeyboard,
@@ -35,8 +35,12 @@ const sendLabel = "Прислать фото";
 const replaceLabel = "Заменить фото";
 const removePhotoLabel = removeLabel("Убрать фото");
 
-function toConsole(auctionId: string): Parent {
-  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
+// Вход — с «Розыгрыша» пульта (PER-802), и возврат — туда же.
+function toRaffle(auctionId: string): Parent {
+  return {
+    name: "Розыгрыш",
+    data: consoleRaffleScreenData(uuidToToken(auctionId)),
+  };
 }
 
 /**
@@ -69,7 +73,7 @@ export function rafflePrizePhotoScreen(view: {
       ),
       escapeHtml("Фото меняется, пока у розыгрыша нет итога."),
     ),
-    keyboard: withNav(keyboard, toConsole(view.auctionId)),
+    keyboard: withNav(keyboard, toRaffle(view.auctionId)),
     format: "HTML",
   };
 }
@@ -147,7 +151,7 @@ export function rafflePrizePhotoOutcomeScreen(
   return {
     id: "outcome",
     text: outcomeText(noteText(view)),
-    keyboard: withNav(new InlineKeyboard(), toConsole(view.auctionId)),
+    keyboard: withNav(new InlineKeyboard(), toRaffle(view.auctionId)),
     format: "HTML",
   };
 }

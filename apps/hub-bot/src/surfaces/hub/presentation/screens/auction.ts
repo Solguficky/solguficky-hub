@@ -72,16 +72,11 @@ import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
-  consoleAnnouncementData,
-  consolePromoVideoData,
-  consoleSetsData,
   consoleViewData,
-  floorData,
   lotFormData,
   lotNewData,
   removalData,
 } from "../parse-callback.js";
-import { announcementLabel } from "./auction-announcement.js";
 import {
   acceptedScreen,
   answerRefusedScreen,
@@ -105,7 +100,7 @@ import {
   predictionNumberQuestionScreen,
   predictionScreen,
 } from "./auction-predictions.js";
-import { auctionPromoScreen, promoVideoLabel } from "./auction-promo.js";
+import { auctionPromoScreen } from "./auction-promo.js";
 import {
   raffleAnswerRefusedScreen,
   raffleNameChoiceScreen,
@@ -214,11 +209,6 @@ const editLotLabel = adminLabel("Изменить лот");
 
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
 const consoleLabel = adminLabel("Пульт");
-// «Ставки зала» помощника (PER-565) — рядом с пультом, пока идёт финал.
-export const floorLabel = adminLabel("Ставки зала");
-// Сеты лотов (PER-509) — рядом с пультом; в финале пара пульта занята
-// «Ставками зала», и сеты встают своим рядом.
-export const lotSetsLabel = adminLabel("Сеты");
 const favoritesLabel = "Избранное";
 
 /**
@@ -499,7 +489,7 @@ const mineOptions = {
 
 /**
  * Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
- * «Лоты», «Пульт» и «Сеты» по праву и «Розыгрыш», пока он есть, «Избранное» тела у
+ * «Лоты», «Пульт» по праву и «Розыгрыш», пока он есть, «Избранное» тела у
  * процесса с Notifications и «Правила и FAQ». Возврат — в меню «Расширения»
  * сходки.
  */
@@ -586,31 +576,10 @@ function rootScreen(
     auctionFaqData(token, view.entry === "events"),
   );
   // «🛠 Пульт» — своим рядом над возвратом (PER-669): действие управления не
-  // делит ряд с кнопками участника.
+  // делит ряд с кнопками участника. Это единственный вход управления в корне
+  // (PER-802): сеты, объявление, промо-видео и ставки зала — в пульте.
   if (view.canManage === true) {
     nextRow(keyboard).text(consoleLabel, consoleViewData(token));
-    // Ставки зала заносят в живом финале (ADR-070 п. 4): вход — парой с
-    // пультом ведущего, пока состав объявлен или финал идёт.
-    if (auction.stage === "lineup-frozen" || auction.stage === "in-final") {
-      keyboard.text(floorLabel, floorData(token));
-      nextRow(keyboard);
-    }
-    keyboard.text(lotSetsLabel, consoleSetsData(token));
-    // Объявление аукциона (PER-765) — своим рядом под пультом, пока
-    // участники видят аукцион и он не кончился: в пульте места нет, он в
-    // потолке рядов.
-    if (
-      (auction.stage === "scheduled" && auction.hidden !== true) ||
-      auction.stage === "prebidding" ||
-      auction.stage === "on-break"
-    ) {
-      nextRow(keyboard).text(announcementLabel, consoleAnnouncementData(token));
-    }
-    // Промо-видео (PER-774) — своим рядом под объявлением, пока есть чат
-    // медиа ботов: в пульте места нет. У отменённого аукциона видео не задать.
-    if (view.media === true && auction.stage !== "cancelled") {
-      nextRow(keyboard).text(promoVideoLabel, consolePromoVideoData(token));
-    }
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);

@@ -100,6 +100,8 @@ const today = () => ({ year: 2026, month: 10, day: 6 });
 const now = new Date("2026-10-06T09:00:00Z");
 
 const consoleData = `v1:ac:v:${auctionToken}`;
+// «Розыгрыш» под пультом (PER-802).
+const raffleData = `v1:ac:rs:${auctionToken}`;
 
 // Права части набора `admin` (ADR-070): помощник ведущего с одной записью
 // run_auctions и держатель права вести сходки без неё.
@@ -1342,7 +1344,7 @@ function harness(
   rights?: readonly AccessRight[],
   auctionBotUsername?: string,
   // Живой пульт (PER-566): поток, темп правок и ответы Telegram на правки.
-  extra: Pick<HarnessOptions, "live" | "respond" | "files"> = {},
+  extra: Pick<HarnessOptions, "live" | "respond" | "files" | "mediaChat"> = {},
 ) {
   return createHarness(
     identity(holder, rights),
@@ -1522,16 +1524,64 @@ describe("entry into the auction console", () => {
     expect(labels(root).slice(0, 3)).toEqual([
       ["🏷️ Лоты"],
       ["Правила и FAQ"],
-      ["🛠 Пульт", "🛠 Сеты"],
+      ["🛠 Пульт"],
     ]);
     expect(dataOf(root, "🛠 Пульт")).toBe(consoleData);
-    expect(dataOf(root, "🛠 Сеты")).toBe(`v1:ac:t:${auctionToken}`);
 
     const member = harness("member", auction);
     await member.bot.init();
     await member.bot.handleUpdate(press(rootData));
     expect(JSON.stringify(shown(member.calls))).not.toContain("🛠 Пульт");
-    expect(JSON.stringify(shown(member.calls))).not.toContain("🛠 Сеты");
+  });
+
+  // Корень администратора — ряды участника и один «🛠 Пульт» над возвратом
+  // (PER-802): сеты, объявление, промо-видео и ставки зала — в пульте, на
+  // любой стадии и при чате медиа.
+  it("gives the administrator the rows of a member and one console row at every stage", async () => {
+    for (const status of [
+      "draft",
+      "scheduled",
+      "prebidding",
+      "break",
+      "lineup-frozen",
+      "final",
+      "finished",
+    ] as const) {
+      const auction = fakeAuction({
+        status,
+        lots: [vase],
+        ...(status === "draft" || status === "scheduled"
+          ? {}
+          : { raffle: true as const }),
+        promoVideo: 77,
+      });
+      const media = {
+        mediaChat: createMediaChat({
+          channelId: -100500,
+          logger: { warn: () => {} },
+        }),
+      };
+      const admin = harness("admin", auction, [], undefined, undefined, media);
+      await admin.bot.init();
+      await admin.bot.handleUpdate(press(rootData));
+      const member = harness(
+        "member",
+        auction,
+        [],
+        undefined,
+        undefined,
+        media,
+      );
+      await member.bot.init();
+      await member.bot.handleUpdate(press(rootData));
+      const own = labels(last(admin.calls));
+      const theirs = labels(last(member.calls));
+      expect(own.slice(0, -1)).toEqual([...theirs.slice(0, -1), ["🛠 Пульт"]]);
+      expect(own.at(-1)).toEqual(theirs.at(-1));
+      expect(JSON.stringify(own)).not.toMatch(
+        /Сеты|Объявление|Промо-видео|Ставки зала/,
+      );
+    }
   });
 
   // «Добавить лот» — пока онлайн-неделя не открыта (PER-468): после старта
@@ -1562,7 +1612,7 @@ describe("entry into the auction console", () => {
       ["🏷️ Лоты"],
       ["Розыгрыш"],
       ["Правила и FAQ"],
-      ["🛠 Пульт", "🛠 Сеты"],
+      ["🛠 Пульт"],
     ]);
 
     const member = harness("member", auction);
@@ -1725,7 +1775,9 @@ describe("entry into the auction console", () => {
 });
 
 describe("auction console", () => {
-  it("sorts all lots by the selected metric and toggles the active direction", async () => {
+  // Сортировка — одна кнопка-переключатель по кругу «ставки → люди → рост»
+  // по убыванию (PER-802); возрастание открывает старая кнопка пульта.
+  it("sorts all lots by the metric of one toggle and keeps an old ascending button", async () => {
     const fewerParticipants: ConsoleLot = {
       ...vase,
       uniqueParticipantCount: 1,
@@ -1763,20 +1815,22 @@ describe("auction console", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
-    await bot.handleUpdate(press(dataOf(last(calls), "Люди")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Сортировка: ставки ↓")));
     const descending = plain(last(calls));
     expect(descending.indexOf("Кружка")).toBeLessThan(
       descending.indexOf("Ваза"),
     );
     expect(descending).toContain("Сортировка: по участникам ↓.");
 
-    await bot.handleUpdate(press(dataOf(last(calls), "Люди")));
+    // Старая кнопка «Люди» с возрастанием из прежнего пульта.
+    await bot.handleUpdate(press(`${consoleData}:0:pa`));
     const ascending = plain(last(calls));
     expect(ascending.indexOf("Ваза")).toBeLessThan(ascending.indexOf("Кружка"));
     expect(ascending).toContain("Сортировка: по участникам ↑.");
 
-    await bot.handleUpdate(press(dataOf(last(calls), "Рост")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Сортировка: люди ↑")));
     const growth = plain(last(calls));
+    expect(growth).toContain("Сортировка: по росту цены ↓.");
     expect(growth.indexOf("Ваза")).toBeLessThan(growth.indexOf("Кружка"));
     expect(growth.indexOf("Кружка")).toBeLessThan(
       growth.indexOf("Без роста A"),
@@ -1809,7 +1863,7 @@ describe("auction console", () => {
     await bot.handleUpdate(press(dataOf(last(calls), "→")));
 
     expect(last(calls).text).toContain("Пульт · 2 из 2");
-    await bot.handleUpdate(press(dataOf(last(calls), "Люди")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Сортировка: ставки ↓")));
 
     expect(last(calls).text).toContain("Пульт · 2 из 2");
     expect(plain(last(calls))).toContain("Сортировка: по участникам ↓.");
@@ -1889,11 +1943,12 @@ describe("auction console", () => {
       ].join("\n\n"),
     );
     expect(labels(screen)).toEqual([
-      ["Ставки", "Люди", "Рост"],
-      ["Время финала"],
-      ["Счастливые часы", "Сводка дня", "Отменить аукцион", "Порядок"],
-      ["В финал · Ваза"],
-      ["Снять из финала · Кружка"],
+      ["Сортировка: ставки ↓"],
+      ["Счастливые часы", "Сводка дня"],
+      ["Объявление"],
+      ["Финал"],
+      ["Сеты", "Порядок"],
+      ["Ещё"],
       ["‹ Аукцион"],
     ]);
     expect(dataOf(screen, "‹ Аукцион")).toBe(rootData);
@@ -1951,6 +2006,8 @@ describe("auction console", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Финал")));
+    expect(plain(last(calls))).toContain("В финал отмечено: 0 из 1.");
 
     await bot.handleUpdate(press(dataOf(last(calls), "В финал · Ваза")));
 
@@ -1960,15 +2017,13 @@ describe("auction console", () => {
         args: { auctionId, lotId: vaseId, opId: expect.any(String) },
       },
     ]);
-    // Исход — свой экран без строк пульта; пульт открывает «‹ Пульт».
+    // Исход — свой экран; «Финал» открывает «‹ Финал» (PER-802).
     expect(last(calls).text).toBe(
       "<b>Лот отмечен для финала</b>\n\n<b>Ваза</b>",
     );
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
-    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
-    expect(plain(last(calls))).toContain(
-      "• Ваза — 1 200 ₽ · 3 ставки · 2 уч. · в финал",
-    );
+    expect(labels(last(calls))).toEqual([["‹ Финал"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Финал")));
+    expect(plain(last(calls))).toContain("В финал отмечено: 1 из 1.");
 
     await bot.handleUpdate(
       press(dataOf(last(calls), "Снять из финала · Ваза")),
@@ -1976,10 +2031,35 @@ describe("auction console", () => {
 
     expect(auction.sent("deselectForFinal")).toHaveLength(1);
     expect(last(calls).text).toBe("<b>Отметка финала снята</b>\n\n<b>Ваза</b>");
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    expect(labels(last(calls))).toEqual([["‹ Финал"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Финал")));
+    expect(labels(last(calls))).toEqual([
+      ["Время финала"],
+      ["В финал · Ваза"],
+      ["‹ Пульт"],
+    ]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
-    expect(labels(last(calls))[0]).toEqual(["Ставки", "Люди", "Рост"]);
-    expect(labels(last(calls))).toContainEqual(["В финал · Ваза"]);
+    expect(labels(last(calls))[0]).toEqual(["Сортировка: ставки ↓"]);
+  });
+
+  // Старая кнопка отметки из прежнего пульта (PER-802) — та же команда, а
+  // исход ведёт в «Финал»; новый бот её не знает и читает всё из кнопки.
+  it("runs an old mark button of the former console and leads to the final screen", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(
+      press(`v1:ac:s:${auctionToken}:${uuidToToken(vaseId)}:0:pd`),
+    );
+    expect(auction.sent("selectForFinal")).toHaveLength(1);
+    expect(labels(last(calls))).toEqual([["‹ Финал"]]);
+    expect(dataOf(last(calls), "‹ Финал")).toBe(
+      `v1:ac:fl:${auctionToken}:0:pd`,
+    );
   });
 
   it("shows the refusal of a passed deadline as an outcome screen instead of a success", async () => {
@@ -1992,6 +2072,7 @@ describe("auction console", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Финал")));
 
     await bot.handleUpdate(press(dataOf(last(calls), "В финал · Ваза")));
 
@@ -2000,12 +2081,11 @@ describe("auction console", () => {
       "<b>Дедлайн лота прошёл</b>\n\nОтметку финала уже не изменить.",
     );
     expect(screen).not.toContain("Лот отмечен для финала");
-    // Строк пульта на экране исхода нет; пульт за «‹ Пульт» без отметки.
+    // Строк пульта на экране исхода нет; «Финал» за «‹ Финал» без отметки.
     expect(screen).not.toContain("• Ваза");
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
-    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
-    expect(plain(last(calls))).toContain("• Ваза — 1 200 ₽ · 3 ставки · 2 уч.");
-    expect(plain(last(calls))).not.toContain("в финал");
+    expect(labels(last(calls))).toEqual([["‹ Финал"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Финал")));
+    expect(plain(last(calls))).toContain("В финал отмечено: 0 из 1.");
   });
 });
 
@@ -2020,12 +2100,11 @@ describe("week of the auction", () => {
     };
 
     await next(() => press(consoleData));
-    expect(plain(last(calls))).toContain("Сроки недели не заданы.");
+    expect(plain(last(calls))).toContain("✗ Сроки недели не заданы.");
     expect(labels(last(calls))).toEqual([
-      ["Ставки", "Люди", "Рост"],
-      ["Сроки недели", "Снять с публикации"],
-      ["Сводка дня", "Порядок"],
-      ["🗑 Удалить аукцион"],
+      ["Сроки недели"],
+      ["Сеты", "Порядок"],
+      ["Ещё"],
       ["‹ Аукцион"],
     ]);
 
@@ -2081,17 +2160,18 @@ describe("week of the auction", () => {
     await next((history) => press(dataOf(last(history), "‹ Пульт")));
     const screen = last(calls);
     expect(plain(screen)).toContain(
-      "Онлайн-неделя: с 20 октября, вт, 18:00 до 27 октября, вт, 00:00.\nФинал: есть.",
+      "✓ Онлайн-неделя: с 20 октября, вт, 18:00 до 27 октября, вт, 00:00.",
     );
+    expect(plain(screen)).toContain("Финал: есть.");
     expect(labels(screen)).toEqual([
-      ["Ставки", "Люди", "Рост"],
-      ["Сроки недели", "Снять с публикации"],
+      ["Сроки недели", "Вкл · Финал в зале"],
       ["Время финала"],
-      ["Вкл · Финал в зале"],
-      ["Счастливые часы", "Сводка дня", "Порядок"],
-      ["Розыгрыш", "Срок оплаты"],
+      ["Счастливые часы", "Срок оплаты"],
+      ["Розыгрыш"],
+      ["Объявление"],
+      ["Сеты", "Порядок"],
       ["Открыть онлайн-неделю"],
-      ["🗑 Удалить аукцион"],
+      ["Ещё"],
       ["‹ Аукцион"],
     ]);
   });
@@ -2158,7 +2238,10 @@ describe("week of the auction", () => {
     ]);
     expect(toasts(calls)).toContain("Выключено: финал в зале.");
     expect(plain(last(calls))).toContain("Финал: нет.");
-    expect(labels(last(calls))).toContainEqual(["Выкл · Финал в зале"]);
+    expect(labels(last(calls))).toContainEqual([
+      "Сроки недели",
+      "Выкл · Финал в зале",
+    ]);
 
     // Повтор той же кнопки команды не шлёт: финал уже такой.
     await bot.handleUpdate(press(toggle));
@@ -2185,7 +2268,10 @@ describe("week of the auction", () => {
       expect.objectContaining({ final: true }),
     ]);
     expect(toasts(calls)).toContain("Включено: финал в зале.");
-    expect(labels(last(calls))).toContainEqual(["Вкл · Финал в зале"]);
+    expect(labels(last(calls))).toContainEqual([
+      "Сроки недели",
+      "Вкл · Финал в зале",
+    ]);
   });
 
   it("shows an outcome screen with a retry when the end of the week has already come", async () => {
@@ -2223,11 +2309,16 @@ describe("raffle of the week", () => {
     };
 
     await next(() => press(consoleData));
-    expect(plain(last(calls))).toContain("Розыгрыш: нет.");
-    expect(dataOf(last(calls), "Розыгрыш")).toBe(`v1:ac:r:${auctionToken}`);
-    expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать розыгрыш");
-
+    expect(plain(last(calls))).toContain("— Розыгрыш не назначен.");
+    expect(dataOf(last(calls), "Розыгрыш")).toBe(`v1:ac:rs:${auctionToken}`);
     await next((history) => press(dataOf(last(history), "Розыгрыш")));
+    expect(plain(last(calls))).toContain("Розыгрыш: нет.");
+    expect(labels(last(calls))).toEqual([["Момент розыгрыша"], ["‹ Пульт"]]);
+    expect(dataOf(last(calls), "Момент розыгрыша")).toBe(
+      `v1:ac:r:${auctionToken}`,
+    );
+
+    await next((history) => press(dataOf(last(history), "Момент розыгрыша")));
     const asked = question(calls).payload;
     expect(dataOf(asked, "Отмена")).toBe(`v1:q:ar:${auctionToken}:42`);
     expect(asked.text).toContain("Неделя: 20.10.2026 18:00 — 27.10.2026 00:00");
@@ -2238,7 +2329,7 @@ describe("raffle of the week", () => {
     expect(last(calls).text).toBe(
       "<b>Регистрация в розыгрыше должна закрыться раньше конца недели</b>",
     );
-    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Розыгрыш"]]);
     expect(auction.sent("scheduleAuction")).toEqual([]);
     await next((history) => press(dataOf(last(history), "Ввести заново")));
 
@@ -2258,15 +2349,22 @@ describe("raffle of the week", () => {
     expect(last(calls).text).toBe(
       "<b>Регистрация в розыгрыше закроется 22 октября, чт, 18:00</b>",
     );
-    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    await next((history) => press(dataOf(last(history), "‹ Розыгрыш")));
     expect(plain(last(calls))).toContain(
       "Розыгрыш: регистрация до 22 октября, чт, 18:00.",
     );
-    expect(labels(last(calls))).toContainEqual(["Розыгрыш", "Срок оплаты"]);
-    expect(labels(last(calls))).toContainEqual(["🗑 Убрать розыгрыш"]);
+    expect(labels(last(calls))).toEqual([
+      ["Момент розыгрыша", "🗑 Убрать розыгрыш"],
+      ["Приз"],
+      ["‹ Пульт"],
+    ]);
+    // Фото приза — с открытием недели (решение владельца 28.10).
+    expect(plain(last(calls))).toContain("Фото приза — после открытия недели.");
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("✗ Розыгрыш: приз не задан.");
 
     // Вопрос называет текущий момент в том виде, в каком его вводят.
-    await next((history) => press(dataOf(last(history), "Розыгрыш")));
+    await next(() => press(`v1:ac:r:${auctionToken}`));
     expect(question(calls).payload.text).toContain("Сейчас: 22.10.2026 18:00");
     await next((history) => press(dataOf(question(history).payload, "Отмена")));
 
@@ -2311,7 +2409,7 @@ describe("raffle of the week", () => {
       answer(calls, { text: "23.10.2026 18:00 — 28.10.2026 00:00" }),
     );
     expect(last(calls).text).toBe(
-      "<b>Момент розыгрыша не помещается в новые сроки</b>\n\nСдвинь или убери его кнопкой «Розыгрыш» на пульте или задай сроки шире.",
+      "<b>Момент розыгрыша не помещается в новые сроки</b>\n\nСдвинь или убери его в «Розыгрыше» пульта или задай сроки шире.",
     );
     expect(auction.state.week?.raffleClosesAt).toBe(moment);
   });
@@ -2323,7 +2421,7 @@ describe("raffle of the week", () => {
     });
     const { bot, calls } = harness("admin", auction);
     await bot.init();
-    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(`v1:ac:rs:${auctionToken}`));
 
     const remove = dataOf(last(calls), "🗑 Убрать розыгрыш");
     expect(remove).toBe(`v1:ac:rx:${auctionToken}`);
@@ -2344,7 +2442,7 @@ describe("raffle of the week", () => {
     expect(last(calls).text).toBe(
       "<b>Розыгрыш убран</b>\n\nНеделя пройдёт без него.",
     );
-    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Розыгрыш")));
     expect(plain(last(calls))).toContain("Розыгрыш: нет.");
     expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать розыгрыш");
 
@@ -2374,7 +2472,10 @@ describe("payment term of the week", () => {
 
     await next(() => press(consoleData));
     expect(plain(last(calls))).toContain("Срок оплаты: 7 дн.");
-    expect(labels(last(calls))).toContainEqual(["Розыгрыш", "Срок оплаты"]);
+    expect(labels(last(calls))).toContainEqual([
+      "Счастливые часы",
+      "Срок оплаты",
+    ]);
     expect(dataOf(last(calls), "Срок оплаты")).toBe(`v1:ac:pt:${auctionToken}`);
 
     await next((history) => press(dataOf(last(history), "Срок оплаты")));
@@ -2524,7 +2625,7 @@ describe("prize of the raffle", () => {
   async function askPrize(auction = withMoment()) {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
-    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(raffleData));
     await bot.handleUpdate(press(dataOf(last(calls), "Приз")));
     return { auction, bot, calls };
   }
@@ -2533,7 +2634,7 @@ describe("prize of the raffle", () => {
     const auction = withMoment();
     const { bot, calls } = harness("admin", auction);
     await bot.init();
-    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(raffleData));
 
     expect(plain(last(calls))).toContain(
       "Розыгрыш: регистрация до 22 октября, чт, 18:00.",
@@ -2587,18 +2688,20 @@ describe("prize of the raffle", () => {
     ]);
     expect(last(calls).text).toBe(`<b>Приз розыгрыша сохранён: ${prize}</b>`);
 
-    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Розыгрыш")));
     expect(plain(last(calls))).toContain(`Приз: ${prize}`);
-    expect(labels(last(calls))).toContainEqual(["Изменить приз"]);
-    expect(labels(last(calls))).toContainEqual(["🗑 Убрать розыгрыш"]);
-    expect(labels(last(calls))).toContainEqual(["🗑 Убрать приз"]);
+    expect(labels(last(calls))).toEqual([
+      ["Момент розыгрыша", "🗑 Убрать розыгрыш"],
+      ["Изменить приз", "🗑 Убрать приз"],
+      ["‹ Пульт"],
+    ]);
   });
 
   it("shows the saved prize in the question", async () => {
     const auction = withPrize();
     const { bot, calls } = harness("admin", auction);
     await bot.init();
-    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(raffleData));
     await bot.handleUpdate(press(dataOf(last(calls), "Изменить приз")));
 
     expect(question(calls).payload.text).toContain(`Сейчас: ${prize}`);
@@ -2608,7 +2711,7 @@ describe("prize of the raffle", () => {
     const auction = withPrize();
     const { bot, calls } = harness("admin", auction);
     await bot.init();
-    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(raffleData));
     await bot.handleUpdate(press(dataOf(last(calls), "🗑 Убрать приз")));
 
     expect(auction.sent("scheduleAuction")).toEqual([
@@ -2627,7 +2730,7 @@ describe("prize of the raffle", () => {
     expect(last(calls).text).toBe(
       "<b>Приз розыгрыша убран</b>\n\nПобедитель получит весть без приза.",
     );
-    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Розыгрыш")));
     expect(plain(last(calls))).not.toContain("Приз:");
     expect(labels(last(calls))).toContainEqual(["Приз"]);
     expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать приз");
@@ -2660,7 +2763,7 @@ describe("prize of the raffle", () => {
     const auction = withPrize();
     const { bot, calls } = harness("admin", auction);
     await bot.init();
-    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(raffleData));
     await bot.handleUpdate(press(dataOf(last(calls), "🗑 Убрать розыгрыш")));
 
     // Розыгрыша нет — нет и приза: победителя у такой недели не будет.
@@ -2685,7 +2788,7 @@ describe("prize of the raffle", () => {
     await bot.handleUpdate(press(`v1:ac:rp:${auctionToken}`));
 
     expect(last(calls).text).toBe(
-      "<b>Приз задаётся у розыгрыша: сначала нажми «Розыгрыш» и назови момент</b>",
+      "<b>Приз задаётся у розыгрыша: сначала нажми «Момент розыгрыша» и назови момент</b>",
     );
     expect(auction.sent("scheduleAuction")).toEqual([]);
   });
@@ -3203,6 +3306,8 @@ describe("opening the online week", () => {
 
     const visible = await consoleOf("scheduled", "visible");
     expect(plain(visible.screen)).not.toContain(line);
+    // Чек-лист подготовки (PER-802) называет опубликованную сходку.
+    expect(plain(visible.screen)).toContain("✓ Сходка опубликована.");
     expect(labels(visible.screen).flat()).not.toContain("Сходка");
     expect(labels(visible.screen).flat()).toContain("Открыть онлайн-неделю");
 
@@ -3213,6 +3318,9 @@ describe("opening the online week", () => {
       cause: new Error("down"),
     }));
     expect(plain(down.screen)).not.toContain(line);
+    expect(plain(down.screen)).toContain(
+      "? Сходка — открой аукцион с карточки сходки.",
+    );
     expect(labels(down.screen).flat()).toContain("Открыть онлайн-неделю");
 
     // После открытия недели сходку пульт не читает.
@@ -3301,12 +3409,11 @@ describe("final selection", () => {
     await bot.init();
 
     await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Финал")));
 
     expect(labels(last(calls))).toEqual([
-      ["Ставки", "Люди", "Рост"],
-      ["Счастливые часы", "Сводка дня", "Отменить аукцион", "Порядок"],
       ["Снять из финала · Кружка"],
-      ["‹ Аукцион"],
+      ["‹ Пульт"],
     ]);
   });
 
@@ -3329,7 +3436,7 @@ describe("final selection", () => {
       "<b>У недели нет финала</b>\n\nОтбирать лоты некуда.",
     );
     expect(screen).not.toContain("Лот отмечен для финала");
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    expect(labels(last(calls))).toEqual([["‹ Финал"]]);
   });
 
   it("marks a held lot as a finalist without buttons", async () => {
@@ -3357,13 +3464,135 @@ describe("final selection", () => {
       "• Ваза — 1 200 ₽ · 4 ставки · 3 уч. · в финал",
     );
     expect(labels(last(calls))).toEqual([
-      ["Ставки", "Люди", "Рост"],
-      ["Время финала"],
-      ["Сводка дня", "Отменить аукцион", "Порядок"],
+      ["Сортировка: ставки ↓"],
       // Удержанный лот в перерыве продаётся ведущим, и с перерыва у
       // аукциона есть счета (PER-321).
       ["Счета"],
+      ["Сводка дня"],
+      ["Финал"],
+      ["Сеты", "Порядок"],
+      ["Ещё"],
       ["‹ Аукцион"],
+    ]);
+    await bot.handleUpdate(press(dataOf(last(calls), "Финал")));
+    expect(labels(last(calls))).toEqual([["Время финала"], ["‹ Пульт"]]);
+  });
+});
+
+// Чек-лист подготовки (PER-802; решение владельца 28.10): пульт до открытия
+// недели отмечает лоты, сроки, сходку, розыгрыш и публикацию, и отметка
+// меняется после команды. Каждый шаг — новый бот: отметки читаются из
+// Auction, а не из памяти процесса.
+describe("preparation checklist", () => {
+  const checklist = (screen: Sent) => {
+    const text = plain(screen);
+    const from = text.indexOf("Подготовка:");
+    return text.slice(from).split("\n\n")[0]?.split("\n").slice(1) ?? [];
+  };
+
+  it("marks each of the five conditions and changes them after the commands", async () => {
+    const auction = fakeAuction({ hidden: true, lots: [unpriced] });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    expect(checklist(last(calls))).toEqual([
+      "✗ Без цены и шага: 1 лот из 1.",
+      "✗ Сроки недели не заданы.",
+      "? Сходка — открой аукцион с карточки сходки.",
+      "— Розыгрыш не назначен.",
+      "✗ Аукцион скрыт от участников: они его не видят, пока не опубликуешь.",
+    ]);
+    // Кнопки «следующего шага» нет — только отметки (решение владельца).
+    expect(labels(last(calls))).toEqual([
+      ["Сроки недели"],
+      ["Опубликовать"],
+      ["Сеты", "Порядок"],
+      ["Ещё"],
+      ["‹ Аукцион"],
+    ]);
+
+    await next((history) => press(dataOf(last(history), "Сроки недели")));
+    await next((history) =>
+      answer(history, { text: "20.10.2026 18:00 — 27.10.2026 00:00" }),
+    );
+    await next(() => press(consoleData));
+    expect(checklist(last(calls))[1]).toBe(
+      "✓ Онлайн-неделя: с 20 октября, вт, 18:00 до 27 октября, вт, 00:00.",
+    );
+
+    await next(() => press(`v1:ac:r:${auctionToken}`));
+    await next((history) => answer(history, { text: "22.10.2026 18:00" }));
+    await next(() => press(consoleData));
+    expect(checklist(last(calls))[3]).toBe("✗ Розыгрыш: приз не задан.");
+
+    await next(() => press(`v1:ac:rp:${auctionToken}`));
+    await next((history) => answer(history, { text: "Кружка" }));
+    await next(() => press(consoleData));
+    expect(checklist(last(calls))[3]).toBe(
+      "✓ Розыгрыш: регистрация до 22 октября, чт, 18:00, приз есть.",
+    );
+
+    await next((history) => press(dataOf(last(history), "Опубликовать")));
+    await next(() => press(consoleData));
+    expect(checklist(last(calls))[4]).toBe("✓ Аукцион виден участникам.");
+    expect(labels(last(calls)).flat()).not.toContain("Опубликовать");
+  });
+
+  it("marks the lots with price and step and an empty registry", async () => {
+    const open = async (lots: readonly ConsoleLot[]) => {
+      const { bot, calls } = harness("admin", fakeAuction({ lots: [...lots] }));
+      await bot.init();
+      await bot.handleUpdate(press(consoleData));
+      return checklist(last(calls))[0];
+    };
+    expect(await open([])).toBe("✗ Лотов пока нет.");
+    expect(await open([priced, unpriced])).toBe(
+      "✗ Без цены и шага: 1 лот из 2.",
+    );
+    expect(await open([priced])).toBe("✓ Лоты с ценой и шагом: 1.");
+  });
+});
+
+// Старые кнопки пульта из уже отправленных сообщений (PER-802): данные
+// `v1:ac:*` не менялись, и каждая открывает новый пульт или экран под ним, а
+// не падает. Каждое нажатие — новый бот, как после рестарта.
+describe("old buttons of the console", () => {
+  it("opens the new console, its screens and the moved entries from old messages", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+      lots: [vase, mug],
+    });
+    const fresh = async (data: string) => {
+      const { bot, calls } = harness("admin", auction);
+      await bot.init();
+      await bot.handleUpdate(press(data));
+      return last(calls);
+    };
+    // Прежние сортировки: «Рост» с возрастанием и страница.
+    const sorted = await fresh(`${consoleData}:0:ga`);
+    expect(plain(sorted)).toContain("Сортировка: по росту цены ↑.");
+    expect(labels(sorted)[0]).toEqual(["Сортировка: рост ↑"]);
+    // Прежний вход корня «🛠 Сеты» — экран с возвратом в пульт; «🛠 Промо-видео»
+    // и «🛠 Объявление» проверяют свои блоки, им нужны чат медиа и сходка.
+    const sets = await fresh(`v1:ac:t:${auctionToken}`);
+    expect(labels(sets).at(-1)).toEqual(["‹ Пульт"]);
+    // Прежний «Фото приза» из пульта — экран под «Розыгрышем».
+    const photo = await fresh(`v1:ac:rf:${auctionToken}`);
+    expect(labels(photo).at(-1)).toEqual(["‹ Розыгрыш"]);
+    // Новые экраны тоже живут в кнопке.
+    expect(labels(await fresh(raffleData)).at(-1)).toEqual(["‹ Пульт"]);
+    expect(labels(await fresh(`v1:ac:fl:${auctionToken}`)).at(-1)).toEqual([
+      "‹ Пульт",
+    ]);
+    expect(labels(await fresh(`v1:ac:es:${auctionToken}`))).toEqual([
+      ["Отменить аукцион"],
+      ["‹ Пульт"],
     ]);
   });
 });
@@ -3375,7 +3604,7 @@ describe("auction visibility", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
     expect(plain(last(calls))).toContain(
-      "Скрыт от участников: они его не видят, пока не опубликуешь.",
+      "✗ Аукцион скрыт от участников: они его не видят, пока не опубликуешь.",
     );
 
     await bot.handleUpdate(press(dataOf(last(calls), "Опубликовать")));
@@ -3385,8 +3614,16 @@ describe("auction visibility", () => {
     );
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
-    expect(plain(last(calls))).toContain("Виден участникам.");
+    expect(plain(last(calls))).toContain("✓ Аукцион виден участникам.");
+    expect(labels(last(calls)).flat()).not.toContain("Опубликовать");
 
+    // Снятие с публикации — в «Ещё» (PER-802).
+    await bot.handleUpdate(press(dataOf(last(calls), "Ещё")));
+    expect(labels(last(calls))).toEqual([
+      ["Снять с публикации"],
+      ["🗑 Удалить аукцион"],
+      ["‹ Пульт"],
+    ]);
     await bot.handleUpdate(press(dataOf(last(calls), "Снять с публикации")));
     expect(auction.state.hidden).toBe(true);
     expect(last(calls).text).toBe(
@@ -3400,7 +3637,7 @@ describe("auction visibility", () => {
     expect(hidden?.args).toMatchObject({ auctionId });
   });
 
-  it("keeps the fullest console before the week within thirteen rows", async () => {
+  it("keeps the fullest console before the week within the row ceiling", async () => {
     const lots = Array.from({ length: 9 }, (_, index) => ({
       ...priced,
       lot: {
@@ -3422,11 +3659,11 @@ describe("auction visibility", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
-    expect(labels(last(calls))[1]).toEqual([
+    expect(labels(last(calls))[0]).toEqual([
       "Сроки недели",
-      "Снять с публикации",
+      "Вкл · Финал в зале",
     ]);
-    expect(labels(last(calls)).length).toBeLessThanOrEqual(13);
+    expect(labels(last(calls)).length).toBeLessThanOrEqual(12);
   });
 
   it("offers neither button once the week is open and names it for an old button", async () => {
@@ -3487,6 +3724,7 @@ describe("discarding the auction", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Ещё")));
 
     await bot.handleUpdate(press(dataOf(last(calls), "🗑 Удалить аукцион")));
     const confirm = last(calls);
@@ -3573,7 +3811,9 @@ describe("cancelling the auction", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Ещё")));
     expect(JSON.stringify(last(calls))).not.toContain("Удалить аукцион");
+    expect(labels(last(calls))).toEqual([["Отменить аукцион"], ["‹ Пульт"]]);
 
     await bot.handleUpdate(press(dataOf(last(calls), "Отменить аукцион")));
     const confirm = last(calls);
@@ -3602,6 +3842,7 @@ describe("cancelling the auction", () => {
       "Аукцион отменён: проданные лоты остались проданными.",
     );
     expect(JSON.stringify(last(calls))).not.toContain("Отменить аукцион");
+    expect(labels(last(calls)).flat()).not.toContain("Ещё");
 
     // Повторное «Да» несёт тот же ключ: Auction примет его как повтор.
     await bot.handleUpdate(press(yes));
@@ -3696,6 +3937,8 @@ describe("final of the auctioneer", () => {
     expect(labels(last(calls))).toEqual([
       ["Начать финал"],
       ["Отменить аукцион"],
+      ["Ставки зала"],
+      ["Сеты"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
@@ -3715,6 +3958,8 @@ describe("final of the auctioneer", () => {
       ["Поднять цену"],
       ["Продать"],
       ["Отменить аукцион"],
+      ["Ставки зала"],
+      ["Сеты"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
@@ -3772,6 +4017,8 @@ describe("final of the auctioneer", () => {
     expect(labels(last(calls))).toEqual([
       ["Открыть следующий лот"],
       ["Отменить аукцион"],
+      ["Ставки зала"],
+      ["Сеты"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
@@ -4633,7 +4880,8 @@ describe("lot sets", () => {
     });
     const { calls, next } = steps(auction);
     await next(() => press(rootData));
-    await next((history) => press(dataOf(last(history), "🛠 Сеты")));
+    await next((history) => press(dataOf(last(history), "🛠 Пульт")));
+    await next((history) => press(dataOf(last(history), "Сеты")));
     await next((history) => press(dataOf(last(history), "Новый сет")));
     const reply = answer(calls, { text: "Кружки" });
 
@@ -4655,9 +4903,10 @@ describe("lot sets", () => {
     const { calls, next } = steps(auction);
 
     await next(() => press(rootData));
-    await next((history) => press(dataOf(last(history), "🛠 Сеты")));
+    await next((history) => press(dataOf(last(history), "🛠 Пульт")));
+    await next((history) => press(dataOf(last(history), "Сеты")));
     expect(plain(last(calls))).toContain("Сетов пока нет.");
-    expect(labels(last(calls))).toEqual([["Новый сет"], ["‹ Аукцион"]]);
+    expect(labels(last(calls))).toEqual([["Новый сет"], ["‹ Пульт"]]);
 
     await next((history) => press(dataOf(last(history), "Новый сет")));
     const asked = question(calls).payload;
@@ -4732,7 +4981,7 @@ describe("lot sets", () => {
     expect(labels(last(calls))).toEqual([
       ["Кружки · 3 лота"],
       ["Новый сет"],
-      ["‹ Аукцион"],
+      ["‹ Пульт"],
     ]);
   });
 
@@ -4769,7 +5018,7 @@ describe("lot sets", () => {
     // После открытия сеты видны только для просмотра.
     await next(() => press(setsData));
     expect(plain(last(calls))).toContain("сеты больше не меняются");
-    expect(labels(last(calls))).toEqual([["Кружки · 1 лот"], ["‹ Аукцион"]]);
+    expect(labels(last(calls))).toEqual([["Кружки · 1 лот"], ["‹ Пульт"]]);
     await next((history) => press(dataOf(last(history), "Кружки · 1 лот")));
     expect(plain(last(calls))).toContain("• Ваза");
     expect(labels(last(calls))).toEqual([["‹ Сеты"]]);
@@ -4888,11 +5137,7 @@ describe("lot layout", () => {
     const { calls, next } = steps(auction);
 
     await next(() => press(consoleData));
-    expect(labels(last(calls))).toContainEqual([
-      "Счастливые часы",
-      "Сводка дня",
-      "Порядок",
-    ]);
+    expect(labels(last(calls))).toContainEqual(["Сеты", "Порядок"]);
     await next((history) => press(dataOf(last(history), "Порядок")));
     expect(plain(last(calls))).toContain("Все лоты — 3 лота");
     expect(labels(last(calls))).toEqual([
@@ -5075,12 +5320,7 @@ describe("lot layout", () => {
     });
     const { calls, next } = steps(auction);
     await next(() => press(consoleData));
-    expect(labels(last(calls))).toContainEqual([
-      "Счастливые часы",
-      "Сводка дня",
-      "Отменить аукцион",
-      "Порядок",
-    ]);
+    expect(labels(last(calls))).toContainEqual(["Сеты", "Порядок"]);
     await next(() => press(`v1:ac:mu:${auctionToken}:${uuidToToken(mugId)}`));
     expect(last(calls).text).toBe(
       "<b>Финал начался или аукцион закончен</b>\n\nПорядок ленты больше не меняется.",
@@ -5428,6 +5668,8 @@ describe("live console of the auctioneer", () => {
       ["Поднять цену"],
       ["Продать"],
       ["Отменить аукцион"],
+      ["Ставки зала"],
+      ["Сеты"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
@@ -5726,25 +5968,39 @@ describe("floor bids of the assistant", () => {
     return { bot, calls };
   };
 
-  it("puts the floor bids next to the console while the final runs", async () => {
+  // «Ставки зала» — ряд пульта ведущего (PER-802; решение владельца 28.10):
+  // в корне у администратора один «🛠 Пульт».
+  it("puts the floor bids into the console of the auctioneer while the final runs", async () => {
     const auction = running();
     const { bot, calls } = harness("admin", auction, [], runAuctionsOnly);
     await bot.init();
     await bot.handleUpdate(press(rootData));
-    expect(labels(last(calls))).toContainEqual(["🛠 Пульт", "🛠 Ставки зала"]);
-    // В финале пару пульта занимают «Ставки зала», и сеты встают своим рядом.
-    expect(labels(last(calls))).toContainEqual(["🛠 Сеты"]);
-    expect(dataOf(last(calls), "🛠 Ставки зала")).toBe(floorData);
+    expect(labels(last(calls))).toContainEqual(["🛠 Пульт"]);
+    expect(labels(last(calls)).flat()).not.toContain("🛠 Ставки зала");
+    await bot.handleUpdate(press(dataOf(last(calls), "🛠 Пульт")));
+    expect(labels(last(calls))).toContainEqual(["Ставки зала"]);
+    expect(dataOf(last(calls), "Ставки зала")).toBe(floorData);
   });
 
-  it("keeps the floor bids out of the root before the final", async () => {
+  // Старая кнопка «🛠 Ставки зала» из корня прежнего вида открывает экран
+  // новым ботом, а его возврат — пульт.
+  it("opens the floor bids from an old root button with the way back to the console", async () => {
+    const auction = running();
+    const { bot, calls } = harness("admin", auction, [], runAuctionsOnly);
+    await bot.init();
+    await bot.handleUpdate(press(floorData));
+    expect(labels(last(calls)).at(-1)).toEqual(["‹ Пульт"]);
+    expect(dataOf(last(calls), "‹ Пульт")).toBe(consoleData);
+  });
+
+  it("keeps the floor bids out of the console before the final", async () => {
     const auction = running();
     auction.state.status = "prebidding";
     const { bot, calls } = harness("admin", auction);
     await bot.init();
-    await bot.handleUpdate(press(rootData));
-    expect(labels(last(calls)).flat()).not.toContain("🛠 Ставки зала");
-    expect(labels(last(calls))).toContainEqual(["🛠 Пульт", "🛠 Сеты"]);
+    await bot.handleUpdate(press(consoleData));
+    expect(labels(last(calls)).flat()).not.toContain("Ставки зала");
+    expect(labels(last(calls))).toContainEqual(["Сеты", "Порядок"]);
   });
 
   it("shows the lot and the room in alphabetical order with the leader in place", async () => {
@@ -5758,7 +6014,7 @@ describe("floor bids of the assistant", () => {
       ["Вова — 1 300 ₽"],
       ["Другой человек…"],
       ["🔄 Обновить"],
-      ["‹ Аукцион"],
+      ["‹ Пульт"],
     ]);
   });
 
@@ -5902,7 +6158,7 @@ describe("floor bids of the assistant", () => {
     auction.state.lineup = { order: [vaseId, mugId] };
     const { calls } = await open(auction);
     expect(plain(last(calls))).toContain("Сейчас лот не открыт.");
-    expect(labels(last(calls))).toEqual([["🔄 Обновить"], ["‹ Аукцион"]]);
+    expect(labels(last(calls))).toEqual([["🔄 Обновить"], ["‹ Пульт"]]);
   });
 
   it("tells an empty room from a failed read of the names", async () => {
@@ -6776,7 +7032,11 @@ describe("raffle winner of the auction console", () => {
     expect(plain(console)).toContain(
       "Розыгрыш: регистрация закрыта, билетов: 3 — ждёт итога.",
     );
-    expect(dataOf(console, "Итог розыгрыша")).toBe(winnerData);
+    // Итог — на «Розыгрыше» пульта (PER-802).
+    const raffle = await step(inBreak(), calls, (history) =>
+      press(dataOf(last(history), "Розыгрыш")),
+    );
+    expect(dataOf(raffle, "Итог розыгрыша")).toBe(winnerData);
 
     const drawn: RecordedCall[] = [];
     const after = await step(
@@ -6789,8 +7049,9 @@ describe("raffle winner of the auction console", () => {
         },
       ),
       drawn,
-      () => press(consoleData),
+      () => press(raffleData),
     );
+    expect(plain(after)).toContain("Розыгрыш: выиграл билет №2");
     expect(labels(after).flat()).not.toContain("Итог розыгрыша");
   });
 
@@ -6800,7 +7061,7 @@ describe("raffle winner of the auction console", () => {
     expect(screen.text).toContain("<b>Итог розыгрыша</b>");
     expect(screen.text).toContain("Билетов: 3\nПриз: Сертификат");
     expect(screen.text).toContain("<pre>№1 — @jay\n№2 — Сова*\n№3</pre>");
-    expect(labels(screen)).toEqual([["Ввести победителя"], ["‹ Пульт"]]);
+    expect(labels(screen)).toEqual([["Ввести победителя"], ["‹ Розыгрыш"]]);
     expect(dataOf(screen, "Ввести победителя")).toBe(
       `v1:ac:ra:${auctionToken}`,
     );
@@ -6820,7 +7081,11 @@ describe("raffle winner of the auction console", () => {
     expect(first.text).toContain("Билетов: 100");
     expect(first.text).toContain("Здесь билеты 1–80.");
     expect((first.text ?? "").length).toBeLessThan(4096);
-    expect(labels(first)).toEqual([["Ввести победителя"], ["→"], ["‹ Пульт"]]);
+    expect(labels(first)).toEqual([
+      ["Ввести победителя"],
+      ["→"],
+      ["‹ Розыгрыш"],
+    ]);
     const second = await step(auction, calls, (history) =>
       press(dataOf(last(history), "→")),
     );
@@ -6883,7 +7148,7 @@ describe("raffle winner of the auction console", () => {
     expect(outcome.text).toBe(
       "<b>Итог розыгрыша подведён</b>\n\n<b>Победитель — билет №2 — Сова*</b>\n\nУчастники получат сообщение с итогом.",
     );
-    expect(labels(outcome)).toEqual([["‹ Пульт"]]);
+    expect(labels(outcome)).toEqual([["‹ Розыгрыш"]]);
   });
 
   it("names the drawn ticket when the result is already in", async () => {
@@ -6896,7 +7161,7 @@ describe("raffle winner of the auction console", () => {
     );
     expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
     expect(plain(outcome)).toContain("Победитель — билет №1 — @jay");
-    expect(labels(outcome)).toEqual([["‹ Пульт"]]);
+    expect(labels(outcome)).toEqual([["‹ Розыгрыш"]]);
   });
 
   it("refuses a ticket outside the pool and offers to enter another", async () => {
@@ -6908,7 +7173,7 @@ describe("raffle winner of the auction console", () => {
     expect(auction.sent("assignRaffleWinner")).toHaveLength(1);
     expect(plain(outcome)).toContain("Такого билета нет");
     expect(plain(outcome)).toContain("В розыгрыше билеты от 1 до 3.");
-    expect(labels(outcome)).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(labels(outcome)).toEqual([["Ввести заново"], ["‹ Розыгрыш"]]);
   });
 
   it("answers a stale button of a raffle that no longer waits", async () => {
@@ -7004,7 +7269,7 @@ describe("prize change of a running raffle", () => {
     const console = await step(
       trading({ ...open, prize: "Кружка" }),
       calls,
-      () => press(consoleData),
+      () => press(raffleData),
     );
     expect(plain(console)).toContain("Приз: Кружка");
     expect(dataOf(console, "Изменить приз")).toBe(changeData);
@@ -7012,14 +7277,15 @@ describe("prize change of a running raffle", () => {
     const scheduled = await step(
       fakeAuction({ status: "scheduled", week: raffleWeek }),
       [],
-      () => press(consoleData),
+      () => press(raffleData),
     );
     // До открытия недели «Изменить приз» — приз сроков (PER-649).
     expect(dataOf(scheduled, "Изменить приз")).not.toBe(changeData);
   });
 
   // Пульт онлайн-торгов с полной страницей лотов, окнами и розыгрышем —
-  // самый длинный: ряд смены приза держит его в потолке рядов линтера.
+  // самый длинный: розыгрыш живёт своим экраном (PER-802), и пульт держит
+  // общий потолок рядов.
   it("keeps a full console of the trading week within the row ceiling", async () => {
     const lots = Array.from({ length: 12 }, (_, index) => ({
       ...vase,
@@ -7049,19 +7315,24 @@ describe("prize change of a running raffle", () => {
       calls,
       () => press(consoleData),
     );
-    expect(dataOf(console, "Изменить приз")).toBe(changeData);
-    expect(labels(console).length).toBeLessThanOrEqual(13);
-    expect(labels(console)).toContainEqual([
-      "Время финала",
-      "Изменить приз",
-      "Фото приза",
-    ]);
+    expect(labels(console).length).toBeLessThanOrEqual(12);
+    const raffle = await step(
+      fakeAuction({
+        status: "prebidding",
+        week: raffleWeek,
+        consoleRaffle: open,
+      }),
+      calls,
+      (history) => press(dataOf(last(history), "Розыгрыш")),
+    );
+    expect(dataOf(raffle, "Изменить приз")).toBe(changeData);
+    expect(labels(raffle)).toContainEqual(["Изменить приз", "Фото приза"]);
   });
 
   it("asks the text, confirms was and will be and changes the prize after yes over restarts", async () => {
     const auction = trading();
     const calls: RecordedCall[] = [];
-    await step(auction, calls, () => press(consoleData));
+    await step(auction, calls, () => press(raffleData));
     await step(auction, calls, (history) =>
       press(dataOf(last(history), "Изменить приз")),
     );
@@ -7085,7 +7356,7 @@ describe("prize change of a running raffle", () => {
       "Было: Сертификат\nСтанет: кружка и &lt;брелок&gt;",
     );
     expect(labels(confirm)).toEqual([["✔️ Да, изменить", "✖️ Нет"]]);
-    expect(dataOf(confirm, "✖️ Нет")).toBe(consoleData);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(raffleData);
     expect(auction.sent("changeRafflePrize")).toEqual([]);
 
     const outcome = await step(auction, calls, () =>
@@ -7103,9 +7374,9 @@ describe("prize change of a running raffle", () => {
     ]);
     expect(plain(outcome)).toContain("Приз розыгрыша изменён");
     expect(plain(outcome)).toContain("Приз: кружка и &lt;брелок&gt;");
-    expect(labels(outcome)).toEqual([["‹ Пульт"]]);
+    expect(labels(outcome)).toEqual([["‹ Розыгрыш"]]);
 
-    const console = await step(auction, calls, () => press(consoleData));
+    const console = await step(auction, calls, () => press(raffleData));
     expect(plain(console)).toContain("Приз: кружка и &lt;брелок&gt;");
   });
 
@@ -7120,7 +7391,7 @@ describe("prize change of a running raffle", () => {
       pressUnder(confirm, "✔️ Да, изменить", "Изменить приз?\n\nСтанет: ваза"),
     );
     expect(plain(stale)).toContain("Подтверждение устарело");
-    expect(labels(stale)).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(labels(stale)).toEqual([["Ввести заново"], ["‹ Розыгрыш"]]);
     expect(auction.sent("changeRafflePrize")).toEqual([]);
   });
 
@@ -7143,7 +7414,7 @@ describe("prize change of a running raffle", () => {
         },
       }),
       [],
-      () => press(consoleData),
+      () => press(raffleData),
     );
     expect(labels(console).flat()).not.toContain("Изменить приз");
     const outcome = await step(drawn, [], () => press(changeData));
@@ -7246,17 +7517,16 @@ describe("prize photo of a running raffle", () => {
   it("sets, replaces and removes the photo next to the prize change", async () => {
     const auction = trading();
     const calls: RecordedCall[] = [];
-    const console = await step(auction, calls, () => press(consoleData));
-    expect(labels(console)).toContainEqual([
-      "Время финала",
-      "Изменить приз",
-      "Фото приза",
+    const console = await step(auction, calls, () => press(raffleData));
+    expect(labels(console)).toEqual([
+      ["Изменить приз", "Фото приза"],
+      ["‹ Пульт"],
     ]);
     expect(dataOf(console, "Фото приза")).toBe(photoData);
 
     const empty = await step(auction, calls, () => press(photoData));
     expect(plain(empty)).toContain("Фото у приза нет");
-    expect(labels(empty)).toEqual([["Прислать фото"], ["‹ Пульт"]]);
+    expect(labels(empty)).toEqual([["Прислать фото"], ["‹ Розыгрыш"]]);
 
     await step(auction, calls, (history) =>
       press(dataOf(last(history), "Прислать фото")),
@@ -7275,7 +7545,7 @@ describe("prize photo of a running raffle", () => {
       photoAnswer(history, "first", 11),
     );
     expect(plain(set)).toContain("Фото приза сохранено");
-    expect(labels(set)).toEqual([["‹ Пульт"]]);
+    expect(labels(set)).toEqual([["‹ Розыгрыш"]]);
     const [first] = auction.sent("setRafflePrizePhoto");
     expect(first).toEqual({
       method: "setRafflePrizePhoto",
@@ -7291,7 +7561,7 @@ describe("prize photo of a running raffle", () => {
     expect(labels(shown)).toEqual([
       ["Заменить фото"],
       [removeLabel],
-      ["‹ Пульт"],
+      ["‹ Розыгрыш"],
     ]);
 
     // Замена — новое сообщение с фото: новый ключ, а не повтор прежнего.
@@ -7357,7 +7627,7 @@ describe("prize photo of a running raffle", () => {
         consoleRaffle: result,
       }),
       [],
-      () => press(consoleData),
+      () => press(raffleData),
     );
     expect(labels(console).flat()).not.toContain("Фото приза");
     const drawn = trading(result);
@@ -7582,20 +7852,21 @@ describe("auction announcement", () => {
       await fresh.handleUpdate(update);
     };
 
-    // Вход — ряд корня аукциона под пультом: в пульте места нет.
+    // Вход — ряд «Участникам» пульта (PER-802): в корне только «🛠 Пульт».
     await step(press(rootData));
-    expect(labels(last(calls)).slice(-3)).toEqual([
-      ["🛠 Пульт", "🛠 Сеты"],
-      ["🛠 Объявление"],
+    expect(labels(last(calls)).slice(-2)).toEqual([
+      ["🛠 Пульт"],
       ["‹ Расширения"],
     ]);
-    await step(press(dataOf(last(calls), "🛠 Объявление")));
+    await step(press(dataOf(last(calls), "🛠 Пульт")));
+    expect(labels(last(calls))).toContainEqual(["Объявление"]);
+    await step(press(dataOf(last(calls), "Объявление")));
     expect(labels(last(calls))).toEqual([
       ["Своё объявление"],
       ["Розыгрыш и прогнозы"],
       ["История лота"],
       ["Хроники дня"],
-      ["‹ Аукцион"],
+      ["‹ Пульт"],
     ]);
 
     await step(press(dataOf(last(calls), "История лота")));
@@ -8228,8 +8499,8 @@ describe("auction announcement", () => {
     const calls: RecordedCall[] = [];
     const hub = bot(auction, announcements(), calls);
     await hub.init();
-    await hub.handleUpdate(press(rootData));
-    expect(labels(last(calls)).flat()).not.toContain("🛠 Объявление");
+    await hub.handleUpdate(press(consoleData));
+    expect(labels(last(calls)).flat()).not.toContain("Объявление");
 
     await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
     expect(plain(last(calls))).toContain("Объявлять некому");
@@ -8428,7 +8699,7 @@ describe("auction announcement", () => {
     expect(calls.at(-1)?.payload).not.toHaveProperty("reply_parameters");
     // Дальше экраны правят уже исход — сообщение без цитаты.
     const backFrom = calls.length;
-    await step(pressUnder(dataOf(last(calls), "‹ Аукцион"), last(calls)));
+    await step(pressUnder(dataOf(last(calls), "‹ Пульт"), last(calls)));
     expect(screens(backFrom)).toEqual(["editMessageText"]);
     expect(notices.accepted).toHaveLength(1);
     expect(notices.accepted[0]?.command).toMatchObject({
@@ -8780,9 +9051,9 @@ describe("auction announcement", () => {
   });
 });
 
-// Промо-видео аукциона (PER-774): вход «🛠 Промо-видео» корня — в пульте места
-// нет, — видео ответом в чат медиа ботов, замена и снятие; участник открывает
-// видео кнопкой «🎬 Промо» корня копией поста.
+// Промо-видео аукциона (PER-774): вход «Промо-видео» пульта (PER-802), видео
+// ответом в чат медиа ботов, замена и снятие; участник открывает видео
+// кнопкой «🎬 Промо» корня копией поста.
 describe("promo video", () => {
   const mediaChannelId = -1001234567890;
   const video = {
@@ -8865,20 +9136,17 @@ describe("promo video", () => {
       await fresh.handleUpdate(update);
     };
 
-    // Без видео участнику смотреть нечего, а вход организатора — своим рядом
-    // под объявлением.
+    // Без видео участнику смотреть нечего, а вход организатора — ряд
+    // «Участникам» пульта рядом с объявлением (PER-802).
     await step(press(rootData));
-    expect(labels(last(calls)).slice(-4)).toEqual([
-      ["🛠 Пульт", "🛠 Сеты"],
-      ["🛠 Объявление"],
-      ["🛠 Промо-видео"],
-      ["‹ Сходки"],
-    ]);
+    expect(labels(last(calls)).slice(-2)).toEqual([["🛠 Пульт"], ["‹ Сходки"]]);
     expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+    await step(press(dataOf(last(calls), "🛠 Пульт")));
+    expect(labels(last(calls))).toContainEqual(["Объявление", "Промо-видео"]);
 
-    await step(press(dataOf(last(calls), "🛠 Промо-видео")));
+    await step(press(dataOf(last(calls), "Промо-видео")));
     expect(plain(last(calls))).toContain("Видео нет.");
-    expect(labels(last(calls))).toEqual([["Прикрепить видео"], ["‹ Аукцион"]]);
+    expect(labels(last(calls))).toEqual([["Прикрепить видео"], ["‹ Пульт"]]);
 
     await step(press(dataOf(last(calls), "Прикрепить видео")));
     expect(question(calls).payload.reply_markup?.force_reply).toBe(true);
@@ -8932,13 +9200,14 @@ describe("promo video", () => {
     ).toEqual([["‹ Аукцион"]]);
     expect(last(calls)).toBe(root);
 
-    // Замена — тот же вопрос: новый пост и новый номер у Auction.
-    await step(press(dataOf(last(calls), "🛠 Промо-видео")));
+    // Замена — тот же вопрос: новый пост и новый номер у Auction. Старая
+    // кнопка «🛠 Промо-видео» из корня прежнего вида открывает тот же экран.
+    await step(press(`v1:ac:vo:${auctionToken}`));
     expect(plain(last(calls))).toContain("Видео прикреплено:");
     expect(labels(last(calls))).toEqual([
       ["Заменить видео"],
       ["🗑 Убрать видео"],
-      ["‹ Аукцион"],
+      ["‹ Пульт"],
     ]);
     await step(press(dataOf(last(calls), "Заменить видео")));
     await step(answer(calls, video));
@@ -8970,8 +9239,8 @@ describe("promo video", () => {
     const calls: RecordedCall[] = [];
     const hub = bot(auction, calls, {});
     await hub.init();
-    await hub.handleUpdate(press(rootData));
-    await hub.handleUpdate(press(dataOf(last(calls), "🛠 Промо-видео")));
+    await hub.handleUpdate(press(consoleData));
+    await hub.handleUpdate(press(dataOf(last(calls), "Промо-видео")));
     await hub.handleUpdate(press(dataOf(last(calls), "Прикрепить видео")));
     expect(question(calls).payload.text).toContain("Пришли одно видео");
 
@@ -9139,7 +9408,8 @@ describe("promo video", () => {
     await hub.handleUpdate(press(rootData));
     const flat = labels(last(calls)).flat();
     expect(flat).not.toContain("🎬 Промо");
-    expect(flat).not.toContain("🛠 Промо-видео");
+    await hub.handleUpdate(press(consoleData));
+    expect(labels(last(calls)).flat()).not.toContain("Промо-видео");
 
     // Подделанные кнопки: участника — «видео недоступно» без Auction,
     // организатора — исход без вопроса.

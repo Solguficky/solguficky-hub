@@ -767,7 +767,7 @@ export function createAuctionConsole(
       });
     }
     const live = liveActive({ ...found.console, lots });
-    const [trading, raffle, leaders, meetupHidden] = await Promise.all([
+    const [trading, raffle, leaders, meetup] = await Promise.all([
       tradingOf(request, live),
       raffleOf(request, live),
       leadersOf(request, live),
@@ -787,7 +787,8 @@ export function createAuctionConsole(
         ...console,
         ...(trading === undefined ? {} : { trading }),
         ...(raffle === undefined ? {} : { raffle }),
-        ...(meetupHidden ? { meetupHidden: true as const } : {}),
+        ...(meetup === "hidden" ? { meetupHidden: true as const } : {}),
+        ...(meetup === "published" ? { meetupPublished: true as const } : {}),
       },
     };
   }
@@ -799,14 +800,14 @@ export function createAuctionConsole(
   async function meetupHiddenOf(
     request: AuctionConsoleRequest,
     console: AuctionConsoleView,
-  ): Promise<boolean> {
+  ): Promise<"hidden" | "published" | undefined> {
     const { meetupId } = console;
     if (
       meetups === undefined ||
       meetupId === undefined ||
       (console.status !== "draft" && console.status !== "scheduled")
     ) {
-      return false;
+      return undefined;
     }
     try {
       const meetup = await meetups.get(
@@ -814,14 +815,13 @@ export function createAuctionConsole(
         meetupId,
         rpcMeta(request),
       );
+      if (meetup.kind !== "ok") return undefined;
       // Отменённую сходку не публикуют: её отказ пульт называет сам.
-      return (
-        meetup.kind === "ok" &&
-        meetup.meetup.visibility === "hidden" &&
-        meetup.meetup.lifecycle !== "cancelled"
-      );
+      if (meetup.meetup.lifecycle === "cancelled") return undefined;
+      // Опубликованную сходку видит чек-лист подготовки (PER-802).
+      return meetup.meetup.visibility === "hidden" ? "hidden" : "published";
     } catch {
-      return false;
+      return undefined;
     }
   }
 

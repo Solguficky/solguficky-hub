@@ -5,7 +5,6 @@ import {
   announcementButtonLabels,
   announcementTextLimit,
 } from "../../../../core/notifications/organizer-announcement.js";
-import { marked, pictogram } from "../../../../core/pictograms.js";
 import type {
   AnnouncementAudience,
   AnnouncementDraft,
@@ -30,6 +29,7 @@ import {
   consoleAnnouncementRecipientsData,
   consoleAnnouncementSendData,
   consoleAnnouncementWindowsData,
+  consoleViewData,
 } from "../parse-callback.js";
 import {
   buttonText,
@@ -45,7 +45,6 @@ import {
   refusalText,
   retryLabel,
   screenText,
-  toAuctionRoot,
   withNav,
   withPager,
 } from "./kit.js";
@@ -59,10 +58,10 @@ import type { ShownScreen } from "./show.js";
 // (`presentation/announcement-input.ts`), а кнопки несут его отпечаток.
 
 /**
- * Вход в объявление из корня аукциона: действие управления на экране, который
- * видит и участник, несёт «🛠», как «🛠 Пульт» (дизайн-код, PER-669).
+ * Вход в объявление — из пульта (PER-802): экран видит только держатель
+ * права, и знак управления подписи не нужен.
  */
-export const announcementLabel = marked(pictogram.admin, "Объявление");
+export const announcementLabel = "Объявление";
 
 /**
  * Строка, за которой в кадре шага идёт текст объявления, — до конца
@@ -167,7 +166,7 @@ export function announcementMenuScreen(
         "Сообщение тем, у кого есть право ставок: участникам — в этом боте, гостям — в боте аукциона. Выбери своё объявление или шаблон — черновик текста можно поправить, а кому отправить, спросим перед предпросмотром.",
       ),
     ),
-    keyboard: withNav(keyboard, toAuctionRoot(view.auctionId)),
+    keyboard: withNav(keyboard, toConsole(view.auctionId)),
     format: "HTML",
   };
 }
@@ -603,7 +602,7 @@ export function announcementOutcomeScreen(
   return {
     id: "outcome",
     text: outcomeText(text),
-    keyboard: withNav(new InlineKeyboard(), toAuctionRoot(view.auctionId)),
+    keyboard: withNav(new InlineKeyboard(), toConsole(view.auctionId)),
     format: "HTML",
   };
 }
@@ -638,7 +637,7 @@ export function announcementRetryScreen(view: {
     text: view.text === undefined ? lead : `${lead}\n\n${textBlock(view.text)}`,
     keyboard: withNav(
       new InlineKeyboard().text(retryLabel, view.retry),
-      toAuctionRoot(view.auctionId),
+      toConsole(view.auctionId),
     ),
     format: "HTML",
   };
@@ -653,7 +652,7 @@ export function announcementWithoutMeetupScreen(): ShownScreen {
   return {
     id: "outcome",
     text: outcomeText(
-      "Открой аукцион с карточки сходки. Объявлению нужна сходка аукциона, а бот её сейчас не помнит: открой сходку, «🧩 Расширения» и аукцион — и нажми «🛠 Объявление» снова.",
+      "Открой аукцион с карточки сходки. Объявлению нужна сходка аукциона, а бот её сейчас не помнит: открой сходку, «🧩 Расширения», аукцион и «🛠 Пульт» — и нажми «Объявление» снова.",
     ),
     keyboard: exitToMeetups(),
     format: "HTML",
@@ -672,8 +671,13 @@ export function announcementStaleScreen(auctionId: string): ShownScreen {
         "Ввести заново",
         consoleAnnouncementAskData(uuidToToken(auctionId), "own"),
       ),
-      toAuctionRoot(auctionId),
+      toConsole(auctionId),
     ),
     format: "HTML",
   };
+}
+
+// Вход — из пульта (PER-802), и возврат — в пульт.
+function toConsole(auctionId: string): Parent {
+  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
 }

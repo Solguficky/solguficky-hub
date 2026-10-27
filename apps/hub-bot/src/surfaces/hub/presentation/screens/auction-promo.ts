@@ -1,7 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { promoButtonLabel, promoCaption } from "../../../../auction-promo.js";
 import type { AuctionBlock } from "../../../../auction-ui/index.js";
-import { adminLabel } from "../../../../core/pictograms.js";
 import type { PromoVideoNote } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
@@ -9,6 +8,7 @@ import {
   consolePromoVideoData,
   consolePromoVideoRemoveConfirmData,
   consolePromoVideoRemoveData,
+  consoleViewData,
 } from "../parse-callback.js";
 import {
   confirmKeyboard,
@@ -24,12 +24,12 @@ import type { ShownScreen } from "./show.js";
 
 // Промо-видео аукциона (PER-774): одно видео у аукциона — пост чата медиа
 // ботов (PER-775). Держатель права вести аукцион прикрепляет, заменяет и
-// убирает его с экрана «Промо-видео»: в пульте места нет, он в потолке рядов,
-// и вход стоит в корне аукциона рядом с «🛠 Объявлением». Участник открывает
+// убирает его с экрана «Промо-видео»: вход — ряд «Участникам» пульта рядом с
+// «Объявлением» (PER-802). Участник открывает
 // видео кнопкой «🎬 Промо» корня — копией поста новым сообщением с «‹ Аукцион».
 
-/** Вход из корня аукциона: инструмент организатора — знак 🛠. */
-export const promoVideoLabel = adminLabel("Промо-видео");
+/** Вход из пульта (PER-802): экран видит только держатель права, без 🛠. */
+export const promoVideoLabel = "Промо-видео";
 
 const promoVideoTitle = "Промо-видео";
 
@@ -80,9 +80,14 @@ export function promoVideoScreen(view: {
           : `Видео нет. Прикрепи одно видео — участники откроют его кнопкой «${promoButtonLabel}» в корне аукциона в обоих ботах.`,
       ),
     ),
-    keyboard: withNav(keyboard, toAuctionRoot(view.auctionId)),
+    keyboard: withNav(keyboard, toConsole(view.auctionId)),
     format: "HTML",
   };
+}
+
+// Вход — из пульта (PER-802), и возврат — в пульт.
+function toConsole(auctionId: string): Parent {
+  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
 }
 
 /** Вопрос о видео: одно видео ответом, первый раз или заново после отказа. */
