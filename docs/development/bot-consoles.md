@@ -161,9 +161,9 @@ sh $S alice@hub press Прикрепить
 sh $S alice@hub say /meetups
 sh $S alice@hub press 17 октября · Настолки у Алисы
 sh $S alice@hub press 🧩 Расширения          # меню расширений сходки (PER-605)
-sh $S alice@hub press 🛠 Включить аукцион    # исход «Аукцион включён» с кнопкой «🔨 Аукцион»
-sh $S alice@hub press 🔨 Аукцион             # корень: «🔨 Лоты», «Правила и FAQ», «🛠 Пульт»; read model может отстать — повтори
-sh $S alice@hub press 🔨 Лоты                # лента: «🛠 Добавить лот» и лоты
+sh $S alice@hub press 🛠 Включить аукцион    # исход «Аукцион включён» с кнопкой «🏷️ Аукцион»
+sh $S alice@hub press 🏷️ Аукцион             # корень: «🏷️ Лоты», «Правила и FAQ», «🛠 Пульт»; read model может отстать — повтори
+sh $S alice@hub press 🏷️ Лоты                # лента: «🛠 Добавить лот» и лоты
 sh $S alice@hub press 🛠 Добавить лот
 sh $S alice@hub say Кружка солегуфика        # название — единственный вопрос; дальше экран «Изменить лот»
 sh $S alice@hub press Фото
@@ -195,7 +195,7 @@ sh $S alice@hub press ✔️ Допустить            # «Отказать�
 sh $S carol@auction say /start               # FAQ; «Аукционы» под ним ставит отметку ознакомления
 sh $S carol@auction press Аукционы           # и открывает список аукционов
 sh $S carol@auction pick 1 6 октября, вт · идут ставки · 1 лот
-sh $S carol@auction press 🔨 Лоты              # строка списка открывает корень аукциона
+sh $S carol@auction press 🏷️ Лоты              # строка списка открывает корень аукциона
 sh $S carol@auction press Кружка солегуфика · 1 000 ₽
 sh $S carol@auction press По шагу (1 100 ₽)
 sh $S carol@auction press ✔️ Да, поставить 1 100 ₽   # первая ставка спрашивает имя

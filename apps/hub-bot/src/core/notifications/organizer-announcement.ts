@@ -65,7 +65,7 @@ export const announcementButtonLabels: Readonly<
   Record<AnnouncementButtonKind, string>
 > = {
   auction: "К аукциону",
-  // «К лотам» дизайн-код вывел из словаря: вход в ленту — «🔨 Лоты».
+  // «К лотам» дизайн-код вывел из словаря: вход в ленту — «🏷️ Лоты».
   lots: marked(pictogram.auction, "Лоты"),
   lot: "К лоту",
   raffle: "К розыгрышу",
@@ -379,8 +379,8 @@ export type AnnouncementMarkup = { inline_keyboard: readonly unknown[] };
  * текстом, а запись об отказе делает чат медиа. Отказ отправки текста
  * бросается: его классифицирует вызывающий — доставка своими классами,
  * предпросмотр своим экраном сбоя.
- * Ответ — номер сообщения и ушло ли фото лота: предпросмотр без фото не должен
- * обещать фото рассылке.
+ * Ответ — номер сообщения и что из медиа ушло, фото лота или пост: предпросмотр
+ * без них не должен обещать их рассылке.
  */
 export async function sendOrganizerAnnouncement(
   api: AnnouncementApi,
@@ -396,7 +396,7 @@ export async function sendOrganizerAnnouncement(
     // Метка каталога экранов: линтер test kit видит и эту отправку.
     mark: Record<string, unknown>;
   },
-): Promise<{ messageId: number; withPhoto: boolean }> {
+): Promise<{ messageId: number; withPhoto: boolean; withPost: boolean }> {
   const keyboard =
     options.markup === undefined ? {} : { reply_markup: options.markup };
   if (view.post !== undefined && options.media !== undefined) {
@@ -406,7 +406,7 @@ export async function sendOrganizerAnnouncement(
       mark: options.mark,
     });
     if (shown.kind === "shown") {
-      return { messageId: shown.messageId, withPhoto: false };
+      return { messageId: shown.messageId, withPhoto: false, withPost: true };
     }
   }
   if (view.photo !== undefined) {
@@ -420,7 +420,7 @@ export async function sendOrganizerAnnouncement(
         });
         const largest = sent.photo?.at(-1)?.file_id;
         if (largest !== undefined) options.photos.remember(view.photo, largest);
-        return { messageId: sent.message_id, withPhoto: true };
+        return { messageId: sent.message_id, withPhoto: true, withPost: false };
       } catch (cause) {
         // 400 у загрузки — отказ в самом изображении: объявление уходит
         // текстом. Прочий сбой — сеть, лимит или блокировка — общий исход
@@ -437,5 +437,5 @@ export async function sendOrganizerAnnouncement(
     ...keyboard,
     link_preview_options: { is_disabled: true },
   });
-  return { messageId: sent.message_id, withPhoto: false };
+  return { messageId: sent.message_id, withPhoto: false, withPost: false };
 }

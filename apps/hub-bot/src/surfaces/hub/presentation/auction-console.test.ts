@@ -1456,7 +1456,7 @@ describe("entry into the auction console", () => {
     await admin.bot.handleUpdate(press(rootData));
     const root = last(admin.calls);
     expect(labels(root).slice(0, 3)).toEqual([
-      ["🔨 Лоты"],
+      ["🏷️ Лоты"],
       ["Правила и FAQ"],
       ["🛠 Пульт", "🛠 Сеты"],
     ]);
@@ -1495,7 +1495,7 @@ describe("entry into the auction console", () => {
     await admin.bot.init();
     await admin.bot.handleUpdate(press(rootData));
     expect(labels(last(admin.calls)).slice(0, 3)).toEqual([
-      ["🔨 Лоты", "Розыгрыш"],
+      ["🏷️ Лоты", "Розыгрыш"],
       ["Правила и FAQ"],
       ["🛠 Пульт", "🛠 Сеты"],
     ]);
@@ -1504,7 +1504,7 @@ describe("entry into the auction console", () => {
     await member.bot.init();
     await member.bot.handleUpdate(press(rootData));
     expect(labels(last(member.calls)).slice(0, 2)).toEqual([
-      ["🔨 Лоты", "Розыгрыш"],
+      ["🏷️ Лоты", "Розыгрыш"],
       ["Правила и FAQ"],
     ]);
   });
@@ -2214,7 +2214,7 @@ describe("raffle of the week", () => {
       press(dataOf(last(history), "✔️ Да, открыть неделю")),
     );
     await next(() => press(rootData));
-    expect(labels(last(calls))[0]).toEqual(["🔨 Лоты", "Розыгрыш"]);
+    expect(labels(last(calls))[0]).toEqual(["🏷️ Лоты", "Розыгрыш"]);
   });
 
   it("keeps the moment over new dates and the final and names it when new dates cut it off", async () => {
@@ -7436,7 +7436,7 @@ describe("auction announcement", () => {
     expect(labels(last(calls))).toEqual([
       ["К лоту"],
       ["К аукциону"],
-      ["🔨 Лоты"],
+      ["🏷️ Лоты"],
       ["К розыгрышу"],
       ["Хроники дня"],
       ["Без кнопки"],
@@ -7889,6 +7889,102 @@ describe("auction announcement", () => {
     );
     expect(published).toHaveLength(1);
     expect(published[0]?.message_id).toBe(10);
+  });
+
+  // Чего автор не увидел в предпросмотре, то не отправляется: пост, который
+  // не скопировался автору, не уходит и в «Отправить».
+  it("sends the text alone when the post did not show in the preview", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements(3);
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls, true, {
+      respond: (method, payload) =>
+        method === "copyMessage" &&
+        (payload as { chat_id?: number }).chat_id === 42
+          ? {
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: message to copy not found",
+            }
+          : undefined,
+    });
+    await hub.init();
+    const text = "Пост не показался.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["auction"],
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+    await hub.handleUpdate(reply(calls, photo));
+
+    const [published] = copies(calls);
+    expect(published).toMatchObject({ chat_id: mediaChannelId });
+    const preview = calls[calls.length - 2]?.payload as { text?: string };
+    expect(preview.text).toBe(text);
+    const send = parseCallback(dataOf(last(calls), "✔️ Да, отправить 3"));
+    expect(send).toMatchObject({ kind: "console-announcement-send" });
+    expect(send).not.toHaveProperty("post");
+
+    await hub.handleUpdate(pressSend(calls, "✔️ Да, отправить 3"));
+    expect(plain(last(calls))).toContain("Объявление принято");
+    expect(notices.accepted).toHaveLength(1);
+    expect(notices.accepted[0]?.command.text).toBe(text);
+    expect(notices.accepted[0]?.command.post).toBeUndefined();
+  });
+
+  // Ответ на вопрос о медиа после рестарта: сходки процесс не помнит, и пост
+  // в канал медиа не публикуется зря.
+  it("sends to the meetup card instead of publishing a post when the process does not know the meetup", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements();
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls, true, {});
+    await hub.init();
+    const text = "Сходка забыта.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["auction"],
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+    const restarted = bot(
+      auction,
+      notices,
+      calls,
+      true,
+      {},
+      createAuctionParents(),
+    );
+    await restarted.init();
+    await restarted.handleUpdate(reply(calls, photo));
+
+    expect(plain(last(calls))).toContain("Открой аукцион с карточки сходки");
+    expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
+    expect(copies(calls)).toEqual([]);
+    expect(notices.accepted).toEqual([]);
   });
 
   it("sends nothing and says so when the media chat refuses the post", async () => {

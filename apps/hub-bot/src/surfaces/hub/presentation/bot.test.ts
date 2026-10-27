@@ -7242,7 +7242,7 @@ describe("notification frames", () => {
         kind: "global-notification-settings",
         categories: [{ category: "published", enabled: true }],
       });
-      const entry = { text: "🔨 Аукцион", callback_data: "v1:nav:exta" };
+      const entry = { text: "🏷️ Аукцион", callback_data: "v1:nav:exta" };
       for (const auction of [true, false]) {
         const { bot, calls } = harness(execute, auction);
         await bot.init();
