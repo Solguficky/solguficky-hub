@@ -625,6 +625,10 @@ export type RaffleView = {
   // Итог называет администратор, а не маяк (PER-727): известно с фиксации
   // пула, и пересчитывать такой итог нечего. Нет поля — итог по маяку.
   drawnByHand?: true;
+  // Фото приза без байтов (PER-773): байты читает край через
+  // `LotImagePort.getRafflePrizePhoto`, версия — ключ кэша `file_id`. Нет —
+  // приз без фото.
+  prizePhoto?: { photoId: string; version: string };
 };
 
 export type RaffleRegistrationRefusal =
@@ -726,6 +730,12 @@ export interface LotImagePort {
     viewer: Viewer;
     lotId: string;
     photoId: string;
+  }): Promise<LotImage>;
+  // Фото приза розыгрыша аукциона (PER-773) в той же форме. Нет метода —
+  // экран розыгрыша идёт без фото.
+  getRafflePrizePhoto?(request: {
+    viewer: Viewer;
+    auctionId: string;
   }): Promise<LotImage>;
 }
 

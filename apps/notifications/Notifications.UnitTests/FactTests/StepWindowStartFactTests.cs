@@ -60,4 +60,30 @@ public class StepWindowStartFactTests
         fact.NotAfter.ShouldBe(NotificationFacts.Instant(secondUntil));
         fact.HasRequestId.ShouldBeFalse();
     }
+
+    [Fact]
+    public void StepWindowAnnounced_CarriesTaskCauseLatestEndAndLotCount()
+    {
+        var notificationId = Guid.CreateVersion7();
+        var recipientId = Guid.CreateVersion7();
+        var taskId = Guid.CreateVersion7();
+        var auctionId = Guid.CreateVersion7();
+        var startsAt = Now.AddMinutes(-5);
+        var until = Now.AddMinutes(40);
+
+        var fact = NotificationFacts.StepWindowAnnounced(
+            notificationId, recipientId, taskId, auctionId, startsAt, until, lotCount: 3, Now, until);
+
+        fact.NotificationId.ShouldBe(notificationId.ToString());
+        fact.RecipientId.ShouldBe(recipientId.ToString());
+        fact.TypeCase.ShouldBe(Notification.TypeOneofCase.StepWindowAnnounced);
+        // Повод тот же, что у вести следящим: тип свой, ключи не совпадают.
+        fact.Cause.ReminderTaskId.ShouldBe(taskId.ToString());
+        fact.StepWindowAnnounced.AuctionId.ShouldBe(auctionId.ToString());
+        fact.StepWindowAnnounced.StartsAt.ShouldBe(NotificationFacts.Instant(startsAt));
+        fact.StepWindowAnnounced.Until.ShouldBe(NotificationFacts.Instant(until));
+        fact.StepWindowAnnounced.LotCount.ShouldBe(3u);
+        fact.NotAfter.ShouldBe(NotificationFacts.Instant(until));
+        fact.HasRequestId.ShouldBeFalse();
+    }
 }

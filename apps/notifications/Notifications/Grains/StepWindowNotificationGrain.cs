@@ -84,22 +84,26 @@ public sealed class StepWindowNotificationGrain(
             }
 
             // «Исполнено» и «сообщение ушло» — разные вещи: пустая аудитория,
-            // кончившийся аукцион и кончившееся окно дают ноль фактов. Ноль и
-            // назван ниже как ноль, чтобы систематический промах сверки не
-            // выглядел успехом.
-            if (result.Facts.Created == 0)
+            // кончившийся аукцион и кончившееся окно дают ноль фактов обоих
+            // видов. Ноль и назван ниже как ноль, чтобы систематический промах
+            // сверки не выглядел успехом.
+            facts.Record(NotificationFacts.StepWindowStartedType, result.Facts.Started);
+            facts.Record(NotificationFacts.StepWindowAnnouncedType, result.Facts.Announced);
+
+            if (result.Facts.Started.Created == 0 && result.Facts.Announced.Created == 0)
             {
                 continue;
             }
 
             sent = true;
-            facts.Record(NotificationFacts.StepWindowStartedType, result.Facts);
             logger.LogInformation(
-                "Step window start fired {auction_id} {starts_at} {task_id} {facts_created}",
+                "Step window start fired {auction_id} {starts_at} {task_id} {facts_created} {announced_created} {announced_suppressed}",
                 auctionId,
                 task.StartsAt,
                 task.TaskId,
-                result.Facts.Created);
+                result.Facts.Started.Created,
+                result.Facts.Announced.Created,
+                result.Facts.Announced.Suppressed);
         }
 
         await Settle(auctionId, token);

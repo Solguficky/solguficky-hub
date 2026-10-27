@@ -196,6 +196,7 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.LeadRestored => "lead_restored",
             AuctionOutcome.Announcement => "announcement",
             AuctionOutcome.AnnouncementWithdrawn => "announcement_withdrawn",
+            AuctionOutcome.StandingRecorded => "standing_recorded",
             AuctionOutcome.InvoiceReplicated => "invoice_replicated",
             AuctionOutcome.InvoiceStale => "invoice_stale",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),

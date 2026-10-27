@@ -18,8 +18,17 @@ public enum StepWindowFireOutcome
     AlreadyFired,
 }
 
+/// <summary>
+/// Факты одного начала окна: весть следящим за его лотами и общая весть
+/// остальным держателям права ставок (ADR-047, дополнение 2026-10-27).
+/// </summary>
+public sealed record StepWindowStartFacts(FactCount Started, FactCount Announced)
+{
+    public static readonly StepWindowStartFacts None = new(FactCount.None, FactCount.None);
+}
+
 /// <summary>Исход исполнения и записанные факты.</summary>
-public sealed record StepWindowFireResult(StepWindowFireOutcome Outcome, FactCount Facts);
+public sealed record StepWindowFireResult(StepWindowFireOutcome Outcome, StepWindowStartFacts Facts);
 
 /// <summary>
 /// Доступ к таблице заданий начала окна сниженного шага. Dapper поверх Npgsql —
@@ -122,7 +131,8 @@ public sealed class StepWindowTaskStore(NpgsqlDataSource source, StepWindowTelem
 
     /// <summary>
     /// Исполняет задание: переводит в «сработало» и разворачивает на следящих
-    /// адресными фактами одной транзакцией.
+    /// и на остальных держателей права ставок адресными фактами одной
+    /// транзакцией.
     /// </summary>
     /// <remarks>
     /// Задание, чей аукцион уже кончился, исполняется без фактов: конец
@@ -145,7 +155,7 @@ public sealed class StepWindowTaskStore(NpgsqlDataSource source, StepWindowTelem
 
         if (claimed == 0)
         {
-            return new StepWindowFireResult(StepWindowFireOutcome.AlreadyFired, FactCount.None);
+            return new StepWindowFireResult(StepWindowFireOutcome.AlreadyFired, StepWindowStartFacts.None);
         }
 
         var facts = await NotificationStore.AddStepWindowStart(work, task, now, cancellationToken);

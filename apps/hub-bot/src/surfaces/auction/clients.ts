@@ -123,6 +123,7 @@ export type AuctionRpc = Pick<
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
+  | "getRafflePrizePhoto"
   | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
@@ -547,6 +548,21 @@ export function createPorts(
               viewer: wireViewer(request.viewer),
               lotId: request.lotId,
               photoId: request.photoId,
+            },
+            callOptions(imageTimeoutMs),
+          );
+          return {
+            content: image.content,
+            mediaType: image.mediaType,
+            version: image.version,
+          };
+        },
+        // Фото приза розыгрыша (PER-773) — та же форма и тот же срок.
+        async getRafflePrizePhoto(request) {
+          const image = await auction.getRafflePrizePhoto(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
             },
             callOptions(imageTimeoutMs),
           );

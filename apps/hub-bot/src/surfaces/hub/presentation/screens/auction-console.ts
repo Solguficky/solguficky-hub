@@ -66,6 +66,7 @@ import {
   consoleRaffleData,
   consoleRafflePrizeChangeData,
   consoleRafflePrizeData,
+  consoleRafflePrizePhotoData,
   consoleRafflePrizeRemoveData,
   consoleRaffleRemoveData,
   consoleRaffleWinnerData,
@@ -87,6 +88,7 @@ import {
 import { money, truncate } from "./auction.js";
 import { invoicesLabel } from "./auction-invoices.js";
 import { rafflePrizeChangeLabel } from "./auction-raffle-prize-change.js";
+import { rafflePrizePhotoLabel } from "./auction-raffle-prize-photo.js";
 import { raffleWinnerLabel } from "./auction-raffle-winner.js";
 import { auctionCancelConsequence } from "./auction-stage.js";
 import {
@@ -932,12 +934,17 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
         rafflePrizeChangeLabel,
         consoleRafflePrizeChangeData(auction),
       );
+      // Фото приза (PER-773) — тем же правилом и в том же ряду, что смена
+      // приза: своим рядом пульт вышел бы за потолок рядов.
+      keyboard.text(
+        rafflePrizePhotoLabel,
+        consoleRafflePrizePhotoData(auction),
+      );
     }
   } else if (prizeChange) {
-    nextRow(keyboard).text(
-      rafflePrizeChangeLabel,
-      consoleRafflePrizeChangeData(auction),
-    );
+    nextRow(keyboard)
+      .text(rafflePrizeChangeLabel, consoleRafflePrizeChangeData(auction))
+      .text(rafflePrizePhotoLabel, consoleRafflePrizePhotoData(auction));
   }
   const windowsShown = scheduled || console.status === "prebidding";
   // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд

@@ -14,7 +14,7 @@ public enum AuctionOutcome
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
     AuctionCancelled, AuctionEnded,
     FinalLotNext, LeadRestored, LotSetCollected,
-    Announcement, AnnouncementWithdrawn,
+    Announcement, AnnouncementWithdrawn, StandingRecorded,
     InvoiceReplicated, InvoiceStale,
 }
 
@@ -496,6 +496,21 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             : [];
         await FavoriteStore.Forget(work, lotIds, cancellationToken);
         await AuctionEndStore.CancelReminders(work, lotIds, cancellationToken);
+        // Положение для команды объявления и снятие неотправленных объявлений
+        // (PER-780) — под той же исключительной блокировкой: объявление,
+        // принятое до конца, здесь уже видно, а принятое после читает конец.
+        // Устаревший конец удалённого — запоздавший после нового рождения — не
+        // снимает объявлений нового рождения.
+        if (await AuctionStandingStore.Apply(work, closed.AuctionId, closed.MeetupId,
+                AuctionStandingStore.Of(closed.End), closed.Version, now, cancellationToken)
+            && closed.End != AuctionEnd.Finished)
+        {
+            await NotificationStore.WithdrawAuctionNotices(work, closed.MeetupId,
+                closed.End == AuctionEnd.Cancelled
+                    ? NotificationFacts.WithdrawnOnAuctionCancelled
+                    : NotificationFacts.WithdrawnOnAuctionDiscarded,
+                now, cancellationToken);
+        }
         // Окна лотов кончились вместе с аукционом: задание начала окна не
         // сработает после его конца, а сработавшее остаётся историей.
         await StepWindowTaskStore.CancelForAuction(work, closed.AuctionId, cancellationToken);
@@ -547,10 +562,35 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
 
+        // Положение аукциона для команды объявления (PER-780). Скрытие берёт
+        // исключительную блокировку аукциона до записи: команда объявления
+        // читает положение под разделяемой, и объявление в полёте скрытие либо
+        // дождётся и снимет, либо команда увидит скрытие и откажет.
+        await AuctionEndStore.LockExclusive(work, announcement.AuctionId, cancellationToken);
+        var hidden = announcement.Occasion == AnnouncementOccasion.Hidden
+            || (announcement.Occasion == AnnouncementOccasion.Drafted && announcement.Hidden);
+        var current = await AuctionStandingStore.Apply(work, announcement.AuctionId, announcement.MeetupId,
+            hidden ? AuctionStanding.Hidden : AuctionStanding.Visible, announcement.Version, now, cancellationToken);
+
+        // Рождение только записывает положение: вести у него нет, а снимать
+        // нечего — у рождённого заново аукциона объявления сняло удаление.
+        if (announcement.Occasion == AnnouncementOccasion.Drafted)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.StandingRecorded, new Dictionary<string, int>());
+        }
+
         if (announcement.Occasion == AnnouncementOccasion.Hidden)
         {
             var withdrawn = await NotificationStore.WithdrawOnAuctionHidden(work, announcement.MeetupId, now,
                 cancellationToken);
+            // Устаревшее скрытие — пришедшее после новой публикации — объявлений,
+            // принятых по опубликованному аукциону, не снимает.
+            if (current)
+            {
+                await NotificationStore.WithdrawAuctionNotices(work, announcement.MeetupId,
+                    NotificationFacts.WithdrawnOnAuctionHidden, now, cancellationToken);
+            }
             await work.Commit(cancellationToken);
             return new AuctionApplication(AuctionOutcome.AnnouncementWithdrawn,
                 new Dictionary<string, int> { [AuctionFacts.PublishedType] = withdrawn });

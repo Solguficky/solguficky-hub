@@ -88,6 +88,8 @@ public class MigrationsTests
             "lot_set_collected",
             "invoice_reminder_due_leads",
             "auction_notice",
+            "auction_standing",
+            "step_window_announced",
         ]);
 
         var main = names.IndexOf("orleans_main");

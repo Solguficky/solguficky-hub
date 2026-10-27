@@ -303,9 +303,14 @@ export function renderNotification(
       ),
     };
   }
-  if (content.kind === "new-auction" || content.kind === "trading-opened") {
-    // Вести о новом аукционе и об открытии торгов (PER-646): кнопка следа —
-    // корень аукциона или его лента, экран придёт новым сообщением.
+  if (
+    content.kind === "new-auction" ||
+    content.kind === "trading-opened" ||
+    content.kind === "step-window-announced"
+  ) {
+    // Вести о новом аукционе, об открытии торгов (PER-646) и общая весть о
+    // начале «Счастливых часов» (PER-766): кнопка следа — корень аукциона или
+    // его лента, экран придёт новым сообщением.
     const view = renderAuctionAnnouncement(content, timeZone);
     return {
       text: view.text,

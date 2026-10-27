@@ -158,7 +158,10 @@ public sealed record AuctionClosed(Guid EventId, Guid AuctionId, Guid MeetupId, 
 /// Повод вести о новом аукционе (PER-646): публикация, снятие с публикации и
 /// открытие онлайн-недели. Снятие вести не даёт — оно снимает неотправленную.
 /// </summary>
-public enum AnnouncementOccasion { Published, Hidden, TradingOpened }
+/// Рождение аукциона (PER-780) вести не даёт и ничего не снимает: оно только
+/// записывает положение аукциона для команды объявления — с PER-609 аукцион
+/// рождается скрытым.
+public enum AnnouncementOccasion { Published, Hidden, TradingOpened, Drafted }
 
 /// <summary>
 /// Проверенный факт видимости или открытия торгов (ADR-047, дополнение
@@ -166,8 +169,9 @@ public enum AnnouncementOccasion { Published, Hidden, TradingOpened }
 /// нет, и весть тогда дат не называет. Аукцион называется своим идентификатором,
 /// сходка — своим: название сходки канал берёт из карточки реплики.
 /// </summary>
+/// <param name="Hidden">Признак скрытия из снимка; читает его только рождение.</param>
 public sealed record AuctionAnnouncement(Guid EventId, Guid AuctionId, Guid MeetupId, long Version,
-    DateTimeOffset OccurredAt, AnnouncementOccasion Occasion, OnlinePhase? OnlinePhase);
+    DateTimeOffset OccurredAt, AnnouncementOccasion Occasion, OnlinePhase? OnlinePhase, bool Hidden = false);
 
 /// <summary>
 /// Положение счёта в снимке факта: к оплате или оплачен. Выдано — третье
@@ -405,6 +409,18 @@ public static class AuctionMapping
         if (!Id(state.MeetupId, out var meetupId))
         {
             return new AuctionDecoded.Poison("meetup_id is not a canonical UUIDv7");
+        }
+
+        // Рождение (PER-780): у черновика скрытие — значение снимка, а не
+        // повод, поэтому сверять его не с чем, кроме статуса.
+        if (occasion == AuctionEvent.OccasionOneofCase.AuctionDrafted)
+        {
+            if (state.StatusCase != AuctionState.StatusOneofCase.Draft)
+            {
+                return new AuctionDecoded.Poison($"{subject} state is not the status of its occasion");
+            }
+            return new AuctionDecoded.Announcement(new AuctionAnnouncement(eventId, auctionId, meetupId,
+                message.Version, occurredAt, AnnouncementOccasion.Drafted, null, state.Hidden));
         }
 
         // Видимость и открытие торгов (PER-646): повод, признак скрытия и статус

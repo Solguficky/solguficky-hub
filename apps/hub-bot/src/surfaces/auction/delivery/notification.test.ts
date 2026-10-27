@@ -366,6 +366,35 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Общая весть о начале «Счастливых часов» (PER-766) гостю доставляет бот
+  // аукциона.
+  it("decodes the announcement of a step window", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({
+          case: "stepWindowAnnounced",
+          value: {
+            auctionId,
+            startsAt: "2026-10-21T17:00:00Z",
+            until: "2026-10-21T19:00:00Z",
+            lotCount: 4,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "step-window-announced",
+          auctionId,
+          until: "2026-10-21T19:00:00Z",
+          lotCount: 4,
+        },
+      },
+    });
+  });
+
   // Извещение об отмене аукциона (PER-606) гостю доставляет бот аукциона.
   it("decodes a cancelled auction with the purchases of the recipient", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";

@@ -26,6 +26,7 @@ import {
 import {
   type AuctionAnnouncementNotice,
   newAuctionNoticeOf,
+  stepWindowAnnouncedNoticeOf,
   tradingOpenedNoticeOf,
 } from "../../../core/notifications/auction-announcement-notice.js";
 import {
@@ -354,6 +355,10 @@ function toContent(message: Notification): NotificationContent | undefined {
       return newAuctionNoticeOf(type.value);
     case "auctionTradingOpened":
       return tradingOpenedNoticeOf(type.value);
+    // Общая весть о начале «Счастливых часов» (PER-766): та же семья, что
+    // вести о новом аукционе, — тот же выключатель и кнопка в ленту.
+    case "stepWindowAnnounced":
+      return stepWindowAnnouncedNoticeOf(type.value);
     case "releaseSummary": {
       const { summaryId, summarizedAt, recordIds } = type.value;
       if (summaryId === "" || summarizedAt === "" || recordIds.length === 0) {
