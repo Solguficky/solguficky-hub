@@ -5,6 +5,8 @@ import type {
   ConsolePredictions,
   ConsoleLot as WireConsoleLot,
   ConsoleLotSet as WireConsoleLotSet,
+  HappyHourLotTerms as WireHappyHourLotTerms,
+  HappyHourPeriod as WireHappyHourPeriod,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
 import {
   finalLineupOf,
@@ -17,6 +19,8 @@ import type {
   AuctionWeek,
   ConsoleAuctionStatus,
   ConsoleLotSnapshot,
+  HappyHourLotTerms,
+  HappyHourPeriod,
   LotSet,
   PredictionTally,
   StepWindow,
@@ -48,6 +52,7 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает, а
     // пульт показывает их рядом с объявленными.
     launchedWindows: console.launchedStepWindows.map(windowOf),
+    happyHourPeriods: console.happyHourPeriods.map(happyHourPeriodOf),
     lots: console.lots.map(consoleLotOf),
     lotSets: console.lotSets.map(lotSetOf),
     // Порядок и разделы ленты (PER-719); нет — лента в порядке создания.
@@ -130,6 +135,34 @@ function windowOf(window: AuctionStepWindow): StepWindow {
     until: window.until,
     step: moneyOf(window.step),
     lotIds: [...window.lotIds],
+  };
+}
+
+// Период «Счастливых часов» (PER-787). Без идентификатора или условия лота
+// без шага и стартовой — дефект соседа: Auction таких не записывает.
+export function happyHourPeriodOf(
+  period: WireHappyHourPeriod,
+): HappyHourPeriod {
+  if (period.periodId === "") throw new Error("happy hour period without id");
+  return {
+    periodId: period.periodId,
+    from: period.from,
+    until: period.until,
+    lotTerms: period.lotTerms.map(happyHourLotTermsOf),
+  };
+}
+
+export function happyHourLotTermsOf(
+  terms: WireHappyHourLotTerms,
+): HappyHourLotTerms {
+  if (terms.lotId === "") throw new Error("happy hour lot terms without lot");
+  if (terms.step === undefined && terms.start === undefined) {
+    throw new Error("happy hour lot terms without a step and a start");
+  }
+  return {
+    lotId: terms.lotId,
+    ...(terms.step === undefined ? {} : { step: moneyOf(terms.step) }),
+    ...(terms.start === undefined ? {} : { start: moneyOf(terms.start) }),
   };
 }
 

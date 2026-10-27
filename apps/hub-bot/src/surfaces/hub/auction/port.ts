@@ -13,6 +13,8 @@ import type {
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoleSnapshot,
+  HappyHourLotTerms,
+  HappyHourPeriod,
   Invoice,
   InvoiceMark,
   Person,
@@ -501,6 +503,62 @@ export type LaunchStepWindowCommand = {
   lotIds: readonly string[];
 };
 
+// Периоды «Счастливых часов» и условия лотов в них (PER-787; контракт —
+// PER-785 и PER-786, ADR-047, дополнение 2026-10-27). Команды только в
+// онлайн-торгах и только до начала периода; повтор того же `opId` Auction
+// отвечает исходным ответом. Общие отказы у всех четырёх.
+type HappyHourCommonRefusal =
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "not-in-prebidding" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type CreateHappyHourPeriodResult =
+  | { kind: "ok"; period: HappyHourPeriod }
+  | { kind: "period-in-past" }
+  | { kind: "period-empty" }
+  | { kind: "period-outside-phase" }
+  | HappyHourCommonRefusal;
+
+export type DeleteHappyHourPeriodResult =
+  | { kind: "ok" }
+  | { kind: "period-not-found" }
+  | { kind: "period-started" }
+  | HappyHourCommonRefusal;
+
+// `step-not-lower` и `start-not-lower` несут обычное значение лота: отказ
+// называет его человеку.
+export type SetHappyHourLotTermsResult =
+  | { kind: "ok"; terms: HappyHourLotTerms }
+  | { kind: "period-not-found" }
+  | { kind: "period-started" }
+  | { kind: "terms-empty" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "lot-not-open" }
+  | { kind: "amount-invalid" }
+  | { kind: "step-not-lower"; regularStep?: Money }
+  | { kind: "start-not-lower"; regularStart?: Money }
+  | { kind: "windows-overlap"; from: string; until: string }
+  | HappyHourCommonRefusal;
+
+export type ClearHappyHourLotTermsResult =
+  | { kind: "ok" }
+  | { kind: "period-not-found" }
+  | { kind: "period-started" }
+  | { kind: "lot-not-in-auction" }
+  | HappyHourCommonRefusal;
+
+export type HappyHourLotTermsCommand = {
+  auctionId: string;
+  periodId: string;
+  lotId: string;
+  opId: string;
+  step?: Money;
+  start?: Money;
+};
+
 export type FinalistMark = { auctionId: string; lotId: string; opId: string };
 
 // Финал ведущего (PER-337; контракт — PER-475). Ведущий — администратор
@@ -808,6 +866,27 @@ export type AuctionConsoles = {
     launch: LaunchStepWindowCommand,
     meta?: RpcMetadata,
   ): Promise<LaunchStepWindowResult>;
+  // Периоды «Счастливых часов» и условия лотов в них (PER-787).
+  createHappyHourPeriod(
+    person: Person,
+    period: { auctionId: string; opId: string; from: string; until: string },
+    meta?: RpcMetadata,
+  ): Promise<CreateHappyHourPeriodResult>;
+  deleteHappyHourPeriod(
+    person: Person,
+    period: { auctionId: string; opId: string; periodId: string },
+    meta?: RpcMetadata,
+  ): Promise<DeleteHappyHourPeriodResult>;
+  setHappyHourLotTerms(
+    person: Person,
+    terms: HappyHourLotTermsCommand,
+    meta?: RpcMetadata,
+  ): Promise<SetHappyHourLotTermsResult>;
+  clearHappyHourLotTerms(
+    person: Person,
+    terms: Omit<HappyHourLotTermsCommand, "step" | "start">,
+    meta?: RpcMetadata,
+  ): Promise<ClearHappyHourLotTermsResult>;
   // Повтор того же `opId` Auction принимает; новый ключ на открытом
   // аукционе — `not-scheduled`.
   startPrebidding(

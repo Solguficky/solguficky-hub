@@ -391,6 +391,7 @@ function fakeAuction(
           status,
           hidden: false,
           launchedWindows: [],
+          happyHourPeriods: [],
           lots: [...registry].flatMap((lotId) => {
             const lot = lots.get(lotId);
             return lot === undefined

@@ -42,6 +42,7 @@ import type {
   AuctionConsoleView,
   ConsoleAuctionStatus,
   ConsoleLot,
+  HappyHourPeriod,
   Invoice,
   InvoiceMark,
   LotSet,
@@ -55,7 +56,9 @@ import type {
   AuctionWeekConfig,
   ChangeRafflePrizeResult,
   ConsoleReadResult,
+  CreateHappyHourPeriodResult,
   DayLotStatistics,
+  DeleteHappyHourPeriodResult,
   FinalistResult,
   FinalTimeResult,
   FloorBid,
@@ -69,6 +72,7 @@ import type {
   RafflePrizePhotoResult,
   RemovalTarget,
   SaveLotSetResult,
+  SetHappyHourLotTermsResult,
 } from "../auction/port.js";
 import type { IdentityResolver } from "../identity/port.js";
 import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
@@ -319,6 +323,12 @@ function fakeAuction(
     launchedWindows?: AuctionConsoleView["launchedWindows"];
     // Отказ запуска (PER-615): Auction не принял окно — пульт показывает текст.
     launch?: LaunchStepWindowResult;
+    // Периоды «Счастливых часов» (PER-787) до теста и отказы Auction вместо
+    // принятия команды над ними.
+    periods?: readonly HappyHourPeriod[];
+    createRefusal?: CreateHappyHourPeriodResult;
+    deleteRefusal?: DeleteHappyHourPeriodResult;
+    termsRefusal?: SetHappyHourLotTermsResult;
     // Видимость до торгов (PER-673): аукцион скрыт, и отказ Auction вместо
     // принятия публикации или снятия.
     hidden?: boolean;
@@ -371,6 +381,8 @@ function fakeAuction(
     lots: ConsoleLot[];
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает.
     launchedWindows?: AuctionConsoleView["launchedWindows"];
+    // Периоды «Счастливых часов» (PER-787) по возрастанию начала.
+    periods: HappyHourPeriod[];
     hidden: boolean;
     // Ориентировочное время финала (PER-663): анонс трансляции.
     finalAt?: string;
@@ -412,6 +424,7 @@ function fakeAuction(
       ? {}
       : { launchedWindows: options.launchedWindows }),
     lots: [...(options.lots ?? [])],
+    periods: [...(options.periods ?? [])],
     ...(options.lineup === undefined
       ? {}
       : { lineup: { order: options.lineup } }),
@@ -583,6 +596,7 @@ function fakeAuction(
           ...(state.week === undefined ? {} : { week: state.week }),
           ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
           launchedWindows: state.launchedWindows ?? [],
+          happyHourPeriods: state.periods,
           lots: state.lots,
           lotSets: state.lotSets,
           ...(state.layout === undefined ? {} : { layout: state.layout }),
@@ -672,6 +686,80 @@ function fakeAuction(
         ...(prize === undefined ? {} : { rafflePrize: prize }),
         ...(term === undefined ? {} : { paymentTermSeconds: term }),
       };
+      return { kind: "ok" };
+    },
+    // Периоды как в Auction (PER-785, PER-786): только в онлайн-торгах,
+    // идентификатор периода выводится из ключа, повтор ключа — тот же период.
+    async createHappyHourPeriod(_person, period) {
+      commands.push({ method: "createHappyHourPeriod", args: period });
+      if (options.createRefusal !== undefined) return options.createRefusal;
+      if (state.status !== "prebidding") return { kind: "not-in-prebidding" };
+      const periodId = `pp${period.opId.slice(2)}`;
+      const known = state.periods.find((each) => each.periodId === periodId);
+      if (known !== undefined) return { kind: "ok", period: known };
+      const created = {
+        periodId,
+        from: period.from,
+        until: period.until,
+        lotTerms: [],
+      };
+      state.periods = [...state.periods, created].sort((a, b) =>
+        a.from.localeCompare(b.from),
+      );
+      return { kind: "ok", period: created };
+    },
+    async deleteHappyHourPeriod(_person, period) {
+      commands.push({ method: "deleteHappyHourPeriod", args: period });
+      if (options.deleteRefusal !== undefined) return options.deleteRefusal;
+      if (!state.periods.some((each) => each.periodId === period.periodId)) {
+        return { kind: "period-not-found" };
+      }
+      state.periods = state.periods.filter(
+        (each) => each.periodId !== period.periodId,
+      );
+      return { kind: "ok" };
+    },
+    async setHappyHourLotTerms(_person, terms) {
+      commands.push({ method: "setHappyHourLotTerms", args: terms });
+      if (options.termsRefusal !== undefined) return options.termsRefusal;
+      const period = state.periods.find(
+        (each) => each.periodId === terms.periodId,
+      );
+      if (period === undefined) return { kind: "period-not-found" };
+      const recorded = {
+        lotId: terms.lotId,
+        ...(terms.step === undefined ? {} : { step: terms.step }),
+        ...(terms.start === undefined ? {} : { start: terms.start }),
+      };
+      state.periods = state.periods.map((each) =>
+        each === period
+          ? {
+              ...each,
+              lotTerms: [
+                ...each.lotTerms.filter((one) => one.lotId !== terms.lotId),
+                recorded,
+              ].sort((a, b) => a.lotId.localeCompare(b.lotId)),
+            }
+          : each,
+      );
+      return { kind: "ok", terms: recorded };
+    },
+    async clearHappyHourLotTerms(_person, terms) {
+      commands.push({ method: "clearHappyHourLotTerms", args: terms });
+      const period = state.periods.find(
+        (each) => each.periodId === terms.periodId,
+      );
+      if (period === undefined) return { kind: "period-not-found" };
+      state.periods = state.periods.map((each) =>
+        each === period
+          ? {
+              ...each,
+              lotTerms: each.lotTerms.filter(
+                (one) => one.lotId !== terms.lotId,
+              ),
+            }
+          : each,
+      );
       return { kind: "ok" };
     },
     async launchStepWindow(_person, launch) {

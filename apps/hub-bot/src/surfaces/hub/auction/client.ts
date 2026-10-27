@@ -83,6 +83,12 @@ import type {
 } from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
+  clearHappyHourLotTermsResult,
+  createHappyHourPeriodResult,
+  deleteHappyHourPeriodResult,
+  setHappyHourLotTermsResult,
+} from "./happy-hours.js";
+import {
   type AddLotResult,
   type AdvanceAskResult,
   type AssignRaffleWinnerResult,
@@ -178,6 +184,10 @@ type AuctionRpc = Pick<
   | "getAuctionDaySummary"
   | "scheduleAuction"
   | "launchStepWindow"
+  | "createHappyHourPeriod"
+  | "deleteHappyHourPeriod"
+  | "setHappyHourLotTerms"
+  | "clearHappyHourLotTerms"
   | "startPrebidding"
   | "discardAuction"
   | "cancelAuction"
@@ -757,6 +767,80 @@ export function createAuctionAdapter(
           options(meta),
         );
         return launchStepWindowResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Периоды «Счастливых часов» и условия лотов в них (PER-787).
+    async createHappyHourPeriod(person, period, meta) {
+      try {
+        const response = await rpc.createHappyHourPeriod(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: period.auctionId,
+            from: period.from,
+            until: period.until,
+            opId: period.opId,
+          },
+          options(meta),
+        );
+        return createHappyHourPeriodResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async deleteHappyHourPeriod(person, period, meta) {
+      try {
+        const response = await rpc.deleteHappyHourPeriod(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: period.auctionId,
+            periodId: period.periodId,
+            opId: period.opId,
+          },
+          options(meta),
+        );
+        return deleteHappyHourPeriodResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async setHappyHourLotTerms(person, terms, meta) {
+      try {
+        const response = await rpc.setHappyHourLotTerms(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: terms.auctionId,
+            periodId: terms.periodId,
+            lotId: terms.lotId,
+            ...(terms.step === undefined
+              ? {}
+              : { step: wireMoney(terms.step) }),
+            ...(terms.start === undefined
+              ? {}
+              : { start: wireMoney(terms.start) }),
+            opId: terms.opId,
+          },
+          options(meta),
+        );
+        return setHappyHourLotTermsResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async clearHappyHourLotTerms(person, terms, meta) {
+      try {
+        const response = await rpc.clearHappyHourLotTerms(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: terms.auctionId,
+            periodId: terms.periodId,
+            lotId: terms.lotId,
+            opId: terms.opId,
+          },
+          options(meta),
+        );
+        return clearHappyHourLotTermsResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }

@@ -81,6 +81,7 @@ function view(
     hidden: false,
     lots: [],
     launchedWindows: [],
+    happyHourPeriods: [],
     lotSets: [],
     ...extra,
   };
@@ -242,6 +243,22 @@ function fake(answers: {
       reads.active += 1;
       return answers.active ?? { kind: "ok", auctions: [] };
     },
+    createHappyHourPeriod: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
+    deleteHappyHourPeriod: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
+    setHappyHourLotTerms: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
+    clearHappyHourLotTerms: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
     launchStepWindow: async (_person, launch) => {
       launched.push(launch);
       return (

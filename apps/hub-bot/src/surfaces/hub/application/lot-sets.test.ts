@@ -42,6 +42,7 @@ function snapshot(lotSets: LotSet[]): AuctionConsoleSnapshot {
     status: "draft",
     hidden: false,
     launchedWindows: [],
+    happyHourPeriods: [],
     lots: [vase],
     lotSets,
   };

@@ -177,12 +177,17 @@ function tierOf(tier: StepTier): StepTierView {
   return { lowerBound: required(tier.lowerBound), step: required(tier.step) };
 }
 
-// Окно без шага — дефект соседа: показать сниженный шаг без суммы нельзя.
+// Окно задаёт шаг, стартовую цену или оба (ADR-047, дополнение 2026-10-27).
+// Окно без того и другого — дефект соседа: показать его условия нечем.
 function windowOf(window: LotStepWindow): StepWindowView {
+  if (window.step === undefined && window.start === undefined) {
+    throw new Error("lot step window without a step and a starting price");
+  }
   return {
     from: window.from,
     until: window.until,
-    step: required(window.step),
+    ...(window.step === undefined ? {} : { step: moneyOf(window.step) }),
+    ...(window.start === undefined ? {} : { start: moneyOf(window.start) }),
   };
 }
 

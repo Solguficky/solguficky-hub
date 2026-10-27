@@ -530,6 +530,24 @@ export type StepWindow = {
   lotIds: readonly string[];
 };
 
+// Период «Счастливых часов» (PER-785, PER-787; ADR-047, дополнение
+// 2026-10-27): полуинтервал `[from, until)` онлайн-недели и условия лотов в
+// нём. Сам период торгов не меняет; до начала его удаляют, с начала он
+// заморожен. Условия — в порядке `lotId`, как их записал аукцион.
+export type HappyHourPeriod = {
+  periodId: string;
+  from: string;
+  until: string;
+  lotTerms: readonly HappyHourLotTerms[];
+};
+
+// Условия лота в периоде: шаг, стартовая цена или оба — хотя бы одно есть.
+export type HappyHourLotTerms = {
+  lotId: string;
+  step?: LotAmount;
+  start?: LotAmount;
+};
+
 // Лот на пульте: снимок, число ставок, отметка «в финал» и просрочка — торги
 // идут дольше дедлайна, а лот не закрыт (решает Auction).
 export type ConsoleLotSnapshot = {
@@ -599,6 +617,9 @@ export type AuctionConsoleSnapshot = {
   // запуска: их нет в конфигурации, а конфигурация после открытия недели
   // заморожена. Пульт показывает их рядом с объявленными.
   launchedWindows: readonly StepWindow[];
+  // Периоды «Счастливых часов» (PER-787) по возрастанию начала, прошедшие
+  // тоже; удалённых нет.
+  happyHourPeriods: readonly HappyHourPeriod[];
   lots: readonly ConsoleLotSnapshot[];
   // Сеты лотов аукциона (ADR-073, PER-509) в порядке идентификатора — все, и
   // неполные: снимок лота сет меньше чем из двух лотов не показывает, а
