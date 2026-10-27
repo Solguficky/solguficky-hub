@@ -33,6 +33,8 @@
     "lotLayout": null,
     "promoVideo": null,
     "happyHourPeriodCreated": null,
-    "happyHourPeriodDeleted": null
+    "happyHourPeriodDeleted": null,
+    "happyHourLotTermsSet": null,
+    "happyHourLotTermsCleared": null
   }
 }

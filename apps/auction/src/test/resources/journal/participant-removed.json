@@ -30,6 +30,8 @@
       },
       "leader": "00000000-0000-0001-0000-000000000003",
       "leadingBidId": "00000000-0000-0006-0000-000000000006"
-    }
+    },
+    "periodWindowSet": null,
+    "periodWindowCleared": null
   }
 }

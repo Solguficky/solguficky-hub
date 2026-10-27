@@ -52,6 +52,8 @@ object MethodAccess {
     "LaunchStepWindow" -> Set(Caller.HubBot),
     "CreateHappyHourPeriod" -> Set(Caller.HubBot),
     "DeleteHappyHourPeriod" -> Set(Caller.HubBot),
+    "SetHappyHourLotTerms" -> Set(Caller.HubBot),
+    "ClearHappyHourLotTerms" -> Set(Caller.HubBot),
     "FreezeFinalLineup" -> Set(Caller.HubBot),
     "StartFinal" -> Set(Caller.HubBot),
     "StartNextLot" -> Set(Caller.HubBot),

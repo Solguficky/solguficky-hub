@@ -3,7 +3,9 @@ package auction.grpc
 import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.CreateHappyHourPeriod
+import auction.aggregate.ClearHappyHourLotTerms
 import auction.aggregate.DeleteHappyHourPeriod
+import auction.aggregate.SetHappyHourLotTerms
 import auction.aggregate.HappyHourPeriodId
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
@@ -89,6 +91,8 @@ import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.LaunchStepWindowRequest
 import auction.v1.auction_service.CreateHappyHourPeriodRequest
 import auction.v1.auction_service.DeleteHappyHourPeriodRequest
+import auction.v1.auction_service.SetHappyHourLotTermsRequest
+import auction.v1.auction_service.ClearHappyHourLotTermsRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
 import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
@@ -176,6 +180,11 @@ final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchSt
 final case class HappyHourCreateCommand(auctionId: AuctionId, command: CreateHappyHourPeriod, acting: Acting)
 
 final case class HappyHourDeleteCommand(auctionId: AuctionId, command: DeleteHappyHourPeriod, acting: Acting)
+
+/** Условия лота в периоде «Счастливых часов» (PER-786). Суммы здесь ещё не сверены с лотом: это решение домена. */
+final case class HappyHourTermsCommand(auctionId: AuctionId, command: SetHappyHourLotTerms, acting: Acting)
+
+final case class HappyHourTermsClearCommand(auctionId: AuctionId, command: ClearHappyHourLotTerms, acting: Acting)
 
 /** Снятие участника с лота аукциона сходки и его предпросмотр. */
 final case class RemovalCommand(auctionId: AuctionId, command: RemoveLotParticipant, acting: Acting)
@@ -594,6 +603,39 @@ object RequestMapping {
     } yield HappyHourDeleteCommand(
       auction,
       DeleteHappyHourPeriod(HappyHourPeriodId(period), OpId(opId)),
+      acting
+    )
+
+  /**
+   * Условия лота в периоде: форма — период, лот, суммы, какие заданы, и `op_id`. Ни одной суммы, сумма не положительна
+   * или не в валюте лота — отказы домена, а не форма запроса.
+   */
+  def setHappyHourLotTerms(request: SetHappyHourLotTermsRequest): Either[FormError, HappyHourTermsCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      period <- canonicalUuidV5(request.periodId).toRight(FormError("period_id"))
+      lot <- uuidV7("lot_id", request.lotId)
+      step <- optionalMoney("step", request.step)
+      start <- optionalMoney("start", request.start)
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourTermsCommand(
+      auction,
+      SetHappyHourLotTerms(HappyHourPeriodId(period), LotId(lot), step, start, OpId(opId)),
+      acting
+    )
+
+  /** Снятие условий лота в периоде: период, лот и `op_id`. */
+  def clearHappyHourLotTerms(request: ClearHappyHourLotTermsRequest): Either[FormError, HappyHourTermsClearCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      period <- canonicalUuidV5(request.periodId).toRight(FormError("period_id"))
+      lot <- uuidV7("lot_id", request.lotId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourTermsClearCommand(
+      auction,
+      ClearHappyHourLotTerms(HappyHourPeriodId(period), LotId(lot), OpId(opId)),
       acting
     )
 
@@ -1062,6 +1104,10 @@ object RequestMapping {
 
   private[grpc] def canonicalUuidV5(value: String): Option[UUID] =
     Option.when(CanonicalUuidV5.matches(value))(UUID.fromString(value))
+
+  /** Необязательная сумма: без неё — `None`, с ней — та же проверка, что у обязательной. */
+  private def optionalMoney(field: String, value: Option[MoneyMessage]): Either[FormError, Option[Money]] =
+    value.fold[Either[FormError, Option[Money]]](Right(None))(message => money(field, Some(message)).map(Some(_)))
 
   private def money(field: String, value: Option[MoneyMessage]): Either[FormError, Money] =
     value match {

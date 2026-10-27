@@ -94,6 +94,9 @@ object LotFacts {
         Some("lot_withdrawn" -> bus.LotEvent.Occasion.LotWithdrawn(bus.LotWithdrawn()))
       case LotEvent.StepWindowAdded(_) =>
         Some("step_window_added" -> bus.LotEvent.Occasion.StepWindowAdded(bus.StepWindowAdded()))
+      // Замена и снятие окна периода — один повод: итог несёт снимок, а что было до него, факт не говорит (PER-786).
+      case LotEvent.PeriodWindowSet(_) | LotEvent.PeriodWindowCleared(_) =>
+        Some("step_window_changed" -> bus.LotEvent.Occasion.StepWindowChanged(bus.StepWindowChanged()))
       // Отметка — рабочий выбор организатора до заморозки состава: публичным факт становится только удержание.
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal |
           LotEvent.LotUnmarkedForFinal =>
@@ -136,12 +139,16 @@ object LotFacts {
     }
   }
 
-  /** Окно лота как данные факта: записанный полуинтервал `[from, until)`, его шаг и стартовая цена, если заданы. */
+  /**
+   * Окно лота как данные факта: записанный полуинтервал `[from, until)`, его шаг и стартовая цена, если заданы, и
+   * период «Счастливых часов», если окно — условия лота в нём.
+   */
   private def stepWindow(window: StepWindow): bus.StepWindow =
     bus.StepWindow(
       from = LotValues.instant(window.from),
       until = LotValues.instant(window.until),
       step = window.step.map(LotValues.money),
-      start = window.start.map(LotValues.money)
+      start = window.start.map(LotValues.money),
+      happyHourPeriodId = window.period.fold("")(_.value.toString)
     )
 }

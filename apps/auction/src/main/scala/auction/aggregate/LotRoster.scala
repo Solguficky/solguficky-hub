@@ -2,6 +2,7 @@ package auction.aggregate
 
 import auction.catalog.LotId
 import auction.lot.AddStepWindow
+import auction.lot.ClearPeriodWindow
 import auction.lot.CloseLot
 import auction.lot.CloseLotRejected
 import auction.lot.CloseReason
@@ -10,8 +11,10 @@ import auction.lot.OpId
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ResumeLot
+import auction.lot.SetPeriodWindow
 import auction.lot.StepWindow
 import auction.lot.WithdrawLot
+import auction.lot.WindowPeriod
 import auction.lot.WithdrawLotRejected
 import auction.lot.WithdrawnReason
 
@@ -51,9 +54,9 @@ enum LotStanding {
 }
 
 /**
- * Что аукцион знает о доставке запущенного окна лоту (ADR-047, дополнение 2026-10-12). `Sending` — `AddStepWindow`
- * ушёл, ответа нет; `Delivered` — лот ответил: принял окно или отказал, потому что уже не в торгах, — и ждать от него
- * нечего; `Unanswered` — ответ не пришёл.
+ * Что аукцион знает о доставке запущенного окна лоту (ADR-047, дополнение 2026-10-12) и правки условий лота в периоде
+ * «Счастливых часов» (PER-786). `Sending` — команда ушла, ответа нет; `Delivered` — лот ответил: принял или отказал,
+ * потому что уже не в торгах или период начался, — и ждать от него нечего; `Unanswered` — ответ не пришёл.
  */
 enum WindowDelivery {
   case Sending
@@ -92,6 +95,12 @@ enum LotInstruction {
   /** Доставить лоту окно, запущенное под `launch` (ADR-047, дополнение 2026-10-12). */
   case AddWindow(lot: LotId, launch: OpId, command: AddStepWindow)
 
+  /** Доставить лоту условия в периоде, заданные правкой `change` (PER-786). */
+  case SetTerms(lot: LotId, change: OpId, command: SetPeriodWindow)
+
+  /** Доставить лоту снятие условий в периоде правкой `change`: снятием или удалением периода (PER-786). */
+  case ClearTerms(lot: LotId, change: OpId, command: ClearPeriodWindow)
+
   /**
    * Аукцион кончился, а записи о том нет: в финале завершён каждый лот состава, в перерыве не осталось удержанных —
    * пора записать `AuctionFinished`.
@@ -119,7 +128,9 @@ enum LotInstruction {
  * Окна, запущенные по ходу торгов, доставляются лотам той же парой «команда — подтверждение» (ADR-047, дополнение
  * 2026-10-12): `deliveries` — знание о доставке по `op_id` запуска и лоту, несохраняемое, как и знание о лотах.
  * Recovery начинает с пустого и шлёт каждое запущенное окно каждому его лоту заново: `op_id` доставки тот же, и лот,
- * уже записавший окно, второго события не пишет.
+ * уже записавший окно, второго события не пишет. Условия лотов в периодах «Счастливых часов» (PER-786) идут той же
+ * парой и тем же знанием по `op_id` правки и лоту, но шлётся только последняя правка каждой пары «период — лот»:
+ * прежняя, дошедшая после неё, вернула бы лоту устаревшие условия.
  */
 /**
  * `removals` — сколько снятий участника ушло лоту и ещё не получило ответа (PER-658). Пока хоть одно в пути, цена
@@ -194,6 +205,28 @@ object LotRoster {
       OpId(Auction.nameBased(WindowNamespace, s"${launch.opId.value}/${lot.value}"))
     )
 
+  /** Пространство имён `op_id` доставки правки условий лота в периоде (UUIDv5). */
+  val TermsNamespace: UUID = UUID.fromString("a83e1f57-0c6b-4d92-8e3f-5b17c9d24a06")
+
+  /**
+   * Команда лоту по последней правке его условий в периоде (PER-786): заданные условия — окно периода, снятые — снятие.
+   * `op_id` — UUIDv5 от `op_id` правки и лота: одинаков после любого рестарта, и лот на повтор отвечает исходным
+   * событием. Периода с заданными условиями нет — это дефект: удаление периода снимает условия его лотов той же
+   * правкой.
+   */
+  def periodWindowOf(auction: Auction, terms: PeriodLotTerms): LotInstruction = {
+    val opId = OpId(Auction.nameBased(TermsNamespace, s"${terms.change.value}/${terms.lot.value}"))
+    terms.terms match {
+      case None =>
+        LotInstruction.ClearTerms(terms.lot, terms.change, ClearPeriodWindow(WindowPeriod(terms.period.value), opId))
+      case Some(set) =>
+        val period = auction.happyHours
+          .find(_.id == terms.period)
+          .getOrElse(throw new IllegalStateException(s"lot terms of a gone happy hour period ${terms.period.value}"))
+        LotInstruction.SetTerms(terms.lot, terms.change, SetPeriodWindow(period.windowOf(set), opId))
+    }
+  }
+
   /** Пространство имён `op_id` снятия лота отменённым аукционом (UUIDv5). */
   val WithdrawNamespace: UUID = UUID.fromString("9e3c5a71-2b8d-4f06-a1e4-6d0b7c93f852")
 
@@ -223,7 +256,8 @@ object LotRoster {
       case current if asking(current) =>
         val (asked, questions) = settling(auction, ask(empty, auction.lots.toList))
         val (delivering, windows) = deliver(auction, asked, auction.launched)
-        (delivering, questions ++ windows)
+        val (conveying, terms) = convey(auction, delivering, auction.periodTerms)
+        (conveying, questions ++ clearingFirst(windows, terms))
       case AuctionState.Final(_, _, _, _, _) if Auction.lineupCompleted(auction) => (empty, List(LotInstruction.Finish))
       case current @ AuctionState.Final(_, _, _, _, _) => ask(empty, current.activeLot.toList)
       case _ => (empty, Nil)
@@ -258,7 +292,8 @@ object LotRoster {
       case current if asking(current) =>
         val (asked, questions) = ask(roster, silent)
         val (delivering, windows) = deliver(auction, asked, auction.launched)
-        (delivering, questions ++ windows)
+        val (conveying, terms) = convey(auction, delivering, auction.periodTerms)
+        (conveying, questions ++ clearingFirst(windows, terms))
       case AuctionState.Final(_, _, _, _, _) => ask(roster, silent)
       case _ => (roster, Nil)
     }
@@ -306,8 +341,17 @@ object LotRoster {
     deliver(auction, roster, auction.launched.filter(_.opId == opId))
 
   /**
-   * Лот ответил на `AddStepWindow`: и принятое окно, и отказ лота, который уже не в торгах, доставку завершают —
-   * аукцион такого лота не ждёт. Ответ, которого аукцион не ждёт, знания не меняет.
+   * Шаг доставки после правки условий в периоде (PER-786): записанная правка и повтор того же `op_id` шлют лотам
+   * последние правки, сделанные под ним, — одну у условий лота, по одной на лот у удаления периода. Правка, которую
+   * потом заменила другая, уже не последняя и не шлётся.
+   */
+  def termsChanged(auction: Auction, roster: LotRoster, opId: OpId): (LotRoster, List[LotInstruction]) =
+    convey(auction, roster, auction.periodTerms.filter(_.change == opId))
+
+  /**
+   * Лот ответил на `AddStepWindow`, `SetPeriodWindow` или `ClearPeriodWindow`: и принятое окно, и отказ лота, который
+   * уже не в торгах или чей период начался, доставку завершают — аукцион такого лота не ждёт. Ответ, которого аукцион
+   * не ждёт, знания не меняет. `launch` — `op_id` запуска окна или правки условий.
    */
   def windowAnswered(roster: LotRoster, launch: OpId, lot: LotId): LotRoster =
     roster.deliveries.get(launch -> lot) match {
@@ -346,6 +390,42 @@ object LotRoster {
             known.updated(launch.opId -> lot, WindowDelivery.Sending)
           }),
           due.map((launch, lot) => LotInstruction.AddWindow(lot, launch.opId, windowOf(launch, lot)))
+        )
+      case _ => (roster, Nil)
+    }
+
+  /**
+   * Порядок повторной доставки (PER-786): снятия условий раньше запущенных окон и заданных условий. Лот отбрасывает без
+   * записи окно, пересекающее его окно другого происхождения, а аукцион пустил новое окно, потому что прежние условия
+   * уже снял: дошедшее раньше снятия новое окно пропало бы у лота молча.
+   */
+  private def clearingFirst(windows: List[LotInstruction], terms: List[LotInstruction]): List[LotInstruction] = {
+    val (clears, sets) = terms.partition {
+      case _: LotInstruction.ClearTerms => true
+      case _ => false
+    }
+    clears ++ windows ++ sets
+  }
+
+  /**
+   * Правки условий лотов в периодах шлются тем же правилом, что запущенные окна: только в онлайн-торгах и только той
+   * паре «правка — лот», о доставке которой знания нет или ответ не пришёл.
+   */
+  private def convey(
+      auction: Auction,
+      roster: LotRoster,
+      changes: List[PeriodLotTerms]
+  ): (LotRoster, List[LotInstruction]) =
+    auction.state match {
+      case AuctionState.Prebidding(_, _) =>
+        val due = changes.filter(terms =>
+          roster.deliveries.get(terms.change -> terms.lot).forall(_ == WindowDelivery.Unanswered)
+        )
+        (
+          roster.copy(deliveries = due.foldLeft(roster.deliveries) { (known, terms) =>
+            known.updated(terms.change -> terms.lot, WindowDelivery.Sending)
+          }),
+          due.map(periodWindowOf(auction, _))
         )
       case _ => (roster, Nil)
     }
