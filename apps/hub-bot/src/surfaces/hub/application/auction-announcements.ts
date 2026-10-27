@@ -8,6 +8,7 @@ import {
 import { type RpcMetadata, rpcMeta } from "../../../core/rpc-metadata.js";
 import type { AuctionConsoles, AuctionFailure } from "../auction/port.js";
 import type { NotificationFailure } from "../notifications/port.js";
+import { fingerprint } from "./fingerprint.js";
 import type {
   AuctionConsoleSnapshot,
   ExecuteResult,
@@ -60,11 +61,23 @@ export type AnnouncementCommand = {
 
 export type AnnouncementAudienceResult =
   | { kind: "ok"; recipientCount: number }
+  | AnnouncementRefused
   | NotificationFailure;
 
 export type AnnouncementAcceptResult =
   | { kind: "ok"; created: boolean }
+  | AnnouncementRefused
   | NotificationFailure;
+
+/**
+ * `FAILED_PRECONDITION` Notifications по его причине (PER-792): реплика
+ * видит аукцион скрытым, аукцион или сходка закрыты, фильтр аудитории не
+ * сузить. Это исходы шага, а не поломка зависимости.
+ */
+export type AnnouncementRefused = {
+  kind: "refused";
+  reason: "auction-hidden" | "auction-closed" | "audience-gone";
+};
 
 /**
  * Кому из держателей права ставок уходит объявление (PER-768): все или те,
@@ -203,6 +216,9 @@ export type AuctionAnnouncementRequest =
       audience: AnnouncementAudience;
       lot?: number;
       photo?: number;
+      // Отпечаток `photoId` фото предпросмотра (PER-792): «Отправить» берёт
+      // одобренное фото, а не то, что сейчас стоит под его номером.
+      photoPrint?: string;
       post?: AnnouncementPost;
     });
 
@@ -293,7 +309,9 @@ export type AuctionAnnouncementResult =
   // Шаг устарел: окна, лота или фото, на которые он ссылался, в пульте больше
   // нет, либо объявлять аукцион уже некому. Своё медиа (PER-776): чат медиа
   // выключен — `media-off`, пост не опубликовался — `media-failed`. Аудиторию
-  // шага аукцион больше назвать не может — `audience-gone` (PER-779).
+  // шага аукцион больше назвать не может — `audience-gone` (PER-779). Реплика
+  // Notifications ещё видит аукцион скрытым, хотя пульт его уже показывает, —
+  // `not-replicated`: шаг можно повторить через минуту (PER-792).
   | {
       kind: "announcement-outcome";
       auctionId: string;
@@ -307,7 +325,8 @@ export type AnnouncementOutcomeNote =
   | "closed"
   | "media-off"
   | "media-failed"
-  | "audience-gone";
+  | "audience-gone"
+  | "not-replicated";
 
 const notAdministrator: ExecuteResult = {
   kind: "auction-console-refused",
@@ -365,11 +384,14 @@ function raffleOpen(console: AuctionConsoleSnapshot, now: Date): boolean {
   );
 }
 
-// Раунд прогнозов открыт: каталог — всю онлайн-неделю (PER-723). Раунд финала
-// открывается с составом, когда объявление пульт уже не предлагает.
+// Раунд прогнозов открыт, как его открывает Auction (`PredictionSteps`):
+// каталог — у запланированного аукциона и всю онлайн-неделю (PER-723,
+// PER-792). Раунд финала открывается с составом, когда объявление пульт уже
+// не предлагает.
 function predictionRoundOpen(console: AuctionConsoleSnapshot): boolean {
   return (
-    console.status === "prebidding" && console.predictionTally !== undefined
+    (console.status === "scheduled" || console.status === "prebidding") &&
+    console.predictionTally !== undefined
   );
 }
 
@@ -469,11 +491,18 @@ type Picked =
 
 // Лот, кнопка и фото шага по номерам из кнопки — из пульта, прочитанного
 // сейчас. Лот, который выпал из реестра, или фото, которого у лота больше нет,
-// — устаревший шаг, а не команда с чужим лотом.
+// — устаревший шаг, а не команда с чужим лотом. С отпечатком фото (PER-792)
+// номер не решает: фото ищется по `photoId`, одобренному в предпросмотре, и
+// удалённое — `photo-gone`, а не соседнее, сдвинувшееся на его номер.
 function pick(
   console: AuctionConsoleSnapshot,
   auctionId: string,
-  choice: { button: ButtonChoice; lot?: number; photo?: number },
+  choice: {
+    button: ButtonChoice;
+    lot?: number;
+    photo?: number;
+    photoPrint?: string;
+  },
 ): Picked {
   const outcome = (note: "lot-gone" | "photo-gone"): Picked => ({
     ok: false,
@@ -490,7 +519,15 @@ function pick(
       ? []
       : (console.lots.find((entry) => entry.lot.lotId === lot.lotId)?.lot.card
           ?.photos ?? []);
-  const photo = choice.photo === undefined ? undefined : photos[choice.photo];
+  const index =
+    choice.photo === undefined
+      ? undefined
+      : choice.photoPrint === undefined
+        ? choice.photo
+        : photos.findIndex(
+            (candidate) => fingerprint(candidate.photoId) === choice.photoPrint,
+          );
+  const photo = index === undefined ? undefined : photos[index];
   if (choice.photo !== undefined && photo === undefined) {
     return outcome("photo-gone");
   }
@@ -507,11 +544,11 @@ function pick(
     photos: photos.length,
     ...(lot === undefined ? {} : { lot }),
     ...(button === undefined ? {} : { button }),
-    ...(photo === undefined || lot === undefined || choice.photo === undefined
+    ...(photo === undefined || lot === undefined || index === undefined
       ? {}
       : {
           photo: {
-            index: choice.photo,
+            index,
             lotId: lot.lotId,
             photoId: photo.photoId,
           },
@@ -662,7 +699,7 @@ export function createAuctionAnnouncements(
     if (!picked.ok) return picked.result;
     const audiences = announcementAudiences(found.console, clock());
     if (!audiences.includes(request.audience)) return audienceGone(request);
-    if (counted.kind !== "ok") return failed(counted);
+    if (counted.kind !== "ok") return refusalOutcome(request, counted);
     return {
       kind: "announcement-preview",
       auctionId: request.auctionId,
@@ -716,6 +753,29 @@ export function createAuctionAnnouncements(
     };
   }
 
+  // Отказ Notifications по состоянию аукциона или фильтра — исход шага
+  // (PER-792). Скрытым аукцион видит только реплика: пульт его уже показал,
+  // иначе `read` вернул бы `closed`.
+  function refusalOutcome(
+    request: Call,
+    result: AnnouncementRefused | NotificationFailure,
+  ): ExecuteResult {
+    if (result.kind !== "refused") return failed(result);
+    const notes = {
+      "auction-hidden": "not-replicated",
+      "auction-closed": "closed",
+      "audience-gone": "audience-gone",
+    } as const satisfies Record<
+      AnnouncementRefused["reason"],
+      AnnouncementOutcomeNote
+    >;
+    return {
+      kind: "announcement-outcome",
+      auctionId: request.auctionId,
+      note: notes[result.reason],
+    };
+  }
+
   async function send(
     request: Extract<
       AuctionAnnouncementRequest,
@@ -748,7 +808,7 @@ export function createAuctionAnnouncements(
       },
       rpcMeta(request),
     );
-    if (accepted.kind !== "ok") return failed(accepted);
+    if (accepted.kind !== "ok") return refusalOutcome(request, accepted);
     return {
       kind: "announcement-sent",
       auctionId: request.auctionId,

@@ -7791,6 +7791,209 @@ describe("auction announcement", () => {
     expect(accepted).toEqual([]);
   });
 
+  // Повтор после сбоя (PER-792): кадр сбоя несёт текст шага, и «Повторить»
+  // доходит до подсчёта, а не до «Шаг устарел».
+  it("counts again after «Повторить» once Notifications answers", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+      lots: [mug],
+    });
+    let down = true;
+    const asked: AnnouncementAudience[] = [];
+    const port: AuctionAnnouncements = {
+      async previewAuctionAnnouncement(_person, _meetupId, audience) {
+        asked.push(audience);
+        return down
+          ? { kind: "unavailable", cause: new Error("notifications down") }
+          : { kind: "ok", recipientCount: 6 };
+      },
+      async announceAuction() {
+        return { kind: "ok", created: true };
+      },
+    };
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, { port, accepted: [] }, calls);
+    await hub.init();
+    const shown = announcementAudienceScreen({
+      auctionId,
+      text: "Успей в розыгрыш",
+      button: "auction",
+      audience: "not-in-raffle",
+      audiences: ["all", "not-in-raffle"],
+    });
+    const frame: Sent = {
+      text: shown.text,
+      reply_markup: { inline_keyboard: shown.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "Не в розыгрыше"), frame));
+    expect(plain(last(calls))).toContain("Не получилось загрузить данные");
+
+    down = false;
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Повторить"), last(calls)),
+    );
+    expect(plain(last(calls))).not.toContain("Шаг устарел");
+    expect(plain(last(calls))).toContain("Получат 6 человек");
+    expect(asked).toEqual(["not-in-raffle", "not-in-raffle"]);
+  });
+
+  // FAILED_PRECONDITION Notifications по причине (PER-792) — исход шага, а
+  // не экран поломки.
+  it("answers the refusals of Notifications as outcomes of the step", async () => {
+    const cases = [
+      ["audience-gone", "Этих получателей больше не выбрать"],
+      ["auction-closed", "Объявлять некому"],
+      ["auction-hidden", "Рассылка ещё не знает, что аукцион опубликован"],
+    ] as const;
+    for (const [reason, says] of cases) {
+      const auction = fakeAuction({
+        status: "prebidding",
+        week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+        lots: [mug],
+      });
+      const accepted: AnnouncementCommand[] = [];
+      const port: AuctionAnnouncements = {
+        async previewAuctionAnnouncement() {
+          return { kind: "refused", reason };
+        },
+        async announceAuction(_person, command) {
+          accepted.push(command);
+          return { kind: "ok", created: true };
+        },
+      };
+      const calls: RecordedCall[] = [];
+      const hub = bot(auction, { port, accepted: [] }, calls);
+      await hub.init();
+      const shown = announcementAudienceScreen({
+        auctionId,
+        text: "Успей в розыгрыш",
+        button: "auction",
+        audience: "not-in-raffle",
+        audiences: ["all", "not-in-raffle"],
+      });
+      const frame: Sent = {
+        text: shown.text,
+        reply_markup: { inline_keyboard: shown.keyboard.inline_keyboard },
+      };
+      const pressed = dataOf(frame, "Не в розыгрыше");
+      await hub.handleUpdate(pressUnder(pressed, frame));
+
+      expect(plain(last(calls))).toContain(says);
+      expect(plain(last(calls))).not.toContain("Не получилось загрузить");
+      expect(accepted).toEqual([]);
+      // Реплика догонит публикацию: тот же шаг можно повторить.
+      if (reason === "auction-hidden") {
+        expect(dataOf(last(calls), "Повторить")).toBe(pressed);
+        expect(visible(last(calls))).toContain(
+          "Текст объявления:\nУспей в розыгрыш",
+        );
+      } else {
+        expect(labels(last(calls)).flat()).not.toContain("Повторить");
+      }
+    }
+  });
+
+  // Фото по одобренному `photoId` (PER-792): номер в кнопке после правки
+  // фото лота указывает на другое фото.
+  it("sends the approved lot photo and refuses one removed after the preview", async () => {
+    const lotWith = (ids: readonly string[]): ConsoleLot => ({
+      ...photographed,
+      lot: {
+        ...photographed.lot,
+        card: {
+          title: "Ваза",
+          description: "",
+          photos: ids.map((photoId) => ({ photoId, version: "1" })),
+        },
+      },
+    });
+    const auctionWith = (ids: readonly string[]) =>
+      fakeAuction({
+        status: "prebidding",
+        week: { ...week, final: true },
+        lots: [lotWith(ids)],
+      });
+    const notices = announcements(3);
+    const calls: RecordedCall[] = [];
+    const parents = knownMeetup();
+    const step = async (
+      auction: ReturnType<typeof fakeAuction>,
+      update: Update,
+    ) => {
+      const hub = bot(auction, notices, calls, true, undefined, parents);
+      await hub.init();
+      await hub.handleUpdate(update);
+    };
+    const before = auctionWith(photoIds);
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text: "Ваза ждёт ставок.",
+      buttons: ["lot"],
+      audience: "all",
+      lot: { index: 0, lotId: vaseId, title: "Ваза" },
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await step(before, pressUnder(dataOf(frame, "К лоту"), frame));
+    await step(before, pressUnder(dataOf(last(calls), "Фото 1"), last(calls)));
+    expect(plain(last(calls))).toContain("Получат 3 человека");
+    const send = pressSend(calls, "✔️ Да, отправить 3");
+
+    // Первое фото убрали: под его номером теперь второе, а уходит ничего.
+    await step(auctionWith([photoIds[1] ?? ""]), send);
+    expect(plain(last(calls))).toContain("Этого фото у лота больше нет");
+    expect(notices.accepted).toEqual([]);
+
+    // Перед одобренным встало новое фото: уходит одобренное, а не первое.
+    const added = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1c03";
+    await step(auctionWith([added, photoIds[0] ?? ""]), send);
+    expect(plain(last(calls))).toContain("Объявление принято");
+    expect(notices.accepted[0]?.command.photo).toEqual({
+      lotId: vaseId,
+      photoId: photoIds[0],
+    });
+  });
+
+  // Раунд каталога открыт и у запланированного аукциона, как у Auction
+  // (`PredictionSteps`, PER-792).
+  it("offers «Без прогнозов» for a scheduled auction with an open catalog round", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [mug],
+      predictionTally: { participants: 1, answers: 1 },
+    });
+    const notices = audienceCounts({ "without-predictions": 2 });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, { port: notices.port, accepted: [] }, calls);
+    await hub.init();
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text: "Сделай прогноз до торгов",
+      buttons: ["auction"],
+      audience: "all",
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+
+    expect(labels(last(calls))).toEqual([
+      ["Всем"],
+      ["Без прогнозов"],
+      ["‹ Объявление"],
+    ]);
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Без прогнозов"), last(calls)),
+    );
+    expect(plain(last(calls))).toContain("Получат 2 человека");
+    expect(notices.asked).toEqual(["without-predictions"]);
+  });
+
   it("skips «Кому» when the auction can name no narrower audience", async () => {
     const auction = fakeAuction({
       status: "prebidding",

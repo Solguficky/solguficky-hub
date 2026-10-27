@@ -307,6 +307,7 @@ import {
   announcementOutcomeScreen,
   announcementPhotoScreen,
   announcementQuestionText,
+  announcementRetryScreen,
   announcementStaleScreen,
   announcementWindowsScreen,
   announcementWithoutMeetupScreen,
@@ -10304,7 +10305,12 @@ async function handleAnnouncementCallback(
   const useCase: ProductUseCase = "manage_auction";
   const auctionId = tokenToUuid(action.auction);
   const call = { identity: person, ...rpcCall(ctx, useCase), auctionId };
-  const context = { person, questions, retry: ctx.callbackQuery?.data };
+  const context = {
+    person,
+    questions,
+    retry: ctx.callbackQuery?.data,
+    auctionId,
+  };
   // Notifications адресует объявление сходкой (PER-764), а Auction сходку по
   // аукциону не отдаёт: её помнит процесс с открытия карточки сходки. После
   // рестарта пары нет — кадр ведёт открыть аукцион с карточки сходки.
@@ -10495,6 +10501,9 @@ async function handleAnnouncementCallback(
         audience: action.audience,
         ...(action.lot === undefined ? {} : { lot: action.lot }),
         ...(action.photo === undefined ? {} : { photo: action.photo }),
+        ...(action.photoPrint === undefined
+          ? {}
+          : { photoPrint: action.photoPrint }),
         ...(action.post === undefined ? {} : { post: action.post }),
       });
       return renderAnnouncementResult(ctx, runtime, result, context);
@@ -10661,6 +10670,7 @@ async function renderAnnouncementResult(
     replyId?: number;
     text?: string;
     page?: number;
+    auctionId?: string;
   },
 ): Promise<BoundaryOutcome> {
   const handled = (message: string): BoundaryOutcome => ({
@@ -10670,6 +10680,47 @@ async function renderAnnouncementResult(
     use_case: "manage_auction",
     identity_id: context.person.identityId,
   });
+  // Сбой, который повтор вылечит, на шаге с текстом хвостом или до рассылки,
+  // которая ещё не видит публикацию (PER-792): кадр несёт текст шага, и
+  // «Повторить» доходит до подсчёта, а не до «Шаг устарел».
+  const { retry, auctionId } = context;
+  if (retry !== undefined && auctionId !== undefined) {
+    if (
+      result.kind === "announcement-outcome" &&
+      result.note === "not-replicated"
+    ) {
+      await showScreen(
+        ctx,
+        announcementRetryScreen({
+          auctionId,
+          reason: "not-replicated",
+          retry,
+          text: context.text,
+        }),
+      );
+      return handled("announcement: not-replicated");
+    }
+    if (retryable(result) && context.text !== undefined) {
+      await showScreen(
+        ctx,
+        announcementRetryScreen({
+          auctionId,
+          reason: "unavailable",
+          retry,
+          text: context.text,
+        }),
+      );
+      return {
+        ...screenBoundary(result, {
+          ok: [],
+          okMessage: "auction console handled",
+          rejectedMessage: "auction console rejected",
+          useCase: "manage_auction",
+        }),
+        identity_id: context.person.identityId,
+      };
+    }
+  }
   const moments = {
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
@@ -10845,6 +10896,10 @@ async function sendAnnouncementPreview(
     lot: preview.lot,
     // Фото или пост, которых автор не увидел, получатели тоже не получат.
     photo: sent.withPhoto ? preview.photo?.index : undefined,
+    photoPrint:
+      sent.withPhoto && preview.photo !== undefined
+        ? fingerprint(preview.photo.photoId)
+        : undefined,
     post: sent.withPost ? preview.post : undefined,
     audience: preview.audience,
     audiences: preview.audiences,

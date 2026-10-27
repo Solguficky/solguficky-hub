@@ -1982,6 +1982,41 @@ describe("auction announcement audience callbacks", () => {
     });
   });
 
+  // «Отправить» несёт отпечаток `photoId` фото предпросмотра (PER-792), и
+  // только он: без отпечатка номер снова решал бы, какое фото уйдёт.
+  it("carries the photo print on «Отправить» alone", () => {
+    const choice = {
+      button: "lot" as const,
+      print: "a1b2c",
+      audience: "all" as const,
+      lot: 999,
+      photo: 9,
+      photoPrint: "z9y8x",
+    };
+    const send = consoleAnnouncementSendData(auction, choice);
+    expect(parseCallback(send)).toEqual({
+      kind: "console-announcement-send",
+      auction,
+      button: "lot",
+      print: "a1b2c",
+      audience: "all",
+      lot: 999,
+      photo: 9,
+      photoPrint: "z9y8x",
+    });
+    expect(Buffer.byteLength(send)).toBeLessThanOrEqual(64);
+    for (const data of [
+      `v1:ac:ns:${auction}:l:a1b2c:0:1:-`,
+      `v1:ac:ns:${auction}:l:a1b2c:0:1.short:-`,
+      `v1:ac:ns:${auction}:l:a1b2c:0:-.z9y8x:-`,
+      `v1:ac:ns:${auction}:l:a1b2c:0:1.z9y8x.z9y8x:-`,
+      `v1:ac:nk:${auction}:l:a1b2c:0:1.z9y8x:-`,
+      `v1:ac:np:${auction}:l:a1b2c:0:1.z9y8x:-`,
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+
   it("refuses an unknown audience and a step of «Кому» without one", () => {
     for (const data of [
       `v1:ac:ns:${auction}:a:a1b2c:-:-:x`,

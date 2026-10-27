@@ -36,6 +36,7 @@ import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import type {
   AnnouncementAudience,
   AnnouncementCommand,
+  AnnouncementRefused,
   AuctionAnnouncements,
 } from "../application/auction-announcements.js";
 import type {
@@ -172,7 +173,7 @@ export function createAuctionAnnouncementsAdapter(
           ? { kind: "ok", recipientCount: response.recipientCount }
           : { kind: "invalid", cause: response.recipientCount };
       } catch (cause) {
-        return toFailure(cause);
+        return toAnnouncementFailure(cause);
       }
     },
     async announceAuction(person, command, meta) {
@@ -193,7 +194,7 @@ export function createAuctionAnnouncementsAdapter(
         );
         return { kind: "ok", created: response.created };
       } catch (cause) {
-        return toFailure(cause);
+        return toAnnouncementFailure(cause);
       }
     },
   };
@@ -207,6 +208,33 @@ function noticePhoto(command: AnnouncementCommand) {
   if (command.photo !== undefined)
     return { photo: wireAnnouncementPhoto(command.photo) };
   return {};
+}
+
+// `FAILED_PRECONDITION` объявления аукциона несёт три причины (PER-792), и
+// контракт различает их только текстом статуса Notifications
+// (`NotificationsGrpcService`): аукцион скрыт, аукцион или сходка закрыты,
+// фильтр аудитории не сузить. Текст, которого бот не знает, остаётся прежним
+// отказом `invalid`: это расхождение с сервисом, а не исход шага.
+function toAnnouncementFailure(
+  cause: unknown,
+): AnnouncementRefused | NotificationFailure {
+  if (cause instanceof ConnectError && cause.code === Code.FailedPrecondition) {
+    const message = cause.rawMessage;
+    if (message.startsWith("the audience cannot be narrowed")) {
+      return { kind: "refused", reason: "audience-gone" };
+    }
+    if (message === "the auction is hidden") {
+      return { kind: "refused", reason: "auction-hidden" };
+    }
+    if (
+      message === "the auction is cancelled" ||
+      message === "the auction is discarded" ||
+      message === "the meetup is cancelled"
+    ) {
+      return { kind: "refused", reason: "auction-closed" };
+    }
+  }
+  return toFailure(cause);
 }
 
 export function createNotificationsAdapter(

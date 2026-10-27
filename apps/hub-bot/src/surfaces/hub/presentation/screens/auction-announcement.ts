@@ -42,6 +42,8 @@ import {
   paginate,
   plural,
   readableMoment,
+  refusalText,
+  retryLabel,
   screenText,
   toAuctionRoot,
   withNav,
@@ -514,6 +516,9 @@ export function announcementConfirmScreen(view: {
   button: ButtonChoice;
   lot?: AnnouncementLot | undefined;
   photo?: number | undefined;
+  // Отпечаток `photoId` фото предпросмотра: «Отправить» возьмёт именно его
+  // (PER-792).
+  photoPrint?: string | undefined;
   post?: number | undefined;
   audience: AnnouncementAudience;
   audiences: readonly AnnouncementAudience[];
@@ -551,7 +556,10 @@ export function announcementConfirmScreen(view: {
     ),
     keyboard: confirmKeyboard({
       yes: `Да, отправить ${view.recipientCount}`,
-      yesData: consoleAnnouncementSendData(auction, choice),
+      yesData: consoleAnnouncementSendData(auction, {
+        ...choice,
+        photoPrint: view.photoPrint,
+      }),
       noData:
         view.audiences.length > 1
           ? consoleAnnouncementAudienceData(auction, choice)
@@ -590,11 +598,48 @@ export function announcementOutcomeScreen(
             "Не получилось сохранить фото или видео в канал медиа ботов. Объявление не отправлено: проверь, что бот — администратор канала, и начни заново.",
           "audience-gone":
             "Этих получателей больше не выбрать: регистрация в розыгрыше закрылась или раунд прогнозов кончился. Объявление не отправлено: начни заново и выбери, кому.",
+          "not-replicated": notReplicatedText,
         }[view.note];
   return {
     id: "outcome",
     text: outcomeText(text),
     keyboard: withNav(new InlineKeyboard(), toAuctionRoot(view.auctionId)),
+    format: "HTML",
+  };
+}
+
+// Пульт уже показывает аукцион, а рассылка ещё видит его скрытым: публикация
+// до неё не дошла (PER-792).
+const notReplicatedText =
+  "Рассылка ещё не знает, что аукцион опубликован. Объявление не отправлено: попробуй ещё раз через минуту.";
+
+const announcementUnavailableText =
+  "Не получилось загрузить данные. Это на моей стороне. Попробуй ещё раз через минуту.";
+
+/**
+ * Шаг не прошёл, но повтор его вылечит (PER-792): Notifications недоступен
+ * или его реплика ещё не увидела публикацию аукциона. Кадр несёт текст шага
+ * хвостом, как сам шаг, — «Повторить» прочтёт его оттуда тем же разбором и
+ * повторит подсчёт, а не объявит шаг устаревшим.
+ */
+export function announcementRetryScreen(view: {
+  auctionId: string;
+  reason: "unavailable" | "not-replicated";
+  retry: string;
+  text?: string | undefined;
+}): ShownScreen {
+  const lead = refusalText(
+    view.reason === "unavailable"
+      ? announcementUnavailableText
+      : notReplicatedText,
+  );
+  return {
+    id: "refusal",
+    text: view.text === undefined ? lead : `${lead}\n\n${textBlock(view.text)}`,
+    keyboard: withNav(
+      new InlineKeyboard().text(retryLabel, view.retry),
+      toAuctionRoot(view.auctionId),
+    ),
     format: "HTML",
   };
 }
