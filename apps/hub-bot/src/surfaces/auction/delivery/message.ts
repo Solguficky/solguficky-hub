@@ -9,6 +9,7 @@ import {
   type NotificationSender,
   type RenderMessage,
 } from "../../../core/delivery/index.js";
+import type { MediaChat } from "../../../core/media-chat.js";
 import {
   type AuctionAnnouncementNotice,
   renderAuctionAnnouncement,
@@ -43,7 +44,9 @@ import {
 import {
   type AnnouncementPhoto,
   type AnnouncementPhotos,
+  type AnnouncementPost,
   announcementButtonData,
+  noAnnouncementPhotos,
   type OrganizerAnnouncement,
   renderOrganizerAnnouncement,
   sendOrganizerAnnouncement,
@@ -80,6 +83,8 @@ export type NotificationMessage = {
   // Фото лота объявления аукциона (PER-765) и получатель, чьими правами
   // отправитель читает его байты у Auction.
   photo?: { photo: AnnouncementPhoto; viewerId: string };
+  // Своё фото или видео объявления (PER-776): пост чата медиа ботов.
+  post?: AnnouncementPost;
 };
 
 // Кнопка под следом (дизайн-код, «Доставка»): карточка лота приходит новым
@@ -463,6 +468,7 @@ function organizerMessage(notice: OrganizerAnnouncement): NotificationMessage {
   const view = renderOrganizerAnnouncement(notice);
   return {
     text: view.text,
+    ...(view.post === undefined ? {} : { post: view.post }),
     ...(view.button === undefined
       ? {}
       : {
@@ -491,7 +497,10 @@ export function createNotificationApi(
   return new Api(token, { environment, timeoutSeconds: sendTimeoutSeconds });
 }
 
-export type SendMessageApi = Pick<Api, "sendMessage" | "sendPhoto">;
+export type SendMessageApi = Pick<
+  Api,
+  "sendMessage" | "sendPhoto" | "copyMessage"
+>;
 
 // Клавиатура следа. Её же собирает тест каталога экранов, а не свою копию. У
 // вести о смене круга (PER-537) кнопок нет вовсе — тогда и клавиатуры не шлём.
@@ -504,19 +513,31 @@ export function createNotificationSender(
   api: SendMessageApi,
   // Фото объявления аукциона (PER-765); нет — объявление уходит текстом.
   photos?: AnnouncementPhotos,
+  // Чат медиа ботов: своё фото или видео объявления (PER-776).
+  media?: MediaChat,
 ): NotificationSender<NotificationMessage> {
   return {
     async send({ telegramUserId, message }) {
       const markup = notificationMarkup(message);
       try {
-        if (message.photo !== undefined && photos !== undefined) {
+        if (
+          (message.photo !== undefined && photos !== undefined) ||
+          (message.post !== undefined && media !== undefined)
+        ) {
           await sendOrganizerAnnouncement(
             api,
             Number(telegramUserId),
-            { text: message.text, photo: message.photo.photo },
             {
-              photos,
-              viewerId: message.photo.viewerId,
+              text: message.text,
+              ...(message.photo === undefined
+                ? {}
+                : { photo: message.photo.photo }),
+              ...(message.post === undefined ? {} : { post: message.post }),
+            },
+            {
+              photos: photos ?? noAnnouncementPhotos,
+              media,
+              viewerId: message.photo?.viewerId ?? "",
               markup,
               mark: screenMark("notification"),
             },

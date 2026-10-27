@@ -6,6 +6,7 @@ import {
   AuctionNoticeView,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import { parseAuctionCallback } from "../../auction-ui/index.js";
+import { createMediaChat } from "../media-chat.js";
 import {
   type AnnouncementApi,
   type AnnouncementButtonKind,
@@ -17,6 +18,7 @@ import {
   sendOrganizerAnnouncement,
   wireAnnouncementButton,
   wireAnnouncementPhoto,
+  wireAnnouncementPost,
 } from "./organizer-announcement.js";
 
 // Объявление аукциона (PER-765): разбор факта, кнопка, текст и отправка с
@@ -27,6 +29,37 @@ const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
 const photoId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1c01";
 
 describe("organizerAnnouncementOf", () => {
+  it("reads a post of the media chat as the picture (PER-776)", () => {
+    expect(
+      organizerAnnouncementOf(
+        create(AuctionNoticeSchema, {
+          auctionId,
+          body: "Смотри ролик",
+          photo: wireAnnouncementPost(42),
+        }),
+      ),
+    ).toEqual({
+      kind: "organizer-announcement",
+      auctionId,
+      text: "Смотри ролик",
+      post: 42,
+    });
+  });
+
+  it("delivers the text without a post it cannot name", () => {
+    expect(
+      organizerAnnouncementOf(
+        create(AuctionNoticeSchema, {
+          auctionId,
+          body: "Текст",
+          photo: {
+            source: { case: "channelPost", value: { messageId: 0n } },
+          },
+        }),
+      ),
+    ).toEqual({ kind: "organizer-announcement", auctionId, text: "Текст" });
+  });
+
   it("reads the text, the lot button and the lot photo", () => {
     expect(
       organizerAnnouncementOf(
@@ -131,9 +164,11 @@ describe("sendOrganizerAnnouncement", () => {
   function api(photoFails?: unknown): AnnouncementApi & {
     sendMessage: ReturnType<typeof vi.fn>;
     sendPhoto: ReturnType<typeof vi.fn>;
+    copyMessage: ReturnType<typeof vi.fn>;
   } {
     return {
       sendMessage: vi.fn(async () => ({ message_id: 5 })),
+      copyMessage: vi.fn(async () => ({ message_id: 7 })),
       sendPhoto: vi.fn(async () => {
         if (photoFails !== undefined) throw photoFails;
         return {
@@ -224,5 +259,76 @@ describe("sendOrganizerAnnouncement", () => {
       }),
     ).rejects.toThrow("network");
     expect(blocked.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("copies the media chat post with the text as its caption and the button (PER-776)", async () => {
+    const telegram = api();
+    const warn = vi.fn();
+    const media = createMediaChat({ channelId: -1001, logger: { warn } });
+    const markup = {
+      inline_keyboard: [[{ text: "К лоту", callback_data: "x" }]],
+    };
+
+    expect(
+      await sendOrganizerAnnouncement(
+        telegram,
+        1,
+        { text: "Ваза", post: 42 },
+        {
+          photos: createAnnouncementPhotos(vi.fn(), vi.fn()),
+          media,
+          viewerId: "viewer",
+          markup,
+          mark: { tag: "notification" },
+        },
+      ),
+    ).toBe(7);
+    expect(telegram.copyMessage).toHaveBeenCalledWith(1, -1001, 42, {
+      tag: "notification",
+      caption: "Ваза",
+      reply_markup: markup,
+    });
+    expect(telegram.sendMessage).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("sends the text alone and records the refusal when the post is gone", async () => {
+    const telegram = api();
+    telegram.copyMessage.mockRejectedValueOnce(
+      new GrammyError(
+        "gone",
+        {
+          ok: false,
+          error_code: 400,
+          description: "Bad Request: message to copy not found",
+        },
+        "copyMessage",
+        {},
+      ),
+    );
+    const warn = vi.fn();
+    const media = createMediaChat({ channelId: -1001, logger: { warn } });
+
+    expect(
+      await sendOrganizerAnnouncement(
+        telegram,
+        1,
+        { text: "Ваза", post: 42 },
+        {
+          photos: createAnnouncementPhotos(vi.fn(), vi.fn()),
+          media,
+          viewerId: "viewer",
+          mark: {},
+        },
+      ),
+    ).toBe(5);
+    expect(telegram.sendMessage).toHaveBeenCalledWith(1, "Ваза", {
+      link_preview_options: { is_disabled: true },
+    });
+    expect(warn).toHaveBeenCalledWith("media chat post not shown", {
+      error_category: "dependency_unavailable",
+      error: "Bad Request: message to copy not found",
+      media_post_id: 42,
+    });
   });
 });

@@ -13,6 +13,7 @@ import {
   type LotImage,
 } from "../../auction-ui/index.js";
 import type { Logger } from "../logging.js";
+import type { MediaChat, MediaChatApi } from "../media-chat.js";
 import { marked, pictogram } from "../pictograms.js";
 import { canonical } from "./lot-notice.js";
 
@@ -41,8 +42,15 @@ export type AnnouncementButton =
   | { kind: Exclude<AnnouncementButtonKind, "lot"> }
   | { kind: "lot"; lotId: string };
 
-/** Фото объявления — одно из фото лота Auction (своё медиа — PER-776). */
+/** Фото объявления — одно из фото лота Auction. */
 export type AnnouncementPhoto = { lotId: string; photoId: string };
+
+/**
+ * Своё фото или видео объявления (PER-776) — `message_id` поста чата медиа
+ * ботов (`src/core/media-chat.ts`). С фото лота не сочетается: у контракта
+ * источник фото один.
+ */
+export type AnnouncementPost = number;
 
 export type OrganizerAnnouncement = {
   kind: "organizer-announcement";
@@ -50,6 +58,7 @@ export type OrganizerAnnouncement = {
   text: string;
   button?: AnnouncementButton;
   photo?: AnnouncementPhoto;
+  post?: AnnouncementPost;
 };
 
 export const announcementButtonLabels: Readonly<
@@ -65,8 +74,8 @@ export const announcementButtonLabels: Readonly<
 };
 
 /**
- * Предел текста — подпись фото Telegram: с фото объявление уходит одним
- * сообщением-фотографией, и текст длиннее подписи не поместился бы. Тот же
+ * Предел текста — подпись фото Telegram: с фото или видео объявление уходит
+ * одним сообщением, и текст длиннее подписи не поместился бы. Тот же
  * предел и без фото: выбор фото после текста не должен отказывать тексту,
  * уже принятому на первом шаге.
  */
@@ -115,6 +124,23 @@ export function wireAnnouncementPhoto(
   });
 }
 
+/** Пост чата медиа источником фото объявления (PER-776). */
+export function wireAnnouncementPost(
+  post: AnnouncementPost,
+): AuctionNoticePhoto {
+  return create(AuctionNoticePhotoSchema, {
+    source: { case: "channelPost", value: { messageId: BigInt(post) } },
+  });
+}
+
+// Номер поста — положительное целое в пределах точного числа: иначе ссылка
+// кривая, и объявление уходит без медиа.
+function postOf(messageId: bigint): AnnouncementPost | undefined {
+  return messageId > 0n && messageId <= BigInt(Number.MAX_SAFE_INTEGER)
+    ? Number(messageId)
+    : undefined;
+}
+
 function buttonOf(
   wire: AuctionNoticeButton | undefined,
 ): AnnouncementButton | undefined | "malformed" {
@@ -142,7 +168,8 @@ function buttonOf(
 
 // Факт — ввод соседа: кривой идентификатор аукциона или лота кнопки уронил бы
 // кодировщик кнопки — это дефект издателя. Фото с кривой ссылкой — украшение,
-// и объявление уходит без него. Источник фото новее бота — тоже без фото.
+// и объявление уходит без него. Источник фото новее бота — тоже без фото. Пост
+// чата медиа (PER-776) — номером поста: канал бот берёт из своей конфигурации.
 export function organizerAnnouncementOf(
   value: AuctionNotice,
 ): OrganizerAnnouncement | undefined {
@@ -155,6 +182,8 @@ export function organizerAnnouncementOf(
     source?.case === "lotPhoto" ? canonical(source.value.lotId) : undefined;
   const photoId =
     source?.case === "lotPhoto" ? canonical(source.value.photoId) : undefined;
+  const post =
+    source?.case === "channelPost" ? postOf(source.value.messageId) : undefined;
   return {
     kind: "organizer-announcement",
     auctionId,
@@ -163,6 +192,7 @@ export function organizerAnnouncementOf(
     ...(lotId === undefined || photoId === undefined
       ? {}
       : { photo: { lotId, photoId } }),
+    ...(post === undefined ? {} : { post }),
   };
 }
 
@@ -180,6 +210,7 @@ export type OrganizerAnnouncementView = {
   text: string;
   button?: AnnouncementButtonView;
   photo?: AnnouncementPhoto;
+  post?: AnnouncementPost;
 };
 
 export function renderOrganizerAnnouncement(
@@ -199,6 +230,7 @@ export function renderOrganizerAnnouncement(
           },
         }),
     ...(notice.photo === undefined ? {} : { photo: notice.photo }),
+    ...(notice.post === undefined ? {} : { post: notice.post }),
   };
 }
 
@@ -260,6 +292,14 @@ export type AnnouncementPhotos = {
   remember(photo: AnnouncementPhoto, fileId: string): void;
 };
 
+/** Фото без загрузчика: объявление со своим медиа фото лота не несёт. */
+export const noAnnouncementPhotos: AnnouncementPhotos = {
+  async file() {
+    return undefined;
+  },
+  remember() {},
+};
+
 const photoCacheLimit = 200;
 
 /** Запись о фото, которого Auction не отдал: объявление ушло текстом. */
@@ -303,8 +343,11 @@ export function createAnnouncementPhotos(
   };
 }
 
-/** Минимум Bot API, которым уходит объявление: текст или фото с подписью. */
-export type AnnouncementApi = {
+/**
+ * Минимум Bot API, которым уходит объявление: текст, фото с подписью или
+ * копия поста чата медиа.
+ */
+export type AnnouncementApi = MediaChatApi & {
   sendMessage(
     chatId: number,
     text: string,
@@ -324,8 +367,11 @@ export type AnnouncementMarkup = { inline_keyboard: readonly unknown[] };
 /**
  * Отправка объявления одному человеку. С фото — сообщение-фотография с текстом
  * подписью; фото, которое не загрузилось или которое Telegram не принял, —
- * объявление уходит текстом. Отказ отправки текста бросается: его классифицирует
- * вызывающий — доставка своими классами, предпросмотр своим экраном сбоя.
+ * объявление уходит текстом. Своё медиа (PER-776) — копия поста чата медиа с
+ * текстом подписью; пост, которого нет или который бот не видит, — тоже
+ * текстом, а запись об отказе делает чат медиа. Отказ отправки текста
+ * бросается: его классифицирует вызывающий — доставка своими классами,
+ * предпросмотр своим экраном сбоя.
  * Ответ — номер сообщения.
  */
 export async function sendOrganizerAnnouncement(
@@ -334,6 +380,9 @@ export async function sendOrganizerAnnouncement(
   view: OrganizerAnnouncementView,
   options: {
     photos: AnnouncementPhotos;
+    // Чат медиа ботов; нет — пост не показывается, и объявление уходит
+    // текстом.
+    media?: MediaChat | undefined;
     viewerId: string;
     markup?: AnnouncementMarkup | undefined;
     // Метка каталога экранов: линтер test kit видит и эту отправку.
@@ -342,6 +391,14 @@ export async function sendOrganizerAnnouncement(
 ): Promise<number> {
   const keyboard =
     options.markup === undefined ? {} : { reply_markup: options.markup };
+  if (view.post !== undefined && options.media !== undefined) {
+    const shown = await options.media.show(api, chatId, view.post, {
+      caption: view.text,
+      markup: options.markup,
+      mark: options.mark,
+    });
+    if (shown.kind === "shown") return shown.messageId;
+  }
   if (view.photo !== undefined) {
     const file = await options.photos.file(view.photo, options.viewerId);
     if (file !== undefined) {
