@@ -78,6 +78,15 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
         wire.LotStepWindow("2026-10-07T12:00:00Z", "2026-10-07T14:00:00Z", None, Some(rub(60)))
       )
 
+      // Объявленный ask выше стартовой окна перекрывает её: ставку по стартовой окна лот отклонит.
+      val asked = SnapshotMapping.snapshot(
+        view(trading(price = 100, ask = Some(120), stepWindows = List(window))),
+        participant(1),
+        at("13:00")
+      )
+      asked.nextPrice shouldBe Some(rub(120))
+      asked.activeWindow shouldBe None
+
       val led = trading(price = 100, leader = Some(participant(2)), stepWindows = List(window))
       val after = SnapshotMapping.snapshot(view(led), participant(1), at("13:00"))
       after.nextPrice shouldBe Some(rub(110))

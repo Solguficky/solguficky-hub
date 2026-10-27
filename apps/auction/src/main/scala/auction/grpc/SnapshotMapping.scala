@@ -108,7 +108,10 @@ object SnapshotMapping {
     val step = Lot.step(trading, trading.currentPrice, at)
     val lowered = Option.when(step != Lot.baseStep(trading, trading.currentPrice))(LotValues.money(step))
     val opening = Lot.openingPrice(trading, at)
-    val start = Option.when(trading.leader.isEmpty && opening != trading.currentPrice)(LotValues.money(opening))
+    // Стартовая окна показывается, только пока она и есть следующая цена: объявленный ask выше неё её перекрывает.
+    val start = Option.when(opening != trading.currentPrice && Lot.minRequired(trading, at) == opening)(
+      LotValues.money(opening)
+    )
     Option.when(lowered.isDefined || start.isDefined)(window(current).copy(step = lowered, start = start))
   }
 

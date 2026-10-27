@@ -2965,20 +2965,46 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auction.createHappyHourPeriod(create).futureValue.getRefused.reason.isPeriodOutsideOnlinePhase shouldBe true
       statusOf(auction.createHappyHourPeriod(create.withUntil("tomorrow"))) shouldBe Status.Code.INVALID_ARGUMENT
 
+      val deleteOp = "01890a5d-ac98-7ddd-8eee-ffffffffff01"
+      val delete = wire.DeleteHappyHourPeriodRequest(
+        viewer = Some(viewer),
+        auctionId = meetupAuction.toString,
+        periodId = period.id.value.toString,
+        opId = deleteOp
+      )
+      auction.deleteHappyHourPeriod(delete).futureValue.getRefused.reason.isPeriodStarted shouldBe true
+      deleted = Right(
+        AuctionAnswer.Written(
+          AuctionEnvelope(6, OpId(UUID.fromString(deleteOp)), AuctionEvent.HappyHourPeriodDeleted(period.id))
+        )
+      )
+      auction.deleteHappyHourPeriod(delete).futureValue.outcome.isAccepted shouldBe true
+      statusOf(auction.deleteHappyHourPeriod(delete.withPeriodId(op))) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers a deletion under the op_id of the creation of a period with ALREADY_EXISTS" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val period = HappyHourPeriod(
+        HappyHourPeriod.idOf(OpId(UUID.fromString(op))),
+        java.time.Instant.parse("2026-10-05T12:00:00Z"),
+        java.time.Instant.parse("2026-10-05T14:00:00Z")
+      )
+      val repeated = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(
+            Inspection.Repeated(AuctionEnvelope(5, opId, AuctionEvent.HappyHourPeriodCreated(period)))
+          )
+      }
+      val untouched: MeetupAuthority = (_, _, _) => Future.failed(new AssertionError("meetups was asked"))
+      val auction = service(Unreachable, auctions = AuctionCommands(repeated, Unreachable, untouched))
       val delete = wire.DeleteHappyHourPeriodRequest(
         viewer = Some(viewer),
         auctionId = meetupAuction.toString,
         periodId = period.id.value.toString,
         opId = op
       )
-      auction.deleteHappyHourPeriod(delete).futureValue.getRefused.reason.isPeriodStarted shouldBe true
-      deleted = Right(
-        AuctionAnswer.Written(
-          AuctionEnvelope(6, OpId(UUID.fromString(op)), AuctionEvent.HappyHourPeriodDeleted(period.id))
-        )
-      )
-      auction.deleteHappyHourPeriod(delete).futureValue.outcome.isAccepted shouldBe true
-      statusOf(auction.deleteHappyHourPeriod(delete.withPeriodId(op))) shouldBe Status.Code.INVALID_ARGUMENT
+
+      statusOf(auction.deleteHappyHourPeriod(delete)) shouldBe Status.Code.ALREADY_EXISTS
     }
 
     "carries the bid count of the read model in the snapshot of a lot" in {
