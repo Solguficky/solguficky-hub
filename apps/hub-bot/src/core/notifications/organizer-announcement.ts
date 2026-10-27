@@ -13,6 +13,7 @@ import {
   type LotImage,
 } from "../../auction-ui/index.js";
 import type { Logger } from "../logging.js";
+import { marked, pictogram } from "../pictograms.js";
 import { canonical } from "./lot-notice.js";
 
 // Объявление аукциона (PER-765, эпик PER-763) — весть каждому держателю права
@@ -55,7 +56,8 @@ export const announcementButtonLabels: Readonly<
   Record<AnnouncementButtonKind, string>
 > = {
   auction: "К аукциону",
-  lots: "К лотам",
+  // «К лотам» дизайн-код вывел из словаря: вход в ленту — «🔨 Лоты».
+  lots: marked(pictogram.auction, "Лоты"),
   lot: "К лоту",
   raffle: "К розыгрышу",
   predictions: "Прогнозы",

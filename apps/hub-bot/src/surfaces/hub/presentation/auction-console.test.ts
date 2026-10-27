@@ -24,6 +24,10 @@ import {
   createEditLimiter,
   type EditLimiter,
 } from "../../../core/bot/edit-limiter.js";
+import type {
+  AnnouncementCommand,
+  AuctionAnnouncements,
+} from "../application/auction-announcements.js";
 import {
   createDispatcher,
   type Dispatcher,
@@ -63,6 +67,7 @@ import type { IdentityResolver } from "../identity/port.js";
 import { createAuctionParents } from "./auction-parents.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { type CallbackAction, parseCallback } from "./parse-callback.js";
+import { announcementButtonScreen } from "./screens/auction-announcement.js";
 
 // Пульт аукциона администратора в боте хаба (PER-320): вход из ленты, сроки
 // недели и финал, открытие недели через подтверждение, отметка лотов для
@@ -1169,6 +1174,8 @@ function fakeAuction(
                   ? ("lineup-frozen" as const)
                   : ("scheduled" as const),
             final: false,
+            // Скрытый аукцион корень называет держателю `run_auctions`.
+            ...(state.hidden ? { hidden: true as const } : {}),
           }),
           // Розыгрыш открывается с онлайн-неделей, если у недели есть момент
           // закрытия регистрации, — как в сервисе.
@@ -6912,5 +6919,370 @@ describe("prize change of a running raffle", () => {
     const outcome = await step(drawn, [], () => press(changeData));
     expect(plain(outcome)).toContain("Итог розыгрыша уже подведён");
     expect(drawn.sent("changeRafflePrize")).toEqual([]);
+  });
+});
+
+// Объявление аукциона (PER-765): шаблон, правка текста, смена кнопки, фото
+// лота, предпросмотр и «Отправить». Своего состояния у шагов нет — текст едет
+// в сообщениях бота, — поэтому каждый шаг идёт новым ботом над той же
+// историей чата: так выглядит рестарт.
+describe("auction announcement", () => {
+  const photoIds = [
+    "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1c01",
+    "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1c02",
+  ];
+  const photographed: ConsoleLot = {
+    ...vase,
+    lot: {
+      ...vase.lot,
+      card: {
+        title: "Ваза",
+        description: "",
+        photos: photoIds.map((photoId) => ({ photoId, version: "1" })),
+      },
+    },
+  };
+
+  type Announced = { identityId: string; command: AnnouncementCommand };
+
+  function announcements(recipientCount = 7) {
+    const accepted: Announced[] = [];
+    const seen = new Set<string>();
+    const port: AuctionAnnouncements = {
+      async previewAuctionAnnouncement() {
+        return { kind: "ok", recipientCount };
+      },
+      async announceAuction(person, command) {
+        accepted.push({ identityId: person.identityId, command });
+        const created = !seen.has(command.announcementId);
+        seen.add(command.announcementId);
+        return { kind: "ok", created };
+      },
+    };
+    return { port, accepted };
+  }
+
+  // Фото лота читается правами автора: тест отдаёт байты либо отказ.
+  function withPhotos(
+    auction: ReturnType<typeof fakeAuction>,
+    readable: boolean,
+  ): AuctionConsoles & AuctionScreens & MeetupAuctions & LotAdministration {
+    return {
+      ...auction.port,
+      screenPorts(meta) {
+        const ports = auction.port.screenPorts(meta);
+        return {
+          ...ports,
+          image: {
+            ...ports.image,
+            async getLotPhoto() {
+              if (!readable) throw new Error("photo unavailable");
+              return {
+                content: new Uint8Array([1, 2, 3]),
+                mediaType: "image/jpeg",
+                version: "1",
+              };
+            },
+          },
+        };
+      },
+    };
+  }
+
+  function bot(
+    auction: ReturnType<typeof fakeAuction>,
+    notices: ReturnType<typeof announcements>,
+    calls: RecordedCall[],
+    readable = true,
+  ) {
+    const port = withPhotos(auction, readable);
+    return createHarness(
+      identity("admin"),
+      createDispatcher(undefined, undefined, today, port, port, {
+        auctions: port,
+        timeZone,
+        now: () => now,
+        announcements: notices.port,
+      }),
+      calls,
+      undefined,
+      "plain",
+      today,
+      {
+        auction: port,
+        communityTimeZone: timeZone,
+        // Фото с подписью отвечает сообщением: из него бот берёт номер
+        // предпросмотра для подтверждения.
+        respond: (method) =>
+          method === "sendPhoto"
+            ? {
+                message_id: 100 + calls.length,
+                date: 1_761_000_000,
+                chat: { id: 42, type: "private", first_name: "tester" },
+                photo: [
+                  {
+                    file_id: "photo-1",
+                    file_unique_id: "u1",
+                    width: 1,
+                    height: 1,
+                  },
+                ],
+              }
+            : undefined,
+      },
+    ).bot;
+  }
+
+  // Видимый текст экрана, как его вернёт клиент в нажатии: без разметки.
+  function visible(screen: Sent): string {
+    return (screen.text ?? "")
+      .replaceAll(/<[^>]+>/g, "")
+      .replaceAll("&lt;", "<")
+      .replaceAll("&gt;", ">")
+      .replaceAll("&quot;", '"')
+      .replaceAll("&amp;", "&");
+  }
+
+  // Нажатие под сообщением бота с его видимым текстом.
+  function pressUnder(data: string, screen: Sent): Update {
+    const update = press(data);
+    const query = update.callback_query as unknown as {
+      message: Record<string, unknown>;
+    };
+    query.message = {
+      ...query.message,
+      from: { id: 1, is_bot: true, first_name: "stub" },
+      text: visible(screen),
+    };
+    return update;
+  }
+
+  // «Отправить» под подтверждением, которое отвечает на предпросмотр.
+  function pressSend(calls: readonly RecordedCall[], label: string): Update {
+    const confirm = calls.findLast(
+      (call) =>
+        call.method === "sendMessage" &&
+        (call.payload as { reply_parameters?: unknown }).reply_parameters !==
+          undefined,
+    );
+    const previewId = (
+      confirm?.payload as { reply_parameters: { message_id: number } }
+    ).reply_parameters.message_id;
+    // Предпросмотр — сообщение прямо перед подтверждением.
+    const shownPreview = calls[calls.indexOf(confirm as RecordedCall) - 1]
+      ?.payload as { caption?: string; text?: string };
+    const update = press(dataOf(confirm?.payload as Sent, label));
+    const query = update.callback_query as unknown as {
+      message: Record<string, unknown>;
+    };
+    query.message = {
+      ...query.message,
+      from: { id: 1, is_bot: true, first_name: "stub" },
+      reply_to_message: {
+        message_id: previewId,
+        date: 1_761_000_000,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 1, is_bot: true, first_name: "stub" },
+        ...(shownPreview.caption === undefined
+          ? { text: shownPreview.text }
+          : { caption: shownPreview.caption }),
+      },
+    };
+    return update;
+  }
+
+  it("goes from a template through an edit, another button and a lot photo to one broadcast over restarts", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
+      lots: [photographed, mug],
+    });
+    const notices = announcements(7);
+    const calls: RecordedCall[] = [];
+    const step = async (update: Update) => {
+      const fresh = bot(auction, notices, calls);
+      await fresh.init();
+      await fresh.handleUpdate(update);
+    };
+
+    // Вход — ряд корня аукциона под пультом: в пульте места нет.
+    await step(press(rootData));
+    expect(labels(last(calls)).slice(-3)).toEqual([
+      ["🛠 Пульт", "🛠 Сеты"],
+      ["📣 Объявление"],
+      ["‹ Сходки"],
+    ]);
+    await step(press(dataOf(last(calls), "📣 Объявление")));
+    expect(labels(last(calls))).toEqual([
+      ["Своё объявление"],
+      ["Розыгрыш и прогнозы"],
+      ["История лота"],
+      ["Хроники дня"],
+      ["‹ Аукцион"],
+    ]);
+
+    await step(press(dataOf(last(calls), "История лота")));
+    // Лоты по порядку заведения — идентификатор лота UUIDv7.
+    expect(labels(last(calls))).toEqual([
+      ["Ваза"],
+      ["Кружка"],
+      ["‹ Объявление"],
+    ]);
+    await step(press(dataOf(last(calls), "Ваза")));
+    const asked = question(calls).payload;
+    expect(asked.text).toContain("<code>История лота «Ваза»: </code>");
+
+    // Правка черновика: ответом приходит свой текст.
+    const text = "История лота «Ваза»: её обжигали трижды <и это видно>.";
+    const fresh = bot(auction, notices, calls);
+    await fresh.init();
+    await fresh.handleUpdate(answer(calls, { text }));
+    expect(labels(last(calls))).toEqual([
+      ["К лоту"],
+      ["К аукциону"],
+      ["🔨 Лоты"],
+      ["К розыгрышу"],
+      ["Хроники дня"],
+      ["Без кнопки"],
+      ["Изменить текст"],
+      ["‹ Объявление"],
+    ]);
+    expect(visible(last(calls))).toContain(`Текст объявления:\n${text}`);
+
+    // Смена кнопки: шаблон вёл «К лоту», а объявление поведёт в аукцион.
+    await step(pressUnder(dataOf(last(calls), "К аукциону"), last(calls)));
+    expect(labels(last(calls))).toEqual([
+      ["Фото 1", "Фото 2"],
+      ["Пропустить"],
+      ["‹ Объявление"],
+    ]);
+
+    await step(pressUnder(dataOf(last(calls), "Фото 2"), last(calls)));
+    const preview = calls.findLast((call) => call.method === "sendPhoto")
+      ?.payload as { caption: string; reply_markup: Sent["reply_markup"] };
+    expect(preview.caption).toBe(text);
+    expect(
+      preview.reply_markup?.inline_keyboard.map((row) =>
+        row.map((button) => button.text),
+      ),
+    ).toEqual([["К аукциону"]]);
+    expect(preview.reply_markup?.inline_keyboard[0]?.[0]?.callback_data).toBe(
+      `v1:t:${rootData.slice(3)}`,
+    );
+    expect(plain(last(calls))).toContain("Получат 7 человек с правом ставок");
+
+    const send = pressSend(calls, "✔️ Да, отправить 7");
+    await step(send);
+    expect(plain(last(calls))).toContain("Объявление принято");
+    expect(notices.accepted).toHaveLength(1);
+    expect(notices.accepted[0]).toMatchObject({
+      identityId,
+      command: {
+        auctionId,
+        text,
+        button: { kind: "auction" },
+        photo: { lotId: vaseId, photoId: photoIds[1] },
+      },
+    });
+
+    // Повтор того же «Отправить» несёт тот же ключ: второй рассылки нет.
+    await step(send);
+    expect(notices.accepted).toHaveLength(2);
+    expect(notices.accepted[1]?.command.announcementId).toBe(
+      notices.accepted[0]?.command.announcementId,
+    );
+    expect(plain(last(calls))).toContain("Это объявление уже отправлено");
+  });
+
+  it("previews the announcement as text when the lot photo cannot be read", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [photographed],
+    });
+    const notices = announcements(3);
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls, false);
+    await hub.init();
+    const text = "Ваза ждёт ставок.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["lot"],
+      lot: { index: 0, lotId: vaseId, title: "Ваза" },
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К лоту"), frame));
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Фото 1"), last(calls)),
+    );
+
+    expect(calls.some((call) => call.method === "sendPhoto")).toBe(false);
+    const previewIndex = calls.findLastIndex(
+      (call) => (call.payload as { text?: string }).text === text,
+    );
+    expect(previewIndex).toBeGreaterThan(-1);
+    expect(plain(last(calls))).toContain("Получат 3 человека");
+  });
+
+  it("refuses an edited step whose text no longer matches its button", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements();
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls);
+    await hub.init();
+    const shownButtons = announcementButtonScreen({
+      auctionId,
+      text: "Первый текст",
+      buttons: ["auction"],
+    });
+    const frame: Sent = {
+      text: shownButtons.text.replace("Первый текст", "Чужой текст"),
+      reply_markup: { inline_keyboard: shownButtons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+
+    expect(plain(last(calls))).toContain("Шаг устарел");
+    expect(notices.accepted).toEqual([]);
+  });
+
+  it("refuses an announcement text longer than a photo caption", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, announcements(), calls);
+    await hub.init();
+    await hub.handleUpdate(press(`v1:ac:nq:${auctionToken}:o`));
+    await hub.handleUpdate(answer(calls, { text: "а".repeat(1025) }));
+
+    expect(plain(last(calls))).toContain("Текст длиннее 1024 знаков");
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Объявление"]]);
+  });
+
+  it("offers no announcement for a hidden auction before the week", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      hidden: true,
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, announcements(), calls);
+    await hub.init();
+    await hub.handleUpdate(press(rootData));
+    expect(labels(last(calls)).flat()).not.toContain("📣 Объявление");
+
+    await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
+    expect(plain(last(calls))).toContain("Объявлять некому");
   });
 });

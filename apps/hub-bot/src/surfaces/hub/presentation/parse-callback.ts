@@ -2994,6 +2994,22 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return undefined;
     }
   }
+  // Текст объявления (PER-765): шаблон и, у окна и лота, номер — шагу нужно
+  // пять или шесть частей.
+  if (parts[2] === "ao") {
+    const template = codeOf(templateCodes, parts[4]);
+    const ref = refOf(parts[5]);
+    return (parts.length === 5 || parts.length === 6) &&
+      template !== undefined &&
+      ref !== "malformed"
+      ? {
+          kind: "console-announcement",
+          auction: token.data,
+          template,
+          ...(ref === undefined ? {} : { ref }),
+        }
+      : undefined;
+  }
   if (parts.length !== 5) return undefined;
   if (parts[2] === "ln") {
     const key = LotKeySchema.safeParse(parts[4]);
@@ -3013,20 +3029,6 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
           mode: stepCode[2] === "s" ? "single" : "tiered",
           ...(lead === "c" ? { chain: true as const } : {}),
           ...(lead === "s" ? { set: true as const } : {}),
-        }
-      : undefined;
-  }
-  if (parts[2] === "ao") {
-    const template = codeOf(templateCodes, parts[4]);
-    const ref = refOf(parts[5]);
-    return (parts.length === 5 || parts.length === 6) &&
-      template !== undefined &&
-      ref !== "malformed"
-      ? {
-          kind: "console-announcement",
-          auction: token.data,
-          template,
-          ...(ref === undefined ? {} : { ref }),
         }
       : undefined;
   }

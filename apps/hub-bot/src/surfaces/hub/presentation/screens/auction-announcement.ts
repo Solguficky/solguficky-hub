@@ -26,7 +26,6 @@ import {
   consoleAnnouncementPhotoData,
   consoleAnnouncementSendData,
   consoleAnnouncementWindowsData,
-  consoleViewData,
 } from "../parse-callback.js";
 import {
   buttonText,
@@ -39,12 +38,14 @@ import {
   plural,
   readableMoment,
   screenText,
+  toAuctionRoot,
   withNav,
   withPager,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
-// Объявление аукциона в пульте (PER-765, эпик PER-763): меню шаблонов, выбор
+// Объявление аукциона (PER-765, эпик PER-763): вход — ряд корня аукциона
+// держателю права вести аукцион (в пульте нет места); меню шаблонов, выбор
 // окна и лота, кнопка, фото лота, подтверждение со счётчиком и исходы. Своего
 // состояния нет: текст едет хвостом кадра шага после строки
 // `announcementTextLead`, и следующий шаг читает его оттуда
@@ -73,10 +74,6 @@ const editTextLabel = "Изменить текст";
 const skipPhotoLabel = "Пропустить";
 
 type Moments = { timeZone: string; today: CommunityDay };
-
-function toConsole(auctionId: string): Parent {
-  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
-}
 
 function toAnnouncement(auctionId: string): Parent {
   return {
@@ -136,7 +133,7 @@ export function announcementMenuScreen(
         "Сообщение всем, у кого есть право ставок: участникам — в этом боте, гостям — в боте аукциона. Выбери своё объявление или шаблон — черновик текста можно поправить.",
       ),
     ),
-    keyboard: withNav(keyboard, toConsole(view.auctionId)),
+    keyboard: withNav(keyboard, toAuctionRoot(view.auctionId)),
     format: "HTML",
   };
 }
@@ -380,7 +377,7 @@ export function announcementConfirmScreen(view: {
     text: screenText(
       "Отправить объявление?",
       escapeHtml(
-        `Выше — как его увидят. Получат ${view.recipientCount} ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
+        `Выше — как его увидят. Получат ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
       ),
     ),
     keyboard: confirmKeyboard({
@@ -425,7 +422,7 @@ export function announcementOutcomeScreen(
   return {
     id: "outcome",
     text: outcomeText(text),
-    keyboard: withNav(new InlineKeyboard(), toConsole(view.auctionId)),
+    keyboard: withNav(new InlineKeyboard(), toAuctionRoot(view.auctionId)),
     format: "HTML",
   };
 }
@@ -442,7 +439,7 @@ export function announcementStaleScreen(auctionId: string): ShownScreen {
         "Ввести заново",
         consoleAnnouncementAskData(uuidToToken(auctionId), "own"),
       ),
-      toConsole(auctionId),
+      toAuctionRoot(auctionId),
     ),
     format: "HTML",
   };
