@@ -32,6 +32,7 @@ import {
   buttonText,
   confirmKeyboard,
   escapeHtml,
+  exitToMeetups,
   outcomeText,
   type Parent,
   pagedTitle,
@@ -316,9 +317,14 @@ export function announcementButtonScreen(view: {
       consoleAnnouncementButtonData(auction, choice, print, view.lot?.index),
     );
   });
-  keyboard
-    .row()
-    .text(editTextLabel, consoleAnnouncementAskData(auction, "own"));
+  keyboard.row().text(
+    editTextLabel,
+    // Правка текста «Истории лота» остаётся при лоте: иначе «К лоту» и фото
+    // лота пропали бы со следующего шага.
+    view.lot === undefined
+      ? consoleAnnouncementAskData(auction, "own")
+      : consoleAnnouncementAskData(auction, "lot", view.lot.index),
+  );
   return {
     id: "announcement-button",
     text: screenText(
@@ -418,7 +424,9 @@ export function announcementConfirmScreen(view: {
     text: screenText(
       "Отправить объявление?",
       escapeHtml(
-        `Выше — как его увидят. Получат ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
+        view.recipientCount === 0
+          ? "Выше — как его увидят. Сейчас его никто не получит: держателей права ставок нет или все выключили вести об аукционе."
+          : `Выше — как его увидят. Получат ${people} с правом ставок, кроме тех, кто выключил вести об аукционе.`,
       ),
     ),
     keyboard: confirmKeyboard({
@@ -439,7 +447,7 @@ export function announcementConfirmScreen(view: {
   };
 }
 
-/** Исход отправки и устаревшие шаги — свой экран с возвратом в пульт. */
+/** Исход отправки и устаревшие шаги — свой экран с возвратом в корень аукциона. */
 export function announcementOutcomeScreen(
   view: Extract<
     AuctionAnnouncementResult,
@@ -469,6 +477,22 @@ export function announcementOutcomeScreen(
     id: "outcome",
     text: outcomeText(text),
     keyboard: withNav(new InlineKeyboard(), toAuctionRoot(view.auctionId)),
+    format: "HTML",
+  };
+}
+
+/**
+ * Сходки аукциона процесс не знает — так бывает после рестарта: объявление
+ * адресуется сходкой, а Auction её по аукциону не отдаёт. Карточка сходки
+ * напомнит её процессу.
+ */
+export function announcementWithoutMeetupScreen(): ShownScreen {
+  return {
+    id: "outcome",
+    text: outcomeText(
+      "Открой аукцион с карточки сходки. Объявлению нужна сходка аукциона, а бот её сейчас не помнит: открой сходку, «🧩 Расширения» и аукцион — и нажми «🛠 Объявление» снова.",
+    ),
+    keyboard: exitToMeetups(),
     format: "HTML",
   };
 }

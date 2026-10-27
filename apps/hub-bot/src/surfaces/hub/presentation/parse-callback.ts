@@ -745,7 +745,7 @@ type PlainAction =
 /** Откуда нажата «Создать сходку»: группа управления или «Сходки». */
 export type NewMeetupOrigin = "manage" | "meetups";
 
-/** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
+/** Кнопки объявления аукциона (PER-765): шаги без состояния. */
 export type AnnouncementAction =
   | { kind: "console-announcement"; auction: string }
   | { kind: "console-announcement-windows"; auction: string }
@@ -789,6 +789,7 @@ export type AnnouncementAction =
       post?: number;
     };
 
+/** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
 export type QuestionStep =
   // Своё фото или видео объявления (PER-776): выбор кнопки, отпечаток текста
   // и лот шаблона; сам текст едет хвостом вопроса, как в кадре шага.
@@ -1205,7 +1206,7 @@ function mediaOf(
   return photo === undefined ? {} : { photo };
 }
 
-/** «📣 Объявление» пульта (PER-765): своё объявление или шаблон. */
+/** «🛠 Объявление» корня аукциона (PER-765): своё объявление или шаблон. */
 export function consoleAnnouncementData(auction: string): string {
   return `v1:ac:na:${auction}`;
 }

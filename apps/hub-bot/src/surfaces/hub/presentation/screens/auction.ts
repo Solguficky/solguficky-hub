@@ -75,6 +75,7 @@ import {
   lotNewData,
   removalData,
 } from "../parse-callback.js";
+import { announcementLabel } from "./auction-announcement.js";
 import {
   acceptedScreen,
   answerRefusedScreen,
@@ -199,8 +200,6 @@ export type AuctionView = {
 const editLotLabel = adminLabel("Изменить лот");
 
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
-import { announcementLabel } from "./auction-announcement.js";
-
 const consoleLabel = adminLabel("Пульт");
 // «Ставки зала» помощника (PER-565) — рядом с пультом, пока идёт финал.
 export const floorLabel = adminLabel("Ставки зала");

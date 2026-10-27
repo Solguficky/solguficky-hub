@@ -6992,6 +6992,14 @@ describe("auction announcement", () => {
     };
   }
 
+  const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
+
+  function knownMeetup() {
+    const parents = createAuctionParents();
+    parents.remember(auctionId, meetupId);
+    return parents;
+  }
+
   function bot(
     auction: ReturnType<typeof fakeAuction>,
     notices: ReturnType<typeof announcements>,
@@ -6999,6 +7007,7 @@ describe("auction announcement", () => {
     readable = true,
     // Чат медиа ботов (PER-776): номер канала и ответ Telegram на копию.
     media?: { respond?: (method: string, payload: unknown) => unknown },
+    parents = knownMeetup(),
   ) {
     const port = withPhotos(auction, readable);
     return createHarness(
@@ -7017,6 +7026,7 @@ describe("auction announcement", () => {
       {
         auction: port,
         communityTimeZone: timeZone,
+        auctionParents: parents,
         ...(media === undefined
           ? {}
           : {
@@ -7080,15 +7090,16 @@ describe("auction announcement", () => {
         (call.payload as { reply_parameters?: unknown }).reply_parameters !==
           undefined,
     );
+    if (confirm === undefined) throw new Error("no confirmation");
     const previewId = (
-      (confirm as RecordedCall).payload as {
-        reply_parameters: { message_id: number };
-      }
+      confirm.payload as { reply_parameters: { message_id: number } }
     ).reply_parameters.message_id;
     // Предпросмотр — сообщение прямо перед подтверждением.
-    const shownPreview = calls[calls.indexOf(confirm as RecordedCall) - 1]
-      ?.payload as { caption?: string; text?: string };
-    const update = press(dataOf(confirm?.payload as Sent, label));
+    const shownPreview = calls[calls.indexOf(confirm) - 1]?.payload as {
+      caption?: string;
+      text?: string;
+    };
+    const update = press(dataOf(confirm.payload as Sent, label));
     const query = update.callback_query as unknown as {
       message: Record<string, unknown>;
     };
@@ -7108,7 +7119,7 @@ describe("auction announcement", () => {
     return update;
   }
 
-  it("goes from a template through an edit, another button and a lot photo to one broadcast over restarts", async () => {
+  it("goes from a template through an edit, another button and a lot photo to one broadcast with a new bot on every step", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       week: { ...week, final: true, raffleClosesAt: "2026-10-22T15:00:00Z" },
@@ -7116,8 +7127,9 @@ describe("auction announcement", () => {
     });
     const notices = announcements(7);
     const calls: RecordedCall[] = [];
+    const parents = knownMeetup();
     const step = async (update: Update) => {
-      const fresh = bot(auction, notices, calls);
+      const fresh = bot(auction, notices, calls, true, undefined, parents);
       await fresh.init();
       await fresh.handleUpdate(update);
     };
@@ -7127,7 +7139,7 @@ describe("auction announcement", () => {
     expect(labels(last(calls)).slice(-3)).toEqual([
       ["🛠 Пульт", "🛠 Сеты"],
       ["🛠 Объявление"],
-      ["‹ Сходки"],
+      ["‹ Расширения"],
     ]);
     await step(press(dataOf(last(calls), "🛠 Объявление")));
     expect(labels(last(calls))).toEqual([
@@ -7151,7 +7163,7 @@ describe("auction announcement", () => {
 
     // Правка черновика: ответом приходит свой текст.
     const text = "История лота «Ваза»: её обжигали трижды <и это видно>.";
-    const fresh = bot(auction, notices, calls);
+    const fresh = bot(auction, notices, calls, true, undefined, parents);
     await fresh.init();
     await fresh.handleUpdate(answer(calls, { text }));
     expect(labels(last(calls))).toEqual([
@@ -7195,7 +7207,7 @@ describe("auction announcement", () => {
     expect(notices.accepted[0]).toMatchObject({
       identityId,
       command: {
-        auctionId,
+        meetupId,
         text,
         button: { kind: "auction" },
         photo: { lotId: vaseId, photoId: photoIds[1] },
@@ -7301,6 +7313,32 @@ describe("auction announcement", () => {
 
     await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
     expect(plain(last(calls))).toContain("Объявлять некому");
+  });
+
+  // После рестарта процесс сходку аукциона не помнит: кадр ведёт открыть
+  // аукцион с карточки сходки, и Notifications не зовётся.
+  it("sends to the meetup card when the process does not know the meetup", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements();
+    const calls: RecordedCall[] = [];
+    const hub = bot(
+      auction,
+      notices,
+      calls,
+      true,
+      undefined,
+      createAuctionParents(),
+    );
+    await hub.init();
+    await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
+
+    expect(plain(last(calls))).toContain("Открой аукцион с карточки сходки");
+    expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
+    expect(notices.accepted).toEqual([]);
   });
 
   // Своё фото или видео (PER-776): ответ на вопрос о медиа уходит копией в чат
@@ -7432,7 +7470,7 @@ describe("auction announcement", () => {
     expect(plain(last(calls))).toContain("Объявление принято");
     expect(notices.accepted).toHaveLength(1);
     expect(notices.accepted[0]?.command).toMatchObject({
-      auctionId,
+      meetupId,
       text,
       button: { kind: "auction" },
       post: published?.sentId,
