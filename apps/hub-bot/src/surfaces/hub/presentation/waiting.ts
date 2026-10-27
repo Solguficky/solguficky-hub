@@ -86,6 +86,18 @@ export function startWaiting(ctx: Context): Waiting {
   watchdog?.unref();
 
   ctx.api.config.use(async (prev, method, payload, signal) => {
+    // Копия поста чата медиа ботов (PER-774) — результат, только когда
+    // Telegram её принял: пост удалён — и на нажатие ещё можно ответить
+    // всплывающим «видео недоступно».
+    if (method === "copyMessage") {
+      const response = await prev(method, payload, signal);
+      if (response.ok) {
+        shown = true;
+        stopTyping();
+        await answer();
+      }
+      return response;
+    }
     if (!quietMethods.has(method)) {
       shown = true;
       stopTyping();

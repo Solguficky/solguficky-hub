@@ -98,12 +98,26 @@ export const auctionSurface: SurfaceDefinition = ({
         "unexpected",
       ),
   });
+  // Чат медиа ботов (PER-775): своё фото или видео объявления (PER-776) и
+  // промо-видео аукциона (PER-774). Без `BOT_MEDIA_CHANNEL_ID` его нет.
+  const mediaChat =
+    config.mediaChannelId === undefined
+      ? undefined
+      : createMediaChat({ channelId: config.mediaChannelId, logger });
   const bot = createBot({
     token: config.token,
     environment: config.environment,
     tracing,
     presentation: config.presentation,
-    ports: clients.ports,
+    // Корень аукциона ставит «🎬 Промо», только когда пост есть чем показать.
+    ports:
+      mediaChat === undefined
+        ? clients.ports
+        : (requestId, deadlineAt) => ({
+            ...clients.ports(requestId, deadlineAt),
+            media: true as const,
+          }),
+    ...(mediaChat === undefined ? {} : { media: mediaChat }),
     faq: auction.faq,
     logger,
     ...(auction.supportBotUsername === undefined
@@ -135,9 +149,7 @@ export const auctionSurface: SurfaceDefinition = ({
   const sender = createNotificationSender(
     createNotificationApi(config.token, config.environment),
     announcementPhotos,
-    config.mediaChannelId === undefined
-      ? undefined
-      : createMediaChat({ channelId: config.mediaChannelId, logger }),
+    mediaChat,
   );
   return {
     ok: true,

@@ -331,6 +331,9 @@ export const screenCatalog = {
   // Уведомление из шины — след: клавиатура принадлежит самому сообщению, а
   // метку несёт отправитель доставки (`delivery/message.ts`), не адаптер.
   notification: { class: "trace", nav: "free" },
+  // Промо-видео под «🎬 Промо» (PER-774): копия поста чата медиа ботов с
+  // подписью и одной кнопкой «‹ Аукцион».
+  promo: { class: "trace", nav: "tree", parent: "root" },
 } as const;
 
 export type ScreenId = keyof typeof screenCatalog;

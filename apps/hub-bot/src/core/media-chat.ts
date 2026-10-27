@@ -45,13 +45,17 @@ export type MediaChat = {
     fromChatId: number,
     messageId: number,
   ): Promise<MediaPublishResult>;
-  /** Пост человеку: своя подпись простым текстом и клавиатура. */
+  /**
+   * Пост человеку: своя подпись и клавиатура. Подпись — простой текст, а с
+   * `format: "HTML"` — разметка Telegram.
+   */
   show(
     api: MediaChatApi,
     chatId: number,
     postId: number,
     options: {
       caption: string;
+      format?: "HTML";
       markup?: { inline_keyboard: readonly unknown[] } | undefined;
       // Метка каталога экранов: линтер test kit видит и эту отправку.
       mark?: Record<string, unknown>;
@@ -122,6 +126,7 @@ export function createMediaChat(options: {
         const sent = await api.copyMessage(chatId, channelId, postId, {
           ...shown.mark,
           caption: shown.caption,
+          ...(shown.format === undefined ? {} : { parse_mode: shown.format }),
           ...(shown.markup === undefined ? {} : { reply_markup: shown.markup }),
         });
         return { kind: "shown", messageId: sent.message_id };

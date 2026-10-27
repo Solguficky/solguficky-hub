@@ -1,5 +1,6 @@
 import { type Bot, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
+import { promoUnavailableText } from "../../auction-promo.js";
 import {
   type AuctionPort,
   encodeAuctionCallback,
@@ -30,6 +31,7 @@ import type { Presentation, TelegramEnvironment } from "../../core/config.js";
 import { carriesPersonContent, createHintedAlbums } from "../../core/entry.js";
 import { countFailure } from "../../core/failures.js";
 import type { LogFields, Logger } from "../../core/logging.js";
+import type { MediaChat } from "../../core/media-chat.js";
 import type { Tracing } from "../../core/tracing.js";
 import type { PortsFactory } from "./clients.js";
 import { isTraceCallback, parseTraceCallback } from "./delivery/message.js";
@@ -84,6 +86,9 @@ export type BotOptions = {
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
   photos?: PhotoCache;
+  // Чат медиа ботов (PER-774): промо-видео аукциона — копия поста. Нет — на
+  // «🎬 Промо» бот отвечает «видео недоступно».
+  media?: MediaChat;
   // Открытые вопросы чатов; по умолчанию своя память процесса.
   questions?: QuestionMemory;
   // Тесты передают его, чтобы не звать getMe.
@@ -291,6 +296,23 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       // Подтверждение выбора уходит ответом на нажатие до показа экрана:
       // показ ответил бы на нажатие сам, без текста.
       if (outcome.toast !== undefined) await waiting.answer(outcome.toast);
+      // Промо-видео (PER-774): копия поста новым сообщением, а экран, с
+      // которого нажали, остаётся. Поста нет или Telegram его не отдал —
+      // ответ на нажатие «видео недоступно», и корень цел.
+      if (screen.promo !== undefined) {
+        const { postId } = screen.promo;
+        const sent =
+          postId === undefined || options.media === undefined
+            ? undefined
+            : await options.media.show(ctx.api, ctx.chat.id, postId, {
+                caption: screen.text,
+                format: "HTML",
+                markup: markupOf(screen).reply_markup,
+                mark: screenMark(screen.id),
+              });
+        if (sent?.kind !== "shown") await waiting.answer(promoUnavailableText);
+        return;
+      }
       const delivery = {
         screen,
         photos,

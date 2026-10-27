@@ -62,6 +62,7 @@ import type {
   LotLayoutResult,
   MeetupAuctions,
   PaymentInstructionsResult,
+  PromoVideoResult,
   RemovalTarget,
   SaveLotSetResult,
 } from "../auction/port.js";
@@ -196,6 +197,10 @@ const forgedAuctionPresses = {
   "console-raffle-winner-confirm": `v1:ac:ry:${auctionToken}:2`,
   "console-raffle-prize-change": `v1:ac:rn:${auctionToken}`,
   "console-raffle-prize-change-confirm": `v1:ac:rv:${auctionToken}:00000`,
+  "console-promo-video": `v1:ac:vo:${auctionToken}`,
+  "console-promo-video-ask": `v1:ac:vq:${auctionToken}`,
+  "console-promo-video-remove": `v1:ac:vr:${auctionToken}`,
+  "console-promo-video-remove-confirm": `v1:ac:vy:${auctionToken}`,
   "console-announcement": `v1:ac:na:${auctionToken}`,
   "console-announcement-windows": `v1:ac:nw:${auctionToken}`,
   "console-announcement-lots": `v1:ac:nl:${auctionToken}:0`,
@@ -331,6 +336,10 @@ function fakeAuction(
     // Розыгрыш и прогнозы числами (PER-734): что отдаёт пульт Auction.
     raffleRegistrations?: number;
     predictionTally?: PredictionTally;
+    // Промо-видео (PER-774): номер поста до теста и отказ Auction вместо
+    // принятия команды.
+    promoVideo?: number;
+    promoVideoRefusal?: PromoVideoResult;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -370,6 +379,8 @@ function fakeAuction(
     // Розыгрыш глазами администратора (PER-618): ручной итог (PER-727)
     // переводит его в «итог подведён».
     raffle?: RaffleView;
+    // Промо-видео (PER-774): номер поста в чате медиа ботов.
+    promoVideo?: number;
   } = {
     status: options.status ?? "draft",
     hidden: options.hidden ?? false,
@@ -396,6 +407,9 @@ function fakeAuction(
     ...(options.consoleRaffle === undefined
       ? {}
       : { raffle: options.consoleRaffle }),
+    ...(options.promoVideo === undefined
+      ? {}
+      : { promoVideo: options.promoVideo }),
   };
   // Сеты как в Auction (ADR-073): меняются до открытия недели, лот — в одном
   // сете и только из реестра, тот же идентификатор заменяет сет целиком.
@@ -547,6 +561,9 @@ function fakeAuction(
           lots: state.lots,
           lotSets: state.lotSets,
           ...(state.layout === undefined ? {} : { layout: state.layout }),
+          ...(state.promoVideo === undefined
+            ? {}
+            : { promoVideo: state.promoVideo }),
           ...(options.raffleRegistrations === undefined
             ? {}
             : { raffleRegistrations: options.raffleRegistrations }),
@@ -1090,6 +1107,19 @@ function fakeAuction(
       else state.paymentText = command.text;
       return { kind: "ok" as const };
     },
+    // Промо-видео (PER-774): Auction хранит номер поста; без него — снятие.
+    async setPromoVideo(
+      _person: unknown,
+      command: { auctionId: string; opId: string; postId?: number },
+    ) {
+      commands.push({ method: "setPromoVideo", args: command });
+      if (options.promoVideoRefusal !== undefined) {
+        return options.promoVideoRefusal;
+      }
+      if (command.postId === undefined) delete state.promoVideo;
+      else state.promoVideo = command.postId;
+      return { kind: "ok" as const };
+    },
     // Счёт решает отметку, как в Auction: выдача — только после оплаты,
     // повтор уже стоящей отметки принимается без перехода.
     async markInvoice(
@@ -1179,6 +1209,9 @@ function fakeAuction(
             final: false,
             // Скрытый аукцион корень называет держателю `run_auctions`.
             ...(state.hidden ? { hidden: true as const } : {}),
+            ...(state.promoVideo === undefined
+              ? {}
+              : { promoVideo: state.promoVideo }),
           }),
           // Розыгрыш открывается с онлайн-неделей, если у недели есть момент
           // закрытия регистрации, — как в сервисе.
@@ -7665,5 +7698,252 @@ describe("auction announcement", () => {
     );
     expect(copies(calls)).toHaveLength(1);
     expect(notices.accepted).toEqual([]);
+  });
+});
+
+// Промо-видео аукциона (PER-774): вход «🛠 Промо-видео» корня — в пульте места
+// нет, — видео ответом в чат медиа ботов, замена и снятие; участник открывает
+// видео кнопкой «🎬 Промо» корня копией поста.
+describe("promo video", () => {
+  const mediaChannelId = -1001234567890;
+  const video = {
+    video: {
+      file_id: "promo-video",
+      file_unique_id: "v",
+      width: 1,
+      height: 1,
+      duration: 3,
+    },
+  };
+
+  function bot(
+    auction: ReturnType<typeof fakeAuction>,
+    calls: RecordedCall[],
+    media?: { respond?: (method: string, payload: unknown) => unknown },
+  ) {
+    return createHarness(
+      identity("admin"),
+      createDispatcher(
+        undefined,
+        undefined,
+        today,
+        auction.port,
+        auction.port,
+        {
+          auctions: auction.port,
+          timeZone,
+          now: () => now,
+        },
+      ),
+      calls,
+      undefined,
+      "plain",
+      today,
+      {
+        auction: auction.port,
+        communityTimeZone: timeZone,
+        ...(media === undefined
+          ? {}
+          : {
+              mediaChat: createMediaChat({
+                channelId: mediaChannelId,
+                logger: { warn: () => {} },
+              }),
+            }),
+        ...(media?.respond === undefined ? {} : { respond: media.respond }),
+      },
+    ).bot;
+  }
+
+  type Copied = {
+    chat_id?: number;
+    from_chat_id?: number;
+    message_id?: number;
+    caption?: string;
+    parse_mode?: string;
+    reply_markup?: Sent["reply_markup"];
+    sentId: number;
+  };
+
+  function copies(calls: readonly RecordedCall[]): Copied[] {
+    return calls.flatMap((call, index) =>
+      call.method === "copyMessage"
+        ? [{ ...(call.payload as Omit<Copied, "sentId">), sentId: 101 + index }]
+        : [],
+    );
+  }
+
+  it("attaches, shows, replaces and removes the video with a new bot on every step", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const step = async (update: Update) => {
+      const fresh = bot(auction, calls, {});
+      await fresh.init();
+      await fresh.handleUpdate(update);
+    };
+
+    // Без видео участнику смотреть нечего, а вход организатора — своим рядом
+    // под объявлением.
+    await step(press(rootData));
+    expect(labels(last(calls)).slice(-4)).toEqual([
+      ["🛠 Пульт", "🛠 Сеты"],
+      ["🛠 Объявление"],
+      ["🛠 Промо-видео"],
+      ["‹ Сходки"],
+    ]);
+    expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+
+    await step(press(dataOf(last(calls), "🛠 Промо-видео")));
+    expect(plain(last(calls))).toContain("Видео нет.");
+    expect(labels(last(calls))).toEqual([["Прикрепить видео"], ["‹ Аукцион"]]);
+
+    await step(press(dataOf(last(calls), "Прикрепить видео")));
+    expect(question(calls).payload.reply_markup?.force_reply).toBe(true);
+    expect(question(calls).payload.text).toContain("Пришли одно видео");
+
+    // Не видео — тот же вопрос заново, в канал ничего не уходит.
+    await step(answer(calls, { text: "вот" }));
+    expect(question(calls).payload.text).toContain("Это не видео.");
+    expect(copies(calls)).toEqual([]);
+
+    await step(answer(calls, video));
+    const [published] = copies(calls);
+    expect(published).toMatchObject({
+      chat_id: mediaChannelId,
+      from_chat_id: 42,
+      message_id: 10,
+    });
+    const promoArgs = () =>
+      auction.sent("setPromoVideo").map(
+        (command) =>
+          command.args as {
+            auctionId: string;
+            opId: string;
+            postId?: number;
+          },
+      );
+    expect(promoArgs()).toEqual([
+      expect.objectContaining({ auctionId, postId: published?.sentId }),
+    ]);
+    expect(plain(last(calls))).toMatch(/^Видео прикреплено\n\nУчастники/);
+    expect(labels(last(calls))).toEqual([["‹ Промо-видео"]]);
+
+    // Участник видит «🎬 Промо» своим рядом, а нажатие присылает копию поста
+    // новым сообщением: корень остаётся.
+    await step(press(rootData));
+    expect(labels(last(calls))).toContainEqual(["🎬 Промо"]);
+    const root = last(calls);
+    await step(press(dataOf(root, "🎬 Промо")));
+    const promo = copies(calls).at(-1);
+    expect(promo).toMatchObject({
+      chat_id: 42,
+      from_chat_id: mediaChannelId,
+      message_id: published?.sentId,
+      caption: "<b>Промо-видео</b>",
+      parse_mode: "HTML",
+    });
+    expect(
+      promo?.reply_markup?.inline_keyboard.map((row) =>
+        row.map((button) => button.text),
+      ),
+    ).toEqual([["‹ Аукцион"]]);
+    expect(last(calls)).toBe(root);
+
+    // Замена — тот же вопрос: новый пост и новый номер у Auction.
+    await step(press(dataOf(last(calls), "🛠 Промо-видео")));
+    expect(plain(last(calls))).toContain("Видео прикреплено:");
+    expect(labels(last(calls))).toEqual([
+      ["Заменить видео"],
+      ["🗑 Убрать видео"],
+      ["‹ Аукцион"],
+    ]);
+    await step(press(dataOf(last(calls), "Заменить видео")));
+    await step(answer(calls, video));
+    const replaced = copies(calls).at(-1);
+    expect(replaced).toMatchObject({ chat_id: mediaChannelId });
+    expect(promoArgs().at(-1)).toMatchObject({ postId: replaced?.sentId });
+
+    // Снятие — подтверждение и «Да» с ключом, рождённым на нажатие.
+    await step(press(dataOf(last(calls), "‹ Промо-видео")));
+    await step(press(dataOf(last(calls), "🗑 Убрать видео")));
+    expect(plain(last(calls))).toContain("Убрать промо-видео?");
+    await step(press(dataOf(last(calls), "✔️ Да, убрать")));
+    const removal = promoArgs().at(-1);
+    expect(removal?.postId).toBeUndefined();
+    expect(removal?.opId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(plain(last(calls))).toMatch(/^Видео убрано\n/);
+    await step(press(rootData));
+    expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+  });
+
+  it("answers that the video is unavailable and keeps the root when the post is gone", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+      promoVideo: 77,
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, calls, {
+      respond: (method, payload) =>
+        method === "copyMessage" &&
+        (payload as { from_chat_id?: number }).from_chat_id === mediaChannelId
+          ? {
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: message to copy not found",
+            }
+          : undefined,
+    });
+    await hub.init();
+    await hub.handleUpdate(press(rootData));
+    const root = last(calls);
+    const before = calls.length;
+    await hub.handleUpdate(press(dataOf(root, "🎬 Промо")));
+
+    expect(copies(calls).at(-1)).toMatchObject({ message_id: 77 });
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(
+      calls
+        .slice(before)
+        .filter((call) =>
+          ["sendMessage", "editMessageText", "deleteMessage"].includes(
+            call.method,
+          ),
+        ),
+    ).toEqual([]);
+  });
+
+  it("offers neither button nor question without the media chat", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+      promoVideo: 77,
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, calls);
+    await hub.init();
+    await hub.handleUpdate(press(rootData));
+    const flat = labels(last(calls)).flat();
+    expect(flat).not.toContain("🎬 Промо");
+    expect(flat).not.toContain("🛠 Промо-видео");
+
+    // Подделанные кнопки: участника — «видео недоступно» без Auction,
+    // организатора — исход без вопроса.
+    const reads = auction.sent("getAuctionConsole").length;
+    await hub.handleUpdate(
+      press(encodeAuctionCallback({ kind: "promo", auctionId })),
+    );
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(copies(calls)).toEqual([]);
+    await hub.handleUpdate(press(`v1:ac:vq:${auctionToken}`));
+    expect(plain(last(calls))).toContain("канал медиа ботов не настроен");
+    expect(() => question(calls)).toThrow();
+    expect(auction.sent("getAuctionConsole")).toHaveLength(reads);
   });
 });
