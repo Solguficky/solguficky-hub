@@ -32,8 +32,27 @@ public class ConsumerOptionsTests
     }
 
     [Fact]
-    public void KeyRetention_UnknownStream_Throws() =>
+    public void KeyRetentionFor_UnknownStream_Throws() =>
         Should.Throw<InvalidOperationException>(() => new ConsumerOptions().KeyRetentionFor("OTHER_EVENTS"));
+
+    // Прод до выкладки PER-761 несёт ручное скалярное значение прежнего ключа:
+    // оно не роняет привязку и не сбивает умолчания по стримам.
+    [Fact]
+    public void KeyRetention_LegacyScalarValue_DefaultsKept()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                [$"{ConsumerOptions.SectionName}:KeyRetention"] = "91.00:00:00",
+            })
+            .Build();
+
+        var options = configuration.GetSection(ConsumerOptions.SectionName).Get<ConsumerOptions>().ShouldNotBeNull();
+
+        ConsumerOptions.IsValid(options).ShouldBeTrue();
+        options.KeyRetentionFor("MEETUPS_EVENTS").ShouldBe(TimeSpan.FromDays(8));
+        options.KeyRetentionFor("AUCTION_EVENTS").ShouldBe(TimeSpan.FromDays(91));
+    }
 
     [Fact]
     public void KeyRetention_OneStreamOverridden_OthersKeepDefaults()
