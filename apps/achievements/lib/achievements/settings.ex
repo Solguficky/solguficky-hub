@@ -1,0 +1,50 @@
+defmodule Achievements.Settings do
+  @moduledoc """
+  Разбор переменных среды, которые читает `config/runtime.exs`. Отказ называет
+  переменную, но не повторяет её значение: в адресе могут быть учётные данные.
+  """
+
+  @doc "Порт из переменной `name`, `default` — если она не задана."
+  @spec port!(String.t(), String.t()) :: :inet.port_number()
+  def port!(name, default) do
+    value = System.get_env(name, default)
+
+    case Integer.parse(value) do
+      {port, ""} when port in 1..65_535 -> port
+      _ -> raise "#{name} is not a TCP port"
+    end
+  end
+
+  @doc """
+  Адрес NATS для релея outbox. Пустой адрес — шины в запуске нет: релей не
+  стартует, строки копятся в outbox и уйдут, когда адрес появится.
+  """
+  @spec nats!(String.t() | nil) :: map() | nil
+  def nats!(url) when url in [nil, ""], do: nil
+
+  def nats!(url) do
+    case URI.parse(url) do
+      %URI{scheme: "nats", host: host, port: port, userinfo: userinfo}
+      when is_binary(host) and host != "" ->
+        Map.merge(%{host: host, port: port || 4222}, credentials(userinfo))
+
+      _ ->
+        raise "ACHIEVEMENTS_NATS_URL is not a nats:// URL"
+    end
+  end
+
+  # Учётку кладёт в адрес Aspire (`nats://nats:<пароль>@host:port`). Пароль
+  # gnat берёт функцией: строкой он попал бы в отчёт о падении супервизора.
+  defp credentials(nil), do: %{}
+
+  defp credentials(userinfo) do
+    case String.split(userinfo, ":", parts: 2) do
+      [user, password] ->
+        password = URI.decode(password)
+        %{username: URI.decode(user), password: fn -> password end}
+
+      [user] ->
+        %{username: URI.decode(user)}
+    end
+  end
+end
