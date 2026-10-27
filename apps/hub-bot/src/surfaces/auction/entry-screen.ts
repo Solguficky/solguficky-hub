@@ -1,5 +1,4 @@
 import {
-  auctionChronicleButtonLabel,
   auctionChronicleParagraphs,
   auctionChronicleTitle,
   dayChronicleButtonLabel,
@@ -2008,8 +2007,6 @@ function renderButton(
       return text(dayChronicleButtonLabel);
     case "day-chronicle.back":
       return text("‹ Аукцион");
-    case "root.auction-chronicle":
-      return text(auctionChronicleButtonLabel);
     case "auction-chronicle.back":
       return text("‹ Аукцион");
     case "root.promo":

@@ -602,7 +602,6 @@ export type AuctionButton =
         | "root.predictions"
         | "root.prediction-results"
         | "root.day-chronicle"
-        | "root.auction-chronicle"
         | "root.raffle"
         | "root.favorites"
         // Промо-видео (PER-774): вход из корня и возврат в корень из-под видео.
