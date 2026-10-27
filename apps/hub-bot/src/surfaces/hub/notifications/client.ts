@@ -19,6 +19,7 @@ import { createFavoritesPort } from "../../../core/notifications/favorites.js";
 import {
   wireAnnouncementButton,
   wireAnnouncementPhoto,
+  wireAnnouncementPost,
 } from "../../../core/notifications/organizer-announcement.js";
 import {
   auctionNotificationsOf,
@@ -34,6 +35,7 @@ import {
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import type {
   AnnouncementAudience,
+  AnnouncementCommand,
   AuctionAnnouncements,
 } from "../application/auction-announcements.js";
 import type {
@@ -185,9 +187,7 @@ export function createAuctionAnnouncementsAdapter(
             ...(command.button === undefined
               ? {}
               : { button: wireAnnouncementButton(command.button) }),
-            ...(command.photo === undefined
-              ? {}
-              : { photo: wireAnnouncementPhoto(command.photo) }),
+            ...noticePhoto(command),
           },
           options(meta),
         );
@@ -197,6 +197,16 @@ export function createAuctionAnnouncementsAdapter(
       }
     },
   };
+}
+
+// Источник фото в контракте один: пост чата медиа (PER-776) встаёт на место
+// фото лота, поэтому при обоих уходит пост.
+function noticePhoto(command: AnnouncementCommand) {
+  if (command.post !== undefined)
+    return { photo: wireAnnouncementPost(command.post) };
+  if (command.photo !== undefined)
+    return { photo: wireAnnouncementPhoto(command.photo) };
+  return {};
 }
 
 export function createNotificationsAdapter(
