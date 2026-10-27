@@ -3877,6 +3877,31 @@ describe("promo video in the auction root", () => {
     expect(toasts(calls)).toEqual([]);
   });
 
+  it("opens the root as a new message under the video", async () => {
+    const { bot, calls } = makeBot(promoPorts(true), { media });
+    const update = press(encodeAuctionCallback({ kind: "root", auctionId }));
+    (
+      update.callback_query as unknown as { message: Record<string, unknown> }
+    ).message = {
+      message_id: 7,
+      date: 0,
+      chat: privateChat,
+      video: {
+        file_id: "v",
+        file_unique_id: "u",
+        width: 1,
+        height: 1,
+        duration: 3,
+      },
+      caption: "Промо-видео",
+    };
+    await bot.handleUpdate(update);
+    const methods = calls.map((call) => call.method);
+    expect(methods).not.toContain("editMessageText");
+    expect(methods).toContain("sendMessage");
+    expect(methods).toContain("editMessageReplyMarkup");
+  });
+
   it("answers that the video is unavailable when the post is gone", async () => {
     const { bot, calls } = makeBot(promoPorts(true), {
       media,

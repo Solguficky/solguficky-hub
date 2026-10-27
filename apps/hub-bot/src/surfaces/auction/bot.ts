@@ -310,7 +310,12 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
                 markup: markupOf(screen).reply_markup,
                 mark: screenMark(screen.id),
               });
-        if (sent?.kind !== "shown") await waiting.answer(promoUnavailableText);
+        if (sent?.kind !== "shown") {
+          await waiting.answer(promoUnavailableText);
+          logger.info("auction promo video unavailable", {
+            request_id: ctx.requestId,
+          });
+        }
         return;
       }
       const delivery = {
@@ -762,9 +767,11 @@ async function deliver(
     input.keepCurrent === true ? undefined : ctx.callbackQuery?.message;
   // Текст у сообщения с файлом Telegram править не даёт: под ним экран
   // приходит новым сообщением, а само оно остаётся в чате без клавиатуры —
-  // действовать можно только на новом экране.
+  // действовать можно только на новом экране. Видео — промо-видео аукциона
+  // (PER-774) с «‹ Аукцион».
   const legacy =
-    current !== undefined && ("photo" in current || "document" in current);
+    current !== undefined &&
+    ("photo" in current || "document" in current || "video" in current);
   let editable = current !== undefined && !legacy;
   const leave = async () => {
     if (legacy) await clearKeyboard(ctx);
