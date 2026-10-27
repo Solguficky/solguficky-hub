@@ -2204,6 +2204,12 @@ message AuctionConsole {
   // participant and no answer is named. Absent when the auction has no game
   // yet and when the game could not be read.
   ConsolePredictions predictions = 6;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction, the one
+  // whose administrator was checked for this read. Never empty. Only the console
+  // names it: AuctionSnapshot and the reads of a participant do not lead from an
+  // auction to its meetup.
+  string meetup_id = 7;
 }
 
 // The predictions of every round of the auction counted together.
