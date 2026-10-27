@@ -85,9 +85,8 @@ public sealed class StepWindowNotificationGrain(
 
             // «Исполнено» и «сообщение ушло» — разные вещи: пустая аудитория,
             // кончившийся аукцион и кончившееся окно дают ноль фактов обоих
-            // видов. Ноль и
-            // назван ниже как ноль, чтобы систематический промах сверки не
-            // выглядел успехом.
+            // видов. Ноль и назван ниже как ноль, чтобы систематический промах
+            // сверки не выглядел успехом.
             facts.Record(NotificationFacts.StepWindowStartedType, result.Facts.Started);
             facts.Record(NotificationFacts.StepWindowAnnouncedType, result.Facts.Announced);
 
