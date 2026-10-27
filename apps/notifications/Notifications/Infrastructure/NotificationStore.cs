@@ -352,9 +352,13 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // который пролежал в очереди неделю простоя шины, хранится после выноса
     // полный горизонт. Строка без исхода не удаляется ни при каком возрасте —
     // COALESCE даёт ей NULL, а сравнение с NULL ложно.
+    // Порог у строки — по её причине (PER-761); причина без своего порога
+    // меряется запасным, наибольшим.
     private const string PruneSql = """
-        DELETE FROM notification
-        WHERE COALESCE(dispatched_at, withdrawn_at, rejected_at) < @Threshold;
+        DELETE FROM notification n
+        WHERE COALESCE(n.dispatched_at, n.withdrawn_at, n.rejected_at) < COALESCE(
+            (SELECT t.threshold FROM unnest(@Kinds, @Thresholds) AS t(kind, threshold) WHERE t.kind = n.cause_kind),
+            @Fallback);
         """;
 
     // Типы, которые отмена снимает. Всё, что связано со сходкой, кроме
@@ -1616,20 +1620,28 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     /// <summary>
     /// Удаляет строки, исход которых — вынос, снятие или вычёркивание — старше
-    /// <paramref name="threshold" />. Строка без исхода остаётся при любом
+    /// порога их причины. Строка без исхода остаётся при любом
     /// возрасте. Возвращает число удалённых.
     /// </summary>
     /// <remarks>
     /// Ключ повода живёт в самой строке (008, notification_cause_once_per_recipient),
     /// поэтому порог обязан лежать дальше окна, в котором повод может прийти
-    /// снова: это держит проверка горизонта на старте (<see cref="DispatchOptions" />).
+    /// снова: это держит горизонт строки по её потоку
+    /// (<see cref="DispatchOptions.HorizonFor" />, PER-761).
     /// </remarks>
-    public async Task<int> Prune(DateTimeOffset threshold, CancellationToken cancellationToken)
+    /// <param name="thresholds">Порог по <c>cause_kind</c> строки.</param>
+    /// <param name="fallback">Порог причины, которой в <paramref name="thresholds" /> нет.</param>
+    public async Task<int> Prune(
+        IReadOnlyDictionary<string, DateTimeOffset> thresholds, DateTimeOffset fallback, CancellationToken cancellationToken)
     {
         await using var connection = await source.OpenConnectionAsync(cancellationToken);
 
-        return await connection.ExecuteAsync(
-            new CommandDefinition(PruneSql, new { Threshold = threshold.UtcDateTime }, cancellationToken: cancellationToken));
+        return await connection.ExecuteAsync(new CommandDefinition(PruneSql, new
+        {
+            Kinds = thresholds.Keys.ToArray(),
+            Thresholds = thresholds.Values.Select(threshold => threshold.UtcDateTime).ToArray(),
+            Fallback = fallback.UtcDateTime,
+        }, cancellationToken: cancellationToken));
     }
 
     /// <summary>Момент появления самого старого неотправленного факта.</summary>

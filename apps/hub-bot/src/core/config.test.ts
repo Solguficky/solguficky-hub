@@ -89,6 +89,7 @@ describe("readProcessConfig", () => {
       config: expect.objectContaining({
         identityUrl: "http://127.0.0.1:50051",
         natsUrl: "nats://127.0.0.1:4222",
+        mediaChannelId: undefined,
         logLevel: "info",
       }),
     });
@@ -108,6 +109,35 @@ describe("readProcessConfig", () => {
     const result = readConfig({ ...base, BOT_SERVICE_TOKEN: " t " });
     expect(JSON.stringify(result)).not.toContain("123:auction");
   });
+
+  it.each([
+    ["missing", undefined],
+    ["empty", ""],
+  ])("turns media off when the media channel is %s", (_name, value) => {
+    expect(readConfig({ ...base, BOT_MEDIA_CHANNEL_ID: value })).toEqual({
+      ok: true,
+      config: expect.objectContaining({ mediaChannelId: undefined }),
+    });
+  });
+
+  it("reads the media channel id", () => {
+    expect(
+      readConfig({ ...base, BOT_MEDIA_CHANNEL_ID: "-1001234567890" }),
+    ).toEqual({
+      ok: true,
+      config: expect.objectContaining({ mediaChannelId: -1001234567890 }),
+    });
+  });
+
+  it.each(["1234567890", "-1234567890", "@solguficky_media", "-100abc"])(
+    "refuses the media channel id %s",
+    (value) => {
+      expect(readConfig({ ...base, BOT_MEDIA_CHANNEL_ID: value })).toEqual({
+        ok: false,
+        error: "BOT_MEDIA_CHANNEL_ID must be a channel id like -100…",
+      });
+    },
+  );
 
   it("presents the lot card rich unless the operator rolls back to plain", () => {
     const presentation = (value: string | undefined) => {
