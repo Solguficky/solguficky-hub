@@ -9,6 +9,7 @@ import {
 } from "../../../../testkit/harness.js";
 import {
   type AccessRight,
+  type AuctionChronicleView,
   type AuctionStageView,
   type AuctionSummaryView,
   type DayChronicleView,
@@ -167,6 +168,8 @@ function fakeAuction(
     stage?: "scheduled" | "prebidding" | "finished";
     // Хроники дня (PER-725): агрегаты последних суток от Auction.
     chronicle?: DayChronicleView;
+    // Статистика аукциона (PER-770); "down" — чтение отказывает.
+    auctionChronicle?: AuctionChronicleView | "down";
     // Отображаемые имена участников: карточка проданного лота называет
     // победителя.
     names?: Readonly<Record<string, string>>;
@@ -345,6 +348,15 @@ function fakeAuction(
           getDayChronicle: async () => {
             if (options.chronicle === undefined) throw new Error("not used");
             return options.chronicle;
+          },
+          getAuctionChronicle: async () => {
+            if (options.auctionChronicle === undefined) {
+              throw new Error("not used");
+            }
+            if (options.auctionChronicle === "down") {
+              throw new ConnectError("down", Code.Unavailable);
+            }
+            return options.auctionChronicle;
           },
           submitPrediction: async () => {
             throw new Error("not used");
@@ -815,7 +827,7 @@ describe("auction root and the way back", () => {
     await bot.handleUpdate(press(rootData));
 
     const root = lastScreen(calls);
-    expect(labels(root)).toContainEqual(["Хроники дня"]);
+    expect(labels(root)).toContainEqual(["Хроники дня", "Статистика"]);
     await bot.handleUpdate(press(data(root, "Хроники дня") ?? ""));
     const chronicle = lastScreen(calls);
     expect(chronicle.text).toContain("Хроники дня");
@@ -833,6 +845,79 @@ describe("auction root and the way back", () => {
     expect(labels(chronicle).flat()).toContain("‹ Аукцион");
   });
 
+  // PER-770: участник открывает «Статистику» из корня и после торгов —
+  // счётчики, рекорд роста и номинации за весь аукцион, без людей и ников.
+  it("opens the statistics of the whole auction and returns to the root", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      stage: "finished",
+      auctionChronicle: {
+        bidCount: 42,
+        participantCount: 12,
+        tradedLotCount: 1,
+        growthRecord: {
+          lotId: lot.lotId,
+          growth: { minorUnits: 30_000, currency: "RUB" },
+        },
+        lots: [
+          {
+            lotId: lot.lotId,
+            bidCount: 42,
+            leaderChanges: 7,
+            longestDuel: 5,
+          },
+        ],
+      },
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(labels(root)).toContainEqual(["Статистика"]);
+    expect(labels(root).flat()).not.toContain("Хроники дня");
+    await bot.handleUpdate(press(data(root, "Статистика") ?? ""));
+    const statistics = lastScreen(calls);
+    expect(statistics.text).toContain("Статистика аукциона");
+    expect(statistics.text).toContain("42 ставки");
+    expect(statistics.text).toContain("12 участников");
+    expect(statistics.text).toContain("1 из 1 лота со ставками");
+    expect(statistics.text).toContain("Рекорд роста:");
+    expect(statistics.text).toContain("7 смен лидера");
+    expect(statistics.text).toContain("5 перебиваний подряд вдвоём");
+    expect(statistics.text).not.toContain("Тёмная лошадка:");
+    expect(statistics.text).not.toContain("@");
+    expect(statistics.text).not.toContain("t.me/");
+    await bot.handleUpdate(press(data(statistics, "‹ Аукцион") ?? ""));
+    expect(labels(lastScreen(calls))).toContainEqual(["Статистика"]);
+  });
+
+  it("offers a retry when Auction does not answer the statistics", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      stage: "prebidding",
+      auctionChronicle: "down",
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+    const statisticsData = data(lastScreen(calls), "Статистика") ?? "";
+    await bot.handleUpdate(press(statisticsData));
+
+    expect(data(lastScreen(calls), "Повторить")).toBe(statisticsData);
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls))).toContainEqual([
+      "Хроники дня",
+      "Статистика",
+    ]);
+  });
+
   it("offers no day chronicle before the online week", async () => {
     const auction = fakeAuction({ existing: true, stage: "scheduled" });
     const { bot, calls } = harness("member", auction, {
@@ -843,6 +928,7 @@ describe("auction root and the way back", () => {
     await bot.handleUpdate(press(rootData));
 
     expect(labels(lastScreen(calls)).flat()).not.toContain("Хроники дня");
+    expect(labels(lastScreen(calls)).flat()).not.toContain("Статистика");
   });
 
   it("opens prediction results from a finished auction", async () => {

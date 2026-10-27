@@ -343,6 +343,26 @@ export type AuctionBlock =
           };
     }
   | {
+      // Статистика аукциона (PER-770): счётчики всех торгов и номинации за
+      // весь аукцион. Лот назван только названием карточки, людей — только
+      // числом: ни имён, ни ников в блоке нет.
+      kind: "auction-chronicle";
+      auctionId: string;
+      chronicle:
+        | { kind: "no-lots" }
+        | { kind: "no-bids" }
+        | {
+            kind: "counted";
+            bidCount: number;
+            participantCount: number;
+            tradedLotCount: number;
+            lotCount: number;
+            growthRecord?: { title?: string; growth: Money };
+            contested?: { title?: string; leaderChanges: number };
+            duel?: { title?: string; longestDuel: number };
+          };
+    }
+  | {
       // Розыгрыш среди участников (ADR-066, п. 11): что показать, решает
       // статус. Нет `raffle` — у аукциона розыгрыша нет: кнопка устарела.
       kind: "raffle";
@@ -582,6 +602,7 @@ export type AuctionButton =
         | "root.predictions"
         | "root.prediction-results"
         | "root.day-chronicle"
+        | "root.auction-chronicle"
         | "root.raffle"
         | "root.favorites"
         // Промо-видео (PER-774): вход из корня и возврат в корень из-под видео.
@@ -643,6 +664,7 @@ export type AuctionButton =
         | "raffle.return"
         | "prediction-results.back"
         | "day-chronicle.back"
+        | "auction-chronicle.back"
         // Имя из настроек: возврат на экран имени с исхода.
         | "name.return";
       callbackData: string;

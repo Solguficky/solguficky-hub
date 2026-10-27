@@ -162,6 +162,7 @@ function adapter(rpc: {
     getMyPredictions: notUsed,
     getPredictionResults: notUsed,
     getAuctionDayChronicle: notUsed,
+    getAuctionChronicle: notUsed,
     submitPrediction: notUsed,
     getLotImage: notUsed,
     getLotPhoto: (rpc.getLotPhoto ?? notUsed) as never,

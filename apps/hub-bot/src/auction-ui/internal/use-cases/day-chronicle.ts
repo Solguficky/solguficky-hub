@@ -91,7 +91,8 @@ async function chronicleOf(
   };
 }
 
-async function titleOf(
+// Название лота для номинации; общее со статистикой аукциона (PER-770).
+export async function titleOf(
   context: CommandContext,
   lotId: string,
 ): Promise<string | undefined> {
