@@ -7109,10 +7109,10 @@ describe("auction announcement", () => {
     await step(press(rootData));
     expect(labels(last(calls)).slice(-3)).toEqual([
       ["🛠 Пульт", "🛠 Сеты"],
-      ["📣 Объявление"],
+      ["🛠 Объявление"],
       ["‹ Сходки"],
     ]);
-    await step(press(dataOf(last(calls), "📣 Объявление")));
+    await step(press(dataOf(last(calls), "🛠 Объявление")));
     expect(labels(last(calls))).toEqual([
       ["Своё объявление"],
       ["Розыгрыш и прогнозы"],
@@ -7280,7 +7280,7 @@ describe("auction announcement", () => {
     const hub = bot(auction, announcements(), calls);
     await hub.init();
     await hub.handleUpdate(press(rootData));
-    expect(labels(last(calls)).flat()).not.toContain("📣 Объявление");
+    expect(labels(last(calls)).flat()).not.toContain("🛠 Объявление");
 
     await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
     expect(plain(last(calls))).toContain("Объявлять некому");

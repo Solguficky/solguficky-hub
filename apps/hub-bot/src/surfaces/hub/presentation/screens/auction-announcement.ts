@@ -51,8 +51,11 @@ import type { ShownScreen } from "./show.js";
 // `announcementTextLead`, и следующий шаг читает его оттуда
 // (`presentation/announcement-input.ts`), а кнопки несут его отпечаток.
 
-/** Вход в объявление с пульта; знак — из словаря, подпись — владельца. */
-export const announcementLabel = marked(pictogram.announcement, "Объявление");
+/**
+ * Вход в объявление из корня аукциона: действие управления на экране, который
+ * видит и участник, несёт «🛠», как «🛠 Пульт» (дизайн-код, PER-669).
+ */
+export const announcementLabel = marked(pictogram.admin, "Объявление");
 
 /**
  * Строка, за которой в кадре шага идёт текст объявления, — до конца
