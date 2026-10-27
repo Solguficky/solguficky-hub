@@ -15,6 +15,8 @@ Notifications отвечает на вопрос **«кому и что поло
 
 Граница формулируется одной строкой: **Notifications решает, кому положено уведомление, а доставка — вопрос канала.** Сервис не знает о существовании Telegram, не знает `chat_id`, не знает, какие каналы подписаны, и не получает обратных событий о результате.
 
+Вести модулей сходки подписке на сходку не подчиняются: повод и данные адресата задаёт факт модуля, у вестей модуля свои настройки, а проекцию подключений и индекс расширений Notifications не читает ([ADR-083](../decisions/ADR-083-module-owns-its-notifications.md)). Сам Notifications — сквозной сервис: к сходке он не подключается и слота в карточке не занимает ([RFC-001](../rfcs/RFC-001-meetup-modules-topology.md#10-классы-компонентов), решение 10; для ачивок — [ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md)).
+
 Решения зафиксированы в [ADR-028](../decisions/ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md) — устройство и границы, и [ADR-029](../decisions/ADR-029-notifications-orleans-stack.md) — стек. Разбор вариантов, сценарии и цена решений — в [RFC-005](../rfcs/RFC-005-notifications-subscription-scheduling-delivery.md).
 
 ## Две плоскости взаимодействия
