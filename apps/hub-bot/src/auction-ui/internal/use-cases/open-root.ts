@@ -14,7 +14,8 @@ import { readRaffle } from "./open-feed.js";
 // программа недели (PER-724) — окна и финал из сводки, розыгрыш из `getRaffle`,
 // вход в лоты, в прогнозы, пока участнику есть что отправить или перечитать
 // (PER-489), в хроники дня онлайн-недели (PER-725), в розыгрыш, пока Auction
-// его отдаёт, в промо-видео, пока оно есть и чат медиа включён (PER-774), и,
+// его отдаёт, в промо-видео парой с лотами, пока оно есть и чат медиа включён
+// (PER-774, PER-798), и,
 // у процесса с Notifications, в избранное. Корень один у двух
 // ботов (PER-644, решение владельца по прогону 14 октября 2026 года): лента,
 // прогнозы, хроники, розыгрыш и избранное возвращают в него. Остальные ряды —
@@ -113,7 +114,10 @@ export async function openRoot(input: {
       },
     ],
     keyboard: [
-      // «🏷️ Лоты» — главный вход, своим первым рядом (PER-798).
+      // «🏷️ Лоты» — главный вход, первым рядом парой с «🎬 Промо», пока
+      // администратор выставил видео, а показать пост есть чем — чатом медиа
+      // ботов (PER-774); без промо — своим рядом (решение владельца 27.10,
+      // PER-798).
       [
         {
           action: "root.lots",
@@ -123,6 +127,17 @@ export async function openRoot(input: {
             page: 0,
           }),
         },
+        ...(input.media !== undefined && auction.promoVideo !== undefined
+          ? [
+              {
+                action: "root.promo" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "promo",
+                  auctionId: input.auctionId,
+                }),
+              },
+            ]
+          : []),
       ],
       ...raffleAndPredictionRows,
       // Хроники дня (PER-725): сводка последних суток, пока идёт онлайн-неделя
@@ -165,21 +180,6 @@ export async function openRoot(input: {
                 action: "root.invoices" as const,
                 callbackData: encodeAuctionCallback({
                   kind: "invoices",
-                  auctionId: input.auctionId,
-                }),
-              },
-            ],
-          ]
-        : []),
-      // Промо-видео (PER-774): своим рядом, пока администратор его выставил, а
-      // показать пост есть чем — чатом медиа ботов.
-      ...(input.media !== undefined && auction.promoVideo !== undefined
-        ? [
-            [
-              {
-                action: "root.promo" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "promo",
                   auctionId: input.auctionId,
                 }),
               },

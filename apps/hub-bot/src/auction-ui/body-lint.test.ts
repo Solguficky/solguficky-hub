@@ -38,7 +38,9 @@ const rules: BodyRules = {
       "lot.prev|lot.next",
       // Корень аукциона (PER-770): торги аукциона за сутки и за всё время.
       "root.day-chronicle|root.auction-chronicle",
-      // Бесплатные поводы корня — парой под «Лотами» (PER-798).
+      // «Лоты» и «Промо» — первым рядом, бесплатные поводы корня — парой под
+      // ними (PER-798).
+      "root.lots|root.promo",
       "root.raffle|root.predictions",
       "root.raffle|root.prediction-results",
     ].includes(row.map(({ action }) => action).join("|")),

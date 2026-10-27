@@ -8911,10 +8911,10 @@ describe("promo video", () => {
     expect(plain(last(calls))).toMatch(/^Видео прикреплено\n\nУчастники/);
     expect(labels(last(calls))).toEqual([["‹ Промо-видео"]]);
 
-    // Участник видит «🎬 Промо» своим рядом, а нажатие присылает копию поста
-    // новым сообщением: корень остаётся.
+    // Участник видит «🎬 Промо» первым рядом парой с «🏷️ Лотами» (PER-798),
+    // а нажатие присылает копию поста новым сообщением: корень остаётся.
     await step(press(rootData));
-    expect(labels(last(calls))).toContainEqual(["🎬 Промо"]);
+    expect(labels(last(calls))[0]).toEqual(["🏷️ Лоты", "🎬 Промо"]);
     const root = last(calls);
     await step(press(dataOf(root, "🎬 Промо")));
     const promo = copies(calls).at(-1);
@@ -8957,6 +8957,7 @@ describe("promo video", () => {
     expect(plain(last(calls))).toMatch(/^Видео убрано\n/);
     await step(press(rootData));
     expect(labels(last(calls)).flat()).not.toContain("🎬 Промо");
+    expect(labels(last(calls))[0]).toEqual(["🏷️ Лоты"]);
   });
 
   // Видео без звуковой дорожки Telegram присылает анимацией (PER-801): оно —
