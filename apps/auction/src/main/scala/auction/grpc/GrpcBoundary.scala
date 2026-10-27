@@ -291,6 +291,10 @@ object GrpcBoundary {
       refuse
     def deleteHappyHourPeriod(in: wire.DeleteHappyHourPeriodRequest): Future[wire.DeleteHappyHourPeriodResponse] =
       refuse
+    def setHappyHourLotTerms(in: wire.SetHappyHourLotTermsRequest): Future[wire.SetHappyHourLotTermsResponse] =
+      refuse
+    def clearHappyHourLotTerms(in: wire.ClearHappyHourLotTermsRequest): Future[wire.ClearHappyHourLotTermsResponse] =
+      refuse
     def listAuctionEngagement(
         in: wire.ListAuctionEngagementRequest
     ): Future[wire.ListAuctionEngagementResponse] = refuse

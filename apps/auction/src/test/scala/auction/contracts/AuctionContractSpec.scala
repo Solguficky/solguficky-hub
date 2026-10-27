@@ -88,12 +88,14 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
         "from" -> 1,
         "until" -> 2,
         "step" -> 3,
-        "start" -> 4
+        "start" -> 4,
+        "happy_hour_period_id" -> 5
       )
       windows.getMessageType.findFieldByName("from").getType shouldBe FieldDescriptor.Type.STRING
       windows.getMessageType.findFieldByName("until").getType shouldBe FieldDescriptor.Type.STRING
       windows.getMessageType.findFieldByName("step").getMessageType.getFullName shouldBe "auction.v1.Money"
       windows.getMessageType.findFieldByName("start").getMessageType.getFullName shouldBe "auction.v1.Money"
+      windows.getMessageType.findFieldByName("happy_hour_period_id").getType shouldBe FieldDescriptor.Type.STRING
       reserved should contain allOf (16, 17, 18)
     }
 

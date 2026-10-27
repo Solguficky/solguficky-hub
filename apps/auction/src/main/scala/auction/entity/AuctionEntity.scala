@@ -11,6 +11,7 @@ import auction.lot.LotState
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
 import auction.lot.OpenLotRejected
+import auction.lot.PeriodWindowRejected
 import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLotRejected
@@ -378,11 +379,34 @@ object AuctionEntity {
       replyTo: ActorRef[Either[CreateHappyHourPeriodRejected, AuctionAnswer]]
   ) extends Command
 
-  /** Удаление периода «Счастливых часов» до его начала по часам entity. Ответ — после записи. */
+  /**
+   * Удаление периода «Счастливых часов» до его начала по часам entity. Ответ — после записи; снятие условий лотам
+   * периода уходит после неё (PER-786), и ответ его не ждёт. Повтор того же `op_id` дошлёт снятие лотам, не ответившим
+   * раньше.
+   */
   final case class DeletePeriod(
       command: DeleteHappyHourPeriod,
       initiator: Initiator,
       replyTo: ActorRef[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]]
+  ) extends Command
+
+  /**
+   * Условия лота в периоде «Счастливых часов» по часам entity (PER-786). `regulars` — обычные условия лота, которые
+   * вызывающий прочитал у лота до команды. Ответ — после записи; лоту условия уходят после неё, и ответ их не ждёт.
+   * Повтор того же `op_id` события не пишет, но дошлёт условия, если лот не ответил раньше.
+   */
+  final case class SetTerms(
+      command: SetHappyHourLotTerms,
+      regulars: Option[LotRegulars],
+      initiator: Initiator,
+      replyTo: ActorRef[Either[SetHappyHourLotTermsRejected, AuctionAnswer]]
+  ) extends Command
+
+  /** Снятие условий лота в периоде по часам entity (PER-786); ответ и доставка — как у [[SetTerms]]. */
+  final case class ClearTerms(
+      command: ClearHappyHourLotTerms,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[ClearHappyHourLotTermsRejected, AuctionAnswer]]
   ) extends Command
 
   final case class Get(replyTo: ActorRef[Auction]) extends Command
@@ -442,6 +466,13 @@ object AuctionEntity {
       launch: OpId,
       lot: LotId,
       answer: Try[Either[AddStepWindowRejected, Unit]]
+  ) extends Command
+
+  /** Ответ лота на правку `change` его условий в периоде; неудача — ответа нет. */
+  private[entity] final case class TermsAnswered(
+      change: OpId,
+      lot: LotId,
+      answer: Try[Either[PeriodWindowRejected, Unit]]
   ) extends Command
 
   /** Ответ лота на `WithdrawLot`; неудача — ответа нет. */
@@ -624,6 +655,10 @@ object AuctionEntity {
             case LotInstruction.Finish => context.self ! FinishDue
             case LotInstruction.AddWindow(lot, launch, command) =>
               context.pipeToSelf(lots.addWindow(lot, command))(WindowAnswered(launch, lot, _))
+            case LotInstruction.SetTerms(lot, change, command) =>
+              context.pipeToSelf(lots.setPeriodWindow(lot, command))(TermsAnswered(change, lot, _))
+            case LotInstruction.ClearTerms(lot, change, command) =>
+              context.pipeToSelf(lots.clearPeriodWindow(lot, command))(TermsAnswered(change, lot, _))
           }
         }
 
@@ -1035,6 +1070,31 @@ object AuctionEntity {
                 logUnanswered(lot, failure)
                 roster = LotRoster.windowUnanswered(roster, launch, lot)
               }
+            case SetTerms(set, regulars, initiator, replyTo) =>
+              Auction.decide(state.auction, set, clock.instant(), roster.active, regulars) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(decision) =>
+                  record(state.auction, decision, set.opId, initiator, clock, newId) { (auction, answer) =>
+                    replyTo ! Right(answer)
+                    follow(LotRoster.termsChanged(auction, roster, set.opId))
+                  }
+              }
+            case ClearTerms(clear, initiator, replyTo) =>
+              Auction.decide(state.auction, clear, clock.instant()) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(decision) =>
+                  record(state.auction, decision, clear.opId, initiator, clock, newId) { (auction, answer) =>
+                    replyTo ! Right(answer)
+                    follow(LotRoster.termsChanged(auction, roster, clear.opId))
+                  }
+              }
+            case TermsAnswered(change, lot, Success(_)) =>
+              Effect.none.thenRun(_ => roster = LotRoster.windowAnswered(roster, change, lot))
+            case TermsAnswered(change, lot, Failure(failure)) =>
+              Effect.none.thenRun { _ =>
+                logUnanswered(lot, failure)
+                roster = LotRoster.windowUnanswered(roster, change, lot)
+              }
             case LotObserved(lot, Success(lotState)) =>
               Effect.none.thenRun(after => follow(LotRoster.observed(after.auction, roster, lot, lotState)))
             case LotObserved(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
@@ -1422,15 +1482,14 @@ object AuctionEntity {
                 newId
               )
             case DeletePeriod(delete, initiator, replyTo) =>
-              answered(
-                state.auction,
-                Auction.decide(state.auction, delete, clock.instant()),
-                delete.opId,
-                initiator,
-                replyTo,
-                clock,
-                newId
-              )
+              Auction.decide(state.auction, delete, clock.instant()) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(decision) =>
+                  record(state.auction, decision, delete.opId, initiator, clock, newId) { (auction, answer) =>
+                    replyTo ! Right(answer)
+                    follow(LotRoster.termsChanged(auction, roster, delete.opId))
+                  }
+              }
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 

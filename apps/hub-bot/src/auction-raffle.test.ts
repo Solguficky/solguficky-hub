@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { raffleParagraphs } from "./auction-raffle.js";
+import {
+  raffleParagraphs,
+  raffleRegisteredParagraphs,
+} from "./auction-raffle.js";
 import type { RaffleView } from "./auction-ui/index.js";
 
 // Тексты экрана розыгрыша общие у двух поверхностей (ADR-066, п. 11): строку
@@ -35,13 +38,43 @@ const momentLines = (paragraphs: readonly string[]): string[] =>
   paragraphs.filter((line) => line.startsWith("Жеребьёвка: "));
 
 describe("shared raffle result text", () => {
+  // Ручной итог по настройке сервиса (PER-799): ни минут, ни проверки по
+  // маяку — ни в окне регистрации, ни после её закрытия.
   it("promises no beacon draw and no proof while the winner is due by hand", () => {
-    const open = raffleParagraphs({ ...base, drawnByHand: true }, { moment });
-    expect(open.join("\n")).toContain("Победителя выберут организаторы");
-    expect(open.join("\n")).not.toContain("через пару минут");
-    expect(open.join("\n")).not.toContain("проверяемый");
-    const beacon = raffleParagraphs(base, { moment });
-    expect(beacon.join("\n")).toContain("через пару минут");
+    const byHand = { ...base, drawnByHand: true as const };
+    for (const status of ["open", "closing"] as const) {
+      const text = raffleParagraphs({ ...byHand, status }, { moment }).join(
+        "\n",
+      );
+      expect(text.toLowerCase()).toContain("итог подведёт организатор");
+      expect(text).not.toContain("пару минут");
+      expect(text).not.toContain("проверяемый");
+    }
+    const registered = raffleRegisteredParagraphs(byHand, { moment }).join(
+      "\n",
+    );
+    expect(registered).toContain("Итог подведёт организатор");
+    expect(registered).not.toContain("пару минут");
+  });
+
+  // Автоматический режим и Auction без поля режима — прежние тексты.
+  it("keeps the beacon texts when the winner is drawn", () => {
+    expect(raffleParagraphs(base, { moment })).toEqual([
+      expect.stringContaining("Один билет каждому участнику"),
+      "Регистрация до 14 октября, ср, 03:51. Итог — через пару минут после закрытия регистрации.",
+      "<b>Ты зарегистрирован.</b> Отменить регистрацию можно до её закрытия.",
+      "Итог проверяемый: как его проверить — по кнопке ниже.",
+    ]);
+    expect(
+      raffleParagraphs({ ...base, status: "closing" }, { moment }),
+    ).toEqual([
+      "Регистрация закрыта 14 октября, ср, 03:51: билеты получают номера.",
+      "Ты зарегистрирован: номер билета появится, когда пул зафиксируют.",
+      "Итог проверяемый: как его проверить — по кнопке ниже.",
+    ]);
+    expect(raffleRegisteredParagraphs(base, { moment })[0]).toBe(
+      "Номер билета появится, когда регистрация закроется — 14 октября, ср, 03:51. Итог — через пару минут после этого.",
+    );
   });
 
   it("shows the draw moment right after the winner", () => {

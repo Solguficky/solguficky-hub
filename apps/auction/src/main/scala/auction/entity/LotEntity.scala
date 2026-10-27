@@ -174,6 +174,23 @@ object LotEntity {
       replyTo: ActorRef[Either[AddStepWindowRejected, Option[Envelope]]]
   ) extends Command
 
+  /**
+   * Условия лота в периоде «Счастливых часов» — замена или новое окно периода; шлёт аукцион (PER-786). `None` в ответе
+   * — лот принял окно без записи: оно уже записано, в чужой валюте или пересекается с окном другого происхождения.
+   */
+  final case class SetPeriod(
+      command: SetPeriodWindow,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[PeriodWindowRejected, Option[Envelope]]]
+  ) extends Command
+
+  /** Снятие условий лота в периоде; шлёт аукцион (PER-786). `None` — окна этого периода у лота нет. */
+  final case class ClearPeriod(
+      command: ClearPeriodWindow,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[PeriodWindowRejected, Option[Envelope]]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Lot]) extends Command
 
   /**
@@ -255,6 +272,24 @@ object LotEntity {
           case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
           case Right(Some(decision)) =>
             recordWith(state, Right(decision), add.opId, initiator, replyTo, now, newId)((envelope, _) =>
+              Some(envelope)
+            )
+        }
+      case SetPeriod(set, initiator, replyTo) =>
+        Lot.decide(lot, set, now) match {
+          case Right(None) => Effect.reply(replyTo)(Right(None))
+          case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+          case Right(Some(decision)) =>
+            recordWith(state, Right(decision), set.opId, initiator, replyTo, now, newId)((envelope, _) =>
+              Some(envelope)
+            )
+        }
+      case ClearPeriod(clear, initiator, replyTo) =>
+        Lot.decide(lot, clear, now) match {
+          case Right(None) => Effect.reply(replyTo)(Right(None))
+          case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+          case Right(Some(decision)) =>
+            recordWith(state, Right(decision), clear.opId, initiator, replyTo, now, newId)((envelope, _) =>
               Some(envelope)
             )
         }

@@ -30,6 +30,8 @@
       "from": "2026-10-05T12:00:00Z",
       "until": "2026-10-05T14:00:00Z"
     },
-    "happyHourPeriodDeleted": null
+    "happyHourPeriodDeleted": null,
+    "happyHourLotTermsSet": null,
+    "happyHourLotTermsCleared": null
   }
 }

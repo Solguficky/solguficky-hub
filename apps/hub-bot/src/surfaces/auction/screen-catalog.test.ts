@@ -882,6 +882,9 @@ const raffles: readonly (RaffleView | undefined)[] = [
   raffleOf("open"),
   raffleOf("open", { registered: true }),
   raffleOf("closing", { registered: true }),
+  // Ручной итог (PER-799): без обещания минут и без проверки по маяку.
+  raffleOf("open", { registered: true, drawnByHand: true }),
+  raffleOf("closing", { registered: true, drawnByHand: true }),
   raffleOf("awaiting-beacon", { registered: true, ...pool }),
   raffleOf("drawn", {
     registered: true,
@@ -922,7 +925,8 @@ const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
       : []),
     ...(raffle === undefined ||
     raffle.status === "not-held" ||
-    raffle.status === "cancelled"
+    raffle.status === "cancelled" ||
+    raffle.drawnByHand === true
       ? []
       : [[{ action: "raffle.proof" as const, callbackData: "v1:auc:rp:a" }]]),
     [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],
