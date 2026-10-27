@@ -6,6 +6,7 @@ import {
   type NotificationSender,
   type SendResult,
 } from "../../../core/delivery/index.js";
+import type { MediaChat } from "../../../core/media-chat.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
 import { renderAuctionAnnouncement } from "../../../core/notifications/auction-announcement-notice.js";
 import { renderAuctionCancelledNotice } from "../../../core/notifications/auction-cancelled-notice.js";
@@ -22,6 +23,7 @@ import { renderLotSetNotice } from "../../../core/notifications/lot-set-notice.j
 import {
   type AnnouncementPhotos,
   announcementButtonData,
+  noAnnouncementPhotos,
   type OrganizerAnnouncement,
   renderOrganizerAnnouncement,
   sendOrganizerAnnouncement,
@@ -687,7 +689,11 @@ function pad(part: number): string {
 
 export type SendMessageApi = Pick<
   Api,
-  "sendMessage" | "sendPhoto" | "setMyCommands" | "deleteMyCommands"
+  | "sendMessage"
+  | "sendPhoto"
+  | "copyMessage"
+  | "setMyCommands"
+  | "deleteMyCommands"
 >;
 
 // Содержимое рисуется здесь же, при отправке: соседи для текста хабу не
@@ -701,6 +707,8 @@ export function createNotificationSender(
   timeZone = "UTC",
   // Фото объявления аукциона (PER-765); нет — объявление уходит текстом.
   photos?: AnnouncementPhotos,
+  // Чат медиа ботов: своё фото или видео объявления (PER-776).
+  media?: MediaChat,
 ): NotificationSender<OutgoingNotification> {
   return {
     async send({ telegramUserId, message: content }) {
@@ -713,17 +721,23 @@ export function createNotificationSender(
       try {
         if (
           content.kind === "organizer-announcement" &&
-          content.photo !== undefined &&
-          content.viewerId !== undefined &&
-          photos !== undefined
+          ((content.photo !== undefined &&
+            content.viewerId !== undefined &&
+            photos !== undefined) ||
+            (content.post !== undefined && media !== undefined))
         ) {
           await sendOrganizerAnnouncement(
             api,
             Number(telegramUserId),
-            { text: message.text, photo: content.photo },
             {
-              photos,
-              viewerId: content.viewerId,
+              text: message.text,
+              ...(content.photo === undefined ? {} : { photo: content.photo }),
+              ...(content.post === undefined ? {} : { post: content.post }),
+            },
+            {
+              photos: photos ?? noAnnouncementPhotos,
+              media,
+              viewerId: content.viewerId ?? "",
               markup: message.keyboard,
               mark: screenMark("notification"),
             },

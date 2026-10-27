@@ -73,3 +73,16 @@ function accepted(raw: string, print: string): string | undefined {
     ? checked.text
     : undefined;
 }
+
+// Своё медиа объявления (PER-776) — одно фото или одно видео ответом на
+// вопрос. Документ с картинкой, стикер и анимация медиа объявления не
+// считаются: копия поста ушла бы получателю файлом.
+const MediaSchema = z.union([
+  z.object({ photo: z.array(z.object({ file_id: z.string() })).min(1) }),
+  z.object({ video: z.object({ file_id: z.string() }) }),
+]);
+
+/** Ответ — фото или видео, которое можно опубликовать в чат медиа. */
+export function parseAnnouncementMedia(raw: unknown): boolean {
+  return MediaSchema.safeParse(raw).success;
+}

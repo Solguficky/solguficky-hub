@@ -9,6 +9,7 @@ import {
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
+import { createMediaChat } from "../../core/media-chat.js";
 import { logMissingTitle } from "../../core/notifications/lot-notice.js";
 import {
   createAnnouncementPhotos,
@@ -129,9 +130,14 @@ export const auctionSurface: SurfaceDefinition = ({
       }),
     logMissingAnnouncementPhoto(logger),
   );
+  // Своё фото или видео объявления (PER-776) — пост чата медиа ботов; без
+  // `BOT_MEDIA_CHANNEL_ID` объявление с постом уходит текстом.
   const sender = createNotificationSender(
     createNotificationApi(config.token, config.environment),
     announcementPhotos,
+    config.mediaChannelId === undefined
+      ? undefined
+      : createMediaChat({ channelId: config.mediaChannelId, logger }),
   );
   return {
     ok: true,

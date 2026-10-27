@@ -2,6 +2,7 @@ import {
   type AnnouncementButton,
   type AnnouncementButtonKind,
   type AnnouncementPhoto,
+  type AnnouncementPost,
   checkAnnouncementText,
 } from "../../../core/notifications/organizer-announcement.js";
 import { type RpcMetadata, rpcMeta } from "../../../core/rpc-metadata.js";
@@ -24,6 +25,8 @@ import type {
 // рассылку держит Notifications (PER-764), и адресует она объявление сходкой:
 // связи «аукцион — сходка» у неё нет, поэтому шаги, которые зовут
 // Notifications, несут сходку — её край берёт из памяти процесса.
+// Своё фото или видео (PER-776) приходит сюда уже постом чата медиа ботов —
+// номером поста: публикует его представление, потому что это вызов Telegram.
 
 /** Порт приёма объявления; адаптер — клиент Notifications хаба. */
 export type AuctionAnnouncements = {
@@ -47,6 +50,7 @@ export type AnnouncementCommand = {
   text: string;
   button?: AnnouncementButton;
   photo?: AnnouncementPhoto;
+  post?: AnnouncementPost;
 };
 
 export type AnnouncementAudienceResult =
@@ -132,12 +136,19 @@ export type AuctionAnnouncementRequest =
       button: ButtonChoice;
       lot?: number;
     })
+  // Вопрос о своём фото или видео (PER-776): шаг тот же, что у выбора фото.
+  | (Call & {
+      intent: "ask-announcement-media";
+      button: ButtonChoice;
+      lot?: number;
+    })
   | (Call & {
       intent: "preview-announcement";
       meetupId: string;
       button: ButtonChoice;
       lot?: number;
       photo?: number;
+      post?: AnnouncementPost;
     })
   | (Call & {
       intent: "send-announcement";
@@ -147,6 +158,7 @@ export type AuctionAnnouncementRequest =
       button: ButtonChoice;
       lot?: number;
       photo?: number;
+      post?: AnnouncementPost;
     });
 
 export type AuctionAnnouncementResult =
@@ -185,12 +197,21 @@ export type AuctionAnnouncementResult =
       buttons: readonly AnnouncementButtonKind[];
       lot?: AnnouncementLot;
     }
+  // Фото лота шаблона и, при включённом чате медиа, своё фото или видео
+  // (PER-776): без лота шаг предлагает только своё медиа.
   | {
       kind: "announcement-photo-ask";
       auctionId: string;
       button: ButtonChoice;
-      lot: AnnouncementLot;
+      lot?: AnnouncementLot;
       photos: number;
+      media: boolean;
+    }
+  | {
+      kind: "announcement-media-ask";
+      auctionId: string;
+      button: ButtonChoice;
+      lot?: AnnouncementLot;
     }
   | {
       kind: "announcement-preview";
@@ -198,16 +219,26 @@ export type AuctionAnnouncementResult =
       button: ButtonChoice;
       lot?: AnnouncementLot;
       photo?: { index: number } & AnnouncementPhoto;
+      post?: AnnouncementPost;
       recipientCount: number;
     }
   | { kind: "announcement-sent"; auctionId: string; repeated: boolean }
   // Шаг устарел: окна, лота или фото, на которые он ссылался, в пульте больше
-  // нет, либо объявлять аукцион уже некому.
+  // нет, либо объявлять аукцион уже некому. Своё медиа (PER-776): чат медиа
+  // выключен — `media-off`, пост не опубликовался — `media-failed`.
   | {
       kind: "announcement-outcome";
       auctionId: string;
-      note: "window-gone" | "lot-gone" | "photo-gone" | "closed";
+      note: AnnouncementOutcomeNote;
     };
+
+export type AnnouncementOutcomeNote =
+  | "window-gone"
+  | "lot-gone"
+  | "photo-gone"
+  | "closed"
+  | "media-off"
+  | "media-failed";
 
 const notAdministrator: ExecuteResult = {
   kind: "auction-console-refused",
@@ -362,7 +393,10 @@ function pick(
 export function createAuctionAnnouncements(
   consoles: Pick<AuctionConsoles, "getAuctionConsole" | "consoleRaffle">,
   announcements: AuctionAnnouncements,
+  // Чат медиа ботов включён (PER-776): шаг фото предлагает своё медиа.
+  options: { media?: boolean } = {},
 ) {
+  const media = options.media === true;
   type Read =
     | { kind: "ok"; console: AuctionConsoleSnapshot }
     | { kind: "refused"; result: ExecuteResult };
@@ -478,6 +512,7 @@ export function createAuctionAnnouncements(
       button: ButtonChoice;
       lot?: number;
       photo?: number;
+      post?: AnnouncementPost;
     },
   ): Promise<ExecuteResult> {
     const [found, audience] = await Promise.all([
@@ -498,6 +533,7 @@ export function createAuctionAnnouncements(
       button: request.button,
       ...(picked.lot === undefined ? {} : { lot: picked.lot }),
       ...(picked.photo === undefined ? {} : { photo: picked.photo }),
+      ...(request.post === undefined ? {} : { post: request.post }),
       recipientCount: audience.recipientCount,
     };
   }
@@ -527,6 +563,7 @@ export function createAuctionAnnouncements(
                 photoId: picked.photo.photoId,
               },
             }),
+        ...(request.post === undefined ? {} : { post: request.post }),
       },
       rpcMeta(request),
     );
@@ -612,18 +649,40 @@ export function createAuctionAnnouncements(
         if (found.kind === "refused") return found.result;
         const picked = pick(found.console, request.auctionId, request);
         if (!picked.ok) return picked.result;
-        // Фото — одно из фото выбранного лота; без лота или без фото выбирать
-        // нечего, и шаг сразу ведёт к предпросмотру.
-        if (picked.lot !== undefined && picked.photos > 0) {
+        // Фото — одно из фото выбранного лота или своё фото или видео через
+        // чат медиа (PER-776); выбирать нечего — шаг сразу ведёт к
+        // предпросмотру.
+        if (media || (picked.lot !== undefined && picked.photos > 0)) {
           return {
             kind: "announcement-photo-ask",
             auctionId: request.auctionId,
             button: request.button,
-            lot: picked.lot,
+            ...(picked.lot === undefined ? {} : { lot: picked.lot }),
             photos: picked.photos,
+            media,
           };
         }
         return preview(request);
+      }
+      case "ask-announcement-media": {
+        // Подделанная кнопка при выключенном чате медиа вопроса не задаёт.
+        if (!media) {
+          return {
+            kind: "announcement-outcome",
+            auctionId: request.auctionId,
+            note: "media-off",
+          };
+        }
+        const found = await read(request);
+        if (found.kind === "refused") return found.result;
+        const picked = pick(found.console, request.auctionId, request);
+        if (!picked.ok) return picked.result;
+        return {
+          kind: "announcement-media-ask",
+          auctionId: request.auctionId,
+          button: request.button,
+          ...(picked.lot === undefined ? {} : { lot: picked.lot }),
+        };
       }
       case "preview-announcement":
         return preview(request);

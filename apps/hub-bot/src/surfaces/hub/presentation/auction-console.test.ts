@@ -24,6 +24,7 @@ import {
   createEditLimiter,
   type EditLimiter,
 } from "../../../core/bot/edit-limiter.js";
+import { createMediaChat } from "../../../core/media-chat.js";
 import type {
   AnnouncementCommand,
   AuctionAnnouncements,
@@ -32,6 +33,7 @@ import {
   createDispatcher,
   type Dispatcher,
 } from "../application/dispatcher.js";
+import { fingerprint } from "../application/fingerprint.js";
 import { prizeChangeable } from "../application/raffle-prize-change.js";
 import type {
   AuctionConsoleView,
@@ -200,6 +202,7 @@ const forgedAuctionPresses = {
   "console-announcement-ask": `v1:ac:nq:${auctionToken}:o`,
   "console-announcement-button": `v1:ac:nb:${auctionToken}:a:00000:-`,
   "console-announcement-photo": `v1:ac:np:${auctionToken}:a:00000:0:-`,
+  "console-announcement-media": `v1:ac:nm:${auctionToken}:a:00000:-`,
   "console-announcement-send": `v1:ac:ns:${auctionToken}:a:00000:-:-`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
@@ -7002,6 +7005,8 @@ describe("auction announcement", () => {
     notices: ReturnType<typeof announcements>,
     calls: RecordedCall[],
     readable = true,
+    // Чат медиа ботов (PER-776): номер канала и ответ Telegram на копию.
+    media?: { respond?: (method: string, payload: unknown) => unknown },
     parents = knownMeetup(),
   ) {
     const port = withPhotos(auction, readable);
@@ -7012,6 +7017,7 @@ describe("auction announcement", () => {
         timeZone,
         now: () => now,
         announcements: notices.port,
+        media: media !== undefined,
       }),
       calls,
       undefined,
@@ -7021,10 +7027,19 @@ describe("auction announcement", () => {
         auction: port,
         communityTimeZone: timeZone,
         auctionParents: parents,
+        ...(media === undefined
+          ? {}
+          : {
+              mediaChat: createMediaChat({
+                channelId: mediaChannelId,
+                logger: { warn: () => {} },
+              }),
+            }),
         // Фото с подписью отвечает сообщением: из него бот берёт номер
         // предпросмотра для подтверждения.
-        respond: (method) =>
-          method === "sendPhoto"
+        respond: (method, payload) =>
+          media?.respond?.(method, payload) ??
+          (method === "sendPhoto"
             ? {
                 message_id: 100 + calls.length,
                 date: 1_761_000_000,
@@ -7038,7 +7053,7 @@ describe("auction announcement", () => {
                   },
                 ],
               }
-            : undefined,
+            : undefined),
       },
     ).bot;
   }
@@ -7114,7 +7129,7 @@ describe("auction announcement", () => {
     const calls: RecordedCall[] = [];
     const parents = knownMeetup();
     const step = async (update: Update) => {
-      const fresh = bot(auction, notices, calls, true, parents);
+      const fresh = bot(auction, notices, calls, true, undefined, parents);
       await fresh.init();
       await fresh.handleUpdate(update);
     };
@@ -7148,7 +7163,7 @@ describe("auction announcement", () => {
 
     // Правка черновика: ответом приходит свой текст.
     const text = "История лота «Ваза»: её обжигали трижды <и это видно>.";
-    const fresh = bot(auction, notices, calls, true, parents);
+    const fresh = bot(auction, notices, calls, true, undefined, parents);
     await fresh.init();
     await fresh.handleUpdate(answer(calls, { text }));
     expect(labels(last(calls))).toEqual([
@@ -7310,12 +7325,345 @@ describe("auction announcement", () => {
     });
     const notices = announcements();
     const calls: RecordedCall[] = [];
-    const hub = bot(auction, notices, calls, true, createAuctionParents());
+    const hub = bot(
+      auction,
+      notices,
+      calls,
+      true,
+      undefined,
+      createAuctionParents(),
+    );
     await hub.init();
     await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
 
     expect(plain(last(calls))).toContain("Открой аукцион с карточки сходки");
     expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
+    expect(notices.accepted).toEqual([]);
+  });
+
+  // Своё фото или видео (PER-776): ответ на вопрос о медиа уходит копией в чат
+  // медиа ботов, а предпросмотр и рассылка несут номер поста.
+  const mediaChannelId = -1001234567890;
+
+  // Ответ на последний вопрос с видимым текстом вопроса, как его вернёт клиент.
+  function reply(
+    calls: readonly RecordedCall[],
+    content: Record<string, unknown>,
+  ): Update {
+    const asked = question(calls);
+    return {
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        ...content,
+        reply_to_message: {
+          message_id: asked.messageId,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+          from: { id: 1, is_bot: true, first_name: "stub" },
+          text: visible(asked.payload),
+          reply_markup: asked.payload.reply_markup,
+        },
+      } as never,
+    };
+  }
+
+  const photo = {
+    photo: [{ file_id: "own-photo", file_unique_id: "p", width: 1, height: 1 }],
+  };
+  const video = {
+    video: {
+      file_id: "own-video",
+      file_unique_id: "v",
+      width: 1,
+      height: 1,
+      duration: 3,
+    },
+  };
+
+  type Copied = {
+    chat_id?: number;
+    from_chat_id?: number;
+    message_id?: number;
+    caption?: string;
+    reply_markup?: Sent["reply_markup"];
+    sentId: number;
+  };
+
+  function copies(calls: readonly RecordedCall[]): Copied[] {
+    return calls.flatMap((call, index) =>
+      call.method === "copyMessage"
+        ? [{ ...(call.payload as Omit<Copied, "sentId">), sentId: 101 + index }]
+        : [],
+    );
+  }
+
+  it("attaches an own photo through the media chat and sends its post over restarts", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements(7);
+    const calls: RecordedCall[] = [];
+    const step = async (update: Update) => {
+      const fresh = bot(auction, notices, calls, true, {});
+      await fresh.init();
+      await fresh.handleUpdate(update);
+    };
+    const text = "Завтра последний день <торгов> & розыгрыш.";
+
+    await step(press(`v1:ac:nq:${auctionToken}:o`));
+    await step(answer(calls, { text }));
+    await step(pressUnder(dataOf(last(calls), "К аукциону"), last(calls)));
+    // Своего объявления без лота шаг фото всё равно спрашивает: своё медиа.
+    expect(labels(last(calls))).toEqual([
+      ["Своё фото или видео"],
+      ["Пропустить"],
+      ["‹ Объявление"],
+    ]);
+
+    await step(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+    expect(question(calls).payload.reply_markup?.force_reply).toBe(true);
+    expect(visible(question(calls).payload)).toContain(
+      `Текст объявления:\n${text}`,
+    );
+
+    await step(reply(calls, photo));
+    const [published, shown] = copies(calls);
+    expect(published).toMatchObject({
+      chat_id: mediaChannelId,
+      from_chat_id: 42,
+      message_id: 10,
+    });
+    expect(shown).toMatchObject({
+      chat_id: 42,
+      from_chat_id: mediaChannelId,
+      message_id: published?.sentId,
+      caption: text,
+    });
+    expect(
+      shown?.reply_markup?.inline_keyboard.map((row) =>
+        row.map((button) => button.text),
+      ),
+    ).toEqual([["К аукциону"]]);
+    expect(plain(last(calls))).toContain("Получат 7 человек");
+
+    // Предпросмотр — копия поста с подписью: «Отправить» читает текст оттуда.
+    const confirm = last(calls);
+    const send = pressUnder(dataOf(confirm, "✔️ Да, отправить 7"), confirm);
+    (
+      send.callback_query as unknown as { message: Record<string, unknown> }
+    ).message["reply_to_message"] = {
+      message_id: shown?.sentId,
+      date: 1_761_000_000,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: 1, is_bot: true, first_name: "stub" },
+      caption: text,
+    };
+    await step(send);
+    expect(plain(last(calls))).toContain("Объявление принято");
+    expect(notices.accepted).toHaveLength(1);
+    expect(notices.accepted[0]?.command).toMatchObject({
+      meetupId,
+      text,
+      button: { kind: "auction" },
+      post: published?.sentId,
+    });
+    expect(notices.accepted[0]?.command.photo).toBeUndefined();
+  });
+
+  it("asks again for a reply that is neither a photo nor a video and takes a video of a lot story", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [photographed],
+    });
+    const notices = announcements(2);
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls, true, {});
+    await hub.init();
+    const text = "Ваза в деле.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["lot"],
+      lot: { index: 0, lotId: vaseId, title: "Ваза" },
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К лоту"), frame));
+    expect(labels(last(calls))).toEqual([
+      ["Фото 1", "Фото 2"],
+      ["Своё фото или видео"],
+      ["Пропустить"],
+      ["‹ Объявление"],
+    ]);
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+
+    await hub.handleUpdate(reply(calls, { text: "вот" }));
+    expect(copies(calls)).toEqual([]);
+    expect(visible(question(calls).payload)).toContain(
+      "Это не фото и не видео",
+    );
+    expect(visible(question(calls).payload)).toContain(
+      `Текст объявления:\n${text}`,
+    );
+
+    await hub.handleUpdate(reply(calls, video));
+    const [published, shown] = copies(calls);
+    expect(published).toMatchObject({ chat_id: mediaChannelId });
+    expect(shown).toMatchObject({ chat_id: 42, caption: text });
+    expect(shown?.reply_markup?.inline_keyboard[0]?.[0]?.text).toBe("К лоту");
+    // «Отправить» несёт лот и номер поста на месте фото.
+    const send = parseCallback(dataOf(last(calls), "✔️ Да, отправить 2"));
+    expect(send).toMatchObject({
+      kind: "console-announcement-send",
+      lot: 0,
+      post: published?.sentId,
+    });
+    expect(send).not.toHaveProperty("photo");
+
+    const confirm = last(calls);
+    const sent = pressUnder(dataOf(confirm, "✔️ Да, отправить 2"), confirm);
+    (
+      sent.callback_query as unknown as { message: Record<string, unknown> }
+    ).message["reply_to_message"] = {
+      message_id: shown?.sentId,
+      date: 1_761_000_000,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: 1, is_bot: true, first_name: "stub" },
+      caption: text,
+    };
+    await hub.handleUpdate(sent);
+    expect(notices.accepted[0]?.command).toMatchObject({
+      text,
+      button: { kind: "lot", lotId: vaseId },
+      post: published?.sentId,
+    });
+  });
+
+  it("offers no own media without the media chat and refuses a forged button", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements(4);
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls);
+    await hub.init();
+    const text = "Без медиа.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["auction"],
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    // Своё объявление без лота и без чата медиа сразу ведёт к предпросмотру.
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+    expect(plain(last(calls))).toContain("Получат 4 человека");
+    expect(
+      calls.some((call) =>
+        JSON.stringify(call.payload).includes("Своё фото или видео"),
+      ),
+    ).toBe(false);
+
+    await hub.handleUpdate(
+      pressUnder(`v1:ac:nm:${auctionToken}:a:${fingerprint(text)}:-`, frame),
+    );
+    expect(plain(last(calls))).toContain("канал медиа ботов не настроен");
+    expect(copies(calls)).toEqual([]);
+  });
+
+  it("publishes one post for an album sent as the answer", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, announcements(), calls, true, {});
+    await hub.init();
+    const text = "Альбом.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["auction"],
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+    const first = reply(calls, { ...photo, media_group_id: "album-1" });
+    const second = reply(calls, { ...photo, media_group_id: "album-1" });
+    (second.message as { message_id: number }).message_id = 11;
+    await hub.handleUpdate(first);
+    await hub.handleUpdate(second);
+
+    const published = copies(calls).filter(
+      (copy) => copy.chat_id === mediaChannelId,
+    );
+    expect(published).toHaveLength(1);
+    expect(published[0]?.message_id).toBe(10);
+  });
+
+  it("sends nothing and says so when the media chat refuses the post", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements();
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, notices, calls, true, {
+      respond: (method, payload) =>
+        method === "copyMessage" &&
+        (payload as { chat_id?: number }).chat_id === mediaChannelId
+          ? {
+              ok: false,
+              error_code: 403,
+              description: "Forbidden: bot is not a member of the channel chat",
+            }
+          : undefined,
+    });
+    await hub.init();
+    const text = "С фото.";
+    const buttons = announcementButtonScreen({
+      auctionId,
+      text,
+      buttons: ["auction"],
+    });
+    const frame: Sent = {
+      text: buttons.text,
+      reply_markup: { inline_keyboard: buttons.keyboard.inline_keyboard },
+    };
+    await hub.handleUpdate(pressUnder(dataOf(frame, "К аукциону"), frame));
+    await hub.handleUpdate(
+      pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
+    );
+    await hub.handleUpdate(reply(calls, photo));
+
+    expect(plain(last(calls))).toContain(
+      "Не получилось сохранить фото или видео",
+    );
+    expect(copies(calls)).toHaveLength(1);
     expect(notices.accepted).toEqual([]);
   });
 });

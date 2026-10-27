@@ -1,4 +1,5 @@
 import { create, toBinary } from "@bufbuild/protobuf";
+import { GrammyError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import {
   AuctionNoticeSchema,
@@ -6,10 +7,12 @@ import {
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { inspectCall } from "../../../../testkit/screen-lint.js";
 import { parseAuctionCallback } from "../../../auction-ui/index.js";
+import { createMediaChat } from "../../../core/media-chat.js";
 import {
   createAnnouncementPhotos,
   wireAnnouncementButton,
   wireAnnouncementPhoto,
+  wireAnnouncementPost,
 } from "../../../core/notifications/organizer-announcement.js";
 import {
   createNotificationSender,
@@ -171,5 +174,128 @@ describe("organizer announcement to a guest", () => {
     const data = rendered.message.rows?.[0]?.[0]?.callback_data ?? "";
     const parsed = parseAuctionCallback(parseTraceCallback(data) ?? "");
     expect(parsed.ok && parsed.intent).toEqual(intent);
+  });
+
+  // Своё фото или видео (PER-776): гость получает копию поста чата медиа с
+  // текстом подписью и кнопкой; пост пропал — текст и запись об отказе.
+  it.each([
+    ["the post with the text as its caption", undefined],
+    [
+      "the text alone when the post is gone",
+      { code: 400, description: "Bad Request: message to copy not found" },
+    ],
+    [
+      "the text alone when the bot is out of the channel",
+      {
+        code: 403,
+        description: "Forbidden: bot is not a member of the channel chat",
+      },
+    ],
+  ])("sends %s", async (_name, refused) => {
+    const present = refused === undefined;
+    const channelId = -1001234567890;
+    const decoded = decodeNotification(
+      toBinary(
+        NotificationSchema,
+        create(NotificationSchema, {
+          notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000003",
+          recipientId,
+          createdAt: "2026-10-27T10:00:00Z",
+          type: {
+            case: "auctionNotice",
+            value: create(AuctionNoticeSchema, {
+              auctionId,
+              body: "Смотри ролик",
+              button: wireAnnouncementButton({ kind: "auction" }),
+              photo: wireAnnouncementPost(42),
+            }),
+          },
+        }),
+      ),
+    );
+    if (decoded.kind !== "ok") throw new Error("not decoded");
+    const rendered = await createRenderMessage(
+      { holdsPlaceBids: vi.fn(), lotInfo: vi.fn() },
+      () => {},
+    )(decoded.notification.content as AuctionNotificationContent, {
+      recipientId,
+    });
+    if (rendered.kind !== "ready") throw new Error("not rendered");
+    const calls: { method: string; payload: Record<string, unknown> }[] = [];
+    const api = {
+      sendMessage: vi.fn(async (chat_id: number, text: string, other) => {
+        calls.push({
+          method: "sendMessage",
+          payload: { chat_id, text, ...other },
+        });
+        return { message_id: 1 };
+      }),
+      sendPhoto: vi.fn(),
+      copyMessage: vi.fn(
+        async (
+          chat_id: number,
+          from_chat_id: number,
+          message_id: number,
+          other,
+        ) => {
+          if (refused !== undefined) {
+            throw new GrammyError(
+              "refused",
+              {
+                ok: false,
+                error_code: refused.code,
+                description: refused.description,
+              },
+              "copyMessage",
+              {},
+            );
+          }
+          calls.push({
+            method: "copyMessage",
+            payload: { chat_id, from_chat_id, message_id, ...other },
+          });
+          return { message_id: 3 };
+        },
+      ),
+    };
+    const warn = vi.fn();
+    const sender = createNotificationSender(
+      api as never,
+      createAnnouncementPhotos(vi.fn(), () => {}),
+      createMediaChat({ channelId, logger: { warn } }),
+    );
+
+    expect(
+      await sender.send({ telegramUserId: 42n, message: rendered.message }),
+    ).toEqual({ kind: "sent" });
+    expect(api.sendPhoto).not.toHaveBeenCalled();
+    if (present) {
+      expect(calls.map((call) => call.method)).toEqual(["copyMessage"]);
+      expect(calls[0]?.payload).toMatchObject({
+        chat_id: 42,
+        from_chat_id: channelId,
+        message_id: 42,
+        caption: "Смотри ролик",
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } else {
+      expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
+      expect(warn).toHaveBeenCalledWith("media chat post not shown", {
+        error_category: "dependency_unavailable",
+        error: refused?.description,
+        media_post_id: 42,
+      });
+    }
+    const button = (
+      calls[0]?.payload as
+        | { reply_markup?: { inline_keyboard: { text: string }[][] } }
+        | undefined
+    )?.reply_markup?.inline_keyboard[0]?.[0];
+    expect(button?.text).toBe("К аукциону");
+    expect(
+      calls.flatMap((call) =>
+        inspectCall("auction", call.method, call.payload),
+      ),
+    ).toEqual([]);
   });
 });

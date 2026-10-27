@@ -6,10 +6,12 @@ import {
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { inspectCall } from "../../../../testkit/screen-lint.js";
 import { encodeAuctionCallback } from "../../../auction-ui/index.js";
+import { createMediaChat } from "../../../core/media-chat.js";
 import {
   createAnnouncementPhotos,
   wireAnnouncementButton,
   wireAnnouncementPhoto,
+  wireAnnouncementPost,
 } from "../../../core/notifications/organizer-announcement.js";
 import { createNotificationSender } from "../presentation/notification-message.js";
 import { decodeNotification } from "./notification.js";
@@ -140,5 +142,90 @@ describe("organizer announcement to a member", () => {
 
     expect(hub.calls.map((call) => call.method)).toEqual(["sendMessage"]);
     expect(hub.calls[0]?.payload).toMatchObject({ text: "Розыгрыш <открыт>" });
+  });
+
+  // Своё фото или видео (PER-776): участник получает копию поста чата медиа
+  // с текстом подписью и кнопкой следа.
+  it("copies the post of the media chat with the text and the traced button", async () => {
+    const channelId = -1001234567890;
+    const result = decodeNotification(
+      toBinary(
+        NotificationSchema,
+        create(NotificationSchema, {
+          notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000002",
+          recipientId,
+          createdAt: "2026-10-27T10:00:00Z",
+          type: {
+            case: "auctionNotice",
+            value: create(AuctionNoticeSchema, {
+              auctionId,
+              body: "Смотри ролик",
+              button: wireAnnouncementButton({ kind: "raffle" }),
+              photo: wireAnnouncementPost(42),
+            }),
+          },
+        }),
+      ),
+    );
+    if (result.kind !== "ok") throw new Error(`decoded ${result.kind}`);
+    const content = result.notification.content;
+    if (content.kind !== "organizer-announcement") throw new Error("kind");
+    expect(content.post).toBe(42);
+    const calls: { method: string; payload: Record<string, unknown> }[] = [];
+    const api = {
+      sendMessage: vi.fn(),
+      sendPhoto: vi.fn(),
+      copyMessage: vi.fn(
+        async (
+          chat_id: number,
+          from_chat_id: number,
+          message_id: number,
+          other,
+        ) => {
+          calls.push({
+            method: "copyMessage",
+            payload: { chat_id, from_chat_id, message_id, ...other },
+          });
+          return { message_id: 3 };
+        },
+      ),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    };
+    const send = createNotificationSender(
+      api as never,
+      undefined,
+      undefined,
+      "UTC",
+      undefined,
+      createMediaChat({ channelId, logger: { warn: vi.fn() } }),
+    );
+
+    await expect(
+      send.send({
+        telegramUserId: 42n,
+        message: { ...content, viewerId: recipientId },
+      }),
+    ).resolves.toEqual({ kind: "sent" });
+    expect(api.sendMessage).not.toHaveBeenCalled();
+    expect(calls[0]?.payload).toMatchObject({
+      chat_id: 42,
+      from_chat_id: channelId,
+      message_id: 42,
+      caption: "Смотри ролик",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "К розыгрышу",
+              callback_data: `v1:t:${encodeAuctionCallback({ kind: "raffle", auctionId }).slice(3)}`,
+            },
+          ],
+        ],
+      },
+    });
+    expect(
+      calls.flatMap((call) => inspectCall("hub", call.method, call.payload)),
+    ).toEqual([]);
   });
 });

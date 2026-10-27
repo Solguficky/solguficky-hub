@@ -290,6 +290,17 @@ public class NotificationFactsTests
     }
 
     [Fact]
+    public void AuctionNotice_WithoutButton_LeavesButtonAbsent()
+    {
+        var notification = NotificationFacts.AuctionNotice(
+            NotificationId, RecipientId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "",
+            "Спасибо всем!", new AuctionNoticeContent(null, null), requestId: null, Now, NotAfter);
+
+        notification.AuctionNotice.Button.ShouldBeNull();
+        notification.AuctionNotice.Body.ShouldBe("Спасибо всем!");
+    }
+
+    [Fact]
     public void AuctionNotice_WithoutPhoto_LeavesPhotoAbsentAndLotEmpty()
     {
         var notification = NotificationFacts.AuctionNotice(

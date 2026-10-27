@@ -23,6 +23,7 @@ import {
   consoleAnnouncementButtonData,
   consoleAnnouncementData,
   consoleAnnouncementLotsData,
+  consoleAnnouncementMediaData,
   consoleAnnouncementPhotoData,
   consoleAnnouncementSendData,
   consoleAnnouncementWindowsData,
@@ -76,6 +77,7 @@ const templateLabels: Readonly<Record<AnnouncementTemplate, string>> = {
 const noButtonLabel = "Без кнопки";
 const editTextLabel = "Изменить текст";
 const skipPhotoLabel = "Пропустить";
+const ownMediaLabel = "Своё фото или видео";
 
 type Moments = { timeZone: string; today: CommunityDay };
 
@@ -267,6 +269,24 @@ export function announcementQuestionText(
   ].join("\n\n");
 }
 
+/**
+ * Вопрос о своём медиа (PER-776): одно фото или видео ответом. Текст
+ * объявления идёт хвостом, как в кадре шага: ответ читает его оттуда.
+ */
+export function announcementMediaQuestionText(
+  text: string,
+  refused = false,
+): string {
+  return [
+    escapeHtml(
+      refused
+        ? "Это не фото и не видео. Пришли одно фото или одно видео ответом на это сообщение."
+        : "Пришли одно фото или одно видео ответом на это сообщение — оно уйдёт с текстом ниже подписью.",
+    ),
+    textBlock(text),
+  ].join("\n\n");
+}
+
 export const announcementAskErrorText: Readonly<
   Record<AnnouncementTextError, string>
 > = {
@@ -275,7 +295,7 @@ export const announcementAskErrorText: Readonly<
   nul: "В тексте есть невидимый символ, который Telegram не примет. Перепиши текст.",
 };
 
-function textBlock(text: string): string {
+export function textBlock(text: string): string {
   return `${announcementTextLead}\n${escapeHtml(text)}`;
 }
 
@@ -317,18 +337,24 @@ export function announcementButtonScreen(view: {
   };
 }
 
-/** Шаг фото: одно из фото лота шаблона или «Пропустить». */
+/**
+ * Шаг фото: одно из фото лота шаблона, своё фото или видео через чат медиа
+ * ботов (PER-776), когда он включён, или «Пропустить».
+ */
 export function announcementPhotoScreen(view: {
   auctionId: string;
   text: string;
   button: ButtonChoice;
-  lot: AnnouncementLot;
+  lot?: AnnouncementLot | undefined;
   photos: number;
+  media: boolean;
 }): ShownScreen {
   const auction = uuidToToken(view.auctionId);
   const print = fingerprint(view.text);
   const keyboard = new InlineKeyboard();
-  for (let index = 0; index < view.photos; index += 1) {
+  const { lot } = view;
+  const photos = lot === undefined ? 0 : view.photos;
+  for (let index = 0; index < photos; index += 1) {
     // Короткие подписи встают по четыре в ряд: десять фото — три ряда.
     if (index > 0 && index % 4 === 0) keyboard.row();
     keyboard.text(
@@ -337,24 +363,35 @@ export function announcementPhotoScreen(view: {
         auction,
         view.button,
         print,
-        view.lot.index,
+        lot?.index,
         index,
       ),
+    );
+  }
+  if (view.media) {
+    if (photos > 0) keyboard.row();
+    keyboard.text(
+      ownMediaLabel,
+      consoleAnnouncementMediaData(auction, view.button, print, lot?.index),
     );
   }
   keyboard
     .row()
     .text(
       skipPhotoLabel,
-      consoleAnnouncementPhotoData(auction, view.button, print, view.lot.index),
+      consoleAnnouncementPhotoData(auction, view.button, print, lot?.index),
     );
+  const question =
+    lot === undefined || photos === 0
+      ? "Приложить своё фото или видео?"
+      : view.media
+        ? `Приложить фото лота «${lot.title}» или своё фото или видео? Номер — порядок фото на карточке лота.`
+        : `Приложить фото лота «${lot.title}»? Номер — порядок фото на карточке лота.`;
   return {
     id: "announcement-photo",
     text: screenText(
       "Фото объявления",
-      escapeHtml(
-        `Приложить фото лота «${view.lot.title}»? Номер — порядок фото на карточке лота.`,
-      ),
+      escapeHtml(question),
       textBlock(view.text),
     ),
     keyboard: withNav(keyboard, toAnnouncement(view.auctionId)),
@@ -373,6 +410,7 @@ export function announcementConfirmScreen(view: {
   button: ButtonChoice;
   lot?: AnnouncementLot | undefined;
   photo?: number | undefined;
+  post?: number | undefined;
   recipientCount: number;
 }): ShownScreen {
   const auction = uuidToToken(view.auctionId);
@@ -399,6 +437,7 @@ export function announcementConfirmScreen(view: {
         fingerprint(view.text),
         view.lot?.index,
         view.photo,
+        view.post,
       ),
       noData: consoleAnnouncementData(auction),
       irreversible: true,
@@ -429,6 +468,10 @@ export function announcementOutcomeScreen(
             "Этого фото у лота больше нет. Объявление не отправлено: выбери фото заново.",
           closed:
             "Объявлять некому: аукцион скрыт от участников или уже закончился.",
+          "media-off":
+            "Своё фото или видео сейчас приложить нельзя: канал медиа ботов не настроен. Объявление не отправлено.",
+          "media-failed":
+            "Не получилось сохранить фото или видео в канал медиа ботов. Объявление не отправлено: проверь, что бот — администратор канала, и начни заново.",
         }[view.note];
   return {
     id: "outcome",
