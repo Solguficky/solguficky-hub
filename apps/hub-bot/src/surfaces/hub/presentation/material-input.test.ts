@@ -67,13 +67,17 @@ describe("material input", () => {
       "https://t.me/solguficky/77?comment=5",
     ],
     ["https://t.me/solguficky/77?comment=x", "https://t.me/solguficky/77"],
+    // Набранная руками (PER-793): без схемы и с `http://` — та же ссылка.
+    ["t.me/solguficky/77", "https://t.me/solguficky/77"],
+    ["http://t.me/c/1234567890/77", "https://t.me/c/1234567890/77"],
   ])("takes a typed message link %s", (text, url) => {
     expect(parseMaterialInput({ text })).toEqual({ kind: "message-link", url });
   });
 
   it.each([
     "https://example.com/solguficky/77",
-    "http://t.me/solguficky/77",
+    "ftp://t.me/solguficky/77",
+    "xt.me/solguficky/77",
     "https://t.me/solguficky",
     "https://t.me/c/1234567890",
     "https://t.me/+invite",
@@ -120,10 +124,33 @@ describe("material input", () => {
       "Видео не принимается",
     ],
     [{ text: "ссылка где-то" }, "text", "Текст сам по себе не материал"],
+    // Скрытый источник называет вид пересланного медиа (PER-793).
+    [
+      { forward_origin: { type: "hidden_user" }, video: { file_id: "v" } },
+      "forward:hidden_user,video",
+      "Видео не принимается материалом. На это сообщение нельзя дать ссылку",
+    ],
+    // Ссылка внутри фразы: отказ просит прислать её одну (PER-793).
+    [
+      { text: "вот t.me/solguficky/77, глянь" },
+      "text",
+      "Ссылку на сообщение пришли отдельно, без другого текста",
+    ],
   ])("names the refusal of %j", (message, kind, text) => {
     const refusal = materialRefusal(message);
     expect(refusal.kind).toBe(kind);
     expect(refusal.text).toContain(text);
+  });
+
+  // Отказ тексту не зовёт переслать из чата: такую пересылку бот не принимает
+  // и ответил бы «пришли ссылку» — круга нет (PER-793).
+  it("sends a typed text to the link form instead of a chat forward", () => {
+    const typed = materialRefusal({ text: "вот афиша" }).text;
+    expect(typed).toContain("https://t.me/…");
+    expect(typed).not.toContain("чата");
+    expect(materialRefusal({ text: "https://t.me/solguficky" }).text).toBe(
+      typed,
+    );
   });
 
   it("recovers a message material from the confirmation screen", () => {

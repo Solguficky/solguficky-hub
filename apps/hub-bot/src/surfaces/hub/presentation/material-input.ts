@@ -55,11 +55,22 @@ export function isTypedText(raw: unknown): boolean {
 
 // Ссылка «Копировать ссылку» клиента Telegram: публичный чат по имени или
 // закрытый по номеру `c/<чат>`, необязательная тема и номер сообщения.
-// Ссылка собирается заново из разобранных частей, а не уезжает в материал как
-// набрана: из хвоста запроса остаётся только `comment` — он ведёт на
-// комментарий, а не на сам пост, — а `?single` и прочее отбрасываются.
-const MessageLinkPattern =
-  /^https:\/\/t\.me\/(?:c\/([1-9]\d*)|([A-Za-z][A-Za-z0-9_]{3,31}))(?:\/([1-9]\d*))?\/([1-9]\d*)\/?(?:\?(\S*))?$/;
+// Схема необязательна, `http://` тоже принимается (PER-793): ссылку набирают
+// и руками. Ссылка собирается заново из разобранных частей, а не уезжает в
+// материал как набрана: схема всегда `https://`, из хвоста запроса остаётся
+// только `comment` — он ведёт на комментарий, а не на сам пост, — а `?single`
+// и прочее отбрасываются.
+const linkBody =
+  "t\\.me\\/(?:c\\/([1-9]\\d*)|([A-Za-z][A-Za-z0-9_]{3,31}))(?:\\/([1-9]\\d*))?\\/([1-9]\\d*)";
+const MessageLinkPattern = new RegExp(
+  `^(?:https?:\\/\\/)?${linkBody}\\/?(?:\\?(\\S*))?$`,
+);
+// Та же ссылка внутри фразы: материалом фраза не становится — набранный текст
+// без ответа бывает подписью к пересылке, — но отказ называет, что ссылку
+// нужно прислать одну.
+const LinkInPhrasePattern = new RegExp(
+  `(?:^|[^\\w./])(?:https?:\\/\\/)?${linkBody}(?!\\w)`,
+);
 const CommentIdPattern = /^[1-9]\d*$/;
 
 /**
@@ -134,16 +145,29 @@ export function materialRefusal(raw: unknown): MaterialRefusal {
         text: `${media[1]} не принимается материалом: нужна фотография, документ, ссылка на сообщение или пересылка из канала.`,
       };
     }
-    return isTypedText(raw)
-      ? { kind: "text", text: typedTextRefusal }
-      : { kind: "other", text: hiddenSourceRefusal };
+    if (!isTypedText(raw)) return { kind: "other", text: hiddenSourceRefusal };
+    const text = (raw as { text: string }).text;
+    return {
+      kind: "text",
+      text: LinkInPhrasePattern.test(text)
+        ? linkInPhraseRefusal
+        : typedTextRefusal,
+    };
   }
   const kind = [
     `forward:${forward}`,
     ...(media === undefined ? [] : [media[0]]),
   ].join(",");
+  // Скрытый источник тоже называет вид: «нельзя дать ссылку» на видео
+  // оставило бы человека пробовать то же видео из другого источника.
   if (forward !== "user" && forward !== "chat") {
-    return { kind, text: hiddenSourceRefusal };
+    return {
+      kind,
+      text:
+        media === undefined
+          ? hiddenSourceRefusal
+          : `${media[1]} не принимается материалом. ${hiddenSourceRefusal}`,
+    };
   }
   return {
     kind,
@@ -154,8 +178,12 @@ export function materialRefusal(raw: unknown): MaterialRefusal {
   };
 }
 
+// Пересылку из чата бот не принимает (PER-762), поэтому отказ тексту зовёт
+// ссылкой, а не пересылкой из чата, и называет её форму (PER-793).
 const typedTextRefusal =
-  "Текст сам по себе не материал: перешли сообщение из канала или чата, фото или документ.";
+  "Текст сам по себе не материал: пришли ссылку на сообщение вида https://t.me/…, перешли сообщение из канала, фото или документ.";
+const linkInPhraseRefusal =
+  "Ссылку на сообщение пришли отдельно, без другого текста: https://t.me/…";
 const hiddenSourceRefusal =
   "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.";
 const linkHint =

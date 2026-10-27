@@ -1181,6 +1181,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       environment: runtime.environment ?? defaultTelegramEnvironment,
     });
   const albums = createSeenAlbums();
+  const posts = createPublishedPosts();
   const hintedAlbums = createHintedAlbums();
   const syncCommands = createChatCommandsSync(runtime.logger);
   const liveCards =
@@ -1265,7 +1266,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       ctx,
       runtime,
       questions,
-      { files, albums },
+      { files, albums, posts },
       lotPhotos,
       hintedAlbums,
     ),
@@ -1284,7 +1285,7 @@ async function handleMessage(
   ctx: UpdateContext,
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
-  photos: { files: TelegramFiles; albums: SeenAlbums },
+  photos: { files: TelegramFiles; albums: SeenAlbums; posts: PublishedPosts },
   lotPhotos: LotPhotos,
   hintedAlbums: ReturnType<typeof createHintedAlbums>,
 ): Promise<void> {
@@ -1804,7 +1805,7 @@ async function handleMessage(
         ctx,
         runtime,
         questions,
-        photos.albums,
+        photos,
         pending,
         replyId,
         answered,
@@ -10062,12 +10063,14 @@ async function handlePromoVideoCallback(
 
 // Ответ на вопрос о промо-видео (PER-774). Бот копирует видео человека в чат
 // медиа ботов, а Auction получает номер поста: так видео одинаково покажут
-// оба бота. Прежний пост остаётся в канале — его не удаляет никто.
+// оба бота. Прежний пост остаётся в канале — его не удаляет никто. Повтор
+// доставки того же ответа — повтор команды (PER-793): ключ выводится из
+// сообщения, а пост берётся из памяти процесса, а не публикуется вторым.
 async function handlePromoVideoAnswer(
   ctx: UpdateContext,
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
-  albums: SeenAlbums,
+  { albums, posts }: { albums: SeenAlbums; posts: PublishedPosts },
   pending: PendingConsolePromoVideo,
   replyId: number,
   answered: (result?: ExecuteResult) => Promise<void>,
@@ -10121,13 +10124,18 @@ async function handlePromoVideoAnswer(
   }
   // Видео у аукциона одно: из альбома берётся первое, остальные пропускает
   // проверка альбомов в начале `handleMessage`.
-  const album = ctx.message.media_group_id;
+  const message = ctx.message;
+  const album = message.media_group_id;
   if (album !== undefined) albums.remember(album);
   const media = runtime.mediaChat;
+  const source = questionKey(message.chat.id, message.message_id);
+  const remembered = posts.postOf(source);
   const published =
     media === undefined || !media.enabled
       ? undefined
-      : await media.publish(ctx.api, ctx.chat?.id ?? 0, ctx.message.message_id);
+      : remembered !== undefined
+        ? { kind: "published" as const, postId: remembered }
+        : await media.publish(ctx.api, message.chat.id, message.message_id);
   if (published?.kind !== "published") {
     await answered();
     const note = published === undefined ? "media-off" : "media-failed";
@@ -10135,12 +10143,15 @@ async function handlePromoVideoAnswer(
     // Отказ Telegram чат медиа уже записал на warn: граница пишет исход.
     return handled(`promo video: ${note}`);
   }
+  posts.remember(source, published.postId);
   const result = await runtime.dispatcher.execute({
     identity: person,
-    ...rpcCall(ctx, useCase),
+    // Медленный `copyMessage` не съедает бюджет `SetPromoVideo`, как
+    // `getFile` у фото (PER-728).
+    ...afterTelegram(rpcCall(ctx, useCase)),
     auctionId,
     intent: "set-promo-video",
-    opId: createUuidV7(),
+    opId: answerOpId(message, "console-promo-video"),
     postId: published.postId,
   });
   await answered(result);
@@ -13779,6 +13790,33 @@ function createSeenAlbums(): SeenAlbums {
   };
 }
 
+// Пост чата медиа, опубликованный из ответа человека (PER-793): повторная
+// доставка того же ответа берёт пост отсюда, и второго поста в канале нет.
+// Память процесса, как у альбомов: после рестарта повтор опубликует пост
+// заново, а Auction по тому же `op_id` ответит исходным исходом и оставит
+// первый пост.
+type PublishedPosts = {
+  postOf(source: string): number | undefined;
+  remember(source: string, postId: number): void;
+};
+
+function createPublishedPosts(): PublishedPosts {
+  const posts = new Map<string, number>();
+  return {
+    postOf(source) {
+      return posts.get(source);
+    },
+    remember(source, postId) {
+      posts.delete(source);
+      posts.set(source, postId);
+      if (posts.size > albumMemory) {
+        const oldest = posts.keys().next().value;
+        if (oldest !== undefined) posts.delete(oldest);
+      }
+    },
+  };
+}
+
 function communityToday(ctx: UpdateContext) {
   return (ctx.today ?? utcToday)();
 }
@@ -14215,6 +14253,7 @@ function callbackUseCase(
 type AnswerKeyPurpose =
   | ConsoleQuestionPending["kind"]
   | "console-raffle-prize-photo"
+  | "console-promo-video"
   | "final-ask"
   | "console-set-id";
 
