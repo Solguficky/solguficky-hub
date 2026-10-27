@@ -1,3 +1,19 @@
+achievements: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/achievements/Containerfile context=<repo>
+  endpoint: grpc http port= target=50051 proxied=True external=False
+  env: ACHIEVEMENTS_DATABASE_URL={achievements-db.connectionString}
+  env: ACHIEVEMENTS_GRPC_PORT={achievements.bindings.grpc.targetPort}
+  env: ACHIEVEMENTS_NATS_URL={nats.connectionString}
+  waits: achievements-db WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference achievements-db
+  relationship: Reference nats
+  relationship: WaitFor achievements-db
+  relationship: WaitFor nats
+  health: achievements-grpc
+achievements-db: ConnectionStringParameterResource
+  secret: True
 auction: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/auction/Containerfile context=<repo>
