@@ -896,6 +896,207 @@ describe("presentation adapter", () => {
     );
   });
 
+  // Пересылка из группы чат и номер сообщения не несёт: сообщение чата
+  // приходит ссылкой «Копировать ссылку» (PER-762).
+  describe("message link as the material source", () => {
+    function materialHarness() {
+      const meetup = publishedMeetup();
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+        if (request.intent === "view-meetup") {
+          return { kind: "meetup-card", meetup };
+        }
+        if (request.intent === "attach-material") {
+          return {
+            kind: "material-attached",
+            meetup: { ...meetup, materials: [request.material] },
+          };
+        }
+        return { kind: "rejected", reason: "unexpected" };
+      });
+      return {
+        execute,
+        ...createHarness(resolvedIdentity("admin"), { execute }),
+      };
+    }
+
+    function chatForward(extra: Record<string, unknown> = {}): Update {
+      return {
+        update_id: 6,
+        message: {
+          message_id: 12,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+          from: { id: 42, is_bot: false, first_name: "tester" },
+          forward_origin: {
+            type: "user",
+            date: 0,
+            sender_user: { id: 7, is_bot: false, first_name: "автор" },
+          },
+          text: "пост из чата",
+          ...extra,
+        } as never,
+      };
+    }
+
+    it.each([
+      [
+        "https://t.me/c/1234567890/4321/77",
+        "https://t.me/c/1234567890/4321/77",
+      ],
+      ["https://t.me/solguficky/77?single", "https://t.me/solguficky/77"],
+    ])("attaches %s and opens it from the materials", async (typed, url) => {
+      const { bot, calls, execute } = materialHarness();
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: typed,
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "Пост в чате",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+      const confirmation = calls.at(-1);
+      if (
+        confirmation?.method !== "sendMessage" ||
+        !("reply_markup" in confirmation.payload) ||
+        !("text" in confirmation.payload)
+      ) {
+        throw new Error("no confirmation");
+      }
+      const keyboard = confirmation.payload.reply_markup;
+      const callbackData = JSON.stringify(keyboard).match(
+        /v1:mm:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/,
+      )?.[0];
+      await bot.handleUpdate(
+        callbackMessageUpdate(callbackData ?? "", {
+          text: visible(String(confirmation.payload.text)),
+          reply_markup: keyboard,
+        }),
+      );
+
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "attach-material",
+          material: expect.objectContaining({
+            title: "Пост в чате",
+            source: { kind: "message-link", url },
+          }),
+        }),
+      );
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(`"url":"${url}"`);
+    });
+
+    it("takes a typed link without reply as the source", async () => {
+      const { bot, calls } = materialHarness();
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      await bot.handleUpdate(messageUpdate("https://t.me/solguficky/77"));
+
+      expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
+        "Как назвать материал",
+      );
+    });
+
+    it.each([
+      "https://example.com/solguficky/77",
+      "https://t.me/solguficky",
+      "посмотри https://t.me/solguficky/77",
+    ])("refuses %s without a material", async (typed) => {
+      const { bot, calls, execute, records } = materialHarness();
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: typed,
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
+        "Текст сам по себе не материал",
+      );
+      expect(
+        execute.mock.calls.some(
+          ([request]) => request.intent === "attach-material",
+        ),
+      ).toBe(false);
+      const rejected = records.find(
+        (record) => record.message === "material source rejected",
+      );
+      expect(rejected?.fields.message_kind).toBe("text");
+    });
+
+    it("refuses a forward from a group with the copy-link hint", async () => {
+      const { bot, calls, records } = materialHarness();
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      await bot.handleUpdate(chatForward());
+
+      const rejection = JSON.stringify(sentMessages(calls).at(-1)?.payload);
+      expect(rejection).toContain("из пересылки ссылку не собрать");
+      expect(rejection).toContain("Копировать ссылку");
+      expect(rejection).not.toContain("Источник скрыт");
+      const rejected = records.find(
+        (record) => record.message === "material source rejected",
+      );
+      expect(rejected?.fields.message_kind).toBe("forward:user");
+      // Ни текста, ни ссылки в записи нет: только вид.
+      expect(JSON.stringify(rejected)).not.toContain("пост из чата");
+    });
+
+    it("names the kind of a forwarded video", async () => {
+      const { bot, calls, records } = materialHarness();
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      await bot.handleUpdate(
+        chatForward({
+          text: undefined,
+          video: {
+            file_id: "video",
+            file_unique_id: "video-unique",
+            width: 1,
+            height: 1,
+            duration: 1,
+          },
+        }),
+      );
+
+      expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
+        "Видео не принимается материалом",
+      );
+      expect(
+        records.find((record) => record.message === "material source rejected")
+          ?.fields.message_kind,
+      ).toBe("forward:user,video");
+    });
+  });
+
   it("passes a confirmed file id to Meetups", async () => {
     const meetup = publishedMeetup();
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({

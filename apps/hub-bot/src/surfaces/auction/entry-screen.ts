@@ -25,6 +25,10 @@ import {
   predictionResultsTitle,
 } from "../../auction-prediction-results.js";
 import {
+  auctionStatusLine,
+  programmeParagraph,
+} from "../../auction-programme.js";
+import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
@@ -671,9 +675,23 @@ function renderList(
       list.auctions.length === 0
         ? empty
         : list.auctions
-            .map((auction) =>
-              bullet(auctionLine(auction, options.timeZone, options.now)),
-            )
+            .map((auction) => {
+              // Строка состояния (PER-767) — под строкой аукциона, текст
+              // общий с хабом.
+              const status =
+                auction.week === undefined
+                  ? undefined
+                  : auctionStatusLine(auction.week, {
+                      timeZone: options.timeZone,
+                      now: options.now ?? new Date(),
+                    });
+              const line = bullet(
+                auctionLine(auction, options.timeZone, options.now),
+              );
+              return status === undefined
+                ? line
+                : `${line}\n${escapeHtml(status)}`;
+            })
             .join("\n"),
     ),
     keyboard: [
@@ -1069,6 +1087,13 @@ function rootText(block: RootBlock, options: RenderOptions): string {
         ? ["После них — финал в зале."]
         : []),
     ].join("\n"),
+    // Программа недели (PER-724) — абзацем под сроками, текст общий с хабом.
+    programmeParagraph(block, {
+      moment: (instant) =>
+        readableMoment(instant, options.timeZone, options.now),
+      timeZone: options.timeZone,
+      now: options.now ?? new Date(),
+    }),
   );
 }
 

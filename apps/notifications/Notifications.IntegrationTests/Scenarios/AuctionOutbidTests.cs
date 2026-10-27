@@ -204,6 +204,30 @@ public class AuctionOutbidTests
         (await Count(db, "notification")).ShouldBe(1);
     }
 
+    /// <summary>
+    /// Стрим аукциона держит факты девяносто дней (PER-758): повтор через
+    /// тридцать один день после выноса застаёт и ключ события, и строку факта,
+    /// хотя базовый горизонт строк — тридцать дней (PER-761).
+    /// </summary>
+    [Fact]
+    public async Task When_EventRedeliveredAfterThirtyDays_Expect_KeyAndFactKeptAndNoSecondFact()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        var bid = Decode(EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId()));
+        (await store.Apply(bid, EventFactory.Committed, Cancellation)).FactsCreated.ShouldBe(1);
+        await MarkDispatched(db, EventFactory.Committed);
+
+        var later = EventFactory.Committed.AddDays(31);
+        await PruneAsService(db, later);
+
+        (await Count(db, "consumed_event")).ShouldBe(1);
+        (await Count(db, "notification")).ShouldBe(1);
+        (await store.Apply(bid, later, Cancellation)).FactsCreated.ShouldBe(0);
+        (await Count(db, "notification")).ShouldBe(1);
+    }
+
     [Fact]
     public async Task When_ServiceRestartsAndCauseRepublished_Expect_NoSecondFact()
     {

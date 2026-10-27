@@ -2452,6 +2452,12 @@ message AuctionSnapshot {
   // does not name follows the arranged ones in the order of creation.
   LotLayout lot_layout = 7;
 
+  // The windows of reduced bid step launched during the online phase, in the
+  // order they were launched; the windows of the configuration are in
+  // config.step_windows. Together they are the programme of the week a
+  // participant reads (PER-724). Empty is a real value: no window was launched.
+  repeated AuctionStepWindow launched_step_windows = 8;
+
   // Where the auction is. Exactly one is set.
   oneof status {
     AuctionState.Draft draft = 10;
