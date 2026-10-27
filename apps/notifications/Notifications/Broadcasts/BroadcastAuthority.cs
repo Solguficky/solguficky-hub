@@ -115,8 +115,10 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
     // Объявление аукциона принимает то же отношение, что команды аукциона у
     // Auction, — «ведущий аукциона», держатель run_auctions (ADR-070, PER-652).
     // Из ворот состояния Auction объявление берёт одни — отменённую сходку:
-    // кнопка вела бы к аукциону, команды которого Auction уже закрыл. Скрытый
-    // и удалённый аукцион Notifications на команде не знает (PER-780).
+    // кнопка вела бы к аукциону, команды которого Auction уже закрыл. Скрытый,
+    // отменённый и удалённый аукцион команда узнаёт не здесь, а по своей
+    // реплике при приёме (BroadcastStore, PER-780): это положение аукциона, а не
+    // право.
     public Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded) =>
         AskMeetups(authorId, meetupId, MeetupRelation.AuctionRunner, forwarded, standing =>
             standing.Lifecycle == MeetupLifecycle.Cancelled

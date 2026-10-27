@@ -421,6 +421,12 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
                 StatusCode.Unavailable,
                 "the meetup is not replicated yet"),
 
+            // Аукцион скрыт, отменён или удалён (PER-780): кнопка объявления
+            // привела бы к «не найдено». Ключ не принят.
+            (_, BroadcastOutcome.AuctionClosed closed) => throw Refused(
+                StatusCode.FailedPrecondition,
+                AuctionClosedMessage(closed.Standing)),
+
             _ => throw new InvalidOperationException($"unexpected broadcast result {result}"),
         };
 
@@ -436,9 +442,20 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
             (_, AudienceRead.MeetupNotReplicated) => throw Refused(
                 StatusCode.Unavailable,
                 "the meetup is not replicated yet"),
+            (_, AudienceRead.AuctionClosed closed) => throw Refused(
+                StatusCode.FailedPrecondition,
+                AuctionClosedMessage(closed.Standing)),
             (_, AudienceRead.Counted counted) => new BroadcastAudience { RecipientCount = counted.RecipientCount },
             _ => throw new InvalidOperationException($"unexpected broadcast preview {result}"),
         };
+
+    private static string AuctionClosedMessage(AuctionStanding standing) => standing switch
+    {
+        AuctionStanding.Hidden => "the auction is hidden",
+        AuctionStanding.Cancelled => "the auction is cancelled",
+        AuctionStanding.Discarded => "the auction is discarded",
+        _ => throw new ArgumentOutOfRangeException(nameof(standing)),
+    };
 
     private static BroadcastAccepted Accepted(Guid broadcastId, DateTimeOffset acceptedAt, bool created) =>
         new()
