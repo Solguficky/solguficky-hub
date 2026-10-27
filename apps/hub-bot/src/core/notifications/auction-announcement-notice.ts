@@ -86,8 +86,8 @@ export function tradingOpenedNoticeOf(
 // «2026-10-21», и «Oct 21», а выдуманное время читалось бы как конец окна.
 const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
 
-// Ноль лотов и конец не как момент — дефект издателя: весть «шаг ниже на 0
-// лотах» или без срока была бы неправдой, и разбор отвечает `undefined`.
+// Ноль лотов и конец не как момент — дефект издателя: весть «ставки дешевле на
+// 0 лотах» или без срока была бы неправдой, и разбор отвечает `undefined`.
 export function stepWindowAnnouncedNoticeOf(
   value: StepWindowAnnounced,
 ): AuctionAnnouncementNotice | undefined {
@@ -150,7 +150,9 @@ export function renderAuctionAnnouncement(
   if (notice.kind === "step-window-announced") {
     const until = localTime(notice.until, timeZone);
     return {
-      text: `Счастливые часы${until === undefined ? "" : ` до ${until}`}: шаг ниже на ${lotsOn(notice.lotCount)}.`,
+      // «Ставки дешевле», а не «шаг ниже»: окно периода может снизить и
+      // стартовую цену без шага (PER-788), а факт не говорит, что именно.
+      text: `Счастливые часы${until === undefined ? "" : ` до ${until}`}: ставки дешевле на ${lotsOn(notice.lotCount)}.`,
       button: { auctionId: notice.auctionId, text: stepWindowLabel },
     };
   }

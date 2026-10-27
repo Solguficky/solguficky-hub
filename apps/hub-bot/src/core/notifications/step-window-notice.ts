@@ -1,3 +1,4 @@
+import type { Money as WireMoney } from "../../../gen/auction/v1/auction_pb.js";
 import type { StepWindowStarted } from "../../../gen/notifications/v1/notifications_pb.js";
 import {
   isPermanentFailure,
@@ -21,7 +22,9 @@ import {
 
 // Начало окна «Счастливых часов» на отмеченных лотах (ADR-047, дополнение
 // 2026-10-12, «Сообщение о начале окна»; PER-614) — весть каждому, у кого на
-// момент срабатывания есть отметка избранного на лоте окна. У двух ботов она
+// момент срабатывания есть отметка избранного на лоте окна. У каждого лота —
+// его условия в окне: шаг, стартовая цена рядом с обычной или оба (PER-788);
+// стартовую Notifications обещает только лоту без ставок. У двух ботов она
 // одна: участнику её доставляет бот хаба, гостю — бот аукциона (ADR-064,
 // п. 16). Здесь разбор ветки, текст и ряды кнопок; данные кнопок каждая
 // поверхность кодирует своим следом лота, как у вестей о лотах.
@@ -31,12 +34,21 @@ import {
 // перебитий повод не трогает, и категории у него нет: выключить его — снять
 // отметку, поэтому кнопки частоты под этой вестью нет (ADR-047).
 
+// Стартовая окна и обычная стартовая лота — парой: «от 800 ₽ вместо 1 600 ₽».
+export type StepWindowStart = { start: NoticeMoney; regular: NoticeMoney };
+
+// Хотя бы одно из шага и стартовой есть: лот, которому окно ничего не даёт,
+// Notifications в весть не кладёт.
 export type StepWindowLot = {
   lotId: string;
   // Конец окна своего лота: RFC 3339, тот же формат, что у дедлайна.
   until: string;
   // Шаг, в силе в окне этого лота: у лотов одного окна он разным быть может.
-  step: NoticeMoney;
+  // Нет — окно шаг не меняет.
+  step?: NoticeMoney;
+  // Стартовая первой ставки в окне; нет — окно её не задаёт или у лота уже
+  // есть ставка.
+  start?: StepWindowStart;
 };
 
 export type StepWindowNotice = {
@@ -58,9 +70,11 @@ export function isStepWindowNotice<C extends { kind: string }>(
 }
 
 // Факт — ввод соседа: пустой список лотов, аукцион или лот не в канонической
-// форме, шаг без валюты, начало или конец окна не как момент и конец окна раньше
-// его начала — дефект издателя, и разбор отвечает `undefined`, как у остальных
-// веток. Повтор лота в списке — тоже: у каждого лота окно одно.
+// форме, цена без валюты, лот без шага и без стартовой, стартовая без обычной
+// или обычная без стартовой, стартовая не ниже обычной, начало или конец окна
+// не как момент и конец окна раньше его начала — дефект издателя, и разбор
+// отвечает `undefined`, как у остальных веток. Повтор лота в списке — тоже: у
+// каждого лота окно одно.
 export function stepWindowNoticeOf(
   value: StepWindowStarted,
 ): StepWindowNotice | undefined {
@@ -71,21 +85,44 @@ export function stepWindowNoticeOf(
   const lots: StepWindowLot[] = [];
   for (const lot of value.lots) {
     const lotId = canonical(lot.lotId);
-    const step = toMoney(lot.step);
     const until = instantOf(lot.until);
-    if (
-      lotId === undefined ||
-      step === undefined ||
-      until === undefined ||
-      until <= startsAt
-    ) {
+    if (lotId === undefined || until === undefined || until <= startsAt) {
       return undefined;
     }
-    lots.push({ lotId, until: lot.until, step });
+    const step = toMoney(lot.step);
+    if (lot.step !== undefined && step === undefined) return undefined;
+    const start = startOf(lot.start, lot.regularStart);
+    if (start === null) return undefined;
+    if (step === undefined && start === undefined) return undefined;
+    lots.push({
+      lotId,
+      until: lot.until,
+      ...(step === undefined ? {} : { step }),
+      ...(start === undefined ? {} : { start }),
+    });
   }
   if (new Set(lots.map((lot) => lot.lotId)).size !== lots.length)
     return undefined;
   return { kind: "step-window-started", auctionId, lots };
+}
+
+// Пара стартовых: обеих нет — `undefined`, одна без другой, кривая цена,
+// разные валюты или стартовая не ниже обычной — `null`, дефект издателя.
+function startOf(
+  start: WireMoney | undefined,
+  regular: WireMoney | undefined,
+): StepWindowStart | null | undefined {
+  if (start === undefined && regular === undefined) return undefined;
+  const windowStart = toMoney(start);
+  const regularStart = toMoney(regular);
+  if (windowStart === undefined || regularStart === undefined) return null;
+  if (
+    windowStart.currency !== regularStart.currency ||
+    windowStart.minorUnits >= regularStart.minorUnits
+  ) {
+    return null;
+  }
+  return { start: windowStart, regular: regularStart };
 }
 
 // Момент окна — RFC 3339 в UTC, как пишет его издатель
@@ -174,8 +211,8 @@ function shownLots(notice: StepWindowNotice): readonly StepWindowLot[] {
   return notice.lots.slice(0, DIGEST_LOT_LIMIT);
 }
 
-// Вид вести: первая строка, пустая строка и строки «• «Лот» — шаг … до …» по
-// лоту окна получателя; под ними — ряд на каждый лот с его названием. Название
+// Вид вести: первая строка, пустая строка и строки «• «Лот» — от … вместо …,
+// шаг … до …» по лоту окна получателя; под ними — ряд на каждый лот с его названием. Название
 // лота в факте нет — канал читает его у Auction, как у остальных вестей о
 // лотах. Лотов не больше десяти: окно может накрыть больше, а сообщение
 // Telegram — 4096 знаков.
@@ -211,8 +248,9 @@ export function renderStepWindowNotice(
   return { text, rows };
 }
 
-// Строка окна: название лота, шаг и конец окна по часам сообщества. Название
-// обрезается, без названия строка начинается с «Лот».
+// Строка окна: название лота, его условия и конец окна по часам сообщества.
+// Условия — «от 800 ₽ вместо 1 600 ₽», «шаг 50 ₽» или оба через запятую.
+// Название обрезается, без названия строка начинается с «Лот».
 function windowLine(
   lot: StepWindowLot,
   title: string | undefined,
@@ -220,7 +258,17 @@ function windowLine(
 ): string {
   const name = quoted(title, LINE_TITLE_LIMIT) ?? "Лот";
   const until = localTime(lot.until, timeZone);
-  return `• ${name} — шаг ${money(lot.step)}${
+  return `• ${name} — ${termsText(lot)}${
     until === undefined ? "" : ` до ${until}`
   }`;
+}
+
+function termsText(lot: StepWindowLot): string {
+  const terms = [
+    ...(lot.start === undefined
+      ? []
+      : [`от ${money(lot.start.start)} вместо ${money(lot.start.regular)}`]),
+    ...(lot.step === undefined ? [] : [`шаг ${money(lot.step)}`]),
+  ];
+  return terms.join(", ");
 }
