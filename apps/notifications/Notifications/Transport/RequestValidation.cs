@@ -80,8 +80,12 @@ public static class RequestValidation
     /// Принадлежность лота аукциону и существование фото граница не проверяет:
     /// звонка в Auction на команде нет, а канал отвечает за то, что откроет.
     /// </summary>
-    public static AuctionNoticeContent AuctionNotice(AuctionNoticeButton? button, AuctionNoticePhoto? photo)
+    public static AuctionNoticeContent AuctionNotice(
+        AuctionNoticeButton? button,
+        AuctionNoticePhoto? photo,
+        AuctionNoticeAudience audience = AuctionNoticeAudience.Unspecified)
     {
+        var filter = NoticeAudience(audience);
         var leadsTo = button is null ? null : NoticeButton(button);
 
         NoticePhoto? picture = photo switch
@@ -96,8 +100,16 @@ public static class RequestValidation
             _ => throw Invalid("photo", "must name its source"),
         };
 
-        return new AuctionNoticeContent(leadsTo, picture);
+        return new AuctionNoticeContent(leadsTo, picture, filter);
     }
+
+    /// <summary>
+    /// Фильтр аудитории объявления аукциона (PER-778). <c>UNSPECIFIED</c> —
+    /// «все», как до поля; значение вне словаря отвергается, а не читается как
+    /// «все»: тихо разослать всем то, что автор хотел сузить, нельзя.
+    /// </summary>
+    public static NoticeAudience NoticeAudience(AuctionNoticeAudience audience) =>
+        NoticeAudiences.FromContract(audience) ?? throw Invalid("audience", "must be a known audience");
 
     private static NoticeButton NoticeButton(AuctionNoticeButton button)
     {

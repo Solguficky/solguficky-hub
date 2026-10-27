@@ -227,6 +227,7 @@ notifications: ProjectResource
   endpoint: grpc http port= target=8080 proxied=True external=False
   env: ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
   env: HTTP_PORTS={notifications.bindings.grpc.targetPort}
+  env: NOTIFICATIONS_AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
   env: NOTIFICATIONS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: NOTIFICATIONS_CLUSTER_ID={notifications-cluster-id.value}
@@ -239,10 +240,12 @@ notifications: ProjectResource
   env: NOTIFICATIONS_SERVICE_ID={notifications-service-id.value}
   env: NOTIFICATIONS_SERVICE_TOKEN={notifications-service-token.value}
   env: NOTIFICATIONS_SILO_ADVERTISED_HOST={notifications.bindings.grpc.host}
+  waits: auction WaitUntilHealthy
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: notifications-db WaitUntilHealthy
+  relationship: Reference auction
   relationship: Reference auction-bot-service-token
   relationship: Reference hub-bot-service-token
   relationship: Reference identity
@@ -254,6 +257,7 @@ notifications: ProjectResource
   relationship: Reference notifications-release-notes-enabled-by-default
   relationship: Reference notifications-service-id
   relationship: Reference notifications-service-token
+  relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor meetups
   relationship: WaitFor nats

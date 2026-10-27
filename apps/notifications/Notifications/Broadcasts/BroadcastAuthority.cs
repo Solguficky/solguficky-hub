@@ -221,29 +221,9 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
             ? new AuthorityAnswer(AuthorityVerdict.Unavailable, $"{owner} {status.StatusCode}")
             : new AuthorityAnswer(AuthorityVerdict.Failed, $"{owner} {status.StatusCode}");
 
-    private DateTime Due(Forwarded forwarded)
-    {
-        var own = clock.GetUtcNow().UtcDateTime + CallDeadline;
-        return own < forwarded.Deadline ? own : forwarded.Deadline;
-    }
+    private DateTime Due(Forwarded forwarded) => OwnerCall.Due(clock, CallDeadline, forwarded);
 
-    /// <summary>Свой токен и заголовки цепочки; пустые заголовки цепочки не отправляются.</summary>
-    private Metadata Headers(Forwarded forwarded)
-    {
-        var headers = new Metadata { { "authorization", $"Bearer {serviceToken}" } };
-
-        if (!string.IsNullOrEmpty(forwarded.RequestId))
-        {
-            headers.Add("x-request-id", forwarded.RequestId);
-        }
-
-        if (!string.IsNullOrEmpty(forwarded.UseCase))
-        {
-            headers.Add("x-use-case", forwarded.UseCase);
-        }
-
-        return headers;
-    }
+    private Metadata Headers(Forwarded forwarded) => OwnerCall.Headers(serviceToken, forwarded);
 
     /// <summary>
     /// Отправка в Meetups по адресу. Канал собран сразу, но соединение не
@@ -270,5 +250,34 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
 
         return (request, headers, deadline, cancellationToken) =>
             client.CheckAccessRightAsync(request, headers, deadline, cancellationToken).ResponseAsync;
+    }
+}
+
+/// <summary>Общее у синхронных вызовов владельцев: срок и заголовки.</summary>
+internal static class OwnerCall
+{
+    /// <summary>Свой срок или срок вызывающего — что раньше.</summary>
+    public static DateTime Due(TimeProvider clock, TimeSpan callDeadline, Forwarded forwarded)
+    {
+        var own = clock.GetUtcNow().UtcDateTime + callDeadline;
+        return own < forwarded.Deadline ? own : forwarded.Deadline;
+    }
+
+    /// <summary>Свой токен и заголовки цепочки; пустые заголовки цепочки не отправляются.</summary>
+    public static Metadata Headers(string serviceToken, Forwarded forwarded)
+    {
+        var headers = new Metadata { { "authorization", $"Bearer {serviceToken}" } };
+
+        if (!string.IsNullOrEmpty(forwarded.RequestId))
+        {
+            headers.Add("x-request-id", forwarded.RequestId);
+        }
+
+        if (!string.IsNullOrEmpty(forwarded.UseCase))
+        {
+            headers.Add("x-use-case", forwarded.UseCase);
+        }
+
+        return headers;
     }
 }

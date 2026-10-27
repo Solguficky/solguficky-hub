@@ -1,4 +1,5 @@
 using Notifications.Auction;
+using Notifications.Broadcasts;
 using Notifications.Facts;
 using Notifications.Replica;
 using Npgsql;
@@ -40,7 +41,14 @@ public abstract record NoticePhoto
 /// Чем объявление аукциона богаче тела (PER-764): необязательные кнопка и
 /// картинка. Без кнопки объявление уходит одним текстом.
 /// </summary>
-public sealed record AuctionNoticeContent(NoticeButton? Button, NoticePhoto? Photo);
+/// <param name="Audience">
+/// Фильтр аудитории (PER-778) — часть содержимого: повтор с другим фильтром —
+/// конфликт. Хранится фильтр, а не те, кого он исключил.
+/// </param>
+public sealed record AuctionNoticeContent(
+    NoticeButton? Button,
+    NoticePhoto? Photo,
+    NoticeAudience Audience = NoticeAudience.All);
 
 /// <summary>Чем кончился приём рассылки.</summary>
 public abstract record BroadcastOutcome
@@ -102,9 +110,9 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
 {
     private const string InsertSql = """
         INSERT INTO broadcast (broadcast_id, kind, author_id, meetup_id, body, accepted_at,
-                               button_view, button_lot_id, photo_lot_id, photo_id, photo_message_id)
+                               button_view, button_lot_id, photo_lot_id, photo_id, photo_message_id, audience)
         VALUES (@Id, @Kind, @AuthorId, @MeetupId, @Body, @Now,
-                @ButtonView, @ButtonLotId, @PhotoLotId, @PhotoId, @PhotoMessageId)
+                @ButtonView, @ButtonLotId, @PhotoLotId, @PhotoId, @PhotoMessageId, @Audience)
         ON CONFLICT (broadcast_id) DO NOTHING
         RETURNING accepted_at;
         """;
@@ -112,7 +120,7 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
     private const string ExistingSql = """
         SELECT kind AS Kind, author_id AS AuthorId, meetup_id AS MeetupId, body AS Body, accepted_at AS AcceptedAt,
                button_view AS ButtonView, button_lot_id AS ButtonLotId, photo_lot_id AS PhotoLotId, photo_id AS PhotoId,
-               photo_message_id AS PhotoMessageId
+               photo_message_id AS PhotoMessageId, audience AS Audience
         FROM broadcast
         WHERE broadcast_id = @Id;
         """;
@@ -121,9 +129,15 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
     /// Принимает рассылку и разворачивает её на получателей. Право уже
     /// подтверждено: порядок проверок — форма, право, ключ — задаёт контракт.
     /// </summary>
+    /// <param name="excluded">
+    /// Кого фильтр аудитории объявления аукциона убрал из держателей права
+    /// ставок (PER-778); у остальных рассылок и у «всех» пусто. Только на время
+    /// разворота: в строку <c>broadcast</c> он не пишется.
+    /// </param>
     /// <param name="staleAfter">Срок годности фактов от момента приёма.</param>
     public async Task<BroadcastOutcome> Accept(
         AcceptedBroadcast broadcast,
+        IReadOnlySet<Guid> excluded,
         DateTimeOffset now,
         TimeSpan staleAfter,
         CancellationToken cancellationToken)
@@ -145,6 +159,7 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
                 PhotoLotId = (broadcast.Notice?.Photo as NoticePhoto.LotPhoto)?.LotId,
                 PhotoId = (broadcast.Notice?.Photo as NoticePhoto.LotPhoto)?.PhotoId,
                 PhotoMessageId = (broadcast.Notice?.Photo as NoticePhoto.ChannelPost)?.MessageId,
+                Audience = broadcast.Notice is { } notice ? NoticeAudiences.Storage(notice.Audience) : null,
             },
             cancellationToken);
 
@@ -182,6 +197,7 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
                 work,
                 broadcast,
                 auctionMeetupId,
+                excluded,
                 acceptedAt,
                 notAfter,
                 cancellationToken);
@@ -253,7 +269,11 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
     /// Число держателей права ставок, которым уйдёт объявление аукциона, —
     /// или отказ, которым ответит команда, если аукцион закрыт для объявления.
     /// </summary>
-    public async Task<AudienceRead> ReadAuctionNoticeAudience(Guid meetupId, CancellationToken cancellationToken)
+    /// <param name="excluded">Кого фильтр аудитории убрал, как у <see cref="Accept" />.</param>
+    public async Task<AudienceRead> ReadAuctionNoticeAudience(
+        Guid meetupId,
+        IReadOnlySet<Guid> excluded,
+        CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
         var standing = await AuctionStandingStore.Read(work, AuctionOfMeetup.Of(meetupId), cancellationToken);
@@ -262,9 +282,25 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
             return new AudienceRead.AuctionClosed(standing!.Value);
         }
 
-        var count = await NotificationStore.CountAuctionNoticeRecipients(work, cancellationToken);
+        var count = await NotificationStore.CountAuctionNoticeRecipients(work, excluded, cancellationToken);
 
         return new AudienceRead.Counted(count);
+    }
+
+    /// <summary>
+    /// Повтор уже принятой рассылки, если ключ занят: <c>Repeated</c> или
+    /// <c>Conflict</c>; <c>null</c> — ключ свободен. Объявление с фильтром
+    /// аудитории спрашивает это до вызова Auction (PER-778): повтор принятого
+    /// отвечает повтором, даже если Auction сейчас молчит или регистрация уже
+    /// закрылась. Гонку двух первых вызовов по-прежнему решает вставка в
+    /// <see cref="Accept" />.
+    /// </summary>
+    public async Task<BroadcastOutcome?> Recall(AcceptedBroadcast broadcast, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        var rows = await work.Query<BroadcastRow>(ExistingSql, new { broadcast.Id }, cancellationToken);
+
+        return rows.Count == 0 ? null : Compare(rows[0], broadcast);
     }
 
     private static async Task<BroadcastOutcome> Existing(
@@ -276,8 +312,11 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
 
         // Конфликт по ключу без строки невозможен: строки не удаляются, а
         // вставка ждала коммита конкурента.
-        var held = rows.Single();
+        return Compare(rows.Single(), broadcast);
+    }
 
+    private static BroadcastOutcome Compare(BroadcastRow held, AcceptedBroadcast broadcast)
+    {
         // Цепочка в сравнение не входит: повтор команды законно приходит с
         // другим x-request-id, а содержимое рассылки от него не зависит.
         var same = held.Kind == broadcast.Kind
@@ -318,13 +357,16 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
 
         public long? PhotoMessageId { get; init; }
 
+        public string? Audience { get; init; }
+
         // Содержимое объявления узнаётся по виду рассылки, а не по кнопке:
         // кнопка у объявления необязательна.
         public AuctionNoticeContent? Notice =>
             Kind == NotificationFacts.AuctionNoticeType
                 ? new AuctionNoticeContent(
                     ButtonView is { } view ? new NoticeButton(view, ButtonLotId) : null,
-                    Photo)
+                    Photo,
+                    Audience is { } audience ? NoticeAudiences.FromStorage(audience) : NoticeAudience.All)
                 : null;
 
         private NoticePhoto? Photo =>
