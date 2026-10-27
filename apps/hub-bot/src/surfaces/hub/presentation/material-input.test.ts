@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   materialConfirmationText,
+  materialRefusal,
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
@@ -51,6 +52,68 @@ describe("material input", () => {
       kind: "message-link",
       url: "https://t.me/community/77",
     });
+  });
+
+  it.each([
+    ["https://t.me/solguficky/77", "https://t.me/solguficky/77"],
+    ["https://t.me/solguficky/12/77", "https://t.me/solguficky/12/77"],
+    ["https://t.me/c/1234567890/77", "https://t.me/c/1234567890/77"],
+    [
+      " https://t.me/c/1234567890/12/77?thread=12 ",
+      "https://t.me/c/1234567890/12/77",
+    ],
+  ])("takes a typed message link %s", (text, url) => {
+    expect(parseMaterialInput({ text })).toEqual({ kind: "message-link", url });
+  });
+
+  it.each([
+    "https://example.com/solguficky/77",
+    "http://t.me/solguficky/77",
+    "https://t.me/solguficky",
+    "https://t.me/c/1234567890",
+    "https://t.me/+invite",
+    "вот https://t.me/solguficky/77",
+  ])("refuses a typed text %s that is not a message link", (text) => {
+    expect(parseMaterialInput({ text })).toBeUndefined();
+  });
+
+  it("does not read a link out of a forwarded text", () => {
+    expect(
+      parseMaterialInput({
+        text: "https://t.me/solguficky/77",
+        forward_origin: { type: "user" },
+      }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    [
+      { forward_origin: { type: "chat" }, text: "пост" },
+      "forward:chat",
+      "Копировать ссылку",
+    ],
+    [
+      { forward_origin: { type: "user" }, text: "пост" },
+      "forward:user",
+      "Копировать ссылку",
+    ],
+    [
+      { forward_origin: { type: "hidden_user" }, text: "пост" },
+      "forward:hidden_user",
+      "Источник скрыт",
+    ],
+    [{ forward_origin: { type: "новый" } }, "forward:other", "Источник скрыт"],
+    [{ voice: { file_id: "v" } }, "voice", "Голосовое не принимается"],
+    [
+      { forward_origin: { type: "chat" }, video: { file_id: "v" } },
+      "forward:chat,video",
+      "Видео не принимается",
+    ],
+    [{ text: "ссылка где-то" }, "text", "Текст сам по себе не материал"],
+  ])("names the refusal of %j", (message, kind, text) => {
+    const refusal = materialRefusal(message);
+    expect(refusal.kind).toBe(kind);
+    expect(refusal.text).toContain(text);
   });
 
   it("recovers a message material from the confirmation screen", () => {

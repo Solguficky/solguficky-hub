@@ -25,6 +25,9 @@ export type LogFields = {
   // Telegram отверг карточку с постерами, и она ушла без них (PER-443).
   posters_error?: string;
   meetup_id?: string;
+  // Вид сообщения, которое не стало материалом сходки: `forward:<тип>`, вид
+  // медиа или `text`, без содержимого (PER-762).
+  message_kind?: string;
   signal?: string;
   timeout?: number;
   telegram_environment?: string;
