@@ -10,8 +10,6 @@ import slick.jdbc.JdbcBackend.Database
 import slick.jdbc.PostgresProfile.api.*
 import slick.jdbc.SetParameter
 
-import java.sql.Timestamp
-import java.time.Instant
 import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -28,20 +26,23 @@ final class SlickRafflePrizePhotos(database: Database)(using ExecutionContext) e
     PrizePhotoBytes(IArray.unsafeFromArray(row.nextBytes()), row.nextString(), row.nextString())
   }
 
-  /** Вставка без перезаписи; после неё версия под этим id — своя или чужая, и сравнение решает исход. */
-  def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes, at: Instant): Future[Boolean] = {
+  /**
+   * Вставка без перезаписи; после неё версия под этим id — своя или чужая, и сравнение решает исход. Строку могли
+   * удалить между вставкой и чтением: её id тогда уже не станет текущим, и решение остаётся за розыгрышем.
+   */
+  def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes): Future[Boolean] = {
     val content = IArray.genericWrapArray(photo.content).toArray
     val insert =
-      sqlu"""INSERT INTO raffle_prize_photo (auction_id, photo_id, content, media_type, version, stored_at)
+      sqlu"""INSERT INTO raffle_prize_photo (auction_id, photo_id, content, media_type, version)
              VALUES (${auction.value.toString}::uuid, ${photoId.toString}::uuid, $content, ${photo.mediaType},
-                     ${photo.version}, ${Timestamp.from(at)})
+                     ${photo.version})
              ON CONFLICT (auction_id, photo_id) DO NOTHING"""
     val stored =
       sql"""SELECT version FROM raffle_prize_photo
             WHERE auction_id = ${auction.value.toString}::uuid AND photo_id = ${photoId.toString}::uuid"""
         .as[String]
-        .head
-    database.run(insert.andThen(stored).transactionally).map(_ == photo.version)
+        .headOption
+    database.run(insert.andThen(stored).transactionally).map(_.forall(_ == photo.version))
   }
 
   def read(auction: AuctionId, photoId: UUID): Future[Option[PrizePhotoBytes]] =
@@ -52,13 +53,11 @@ final class SlickRafflePrizePhotos(database: Database)(using ExecutionContext) e
         .headOption
     )
 
-  def discard(auction: AuctionId, keep: Option[UUID], before: Instant): Future[Unit] =
+  def delete(auction: AuctionId, photoId: UUID): Future[Unit] =
     database
       .run(
         sqlu"""DELETE FROM raffle_prize_photo
-               WHERE auction_id = ${auction.value.toString}::uuid
-                 AND photo_id IS DISTINCT FROM ${keep.map(_.toString)}::uuid
-                 AND stored_at < ${Timestamp.from(before)}"""
+               WHERE auction_id = ${auction.value.toString}::uuid AND photo_id = ${photoId.toString}::uuid"""
       )
       .map(_ => ())
 }

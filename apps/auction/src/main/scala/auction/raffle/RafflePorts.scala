@@ -61,30 +61,26 @@ final case class PrizePhotoBytes(content: IArray[Byte], mediaType: String, versi
 trait RafflePrizePhotos {
 
   /**
-   * Записывает байты под id фото с моментом записи `at`. `false` — под этим id уже лежат другие байты; те же байты —
-   * `true` без второй строки.
+   * Записывает байты под id фото. `false` — под этим id уже лежат другие байты; те же байты — `true` без второй строки.
    */
-  def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes, at: Instant): Future[Boolean]
+  def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes): Future[Boolean]
 
   def read(auction: AuctionId, photoId: UUID): Future[Option[PrizePhotoBytes]]
 
-  /**
-   * Удаляет байты фото аукциона, записанные раньше `before`, кроме `keep`: так принятая замена или снятие убирает
-   * прежние байты, а байты параллельной команды, записанные позже, остаются.
-   */
-  def discard(auction: AuctionId, keep: Option[UUID], before: Instant): Future[Unit]
+  /** Удаляет байты фото, которое текущим уже не станет: решает вызывающий по журналу розыгрыша. */
+  def delete(auction: AuctionId, photoId: UUID): Future[Unit]
 }
 
 object RafflePrizePhotos {
 
   /** Без хранилища фото приза нет: запись отвечает сбоем, чтение — пусто. */
   val absent: RafflePrizePhotos = new RafflePrizePhotos {
-    def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes, at: Instant): Future[Boolean] =
+    def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes): Future[Boolean] =
       Future.failed(new IllegalStateException("raffle prize photos are not configured"))
 
     def read(auction: AuctionId, photoId: UUID): Future[Option[PrizePhotoBytes]] = Future.successful(None)
 
-    def discard(auction: AuctionId, keep: Option[UUID], before: Instant): Future[Unit] = Future.unit
+    def delete(auction: AuctionId, photoId: UUID): Future[Unit] = Future.unit
   }
 }
 

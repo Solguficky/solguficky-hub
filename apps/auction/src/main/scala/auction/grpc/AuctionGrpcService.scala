@@ -1203,8 +1203,8 @@ final class AuctionGrpcService(
    * Фото приза розыгрыша (PER-772) путём смены приза: форма, затем байты тем же правилом, что фото лота (предел и
    * сигнатура), затем повтор своего id фото раньше права, затем право вести аукцион у Meetups с воротами отменённой
    * сходки, затем решение розыгрыша по прочитанному — отказ не пишет байтов, — запись байтов под id фото и команда
-   * розыгрыша, которая решает заново. Принятое фото убирает байты, записанные раньше него; сбой уборки ответа не
-   * меняет: лишняя строка не видна ни одному чтению.
+   * розыгрыша, которая решает заново. Уборка — [[tidyPrizePhotos]]: отвергнутая команда убирает свои байты, принятая —
+   * байты фото, которое было у приза при чтении и перестало им быть.
    */
   def setRafflePrizePhoto(in: wire.SetRafflePrizePhotoRequest): Future[wire.SetRafflePrizePhotoResponse] =
     RequestMapping.setRafflePrizePhoto(in) match {
@@ -1223,16 +1223,13 @@ final class AuctionGrpcService(
             def answer(outcome: Either[ChangePrizeRejected, Raffle]) =
               viewed(auction, command.acting.participant, outcome)
                 .flatMap(viewedOutcome => RaffleMapping.setPrizePhoto(viewedOutcome).fold(refuse, Future.successful))
-            def store(): Future[wire.SetRafflePrizePhotoResponse] = {
-              val at = clock.instant()
+            def store(read: Raffle): Future[wire.SetRafflePrizePhotoResponse] = {
               val bytes = PrizePhotoBytes(image.content, image.mediaType.value, image.version.value)
-              prizePhotos.store(auction, command.photoId, bytes, at).flatMap {
+              prizePhotos.store(auction, command.photoId, bytes).flatMap {
                 case false => answer(Left(ChangePrizeRejected.OpIdTaken))
                 case true =>
                   raffles.setPrizePhoto(auction, set).recoverWith(awaited).flatMap { outcome =>
-                    val tidied =
-                      if (outcome.isRight) discardPrizePhotos(auction, Some(command.photoId), at) else Future.unit
-                    tidied.flatMap(_ => answer(outcome))
+                    tidyPrizePhotos(auction, read, outcome, Some(command.photoId)).flatMap(_ => answer(outcome))
                   }
               }
             }
@@ -1247,7 +1244,7 @@ final class AuctionGrpcService(
                   administered(query, denied, MeetupGate.NotCancelled) { _ =>
                     decision match {
                       case Left(rejected) => answer(Left(rejected))
-                      case Right(_) => store()
+                      case Right(_) => store(raffle)
                     }
                   }
               }
@@ -1255,7 +1252,7 @@ final class AuctionGrpcService(
         }
     }
 
-  /** Снятие фото приза (PER-772) путём смены приза; принятое снятие убирает байты, записанные до команды. */
+  /** Снятие фото приза (PER-772) путём смены приза; уборка байтов — [[tidyPrizePhotos]]. */
   def removeRafflePrizePhoto(in: wire.RemoveRafflePrizePhotoRequest): Future[wire.RemoveRafflePrizePhotoResponse] =
     RequestMapping.removeRafflePrizePhoto(in) match {
       case Left(error) => invalid(error)
@@ -1281,10 +1278,8 @@ final class AuctionGrpcService(
                     wire.RemoveRafflePrizePhotoResponse().withRefused(wire.RafflePrizePhotoRefusal(reason))
                   )
               administered(query, denied, MeetupGate.NotCancelled) { _ =>
-                val at = clock.instant()
                 raffles.removePrizePhoto(auction, remove).recoverWith(awaited).flatMap { outcome =>
-                  val tidied = if (outcome.isRight) discardPrizePhotos(auction, None, at) else Future.unit
-                  tidied.flatMap(_ => answer(outcome))
+                  tidyPrizePhotos(auction, raffle, outcome, None).flatMap(_ => answer(outcome))
                 }
               }
           }
@@ -1325,15 +1320,37 @@ final class AuctionGrpcService(
           }
     }
 
-  /** Уборка прежних байтов фото приза — не часть ответа: сбой пишется предупреждением, и ответ тот же. */
-  private def discardPrizePhotos(auction: AuctionId, keep: Option[UUID], before: java.time.Instant): Future[Unit] =
-    Future.delegate(prizePhotos.discard(auction, keep, before)).recover { case NonFatal(cause) =>
-      AuctionGrpcService.logger.warn(
-        "raffle prize photos not discarded",
-        StructuredArguments.keyValue("auction_id", auction.value.toString),
-        StructuredArguments.keyValue("error", cause.getClass.getName)
-      )
+  /**
+   * Уборка байтов фото приза по решению розыгрыша, а не по времени записи: какое фото текущее, решает порядок команд у
+   * entity. Убирается только то, что текущим уже не станет. Фото, которое было у приза при чтении `read` и которого нет
+   * после команды, вернуть нельзя: его id лежит в окне `seen`, и повтор события не даёт. Байты отвергнутой команды
+   * `stored` — тоже: отказ значит, что её id не текущий. Уборка не часть ответа: сбой пишется предупреждением, а лишняя
+   * строка не видна ни одному чтению.
+   */
+  private def tidyPrizePhotos(
+      auction: AuctionId,
+      read: Raffle,
+      outcome: Either[ChangePrizeRejected, Raffle],
+      stored: Option[UUID]
+  ): Future[Unit] = {
+    val stale = outcome match {
+      case Right(after) =>
+        Raffle
+          .prizePhoto(read.state)
+          .map(_.photoId)
+          .filterNot(id => Raffle.prizePhoto(after.state).exists(_.photoId == id))
+      case Left(_) => stored
     }
+    stale.fold(Future.unit) { photoId =>
+      Future.delegate(prizePhotos.delete(auction, photoId)).recover { case NonFatal(cause) =>
+        AuctionGrpcService.logger.warn(
+          "raffle prize photo not deleted",
+          StructuredArguments.keyValue("auction_id", auction.value.toString),
+          StructuredArguments.keyValue("error", cause.getClass.getName)
+        )
+      }
+    }
+  }
 
   /**
    * Прогноз раунда (ADR-067, пп. 2–5): форма, право `place_bids` на каждой отправке, аукцион и лоты раунда, имя в
