@@ -1254,7 +1254,7 @@ object ResponseMapping {
     def refused(reason: Reason) =
       Right(wire.CreateHappyHourPeriodResponse().withRefused(wire.CreateHappyHourPeriodRefusal(reason)))
     outcome match {
-      case Right(period) => Right(wire.CreateHappyHourPeriodResponse().withAccepted(happyHourPeriod(period)))
+      case Right(period) => Right(wire.CreateHappyHourPeriodResponse().withAccepted(happyHourPeriod(period, Nil)))
       case Left(HappyHourRefusal.OpIdTaken) => Left(opIdTaken)
       case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.NotInPrebidding)) =>
         refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
