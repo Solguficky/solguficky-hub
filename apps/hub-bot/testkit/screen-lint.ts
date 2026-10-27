@@ -4,11 +4,13 @@ import {
 } from "../src/auction-day-chronicle.js";
 import { predictionButtonLabel } from "../src/auction-prediction.js";
 import { predictionResultsButtonLabel } from "../src/auction-prediction-results.js";
+import { promoButtonLabel } from "../src/auction-promo.js";
 import { raffleButtonLabel } from "../src/auction-raffle.js";
 import {
   followLabel,
   lotNextLabel,
   lotPrevLabel,
+  lotsLabel,
   unfollowLabel,
 } from "../src/auction-standing.js";
 import {
@@ -88,6 +90,8 @@ const lotCardPairs = [
 // одним рядом. «Хроники дня» и «Статистика» (PER-770) — торги аукциона за
 // сутки и за всё время, одна группа.
 const auctionRootPairs = [
+  // «🏷️ Лоты» и «🎬 Промо» — первым рядом (PER-798).
+  `${lotsLabel}|${promoButtonLabel}`,
   `${raffleButtonLabel}|${predictionButtonLabel}`,
   `${raffleButtonLabel}|${predictionResultsButtonLabel}`,
   `${dayChronicleButtonLabel}|${auctionChronicleButtonLabel}`,
