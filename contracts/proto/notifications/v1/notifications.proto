@@ -565,7 +565,8 @@ message AuctionNotice {
   // Text written by the author, verbatim.
   string body = 5;
 
-  // Where the single button of the message leads.
+  // Where the single button of the message leads. Unset means a message
+  // without a button.
   AuctionNoticeButton button = 6;
 
   // The picture of the message. Unset means a message without a picture.
