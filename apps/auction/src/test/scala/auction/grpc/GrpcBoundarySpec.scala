@@ -168,6 +168,8 @@ final class GrpcBoundarySpec
     def setPromoVideo(in: wire.SetPromoVideoRequest) = unused
     def createHappyHourPeriod(in: wire.CreateHappyHourPeriodRequest) = unused
     def deleteHappyHourPeriod(in: wire.DeleteHappyHourPeriodRequest) = unused
+    def setHappyHourLotTerms(in: wire.SetHappyHourLotTermsRequest) = unused
+    def clearHappyHourLotTerms(in: wire.ClearHappyHourLotTermsRequest) = unused
     def listAuctionEngagement(in: wire.ListAuctionEngagementRequest) = unused
   }
 

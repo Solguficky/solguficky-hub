@@ -424,8 +424,45 @@ public class AuctionMappingTests
         var window = fact.Snapshot.Windows.ShouldHaveSingleItem();
         window.From.ShouldBe(new DateTimeOffset(2026, 10, 12, 19, 0, 0, TimeSpan.Zero));
         window.Until.ShouldBe(new DateTimeOffset(2026, 10, 12, 19, 30, 0, TimeSpan.Zero));
-        window.Step.MinorUnits.ShouldBe(50);
+        window.Step.ShouldNotBeNull().MinorUnits.ShouldBe(50);
         window.Step.Currency.ShouldBe("RUB");
+        window.Start.ShouldBeNull();
+        fact.Snapshot.CurrentPrice.ShouldNotBeNull().MinorUnits.ShouldBe(10000);
+    }
+
+    [Fact]
+    public void When_StepWindowChangedWithStartOnly_Expect_WindowWithoutStep()
+    {
+        // Условия лота в периоде «Счастливых часов» (PER-786): окно задаёт
+        // стартовую цену без шага, и это не дефект соседа (PER-788).
+        var message = EventFactory.Trading(EventFactory.NewId(), "step_window_changed", version: 3,
+            windows: [("2026-10-12T19:00:00Z", "2026-10-12T19:30:00Z", 50L)]);
+        message.State.StepWindows[0].Step = null;
+        message.State.StepWindows[0].Start = new Money { MinorUnits = 80000, Currency = "RUB" };
+
+        var fact = AuctionMapping
+            .Decode(AuctionFeed.StepWindowChangedSubject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>()
+            .Value;
+
+        var window = fact.Snapshot.Windows.ShouldHaveSingleItem();
+        window.Step.ShouldBeNull();
+        window.Start.ShouldNotBeNull().MinorUnits.ShouldBe(80000);
+    }
+
+    [Fact]
+    public void When_StepWindowChangedRemovesLastWindow_Expect_LotFactWithoutWindows()
+    {
+        // Снятые условия уходят из снимка: факт остаётся фактом лота, а не
+        // игнорируемым, — по нему грин снимает задание начала (PER-788).
+        var message = EventFactory.Trading(EventFactory.NewId(), "step_window_changed", version: 4);
+
+        var fact = AuctionMapping
+            .Decode(AuctionFeed.StepWindowChangedSubject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>()
+            .Value;
+
+        fact.Snapshot.Windows.ShouldBeEmpty();
     }
 
     [Fact]
@@ -448,6 +485,7 @@ public class AuctionMappingTests
     [InlineData("order")]
     [InlineData("step")]
     [InlineData("currency")]
+    [InlineData("start_currency")]
     public void When_StepWindowInvalid_Expect_Poison(string field)
     {
         var message = EventFactory.Trading(EventFactory.NewId(), "step_window_added", version: 3,
@@ -461,6 +499,7 @@ public class AuctionMappingTests
             case "order": window.Until = window.From; break;
             case "step": window.Step = null; break;
             case "currency": window.Step.Currency = "rub"; break;
+            case "start_currency": window.Start = new Money { MinorUnits = 800, Currency = "rub" }; break;
             default: throw new ArgumentOutOfRangeException(nameof(field));
         }
 

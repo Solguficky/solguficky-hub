@@ -28,6 +28,14 @@ public static class AuctionFeed
     public const string ParticipantRemovedSubject = "events.auction.participant_removed";
 
     /// <summary>
+    /// Условия лота в периоде «Счастливых часов» заданы, заменены или сняты до
+    /// начала периода (PER-786). Снятое окно уходит из снимка, поэтому этот
+    /// факт зовёт грин начала окна и тогда, когда окон у лота не осталось
+    /// (PER-788).
+    /// </summary>
+    public const string StepWindowChangedSubject = "events.auction.step_window_changed";
+
+    /// <summary>
     /// Счёт выставлен по продаже (PER-308, PER-330): единственный факт, по
     /// которому заводятся два напоминания о неоплаченном счёте. Сообщение —
     /// <c>InvoiceEvent</c>.
@@ -95,6 +103,7 @@ public static class AuctionFeed
             ["events.auction.lot_resumed"] = LotEvent.OccasionOneofCase.LotResumed,
             [ParticipantRemovedSubject] = LotEvent.OccasionOneofCase.ParticipantRemoved,
             ["events.auction.step_window_added"] = LotEvent.OccasionOneofCase.StepWindowAdded,
+            [StepWindowChangedSubject] = LotEvent.OccasionOneofCase.StepWindowChanged,
         };
 
     /// <summary>

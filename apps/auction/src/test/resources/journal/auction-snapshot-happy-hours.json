@@ -31,7 +31,9 @@
         "lotLayout": null,
         "promoVideo": null,
         "happyHourPeriodCreated": null,
-        "happyHourPeriodDeleted": null
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -58,7 +60,9 @@
         "lotLayout": null,
         "promoVideo": null,
         "happyHourPeriodCreated": null,
-        "happyHourPeriodDeleted": null
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -116,7 +120,9 @@
         "lotLayout": null,
         "promoVideo": null,
         "happyHourPeriodCreated": null,
-        "happyHourPeriodDeleted": null
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -141,7 +147,9 @@
         "lotLayout": null,
         "promoVideo": null,
         "happyHourPeriodCreated": null,
-        "happyHourPeriodDeleted": null
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -170,7 +178,9 @@
           "from": "2026-10-05T12:00:00Z",
           "until": "2026-10-05T14:00:00Z"
         },
-        "happyHourPeriodDeleted": null
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -199,7 +209,9 @@
           "from": "2026-10-06T12:00:00Z",
           "until": "2026-10-06T13:00:00Z"
         },
-        "happyHourPeriodDeleted": null
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -226,7 +238,9 @@
         "happyHourPeriodCreated": null,
         "happyHourPeriodDeleted": {
           "periodId": "6c89abdd-491a-5388-917e-649b7912f6d3"
-        }
+        },
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     }
   ],
@@ -282,5 +296,6 @@
       "from": "2026-10-05T12:00:00Z",
       "until": "2026-10-05T14:00:00Z"
     }
-  ]
+  ],
+  "periodTerms": null
 }

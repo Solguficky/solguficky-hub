@@ -909,6 +909,32 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Условия лота в периоде «Счастливых часов» (PER-786): право у Meetups с воротами «сходка не отменена», обычные
+   * условия — у лота, период, реестр, суммы и пересечения решает аукцион по своим часам. Ответ — после записи: лоту
+   * условия уходят после неё.
+   */
+  def setHappyHourLotTerms(in: wire.SetHappyHourLotTermsRequest): Future[wire.SetHappyHourLotTermsResponse] =
+    RequestMapping.setHappyHourLotTerms(in) match {
+      case Left(error) => invalid(error)
+      case Right(set) =>
+        auctions
+          .setHappyHourLotTerms(set.auctionId, set.command, set.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setHappyHourLotTerms(outcome).fold(refuse, Future.successful))
+    }
+
+  /** Снятие условий лота в периоде тем же путём; снимать нечего — ответ успехом. */
+  def clearHappyHourLotTerms(in: wire.ClearHappyHourLotTermsRequest): Future[wire.ClearHappyHourLotTermsResponse] =
+    RequestMapping.clearHappyHourLotTerms(in) match {
+      case Left(error) => invalid(error)
+      case Right(clear) =>
+        auctions
+          .clearHappyHourLotTerms(clear.auctionId, clear.command, clear.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.clearHappyHourLotTerms(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12): право у Meetups, фазу, время, реестр и пересечения
    * решает аукцион. Ответ — после записи `StepWindowLaunched`: лотам окно уходит после него.
    */

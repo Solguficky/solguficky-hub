@@ -38,6 +38,9 @@ const rules: BodyRules = {
       "lot.prev|lot.next",
       // Корень аукциона (PER-770): торги аукциона за сутки и за всё время.
       "root.day-chronicle|root.auction-chronicle",
+      // Бесплатные поводы корня — парой под «Лотами» (PER-798).
+      "root.raffle|root.predictions",
+      "root.raffle|root.prediction-results",
     ].includes(row.map(({ action }) => action).join("|")),
   // Общий потолок двенадцать рядов. Оболочка бота аукциона сегодня ставит
   // под телом два ряда — FAQ и меню, — и пока исключение `rows` ленты в её

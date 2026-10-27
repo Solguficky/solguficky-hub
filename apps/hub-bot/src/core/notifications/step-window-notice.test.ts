@@ -23,7 +23,17 @@ type LotInit = {
   lotId: string;
   until: string;
   step?: { minorUnits: bigint; currency?: string };
+  start?: { minorUnits: bigint; currency?: string };
+  regularStart?: { minorUnits: bigint; currency?: string };
 };
+
+// Окно только со стартовой у лота без ставок: «от 800 ₽ вместо 1 600 ₽».
+const startLot = (n = 1): LotInit => ({
+  lotId: lot(n),
+  until,
+  start: { minorUnits: 80_000n, currency: "RUB" },
+  regularStart: { minorUnits: 160_000n, currency: "RUB" },
+});
 
 const validLot = (n = 1): LotInit => ({
   lotId: lot(n),
@@ -65,6 +75,43 @@ describe("stepWindowNoticeOf", () => {
     });
   });
 
+  // Условия лота в периоде «Счастливых часов» (PER-788): шага может не быть,
+  // стартовая приходит парой с обычной.
+  it("carries the starting price of the window next to the regular one", () => {
+    expect(stepWindowNoticeOf(fact([startLot(1)]))).toEqual({
+      kind: "step-window-started",
+      auctionId,
+      lots: [
+        {
+          lotId: lot(1),
+          until,
+          start: { start: rub(800), regular: rub(1_600) },
+        },
+      ],
+    });
+  });
+
+  it("carries both the starting price and the step", () => {
+    expect(
+      stepWindowNoticeOf(
+        fact([
+          { ...startLot(1), step: { minorUnits: 50_000n, currency: "RUB" } },
+        ]),
+      ),
+    ).toEqual({
+      kind: "step-window-started",
+      auctionId,
+      lots: [
+        {
+          lotId: lot(1),
+          until,
+          step: rub(500),
+          start: { start: rub(800), regular: rub(1_600) },
+        },
+      ],
+    });
+  });
+
   // Дефекты издателя: из такого факта не собрать ни кнопку, ни правдивый текст.
   it.each([
     ["no lots at all", fact([])],
@@ -97,6 +144,39 @@ describe("stepWindowNoticeOf", () => {
       fact([{ ...validLot(), until: "2026-10-21T18:00:00Z" }]),
     ],
     ["the same lot twice", fact([validLot(), validLot()])],
+    [
+      "a lot without a step and a starting price",
+      fact([{ lotId: lot(1), until }]),
+    ],
+    [
+      "a starting price without the regular one",
+      fact([
+        {
+          lotId: lot(1),
+          until,
+          start: { minorUnits: 80_000n, currency: "RUB" },
+        },
+      ]),
+    ],
+    [
+      "a regular starting price without the window one",
+      fact([
+        {
+          ...validLot(),
+          regularStart: { minorUnits: 160_000n, currency: "RUB" },
+        },
+      ]),
+    ],
+    [
+      "a starting price not below the regular one",
+      fact([
+        { ...startLot(), start: { minorUnits: 160_000n, currency: "RUB" } },
+      ]),
+    ],
+    [
+      "a starting price in another currency",
+      fact([{ ...startLot(), start: { minorUnits: 800n, currency: "EUR" } }]),
+    ],
   ])("rejects %s", (_, value) => {
     expect(stepWindowNoticeOf(value)).toBeUndefined();
   });
@@ -117,6 +197,37 @@ describe("renderStepWindowNotice", () => {
         "Счастливые часы начались:",
         "",
         `• «Кружка» — шаг ${money(rub(500))} до 21:00`,
+      ].join("\n"),
+    );
+  });
+
+  it("names the starting price instead of the regular one", () => {
+    const view = renderStepWindowNotice(
+      {
+        kind: "step-window-started",
+        auctionId,
+        lots: [
+          {
+            lotId: lot(1),
+            until,
+            start: { start: rub(800), regular: rub(1_600) },
+          },
+          {
+            lotId: lot(2),
+            until,
+            step: rub(50),
+            start: { start: rub(800), regular: rub(1_600) },
+          },
+        ],
+      },
+      { lots, timeZone: "UTC" },
+    );
+    expect(view.text).toBe(
+      [
+        "Счастливые часы начались:",
+        "",
+        `• «Кружка» — от ${money(rub(800))} вместо ${money(rub(1_600))} до 21:00`,
+        `• «Банка солёных грибов» — от ${money(rub(800))} вместо ${money(rub(1_600))}, шаг ${money(rub(50))} до 21:00`,
       ].join("\n"),
     );
   });

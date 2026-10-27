@@ -113,6 +113,35 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       )
     }
 
+    // PER-786: замена и снятие окна периода — один повод, итог несёт снимок с периодом окна.
+    "publish a set and a cleared period window on step_window_changed with the windows as they are now" in {
+      val period = WindowPeriod(new java.util.UUID(7L, 1L))
+      val window = StepWindow(
+        java.time.Instant.parse("2026-10-06T12:00:00Z"),
+        java.time.Instant.parse("2026-10-06T13:00:00Z"),
+        step = None,
+        start = Some(money(500)),
+        period = Some(period)
+      )
+      val steps = facts(
+        lotDrafted,
+        lotScheduled,
+        openedWithWindows,
+        LotEvent.PeriodWindowSet(window),
+        LotEvent.PeriodWindowCleared(period)
+      )
+      val (_, set) = steps(3)
+      val (_, cleared) = steps(4)
+
+      List(set, cleared).map(_.map(_.subject)) shouldBe List.fill(2)(Some("events.auction.step_window_changed"))
+      message(set).occasion.isStepWindowChanged shouldBe true
+      message(set).getState.stepWindows.map(window => (window.from, window.happyHourPeriodId)) shouldBe List(
+        "2026-10-05T12:00:00Z" -> "",
+        "2026-10-06T12:00:00Z" -> period.value.toString
+      )
+      message(cleared).getState.stepWindows.map(_.from) shouldBe List("2026-10-05T12:00:00Z")
+    }
+
     "publish the ask of the auctioneer with the ask in the state of the lot" in {
       val steps = facts(lotDrafted, lotScheduled, opened, LotEvent.AskAdvanced(money(50000)))
 

@@ -28,8 +28,11 @@
       "start": {
         "minorUnits": 5000,
         "currency": "RUB"
-      }
+      },
+      "period": null
     },
-    "participantRemoved": null
+    "participantRemoved": null,
+    "periodWindowSet": null,
+    "periodWindowCleared": null
   }
 }

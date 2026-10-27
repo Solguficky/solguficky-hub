@@ -162,7 +162,7 @@ message Notification {
 
     // A window of reduced bid step started on a lot the recipient follows. One
     // fact per recipient and window start, however many lots of the window the
-    // recipient follows: every such lot is named inside the fact with the step
+    // recipient follows: every such lot is named inside the fact with the terms
     // and the end of its own window, never in a second fact. A lot that left
     // trading, a window that already ended, a cancelled auction and a blocked
     // recipient produce no fact. No category governs it: unfollowing the lot is
@@ -436,15 +436,15 @@ message StepWindowStarted {
   string starts_at = 2;
 
   // Never empty. The followed lots whose window starts at starts_at, each with
-  // the step and the end of its own window: two windows that share a start may
+  // the terms and the end of its own window: two windows that share a start may
   // differ in both.
   repeated StepWindowLot lots = 3;
 }
 
 // A window of reduced bid step started on lots of an auction. The fact names
 // no lots: the recipient follows none of them, and the channel leads to the
-// lot feed of the auction. The step is not carried either: lots of one window
-// start may differ in step.
+// lot feed of the auction. The terms are not carried either: lots of one window
+// start may differ in step and starting price.
 message StepWindowAnnounced {
   // Canonical lowercase UUID with hyphens: the auction the window belongs to.
   string auction_id = 1;
@@ -457,12 +457,16 @@ message StepWindowAnnounced {
   string until = 3;
 
   // Never zero. How many lots in trading have a window that starts at
-  // starts_at and still runs when the fact was written.
+  // starts_at, still runs when the fact was written and gives the lot a lower
+  // step or, while it has no bid, a lower starting price.
   uint32 lot_count = 4;
 }
 
 // One lot of a StepWindowStarted fact: the window of reduced step the lot
-// recorded, as the auction fact carried it.
+// recorded, as the auction fact carried it, and the terms it gives the lot when
+// the window starts. At least one of step and start is set: a window that gives
+// the lot nothing at its start (only a starting price, and the lot already has
+// a bid) does not name the lot.
 message StepWindowLot {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 1;
@@ -470,8 +474,18 @@ message StepWindowLot {
   // RFC 3339 instant in UTC: the first instant after the window.
   string until = 2;
 
-  // The step in force in the window, in the currency of the lot.
+  // The step in force in the window, in the currency of the lot. Unset when the
+  // window does not change the step.
   auction.v1.Money step = 3;
+
+  // The price of the first bid inside the window. Set only when the window sets
+  // a starting price and the lot had no bid when the window started: a lot with
+  // a bid is not promised a starting price.
+  auction.v1.Money start = 4;
+
+  // The price the first bid needs outside the window: the starting price of the
+  // lot. Set exactly when start is set.
+  auction.v1.Money regular_start = 5;
 }
 
 // The next lot of the live final belongs to the recipient. Nothing else is

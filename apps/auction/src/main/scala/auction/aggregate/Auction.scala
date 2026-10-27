@@ -272,7 +272,8 @@ object LotTerms {
  * целиком, `LotSetDeleted` — только идентификатор, `LotSetSettled` — итог сета, один раз. `LotLayoutSet` — порядок и
  * разделы ленты целиком (PER-719): снимок, а не правка, поэтому повтор и гонка двух администраторов оставляют одну
  * раскладку, а не смесь двух. `HappyHourPeriodCreated` несёт период целиком, `HappyHourPeriodDeleted` — только его
- * идентификатор (ADR-047, дополнение 2026-10-27).
+ * идентификатор (ADR-047, дополнение 2026-10-27). `HappyHourLotTermsSet` несёт условия лота в периоде целиком,
+ * `HappyHourLotTermsCleared` — только период и лот (PER-786).
  */
 enum AuctionEvent {
   case AuctionDrafted(meetup: MeetupId, hidden: Boolean = true)
@@ -304,6 +305,8 @@ enum AuctionEvent {
   case PromoVideoCleared
   case HappyHourPeriodCreated(period: HappyHourPeriod)
   case HappyHourPeriodDeleted(period: HappyHourPeriodId)
+  case HappyHourLotTermsSet(period: HappyHourPeriodId, lot: LotId, terms: HappyHourTerms)
+  case HappyHourLotTermsCleared(period: HappyHourPeriodId, lot: LotId)
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -520,8 +523,9 @@ enum ParticipantRemovalRejected {
  * Отказы запуска окна сниженного шага (ADR-047, дополнение 2026-10-12) в порядке проверки. Случаи окна — те же, что у
  * `ConfigInvalid` дополнения 2026-10-08, и проверяются против конфигурации торгов. `StepWindowInPast` — заданное `from`
  * раньше серверного момента команды. `LotNotInAuction` и `LotNotOpen` называют первый такой лот в порядке запроса:
- * `LotNotOpen` — аукцион не знает, что лот в торгах (И-14). `StepWindowsOverlap` называет общий лот и окно, объявленное
- * или запущенное раньше, с которым запуск пересёкся.
+ * `LotNotOpen` — аукцион не знает, что лот в торгах (И-14). `StepWindowsOverlap` называет общий лот и границы окна,
+ * объявленного, запущенного раньше или заданного условиями лота в периоде «Счастливых часов» (PER-786), с которым
+ * запуск пересёкся.
  */
 enum LaunchStepWindowRejected {
   case AuctionNotFound
@@ -532,7 +536,7 @@ enum LaunchStepWindowRejected {
   case StepWindowLotsEmpty
   case LotNotInAuction(lot: LotId)
   case LotNotOpen(lot: LotId)
-  case StepWindowsOverlap(lot: LotId, existing: StepWindowConfig)
+  case StepWindowsOverlap(lot: LotId, from: Instant, until: Instant)
 }
 
 /**
@@ -574,7 +578,9 @@ enum Inspection {
  * порядок и разделы ленты (PER-719): показ, а не условие торгов, меняется до старта финала; лоты раскладки — всегда
  * лоты реестра. `promoVideo` — промо-видео аукциона (PER-781): номер поста чата медиа ботов, меняется в любом
  * состоянии. `happyHours` — периоды «Счастливых часов» в порядке создания (ADR-047, дополнение 2026-10-27): создаются и
- * удаляются только в онлайн-торгах, удалённый уходит из списка.
+ * удаляются только в онлайн-торгах, удалённый уходит из списка. `periodTerms` — последняя правка условий каждого лота в
+ * каждом периоде в порядке первой правки (PER-786), снятые и удалённые с периодом — тоже: их ещё может быть нужно
+ * доставить лоту.
  */
 final case class Auction(
     state: AuctionState,
@@ -588,7 +594,8 @@ final case class Auction(
     paymentInstructions: Option[PaymentInstructions] = None,
     layout: LotLayout = LotLayout.empty,
     promoVideo: Option[PromoVideo] = None,
-    happyHours: List[HappyHourPeriod] = Nil
+    happyHours: List[HappyHourPeriod] = Nil,
+    periodTerms: List[PeriodLotTerms] = Nil
 )
 
 object Auction {
@@ -1120,11 +1127,15 @@ object Auction {
         !from.isBefore(phase.opensAt) && from.isBefore(command.until) && !command.until.isAfter(closesAt)
       }
     }
-    val existing = config.stepWindows ++ auction.launched.map(_.window)
+    val existing = (config.stepWindows ++ auction.launched.map(_.window)).map(other =>
+      (other.from, other.until, other.lots)
+    ) ++ termsWindows(auction).map((period, lot) => (period.from, period.until, Set(lot)))
     def overlap: Option[LaunchStepWindowRejected] =
       existing.iterator
-        .filter(other => other.from.isBefore(window.until) && window.from.isBefore(other.until))
-        .flatMap(other => lots.find(other.lots.contains).map(LaunchStepWindowRejected.StepWindowsOverlap(_, other)))
+        .filter((from, until, _) => from.isBefore(window.until) && window.from.isBefore(until))
+        .flatMap((from, until, others) =>
+          lots.find(others.contains).map(LaunchStepWindowRejected.StepWindowsOverlap(_, from, until))
+        )
         .nextOption()
     if (from.isBefore(now)) Left(LaunchStepWindowRejected.StepWindowInPast)
     else if (!within) Left(LaunchStepWindowRejected.StepWindowOutsideOnlinePhase)
@@ -1202,6 +1213,121 @@ object Auction {
             Left(DeleteHappyHourPeriodRejected.NotInPrebidding)
         }
     }
+
+  /**
+   * Условия лота в периоде «Счастливых часов» (ADR-047, дополнение 2026-10-27, PER-786) — до начала периода. Повтор
+   * `op_id` узнаётся раньше фазы и часов. `active` — лоты, чьё открытие аукцион подтвердил (И-14); `regulars` — обычные
+   * условия лота, прочитанные у него до команды: их нет у лота не в торгах онлайн-этапа, и это `LotNotOpen`.
+   * Пересечение сверяется с окнами конфигурации, запущенными и условиями лота в других периодах (И-21): окна разного
+   * происхождения у лота не пересекаются, а условия того же периода заменяются.
+   */
+  def decide(
+      auction: Auction,
+      command: SetHappyHourLotTerms,
+      now: Instant,
+      active: Set[LotId],
+      regulars: Option[LotRegulars]
+  ): Either[SetHappyHourLotTermsRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(SetHappyHourLotTermsRejected.AuctionNotFound)
+          case AuctionState.Prebidding(config, _) =>
+            auction.happyHours.find(_.id == command.period) match {
+              case None => Left(SetHappyHourLotTermsRejected.PeriodNotFound)
+              case Some(period) if period.startedAt(now) => Left(SetHappyHourLotTermsRejected.PeriodStarted)
+              case Some(_) if command.step.isEmpty && command.start.isEmpty =>
+                Left(SetHappyHourLotTermsRejected.TermsEmpty)
+              case Some(_) if !auction.lots.contains(command.lot) => Left(SetHappyHourLotTermsRejected.LotNotInAuction)
+              case Some(period) =>
+                regulars.filter(_ => active.contains(command.lot)) match {
+                  case None => Left(SetHappyHourLotTermsRejected.LotNotOpen)
+                  case Some(regular) => termsWithin(auction, config, period, command, regular)
+                }
+            }
+          case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(SetHappyHourLotTermsRejected.NotInPrebidding)
+        }
+    }
+
+  private def termsWithin(
+      auction: Auction,
+      config: AuctionConfig,
+      period: HappyHourPeriod,
+      command: SetHappyHourLotTerms,
+      regular: LotRegulars
+  ): Either[SetHappyHourLotTermsRejected, AuctionDecision] = {
+    val amounts = command.step.toList ++ command.start.toList
+    val windows = (config.stepWindows ++ auction.launched.map(_.window)).filter(_.lots.contains(command.lot))
+    val others = windows.map(window => (window.from, window.until)) ++ termsWindows(auction).collect {
+      case (other, lot) if lot == command.lot && other.id != period.id => (other.from, other.until)
+    }
+    if (amounts.exists(amount => amount.minorUnits <= 0 || amount.currency != regular.currency))
+      Left(SetHappyHourLotTermsRejected.AmountInvalid)
+    else if (command.step.exists(_.minorUnits >= regular.step.minorUnits))
+      Left(SetHappyHourLotTermsRejected.StepNotLower(regular.step))
+    else if (command.start.exists(_.minorUnits >= regular.start.minorUnits))
+      Left(SetHappyHourLotTermsRejected.StartNotLower(regular.start))
+    else
+      others
+        .find((from, until) => from.isBefore(period.until) && period.from.isBefore(until))
+        .map((from, until) => SetHappyHourLotTermsRejected.WindowsOverlap(from, until))
+        .toLeft {
+          val terms = HappyHourTerms(command.step, command.start)
+          AuctionDecision.Accepted(AuctionEvent.HappyHourLotTermsSet(period.id, command.lot, terms))
+        }
+  }
+
+  /**
+   * Снятие условий лота в периоде до его начала (PER-786). Условий нет или они уже сняты — `Unchanged`: снимать нечего,
+   * и событие не пишется. Лот, ушедший из торгов, снятию не мешает: ответ лота аукцион не ждёт.
+   */
+  def decide(
+      auction: Auction,
+      command: ClearHappyHourLotTerms,
+      now: Instant
+  ): Either[ClearHappyHourLotTermsRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(ClearHappyHourLotTermsRejected.AuctionNotFound)
+          case AuctionState.Prebidding(_, _) =>
+            auction.happyHours.find(_.id == command.period) match {
+              case None => Left(ClearHappyHourLotTermsRejected.PeriodNotFound)
+              case Some(period) if period.startedAt(now) => Left(ClearHappyHourLotTermsRejected.PeriodStarted)
+              case Some(_) if !auction.lots.contains(command.lot) =>
+                Left(ClearHappyHourLotTermsRejected.LotNotInAuction)
+              case Some(period) if termsOf(auction, period.id).exists((lot, _) => lot == command.lot) =>
+                Right(AuctionDecision.Accepted(AuctionEvent.HappyHourLotTermsCleared(period.id, command.lot)))
+              case Some(_) => Right(AuctionDecision.Unchanged)
+            }
+          case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(ClearHappyHourLotTermsRejected.NotInPrebidding)
+        }
+    }
+
+  /** Действующие условия лотов в периоде `period` в порядке первой правки: снятые сюда не входят. */
+  def termsOf(auction: Auction, period: HappyHourPeriodId): List[(LotId, HappyHourTerms)] =
+    auction.periodTerms.collect { case PeriodLotTerms(`period`, lot, Some(terms), _) => lot -> terms }
+
+  /** Периоды и лоты с действующими условиями: окна лотов, которые условия периодов задали. */
+  private def termsWindows(auction: Auction): List[(HappyHourPeriod, LotId)] =
+    for {
+      period <- auction.happyHours
+      (lot, _) <- termsOf(auction, period.id)
+    } yield (period, lot)
+
+  /** Последняя правка условий лота в периоде заменяет прежнюю на её месте или ложится в конец. */
+  private def changed(known: List[PeriodLotTerms], change: PeriodLotTerms): List[PeriodLotTerms] =
+    if (known.exists(terms => terms.period == change.period && terms.lot == change.lot))
+      known.map(terms => if (terms.period == change.period && terms.lot == change.lot) change else terms)
+    else known :+ change
 
   private def removable(auction: Auction, lot: LotId): Either[ParticipantRemovalRejected, Unit] =
     auction.state match {
@@ -1481,8 +1607,20 @@ object Auction {
         auction.copy(launched = auction.launched :+ LaunchedWindow(envelope.opId, window))
       case (AuctionState.Prebidding(_, _), AuctionEvent.HappyHourPeriodCreated(period)) =>
         auction.copy(happyHours = auction.happyHours :+ period)
+      // Удаление периода снимает условия его лотов той же правкой: лотам уходит снятие под `op_id` удаления (PER-786).
       case (AuctionState.Prebidding(_, _), AuctionEvent.HappyHourPeriodDeleted(period)) =>
-        auction.copy(happyHours = auction.happyHours.filterNot(_.id == period))
+        auction.copy(
+          happyHours = auction.happyHours.filterNot(_.id == period),
+          periodTerms = auction.periodTerms.map {
+            case terms @ PeriodLotTerms(`period`, _, Some(_), _) => terms.copy(terms = None, change = envelope.opId)
+            case other => other
+          }
+        )
+      case (AuctionState.Prebidding(_, _), AuctionEvent.HappyHourLotTermsSet(period, lot, terms)) =>
+        val change = PeriodLotTerms(period, lot, Some(terms), envelope.opId)
+        auction.copy(periodTerms = changed(auction.periodTerms, change))
+      case (AuctionState.Prebidding(_, _), AuctionEvent.HappyHourLotTermsCleared(period, lot)) =>
+        auction.copy(periodTerms = changed(auction.periodTerms, PeriodLotTerms(period, lot, None, envelope.opId)))
       // Ориентировочное время финала — подпись, а не условие торгов: состояние от него не меняется (ADR-040,
       // дополнение 2026-10-19).
       case (state, AuctionEvent.FinalTimeSet(at)) if state.finalTimeAhead => auction.copy(finalAt = Some(at))

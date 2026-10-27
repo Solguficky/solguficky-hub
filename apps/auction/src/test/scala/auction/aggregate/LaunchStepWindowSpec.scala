@@ -132,19 +132,14 @@ final class LaunchStepWindowSpec extends AnyWordSpec with Matchers {
       val announced = window(29, 31, Set(second, first))
       val auction = prebidding(configInput(stepWindows = List(announced)))
 
-      decide(auction) shouldBe Left(LaunchStepWindowRejected.StepWindowsOverlap(first, announced))
+      decide(auction) shouldBe Left(LaunchStepWindowRejected.StepWindowsOverlap(first, announced.from, announced.until))
     }
 
     "refuse a window overlapping an earlier launched window on a common lot" in {
       val once = written(prebidding(), launch(lots = List(first, second)))
 
       decide(once, launch(from = Some(hours(31)), until = hours(33), lots = List(second), opN = 8)) shouldBe
-        Left(
-          LaunchStepWindowRejected.StepWindowsOverlap(
-            second,
-            StepWindowConfig(hours(30), hours(32), money(1), Set(first, second))
-          )
-        )
+        Left(LaunchStepWindowRejected.StepWindowsOverlap(second, hours(30), hours(32)))
     }
 
     "accept windows that meet at a boundary or share no lot" in {

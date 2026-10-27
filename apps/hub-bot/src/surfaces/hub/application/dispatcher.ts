@@ -73,6 +73,7 @@ export function createDispatcher(
           consoles.timeZone,
           consoles.now,
           consoles.usernames,
+          meetups,
         );
   // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
   // пускает право вести аукцион.
