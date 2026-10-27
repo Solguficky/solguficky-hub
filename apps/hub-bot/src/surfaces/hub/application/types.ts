@@ -1,6 +1,7 @@
 import type {
   AccessRight,
   AuctionSummaryView,
+  LotLayoutView,
   LotView,
   RaffleTicketView,
   RaffleView,
@@ -374,8 +375,10 @@ export type ExecuteRequest =
   | FloorBidsRequest
   | ParticipantRemovalRequest
   | LotSetsRequest
+  | LotLayoutRequest
   | AuctionInvoicesRequest
-  | RaffleWinnerRequest;
+  | RaffleWinnerRequest
+  | RafflePrizeChangeRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -592,6 +595,9 @@ export type AuctionConsoleSnapshot = {
   // организатор собирает его постепенно. Сеты читаются с агрегатом и могут
   // назвать лот, которого `lots` ещё не отдаёт.
   lotSets: readonly LotSet[];
+  // Порядок и разделы ленты (PER-719), как их выставил администратор. Нет —
+  // лоты не упорядочены, и лента идёт в порядке создания.
+  layout?: LotLayoutView;
   // Сколько участников зарегистрировалось в розыгрыше сейчас (PER-734):
   // отменённая регистрация не считается. Есть, только пока розыгрыш держит
   // регистрации; нет — розыгрыша нет, пул зафиксирован или Auction числа не
@@ -1100,6 +1106,70 @@ export type LotSetNote =
   | { kind: "lot-not-in-auction" }
   | { kind: "lot-in-another-set"; name?: string };
 
+// Порядок и разделы ленты (PER-719): разделы, список раздела или общий
+// список, лот в раскладке, вопрос о названии раздела и команды. Состояния
+// нет: место кнопка называет номером раздела — `0` — общий список, — а лот
+// токеном; каждая команда читает пульт заново и отдаёт Auction раскладку
+// целиком.
+export type LotLayoutRequest =
+  | (AuctionConsoleCall & { intent: "view-lot-layout" })
+  | (AuctionConsoleCall & {
+      intent: "view-lot-layout-list";
+      place: number;
+      page: number;
+    })
+  | (AuctionConsoleCall & { intent: "view-lot-layout-lot"; lotId: string })
+  | (AuctionConsoleCall & {
+      intent: "move-lot-layout-lot";
+      lotId: string;
+      direction: LayoutDirection;
+      opId: string;
+    })
+  // Перенос лота в раздел или в общий список: лот встаёт в конец места.
+  | (AuctionConsoleCall & {
+      intent: "place-lot-layout-lot";
+      lotId: string;
+      place: number;
+      opId: string;
+    })
+  // Вопрос о названии: нового раздела или, с `sectionId`, переименования.
+  | (AuctionConsoleCall & { intent: "ask-lot-section"; sectionId?: number })
+  | (AuctionConsoleCall & {
+      intent: "name-lot-section";
+      sectionId?: number;
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "move-lot-section";
+      sectionId: number;
+      direction: LayoutDirection;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "prepare-lot-section-delete";
+      sectionId: number;
+    })
+  | (AuctionConsoleCall & {
+      intent: "delete-lot-section";
+      sectionId: number;
+      opId: string;
+    });
+
+export type LayoutDirection = "up" | "down";
+
+// Исход команды над раскладкой: экран исхода с возвратом к «Порядку и
+// разделам». `name` — название раздела, о котором исход.
+export type LotLayoutNote =
+  | { kind: "deleted"; name: string }
+  // Раздел или лот по кнопке не найден: раскладка изменилась.
+  | { kind: "changed" }
+  // Финал начался или аукцион закончился: лента идёт порядком зала либо
+  // больше не меняется (PER-639).
+  | { kind: "closed" }
+  | { kind: "limit" }
+  | { kind: "lot-not-in-auction" };
+
 // Снятие участника с лота администратором (ADR-072, PER-659): участники лота,
 // предпросмотр и снятие. Состояния нет: лот, человек и номер лота
 // предпросмотра едут в кнопке, а ключ команды рождается на нажатие «Да».
@@ -1259,6 +1329,27 @@ export type RaffleWinnerRequest =
       ticket: number;
       opId: string;
     });
+
+// Смена приза идущего розыгрыша (PER-737; ADR-066, дополнение 2026-10-25):
+// вопрос о тексте, ответ на него — подтверждение «было → станет» — и «Да» с
+// текстом из экрана подтверждения и ключом, рождённым на нажатие.
+export type RafflePrizeChangeRequest =
+  | (AuctionConsoleCall & { intent: "ask-raffle-prize-change" })
+  | (AuctionConsoleCall & { intent: "pick-raffle-prize-change"; value: string })
+  | (AuctionConsoleCall & {
+      intent: "change-raffle-prize";
+      prize: string;
+      opId: string;
+    });
+
+// Исход смены приза — свой экран. `changed` несёт приз из ответа Auction,
+// `already-drawn` — итог уже есть, `without-result` — итога не будет,
+// `no-raffle` — розыгрыша у аукциона нет.
+export type RafflePrizeChangeOutcome =
+  | { note: "changed"; prize: string }
+  | { note: "already-drawn" }
+  | { note: "without-result" }
+  | { note: "no-raffle" };
 
 // Непринятый ответ о номере победителя: не номер или вне пула.
 export type RaffleWinnerAskError = "winner-format" | "winner-range";
@@ -1692,6 +1783,24 @@ export type ExecuteResult =
       ticket: RaffleTicketView;
     }
   | ({ kind: "raffle-winner-outcome"; auctionId: string } & RaffleWinnerOutcome)
+  // Смена приза идущего розыгрыша (PER-737): вопрос с текущим призом,
+  // подтверждение «было → станет» и исход.
+  | {
+      kind: "raffle-prize-change-ask";
+      auctionId: string;
+      prize?: string;
+      error?: RafflePrizeAskError;
+    }
+  | {
+      kind: "raffle-prize-change-confirm";
+      auctionId: string;
+      before?: string;
+      after: string;
+    }
+  | ({
+      kind: "raffle-prize-change-outcome";
+      auctionId: string;
+    } & RafflePrizeChangeOutcome)
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
   | { kind: "payment-text-ask"; auctionId: string; error?: PaymentTextAskError }
   | { kind: "auction-invoice"; invoice: InvoiceRow }
@@ -1705,6 +1814,39 @@ export type ExecuteResult =
   // Счёта по кнопке в аукционе нет: кнопка подделана или от другого аукциона.
   | { kind: "invoice-missing"; auctionId: string }
   | { kind: "lot-sets"; console: AuctionConsoleSnapshot; note?: LotSetNote }
+  // Порядок и разделы ленты (PER-719): экран разделов либо исход команды.
+  | {
+      kind: "lot-layout";
+      console: AuctionConsoleSnapshot;
+      note?: LotLayoutNote;
+    }
+  // Список раздела (`place` — его номер) или общий список (`0`): страница
+  // либо лот, чью страницу показать.
+  | {
+      kind: "lot-layout-list";
+      console: AuctionConsoleSnapshot;
+      place: number;
+      at: { page: number } | { lotId: string };
+    }
+  // Лот в раскладке; `moved` — команда принята, исход — всплывающий текст.
+  | {
+      kind: "lot-layout-lot";
+      console: AuctionConsoleSnapshot;
+      lotId: string;
+      moved?: true;
+    }
+  // Вопрос о названии раздела: первый либо тот же заново.
+  | {
+      kind: "lot-section-ask";
+      auctionId: string;
+      sectionId?: number;
+      error?: "name-empty" | "name-taken";
+    }
+  | {
+      kind: "lot-section-delete-confirm";
+      console: AuctionConsoleSnapshot;
+      sectionId: number;
+    }
   // Сет и лоты реестра с отметкой «в сете»: страница списка либо лот, чью
   // страницу показать. `toggled` — принят переключатель лота.
   | {

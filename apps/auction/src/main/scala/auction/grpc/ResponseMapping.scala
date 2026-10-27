@@ -11,6 +11,8 @@ import auction.aggregate.DiscardRefusal
 import auction.aggregate.FinalStartRefusal
 import auction.aggregate.FinalTimeRefusal
 import auction.aggregate.LineupRefusal
+import auction.aggregate.LotLayout
+import auction.aggregate.LotLayoutRefusal
 import auction.aggregate.LotEnding
 import auction.aggregate.NextLotRefusal
 import auction.aggregate.Drafted
@@ -659,6 +661,50 @@ object ResponseMapping {
   }
 
   /**
+   * Порядок и разделы ленты (PER-719) отвечает формой времени финала: принятие — значением, отказ — именованным
+   * значением ответа, а не статусом.
+   */
+  def setLotLayout(outcome: Either[LotLayoutRefusal, Unit]): Either[Status, wire.SetLotLayoutResponse] = {
+    import wire.SetLotLayoutRefusal.Reason
+    def refused(reason: Reason) = Right(wire.SetLotLayoutResponse().withRefused(wire.SetLotLayoutRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SetLotLayoutResponse().withAccepted(wire.LotLayoutAccepted()))
+      case Left(LotLayoutRefusal.FinalAlreadyStarted) =>
+        refused(Reason.FinalAlreadyStarted(wire.FinalAlreadyStarted()))
+      case Left(LotLayoutRefusal.AuctionAlreadyFinished) =>
+        refused(Reason.AuctionAlreadyFinished(wire.AuctionAlreadyFinished()))
+      case Left(LotLayoutRefusal.AuctionAlreadyCancelled) =>
+        refused(Reason.AuctionAlreadyCancelled(wire.AuctionAlreadyCancelled()))
+      case Left(LotLayoutRefusal.LotNotInAuction(lot)) =>
+        refused(Reason.LotNotInAuction(wire.LotLayoutLotNotInAuction(lot.value.toString)))
+      case Left(LotLayoutRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LotLayoutRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LotLayoutRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(LotLayoutRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(LotLayoutRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LotLayoutRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            LotLayoutRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"auction lot layout answered $denial")
+    }
+  }
+
+  /** Раскладка ленты в форме чтения (PER-719); пустая не отдаётся — лента тогда в порядке создания. */
+  def lotLayout(layout: LotLayout): Option[wire.LotLayout] =
+    Option.unless(layout.isEmpty)(
+      wire.LotLayout(
+        lotIds = layout.lots.map(_.value.toString),
+        sections = layout.sections.map(section =>
+          wire.LotSection(section.id.value, section.name.value, section.lots.map(_.value.toString))
+        )
+      )
+    )
+
+  /**
    * Текст «как оплатить и получить» (PER-322): ворот по сходке нет, поэтому отказов значением два — право и сходка.
    */
   def setPaymentInstructions(
@@ -1093,6 +1139,22 @@ object ResponseMapping {
     }
   }
 
+  /** Отказ права на смену приза розыгрыша — та же пара, что у ручного итога (PER-737). */
+  def changePrizeDenied(denial: Denial): Either[Status, wire.ChangeRafflePrizeResponse] = {
+    import wire.ChangeRafflePrizeRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.ChangeRafflePrizeResponse().withRefused(wire.ChangeRafflePrizeRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle prize authority answered $denial")
+    }
+  }
+
   /** Ручная отметка принята: подсчёт подавлен, значения номинаций не несутся (ADR-067, п. 8). */
   val settleResultsAccepted: wire.SettlePredictionResultsManuallyResponse =
     wire.SettlePredictionResultsManuallyResponse().withAccepted(wire.PredictionResultsByHand())
@@ -1162,6 +1224,10 @@ object ResponseMapping {
       lotIds = view.auction.lots.toList.map(_.value).sorted.map(_.toString),
       hidden = view.auction.hidden,
       finalAt = view.auction.finalAt.map(LotValues.instant),
+      lotLayout = lotLayout(view.auction.layout),
+      // Запущенные по ходу торгов окна (PER-724): участник видит их в программе недели рядом с объявленными, как
+      // администратор в пульте.
+      launchedStepWindows = view.auction.launched.map(_.window).map(AuctionValues.stepWindow),
       status = status
     )
   }

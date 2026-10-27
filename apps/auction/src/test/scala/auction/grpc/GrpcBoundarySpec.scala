@@ -147,6 +147,7 @@ final class GrpcBoundarySpec
     def cancelRaffleRegistration(in: wire.CancelRaffleRegistrationRequest) = unused
     def getRaffle(in: wire.GetRaffleRequest) = unused
     def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest) = unused
+    def changeRafflePrize(in: wire.ChangeRafflePrizeRequest) = unused
     def submitPrediction(in: wire.SubmitPredictionRequest) = unused
     def getMyPredictions(in: wire.GetMyPredictionsRequest) = unused
     def getPredictionResults(in: wire.GetPredictionResultsRequest) = unused
@@ -157,6 +158,7 @@ final class GrpcBoundarySpec
     def listMyInvoices(in: wire.ListMyInvoicesRequest) = unused
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest) = unused
     def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest) = unused
+    def setLotLayout(in: wire.SetLotLayoutRequest) = unused
   }
 
   private lazy val binding =

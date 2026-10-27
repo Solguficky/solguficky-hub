@@ -10,6 +10,7 @@ import { createDispatcher } from "../application/dispatcher.js";
 import {
   blockedHubAccessText,
   declinedHubAccessText,
+  invitationOnlyHub,
   pendingHubAccessText,
 } from "../application/hub-access.js";
 import { applyData } from "./parse-callback.js";
@@ -142,6 +143,11 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
   ];
   for (const [text, answer] of frames) {
     if (shown.includes(refusalText(text))) return answer;
+  }
+  // Кадр закрытой очереди несёт ту же кнопку, что приветствие, поэтому
+  // узнаётся раньше него — по заголовку.
+  if (shown.some((text) => text.includes(invitationOnlyHub.title))) {
+    return "invitation-only";
   }
   // Приветствие узнаётся по его кнопке: заявку ставит только она.
   const welcomed = calls.some((call) =>

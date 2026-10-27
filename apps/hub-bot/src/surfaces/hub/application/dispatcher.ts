@@ -13,12 +13,14 @@ import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createFloorBids } from "./floor-bids.js";
 import { createLotForm } from "./lot-form.js";
+import { createLotLayout } from "./lot-layout.js";
 import { createLotSets } from "./lot-sets.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { createParticipantRemoval } from "./participant-removal.js";
+import { createRafflePrizeChange } from "./raffle-prize-change.js";
 import { createRaffleWinner } from "./raffle-winner.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
@@ -74,6 +76,10 @@ export function createDispatcher(
   // аукцион.
   const lotSets =
     consoles === undefined ? undefined : createLotSets(consoles.auctions);
+  // Порядок и разделы ленты (PER-719) — тот же порт: раскладку пускает право
+  // вести аукцион.
+  const lotLayout =
+    consoles === undefined ? undefined : createLotLayout(consoles.auctions);
   // Счета аукциона (PER-321) — тот же порт: сводку и отметки пускает право
   // вести аукцион.
   const auctionInvoices =
@@ -84,6 +90,11 @@ export function createDispatcher(
   // пускает право вести аукцион.
   const raffleWinner =
     consoles === undefined ? undefined : createRaffleWinner(consoles.auctions);
+  // Смена приза идущего розыгрыша (PER-737) — тот же порт и то же право.
+  const rafflePrizeChange =
+    consoles === undefined
+      ? undefined
+      : createRafflePrizeChange(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -352,6 +363,19 @@ export function createDispatcher(
           return lotSets === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotSets(request);
+        case "view-lot-layout":
+        case "view-lot-layout-list":
+        case "view-lot-layout-lot":
+        case "move-lot-layout-lot":
+        case "place-lot-layout-lot":
+        case "ask-lot-section":
+        case "name-lot-section":
+        case "move-lot-section":
+        case "prepare-lot-section-delete":
+        case "delete-lot-section":
+          return lotLayout === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : lotLayout(request);
         case "view-auction-invoices":
         case "view-auction-invoice":
         case "prepare-invoice-mark":
@@ -370,6 +394,12 @@ export function createDispatcher(
           return raffleWinner === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : raffleWinner(request);
+        case "ask-raffle-prize-change":
+        case "pick-raffle-prize-change":
+        case "change-raffle-prize":
+          return rafflePrizeChange === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : rafflePrizeChange(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

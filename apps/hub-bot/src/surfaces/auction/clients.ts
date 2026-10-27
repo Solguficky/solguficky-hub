@@ -760,6 +760,8 @@ function outcomeName(outcome: WireOutcome): AccessRequestOutcome {
       return "declined";
     case WireOutcome.BLOCKED:
       return "blocked";
+    case WireOutcome.INVITATION_ONLY:
+      return "invitation-only";
     default:
       return "unspecified";
   }
