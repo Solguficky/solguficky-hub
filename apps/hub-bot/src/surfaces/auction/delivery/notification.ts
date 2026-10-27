@@ -16,6 +16,7 @@ import {
 import {
   type AuctionAnnouncementNotice,
   newAuctionNoticeOf,
+  stepWindowAnnouncedNoticeOf,
   tradingOpenedNoticeOf,
 } from "../../../core/notifications/auction-announcement-notice.js";
 import {
@@ -154,6 +155,10 @@ function toContent(
       return newAuctionNoticeOf(type.value);
     case "auctionTradingOpened":
       return tradingOpenedNoticeOf(type.value);
+    // Общая весть о начале «Счастливых часов» (PER-766): та же семья, что
+    // вести о новом аукционе, — тот же выключатель и кнопка в ленту.
+    case "stepWindowAnnounced":
+      return stepWindowAnnouncedNoticeOf(type.value);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {

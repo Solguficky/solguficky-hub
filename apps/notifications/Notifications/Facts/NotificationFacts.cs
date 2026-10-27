@@ -52,6 +52,13 @@ public static class NotificationFacts
     public const string StepWindowStartedType = "step_window_started";
 
     /// <summary>
+    /// Общая весть о начале окна сниженного шага держателям права ставок, кроме
+    /// следящих за лотом окна (ADR-047, дополнение 2026-10-27). Категории нет:
+    /// гасит её выключатель вестей о новом аукционе и торгах.
+    /// </summary>
+    public const string StepWindowAnnouncedType = "step_window_announced";
+
+    /// <summary>
     /// Напоминание о неоплаченном счёте: момент за 24 часа до срока оплаты
     /// (PER-726; до него — через 12 часов после победы, PER-330). Категории у
     /// повода нет: счёт — дело победителя, а деньги через продукт не проходят.
@@ -491,6 +498,39 @@ public static class NotificationFacts
             Step = lot.Step.Clone(),
         }));
         notification.StepWindowStarted = body;
+
+        return notification;
+    }
+
+    /// <summary>Общая весть о начале окна одному держателю права ставок.</summary>
+    /// <param name="taskId">Сработавшее задание начала окна — ключ повода.</param>
+    /// <param name="until">Самый поздний конец окон этого начала.</param>
+    /// <param name="lotCount">Сколько лотов в торгах с идущим окном этого начала.</param>
+    public static Notification StepWindowAnnounced(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid auctionId,
+        DateTimeOffset startsAt,
+        DateTimeOffset until,
+        int lotCount,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.StepWindowAnnounced = new V1.StepWindowAnnounced
+        {
+            AuctionId = auctionId.ToString(),
+            StartsAt = Instant(startsAt),
+            Until = Instant(until),
+            LotCount = (uint)lotCount,
+        };
 
         return notification;
     }

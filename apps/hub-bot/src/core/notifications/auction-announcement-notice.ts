@@ -2,9 +2,14 @@ import type { OnlinePhase } from "../../../gen/auction/v1/auction_pb.js";
 import type {
   AuctionPublished,
   AuctionTradingOpened,
+  StepWindowAnnounced,
 } from "../../../gen/notifications/v1/notifications_pb.js";
+import { marked, pictogram } from "../pictograms.js";
+import { localTime } from "./lot-notice.js";
 
-// Вести о новом аукционе и об открытии торгов (PER-646) — по одной каждому
+// Вести о новом аукционе и об открытии торгов (PER-646) и общая весть о
+// начале «Счастливых часов» (PER-766; ADR-047, дополнение 2026-10-27) — по
+// одной каждому
 // держателю права ставок. У двух ботов они одни: участнику Их доставляет бот
 // хаба, гостю — бот аукциона, маршрут по кругу получателя выбирает Notifications
 // (ADR-064). Здесь разбор ветки, текст и кнопка; данные кнопки каждая
@@ -32,6 +37,16 @@ export type AuctionAnnouncementNotice =
       meetupTitle: string;
       opensAt?: string;
       closesAt?: string;
+    }
+  | {
+      // Окно сниженного шага началось, а получатель не следит ни за одним его
+      // лотом: следящему Notifications шлёт свою весть с лотами
+      // (step-window-notice.ts), а эту — нет.
+      kind: "step-window-announced";
+      auctionId: string;
+      // Конец окна — RFC 3339, самый поздний из концов окон этого начала.
+      until: string;
+      lotCount: number;
     };
 
 // Аукцион сходки — UUIDv5, свой — UUIDv7: версия не проверяется, только
@@ -67,6 +82,28 @@ export function tradingOpenedNoticeOf(
   };
 }
 
+// Момент — RFC 3339 в UTC, как пишет его издатель: `Date.parse` берёт и
+// «2026-10-21», и «Oct 21», а выдуманное время читалось бы как конец окна.
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
+// Ноль лотов и конец не как момент — дефект издателя: весть «шаг ниже на 0
+// лотах» или без срока была бы неправдой, и разбор отвечает `undefined`.
+export function stepWindowAnnouncedNoticeOf(
+  value: StepWindowAnnounced,
+): AuctionAnnouncementNotice | undefined {
+  if (!CANONICAL_UUID.test(value.auctionId)) return undefined;
+  if (value.lotCount === 0) return undefined;
+  if (!INSTANT.test(value.until) || Number.isNaN(Date.parse(value.until))) {
+    return undefined;
+  }
+  return {
+    kind: "step-window-announced",
+    auctionId: value.auctionId,
+    until: value.until,
+    lotCount: value.lotCount,
+  };
+}
+
 // Пустая строка — отсутствие поля, как у схемы: момент, которого нет, весть не
 // называет. Моменты остаются строками: понятность проверяет рендер, а не разбор.
 function phaseOf(phase: OnlinePhase | undefined): {
@@ -93,6 +130,9 @@ export type AuctionAnnouncementView = {
 
 const newAuctionLabel = "Аукцион";
 const tradingOpenedLabel = "Лоты";
+// «К лотам» дизайн-код вывел из словаря: вход в ленту — «🏷️ Лоты», как у
+// кнопки объявления аукциона (organizer-announcement.ts).
+const stepWindowLabel = marked(pictogram.auction, "Лоты");
 
 const dayFormat = new Intl.DateTimeFormat("ru-RU", {
   day: "numeric",
@@ -107,6 +147,13 @@ export function renderAuctionAnnouncement(
   notice: AuctionAnnouncementNotice,
   timeZone: string,
 ): AuctionAnnouncementView {
+  if (notice.kind === "step-window-announced") {
+    const until = localTime(notice.until, timeZone);
+    return {
+      text: `Счастливые часы${until === undefined ? "" : ` до ${until}`}: шаг ниже на ${lotsOn(notice.lotCount)}.`,
+      button: { auctionId: notice.auctionId, text: stepWindowLabel },
+    };
+  }
   const meetup = notice.meetupTitle.trim();
   const of = meetup === "" ? "сходки" : `сходки «${meetup}»`;
   const opens = momentText(notice.opensAt, timeZone);
@@ -124,6 +171,13 @@ export function renderAuctionAnnouncement(
         : `Торги открыты: неделя идёт до ${closes}.`,
     button: { auctionId: notice.auctionId, text: tradingOpenedLabel },
   };
+}
+
+// «на 1 лоте», «на 3 лотах», «на 11 лотах»: предложный падеж различает только
+// единственное число.
+function lotsOn(count: number): string {
+  const single = count % 10 === 1 && count % 100 !== 11;
+  return `${count} ${single ? "лоте" : "лотах"}`;
 }
 
 // «торги с 20 октября, 12:00 по 26 октября, 22:00»; конца нет — «до», начала

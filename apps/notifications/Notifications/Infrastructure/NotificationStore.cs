@@ -111,6 +111,15 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         ORDER BY follower.identity_id, replica.lot_id;
         """;
 
+    // Лоты аукциона в торгах с их окнами: общей вести о начале окна нужны
+    // число лотов окна и самый поздний конец, а не следящие за ними.
+    private const string StepWindowLotsSql = """
+        SELECT lot_id AS LotId, step_windows AS Windows
+        FROM lot_replica
+        WHERE auction_id = @AuctionId AND status = 'trading'
+        ORDER BY lot_id;
+        """;
+
     // Срок годности у каждого человека свой: он кончается вместе с его
     // последним окном, а не с чужим. Поэтому вставка несёт not_after массивом,
     // в отличие от InsertSql с одним значением на пачку.
@@ -954,18 +963,19 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     }
 
     /// <summary>
-    /// Разворачивает начало окна сниженного шага на следящих за его лотами и
-    /// пишет факты в транзакции <paramref name="work" /> — той же, что переводит
-    /// задание в «сработало» (ADR-047, дополнение 2026-10-12).
+    /// Разворачивает начало окна сниженного шага на следящих за его лотами, а
+    /// общую весть — на остальных держателей права ставок, и пишет факты в
+    /// транзакции <paramref name="work" /> — той же, что переводит задание в
+    /// «сработало» (ADR-047, дополнения 2026-10-12 и 2026-10-27).
     /// </summary>
     /// <remarks>
     /// Сверка на момент срабатывания, а не на момент факта: окно могло уже
-    /// кончиться, лот — выйти из торгов, а аукцион — кончиться. Человек
-    /// получает одно сообщение со всеми своими лотами окна; ключ повода —
-    /// задание, поэтому повтор срабатывания и поздний факт лота второго не
-    /// дают.
+    /// кончиться, лот — выйти из торгов, а аукцион — кончиться. Следящий
+    /// получает одно сообщение со всеми своими лотами окна и общей вести не
+    /// получает; ключ повода обеих — задание, поэтому повтор срабатывания и
+    /// поздний факт лота второго не дают.
     /// </remarks>
-    internal static async Task<FactCount> AddStepWindowStart(
+    internal static async Task<StepWindowStartFacts> AddStepWindowStart(
         UnitOfWork work,
         LiveStepWindowTask task,
         DateTimeOffset now,
@@ -976,9 +986,26 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         // не срабатывать вечно.
         if (await AuctionEndStore.Read(work, task.AuctionId, cancellationToken) is not null)
         {
-            return FactCount.None;
+            return StepWindowStartFacts.None;
         }
 
+        var (started, followers) = await AddStepWindowFollowers(work, task, now, cancellationToken);
+        var announced = await AddStepWindowAnnouncement(work, task, followers, now, cancellationToken);
+
+        return new StepWindowStartFacts(started, announced);
+    }
+
+    /// <summary>
+    /// Весть следящим за лотами окна: каждому — его лоты этого окна. Отдаёт
+    /// ещё и всех, кому весть положена, даже если факт уже был записан: общая
+    /// весть их обходит.
+    /// </summary>
+    private static async Task<(FactCount Facts, IReadOnlySet<Guid> Recipients)> AddStepWindowFollowers(
+        UnitOfWork work,
+        LiveStepWindowTask task,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
         var rows = await work.Query<StepWindowAudienceRow>(
             StepWindowAudienceSql,
             new { task.AuctionId },
@@ -1006,7 +1033,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         if (people.Count == 0)
         {
-            return FactCount.None;
+            return (FactCount.None, new HashSet<Guid>());
         }
 
         var selected = people.Values.OrderBy(person => person.IdentityId).ToArray();
@@ -1042,7 +1069,56 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             },
             cancellationToken);
 
-        return new FactCount(created, 0);
+        return (new FactCount(created, 0), people.Keys.ToHashSet());
+    }
+
+    /// <summary>
+    /// Общая весть о начале окна (ADR-047, дополнение 2026-10-27): каждому
+    /// держателю права ставок, кроме заблокированных, выключивших вести о новом
+    /// аукционе и торгах и следящих за лотом окна, — одна на начало окна.
+    /// </summary>
+    /// <remarks>
+    /// Лоты окна — те же, что у вести следящим: в торгах и с окном этого
+    /// начала, которое ещё идёт. Нет таких лотов — нет и вести. Конец — самый
+    /// поздний из концов окон этого начала, им же кончается срок факта.
+    /// </remarks>
+    private static async Task<FactCount> AddStepWindowAnnouncement(
+        UnitOfWork work,
+        LiveStepWindowTask task,
+        IReadOnlySet<Guid> followers,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var lots = await work.Query<StepWindowLotRow>(StepWindowLotsSql, new { task.AuctionId }, cancellationToken);
+        var windows = lots
+            .Select(lot => LotReplicaStore.WindowsOf(lot.Windows).FirstOrDefault(window =>
+                window.From == task.StartsAt && StepWindowPlan.Running(window, now)))
+            .OfType<LotStepWindow>()
+            .ToArray();
+
+        if (windows.Length == 0)
+        {
+            return FactCount.None;
+        }
+
+        var until = windows.Max(window => window.Until);
+        var audience = (await work.Query<AudienceRow>(
+                AuctionAnnouncementAudienceSql,
+                new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
+                cancellationToken))
+            .Where(person => !followers.Contains(person.IdentityId))
+            .ToArray();
+
+        return await Insert(
+            work,
+            new FactCause(NotificationFacts.StepWindowAnnouncedType, NotificationFacts.ReminderTaskCause,
+                task.TaskId.ToString(), null, null),
+            audience,
+            (id, recipient) => NotificationFacts.StepWindowAnnounced(
+                id, recipient, task.TaskId, task.AuctionId, task.StartsAt, until, windows.Length, now, until),
+            now,
+            until,
+            cancellationToken);
     }
 
     // Дедлайн, о котором ещё можно напомнить (ADR-063, п.3): у лота в конечном
@@ -1736,6 +1812,14 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         public string DeliverySurface { get; init; } = NotificationSubjects.Hub;
 
+        public Guid LotId { get; init; }
+
+        /// <summary>Окна лота строкой реплики: их разбирает <see cref="LotReplicaStore.WindowsOf" />.</summary>
+        public string? Windows { get; init; }
+    }
+
+    private sealed class StepWindowLotRow
+    {
         public Guid LotId { get; init; }
 
         /// <summary>Окна лота строкой реплики: их разбирает <see cref="LotReplicaStore.WindowsOf" />.</summary>
