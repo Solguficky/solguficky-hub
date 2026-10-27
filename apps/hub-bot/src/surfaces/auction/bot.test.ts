@@ -3946,6 +3946,11 @@ describe("promo video in the auction root", () => {
       press(encodeAuctionCallback({ kind: "root", auctionId })),
     );
     const root = lastScreen(calls);
+    // «🎬 Промо» — первым рядом парой с «🏷️ Лотами» (PER-798).
+    expect(root.keyboard[0]?.map((button) => button.text)).toEqual([
+      "🏷️ Лоты",
+      "🎬 Промо",
+    ]);
     const promo = root.keyboard
       .flat()
       .find((button) => button.text === "🎬 Промо");
@@ -4039,6 +4044,10 @@ describe("promo video in the auction root", () => {
         .keyboard.flat()
         .map((button) => button.text),
     ).not.toContain("🎬 Промо");
+    // Без промо «🏷️ Лоты» — своим рядом (PER-798).
+    expect(lastScreen(calls).keyboard[0]?.map((button) => button.text)).toEqual(
+      ["🏷️ Лоты"],
+    );
     await bot.handleUpdate(
       press(encodeAuctionCallback({ kind: "promo", auctionId })),
     );

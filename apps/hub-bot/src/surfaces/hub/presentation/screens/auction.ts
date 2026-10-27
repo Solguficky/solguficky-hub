@@ -553,11 +553,14 @@ function rootScreen(
   );
   const invoices = buttons.find((button) => button.action === "root.invoices");
   const promo = buttons.find((button) => button.action === "root.promo");
-  // «🏷️ Лоты» — своим рядом, «Розыгрыш» и «Прогнозы» — парой под ним
-  // (решение владельца по прогону stage 27.10, PER-798; пересматривает №66
+  // «🏷️ Лоты» — первым рядом парой с «🎬 Промо» (PER-774), пока у аукциона
+  // есть видео, иначе своим рядом; «Розыгрыш» и «Прогнозы» — парой под ним
+  // (решения владельца по прогону stage 27.10, PER-798; пересматривают №66
   // прогона 14.10): без «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему
   // пары не нашлось, — своим рядом.
-  if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData).row();
+  if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData);
+  if (promo !== undefined) keyboard.text(promoButtonLabel, promo.callbackData);
+  nextRow(keyboard);
   if (raffle !== undefined) {
     keyboard.text(raffleButtonLabel, raffle.callbackData);
   }
@@ -581,10 +584,6 @@ function rootScreen(
   // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
   if (invoices !== undefined) {
     nextRow(keyboard).text(invoicesButtonLabel, invoices.callbackData).row();
-  }
-  // «🎬 Промо» (PER-774) — своим рядом, пока у аукциона есть видео.
-  if (promo !== undefined) {
-    nextRow(keyboard).text(promoButtonLabel, promo.callbackData).row();
   }
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);

@@ -5854,10 +5854,12 @@ const PROMO_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [
-        rootLotsRow,
+        [
+          ...rootLotsRow,
+          { action: "root.promo", callbackData: promoCallback() },
+        ],
         [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
         rootChronicleRow,
-        [{ action: "root.promo", callbackData: promoCallback() }],
       ],
     },
   },
