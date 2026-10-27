@@ -261,6 +261,13 @@ object AuctionEntity {
       replyTo: ActorRef[Either[PaymentInstructionsRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Промо-видео аукциона (PER-781): выставить, заменить или снять. Ответ — после записи. */
+  final case class Promote(
+      command: SetPromoVideo,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[PromoVideoRejected, AuctionAnswer]]
+  ) extends Command
+
   /**
    * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, инициатор — планировщик. Что делать,
    * решает агрегат: удаление идёт путём `Discard`, отмена — путём `Cancel`, под тем же `op_id`, поэтому прогнозы, лоты,
@@ -1375,6 +1382,16 @@ object AuctionEntity {
                 state.auction,
                 Auction.decide(state.auction, instruct),
                 instruct.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
+            case Promote(promote, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, promote),
+                promote.opId,
                 initiator,
                 replyTo,
                 clock,

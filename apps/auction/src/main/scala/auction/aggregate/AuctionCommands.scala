@@ -137,6 +137,15 @@ enum PaymentInstructionsRefusal {
 }
 
 /**
+ * Отказ промо-видео (PER-781): проверка до агрегата. `OpIdTaken` — под этим `op_id` записана другая команда или другое
+ * видео: тихое «принято» сообщило бы о видео, которого в журнале нет.
+ */
+enum PromoVideoRefusal {
+  case Denied(denial: Denial)
+  case OpIdTaken
+}
+
+/**
  * Отказ раскладки ленты (PER-719): проверка до агрегата или решение агрегата. `OpIdTaken` — под этим `op_id` записана
  * другая команда или другая раскладка: тихое «принято» сообщило бы о порядке, которого в журнале нет.
  */
@@ -586,6 +595,41 @@ final class AuctionCommands(
   }
 
   /**
+   * Промо-видео аукциона (PER-781): выставить, заменить или снять. Порядок тот же, что у текста оплаты: повтор, аукцион
+   * без журнала, право у Meetups, затем агрегат. Ворота — сходка не отменена, как у остальных команд пульта.
+   */
+  def setPromoVideo(
+      auctionId: AuctionId,
+      video: Option[PromoVideo],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[PromoVideoRefusal, Unit]] = {
+    // Выставить и снять — разные события; другое видео под тем же `op_id` — тоже чужая команда.
+    def ours(envelope: AuctionEnvelope): Boolean =
+      envelope.event match {
+        case AuctionEvent.PromoVideoSet(recorded) => video.contains(recorded)
+        case AuctionEvent.PromoVideoCleared => video.isEmpty
+        case _ => false
+      }
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        Future.successful(Either.cond(ours(original), (), PromoVideoRefusal.OpIdTaken))
+      case Inspection.Absent => Future.successful(Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, PromoVideoRefusal.Denied(_)) {
+          auctions
+            .setPromoVideo(auctionId, SetPromoVideo(video, opId), Initiator.Operator(person))
+            .map {
+              case Left(PromoVideoRejected.AuctionNotFound) => Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound))
+              case Right(AuctionAnswer.Written(original)) =>
+                Either.cond(ours(original), (), PromoVideoRefusal.OpIdTaken)
+              case Right(AuctionAnswer.Unchanged) => Right(())
+            }
+        }
+    }
+  }
+
+  /**
    * Порядок и разделы ленты (PER-719): раскладка целиком. Порядок тот же, что у времени финала: повтор, аукцион без
    * журнала, право у Meetups, затем агрегат. Ворота — сходка не отменена.
    */
@@ -986,7 +1030,7 @@ final class AuctionCommands(
           AuctionEvent.AuctionHidden | AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared |
           AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared |
           AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) | AuctionEvent.LotSetSettled(_, _) |
-          AuctionEvent.LotLayoutSet(_) =>
+          AuctionEvent.LotLayoutSet(_) | AuctionEvent.PromoVideoSet(_) | AuctionEvent.PromoVideoCleared =>
         false
     }
 }

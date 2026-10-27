@@ -143,6 +143,12 @@ final case class SetFinalTime(at: Option[Instant], opId: OpId)
 final case class SetPaymentInstructions(text: Option[PaymentInstructions], opId: OpId)
 
 /**
+ * Промо-видео аукциона (PER-781): номер поста в чате медиа ботов. Показ, а не условие торгов, поэтому живёт вне
+ * конфигурации, как текст оплаты. `video` пусто — видео снимается.
+ */
+final case class SetPromoVideo(video: Option[PromoVideo], opId: OpId)
+
+/**
  * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, без входа сверх `op_id` и без отказов.
  * Удалить аукцион, отменить его или ничего не делать, решает агрегат по своему состоянию, а не потребитель: состояние,
  * прочитанное заранее, успевает устареть. `op_id` — UUIDv5 от `event_id` факта ([[Auction.meetupCancellationOf]]).
@@ -293,6 +299,8 @@ enum AuctionEvent {
   case LotSetDeleted(set: LotSetId)
   case LotSetSettled(set: LotSetId, settlement: LotSetSettlement)
   case LotLayoutSet(layout: LotLayout)
+  case PromoVideoSet(video: PromoVideo)
+  case PromoVideoCleared
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -357,6 +365,11 @@ enum FinalTimeRejected {
 
 /** Отказ `SetPaymentInstructions`: аукциона нет. Состояние не отказывает — счета переживают и конец, и отмену. */
 enum PaymentInstructionsRejected {
+  case AuctionNotFound
+}
+
+/** Отказ `SetPromoVideo`: аукциона нет. Состояние не отказывает, как у текста оплаты. */
+enum PromoVideoRejected {
   case AuctionNotFound
 }
 
@@ -556,7 +569,8 @@ enum Inspection {
  * реестра, и лот не больше чем в одном сете; после старта торгов меняется только итог сета. `paymentInstructions` —
  * текст администратора «как оплатить и получить» (PER-322): не условие торгов, меняется в любом состоянии. `layout` —
  * порядок и разделы ленты (PER-719): показ, а не условие торгов, меняется до старта финала; лоты раскладки — всегда
- * лоты реестра.
+ * лоты реестра. `promoVideo` — промо-видео аукциона (PER-781): номер поста чата медиа ботов, меняется в любом
+ * состоянии.
  */
 final case class Auction(
     state: AuctionState,
@@ -568,7 +582,8 @@ final case class Auction(
     finalAt: Option[Instant] = None,
     sets: Map[LotSetId, LotSet] = Map.empty,
     paymentInstructions: Option[PaymentInstructions] = None,
-    layout: LotLayout = LotLayout.empty
+    layout: LotLayout = LotLayout.empty,
+    promoVideo: Option[PromoVideo] = None
 )
 
 object Auction {
@@ -885,6 +900,25 @@ object Auction {
             val event = command.text match {
               case Some(text) => AuctionEvent.PaymentInstructionsSet(text)
               case None => AuctionEvent.PaymentInstructionsCleared
+            }
+            Right(AuctionDecision.Accepted(event))
+        }
+    }
+
+  /**
+   * Промо-видео (PER-781): выставить, заменить или снять в любом состоянии рождённого аукциона, как текст оплаты. То же
+   * видео пишет событие ещё раз: ответ без события повтором не защищён.
+   */
+  def decide(auction: Auction, command: SetPromoVideo): Either[PromoVideoRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(PromoVideoRejected.AuctionNotFound)
+          case _ =>
+            val event = command.video match {
+              case Some(video) => AuctionEvent.PromoVideoSet(video)
+              case None => AuctionEvent.PromoVideoCleared
             }
             Right(AuctionDecision.Accepted(event))
         }
@@ -1388,6 +1422,10 @@ object Auction {
         auction.copy(paymentInstructions = None)
       // Раскладка ленты — показ, а не условие торгов: состояние от неё не меняется (PER-719).
       case (state, AuctionEvent.LotLayoutSet(layout)) if state.finalTimeAhead => auction.copy(layout = layout)
+      // Промо-видео — показ, а не условие торгов: состояние от него не меняется (PER-781).
+      case (state, AuctionEvent.PromoVideoSet(video)) if state != AuctionState.Initial =>
+        auction.copy(promoVideo = Some(video))
+      case (state, AuctionEvent.PromoVideoCleared) if state != AuctionState.Initial => auction.copy(promoVideo = None)
       case (current, AuctionEvent.AuctionCancelled) =>
         current match {
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |

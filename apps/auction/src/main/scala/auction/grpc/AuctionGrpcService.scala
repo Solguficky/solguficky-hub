@@ -755,6 +755,20 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Промо-видео аукциона (PER-781): право у Meetups с воротами «сходка не отменена», затем аукцион. Видео выставляется,
+   * заменяется и снимается одной командой.
+   */
+  def setPromoVideo(in: wire.SetPromoVideoRequest): Future[wire.SetPromoVideoResponse] =
+    RequestMapping.setPromoVideo(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .setPromoVideo(command.auctionId, command.video, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setPromoVideo(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Видимость аукциона смотрящему (ADR-047, дополнение 2026-10-20): скрытый видит только держатель `run_auctions`, и
    * всем остальным чтения отвечают так, будто аукциона нет.
    */

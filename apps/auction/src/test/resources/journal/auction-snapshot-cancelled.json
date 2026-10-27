@@ -28,7 +28,8 @@
         "lotSetDeleted": null,
         "lotSetSettled": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null
       }
     },
     {
@@ -52,7 +53,8 @@
         "lotSetDeleted": null,
         "lotSetSettled": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null
       }
     },
     {
@@ -107,7 +109,8 @@
         "lotSetDeleted": null,
         "lotSetSettled": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null
       }
     },
     {
@@ -129,7 +132,8 @@
         "lotSetDeleted": null,
         "lotSetSettled": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null
       }
     },
     {
@@ -151,7 +155,8 @@
         "lotSetDeleted": null,
         "lotSetSettled": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null
       }
     },
     {
@@ -175,7 +180,8 @@
         "lotSetDeleted": null,
         "lotSetSettled": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null
       }
     },
     {
@@ -197,7 +203,8 @@
         "lotSetDeleted": null,
         "lotSetSettled": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null
       }
     }
   ],
@@ -245,5 +252,6 @@
   "finalAt": null,
   "sets": null,
   "paymentInstructions": null,
-  "layout": null
+  "layout": null,
+  "promoVideo": null
 }
