@@ -10,6 +10,12 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
 
+/**
+ * Раунд, который принимает прогнозы сейчас, и участники с непустым прогнозом в нём (PER-777): только идентификаторы,
+ * без ответов.
+ */
+final case class OpenRoundForecasters(round: PredictionRound, participants: Set[ParticipantId])
+
 /** Игра и прогнозы одного участника: другого участника это чтение не несёт (ADR-067, п. 9). */
 final case class MyPredictions(game: Predictions, forecasts: Map[PredictionRound, Forecast])
 
@@ -26,6 +32,12 @@ trait PredictionGateway {
    * Прогнозы аукциона числами для пульта администратора (PER-734): `None` — игры ещё нет, ни один раунд не открывался.
    */
   def tally(auction: AuctionId): Future[Option[PredictionTally]]
+
+  /**
+   * Участники с непустым прогнозом в открытом сейчас раунде — для аудитории объявления Notifications (PER-777): `None`
+   * — ни один раунд не открыт. Раунд решает [[Predictions.openRound]], строки читаются после ответа игры.
+   */
+  def forecasters(auction: AuctionId): Future[Option[OpenRoundForecasters]]
 
   /** Принятая раньше отправка с этим `op_id`, если она была: граница узнаёт повтор до своих проверок по состоянию. */
   def recall(
@@ -58,6 +70,14 @@ object PredictionGateway {
       def tally(auction: AuctionId): Future[Option[PredictionTally]] =
         entity(auction).ask[Predictions](PredictionEntity.Get(_)).flatMap { game =>
           if (game == Predictions.initial) Future.successful(None) else store.tally(auction).map(Some(_))
+        }
+
+      def forecasters(auction: AuctionId): Future[Option[OpenRoundForecasters]] =
+        entity(auction).ask[Predictions](PredictionEntity.Get(_)).flatMap { game =>
+          Predictions.openRound(game) match {
+            case None => Future.successful(None)
+            case Some(round) => store.forecasters(auction, round).map(found => Some(OpenRoundForecasters(round, found)))
+          }
         }
 
       def recall(

@@ -92,6 +92,11 @@ final class PredictionEntitySpec extends AnyWordSpec with Matchers with BeforeAn
         PredictionTally(answered.map(_._1).distinct.size.toLong, answered.map(_._2).sum.toLong)
       })
 
+    def forecasters(auction: AuctionId, round: PredictionRound): Future[Set[ParticipantId]] =
+      Future.successful(synchronized(rows.collect {
+        case ((`auction`, `round`, participant), forecast) if forecast.answers.nonEmpty => participant
+      }.toSet))
+
     def discard(auction: AuctionId): Future[Unit] = synchronized {
       discards += 1
       rows = rows.filterNot(_._1._1 == auction)

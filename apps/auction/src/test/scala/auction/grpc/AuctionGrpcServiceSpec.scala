@@ -773,6 +773,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) =
       Future.successful(sent)
     def tally(auction: AuctionId) = Future.successful(counted)
+    def forecasters(auction: AuctionId) = Future.successful(None)
   }
 
   /** Розыгрыш, которого пульт не должен спросить: отказ права наступает до него. */
@@ -1325,6 +1326,14 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .getRaffle(wire.GetRaffleRequest(Some(participantViewer), id.toString))
         .futureValue
         .raffle should not be empty
+    }
+
+    "names no meetup to a participant in GetAuction or ListAuctions" in {
+      val (grpc, listed, _) = reads(hidden = false, participantViewer)
+      val read = grpc.getAuction(wire.GetAuctionRequest(Some(participantViewer), id.toString)).futureValue
+      read.toByteString.toStringUtf8 should not include meetupId
+      listed.map(_.toByteString.toStringUtf8).foreach(_ should not include meetupId)
+      wire.AuctionSnapshot.scalaDescriptor.findFieldByName("meetup_id") shouldBe None
     }
 
     "keeps the image, the history and the stream of a hidden auction from a participant, not from the organizer" in {
@@ -2629,7 +2638,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Status.Code.NOT_FOUND
     }
 
-    "shows the administrator the lots of the console with their bids, the mark, the held finalist and the overdue lot" in {
+    "shows the administrator the meetup and the lots of the console with their bids, the mark, the held finalist and the overdue lot" in {
       val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
       val (marked, late, finalist) = (new UUID(7L, 1L), new UUID(7L, 2L), new UUID(7L, 3L))
       val registry = new Views {
@@ -2660,6 +2669,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       console.getAuction.status.isPrebidding shouldBe true
       console.lots.map(entry => (entry.getLot.id, entry.getLot.bidCount, entry.markedForFinal, entry.overdue)) shouldBe
         Seq((marked.toString, 3L, true, false), (late.toString, 0L, false, true), (finalist.toString, 4L, true, false))
+      console.meetupId shouldBe meetupId
     }
 
     "shows the window launched during the online phase to the administrator" in {

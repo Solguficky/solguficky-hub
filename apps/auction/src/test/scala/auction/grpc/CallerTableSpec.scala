@@ -60,16 +60,22 @@ final class CallerTableSpec extends AnyWordSpec with Matchers with EitherValues 
 
     "reads the tokens the service config binds from the environment variables" in {
       val service = ConfigFactory.parseResourcesAnySyntax("application")
-      val variables = both.map(CallerTable.environmentVariable)
-      variables shouldBe Set("AUCTION_CALLER_TOKEN_HUB_BOT", "AUCTION_CALLER_TOKEN_AUCTION_BOT")
+      val every = Caller.values.toSet
+      val variables = every.map(CallerTable.environmentVariable)
+      variables shouldBe Set(
+        "AUCTION_CALLER_TOKEN_HUB_BOT",
+        "AUCTION_CALLER_TOKEN_AUCTION_BOT",
+        "AUCTION_CALLER_TOKEN_NOTIFICATIONS"
+      )
       // Переменные окружения подкладываются корнем конфигурации: так их видит
       // подстановка `${?NAME}`, и тест не зависит от окружения машины.
       val resolved = ConfigFactory
         .parseString(variables.map(name => s"""$name = "$name-value"""").mkString("\n"))
         .withFallback(service)
         .resolve()
-      val table = CallerTable.fromConfig(resolved, both).value
+      val table = CallerTable.fromConfig(resolved, every).value
       table.identify("AUCTION_CALLER_TOKEN_AUCTION_BOT-value") shouldBe Some(Caller.AuctionBot)
+      table.identify("AUCTION_CALLER_TOKEN_NOTIFICATIONS-value") shouldBe Some(Caller.Notifications)
     }
   }
 }

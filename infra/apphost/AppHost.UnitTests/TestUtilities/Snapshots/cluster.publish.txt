@@ -21,6 +21,7 @@ auction: ContainerResource
   endpoint: http http port= target=8080 proxied=True external=False
   env: AUCTION_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
   env: AUCTION_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: AUCTION_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
   env: AUCTION_DATABASE_JDBC_URL={auction-db.connectionString}
   env: AUCTION_DATABASE_PASSWORD={auction-db-password.value}
   env: AUCTION_DATABASE_USER={auction-db-user.value}
@@ -45,6 +46,7 @@ auction: ContainerResource
   relationship: Reference identity
   relationship: Reference meetups
   relationship: Reference nats
+  relationship: Reference notifications-service-token
   relationship: WaitFor auction-db
   relationship: WaitFor identity
   relationship: WaitFor meetups
