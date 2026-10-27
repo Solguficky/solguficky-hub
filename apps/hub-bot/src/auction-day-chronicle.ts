@@ -70,13 +70,7 @@ export function dayChronicleParagraphs(
     case "nominated": {
       const { contested, darkHorse, duel } = chronicle;
       const sections = [
-        contested === undefined
-          ? undefined
-          : section(
-              contestedName,
-              contested.title,
-              contestedTail(contested.leaderChanges),
-            ),
+        contestedSection(contested),
         darkHorse === undefined
           ? undefined
           : section(
@@ -87,9 +81,7 @@ export function dayChronicleParagraphs(
                 window: "last-day",
               }),
             ),
-        duel === undefined
-          ? undefined
-          : section(duelName, duel.title, duelTail(duel.longestDuel)),
+        duelSection(duel),
       ].filter((paragraph) => paragraph !== undefined);
       return [
         dayChronicleWindow,
@@ -141,16 +133,8 @@ export function auctionChronicleParagraphs(
               growthRecord.title,
               `+${options.money(growthRecord.growth)} от старта`,
             ),
-        contested === undefined
-          ? undefined
-          : section(
-              contestedName,
-              contested.title,
-              contestedTail(contested.leaderChanges),
-            ),
-        duel === undefined
-          ? undefined
-          : section(duelName, duel.title, duelTail(duel.longestDuel)),
+        contestedSection(contested),
+        duelSection(duel),
       ].filter((paragraph) => paragraph !== undefined);
       return [
         auctionChronicleWindow,
@@ -163,6 +147,26 @@ export function auctionChronicleParagraphs(
       return _exhaustive;
     }
   }
+}
+
+function contestedSection(
+  contested: { title?: string; leaderChanges: number } | undefined,
+) {
+  return contested === undefined
+    ? undefined
+    : section(
+        contestedName,
+        contested.title,
+        contestedTail(contested.leaderChanges),
+      );
+}
+
+function duelSection(
+  duel: { title?: string; longestDuel: number } | undefined,
+) {
+  return duel === undefined
+    ? undefined
+    : section(duelName, duel.title, duelTail(duel.longestDuel));
 }
 
 function section(name: string, title: string | undefined, tail: string) {

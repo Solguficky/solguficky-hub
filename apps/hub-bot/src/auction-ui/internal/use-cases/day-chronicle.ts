@@ -55,15 +55,11 @@ async function chronicleOf(
       bidsBefore: Math.max(0, lot.totalBidCount - lot.bidCount),
     })),
   );
-  const titles = new Map<string, string | undefined>();
-  for (const lot of [contested, darkHorse, duel]) {
-    if (lot === undefined || titles.has(lot.lotId)) continue;
-    titles.set(lot.lotId, await titleOf(context, lot.lotId));
-  }
-  const titled = (lotId: string) => {
-    const title = titles.get(lotId);
-    return title === undefined ? {} : { title };
-  };
+  const titled = await titlesOf(context, [
+    contested?.lotId,
+    darkHorse?.lotId,
+    duel?.lotId,
+  ]);
   return {
     kind: "nominated",
     ...(contested === undefined
@@ -91,8 +87,25 @@ async function chronicleOf(
   };
 }
 
-// Название лота для номинации; общее со статистикой аукциона (PER-770).
-export async function titleOf(
+// Названия номинированных лотов, каждое одним чтением; общее со статистикой
+// аукциона (PER-770). Лот без названия — без поля: «лот без названия»
+// подставит оболочка.
+export async function titlesOf(
+  context: CommandContext,
+  lotIds: readonly (string | undefined)[],
+): Promise<(lotId: string) => { title?: string }> {
+  const titles = new Map<string, string | undefined>();
+  for (const lotId of lotIds) {
+    if (lotId === undefined || titles.has(lotId)) continue;
+    titles.set(lotId, await titleOf(context, lotId));
+  }
+  return (lotId) => {
+    const title = titles.get(lotId);
+    return title === undefined ? {} : { title };
+  };
+}
+
+async function titleOf(
   context: CommandContext,
   lotId: string,
 ): Promise<string | undefined> {

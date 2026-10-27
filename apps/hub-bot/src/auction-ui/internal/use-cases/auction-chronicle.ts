@@ -3,7 +3,7 @@ import { dayNominations } from "../../day-nominations.js";
 import type { AuctionChronicleView } from "../../ports.js";
 import type { AuctionScreenBody } from "../../screen.js";
 import type { CommandContext } from "./commands.js";
-import { titleOf } from "./day-chronicle.js";
+import { titlesOf } from "./day-chronicle.js";
 
 // Статистика аукциона (PER-770): счётчики всех торгов, рекорд роста и
 // номинации за весь аукцион глазами участника. «Спорнее всех» и «Эпичную
@@ -54,15 +54,11 @@ async function chronicleOf(
     view.lots.map((lot) => ({ ...lot, bidsBefore: 0 })),
   );
   const { growthRecord } = view;
-  const titles = new Map<string, string | undefined>();
-  for (const lotId of [growthRecord?.lotId, contested?.lotId, duel?.lotId]) {
-    if (lotId === undefined || titles.has(lotId)) continue;
-    titles.set(lotId, await titleOf(context, lotId));
-  }
-  const titled = (lotId: string) => {
-    const title = titles.get(lotId);
-    return title === undefined ? {} : { title };
-  };
+  const titled = await titlesOf(context, [
+    growthRecord?.lotId,
+    contested?.lotId,
+    duel?.lotId,
+  ]);
   return {
     kind: "counted",
     bidCount: view.bidCount,
