@@ -43,7 +43,10 @@ object ConsoleMapping {
       launchedStepWindows = auction.auction.launched.map(_.window).map(AuctionValues.stepWindow),
       // Сеты (ADR-073, п. 3; PER-509) — из агрегата, все, и неполные: организатор собирает сет постепенно и видит его
       // до второго лота. Снимок лота неполный сет не показывает.
-      lotSets = lotSets(auction.auction)
+      lotSets = lotSets(auction.auction),
+      // Сходка аукциона (PER-782): пульт открыт только тому, чьё право на эту сходку проверено, и по ней бот адресует
+      // объявление аукциона. Снимок аукциона и чтения участника её не называют.
+      meetupId = auction.auction.meetup.fold("")(_.value.toString)
     )
 
   /**
