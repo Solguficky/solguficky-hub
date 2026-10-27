@@ -257,7 +257,7 @@ object LotRoster {
         val (asked, questions) = settling(auction, ask(empty, auction.lots.toList))
         val (delivering, windows) = deliver(auction, asked, auction.launched)
         val (conveying, terms) = convey(auction, delivering, auction.periodTerms)
-        (conveying, questions ++ windows ++ terms)
+        (conveying, questions ++ clearingFirst(windows, terms))
       case AuctionState.Final(_, _, _, _, _) if Auction.lineupCompleted(auction) => (empty, List(LotInstruction.Finish))
       case current @ AuctionState.Final(_, _, _, _, _) => ask(empty, current.activeLot.toList)
       case _ => (empty, Nil)
@@ -293,7 +293,7 @@ object LotRoster {
         val (asked, questions) = ask(roster, silent)
         val (delivering, windows) = deliver(auction, asked, auction.launched)
         val (conveying, terms) = convey(auction, delivering, auction.periodTerms)
-        (conveying, questions ++ windows ++ terms)
+        (conveying, questions ++ clearingFirst(windows, terms))
       case AuctionState.Final(_, _, _, _, _) => ask(roster, silent)
       case _ => (roster, Nil)
     }
@@ -393,6 +393,19 @@ object LotRoster {
         )
       case _ => (roster, Nil)
     }
+
+  /**
+   * Порядок повторной доставки (PER-786): снятия условий раньше запущенных окон и заданных условий. Лот отбрасывает без
+   * записи окно, пересекающее его окно другого происхождения, а аукцион пустил новое окно, потому что прежние условия
+   * уже снял: дошедшее раньше снятия новое окно пропало бы у лота молча.
+   */
+  private def clearingFirst(windows: List[LotInstruction], terms: List[LotInstruction]): List[LotInstruction] = {
+    val (clears, sets) = terms.partition {
+      case _: LotInstruction.ClearTerms => true
+      case _ => false
+    }
+    clears ++ windows ++ sets
+  }
 
   /**
    * Правки условий лотов в периодах шлются тем же правилом, что запущенные окна: только в онлайн-торгах и только той

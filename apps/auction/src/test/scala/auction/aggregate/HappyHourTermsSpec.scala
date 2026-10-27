@@ -267,6 +267,20 @@ final class HappyHourTermsSpec extends AnyWordSpec with Matchers {
         List(op(21))
     }
 
+    // Лот отбросил бы окно, пересекающее ещё не снятое окно периода, и аукцион считал бы его доставленным.
+    "send a removal before a launched window after a restart" in {
+      val once = written(withPeriods(), set())
+      val cleared = applied(once, op(30), Auction.decide(once, clear(), now))
+      val launch = LaunchStepWindow(Some(hours(31)), hours(33), money(1), List(first), op(10))
+      val launched = applied(cleared, op(10), Auction.decide(cleared, launch, now, Set(first, second)))
+
+      val kinds = LotRoster.survey(launched)._2.collect {
+        case _: LotInstruction.ClearTerms => "clear"
+        case _: LotInstruction.AddWindow => "window"
+      }
+      kinds shouldBe List("clear", "window")
+    }
+
     "send again a change the lot did not answer and not one it answered" in {
       val once = written(withPeriods(), set())
       val (sent, _) = LotRoster.termsChanged(once, LotRoster.empty, op(20))
