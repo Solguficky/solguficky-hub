@@ -4,7 +4,8 @@
 
 - дифф PER-311 ([PR #366](https://github.com/Solguficky/solguficky-hub/pull/366)): `infra/apphost/AppHost/Configuration/Publish/HelmHookJob.cs`, `ClusterWorkload.cs`, `tools/apphost/check-chart.py`;
 - выкладки, откат и перезагрузка stage 06.10.2026;
-- проверочные команды, выполненные при записи разбора: helm 4.3.0 локально и учётка выкатки `test` на хосте.
+- проверочные команды, выполненные при записи разбора: helm 4.3.0 локально и учётка выкатки stage на хосте;
+- post-renderer уровней логов stage из ops-репозитория (PER-630, [solguficky-ops#17](https://github.com/Solguficky/solguficky-ops/pull/17)): `stage/helm-plugins/env-vars/`, `stage/deploy.sh`, проверенные `helm template` helm 4.3.0 23.10.2026.
 
 Как устроен сам кластер — в [k3s.md](../self-hosting/k3s.md). Правила stage — в [stage.md](../../development/stage.md), решение о рантайме — в [ADR-055](../../decisions/ADR-055-k3s-runtime-from-aspire-chart.md).
 
@@ -141,6 +142,44 @@ The Deployment "dryrun-recreate" is invalid: spec.strategy.rollingUpdate: Forbid
 
 Генератор Aspire такой Deployment и выдавал (PER-370). Поэтому у чарта своя проверка правил, `check-chart.py`. Её фикстуры доказывают, что каждое правило ловит свой дефект.
 
+### Post-renderer: правка манифестов после рендера
+
+Иногда среде нужно то, чего чарт не несёт. Stage на неделю теста получил уровни логов `Debug` (PER-630), а чарт генерирует AppHost, и переменной уровня в нём нет. Править чарт ради одной среды значит менять генератор и прод. Helm для этого даёт post-renderer: программу, которая получает на stdin все отрендеренные манифесты одним YAML-потоком и возвращает их на stdout, возможно изменёнными. Helm применяет то, что вернул post-renderer. Ближайший аналог из .NET — middleware в конвейере ответа: последний шаг перед отправкой, который видит и может переписать готовый результат.
+
+В Helm 3 post-renderer задавался путём к исполняемому файлу. В Helm 4 так больше нельзя: флаг принимает только имя плагина типа `postrenderer/v1`. Путь к файлу Helm 4 честно ищет как имя плагина и не находит:
+
+```text
+$ helm template hub chart --post-renderer ~/solguficky-ops/stage/helm-plugins/env-vars/render.sh
+Error: invalid argument ".../render.sh" for "--post-renderer" flag:
+  plugin: {Name:.../render.sh Type:postrenderer/v1} not found
+```
+
+Плагин — каталог с `plugin.yaml`. Ops-репозиторий держит свой в `stage/helm-plugins/env-vars/`:
+
+```yaml
+apiVersion: v1
+type: postrenderer/v1
+name: env-vars
+runtime: subprocess
+runtimeConfig:
+  platformCommand:
+    - command: ${HELM_PLUGIN_DIR}/render.sh
+```
+
+`runtime: subprocess` значит, что Helm запускает команду отдельным процессом и гонит манифесты через её stdin и stdout. `${HELM_PLUGIN_DIR}` Helm подставляет сам — это каталог плагина. Окружение вызывающего процесса доходит до плагина целиком, поэтому `stage/deploy.sh` передаёт файл переменных обычной переменной окружения:
+
+```bash
+HELM_PLUGINS="$here/helm-plugins" SOLGUFICKY_ENV_VARS="$env_dir/env.yaml" \
+helm upgrade --install "$release" "$chart" ... --post-renderer env-vars
+```
+
+Установка плагина не нужна. Helm ищет плагины в каталоге из `HELM_PLUGINS`, и подкаталог с `plugin.yaml` там уже плагин: `HELM_PLUGINS=stage/helm-plugins helm plugin list` показывает `env-vars postrenderer/v1`. `helm plugin install` для локального каталога только создаёт символическую ссылку в каталоге плагинов по умолчанию. Свой `HELM_PLUGINS` обходится без неё, и плагин едет на хост вместе с `stage/` одним `scp`.
+
+Две ловушки этой схемы проверены отказом:
+
+- **Бит исполнения.** Helm запускает `command` напрямую, без оболочки. `render.sh` без `+x` роняет выкладку: `fork/exec .../render.sh: permission denied`. Режим файла живёт в Git (`100755`), и правка файла из Windows по пути `\\wsl.localhost` его теряет — ревью PER-630 поймало ровно это.
+- **Отказ плагина — отказ выкладки.** Плагин, вышедший с ненулевым кодом, роняет рендер: `failed to invoke post-renderer plugin "env-vars": plugin "env-vars" exited with error`. Кластер при этом не тронут, потому что рендер идёт до применения. Поэтому `render.py` проверяет файл переменных строго: сервис без своего Deployment или без переменных — отказ, а не молчаливый пропуск.
+
 ## Урок
 
 - **Порядок, от которого зависит старт, выражается механизмом инструмента, а не надеждой.** Сервисы падают без durables, а Helm умеет «до релиза» только через pre-hook. В любом инструменте выкатки так же: миграция или подготовка инфраструктуры — отдельный шаг с ожиданием, а не гонка с приложением.
@@ -148,6 +187,7 @@ The Deployment "dryrun-recreate" is invalid: spec.strategy.rollingUpdate: Forbid
 - **Конфигурация, прочитанная при старте, требует сигнала на перезапуск.** Хеш конфигурации в шаблоне пода — общий приём: где процесс читает настройки один раз, изменение настроек должно менять то, за чем следит оркестратор.
 - **Откат — отдельное событие со своими правилами.** Что возвращает откат, проверяется отдельно от того, что ставит выкладка: здесь он не трогает ни базу, ни топологию шины.
 - **Рендер без ошибок ничего не говорит о схеме.** Между «шаблон собрался» и «API принял» стоит отдельная проверка: правила чарта и `--dry-run=server`.
+- **Разница сред — данные среды, а не ветка в общем артефакте.** Чарт один на прод и stage. Отличие stage едет файлом `envs/stage/env.yaml` и шагом после рендера, а прод без такого файла выкатывается без post-renderer. Тот же приём работает везде, где артефакт общий: overlay kustomize, трансформация конфигурации при публикации.
 
 ## Почему так, а не иначе
 
@@ -157,6 +197,9 @@ The Deployment "dryrun-recreate" is invalid: spec.strategy.rollingUpdate: Forbid
 - **`helm upgrade --atomic`.** Упавшая выкладка откатывалась бы сама. Но откат решает человек (ADR-055): автоматический откат стёр бы упавшую ревизию как улику и вернул бы старый образ на схему базы, которую тот, возможно, не понимает.
 - **Хеш из `.Values` вместо рендера шаблона.** Можно хешировать сами values (`toYaml .Values | sha256sum`). Тогда любая правка values, даже чужого сервиса, перекатывала бы все поды разом. `include` конкретного ConfigMap перекатывает только тот сервис, чья конфигурация изменилась.
 - **Умолчания лимитов в `values.yaml`.** Привычнее, но генератор Aspire туда своих ключей не пишет. Умолчание в шаблоне через `dig` держит одно описание формы сервиса в коде AppHost.
+- **Параметр уровня логов в чарте вместо post-renderer.** Чище: переменная видна в `values.yaml` и снимке чарта. Но это правка AppHost, генератора и чарта прода ради недели теста, а граница PER-630 — «чарт не меняется».
+- **`kubectl set env` после `helm upgrade`.** Без плагина. Цена — второй перекат каждого пода после каждой выкладки: изменение `spec.template` перекатывает под (раздел про `checksum/*` выше). И поле в объекте релиза, которого нет ни в чарте, ни в Git.
+- **kustomize как post-renderer.** Стандартный путь в документации Helm. Но под Helm 4 kustomize всё равно заворачивается в плагин, а семь патчей env на семь Deployment'ов длиннее файла `env.yaml` из семи пар «сервис — переменная». Выбран короткий `render.py`, читающий тот же файл, что видит человек.
 
 ## Схема
 
@@ -191,11 +234,14 @@ sequenceDiagram
 - [Helm: `helm upgrade`](https://helm.sh/docs/helm/helm_upgrade/) и [`helm rollback`](https://helm.sh/docs/helm/helm_rollback/) — `--wait`, `--atomic`, что делает откат.
 - [Kubernetes: Deployments, Strategy](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/#strategy) — `Recreate` против `RollingUpdate` и то, что перекат запускается только сменой `spec.template`.
 - [Go: text/template](https://pkg.go.dev/text/template) — синтаксис действий и строковые литералы, в том числе в обратных кавычках.
+- [Helm 4: Overview, Breaking Changes](https://helm.sh/docs/overview/) — post-renderer теперь только плагином, путь к исполняемому файлу больше не принимается.
+- [Helm: Post-renderer plugin tutorial](https://helm.sh/docs/plugins/developer/tutorial-postrenderer-plugin/) — `plugin.yaml` с `type: postrenderer/v1`, `runtime: subprocess` и `${HELM_PLUGIN_DIR}`.
+- [Helm: Plugins](https://helm.sh/docs/topics/plugins/) — раскладка `$HELM_PLUGINS/<имя>/plugin.yaml` и то, что Helm находит плагины по каталогу.
 - [ADR-055](../../decisions/ADR-055-k3s-runtime-from-aspire-chart.md) и [ADR-050](../../decisions/ADR-050-jetstream-topology-owned-by-platform.md) — откуда требования: чарт из AppHost, откат решает человек, топологией владеет платформа.
 
 ## Проверь себя
 
-Команды на хосте — под `ops` с `KUBECONFIG=~/.kube/test.yaml`. Локальные — helm 4.3.0.
+Команды на хосте — под `ops` с `KUBECONFIG=~/.kube/stage.yaml`. Локальные — helm 4.3.0.
 
 1. **Входят ли hook'и в релиз?** `helm get manifest hub | grep -c jetstream-topology` — `0`; `helm get hooks hub | grep "^# Source"` — ConfigMap, Secret и Job топологии.
 2. **В каком порядке Helm создал входы и Job?** `kubectl get job/jetstream-topology configmap/jetstream-topology-files -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp` — ConfigMap на секунду раньше Job.
@@ -203,4 +249,8 @@ sequenceDiagram
 4. **Перекатит ли под правка values?** На игрушечном чарте с аннотацией `checksum/config`: `helm template t . --set k=a | grep checksum` и то же с `k=b` — хеши разные.
 5. **Почему `dig`, а не `.Values.resources…`?** `helm template` с `{{ .Values.resources.hub_bot.memoryLimit }}` без ключа `resources` падает с `nil pointer evaluating interface {}.hub_bot`, а `dig` возвращает умолчание.
 6. **Поймает ли `helm lint` Deployment с `Recreate` и `rollingUpdate`?** Нет, `0 chart(s) failed`. Ловит API: `kubectl apply --dry-run=server -f …` — `spec.strategy.rollingUpdate: Forbidden`.
-7. **Удалит ли `helm uninstall` Job топологии?** Не проверялось: релиз stage живой, а второй релиз чарта хаба не влезет в квоту `test`. По документации — нет: «resources that a hook creates are not tracked or managed as part of the release». Проверь сам на игрушечном чарте с одним hook-ConfigMap: `helm install tmp ./tiny`, `helm uninstall tmp`, затем `kubectl get configmap` — hook-объект остаётся.
+7. **Удалит ли `helm uninstall` Job топологии?** Не проверялось: релиз stage живой, а второй релиз чарта хаба не влезет в квоту `stage`. По документации — нет: «resources that a hook creates are not tracked or managed as part of the release». Проверь сам на игрушечном чарте с одним hook-ConfigMap: `helm install tmp ./tiny`, `helm uninstall tmp`, затем `kubectl get configmap` — hook-объект остаётся.
+8. **Примет ли Helm 4 путь к скрипту в `--post-renderer`?** `helm template hub chart --post-renderer ./render.sh` — `plugin: {Name:./render.sh Type:postrenderer/v1} not found`, код 1.
+9. **Найдёт ли Helm плагин без `helm plugin install`?** `HELM_PLUGINS=~/solguficky-ops/stage/helm-plugins helm plugin list` — строка `env-vars 0.1.0 postrenderer/v1`. Без `HELM_PLUGINS` тот же `--post-renderer env-vars` — `not found`.
+10. **Что будет без бита исполнения?** Скопируй каталог плагинов, сними `+x` с `render.sh` и отрендерь с ним — `fork/exec …/render.sh: permission denied`, код 1.
+11. **Попадает ли результат post-renderer в ревизию, и вернёт ли его откат?** Не проверялось: для этого нужен `helm get manifest hub` на хосте stage, а `bin/stage` его не выдаёт. Проверь сам под `ops` на хосте: `helm get manifest hub -n stage | grep -c LOG_LEVEL` — ожидается 7, по числу сервисов в `envs/stage/env.yaml`, если Helm хранит в ревизии уже переписанные манифесты.

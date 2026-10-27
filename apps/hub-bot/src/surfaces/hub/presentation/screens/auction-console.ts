@@ -5,12 +5,18 @@ import {
   acceptsLots,
   activeLot,
   heldLots,
+  launchableLots,
+  paymentTermDays,
+  paymentTermInDays,
   rafflePrizeLimit,
+  sortedLots,
   windowLimit,
   windowPrint,
 } from "../../application/auction-console.js";
 import { maxLotRubles } from "../../application/lot-form.js";
+import { layoutEditable } from "../../application/lot-layout.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
+import { prizeChangeable } from "../../application/raffle-prize-change.js";
 import type {
   AuctionConsoleView,
   AuctionWeek,
@@ -19,8 +25,11 @@ import type {
   ConsoleSort,
   ConsoleSortMetric,
   FinalAskError,
+  FinalTimeAskError,
+  LaunchDraft,
   LineupPick,
   LotAmount,
+  PaymentTermAskError,
   RaffleAskError,
   RafflePrizeAskError,
   StepWindow,
@@ -34,6 +43,8 @@ import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleAskData,
+  consoleCancelConfirmData,
+  consoleCancelData,
   consoleCloseConfirmData,
   consoleCloseData,
   consoleConfirmData,
@@ -41,27 +52,43 @@ import {
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
+  consoleFinalTimeData,
+  consoleFinalTimeRemoveData,
+  consoleInvoicesData,
+  consoleLayoutData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
   consoleMarkData,
   consoleNextLotData,
   consoleOpenData,
+  consolePaymentTermData,
   consoleRaffleData,
+  consoleRafflePrizeChangeData,
   consoleRafflePrizeData,
   consoleRafflePrizeRemoveData,
   consoleRaffleRemoveData,
+  consoleRaffleWinnerData,
   consoleStartFinalData,
   consoleViewData,
+  consoleVisibilityData,
   consoleWeekData,
   consoleWindowAskData,
   consoleWindowData,
+  consoleWindowLaunchData,
+  consoleWindowLaunchGoData,
+  consoleWindowLaunchLotData,
+  consoleWindowLaunchPageData,
   consoleWindowLotData,
   consoleWindowRemoveData,
   consoleWindowsData,
   defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
+import { invoicesLabel } from "./auction-invoices.js";
+import { rafflePrizeChangeLabel } from "./auction-raffle-prize-change.js";
+import { raffleWinnerLabel } from "./auction-raffle-winner.js";
+import { auctionCancelConsequence } from "./auction-stage.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -77,6 +104,7 @@ import {
   screenText,
   toAuctionRoot,
   toggleLabel,
+  withAccount,
   withNav,
   withPager,
 } from "./kit.js";
@@ -125,7 +153,7 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-not-scheduled":
     "Сначала задай сроки недели. Без них неделю не открыть.",
   "week-frozen":
-    "Онлайн-неделя уже открыта. Сроки, финал, счастливые часы и розыгрыш больше не меняются.",
+    "Онлайн-неделя уже открыта. Сроки, финал, счастливые часы, розыгрыш и срок оплаты больше не меняются.",
   "week-needed": "Сначала задай сроки недели.",
   "raffle-saved": "Момент розыгрыша сохранён.",
   "raffle-removed": "Розыгрыш убран. Неделя пройдёт без него.",
@@ -133,6 +161,7 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "prize-removed": "Приз розыгрыша убран. Победитель получит весть без приза.",
   "prize-without-raffle":
     "Приз задаётся у розыгрыша: сначала нажми «Розыгрыш» и назови момент.",
+  "payment-term-saved": "Срок оплаты счёта сохранён.",
   marked: "Лот отмечен для финала.",
   unmarked: "Отметка финала снята.",
   "already-marked": "Лот уже отмечен для финала.",
@@ -147,6 +176,25 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-ended": "Конец недели уже прошёл. Задай новые сроки.",
   "no-lots-to-open": "Нет лотов с ценой и шагом. Открывать нечего.",
   "discard-too-late": "Онлайн-неделя уже открыта. Удалить аукцион нельзя.",
+  "cancel-too-early":
+    "Онлайн-неделя ещё не открыта. Отменять нечего: аукцион можно удалить.",
+  "cancel-too-late": "Аукцион уже закончился. Отменять нечего.",
+  "already-cancelled": "Аукцион уже отменён.",
+  "auction-cancelled":
+    "Аукцион отменён. Проданные лоты остались проданными, остальные сняты с торгов.",
+  "meetup-hidden":
+    "Сходка скрыта. Онлайн-неделя откроется, когда сходку снова опубликуют.",
+  published: "Аукцион опубликован. Участники видят его и лоты.",
+  unpublished: "Аукцион снят с публикации. Участники его не видят.",
+  "visibility-too-late":
+    "Онлайн-неделя уже открыта. Аукцион виден участникам, снять его нельзя.",
+  // Ориентировочное время финала (PER-663): выставлено, снято или уже поздно.
+  "final-time-saved": "Время финала сохранено.",
+  "final-time-removed": "Время финала убрано. Анонса больше нет.",
+  "final-already-started":
+    "Финал уже начался. Время финала больше не меняется.",
+  "auction-already-finished": "Аукцион уже завершён. Время финала не меняется.",
+  "auction-already-cancelled": "Аукцион отменён. Время финала не меняется.",
   "final-started": "Финал начат. Открой первый лот.",
   "lineup-not-frozen": "Состав финала ещё не объявлен. Начать финал нельзя.",
   "not-in-final": "Финал не идёт. Открывать лоты нельзя.",
@@ -187,6 +235,21 @@ function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
       return week?.rafflePrize === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(`Приз розыгрыша сохранён: ${week.rafflePrize}`);
+    // Срок оплаты (PER-722) называется тем же, чем строкой пульта.
+    case "payment-term-saved":
+      return week?.paymentTermSeconds === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(
+            `Срок оплаты счёта сохранён: ${paymentTermText(week.paymentTermSeconds)}`,
+          );
+    // Время финала (PER-663) называется тем же, чем строкой пульта: момент
+    // анонса, а не обещание, что финал начнётся ровно тогда.
+    case "final-time-saved":
+      return view.console.finalAt === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(
+            `Время финала сохранено: ${moment(view.console.finalAt, view)}`,
+          );
     case "another-auction-active":
       return view.holder === undefined
         ? outcomeText(consoleNoteText[note])
@@ -251,10 +314,12 @@ function finalLine(week: AuctionWeek): string {
 }
 
 // Окна видны в снимке пульта строкой (PER-504); сами окна — на своём экране.
-function windowsLines(week: AuctionWeek): string[] {
-  return week.windows.length === 0
-    ? []
-    : [`Счастливые часы: ${windowsLabel(week.windows.length)}.`];
+// Окна видны в снимке пульта строкой (PER-504); запущенные по ходу торгов
+// (PER-615) считаются с объявленными — пульт показывает их рядом.
+function windowsLines(console: AuctionConsoleView): string[] {
+  const count =
+    (console.week?.windows.length ?? 0) + console.launchedWindows.length;
+  return count === 0 ? [] : [`Счастливые часы: ${windowsLabel(count)}.`];
 }
 
 // Розыгрыш (PER-593) виден строкой всегда: без момента у участников нет
@@ -272,6 +337,10 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
     case "closing":
     case "awaiting-beacon":
       return "Розыгрыш: регистрация закрыта, жеребьёвка идёт.";
+    // Пул ждёт итога, который назовёт администратор (PER-727): вход в итог —
+    // ряд «Итог розыгрыша» пульта.
+    case "awaiting-winner":
+      return `Розыгрыш: регистрация закрыта, билетов: ${raffle.tickets.length} — ждёт итога.`;
     case "drawn": {
       const tickets = `билетов: ${raffle.tickets.length}`;
       const number = raffle.reveal?.winningTicket;
@@ -289,6 +358,8 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
       return "Розыгрыш: не состоялся, никто не зарегистрировался.";
     case "not-held":
       return "Розыгрыш: не проводился, неделя открылась после закрытия регистрации.";
+    case "cancelled":
+      return "Розыгрыш: отменён вместе с аукционом.";
     default: {
       const _exhaustive: never = raffle.status;
       return _exhaustive;
@@ -298,8 +369,49 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
 
 // Приз розыгрыша (PER-649) — строкой под розыгрышем: его видят участники на
 // экране розыгрыша, а победитель — в вести. Без приза строки нет.
-function rafflePrizeLines(week: AuctionWeek): string[] {
-  return week.rafflePrize === undefined ? [] : [`Приз: ${week.rafflePrize}`];
+// После открытия недели приз — у розыгрыша: он скопировал его из сроков и
+// меняется уже там (PER-737). Розыгрыш не прочитан — приз из сроков.
+function rafflePrizeLines(
+  week: AuctionWeek,
+  view: ConsoleScreenView,
+): string[] {
+  const prize = view.console.raffle?.prize ?? week.rafflePrize;
+  return prize === undefined ? [] : [`Приз: ${prize}`];
+}
+
+// Розыгрыш и прогнозы числами (PER-734), пока идёт онлайн-неделя: по ним
+// организаторы подбирают призы. Числа нет — строки нет.
+function participationLines(console: AuctionConsoleView): string[] {
+  const lines: string[] = [];
+  const registrations = console.raffleRegistrations;
+  if (registrations !== undefined) {
+    lines.push(
+      registrations === 0
+        ? "Розыгрыш: пока никто не зарегистрировался."
+        : `Розыгрыш: зарегистрировались ${registrations}.`,
+    );
+  }
+  const tally = console.predictionTally;
+  if (tally !== undefined) {
+    lines.push(
+      tally.participants === 0
+        ? "Прогнозы: пока ни одного."
+        : `Прогнозы: ${counted(tally.participants, ["участник", "участника", "участников"])}, ${counted(tally.answers, ["ответ", "ответа", "ответов"])}.`,
+    );
+  }
+  return lines;
+}
+
+// Срок оплаты счёта (PER-722): сколько дней у победителя лота на оплату от
+// продажи. Auction отдаёт его всегда; без поля строки нет.
+function paymentTermText(seconds: number): string {
+  return `${paymentTermInDays(seconds)} дн.`;
+}
+
+function paymentTermLines(week: AuctionWeek): string[] {
+  return week.paymentTermSeconds === undefined
+    ? []
+    : [`Срок оплаты: ${paymentTermText(week.paymentTermSeconds)}`];
 }
 
 // Розыгрыш после онлайн-торгов: итог виден, пока пульт открыт (PER-618).
@@ -307,7 +419,7 @@ function raffleLines(view: ConsoleScreenView): string[] {
   const week = view.console.week;
   return week?.raffleClosesAt === undefined
     ? []
-    : [raffleLine(week, view), ...rafflePrizeLines(week)];
+    : [raffleLine(week, view), ...rafflePrizeLines(week, view)];
 }
 
 function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
@@ -317,20 +429,76 @@ function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
   return `Онлайн-неделя: с ${moment(week.opensAt, view)} до ${moment(week.closesAt, view)}.`;
 }
 
+// Видимость до торгов (PER-673): пульт называет её и у видимого аукциона,
+// как карточка сходки у управляющего, — после открытия недели аукцион виден
+// всегда, и строки нет.
+function visibilityLine(console: AuctionConsoleView): string {
+  return console.hidden
+    ? "Скрыт от участников: они его не видят, пока не опубликуешь."
+    : "Виден участникам.";
+}
+
+// Ориентировочное время финала (PER-663): анонс трансляции, а не условие
+// торгов. Пульт называет его, пока финал впереди, — иначе анонс уже не
+// меняется, и называть его незачем.
+function finalTimeLines(
+  console: AuctionConsoleView,
+  view: ConsoleScreenView,
+): string[] {
+  if (console.status === "cancelled") return [];
+  if (console.finalAt !== undefined) {
+    return [`Время финала: ${moment(console.finalAt, view)}.`];
+  }
+  if (console.week?.final !== true) return [];
+  return ["Время финала: не выставлено."];
+}
+
+// Время финала меняется, пока финал впереди. Кнопка «Время финала» стоит
+// только у аукциона с финалом: анонсировать нечего. А снятие — пока анонс на
+// месте: выключенный финал оставляет время у аукциона, и убрать его больше
+// нечем (PER-663).
+function finalTimeAhead(console: AuctionConsoleView): boolean {
+  return (
+    console.status !== "lineup-frozen" &&
+    console.status !== "final" &&
+    console.status !== "finished" &&
+    console.status !== "cancelled"
+  );
+}
+
+function finalTimeEditable(console: AuctionConsoleView): boolean {
+  return console.week?.final === true && finalTimeAhead(console);
+}
+
+function finalTimeRemovable(console: AuctionConsoleView): boolean {
+  return console.finalAt !== undefined && finalTimeAhead(console);
+}
+
 function statusLines(view: ConsoleScreenView): string[] {
   const { status, week } = view.console;
   switch (status) {
     case "draft":
-      return ["Сроки недели не заданы."];
+      return [
+        visibilityLine(view.console),
+        "Сроки недели не заданы.",
+        ...finalTimeLines(view.console, view),
+      ];
     case "scheduled":
       return week === undefined
-        ? ["Сроки недели не заданы."]
+        ? [
+            visibilityLine(view.console),
+            "Сроки недели не заданы.",
+            ...finalTimeLines(view.console, view),
+          ]
         : [
+            visibilityLine(view.console),
             weekLine(week, view),
             finalLine(week),
-            ...windowsLines(week),
+            ...finalTimeLines(view.console, view),
+            ...windowsLines(view.console),
             raffleLine(week, view),
-            ...rafflePrizeLines(week),
+            ...rafflePrizeLines(week, view),
+            ...paymentTermLines(week),
           ];
     case "prebidding":
       return [
@@ -341,27 +509,38 @@ function statusLines(view: ConsoleScreenView): string[] {
           ? []
           : [
               finalLine(week),
-              ...windowsLines(week),
+              ...finalTimeLines(view.console, view),
+              ...windowsLines(view.console),
               raffleLine(week, view),
-              ...rafflePrizeLines(week),
+              ...rafflePrizeLines(week, view),
+              ...participationLines(view.console),
+              ...paymentTermLines(week),
             ]),
       ];
     case "settling":
       return [
         "Общий дедлайн прошёл: аукцион ждёт закрытия лотов.",
+        ...finalTimeLines(view.console, view),
         ...raffleLines(view),
       ];
     case "break":
       return [
         "Онлайн-торги закончились: перерыв перед финалом.",
+        ...finalTimeLines(view.console, view),
         ...raffleLines(view),
       ];
     case "lineup-frozen":
-      return ["Состав финала объявлен."];
+      return ["Состав финала объявлен.", ...finalTimeLines(view.console, view)];
     case "final":
-      return ["Идёт финал."];
+      return ["Идёт финал.", ...finalTimeLines(view.console, view)];
     case "finished":
-      return ["Аукцион завершён.", ...raffleLines(view)];
+      return [
+        "Аукцион завершён.",
+        ...finalTimeLines(view.console, view),
+        ...raffleLines(view),
+      ];
+    case "cancelled":
+      return ["Аукцион отменён: проданные лоты остались проданными."];
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
@@ -373,6 +552,28 @@ function statusLines(view: ConsoleScreenView): string[] {
 // показывает состав в порядке выхода, а не реестр, и торги текущего лота.
 function inFinal(console: AuctionConsoleView): boolean {
   return console.status === "lineup-frozen" || console.status === "final";
+}
+
+// Пульт финала — экран ведущего, и счета там не показываются: к ним
+// возвращаются в перерыве и после конца аукциона.
+function invoicesShown(console: AuctionConsoleView): boolean {
+  return (
+    console.status === "settling" ||
+    console.status === "break" ||
+    console.status === "finished" ||
+    console.status === "cancelled"
+  );
+}
+
+// Приз розыгрыша меняется с открытия недели, пока итога нет (PER-737).
+// Прочитанный розыгрыш решает сам; без него ряд стоит только в онлайн-торгах:
+// после них пульт читает розыгрыш всегда, и нет его — нет и розыгрыша.
+function prizeChangeShown(console: AuctionConsoleView): boolean {
+  if (console.week?.raffleClosesAt === undefined) return false;
+  if (console.raffle !== undefined) {
+    return console.status !== "cancelled" && prizeChangeable(console.raffle);
+  }
+  return console.status === "prebidding";
 }
 
 // Финал идёт, а ведущий ещё не открыл ни одного лота: активного нет, и ни
@@ -456,6 +657,9 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
   } else {
     keyboard.text("Открыть следующий лот", consoleNextLotData(auction));
   }
+  // Финал — тоже торги: отмена доступна и ведущему (ADR-047, дополнение
+  // 2026-10-12), отдельным рядом над «Обновить» — рядов у финала мало.
+  withCancel(nextRow(keyboard), console);
   nextRow(keyboard).text(refreshLabel, consoleViewData(auction));
   const trading = tradingLines(console);
   return {
@@ -521,7 +725,7 @@ function windowsLabel(count: number): string {
   return counted(count, ["окно", "окна", "окон"]);
 }
 
-function counted(
+export function counted(
   count: number,
   [one, few, many]: readonly [string, string, string],
 ): string {
@@ -648,6 +852,14 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     if (view.note === "final-started" && noLotOpened(console)) {
       keyboard.text("Открыть первый лот", consoleNextLotData(auction));
     }
+    // Слот торгов занят (PER-606): исход ведёт и к идущему аукциону — в его
+    // корень, а не в пульт: пульт чужого аукциона спросит своё право.
+    if (view.note === "another-auction-active" && view.holder !== undefined) {
+      keyboard.text(
+        "Идущий аукцион",
+        toAuctionRoot(view.holder.auctionId).data,
+      );
+    }
     return {
       id: "outcome",
       text: noteText(view, view.note),
@@ -680,21 +892,65 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     .row();
   const editable = console.status === "draft" || console.status === "scheduled";
   if (editable) {
-    keyboard.text("Сроки недели", consoleWeekData(auction));
+    // Видимость до торгов (PER-673) — парой со сроками и с целевым
+    // состоянием: свой ряд вывел бы запланированный аукцион с розыгрышем,
+    // призом и листанием за двенадцать рядов.
+    keyboard
+      .text("Сроки недели", consoleWeekData(auction))
+      .text(
+        console.hidden ? "Опубликовать" : "Снять с публикации",
+        consoleVisibilityData(auction, console.hidden),
+      );
   }
   const week = console.week;
   const scheduled =
     console.status === "scheduled" &&
     week?.opensAt !== undefined &&
     week.closesAt !== undefined;
-  const windowsShown =
-    scheduled ||
-    (console.status === "prebidding" && (week?.windows.length ?? 0) > 0);
+  // Ориентировочное время финала (PER-663): рядом с настройкой недели, а в
+  // онлайн-торгах и перерыве, где переключателя финала нет, — сразу после
+  // строк настройки. Снятие стоит в том же ряду: два «🗑» в один ряд не
+  // встают, а пульт упирается в потолок рядов.
+  const finalTimeSet = finalTimeEditable(console);
+  // Смена приза идущего розыгрыша (PER-737) встаёт в ряд времени финала, где
+  // он есть: пульт онлайн-торгов с окнами и полной страницей лотов уже стоит
+  // в потолке рядов. Без времени финала — свой ряд, и он помещается.
+  const prizeChange = prizeChangeShown(console);
+  if (finalTimeSet || finalTimeRemovable(console)) {
+    nextRow(keyboard);
+    if (finalTimeSet) {
+      keyboard.text("Время финала", consoleFinalTimeData(auction));
+    }
+    if (finalTimeRemovable(console)) {
+      keyboard.text(
+        removeLabel("Убрать время финала"),
+        consoleFinalTimeRemoveData(auction),
+      );
+    }
+    if (prizeChange) {
+      keyboard.text(
+        rafflePrizeChangeLabel,
+        consoleRafflePrizeChangeData(auction),
+      );
+    }
+  } else if (prizeChange) {
+    nextRow(keyboard).text(
+      rafflePrizeChangeLabel,
+      consoleRafflePrizeChangeData(auction),
+    );
+  }
+  const windowsShown = scheduled || console.status === "prebidding";
   // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд
   // есть: в онлайн-торгах с окнами и восемью лотами отдельный ряд вывел бы
   // пульт за двенадцать. Без окон — сразу под сортировкой.
+  // «Порядок» ленты (PER-719) встаёт в конец ряда «Сводки дня»: этот ряд есть
+  // в каждом состоянии до финала, а пульт онлайн-торгов стоит в потолке
+  // рядов, и свой ряд вывел бы его за тринадцать.
+  const layout = layoutEditable(console.status);
   if (!windowsShown) {
     nextRow(keyboard).text("Сводка дня", consoleDaySummaryData(auction));
+    withCancel(keyboard, console);
+    if (layout) keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (scheduled) {
     nextRow(keyboard).text(
@@ -703,8 +959,13 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     );
     nextRow(keyboard)
       .text("Счастливые часы", consoleWindowsData(auction))
-      .text("Сводка дня", consoleDaySummaryData(auction));
-    nextRow(keyboard).text("Розыгрыш", consoleRaffleData(auction));
+      .text("Сводка дня", consoleDaySummaryData(auction))
+      .text(layoutLabel, consoleLayoutData(auction));
+    // Срок оплаты счёта (PER-722) — парой с «Розыгрышем»: свой ряд вывел бы
+    // пульт с призом за потолок рядов.
+    nextRow(keyboard)
+      .text("Розыгрыш", consoleRaffleData(auction))
+      .text("Срок оплаты", consolePaymentTermData(auction));
     if (week.raffleClosesAt !== undefined) {
       // Приз живёт у розыгрыша (PER-649): без момента кнопки нет — Auction
       // приз без розыгрыша не принимает.
@@ -724,20 +985,30 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       }
     }
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
-  } else if (
-    console.status === "prebidding" &&
-    (week?.windows.length ?? 0) > 0
-  ) {
-    // После открытия окна только видны: править их уже нельзя.
+  } else if (console.status === "prebidding") {
+    // После открытия окна только видны: править их уже нельзя. Ряд есть и
+    // без окон: в нём запускается окно по ходу торгов (PER-615).
     nextRow(keyboard)
       .text("Счастливые часы", consoleWindowsData(auction))
       .text("Сводка дня", consoleDaySummaryData(auction));
+    withCancel(keyboard, console);
+    keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (editable) {
     nextRow(keyboard).text(
       removeLabel("Удалить аукцион"),
       consoleDiscardData(auction),
     );
+  }
+  // Итог розыгрыша вручную (PER-727): ряд стоит, пока пул ждёт победителя.
+  if (console.raffle?.status === "awaiting-winner") {
+    nextRow(keyboard).text(raffleWinnerLabel, consoleRaffleWinnerData(auction));
+  }
+  // Счета (PER-321): лоты продаются с общего дедлайна онлайн-недели, и с него
+  // же у аукциона появляются счета. Отменённый аукцион их сохраняет: проданный
+  // лот остаётся проданным.
+  if (invoicesShown(console)) {
+    nextRow(keyboard).text(invoicesLabel, consoleInvoicesData(auction));
   }
   if (console.status === "break" && heldLots(console).length > 0) {
     nextRow(keyboard).text(
@@ -836,6 +1107,13 @@ export function weekConfirmScreen(confirm: {
         : escapeHtml(
             `Без цены и шага останутся без торгов: ${lotsLabel(confirm.idle)}.`,
           ),
+      // Открытие публикует скрытый аукцион (PER-609), и подтверждение
+      // говорит об этом заранее (PER-707). У опубликованного строки нет.
+      confirm.console.hidden
+        ? escapeHtml(
+            "Аукцион сейчас скрыт: с открытием недели участники увидят его и лоты.",
+          )
+        : undefined,
       escapeHtml(
         "Отменить открытие нельзя: сроки, финал и состав лотов после него не меняются.",
       ),
@@ -995,6 +1273,59 @@ export function discardConfirmScreen(confirm: {
   };
 }
 
+// «Отменить аукцион» (PER-606) — в ряду «Сводки дня» пульта: в онлайн-торгах
+// с восемью лотами для финала отдельный ряд вывел бы пульт за двенадцать, как
+// «Сводку дня» рядом со «Счастливыми часами». Без знака: «🗑» — у «Убрать» и
+// «Удалить», а отмена, как «Отменить сходку», знака не несёт.
+function withCancel(keyboard: InlineKeyboard, console: AuctionConsoleView) {
+  if (!cancellable(console)) return;
+  keyboard.text(cancelLabel, consoleCancelData(uuidToToken(console.auctionId)));
+}
+
+const cancelLabel = "Отменить аукцион";
+
+// Вход в «Порядок и разделы» ленты (PER-719): короткая подпись, потому что
+// кнопка делит ряд со «Сводкой дня».
+const layoutLabel = "Порядок";
+
+// Отменить аукцион можно с открытия онлайн-недели до его конца (ADR-047,
+// дополнение 2026-10-12); до неё действует удаление.
+function cancellable(console: AuctionConsoleView): boolean {
+  return (
+    console.status !== "draft" &&
+    console.status !== "scheduled" &&
+    console.status !== "finished" &&
+    console.status !== "cancelled"
+  );
+}
+
+/**
+ * Подтверждение отмены аукциона после старта торгов. Ключ команды рождён
+ * здесь и едет в «Да»: повторное нажатие Auction примет как повтор.
+ */
+export function cancelConfirmScreen(confirm: {
+  auctionId: string;
+  opId: string;
+  sold: number;
+}): ShownScreen {
+  const auction = uuidToToken(confirm.auctionId);
+  return {
+    id: "cancel-confirm",
+    text: screenText(
+      "Отменить аукцион?",
+      escapeHtml(auctionCancelConsequence(confirm.sold)),
+      escapeHtml("Отменить нельзя: нового аукциона у этой сходки не будет."),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, отменить аукцион",
+      yesData: consoleCancelConfirmData(auction, uuidToToken(confirm.opId)),
+      noData: consoleViewData(auction),
+      irreversible: true,
+    }),
+    format: "HTML",
+  };
+}
+
 /**
  * Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо,
  * без ставок, закрытие без продажи. Ключ закрытия рождён здесь и едет в «Да»:
@@ -1008,6 +1339,7 @@ export function closeConfirmScreen(confirm: {
   title?: string | undefined;
   price?: LotAmount | undefined;
   leaderName?: string | undefined;
+  leaderUsername?: string | undefined;
   changed?: true | undefined;
 }): ShownScreen {
   const auction = uuidToToken(confirm.auctionId);
@@ -1015,7 +1347,7 @@ export function closeConfirmScreen(confirm: {
   const buyer =
     confirm.leaderName === undefined
       ? ""
-      : `, покупатель — ${confirm.leaderName}`;
+      : `, покупатель — ${withAccount(confirm.leaderName, confirm.leaderUsername)}`;
   return {
     id: "final-close-confirm",
     text: screenText(
@@ -1058,14 +1390,19 @@ export function closedScreen(closed: {
   auctionId: string;
   title?: string | undefined;
   closure:
-    | { kind: "sold"; price: LotAmount; buyerName?: string | undefined }
+    | {
+        kind: "sold";
+        price: LotAmount;
+        buyerName?: string | undefined;
+        buyerUsername?: string | undefined;
+      }
     | { kind: "unsold" };
   finished?: { soldLots: number; total: LotAmount } | undefined;
 }): ShownScreen {
   const { closure, finished } = closed;
   const buyer =
     closure.kind === "sold" && closure.buyerName !== undefined
-      ? `, покупатель — ${closure.buyerName}`
+      ? `, покупатель — ${withAccount(closure.buyerName, closure.buyerUsername)}`
       : "";
   const toConsole = consoleViewData(uuidToToken(closed.auctionId));
   // Последний лот состава завершает аукцион (PER-639): исход говорит об этом
@@ -1251,6 +1588,56 @@ export function rafflePrizeQuestionText(prize: string | undefined): string {
   ].join("\n");
 }
 
+/** Причина отказа ответу о сроке оплаты счёта (PER-722). */
+export const paymentTermAskErrorText: Record<PaymentTermAskError, string> = {
+  "payment-term-format":
+    "Не получилось разобрать срок. Нужно целое число дней, например: 1.",
+  "payment-term-range": `Срок оплаты — от ${paymentTermDays.min} до ${paymentTermDays.max} дней.`,
+};
+
+export const paymentTermPrompt = `Сколько дней у победителя лота на оплату счёта от продажи? Целое число от ${paymentTermDays.min} до ${paymentTermDays.max}.\nНапример: 1`;
+
+/**
+ * Вопрос о сроке оплаты счёта (PER-722): текущий срок в том же виде, в каком
+ * его вводят, затем образец.
+ */
+export function paymentTermQuestionText(days: number | undefined): string {
+  return [
+    ...(days === undefined ? [] : [`Сейчас: ${days}`]),
+    paymentTermPrompt,
+  ].join("\n");
+}
+
+/** Причина отказа ответу о времени финала (PER-663). */
+export const finalTimeAskErrorText: Record<FinalTimeAskError, string> = {
+  "final-time-format":
+    "Не получилось разобрать момент. Нужны дата и время: ДД.ММ.ГГГГ ЧЧ:ММ.",
+  "final-time-moment":
+    "Такого времени нет по времени сообщества: в этот час переводили часы.",
+  "final-time-past": "Этот момент уже прошёл.",
+};
+
+export const finalTimePrompt =
+  "Когда ждать финал в зале? Дата и время по времени сообщества — анонс, а не обещание.\nНапример: 31.10.2026 19:00";
+
+/**
+ * Вопрос об ориентировочном времени финала (PER-663): текущее время в том
+ * же виде, в каком его вводят, затем образец.
+ */
+export function finalTimeQuestionText(
+  timeZone: string,
+  finalAt: string | undefined,
+): string {
+  return [
+    ...(finalAt === undefined
+      ? []
+      : [
+          `Сейчас: ${formatLocalMoment(communityLocalTime(finalAt, timeZone))}`,
+        ]),
+    finalTimePrompt,
+  ].join("\n");
+}
+
 // «Счастливые часы» (PER-504): окна сниженного шага онлайн-недели. Окно
 // задаётся до открытия недели одним ответом и рождается со всеми лотами
 // реестра; лишние организатор снимает на экране окна (решение владельца
@@ -1266,6 +1653,9 @@ export type WindowsScreenView = {
   note?: WindowNote | undefined;
   timeZone: string;
   today: CommunityDay;
+  // Запуск окна доступен (PER-615): идут онлайн-торги и общий дедлайн не
+  // прошёл. Решает край по часам бота — статус аукциона может отставать.
+  launch?: boolean | undefined;
 };
 
 function windowsOf(console: AuctionConsoleView): readonly StepWindow[] {
@@ -1297,7 +1687,10 @@ function lotsOfWindow(window: StepWindow, console: AuctionConsoleView): string {
   ].join(" · ");
 }
 
-export function windowNoteText(note: WindowNote): string {
+export function windowNoteText(
+  note: WindowNote,
+  view: { timeZone: string; today: CommunityDay },
+): string {
   switch (note.kind) {
     case "saved":
       return `Окно ${note.window} сохранено. В нём все лоты аукциона — лишние сними на экране окна.`;
@@ -1313,6 +1706,15 @@ export function windowNoteText(note: WindowNote): string {
       return `Окон уже ${windowLimit}. Удали лишнее окно, чтобы добавить новое.`;
     case "overlap":
       return `Лот уже в окне ${note.other}, а оно пересекается с окном ${note.window} по времени. Сначала убери лот из окна ${note.other}.`;
+    case "launched": {
+      const local = (instant: string) =>
+        readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+      return `Окно запущено: с ${local(note.from)} до ${local(note.until)}, шаг ${money(note.step)}.`;
+    }
+    case "launch-closed":
+      return "Запуск окна доступен только во время онлайн-торгов.";
+    case "launch-empty":
+      return "Окну нужны лоты. Оставь хотя бы один.";
     default: {
       const _exhaustive: never = note;
       return _exhaustive;
@@ -1336,12 +1738,13 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
   if (view.note !== undefined) {
     return {
       id: "outcome",
-      text: outcomeText(windowNoteText(view.note)),
+      text: outcomeText(windowNoteText(view.note, view)),
       keyboard: withNav(new InlineKeyboard(), toWindows(auction)),
       format: "HTML",
     };
   }
   const windows = windowsOf(console);
+  const launched = console.launchedWindows;
   const editable = acceptsLots(console.status);
   const keyboard = new InlineKeyboard();
   // Окно открывается и после открытия недели — только для просмотра его лотов.
@@ -1353,6 +1756,10 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
   });
   if (editable && windows.length < windowLimit) {
     nextRow(keyboard).text("Добавить окно", consoleWindowAskData(auction));
+  }
+  // Запуск окна по ходу торгов (PER-615): действие есть, пока идут онлайн-торги.
+  if (view.launch === true) {
+    nextRow(keyboard).text("Запустить окно", consoleWindowLaunchData(auction));
   }
   return {
     id: "step-windows",
@@ -1370,6 +1777,16 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
               ),
             )
             .join("\n"),
+      launched.length === 0
+        ? undefined
+        : [
+            "Запущенные окна:",
+            ...launched.map((window) =>
+              escapeHtml(
+                `• ${spanLine(window, view)} · ${lotsOfWindow(window, console)}`,
+              ),
+            ),
+          ].join("\n"),
     ),
     keyboard: withNav(keyboard, {
       name: "Пульт",
@@ -1477,6 +1894,10 @@ export function windowAskErrorText(
     timeZone: string;
     week?: AuctionWeek | undefined;
     window?: number | undefined;
+    // Отказ запуска окна (PER-615) называет лот и границы окна, с которым
+    // запущенное пересеклось: номер окна у запуска нет.
+    lot?: string | undefined;
+    other?: { from: string; until: string } | undefined;
   },
 ): string {
   switch (error) {
@@ -1504,6 +1925,23 @@ export function windowAskErrorText(
         : `Окно пересекается с окном ${context.window}, а лоты у них общие. Сдвинь время или удали окно ${context.window}.`;
     case "window-step":
       return "Шаг окна не принят: он должен быть больше нуля.";
+    case "window-in-past":
+      return "Начало окна уже прошло. Запусти окно с текущего момента или с будущего.";
+    case "window-not-in-prebidding":
+      return "Запуск окна доступен только во время онлайн-торгов.";
+    case "window-lot-not-in-auction":
+      return `Лот «${context.lot ?? "—"}» не в реестре аукциона.`;
+    case "window-lot-not-open":
+      return `Лот «${context.lot ?? "—"}» не в торгах: запустить окно на нём нельзя.`;
+    case "launch-overlap": {
+      const other =
+        context.other === undefined
+          ? undefined
+          : `${formatLocalMoment(communityLocalTime(context.other.from, context.timeZone))} — ${formatLocalMoment(communityLocalTime(context.other.until, context.timeZone))}`;
+      return other === undefined
+        ? "Окно пересекается с другим окном, а лоты у них общие. Сдвинь время."
+        : `Окно пересекается с другим окном по лоту «${context.lot ?? "—"}»: ${other}. Сдвинь время.`;
+    }
     default: {
       const _exhaustive: never = error;
       return _exhaustive;
@@ -1523,6 +1961,13 @@ export const windowPrompt =
   "Окно по времени сообщества: начало и конец через тире, затем шаг в целых рублях через запятую. Окно — внутри недели, шаг — меньше обычного.\nНапример: 21.10.2026 18:00 — 21.10.2026 21:00, 50";
 
 /**
+ * Вопрос о запуске окна по ходу торгов (PER-615): начало — «сейчас» или
+ * момент, конец — момент, шаг — целыми рублями.
+ */
+export const launchPrompt =
+  "Окно по времени сообщества: начало — «сейчас» или момент, конец — момент, затем шаг в целых рублях через запятую. Окно — внутри онлайн-недели, шаг — меньше обычного.\nНапример: сейчас — 21.10.2026 21:00, 50";
+
+/**
  * Вопрос о новом окне (дизайн-код, «Вопросы»): сроки недели в том же виде, в
  * каком вводят окно, и образец.
  */
@@ -1537,15 +1982,90 @@ export function windowQuestionText(
   ].join("\n");
 }
 
+/** Вопрос о запуске окна: сроки недели и вид ответа — как у объявленного окна. */
+export function launchQuestionText(
+  timeZone: string,
+  week?: AuctionWeek,
+): string {
+  const span = weekSpan(timeZone, week);
+  return [
+    ...(span === undefined ? [] : [`Неделя: ${span}`]),
+    launchPrompt,
+  ].join("\n");
+}
+
+/**
+ * Запуск окна по ходу торгов (PER-615): сроки и шаг запускаемого окна, лоты
+ * реестра переключателями и ряд запуска. Черновик едет в кнопке: состояния у
+ * пульта нет, а лот в кнопку не помещается.
+ */
+export function launchScreen(view: {
+  console: AuctionConsoleView;
+  draft: LaunchDraft;
+  at: { page: number } | { lot: number };
+  timeZone: string;
+  today: CommunityDay;
+}): ShownScreen {
+  const { console, draft } = view;
+  const auction = uuidToToken(console.auctionId);
+  const lots = launchableLots(console);
+  const registry = sortedLots(console);
+  const selected = new Set(draft.lots);
+  const requested =
+    "page" in view.at ? view.at.page : Math.floor(view.at.lot / pageSize);
+  const page = paginate(lots, requested);
+  const keyboard = new InlineKeyboard();
+  const title = pagedTitle("Запуск окна", page);
+  for (const entry of page.items) {
+    const at = indexOf(lots, entry);
+    const on = selected.has(at);
+    nextRow(keyboard).text(
+      buttonText(toggleLabel(titleOf(entry), on)),
+      consoleWindowLaunchLotData(auction, draft, at),
+    );
+  }
+  withPager(keyboard, page, (target) =>
+    consoleWindowLaunchPageData(auction, draft, target),
+  );
+  nextRow(keyboard).text(
+    "Запустить окно",
+    consoleWindowLaunchGoData(auction, draft),
+  );
+  const local = (instant: string) =>
+    readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  // Начало «сейчас» — момент, в который сервис решил команду, и назвать его
+  // нечем: пульт пишет «сейчас».
+  const from = draft.from === undefined ? "сейчас" : local(draft.from);
+  return {
+    id: "step-window-launch",
+    text: screenText(
+      title,
+      escapeHtml(
+        `с ${from} до ${local(draft.until)}, шаг ${money(draft.step)}`,
+      ),
+      escapeHtml("Вкл — лот в окне, Выкл — шаг у лота обычный."),
+      escapeHtml(`лотов ${selected.size} из ${lots.length}`),
+      // Набор лотов едет в кнопке пульта битовой маской (PER-615): реестр
+      // больше окна не накрывает, и пульт говорит об этом прямо.
+      registry.length > lots.length
+        ? escapeHtml(
+            `Окно накрывает первые ${lots.length} лотов реестра — остальные в него не входят.`,
+          )
+        : undefined,
+    ),
+    keyboard: withNav(keyboard, toWindows(auction)),
+    format: "HTML",
+  };
+}
+
+// Номер лота в отсортированном реестре: номера лотов запуска едут в кнопке.
+function indexOf(lots: readonly ConsoleLot[], entry: ConsoleLot): number {
+  return lots.findIndex((each) => each.lot.lotId === entry.lot.lotId);
+}
+
 /** Текст кадра отказа пульту; отказ по праву несёт общий текст хаба. */
 export const consoleMissingText = "Аукцион не найден. Открой сходку заново.";
 
-/**
- * Отказы сходки (ADR-047, дополнение 2026-10-12): отменённая закрывает команды
- * пульта, скрытая — открытие онлайн-недели. Кадры с переходом — PER-606.
- */
-export const consoleMeetupText = {
-  "meetup-cancelled": "Сходку отменили. Управлять её аукционом больше нельзя.",
-  "meetup-hidden":
-    "Сходка скрыта. Онлайн-неделя откроется, когда сходку снова опубликуют.",
-} as const;
+/** Отменённая сходка закрыла команды пульта (ADR-047, дополнение 2026-10-12). */
+export const consoleMeetupCancelledText =
+  "Сходку отменили. Управлять её аукционом больше нельзя.";

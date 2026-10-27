@@ -88,6 +88,73 @@ const goneRoot: AuctionScreenBody = {
   keyboard: [],
 };
 
+// Лента с разделами и раздел (PER-719): разделы кнопками над общим списком,
+// раздел — свои лоты и возврат к разделам.
+const sectionedFeed: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "feed",
+      auctionId: "auc-1",
+      page: 0,
+      pageCount: 1,
+      lots: [
+        {
+          lotId: "lot-1",
+          title: "Банка солёных грибов",
+          status: { kind: "trading", currentPrice: rub(500), phase: "online" },
+        },
+      ],
+      sections: [{ sectionId: 2, name: "Книги", lotCount: 3 }],
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "feed.open-section",
+        sectionId: 2,
+        callbackData: "v1:auc:sec:auc-1:2:0",
+      },
+    ],
+    [
+      {
+        action: "feed.open-lot",
+        lotId: "lot-1",
+        callbackData: "v1:auc:lot:lot-1:0",
+      },
+    ],
+    [{ action: "feed.back", callbackData: "v1:auc:rt:auc-1" }],
+  ],
+};
+
+const section: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "feed",
+      auctionId: "auc-1",
+      page: 0,
+      pageCount: 1,
+      lots: [
+        {
+          lotId: "lot-2",
+          title: "Книга рецептов",
+          status: { kind: "trading", currentPrice: rub(300), phase: "online" },
+        },
+      ],
+      section: { sectionId: 2, name: "Книги" },
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "feed.open-lot",
+        lotId: "lot-2",
+        callbackData: "v1:auc:lot:lot-2:0",
+      },
+    ],
+    [{ action: "feed.back", callbackData: "v1:auc:feed:auc-1:0" }],
+  ],
+};
+
 const emptyFeed: AuctionScreenBody = {
   blocks: [
     { kind: "feed", auctionId: "auc-1", page: 0, pageCount: 1, lots: [] },
@@ -427,7 +494,8 @@ const lot = (image: boolean): AuctionScreenBody => ({
 
 // Карточка с кнопкой избранного (PER-495): ставка по шагу, своя сумма с
 // автоставкой, «Ставки» с избранным, листание с «Обновить» и навигация —
-// пять рядов, предел карточки (PER-669).
+// пять рядов (PER-669); у лота сета к ним добавляется ряд «Лоты сета»
+// (PER-510).
 const withFollow = (following: boolean): AuctionScreenBody => {
   const body = lot(false);
   return {
@@ -445,6 +513,70 @@ const withFollow = (following: boolean): AuctionScreenBody => {
         : row,
     ),
   };
+};
+
+// Сет лотов (ADR-073, п. 7): карточка лота сета с кнопкой «Лоты сета» и
+// собравшим после итога, и экран сета — его лоты и тот же собравший.
+const setLot: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "lot",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      version: 3,
+      card: { title: "Банка солёных грибов", description: "" },
+      status: { kind: "trading", currentPrice: rub(500), phase: "online" },
+      set: {
+        name: "Лесные дары",
+        lotIds: ["lot-1", "lot-2"],
+        collectorName: "@jay",
+      },
+    },
+  ],
+  keyboard: [
+    [{ action: "lot.set", callbackData: "v1:auc:st:lot-1:1" }],
+    [{ action: "lot.back", callbackData: "v1:auc:feed:auc-1:1" }],
+  ],
+};
+
+const setScreen: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "set",
+      auctionId: "auc-1",
+      name: "Лесные дары",
+      lots: [
+        {
+          lotId: "lot-1",
+          title: "Банка солёных грибов",
+          status: { kind: "trading", currentPrice: rub(500), phase: "online" },
+        },
+        {
+          lotId: "lot-2",
+          title: "Плетёная корзина",
+          status: { kind: "sold", winnerId: "p-1", price: rub(700) },
+        },
+      ],
+      collectorName: "@jay",
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "set.open-lot",
+        lotId: "lot-1",
+        callbackData: "v1:auc:lot:lot-1:1",
+      },
+    ],
+    [
+      {
+        action: "set.open-lot",
+        lotId: "lot-2",
+        callbackData: "v1:auc:lot:lot-2:1",
+      },
+    ],
+    [{ action: "set.back", callbackData: "v1:auc:lot:lot-1:1" }],
+  ],
 };
 
 // Избранное: средняя страница с листанием — лот в торгах с дедлайном и
@@ -522,6 +654,7 @@ const history = (entries: boolean): AuctionScreenBody => ({
       lotId: "lot-1",
       auctionId: "auc-1",
       title: "Банка солёных грибов",
+      status: { kind: "unsold" },
       page: entries ? 1 : 0,
       pageCount: entries ? 3 : 1,
       entries: entries
@@ -712,13 +845,9 @@ const middlePage: AuctionListPage = {
   ],
 };
 
-// Тексты организатора со знаками разметки: в сообщение они уходят дословно.
+// Текст организатора уже размечен: в сообщение он уходит дословно.
 const urls = {
-  items: "Грибы & соленья <домашние>.",
-  purpose: "На сходки.",
-  simultaneousBids: "Побеждает первая.",
-  connectionFailure: "Ставка либо принята, либо нет.",
-  delivery: "Лично на сходке.",
+  text: "<b>Правила и FAQ</b>\n\nГрибы &amp; соленья &lt;домашние&gt;.",
   detailsUrl: "https://example.org/rules",
   questionUrl: "https://t.me/organizer",
 };
@@ -767,6 +896,8 @@ const raffles: readonly (RaffleView | undefined)[] = [
   }),
   raffleOf("no-tickets", { reveal: { seed: "cd".repeat(32) } }),
   raffleOf("not-held", {}),
+  // Отменён вместе с аукционом (PER-698): отпечаток есть, seed не раскроется.
+  raffleOf("cancelled", { registered: true }),
 ];
 
 const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
@@ -789,7 +920,9 @@ const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
           ],
         ]
       : []),
-    ...(raffle === undefined || raffle.status === "not-held"
+    ...(raffle === undefined ||
+    raffle.status === "not-held" ||
+    raffle.status === "cancelled"
       ? []
       : [[{ action: "raffle.proof" as const, callbackData: "v1:auc:rp:a" }]]),
     [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],
@@ -808,6 +941,151 @@ const raffleProofBody = (
     },
   ],
   keyboard: [[{ action: "raffle.return", callbackData: "v1:auc:rf:a" }]],
+});
+
+// Счета победителя (PER-322): список, счёт в каждом статусе и кадр «счёта
+// нет» с возвратом к счетам и с «Повторить».
+const winnerInvoice = {
+  invoiceId: "inv-1",
+  lotId: "lot-1",
+  amount: { minorUnits: 300000, currency: "RUB" },
+  paymentDueAt: "2026-10-31T18:00:00Z",
+  title: "Плакат <первый>",
+};
+
+const invoicesBody = (instructions?: string): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "invoices",
+      auctionId: "auc-1",
+      invoices: [
+        { ...winnerInvoice, status: "awaiting-payment" },
+        {
+          ...winnerInvoice,
+          invoiceId: "inv-2",
+          status: "paid",
+          fulfillment: "pickup",
+        },
+      ],
+      ...(instructions === undefined
+        ? {}
+        : { paymentInstructions: instructions }),
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "invoices.open",
+        invoiceId: "inv-1",
+        callbackData: "v1:auc:ia:a:b",
+      },
+    ],
+    [
+      {
+        action: "invoices.open",
+        invoiceId: "inv-2",
+        callbackData: "v1:auc:ia:a:c",
+      },
+    ],
+    [{ action: "invoices.back", callbackData: "v1:auc:rt:auc-1" }],
+  ],
+});
+
+const invoiceBody = (
+  status: "awaiting-payment" | "paid" | "handed-over",
+  notice?: "fulfillment-chosen" | "fulfillment-frozen",
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "invoice",
+      auctionId: "auc-1",
+      invoice: { ...winnerInvoice, status, fulfillment: "delivery" },
+      paymentInstructions: "Перевод на карту.\nСамовывоз — на сходке.",
+      ...(notice === undefined ? {} : { notice }),
+    },
+  ],
+  keyboard: [
+    ...(status === "handed-over"
+      ? []
+      : (["pickup", "delivery", "digital"] as const).map((method) => [
+          {
+            action: "invoice.fulfillment" as const,
+            method,
+            callbackData: `v1:auc:im:a:b:${method[0]}`,
+          },
+        ])),
+    [{ action: "invoice.back", callbackData: "v1:auc:iv:a" }],
+  ],
+});
+
+// Регистрация принята (прогон 14.10, №69): кадр исхода с отменой и
+// возвратами в розыгрыш и в корень аукциона.
+const raffleRegisteredBody = (
+  raffle: RaffleView | undefined,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "raffle-registered",
+      auctionId: "auc-1",
+      ...(raffle ? { raffle } : {}),
+    },
+  ],
+  keyboard: [
+    [{ action: "raffle.cancel", callbackData: "v1:auc:rc:a" }],
+    [{ action: "raffle.return", callbackData: "v1:auc:rf:a" }],
+    [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],
+  ],
+});
+
+const predictionResultsAuctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+
+const predictionResultsBody = (
+  results: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "prediction-results" }
+  >["results"],
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "prediction-results",
+      auctionId: predictionResultsAuctionId,
+      results,
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "prediction-results.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: predictionResultsAuctionId,
+        }),
+      },
+    ],
+  ],
+});
+
+// Хроники дня (PER-725): номинации последних суток и пустые сутки.
+const dayChronicleBody = (
+  chronicle: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "day-chronicle" }
+  >["chronicle"],
+): AuctionScreenBody => ({
+  blocks: [
+    { kind: "day-chronicle", auctionId: predictionResultsAuctionId, chronicle },
+  ],
+  keyboard: [
+    [
+      {
+        action: "day-chronicle.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: predictionResultsAuctionId,
+        }),
+      },
+    ],
+  ],
 });
 
 const raffleNameChoice: AuctionScreenBody = {
@@ -901,6 +1179,7 @@ const shown: readonly {
         frequency: "every",
         finalAnnouncements: true,
         liveFinalOutbids: false,
+        auctionAnnouncements: true,
       },
     },
   },
@@ -911,6 +1190,7 @@ const shown: readonly {
         frequency: "15",
         finalAnnouncements: false,
         liveFinalOutbids: true,
+        auctionAnnouncements: false,
       },
     },
   },
@@ -921,7 +1201,22 @@ const shown: readonly {
         frequency: "off",
         finalAnnouncements: true,
         liveFinalOutbids: false,
+        auctionAnnouncements: true,
       },
+    },
+  },
+  // Открытый из вести — без возврата в «Настройки» (№73 прогона 14 октября
+  // 2026 года).
+  {
+    screen: {
+      kind: "notify",
+      current: {
+        frequency: "5",
+        finalAnnouncements: true,
+        liveFinalOutbids: false,
+        auctionAnnouncements: true,
+      },
+      detached: true,
     },
   },
   { screen: { kind: "faq" } },
@@ -966,6 +1261,8 @@ const shown: readonly {
   { screen: { kind: "past", list: middlePage } },
   { screen: { kind: "auction", body: feed } },
   { screen: { kind: "auction", body: emptyFeed } },
+  { screen: { kind: "auction", body: sectionedFeed } },
+  { screen: { kind: "auction", body: section } },
   { screen: { kind: "auction", body: predictionBody("catalog", "open") } },
   { screen: { kind: "auction", body: predictionBody("final", "not-open") } },
   {
@@ -1015,6 +1312,9 @@ const shown: readonly {
   { screen: { kind: "auction", body: soldLot }, presentation: "plain" },
   { screen: { kind: "auction", body: history(true) } },
   { screen: { kind: "auction", body: history(false) } },
+  { screen: { kind: "auction", body: setLot } },
+  { screen: { kind: "auction", body: setScreen } },
+  { screen: { kind: "auction", body: setScreen }, presentation: "plain" },
   { screen: { kind: "auction", body: confirm("bid") } },
   { screen: { kind: "auction", body: confirm("proxy") } },
   { screen: { kind: "auction", body: accepted("bid", true) } },
@@ -1032,9 +1332,89 @@ const shown: readonly {
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleBody(raffle) },
   })),
+  {
+    screen: {
+      kind: "auction" as const,
+      body: predictionResultsBody({ kind: "after-final" }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: predictionResultsBody({
+        kind: "counted",
+        nominations: [
+          {
+            nomination: "catalog-total-sales",
+            value: { kind: "number", value: 3_000_000 },
+            winnerNames: ["Сова*"],
+            winnerCount: 1,
+            mine: { kind: "missed", deviation: 10_000 },
+          },
+        ],
+      }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: dayChronicleBody({
+        kind: "nominated",
+        contested: { title: "Кружка с совой", leaderChanges: 5 },
+        darkHorse: {
+          priceGrowth: { minorUnits: 50_000, currency: "RUB" },
+          bidsBefore: 1,
+        },
+        duel: { title: "Кружка с совой", longestDuel: 4 },
+      }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: dayChronicleBody({ kind: "no-bids" }),
+    },
+  },
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleProofBody(raffle) },
   })),
+  { screen: { kind: "auction", body: invoicesBody("Перевод на карту.") } },
+  { screen: { kind: "auction", body: invoicesBody() } },
+  { screen: { kind: "auction", body: invoiceBody("awaiting-payment") } },
+  {
+    screen: {
+      kind: "auction",
+      body: invoiceBody("paid", "fulfillment-chosen"),
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: invoiceBody("handed-over", "fulfillment-frozen"),
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: {
+        blocks: [{ kind: "invoice-missing", auctionId: "auc-1" }],
+        keyboard: [[{ action: "invoice.back", callbackData: "v1:auc:iv:a" }]],
+      },
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: {
+        blocks: [{ kind: "invoice-missing" }],
+        keyboard: [
+          [{ action: "invoice.retry", callbackData: "v1:auc:ia:a:b" }],
+        ],
+      },
+    },
+  },
+  { screen: { kind: "auction", body: raffleRegisteredBody(raffles[0]) } },
+  { screen: { kind: "auction", body: raffleRegisteredBody(undefined) } },
   { screen: { kind: "auction", body: raffleNameChoice } },
   { screen: { kind: "auction", body: raffleQuestion } },
   { screen: { kind: "auction", body: raffleAnswerRefused } },
@@ -1298,10 +1678,13 @@ describe("auction screens beyond the linter", () => {
   it("addresses the person informally in every text", () => {
     // Местоимения и повелительные формы, которые стояли в текстах до
     // перевёрстки; общий признак окончания дал бы ложные «лимите» и «ответе».
+    // FAQ — текст организаторов на «вы» (решение владельца 24.10.2026), а не
+    // голос бота, поэтому правило его не касается.
     const formal =
       /(^|[^а-яё])(вы|вас|вам|ваш[а-яё]*|выберите|отправьте|попробуйте|пришлите|откройте|проверьте)(?![а-яё])/i;
     expect(
       rendered
+        .filter((screen) => screen.id !== "faq")
         .filter((screen) => formal.test(visible(screen)))
         .map((screen) => `${screen.id}: ${visible(screen)}`),
     ).toEqual([]);
@@ -1333,7 +1716,7 @@ describe("auction screens beyond the linter", () => {
   // строка на кнопку осталась у списков аукционов.
   it("lists every content button of a list as a line of the body", () => {
     const lists = rendered.filter((screen) =>
-      ["auctions", "past"].includes(screen.id),
+      ["auctions", "past", "set"].includes(screen.id),
     );
     expect(lists.length).toBeGreaterThan(0);
     // Среди видов есть непустые списки: на одних пустых проверка молчала бы.
@@ -1343,13 +1726,14 @@ describe("auction screens beyond the linter", () => {
         .split("\n")
         .filter((line) => line.startsWith("• "));
       // Навигация, листание, действие ленты «Розыгрыш» (ADR-066) и вход в
-      // «Прошедшие» под «Аукционами» (PER-592) — не содержимое списка.
+      // «🗂 Прошедшие» под «Аукционами» (PER-592; знак — прогон 14.10, №84) —
+      // не содержимое списка.
       const content = screen.keyboard
         .flat()
         .filter(
           (button) =>
             "callback_data" in button &&
-            !/^(‹ |←$|→$|Розыгрыш$|Прошедшие$)/.test(button.text),
+            !/^(‹ |←$|→$|Розыгрыш$|🗂 Прошедшие$)/.test(button.text),
         );
       expect(lines.length, screen.text).toBe(content.length);
     }

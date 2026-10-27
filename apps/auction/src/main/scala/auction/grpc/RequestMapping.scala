@@ -4,8 +4,14 @@ import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
+import auction.aggregate.LotLayout
+import auction.aggregate.LotSection
+import auction.aggregate.LotSectionId
+import auction.aggregate.LotSectionName
+import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
+import auction.aggregate.PaymentInstructions
 import auction.aggregate.PreviewLotParticipantRemoval
 import auction.aggregate.RemoveLotParticipant
 import auction.aggregate.StepWindowConfig
@@ -14,6 +20,7 @@ import auction.projection.AuctionListing
 import auction.access.Viewer
 import auction.catalog.ImageChange
 import auction.catalog.LotId
+import auction.catalog.PhotoId
 import auction.lot.AntiSnipe
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
@@ -35,11 +42,14 @@ import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
+import auction.v1.auction_service.AddLotPhotoRequest
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AdvanceAskRequest
+import auction.v1.auction_service.AssignRaffleWinnerRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
+import auction.v1.auction_service.ChangeRafflePrizeRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
@@ -49,6 +59,7 @@ import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
 import auction.v1.auction_service.PreviewParticipantRemovalRequest
+import auction.v1.auction_service.RemoveLotPhotoRequest
 import auction.v1.auction_service.RemoveParticipantRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
@@ -56,9 +67,11 @@ import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
+import auction.v1.auction_service.GetAuctionDayChronicleRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
+import auction.v1.auction_service.GetLotPhotoRequest
 import auction.v1.auction_service.GetLotRequest
 import auction.v1.auction_service.GetPredictionResultsRequest
 import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
@@ -70,15 +83,21 @@ import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
 import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
+import auction.v1.auction_service.SaveLotSetRequest
+import auction.v1.auction_service.DeleteLotSetRequest
 import auction.v1.auction_service.PlaceBidRequest
 import auction.v1.auction_service.PublishAuctionRequest
 import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.SetFinalTimeRequest
+import auction.v1.auction_service.SetPaymentInstructionsRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
+import auction.v1.auction_service.LotLayout as LotLayoutMessage
+import auction.v1.auction_service.SetLotLayoutRequest
 import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
@@ -124,6 +143,21 @@ final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
 /** Правка реестра — `AddLot` и `RemoveLot` несут одно и то же. */
 final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId, acting: Acting)
 
+/**
+ * Определение сета лотов аукциону сходки (ADR-073). Название здесь не проверяется: пустое название — отказ домена, а не
+ * форма запроса.
+ */
+final case class LotSetSaveCommand(
+    auctionId: AuctionId,
+    set: LotSetId,
+    name: String,
+    lots: List[LotId],
+    opId: OpId,
+    acting: Acting
+)
+
+final case class LotSetDeleteCommand(auctionId: AuctionId, set: LotSetId, opId: OpId, acting: Acting)
+
 /** Запуск окна сниженного шага аукциону сходки. Окно здесь ещё не проверено: его случаи — решение домена. */
 final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchStepWindow, acting: Acting)
 
@@ -165,6 +199,22 @@ final case class VisibilityCommand(auctionId: AuctionId, published: Boolean, opI
 final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /**
+ * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): `at` пусто — время снимается.
+ */
+final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opId: OpId, acting: Acting)
+
+/** Порядок и разделы ленты (PER-719): раскладка целиком, форма уже проверена. */
+final case class LotLayoutCommand(auctionId: AuctionId, layout: LotLayout, opId: OpId, acting: Acting)
+
+/** Текст «как оплатить и получить» (PER-322): `text` пусто — текст снимается. */
+final case class PaymentInstructionsCommand(
+    auctionId: AuctionId,
+    text: Option[PaymentInstructions],
+    opId: OpId,
+    acting: Acting
+)
+
+/**
  * Заморозка состава финала: `order` — лоты в порядке выхода, как их прислал пульт. Дубли и пустой список — не форма
  * запроса, а решение домена (`LineupMismatch`, `LineupEmpty`).
  */
@@ -175,6 +225,12 @@ final case class FinalCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /** Регистрация в розыгрыше аукциона или её отмена: участник — смотрящий (ADR-066). */
 final case class RaffleCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/** Ручной итог розыгрыша: номер билета от администратора; диапазон судит розыгрыш по своему пулу. */
+final case class RaffleWinnerCommand(auctionId: AuctionId, ticket: Int, opId: OpId, acting: Acting)
+
+/** Смена приза розыгрыша: текст без пробелов по краям; пустоту и длину судит граница правилами конфигурации. */
+final case class RafflePrizeCommand(auctionId: AuctionId, prize: String, opId: OpId, acting: Acting)
 
 /** Чтение розыгрыша аукциона смотрящим. */
 final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
@@ -191,6 +247,9 @@ final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
 /** Сводка дня торгов: аукцион сходки и окно `[from, until)`, за которое считается статистика лотов. */
 final case class DaySummaryQuery(auctionId: AuctionId, acting: Acting, from: Instant, until: Instant)
 
+/** Хроники дня участника (PER-725): аукцион сходки и тот, кто смотрит; окно выбирает сервис. */
+final case class DayChronicleQuery(auctionId: AuctionId, acting: Acting)
+
 /** Подписка на поток аукциона сходки: аукцион и тот, кто смотрит. */
 final case class WatchQuery(auctionId: AuctionId, acting: Acting)
 
@@ -202,6 +261,14 @@ final case class AuctionsQuery(listing: AuctionListing, after: Option[UUID], lim
  * — что сделать с хранимым. Байты здесь ещё не проверены: предел и тип — решение домена, а не форма запроса.
  */
 final case class CardCommand[I](lotId: LotId, title: String, description: String, image: I, viewer: Viewer)
+
+/**
+ * Команда над фото лота: добавление несёт ещё не проверенные байты, снятие — `Unit`. Предел и тип — решение домена.
+ */
+final case class PhotoCommand[I](lotId: LotId, photoId: PhotoId, photo: I, viewer: Viewer)
+
+/** Фото лота по id для `GetLotPhoto`. */
+final case class LotPhotoQuery(lotId: UUID, photoId: UUID, acting: Acting)
 
 /** Выбор имени участника в аукционе; участник — тот, от чьего имени действует смотрящий. */
 final case class ChooseCommand(auctionId: AuctionId, choice: NameChoice, acting: Acting)
@@ -227,6 +294,9 @@ object RequestMapping {
    * аукцион сходки, — только пятую (integration.md, «Аукцион у сходки»).
    */
   private val CanonicalUuidV5 = "^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$".r
+
+  /** Любая версия и вариант в каноническом виде: строчные hex-цифры с дефисами. */
+  private val CanonicalUuid = "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$".r
 
   private val CurrencyAlpha = "^[A-Z]{3}$".r
 
@@ -307,6 +377,30 @@ object RequestMapping {
       lotId <- uuidV7("lot_id", request.lotId)
     } yield LotQuery(lotId, acting)
 
+  // Id нового фото рождает вызывающий, как `lot_id`, — UUIDv7. Снятие и чтение называют фото, которое уже есть, а id
+  // фото, пришедшего с карточкой или из миграции, выдаёт сервис, поэтому там годится любой канонический UUID.
+  def addLotPhoto(request: AddLotPhotoRequest): Either[FormError, PhotoCommand[IArray[Byte]]] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      photoId <- uuidV7("photo_id", request.photoId)
+      upload <- request.photo.toRight(FormError("photo"))
+    } yield PhotoCommand(LotId(lotId), PhotoId(photoId), bytes(upload), acting.viewer)
+
+  def removeLotPhoto(request: RemoveLotPhotoRequest): Either[FormError, PhotoCommand[Unit]] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      photoId <- uuidV7("photo_id", request.photoId)
+    } yield PhotoCommand(LotId(lotId), PhotoId(photoId), (), acting.viewer)
+
+  def getLotPhoto(request: GetLotPhotoRequest): Either[FormError, LotPhotoQuery] =
+    for {
+      acting <- acting(request.viewer)
+      lotId <- uuidV7("lot_id", request.lotId)
+      photoId <- uuidV7("photo_id", request.photoId)
+    } yield LotPhotoQuery(lotId, photoId, acting)
+
   def getLot(request: GetLotRequest): Either[FormError, LotQuery] =
     for {
       acting <- acting(request.viewer)
@@ -380,6 +474,27 @@ object RequestMapping {
 
   def removeLot(request: RemoveLotRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def saveLotSet(request: SaveLotSetRequest): Either[FormError, LotSetSaveCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      set <- uuidV7("lot_set_id", request.lotSetId)
+      lots <- request.lotIds
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, raw) =>
+          acc.flatMap(lots => uuidV7("lot_ids", raw).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+      opId <- uuidV7("op_id", request.opId)
+    } yield LotSetSaveCommand(auction, LotSetId(set), request.name, lots, OpId(opId), acting)
+
+  def deleteLotSet(request: DeleteLotSetRequest): Either[FormError, LotSetDeleteCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      set <- uuidV7("lot_set_id", request.lotSetId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield LotSetDeleteCommand(auction, LotSetId(set), OpId(opId), acting)
 
   /** Отметка и снятие отметки несут то же, что команды реестра: аукцион сходки, лот и `op_id`. */
   def selectForFinal(request: SelectForFinalRequest): Either[FormError, RegistryCommand] =
@@ -459,6 +574,13 @@ object RequestMapping {
       until <- instant("until", request.until)
       _ <- Either.cond(until.isAfter(from), (), FormError("until"))
     } yield DaySummaryQuery(query.auctionId, query.acting, from, until)
+
+  /** Хроники дня участника: аукцион сходки; право `place_bids` граница проверит до чтения, окно — сервис. */
+  def getAuctionDayChronicle(request: GetAuctionDayChronicleRequest): Either[FormError, DayChronicleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield DayChronicleQuery(auction, acting)
 
   /** Чтение итогов прогнозов смотрящим: аукцион сходки; право `place_bids` граница проверит до чтения. */
   def getPredictionResults(request: GetPredictionResultsRequest): Either[FormError, PredictionQuery] =
@@ -547,6 +669,64 @@ object RequestMapping {
       opId <- uuidV7("op_id", request.opId)
     } yield CancelCommand(auction, OpId(opId), acting)
 
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19). Момент приходит строкой RFC 3339, а пустое поле —
+   * снятие времени: отдельной команды нет.
+   */
+  def setFinalTime(request: SetFinalTimeRequest): Either[FormError, FinalTimeCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      at <- request.finalAt.fold[Either[FormError, Option[Instant]]](Right(None))(instant("final_at", _).map(Some(_)))
+    } yield FinalTimeCommand(auction, at, OpId(opId), acting)
+
+  /**
+   * Текст «как оплатить и получить» (PER-322). Пустое поле — снятие текста; поле, пустое после обрезки краёв или
+   * длиннее предела, — не форма запроса, а `INVALID_ARGUMENT`: снятие называет отсутствие поля, а не пустая строка.
+   */
+  def setPaymentInstructions(request: SetPaymentInstructionsRequest): Either[FormError, PaymentInstructionsCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      text <- request.text.fold[Either[FormError, Option[PaymentInstructions]]](Right(None))(raw =>
+        PaymentInstructions.parse(raw).map(Some(_)).toRight(FormError("text"))
+      )
+    } yield PaymentInstructionsCommand(auction, text, OpId(opId), acting)
+
+  /**
+   * Порядок и разделы ленты (PER-719). Пустое поле — пустая раскладка: порядок создания. Номер раздела вне диапазона,
+   * пустое название, повтор лота или номера — не форма запроса, а `INVALID_ARGUMENT`: название спрашивает вызывающий, и
+   * отказа значением у него нет.
+   */
+  def setLotLayout(request: SetLotLayoutRequest): Either[FormError, LotLayoutCommand] = {
+    val requested = request.layout.getOrElse(LotLayoutMessage())
+    def lotsOf(field: String, raw: Seq[String]): Either[FormError, List[LotId]] =
+      raw
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, id) =>
+          acc.flatMap(lots => uuidV7(field, id).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      lots <- lotsOf("layout.lot_ids", requested.lotIds)
+      sections <- requested.sections
+        .foldLeft[Either[FormError, List[LotSection]]](Right(Nil)) { (acc, section) =>
+          for {
+            done <- acc
+            id <- LotSectionId(section.sectionId).toRight(FormError("layout.sections.section_id"))
+            name <- LotSectionName(section.name).toRight(FormError("layout.sections.name"))
+            members <- lotsOf("layout.sections.lot_ids", section.lotIds)
+          } yield LotSection(id, name, members) :: done
+        }
+        .map(_.reverse)
+      layout <- LotLayout.of(lots, sections).left.map(_ => FormError("layout"))
+    } yield LotLayoutCommand(auction, layout, OpId(opId), acting)
+  }
+
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {
       acting <- acting(request.viewer)
@@ -583,6 +763,20 @@ object RequestMapping {
       acting <- acting(request.viewer)
       auction <- meetupAuction(request.auctionId)
     } yield RaffleQuery(auction, acting)
+
+  def assignRaffleWinner(request: AssignRaffleWinnerRequest): Either[FormError, RaffleWinnerCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      op <- uuidV7("op_id", request.opId)
+    } yield RaffleWinnerCommand(auction, request.ticket, OpId(op), acting)
+
+  def changeRafflePrize(request: ChangeRafflePrizeRequest): Either[FormError, RafflePrizeCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      op <- uuidV7("op_id", request.opId)
+    } yield RafflePrizeCommand(auction, request.prize.trim, OpId(op), acting)
 
   /** Розыгрыш есть только у аукциона сходки: его открывает журнал аукциона, а у тестового аукциона журнала нет. */
   private def raffleCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =
@@ -634,7 +828,9 @@ object RequestMapping {
           acc.flatMap(windows => stepWindow(window).map(_ :: windows))
         }
         .map(_.reverse)
-    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults, windows)
+      // Срок оплаты — любое число секунд: границы судит ядро (`PaymentTermOutOfRange`), а не форма.
+      paymentTerm = config.paymentTermSeconds.map(java.time.Duration.ofSeconds)
+    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults, windows, paymentTerm)
 
   private def stepWindow(window: AuctionStepWindowMessage): Either[FormError, StepWindowConfig] =
     for {
@@ -770,6 +966,9 @@ object RequestMapping {
 
   private[grpc] def canonicalUuidV7(value: String): Option[UUID] =
     Option.when(CanonicalUuidV7.matches(value))(UUID.fromString(value))
+
+  private[grpc] def canonicalUuid(value: String): Option[UUID] =
+    Option.when(CanonicalUuid.matches(value))(UUID.fromString(value))
 
   private[grpc] def canonicalUuidV5(value: String): Option[UUID] =
     Option.when(CanonicalUuidV5.matches(value))(UUID.fromString(value))

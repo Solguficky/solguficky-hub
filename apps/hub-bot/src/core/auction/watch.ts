@@ -4,6 +4,7 @@ import {
   Code,
   ConnectError,
 } from "@connectrpc/connect";
+import type { Http2SessionOptions } from "@connectrpc/connect-node";
 import type {
   AuctionService,
   AuctionWatch,
@@ -22,9 +23,10 @@ import { lotViewOf } from "./snapshot.js";
 /** Состояние аукциона и его финала из одного сообщения потока. */
 export type AuctionWatchState = {
   auctionId: string;
-  // После этого сообщения сервер закрывает поток: аукцион завершён — или
+  // После этого сообщения сервер закрывает поток: аукцион завершён или
   // отменён (ADR-047, дополнение 2026-10-12), и ни один лот состава уже не
-  // торгуется и не удержан.
+  // торгуется и не удержан. Продажу последнего лота финала read model лотов
+  // может отдать позже конца аукциона, и поток ждёт её (PER-712).
   finished: boolean;
   // Активный лот живого финала; нет — до финала, между лотами и после него.
   activeLot?: LotView;
@@ -40,11 +42,11 @@ export function watchStateOf(message: AuctionWatch): AuctionWatchState {
   return {
     auctionId: auction.id,
     finished:
-      auction.status.case === "finished" ||
-      (auction.status.case === "cancelled" &&
-        message.lineup.every(
-          (lot) => lot.status.case !== "trading" && lot.status.case !== "held",
-        )),
+      (auction.status.case === "finished" ||
+        auction.status.case === "cancelled") &&
+      message.lineup.every(
+        (lot) => lot.status.case !== "trading" && lot.status.case !== "held",
+      ),
     ...(message.activeLot === undefined
       ? {}
       : { activeLot: lotViewOf(message.activeLot) }),
@@ -108,6 +110,23 @@ export type WatchFailure = "stream" | "listener";
 // закрыться за секунды; дальше пауза растёт, чтобы недоступный Auction не
 // получал залп попыток от каждого бота.
 export const WATCH_RETRY_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
+
+// Keepalive соединения с Auction (PER-705). Полуоткрытое соединение — сеть
+// замолкла, а не закрылась — поток сам не рвёт: TCP молчит, и карточки финала,
+// пульт ведущего и «Ставки зала» стоят на старом состоянии. Поэтому соединение
+// пингует клиент: PING уходит, когда по потоку `pingIntervalMs` не пришло ни
+// байта, и без ответа за `pingTimeoutMs` соединение закрывается, а поток
+// переподключается с пометкой `interrupted`. Худший срок обнаружения — их
+// сумма, 15 секунд: заметно дольше паузы между ставками зала, но не дольше
+// одного шага финала. PING у пустого соединения не идёт (`pingIdleConnection`
+// выключен), а вызов после паузы длиннее интервала проверяет соединение одним
+// PING перед запросом. Сервер Auction на pekko-http частоту PING клиента не
+// ограничивает (`too_many_pings` у него нет) — иначе интервал меньше пяти
+// минут, порога gRPC по умолчанию, был бы нельзя.
+export const AUCTION_KEEPALIVE: Http2SessionOptions = {
+  pingIntervalMs: 10_000,
+  pingTimeoutMs: 5_000,
+};
 
 export type Sleep = (ms: number, signal: AbortSignal) => Promise<void>;
 

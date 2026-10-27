@@ -6,13 +6,21 @@ import {
   AuctionState_PrebiddingSchema,
   AuctionState_ScheduledSchema,
 } from "../../../../gen/auction/v1/auction_events_pb.js";
-import { BidSource } from "../../../../gen/auction/v1/auction_pb.js";
+import {
+  BidSource,
+  FulfillmentMethod,
+  LotSaleSchema,
+} from "../../../../gen/auction/v1/auction_pb.js";
 import {
   AddLotResponseSchema,
   AdvanceAskResponseSchema,
+  AssignRaffleWinnerResponseSchema,
   AuctionSnapshotSchema,
+  CancelAuctionResponseSchema,
+  ChangeRafflePrizeResponseSchema,
   CloseLotResponseSchema,
   CreateLotCardResponseSchema,
+  DeleteLotSetResponseSchema,
   DiscardAuctionResponseSchema,
   DraftAuctionResponseSchema,
   EditLotCardResponseSchema,
@@ -22,16 +30,23 @@ import {
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
   GetRaffleResponseSchema,
+  HideAuctionResponseSchema,
+  ListAuctionLotsResponseSchema,
   ListAuctionNamesResponseSchema,
   ListAuctionsResponseSchema,
   ListLotHistoryResponseSchema,
   LotSnapshotSchema,
   PlaceBidResponseSchema,
+  PublishAuctionResponseSchema,
   RaffleSchema,
   RaffleStatus,
+  RemoveLotResponseSchema,
+  SaveLotSetResponseSchema,
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
   SelectForFinalResponseSchema,
+  SetFinalTimeResponseSchema,
+  SetLotLayoutResponseSchema,
   StartFinalResponseSchema,
   StartNextLotResponseSchema,
   StartPrebiddingResponseSchema,
@@ -78,6 +93,14 @@ function adapter(rpc: {
   scheduleAuction?: Call;
   startPrebidding?: Call;
   discardAuction?: Call;
+  cancelAuction?: Call;
+  listAuctionLots?: Call;
+  publishAuction?: Call;
+  hideAuction?: Call;
+  setFinalTime?: Call;
+  saveLotSet?: Call;
+  setLotLayout?: Call;
+  deleteLotSet?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
   freezeFinalLineup?: Call;
@@ -89,8 +112,23 @@ function adapter(rpc: {
   getDisplayNames?: Call;
   listAuctions?: Call;
   getRaffle?: Call;
+  assignRaffleWinner?: Call;
+  changeRafflePrize?: Call;
   listAuctionNames?: Call;
   placeBid?: Call;
+  launchStepWindow?: Call;
+  previewParticipantRemoval?: Call;
+  removeParticipant?: Call;
+  listAuctionInvoices?: Call;
+  markInvoicePaid?: Call;
+  markInvoiceHandedOver?: Call;
+  setPaymentInstructions?: Call;
+  listMyInvoices?: Call;
+  chooseFulfillment?: Call;
+  removeLot?: Call;
+  getLotPhoto?: Call;
+  addLotPhoto?: Call;
+  removeLotPhoto?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -99,9 +137,10 @@ function adapter(rpc: {
     createLotCard: (rpc.createLotCard ?? notUsed) as never,
     editLotCard: (rpc.editLotCard ?? notUsed) as never,
     addLot: (rpc.addLot ?? notUsed) as never,
+    removeLot: (rpc.removeLot ?? notUsed) as never,
     scheduleLot: (rpc.scheduleLot ?? notUsed) as never,
     getLot: (rpc.getLot ?? notUsed) as never,
-    listAuctionLots: notUsed,
+    listAuctionLots: (rpc.listAuctionLots ?? notUsed) as never,
     listLotHistory: (rpc.listLotHistory ?? notUsed) as never,
     getDisplayNames: (rpc.getDisplayNames ?? notUsed) as never,
     listAuctionNames: (rpc.listAuctionNames ?? notUsed) as never,
@@ -110,17 +149,32 @@ function adapter(rpc: {
     chooseDisplayName: notUsed,
     getAuction: notUsed,
     getRaffle: (rpc.getRaffle ?? notUsed) as never,
+    assignRaffleWinner: (rpc.assignRaffleWinner ?? notUsed) as never,
+    changeRafflePrize: (rpc.changeRafflePrize ?? notUsed) as never,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
     getMyPredictions: notUsed,
+    getPredictionResults: notUsed,
+    getAuctionDayChronicle: notUsed,
     submitPrediction: notUsed,
     getLotImage: notUsed,
+    getLotPhoto: (rpc.getLotPhoto ?? notUsed) as never,
+    addLotPhoto: (rpc.addLotPhoto ?? notUsed) as never,
+    removeLotPhoto: (rpc.removeLotPhoto ?? notUsed) as never,
     getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,
     getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
     getAuctionDaySummary: (rpc.getAuctionDaySummary ?? notUsed) as never,
     scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
+    launchStepWindow: (rpc.launchStepWindow ?? notUsed) as never,
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
     discardAuction: (rpc.discardAuction ?? notUsed) as never,
+    cancelAuction: (rpc.cancelAuction ?? notUsed) as never,
+    publishAuction: (rpc.publishAuction ?? notUsed) as never,
+    hideAuction: (rpc.hideAuction ?? notUsed) as never,
+    setFinalTime: (rpc.setFinalTime ?? notUsed) as never,
+    saveLotSet: (rpc.saveLotSet ?? notUsed) as never,
+    deleteLotSet: (rpc.deleteLotSet ?? notUsed) as never,
+    setLotLayout: (rpc.setLotLayout ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
     freezeFinalLineup: (rpc.freezeFinalLineup ?? notUsed) as never,
@@ -128,6 +182,15 @@ function adapter(rpc: {
     startNextLot: (rpc.startNextLot ?? notUsed) as never,
     advanceAsk: (rpc.advanceAsk ?? notUsed) as never,
     closeLot: (rpc.closeLot ?? notUsed) as never,
+    previewParticipantRemoval: (rpc.previewParticipantRemoval ??
+      notUsed) as never,
+    removeParticipant: (rpc.removeParticipant ?? notUsed) as never,
+    listAuctionInvoices: (rpc.listAuctionInvoices ?? notUsed) as never,
+    markInvoicePaid: (rpc.markInvoicePaid ?? notUsed) as never,
+    markInvoiceHandedOver: (rpc.markInvoiceHandedOver ?? notUsed) as never,
+    setPaymentInstructions: (rpc.setPaymentInstructions ?? notUsed) as never,
+    listMyInvoices: (rpc.listMyInvoices ?? notUsed) as never,
+    chooseFulfillment: (rpc.chooseFulfillment ?? notUsed) as never,
   });
 }
 
@@ -276,6 +339,27 @@ describe("auction adapter of the lot form", () => {
     expect(editLotCard).toHaveBeenCalledWith(sent, expect.anything());
   });
 
+  it("sends the removal of the image as remove_image with both texts", async () => {
+    const editLotCard = vi.fn(async () =>
+      create(EditLotCardResponseSchema, {
+        outcome: { case: "accepted", value: { title: "Ваза" } },
+      }),
+    );
+    const lots = adapter({ editLotCard });
+
+    await expect(
+      lots.editLotCard(admin, { ...card, removeImage: true }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(editLotCard).toHaveBeenCalledWith(
+      {
+        ...card,
+        viewer: wireAdmin,
+        imageChange: { case: "removeImage", value: {} },
+      },
+      expect.anything(),
+    );
+  });
+
   it.each([
     ["notAdmin", { kind: "not-admin" }],
     ["emptyTitle", { kind: "empty-title" }],
@@ -364,6 +448,47 @@ describe("auction adapter of the lot form", () => {
       ).resolves.toEqual(expected);
     },
   );
+
+  it.each([
+    ["notMeetupAdministrator", { kind: "not-administrator" }],
+    ["meetupNotFound", { kind: "meetup-not-found" }],
+    ["meetupCancelled", { kind: "meetup-cancelled" }],
+    ["lotsFrozen", { kind: "lots-frozen" }],
+    ["lotNotInAuction", { kind: "lot-not-in-auction" }],
+  ] as const)(
+    "reads the %s refusal of a removal as a final answer",
+    async (reason, expected) => {
+      const lots = adapter({
+        removeLot: async () => refused(RemoveLotResponseSchema, reason),
+      });
+
+      await expect(
+        lots.removeLot(admin, { auctionId, lotId, opId }),
+      ).resolves.toEqual(expected);
+    },
+  );
+
+  it("sends the removal of a lot with its key and reads an auction without a journal", async () => {
+    const removeLot = vi.fn(async () =>
+      create(RemoveLotResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    const missing = adapter({
+      removeLot: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+
+    await expect(
+      adapter({ removeLot }).removeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(removeLot).toHaveBeenCalledWith(
+      { viewer: wireAdmin, auctionId, lotId, opId },
+      expect.anything(),
+    );
+    await expect(
+      missing.removeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
 
   it("sends the price and one fixed step in minor units", async () => {
     const scheduleLot = vi.fn(async () =>
@@ -516,6 +641,7 @@ describe("auction adapter of the lot form", () => {
 // Пульт аукциона (PER-320): что уходит в Auction и как читается ответ.
 describe("auction console adapter", () => {
   const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+  const lotSetId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34bb";
   const week = {
     auctionId,
     opId,
@@ -524,6 +650,7 @@ describe("auction console adapter", () => {
     windows: [],
     raffleClosesAt: undefined,
     rafflePrize: undefined,
+    paymentTermSeconds: undefined,
   };
 
   it.each([
@@ -604,6 +731,44 @@ describe("auction console adapter", () => {
         final: true,
       }),
     ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  // Срок оплаты счёта (PER-722): едет секундами в конфигурации, а отказ
+  // Auction о пределе — ответ человеку, а не дефект.
+  it("sends the payment term with the week and reads its refusal", async () => {
+    const scheduleAuction = vi.fn(async (_request: unknown) =>
+      create(ScheduleAuctionResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    await adapter({ scheduleAuction }).scheduleAuction(admin, {
+      ...week,
+      final: false,
+      paymentTermSeconds: 86_400,
+    });
+    const sent = scheduleAuction.mock.calls[0]?.[0] as {
+      config: Record<string, unknown>;
+    };
+    expect(sent.config).toMatchObject({ paymentTermSeconds: 86_400n });
+
+    await expect(
+      adapter({
+        scheduleAuction: async () =>
+          create(ScheduleAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: {
+                reason: {
+                  case: "configInvalid",
+                  value: {
+                    reason: { case: "paymentTermOutOfRange", value: {} },
+                  },
+                },
+              },
+            },
+          }),
+      }).scheduleAuction(admin, { ...week, final: false }),
+    ).resolves.toEqual({ kind: "payment-term-out-of-range" });
   });
 
   it("sends the happy hours windows with the week and reads their refusals by window", async () => {
@@ -847,6 +1012,8 @@ describe("auction console adapter", () => {
                   overdue: true,
                 },
               ],
+              // Неполный сет из одного лота (PER-509): пульт его видит.
+              lotSets: [{ lotSetId, name: "Кружки", lotIds: [lotId] }],
             },
           },
         }),
@@ -857,12 +1024,14 @@ describe("auction console adapter", () => {
       console: {
         auctionId,
         status: "prebidding",
+        hidden: false,
         week: {
           opensAt: week.opensAt,
           closesAt: week.closesAt,
           final: true,
           windows: [],
         },
+        launchedWindows: [],
         lots: [
           {
             lot: expect.objectContaining({
@@ -870,6 +1039,7 @@ describe("auction console adapter", () => {
               status: {
                 kind: "trading",
                 currentPrice: { minorUnits: 120_000, currency: "RUB" },
+                extensionsUsed: 0,
                 phase: "online",
               },
             }),
@@ -878,8 +1048,58 @@ describe("auction console adapter", () => {
             overdue: true,
           },
         ],
+        lotSets: [{ lotSetId, name: "Кружки", lotIds: [lotId] }],
       },
     });
+  });
+
+  // PER-734: числа розыгрыша и прогнозов — только агрегаты; без полей их нет.
+  it("reads the raffle registrations and the predictions tally of the console", async () => {
+    const reading = (
+      extra: Partial<{
+        raffleRegistrations: number;
+        predictions: { participants: number; answers: number };
+      }>,
+    ) =>
+      adapter({
+        getAuctionConsole: async () =>
+          create(GetAuctionConsoleResponseSchema, {
+            outcome: {
+              case: "console",
+              value: {
+                auction: {
+                  id: auctionId,
+                  status: { case: "prebidding", value: {} },
+                },
+                ...extra,
+              },
+            },
+          }),
+      }).getAuctionConsole(admin, auctionId);
+
+    await expect(
+      reading({
+        raffleRegistrations: 12,
+        predictions: { participants: 5, answers: 17 },
+      }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      console: {
+        raffleRegistrations: 12,
+        predictionTally: { participants: 5, answers: 17 },
+      },
+    });
+    const bare = await reading({});
+    expect(bare.kind === "ok" && bare.console).not.toHaveProperty(
+      "raffleRegistrations",
+    );
+    expect(bare.kind === "ok" && bare.console).not.toHaveProperty(
+      "predictionTally",
+    );
+    // Ответов меньше, чем людей, не бывает: это дефект соседа.
+    await expect(
+      reading({ predictions: { participants: 3, answers: 1 } }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
   });
 
   it("reads ranked-statistics inputs without exposing participant identities", async () => {
@@ -1118,6 +1338,273 @@ describe("auction console adapter", () => {
     ).resolves.not.toHaveProperty("raffle");
   });
 
+  // Ручной итог розыгрыша (PER-727): принятый — розыгрыш с итогом, каждый
+  // именованный отказ — свой ответ, а в Auction едут смотрящий, номер и ключ.
+  it("assigns the raffle winner and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      assignRaffleWinner: async (request: unknown) => {
+        sent.push(request);
+        return create(AssignRaffleWinnerResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: create(RaffleSchema, {
+              auctionId,
+              status: RaffleStatus.DRAWN,
+              closesAt: "2026-10-05T16:12:00Z",
+              drawnByHand: true,
+              tickets: [{ number: 1 }, { number: 2, displayName: "Сова*" }],
+              reveal: { seed: "cd".repeat(32), winningTicket: 2 },
+            }),
+          },
+        });
+      },
+    });
+    await expect(
+      accepted.assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      raffle: {
+        status: "drawn",
+        drawnByHand: true,
+        reveal: { winningTicket: 2 },
+      },
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        ticket: 2,
+        opId,
+      }),
+    ]);
+
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "raffleNotFound", value: {} }, { kind: "raffle-not-found" }],
+      [
+        { case: "notAwaitingWinner", value: {} },
+        { kind: "not-awaiting-winner" },
+      ],
+      [
+        { case: "ticketNotInPool", value: { tickets: 12 } },
+        { kind: "ticket-not-in-pool", tickets: 12 },
+      ],
+      [
+        { case: "alreadyDrawn", value: { winningTicket: 3 } },
+        { kind: "already-drawn", winningTicket: 3 },
+      ],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(
+        adapter({
+          assignRaffleWinner: async () =>
+            create(AssignRaffleWinnerResponseSchema, {
+              outcome: { case: "refused", value: { reason } },
+            }),
+        }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+      ).resolves.toEqual(result);
+    }
+
+    await expect(
+      adapter({
+        assignRaffleWinner: async () =>
+          create(AssignRaffleWinnerResponseSchema, {}),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        assignRaffleWinner: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    // Чужой ключ (ALREADY_EXISTS) — дефект края, а не отказ человеку.
+    await expect(
+      adapter({
+        assignRaffleWinner: () =>
+          Promise.reject(new ConnectError("op", Code.AlreadyExists)),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        assignRaffleWinner: () =>
+          Promise.reject(new ConnectError("down", Code.Unavailable)),
+      }).assignRaffleWinner(admin, { auctionId, ticket: 2, opId }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  // Смена приза идущего розыгрыша (PER-737): принятая — розыгрыш с новым
+  // призом, каждый именованный отказ — свой ответ, а в Auction едут
+  // смотрящий, текст и ключ.
+  it("changes the raffle prize and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      changeRafflePrize: async (request: unknown) => {
+        sent.push(request);
+        return create(ChangeRafflePrizeResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: create(RaffleSchema, {
+              auctionId,
+              status: RaffleStatus.OPEN,
+              closesAt: "2026-10-05T16:12:00Z",
+              rafflePrize: "кружка и брелок",
+            }),
+          },
+        });
+      },
+    });
+    const command = { auctionId, prize: "кружка и брелок", opId };
+    await expect(
+      accepted.changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      raffle: { status: "open", prize: "кружка и брелок" },
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        prize: "кружка и брелок",
+        opId,
+      }),
+    ]);
+
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "raffleNotFound", value: {} }, { kind: "raffle-not-found" }],
+      [{ case: "prizeBlank", value: {} }, { kind: "prize-blank" }],
+      [{ case: "prizeTooLong", value: {} }, { kind: "prize-too-long" }],
+      [
+        { case: "alreadyDrawn", value: { winningTicket: 3 } },
+        { kind: "already-drawn", winningTicket: 3 },
+      ],
+      [{ case: "withoutResult", value: {} }, { kind: "without-result" }],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(
+        adapter({
+          changeRafflePrize: async () =>
+            create(ChangeRafflePrizeResponseSchema, {
+              outcome: { case: "refused", value: { reason } },
+            }),
+        }).changeRafflePrize(admin, command),
+      ).resolves.toEqual(result);
+    }
+
+    await expect(
+      adapter({
+        changeRafflePrize: async () =>
+          create(ChangeRafflePrizeResponseSchema, {}),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        changeRafflePrize: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    await expect(
+      adapter({
+        changeRafflePrize: () =>
+          Promise.reject(new ConnectError("down", Code.Unavailable)),
+      }).changeRafflePrize(admin, command),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  // Отмена после старта торгов (PER-606): каждый именованный отказ — свой
+  // ответ, принятая — `ok`, и в Auction едут смотрящий и ключ отмены.
+  it("reads the cancel of an auction and its named refusals", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      cancelAuction: async (request) => {
+        sent.push(request);
+        return create(CancelAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.cancelAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([{ viewer: wireAdmin, auctionId, opId }]);
+
+    for (const [reason, kind] of [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["auctionNotStarted", "not-started"],
+      ["auctionAlreadyFinished", "already-finished"],
+    ] as const) {
+      const refused = adapter({
+        cancelAuction: async () =>
+          create(CancelAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+      });
+
+      await expect(
+        refused.cancelAuction(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+  });
+
+  // Число проданных лотов для подтверждения отмены сходки: реестр по
+  // страницам, проданный — по статусу снимка; бесконечный реестр — дефект.
+  it("counts the sold lots of an auction over the pages of its registry", async () => {
+    const sold = (lotId: string) =>
+      create(LotSnapshotSchema, {
+        id: lotId,
+        status: {
+          case: "sold",
+          value: create(LotSaleSchema, {
+            winnerId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+            price: { minorUnits: 100_000n, currency: "RUB" },
+          }),
+        },
+      });
+    const pages = adapter({
+      listAuctionLots: async (request) =>
+        (request as { pageToken: string }).pageToken === ""
+          ? create(ListAuctionLotsResponseSchema, {
+              lots: [
+                sold("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401"),
+                create(LotSnapshotSchema, {
+                  id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402",
+                }),
+              ],
+              nextPageToken: "next",
+            })
+          : create(ListAuctionLotsResponseSchema, {
+              lots: [sold("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3403")],
+            }),
+    });
+    const looping = adapter({
+      listAuctionLots: async () =>
+        create(ListAuctionLotsResponseSchema, { nextPageToken: "again" }),
+    });
+
+    await expect(pages.soldLots(admin, auctionId)).resolves.toEqual({
+      kind: "ok",
+      sold: 2,
+    });
+    await expect(looping.soldLots(admin, auctionId)).resolves.toMatchObject({
+      kind: "invalid",
+    });
+  });
+
   it("reads a start refused for a cancelled or a hidden meetup as its own answer", async () => {
     for (const [reason, kind] of [
       ["meetupCancelled", "meetup-cancelled"],
@@ -1172,6 +1659,307 @@ describe("auction console adapter", () => {
     ).resolves.toEqual({ kind: "already-started" });
     await expect(
       missing.discardAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+
+  it("reads every visibility refusal as an answer, for both commands", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      publishAuction: async (request: unknown) => {
+        sent.push(request);
+        return create(PublishAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+      hideAuction: async (request: unknown) => {
+        sent.push(request);
+        return create(HideAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.publishAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      accepted.hideAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      { auctionId, opId },
+      { auctionId, opId },
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+      ["auctionAlreadyStarted", "already-started"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      const refused = adapter({
+        publishAuction: async () =>
+          create(PublishAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+        hideAuction: async () =>
+          create(HideAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+      });
+      await expect(
+        refused.publishAuction(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+      await expect(
+        refused.hideAuction(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    const odd = adapter({
+      publishAuction: async () => create(PublishAuctionResponseSchema, {}),
+      hideAuction: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    await expect(
+      odd.publishAuction(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(odd.hideAuction(admin, { auctionId, opId })).resolves.toEqual({
+      kind: "auction-not-found",
+    });
+  });
+
+  // Ориентировочное время финала (PER-663): принятие и именованные отказы.
+  it("reads every refusal of the final time as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      setFinalTime: async (request: unknown) => {
+        sent.push(request);
+        return create(SetFinalTimeResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.setFinalTime(admin, {
+        auctionId,
+        opId,
+        finalAt: "2026-10-31T16:00:00Z",
+      }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      { auctionId, opId, finalAt: "2026-10-31T16:00:00Z" },
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+      ["finalAlreadyStarted", "final-already-started"],
+      ["auctionAlreadyFinished", "auction-already-finished"],
+      ["auctionAlreadyCancelled", "auction-already-cancelled"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      const refused = adapter({
+        setFinalTime: async () =>
+          create(SetFinalTimeResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+      });
+      await expect(
+        refused.setFinalTime(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    const odd = adapter({
+      setFinalTime: async () => create(SetFinalTimeResponseSchema, {}),
+    });
+    await expect(
+      odd.setFinalTime(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  // Сеты лотов (PER-509): состав уходит целиком, отказ лота несёт лот, а лот
+  // чужого сета — ещё и сет.
+  it("sends a lot set whole and reads every lot set refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const set = { auctionId, lotSetId, name: "Кружки", lotIds: [lotId], opId };
+    const accepted = adapter({
+      saveLotSet: async (request: unknown) => {
+        sent.push(request);
+        return create(SaveLotSetResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+      deleteLotSet: async (request: unknown) => {
+        sent.push(request);
+        return create(DeleteLotSetResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(accepted.saveLotSet(admin, set)).resolves.toEqual({
+      kind: "ok",
+    });
+    await expect(
+      accepted.deleteLotSet(admin, { auctionId, lotSetId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      {
+        viewer: { identityId: admin.identityId },
+        auctionId,
+        lotSetId,
+        name: "Кружки",
+        lotIds: [lotId],
+        opId,
+      },
+      { viewer: { identityId: admin.identityId }, auctionId, lotSetId, opId },
+    ]);
+
+    const saveRefusal = (reason: unknown) =>
+      adapter({
+        saveLotSet: async () =>
+          create(SaveLotSetResponseSchema, {
+            outcome: { case: "refused", value: { reason } as never },
+          }),
+      }).saveLotSet(admin, set);
+    const saves = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "lotsFrozen", value: {} }, { kind: "lots-frozen" }],
+      [{ case: "nameEmpty", value: {} }, { kind: "name-empty" }],
+      [
+        { case: "lotNotInAuction", value: { lotId } },
+        { kind: "lot-not-in-auction", lotId },
+      ],
+      [
+        { case: "lotInAnotherSet", value: { lotId, lotSetId } },
+        { kind: "lot-in-another-set", lotId, lotSetId },
+      ],
+    ] as const;
+    for (const [reason, result] of saves) {
+      await expect(saveRefusal(reason)).resolves.toEqual(result);
+    }
+
+    const deleteRefusal = (reason: unknown) =>
+      adapter({
+        deleteLotSet: async () =>
+          create(DeleteLotSetResponseSchema, {
+            outcome: { case: "refused", value: { reason } as never },
+          }),
+      }).deleteLotSet(admin, { auctionId, lotSetId, opId });
+    const deletes = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+      ["lotsFrozen", "lots-frozen"],
+      ["lotSetNotFound", "lot-set-not-found"],
+    ] as const;
+    for (const [reason, kind] of deletes) {
+      await expect(deleteRefusal({ case: reason, value: {} })).resolves.toEqual(
+        { kind },
+      );
+    }
+
+    const odd = adapter({
+      saveLotSet: async () => create(SaveLotSetResponseSchema, {}),
+      deleteLotSet: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    await expect(odd.saveLotSet(admin, set)).resolves.toMatchObject({
+      kind: "invalid",
+    });
+    await expect(
+      odd.deleteLotSet(admin, { auctionId, lotSetId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+
+  // Порядок и разделы ленты (PER-719): раскладка уходит целиком, отказ лота
+  // несёт лот.
+  it("sends the lot layout whole and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const layout = {
+      lotIds: [lotId],
+      sections: [{ sectionId: 1, name: "Книги", lotIds: [] }],
+    };
+    const accepted = adapter({
+      setLotLayout: async (request: unknown) => {
+        sent.push(request);
+        return create(SetLotLayoutResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.setLotLayout(admin, { auctionId, layout, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      {
+        viewer: { identityId: admin.identityId },
+        auctionId,
+        opId,
+        layout: {
+          lotIds: [lotId],
+          sections: [{ sectionId: 1, name: "Книги", lotIds: [] }],
+        },
+      },
+    ]);
+
+    const refusal = (reason: unknown) =>
+      adapter({
+        setLotLayout: async () =>
+          create(SetLotLayoutResponseSchema, {
+            outcome: { case: "refused", value: { reason } as never },
+          }),
+      }).setLotLayout(admin, { auctionId, layout, opId });
+    const refusals = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [
+        { case: "finalAlreadyStarted", value: {} },
+        { kind: "final-already-started" },
+      ],
+      [
+        { case: "auctionAlreadyFinished", value: {} },
+        { kind: "auction-already-finished" },
+      ],
+      [
+        { case: "auctionAlreadyCancelled", value: {} },
+        { kind: "auction-already-cancelled" },
+      ],
+      [
+        { case: "lotNotInAuction", value: { lotId } },
+        { kind: "lot-not-in-auction", lotId },
+      ],
+    ] as const;
+    for (const [reason, result] of refusals) {
+      await expect(refusal(reason)).resolves.toEqual(result);
+    }
+
+    const odd = adapter({
+      setLotLayout: async () => create(SetLotLayoutResponseSchema, {}),
+    });
+    await expect(
+      odd.setLotLayout(admin, { auctionId, layout, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    const missing = adapter({
+      setLotLayout: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    await expect(
+      missing.setLotLayout(admin, { auctionId, layout, opId }),
     ).resolves.toEqual({ kind: "auction-not-found" });
   });
 });
@@ -1694,5 +2482,451 @@ describe("floor bids adapter", () => {
       kind: "ok",
       names: [{ participantId, name: "Аня" }],
     });
+  });
+});
+
+// Снятие участника с лота (PER-659, ADR-072): участники по хронологии,
+// предпросмотр и снятие на его номере; отказы — значения.
+describe("participant removal adapter", () => {
+  const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+  const money = (rubles: number) => ({
+    minorUnits: BigInt(rubles * 100),
+    currency: "RUB",
+  });
+  const bid = (sequence: number, participantId: string, removed = false) => ({
+    sequence: BigInt(sequence),
+    occurredAt: "2026-10-27T18:00:00Z",
+    kind: {
+      case: "bid" as const,
+      value: {
+        bidId: lotId,
+        participantId,
+        amount: money(sequence * 100),
+        origin: { case: "proxy" as const, value: {} },
+        removed,
+      },
+    },
+  });
+
+  it("lists the participants of the lot in the order of their first bid with their names", async () => {
+    const pages: Record<string, unknown> = {
+      "": create(ListLotHistoryResponseSchema, {
+        entries: [bid(1, "b", true), bid(2, "a"), bid(3, "b", true)],
+        nextPageToken: "next",
+      }),
+      next: create(ListLotHistoryResponseSchema, {
+        entries: [
+          {
+            sequence: 4n,
+            occurredAt: "2026-10-27T18:01:00Z",
+            kind: { case: "removal", value: { price: money(200) } },
+          },
+          bid(5, "c"),
+        ],
+        nextPageToken: "",
+      }),
+    };
+    const asked: unknown[] = [];
+    const read = adapter({
+      listLotHistory: async (request) =>
+        pages[(request as { pageToken: string }).pageToken],
+      getDisplayNames: async (request) => {
+        asked.push(request);
+        return { names: { a: { text: "Аня" }, b: { text: "Боря" } } };
+      },
+    });
+    await expect(
+      read.lotParticipants(admin, { auctionId, lotId }),
+    ).resolves.toEqual({
+      kind: "ok",
+      participants: [
+        { participantId: "b", name: "Боря", removed: true },
+        { participantId: "a", name: "Аня", removed: false },
+        { participantId: "c", removed: false },
+      ],
+    });
+    expect(asked).toMatchObject([
+      { auctionId, participantIds: ["b", "a", "c"] },
+    ]);
+  });
+
+  it("refuses a history it could not read to the end", async () => {
+    const endless = adapter({
+      listLotHistory: async () =>
+        create(ListLotHistoryResponseSchema, {
+          entries: [bid(1, "a")],
+          nextPageToken: "more",
+        }),
+    });
+    await expect(
+      endless.lotParticipants(admin, { auctionId, lotId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("previews the removal and sends the version it decided at back with the removal", async () => {
+    const sent: unknown[] = [];
+    const removal = adapter({
+      previewParticipantRemoval: async (request) => {
+        sent.push(request);
+        return {
+          outcome: {
+            case: "preview",
+            value: {
+              price: money(1_200),
+              leaderId: "b",
+              extendedDeadline: "2026-10-27T18:10:00Z",
+              version: 7n,
+            },
+          },
+        };
+      },
+      removeParticipant: async (request) => {
+        sent.push(request);
+        return { outcome: { case: "accepted", value: { lotVersion: 8n } } };
+      },
+    });
+    const target = { auctionId, lotId, participantId: "a" };
+    await expect(
+      removal.previewParticipantRemoval(admin, target),
+    ).resolves.toEqual({
+      kind: "ok",
+      preview: {
+        price: { minorUnits: 120_000, currency: "RUB" },
+        leaderId: "b",
+        extendedDeadline: "2026-10-27T18:10:00Z",
+        version: 7,
+      },
+    });
+    await expect(
+      removal.removeParticipant(admin, {
+        ...target,
+        expectedVersion: 7,
+        opId: "op-1",
+      }),
+    ).resolves.toEqual({ kind: "ok", lotVersion: 8 });
+    expect(sent).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, ...target }),
+      expect.objectContaining({
+        viewer: wireAdmin,
+        ...target,
+        expectedVersion: 7n,
+        opId: "op-1",
+      }),
+    ]);
+  });
+
+  it("reads every removal refusal as a value", async () => {
+    const cases: [string, unknown][] = [
+      ["notMeetupAdministrator", { kind: "not-administrator" }],
+      ["meetupNotFound", { kind: "meetup-not-found" }],
+      ["meetupCancelled", { kind: "meetup-cancelled" }],
+      ["lotNotInAuction", { kind: "refused", reason: "lot-not-in-auction" }],
+      ["notInPrebidding", { kind: "refused", reason: "not-in-prebidding" }],
+      ["lineupFrozen", { kind: "refused", reason: "lineup-frozen" }],
+      ["lotNotOpen", { kind: "refused", reason: "lot-not-open" }],
+      ["notInOnlinePhase", { kind: "refused", reason: "not-in-online-phase" }],
+      ["deadlinePassed", { kind: "refused", reason: "deadline-passed" }],
+      [
+        "notALotParticipant",
+        { kind: "refused", reason: "not-a-lot-participant" },
+      ],
+      [
+        "participantAlreadyRemoved",
+        { kind: "refused", reason: "already-removed" },
+      ],
+      ["lotChanged", { kind: "lot-changed" }],
+    ];
+    for (const [reason, outcome] of cases) {
+      const removal = adapter({
+        removeParticipant: async () => ({
+          outcome: {
+            case: "refused",
+            value: { reason: { case: reason, value: {} } },
+          },
+        }),
+      });
+      await expect(
+        removal.removeParticipant(admin, {
+          auctionId,
+          lotId,
+          participantId: "a",
+          expectedVersion: 7,
+          opId: "op-1",
+        }),
+      ).resolves.toEqual(outcome);
+    }
+  });
+
+  it("takes a preview refused with a changed lot for a defect of Auction", async () => {
+    const removal = adapter({
+      previewParticipantRemoval: async () => ({
+        outcome: {
+          case: "refused",
+          value: { reason: { case: "lotChanged", value: {} } },
+        },
+      }),
+    });
+    await expect(
+      removal.previewParticipantRemoval(admin, {
+        auctionId,
+        lotId,
+        participantId: "a",
+      }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("does not repeat a removal that got no answer", async () => {
+    const removeParticipant = vi.fn(() =>
+      Promise.reject(new ConnectError("deadline", Code.DeadlineExceeded)),
+    );
+    await expect(
+      adapter({ removeParticipant }).removeParticipant(admin, {
+        auctionId,
+        lotId,
+        participantId: "a",
+        expectedVersion: 7,
+        opId: "op-1",
+      }),
+    ).resolves.toMatchObject({ kind: "timeout" });
+    expect(removeParticipant).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Счета аукциона (PER-321): сводка организатора и отметки; отказы — значения,
+// а выдача и оплата — разные методы Auction.
+describe("auction invoices adapter", () => {
+  const invoiceId = "5b0d3c1e-8a2f-5c4d-9e6f-1a2b3c4d5e6f";
+  const snapshot = (status: "awaitingPayment" | "paid" | "handedOver") => ({
+    id: invoiceId,
+    auctionId,
+    lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c",
+    winnerId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+    amount: { minorUnits: 150_000n, currency: "RUB" },
+    paymentDueAt: "2026-10-30T12:00:00Z",
+    fulfillment: FulfillmentMethod.PICKUP,
+    status: { case: status, value: {} },
+  });
+
+  it("reads every invoice of the auction with its status and method", async () => {
+    const sent: unknown[] = [];
+    const invoices = adapter({
+      listAuctionInvoices: async (request) => {
+        sent.push(request);
+        return {
+          outcome: {
+            case: "invoices",
+            value: {
+              invoices: [
+                snapshot("awaitingPayment"),
+                { ...snapshot("handedOver"), fulfillment: 7 },
+              ],
+            },
+          },
+        };
+      },
+    });
+    await expect(
+      invoices.listAuctionInvoices(admin, auctionId),
+    ).resolves.toEqual({
+      kind: "ok",
+      invoices: [
+        expect.objectContaining({
+          invoiceId,
+          amount: { minorUnits: 150_000, currency: "RUB" },
+          paymentDueAt: "2026-10-30T12:00:00Z",
+          fulfillment: "pickup",
+          status: "awaiting-payment",
+        }),
+        // Способ новее схемы — как невыбранный.
+        expect.objectContaining({
+          fulfillment: "unspecified",
+          status: "handed-over",
+        }),
+      ],
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, auctionId }),
+    ]);
+  });
+
+  it("reads the refusals of the invoices as values and a missing auction as such", async () => {
+    const refused = (reason: string) =>
+      adapter({
+        listAuctionInvoices: async () => ({
+          outcome: {
+            case: "refused",
+            value: { reason: { case: reason, value: {} } },
+          },
+        }),
+      }).listAuctionInvoices(admin, auctionId);
+    await expect(refused("notMeetupAdministrator")).resolves.toEqual({
+      kind: "not-administrator",
+    });
+    await expect(refused("meetupNotFound")).resolves.toEqual({
+      kind: "meetup-not-found",
+    });
+    await expect(
+      adapter({
+        listAuctionInvoices: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).listAuctionInvoices(admin, auctionId),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+
+  it("refuses an invoice without an amount or a readable due moment as a defect of the neighbour", async () => {
+    const { amount: _, ...withoutAmount } = snapshot("paid");
+    const read = (invoice: unknown) =>
+      adapter({
+        listAuctionInvoices: async () => ({
+          outcome: { case: "invoices", value: { invoices: [invoice] } },
+        }),
+      }).listAuctionInvoices(admin, auctionId);
+    await expect(read(withoutAmount)).resolves.toMatchObject({
+      kind: "invalid",
+    });
+    await expect(
+      read({ ...snapshot("paid"), paymentDueAt: "" }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("marks the payment and the handover by their own methods", async () => {
+    const paid: unknown[] = [];
+    const handedOver: unknown[] = [];
+    const marks = adapter({
+      markInvoicePaid: async (request) => {
+        paid.push(request);
+        return { outcome: { case: "accepted", value: {} } };
+      },
+      markInvoiceHandedOver: async (request) => {
+        handedOver.push(request);
+        return {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "invoiceNotPaid", value: {} } },
+          },
+        };
+      },
+    });
+    await expect(
+      marks.markInvoice(admin, { invoiceId, mark: "paid", opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      marks.markInvoice(admin, { invoiceId, mark: "handed-over", opId }),
+    ).resolves.toEqual({ kind: "invoice-not-paid" });
+    expect(paid).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, invoiceId, opId }),
+    ]);
+    expect(handedOver).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, invoiceId, opId }),
+    ]);
+  });
+
+  // Текст «Как оплатить и получить» (PER-322): чтение сводки несёт текст,
+  // команда задаёт и снимает его, отказы — значения ответа.
+  it("reads the payment text with the invoices", async () => {
+    await expect(
+      adapter({
+        listAuctionInvoices: async () => ({
+          outcome: {
+            case: "invoices",
+            value: { invoices: [], paymentInstructions: "Перевод на карту." },
+          },
+        }),
+      }).listAuctionInvoices(admin, auctionId),
+    ).resolves.toEqual({
+      kind: "ok",
+      invoices: [],
+      paymentInstructions: "Перевод на карту.",
+    });
+  });
+
+  it("sets and takes back the payment text and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      setPaymentInstructions: async (request: unknown) => {
+        sent.push(request);
+        return { outcome: { case: "accepted", value: {} } };
+      },
+    });
+    await expect(
+      accepted.setPaymentInstructions(admin, {
+        auctionId,
+        opId,
+        text: "Перевод на карту.\nЗабрать в зале.",
+      }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      accepted.setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        opId,
+        text: "Перевод на карту.\nЗабрать в зале.",
+      }),
+      expect.not.objectContaining({ text: expect.anything() }),
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      await expect(
+        adapter({
+          setPaymentInstructions: async () => ({
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+        }).setPaymentInstructions(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    await expect(
+      adapter({
+        setPaymentInstructions: async () => ({ outcome: { case: undefined } }),
+      }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        setPaymentInstructions: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    await expect(
+      adapter({
+        setPaymentInstructions: () =>
+          Promise.reject(new ConnectError("blank", Code.InvalidArgument)),
+      }).setPaymentInstructions(admin, { auctionId, opId, text: " " }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        setPaymentInstructions: () =>
+          Promise.reject(new ConnectError("meetups", Code.Unavailable)),
+      }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  it("reads a missing invoice and an unanswered mark without a repeat", async () => {
+    await expect(
+      adapter({
+        markInvoicePaid: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).markInvoice(admin, { invoiceId, mark: "paid", opId }),
+    ).resolves.toEqual({ kind: "invoice-not-found" });
+    const markInvoicePaid = vi.fn(() =>
+      Promise.reject(new ConnectError("deadline", Code.DeadlineExceeded)),
+    );
+    await expect(
+      adapter({ markInvoicePaid }).markInvoice(admin, {
+        invoiceId,
+        mark: "paid",
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "timeout" });
+    expect(markInvoicePaid).toHaveBeenCalledTimes(1);
   });
 });

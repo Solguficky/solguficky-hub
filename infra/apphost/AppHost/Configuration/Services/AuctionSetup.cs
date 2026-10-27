@@ -7,8 +7,9 @@ namespace AppHost.Configuration.Services;
 
 internal static class AuctionSetup
 {
-    // Порты, которые открывает Containerfile (EXPOSE 8080 8081).
-    private const int ContainerHttpPort = 8080;
+    // Порты, которые открывает Containerfile (EXPOSE 8080 8081). HTTP-порт читают
+    // и правила туннеля к экрану зала (CloudflaredSetup).
+    internal const int ContainerHttpPort = 8080;
     private const int ContainerGrpcPort = 8081;
 
     // Проба готовности сервиса: 200 — узел Up и журнал отвечает (ADR-054).
@@ -85,6 +86,14 @@ internal static class AuctionSetup
         var user = context.Builder.AddParameter("auction-db-user", secret: true);
         var password = context.Builder.AddParameter("auction-db-password", secret: true);
 
+        // Кто подводит итог розыгрыша (ADR-066, дополнение 2026-10-24) — свойство
+        // среды, а не конфигурации аукциона: неделя прода открывается раньше, чем
+        // решение, и конфигурация к нему уже заморожена. В чарте значение
+        // «автоматический» (жеребьёвка по маяку): забытый ключ в values оставляет
+        // прежнее поведение, а `manual` values среды кладут своим значением.
+        // Иное значение роняет старт Auction с именем переменной.
+        var raffleDraw = context.Builder.AddParameter("auction-raffle-draw", "automatic", publishValueAsDefault: true);
+
         var auction = context.Builder
             .AddDockerfile(
                 AppHostNames.Resources.Auction,
@@ -96,6 +105,7 @@ internal static class AuctionSetup
         return Wire(context, auction)
             .WithEnvironment("AUCTION_DATABASE_USER", user)
             .WithEnvironment("AUCTION_DATABASE_PASSWORD", password)
+            .WithEnvironment("AUCTION_RAFFLE_DRAW", raffleDraw)
             .ExportsTelemetryToCollector()
             .AsClusterWorkload(Cluster);
     }

@@ -2,6 +2,7 @@ package auction.projection
 
 import auction.entity.StoredAuction
 import auction.entity.StoredAuctionEvent
+import auction.entity.StoredLotSet
 import auction.watch.AuctionChanges
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.pekko.actor.typed.ActorSystem
@@ -64,8 +65,10 @@ object AuctionViewHandler {
  * Обработчик проекции аукциона: строка `auction_view`, реестр `auction_lot` и состав финала `auction_lineup` одной
  * транзакцией `JdbcSession` вместе с offset (ADR-045). Реестр пишется разностью до и после события: лот, добавленный в
  * реестр, — новая строка, снятый — удалённая. Состав только добавляется (PER-608): заморозка у аукциона одна, а снимок
- * `Finished` состав уже не несёт, и подсчёт прогнозов по `Finished` берёт его отсюда. Пишет только соединение сессии,
- * как у лота, и тем же соединением объявляет аукцион потокам `WatchAuction` ([[AuctionChanges.announce]]).
+ * `Finished` состав уже не несёт, и подсчёт прогнозов по `Finished` берёт его отсюда. Сеты лотов `auction_lot_set`
+ * (ADR-073) переписываются целиком, когда снимок сетов изменился: их мало, а правка сета заменяет его. Пишет только
+ * соединение сессии, как у лота, и тем же соединением объявляет аукцион потокам `WatchAuction`
+ * ([[AuctionChanges.announce]]).
  */
 final class AuctionViewHandler(json: AuctionViewJson, serialization: Serialization)
     extends JdbcHandler[EventEnvelope[StoredAuctionEvent], JdbcSession] {
@@ -91,7 +94,11 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
           (previous -- after.lots).foreach(deleteLot(connection, auctionId, _))
           // Состав финала только добавляется: заморозка у аукциона одна, а снимок `Finished` состав уже не несёт.
           val previousLineup = before.fold(Set.empty[UUID])(_.lineup)
-          (after.lineup -- previousLineup).foreach(insertLineup(connection, auctionId, _))
+          after.order.zipWithIndex
+            .filterNot((lot, _) => previousLineup.contains(lot))
+            .foreach((lot, position) => insertLineup(connection, auctionId, lot, position))
+          if (before.fold(List.empty[StoredLotSet])(_.sets) != after.sets)
+            replaceSets(connection, auctionId, after.sets)
           AuctionChanges.announce(connection, auctionId)
         case Right(_) => ()
       }
@@ -147,15 +154,44 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
         statement.executeUpdate()
     }
 
-  /** Лот состава финала (PER-608): строка нужна статистике после `Finished`, когда снимок состав уже не несёт. */
-  private def insertLineup(connection: Connection, auctionId: UUID, lotId: UUID): Unit =
+  /** Сеты аукциона целиком: удаление аукциона до торгов стирает их вместе с реестром (ADR-073, п. 2). */
+  private def replaceSets(connection: Connection, auctionId: UUID, sets: List[StoredLotSet]): Unit = {
+    Using.resource(connection.prepareStatement("DELETE FROM auction_lot_set WHERE auction_id = ?")) { statement =>
+      statement.setObject(1, auctionId)
+      statement.executeUpdate()
+    }
+    sets.foreach { set =>
+      Using.resource(
+        connection.prepareStatement(
+          """INSERT INTO auction_lot_set (lot_set_id, auction_id, name, lot_ids, settled, collector_id)
+            |VALUES (?, ?, ?, ?, ?, ?)""".stripMargin
+        )
+      ) { statement =>
+        statement.setObject(1, set.lotSetId)
+        statement.setObject(2, auctionId)
+        statement.setString(3, set.name)
+        statement.setArray(4, connection.createArrayOf("uuid", set.lots.toArray[AnyRef]))
+        statement.setBoolean(5, set.settled)
+        statement.setObject(6, set.collector.orNull)
+        statement.executeUpdate()
+      }
+    }
+  }
+
+  /**
+   * Лот состава финала (PER-608): строка нужна статистике и потоку `WatchAuction` после `Finished`, когда снимок состав
+   * уже не несёт, а место в составе — порядку выхода в потоке (PER-712).
+   */
+  private def insertLineup(connection: Connection, auctionId: UUID, lotId: UUID, position: Int): Unit =
     Using.resource(
       connection.prepareStatement(
-        "INSERT INTO auction_lineup (auction_id, lot_id) VALUES (?, ?) ON CONFLICT (auction_id, lot_id) DO NOTHING"
+        "INSERT INTO auction_lineup (auction_id, lot_id, position) VALUES (?, ?, ?) " +
+          "ON CONFLICT (auction_id, lot_id) DO UPDATE SET position = EXCLUDED.position"
       )
     ) { statement =>
       statement.setObject(1, auctionId)
       statement.setObject(2, lotId)
+      statement.setInt(3, position)
       statement.executeUpdate()
     }
 }

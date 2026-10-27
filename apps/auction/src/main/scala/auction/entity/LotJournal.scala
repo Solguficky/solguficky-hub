@@ -746,9 +746,10 @@ object LotJournal {
     ordered
   }
 
-  private[entity] def storeMoney(money: Money): StoredMoney = StoredMoney(money.minorUnits, money.currency.value)
+  private[auction] def storeMoney(money: Money): StoredMoney = StoredMoney(money.minorUnits, money.currency.value)
 
-  private[entity] def restoreMoney(stored: StoredMoney): Money = Money(stored.minorUnits, CurrencyCode(stored.currency))
+  private[auction] def restoreMoney(stored: StoredMoney): Money =
+    Money(stored.minorUnits, CurrencyCode(stored.currency))
 
   private def storeSchedule(schedule: Schedule): StoredSchedule =
     StoredSchedule(storeMoney(schedule.startingPrice), storeConfig(schedule.config))

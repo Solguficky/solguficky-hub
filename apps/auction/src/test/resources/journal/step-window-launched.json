@@ -27,6 +27,12 @@
       "lots": [
         "0190f2a0-0000-7000-8000-00000000000b"
       ]
-    }
+    },
+    "finalTime": null,
+    "lotSetDefined": null,
+    "lotSetDeleted": null,
+    "lotSetSettled": null,
+    "paymentInstructions": null,
+    "lotLayout": null
   }
 }

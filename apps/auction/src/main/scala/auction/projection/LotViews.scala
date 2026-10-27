@@ -10,8 +10,15 @@ import java.util.UUID
 import scala.concurrent.Future
 
 /**
+ * Сет лота (ADR-073) в read model: название, лоты в порядке организатора и собравший — после итога и только у
+ * собранного сета.
+ */
+final case class LotSetView(lotSetId: UUID, name: String, lots: List[UUID], collector: Option[UUID])
+
+/**
  * Лот из read model вместе с карточкой каталога: карточку торги не знают (ADR-057), и она присоединяется при чтении.
  * `bidCount` — число строк `lot_bid` лота, ручных и прокси вместе (PER-320), без ставок снятых участников (PER-658).
+ * `lotSet` — сет лота, только полный: сет меньше чем из двух лотов участнику не показывается (ADR-073, п. 3).
  */
 final case class LotSnapshotView(
     lotId: UUID,
@@ -19,7 +26,8 @@ final case class LotSnapshotView(
     version: Long,
     lot: Lot,
     card: Option[LotCard],
-    bidCount: Long = 0
+    bidCount: Long = 0,
+    lotSet: Option[LotSetView] = None
 )
 
 /**
@@ -33,6 +41,8 @@ final case class LotSnapshotView(
  * `finalBidCount` — принятые ставки лота состава после его возврата в торги: строки `lot_bid` с номером события больше
  * `LotResumed`. Состав — заморозка `FinalLineupFrozen` (`auction_lineup`), а не признак удержания: удержанный лот,
  * проданный или снятый до заморозки, в состав не входит. У лота вне состава обеих метрик нет — `None`, а не ноль.
+ *
+ * `contest` — смены лидера и самая длинная дуэль за всю жизнь лота (PER-511), по его хронологии ядром [[LotContest]].
  */
 final case class LotStatisticsView(
     lotId: UUID,
@@ -42,7 +52,8 @@ final case class LotStatisticsView(
     participantCount: Long,
     lastBidAt: Option[Instant],
     heldPrice: Option[Money] = None,
-    finalBidCount: Option[Long] = None
+    finalBidCount: Option[Long] = None,
+    contest: LotContest = LotContest.none
 ) {
 
   /**
@@ -88,13 +99,15 @@ final case class LotStatisticsView(
  * была его цена к открытию окна. Число ставок и максимум считаются по строкам `lot_bid` окна без ставок снятых
  * участников, `priceBefore` — цена последней до окна ставки или снятия участника (PER-658), с которой лот пошёл дальше,
  * а без них — стартовая цена `LotOpened`. Полей участников здесь нет намеренно: сводка дня зовёт лот по цене и
- * оспоренности, а не по людям.
+ * оспоренности, а не по людям. `contest` — смены лидера и самая длинная дуэль внутри окна (PER-511): лидер к открытию
+ * окна берётся из хронологии до него.
  */
 final case class DayLotStatisticsView(
     lotId: UUID,
     bidCount: Long,
     maxPrice: Option[Money],
-    priceBefore: Option[Money]
+    priceBefore: Option[Money],
+    contest: LotContest = LotContest.none
 ) {
 
   /**
@@ -137,6 +150,9 @@ trait LotViews {
    * ровно тогда, когда его отдаёт `find`.
    */
   def image(lotId: UUID): Future[Option[LotImageView]]
+
+  /** Фото лота, который виден в read model, по id фото; лота или фото нет — `None`, как у `image`. */
+  def photo(lotId: UUID, photoId: UUID): Future[Option[LotImageView]]
 
   /**
    * Ставки и снятия участников лота по возрастанию номера события в журнале, строго после `after`, не больше `limit`.

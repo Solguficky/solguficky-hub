@@ -112,7 +112,7 @@ describe("inspectCall", () => {
       {
         chat_id: 42,
         text: "Привет",
-        reply_markup: { inline_keyboard: [[key("Архив")]] },
+        reply_markup: { inline_keyboard: [[key("🗂 Архив")]] },
       },
       catalog,
     );
@@ -160,14 +160,17 @@ describe("inspectCall", () => {
         "editMessageText",
         screen("meetups", "<b>Сходки</b>\n\nПока пусто.", [
           [key("12 июня · Настолки")],
-          [key("Архив")],
+          [key("🗂 Архив")],
         ]),
       ),
     ).toEqual([]);
     expect(
       rulesOf(
         "editMessageText",
-        screen("meetups", "<b>Сходки</b>", [[key("Архив")], [key("‹ Сходки")]]),
+        screen("meetups", "<b>Сходки</b>", [
+          [key("🗂 Архив")],
+          [key("‹ Сходки")],
+        ]),
       ),
     ).toEqual(["nav"]);
   });

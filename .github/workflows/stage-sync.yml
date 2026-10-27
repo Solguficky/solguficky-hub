@@ -42,7 +42,7 @@ jobs:
           [ -n "$STAGE_SYNC_KEY" ] || { echo "::error::нет секрета STAGE_SYNC_KEY в environment stage-sync"; exit 1; }
           key_file="$RUNNER_TEMP/stage-sync-key"
           (umask 077 && printf '%s\n' "$STAGE_SYNC_KEY" > "$key_file")
-          # Ключ хоста закреплён, как в stage-bump.yml: источник — опубликованные
+          # Ключ хоста закреплён, как в ops-bump.yml: источник — опубликованные
           # отпечатки GitHub, а не первый ответ сети.
           echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/known_hosts"
           export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"

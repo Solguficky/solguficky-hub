@@ -146,11 +146,12 @@ describe("auction through both bots", () => {
     await admin.says("100");
     await admin.presses("Пропустить");
     expect(plain(admin.sees())).toContain("Лот готов");
-    await admin.presses("🛠 Изменить лот");
+    // «Лот готов» несёт «Изменить лот» без знака: знак — у ряда карточки лота.
+    await admin.presses("Изменить лот");
     // Лот, который форма только что завела, чтения ещё могут не знать: кадр
     // «Лот не найден» несёт «Повторить».
-    await eventually(admin, "Название", () => admin.presses("Повторить"));
-    await admin.presses("Название");
+    await eventually(admin, "🔖 Название", () => admin.presses("Повторить"));
+    await admin.presses("🔖 Название");
     await admin.says(lotTitle);
     expect(plain(admin.sees())).toContain(lotTitle);
     await admin.presses("‹ Лот");
@@ -189,24 +190,24 @@ describe("auction through both bots", () => {
     // гостя ниже.
     await member.presses(lotRow(member, lotTitle) ?? lotTitle);
     // Аукцион открывает лоты реестра сам, вслед за командой открытия недели.
-    await eventually(member, "По шагу (1 100 ₽)", () =>
+    await eventually(member, "По шагу (1 000 ₽)", () =>
       member.presses("🔄 Обновить"),
     );
     // Первая ставка: имя спрашивается до подтверждения, и подтверждение одно
     // (PER-595).
-    await pressesAmount(member, "По шагу (1 100 ₽)");
+    await pressesAmount(member, "По шагу (1 000 ₽)");
     await member.presses("Взять псевдоним");
     await member.says("Сова");
-    await pressesAmount(member, "✔️ Да, поставить 1 100 ₽");
-    expect(plain(member.sees())).toContain("Ставка 1 100 ₽ принята");
+    await pressesAmount(member, "✔️ Да, поставить 1 000 ₽");
+    expect(plain(member.sees())).toContain("Ставка 1 000 ₽ принята");
     expect(pressableLike(member, "✔️ Да, поставить")).toBeUndefined();
     expect(pressableLike(member, "‹ Лоты")).toBeDefined();
     // «‹ Лот» дочитывает лот до версии из ответа ставки (PER-470): новая
     // цена и лидер — сразу, без «Обновить».
     await member.presses("‹ Лот");
-    expect(plain(member.sees())).toContain("Цена: 1 100 ₽");
+    expect(plain(member.sees())).toContain("Цена: 1 000 ₽");
     expect(plain(member.sees())).toContain("Лидер: ты (Сова*)");
-    expect(plain(member.sees())).toContain("Следующая ставка: от 1 200 ₽");
+    expect(plain(member.sees())).toContain("Следующая ставка: от 1 100 ₽");
     await member.presses("Автоставка");
     await member.says("3 000");
     await member.presses("✔️ Да, включить автоставку");
@@ -217,6 +218,8 @@ describe("auction through both bots", () => {
     // (PER-595): Auction его закрепил.
     await member.says("/settings");
     await member.presses("🧩 Расширения");
+    // Расширения настроек — список, аукцион — его пункт (PER-645).
+    await member.presses("🔨 Аукцион");
     await member.presses("Имя в аукционе");
     expect(plain(member.sees())).toContain("Твоё имя: Сова*");
     expect(pressableLike(member, "Взять псевдоним")).toBeUndefined();
@@ -236,8 +239,11 @@ describe("auction through both bots", () => {
     await admin.says("/manage");
     await admin.presses("Заявки и отказы");
     // Заявка гостя лежит в очереди аукциона, отдельной от очереди сообщества
-    // (дополнение ADR-064 к пункту 12).
-    await admin.presses("Заявки в аукцион");
+    // (дополнение ADR-064 к пункту 12). Подпись несёт число заявок.
+    await admin.presses(
+      admin.pressable().find((label) => label.startsWith("Заявки в аукцион")) ??
+        "Заявки в аукцион",
+    );
     // Очередь отдаётся от старой заявки к новой, а карточка показывает одну:
     // заявки прошлых прогонов администратор пропускает.
     for (let skipped = 0; skipped < 20; skipped += 1) {
@@ -264,19 +270,19 @@ describe("auction through both bots", () => {
     // Цена в ленте может отставать от ставки участника: лот ищется по
     // названию, а цену показывает карточка.
     await guest.presses(lotRow(guest, lotTitle) ?? lotTitle);
-    await eventually(guest, "По шагу (1 200 ₽)", () =>
+    await eventually(guest, "По шагу (1 100 ₽)", () =>
       guest.presses("🔄 Обновить"),
     );
-    await pressesAmount(guest, "По шагу (1 200 ₽)");
+    await pressesAmount(guest, "По шагу (1 100 ₽)");
     await guest.presses("Взять псевдоним");
     await guest.says("Филин");
-    await pressesAmount(guest, "✔️ Да, поставить 1 200 ₽");
-    expect(plain(guest.sees())).toContain("Ставка 1 200 ₽ принята");
+    await pressesAmount(guest, "✔️ Да, поставить 1 100 ₽");
+    expect(plain(guest.sees())).toContain("Ставка 1 100 ₽ принята");
     // Автоставка участника отвечает гостю в той же транзакции, и «‹ Лот»
     // сразу показывает цену на шаг выше — версия ответа её уже несёт.
     await guest.presses("‹ Лот");
-    expect(plain(guest.sees())).toContain("Цена: 1 300 ₽");
-    expect(pressableLike(guest, "По шагу (1 400 ₽)")).toBeDefined();
+    expect(plain(guest.sees())).toContain("Цена: 1 200 ₽");
+    expect(pressableLike(guest, "По шагу (1 300 ₽)")).toBeDefined();
     await guest.presses("Автоставка");
     await guest.says("5 000");
     await guest.presses("✔️ Да, включить автоставку");
@@ -285,6 +291,39 @@ describe("auction through both bots", () => {
     await guest.presses("‹ Лот");
     expect(plain(guest.sees())).toContain("Твоя автоставка: до 5 000 ₽");
     expect(plain(guest.sees())).toContain("Лидер: ты (Филин*)");
+
+    // Администратор снимает гостя с лота со «Ставок» (PER-659, ADR-072):
+    // подтверждение называет лот после снятия, а Auction переигрывает торги
+    // без гостя — лидером снова становится участник. «Нет» ничего не меняет.
+    await admin.opensLink(meetupId);
+    await admin.presses("🧩 Расширения");
+    await admin.presses("🔨 Аукцион");
+    await admin.presses("🔨 Лоты");
+    await admin.presses(lotRow(admin, lotTitle) ?? lotTitle);
+    await admin.presses("Ставки");
+    await admin.presses("Снять участника");
+    await admin.presses("Филин*");
+    expect(plain(admin.sees())).toContain("Снять Филин* с лота?");
+    expect(plain(admin.sees())).toContain("Лидер: Сова*.");
+    await admin.presses("✖️ Нет");
+    expect(admin.pressable()).toContain("Филин*");
+    await admin.presses("Филин*");
+    await admin.presses("✔️ Да, снять");
+    expect(plain(admin.sees())).toContain("Участник снят: Филин*");
+    expect(plain(admin.sees())).toContain("Лидер: Сова*.");
+    // Снятого на лоте больше нет среди тех, кого можно снять.
+    await admin.presses("‹ Лот");
+    await admin.presses("Ставки");
+    await admin.presses("Снять участника");
+    expect(admin.pressable()).not.toContain("Филин*");
+    expect(admin.pressable()).toContain("Сова*");
+    // Гость видит лот и хронологию в своём боте: лидер — участник, а
+    // снятие — своя строка хронологии.
+    await guest.presses("🔄 Обновить");
+    expect(plain(guest.sees())).toContain("Лидер: Сова*");
+    await guest.presses("Ставки");
+    expect(plain(guest.sees())).toContain("участник снят");
+    await guest.presses("‹ Лот");
 
     // Гость без права аукциона видит приветствие без заявки; «Подать заявку»
     // ставит её, и бот отвечает ожиданием — ни меню, ни лота ему не открыто.
@@ -297,5 +336,45 @@ describe("auction through both bots", () => {
     await pending.presses("Подать заявку");
     expect(plain(pending.sees())).toContain("Заявка на рассмотрении");
     expect(pending.pressable()).not.toContain("Аукционы");
+
+    // Отмена сходки с идущими торгами называет последствие до подтверждения
+    // (PER-606): продаж ещё нет, и число — ноль. «Нет» сходку не отменяет.
+    await admin.opensLink(meetupId);
+    await admin.presses("🛠 Статус");
+    await admin.presses("Отменить сходку");
+    expect(plain(admin.sees())).toContain(
+      "У сходки идут торги: аукцион будет отменён, проданные лоты (0) останутся проданными.",
+    );
+    await admin.presses("✖️ Нет");
+
+    // Администратор отменяет аукцион из пульта: ставки теряют силу, а гость
+    // находит аукцион в «Прошедших» с пометкой «отменён». Отмена освобождает
+    // слот торгов сообщества и следующему прогону.
+    await admin.opensLink(meetupId);
+    await admin.presses("🧩 Расширения");
+    await admin.presses("🔨 Аукцион");
+    await admin.presses("🛠 Пульт");
+    await admin.presses("Отменить аукцион");
+    expect(plain(admin.sees())).toContain(
+      "У сходки идут торги: аукцион будет отменён, проданные лоты (0) останутся проданными.",
+    );
+    await admin.presses("✔️ Да, отменить аукцион");
+    expect(plain(admin.sees())).toContain("Аукцион отменён");
+    await guest.says("/auctions");
+    await guest.presses("🗂 Прошедшие");
+    // Список читает read model Auction: отмена доходит до неё не сразу.
+    const cancelledRow = () =>
+      guest.pressable().find((label) => label.includes("отменён"));
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (cancelledRow() !== undefined) break;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await guest.presses("‹ Аукционы");
+      await guest.presses("🗂 Прошедшие");
+    }
+    expect(cancelledRow()).toBeDefined();
+    await guest.presses(cancelledRow() ?? "");
+    expect(plain(guest.sees())).toContain(
+      "Аукцион отменён: проданные лоты остались проданными.",
+    );
   });
 });

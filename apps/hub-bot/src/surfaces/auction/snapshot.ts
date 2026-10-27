@@ -38,6 +38,12 @@ export function auctionSummaryOf(snapshot: AuctionSnapshot): AuctionSummary {
   };
 }
 
+// Момент онлайн-фазы — RFC 3339 в UTC, как обещает `auction.v1.OnlinePhase`:
+// «2026-10-21T21:00:00Z» или с долями секунды. `Date.parse` берёт и
+// «2026-10-21», и «Oct 21, 2026», а выдуманное время в тексте читалось бы как
+// срок (PER-688).
+const INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,9})?Z$/;
+
 // Дни начала и финала строка показывает, а по началу ещё и сортирует: битая
 // дата уронила бы отрисовку уже после маршрута, и человек остался бы без
 // ответа.
@@ -46,7 +52,9 @@ function instantOf(
   refusal: string,
 ): string | undefined {
   if (value === undefined || value === "") return undefined;
-  if (Number.isNaN(Date.parse(value))) throw new Error(refusal);
+  if (!INSTANT.test(value) || !Number.isFinite(Date.parse(value))) {
+    throw new Error(refusal);
+  }
   return value;
 }
 
@@ -66,12 +74,10 @@ function stageOf(status: AuctionSnapshot["status"]): AuctionStage {
       return "in-final";
     case "finished":
       return "finished";
-    // Отменённый аукцион (ADR-047, дополнение 2026-10-12) экраны ещё не
-    // показывают — это PER-606. Отменяют аукцион кнопка пульта (PER-606) и
-    // отмена сходки (PER-602), и ни одной ещё нет, поэтому отменённого
-    // аукциона в ответах не бывает; перевод бросает, как на незнакомом статусе.
+    // Отменённый аукцион (ADR-047, дополнение 2026-10-12) — конечная стадия,
+    // как завершённый, и статус отличает одно от другого (PER-606).
     case "cancelled":
-      throw new Error("auction snapshot is cancelled, not shown yet");
+      return "cancelled";
     case "draft":
       throw new Error("auction list returned a draft");
     case undefined:

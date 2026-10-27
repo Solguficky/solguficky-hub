@@ -124,7 +124,17 @@ function ports(
       cancelRaffleRegistration: vi.fn(async () => {
         throw new Error("not used");
       }),
+      listMyInvoices: async () => ({ invoices: [] }),
+      chooseFulfillment: async () => {
+        throw new Error("not used");
+      },
       getMyPredictions: vi.fn(async () => []),
+      getPredictionResults: vi.fn(async () => {
+        throw new Error("not used");
+      }),
+      getDayChronicle: async () => {
+        throw new Error("not used");
+      },
       submitPrediction: vi.fn(async () => {
         throw new Error("not used");
       }),
@@ -148,6 +158,7 @@ function ports(
 }
 
 const lotButton = encodeAuctionCallback({ kind: "lot", lotId, page: 0 });
+const setButton = encodeAuctionCallback({ kind: "set", lotId, page: 0 });
 const feedButton = encodeAuctionCallback({
   kind: "feed",
   auctionId,
@@ -247,7 +258,7 @@ describe("FAQ entry", () => {
   );
 
   it("sends a community member to the hub bot on /start and on a lot press", async () => {
-    const p = ports(identity({ rights: [...MEMBER, "manage-members"] }));
+    const p = ports(identity({ rights: [...MEMBER, "admit-bidders"] }));
     expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
       screen: { kind: "denied", reason: "in-community" },
       identityId: VIEWER_ID,
@@ -706,6 +717,35 @@ describe("routeAuctionCallback", () => {
       grpcCode: "Unimplemented",
     });
   });
+
+  // Лот, которого Auction больше не отдаёт, повтором не откроется: карточка,
+  // хронология и экран сета получают кадр устаревшего экрана, как в хабе.
+  it.each([
+    ["a lot card", lotButton],
+    ["a set screen", setButton],
+    [
+      "a bid history",
+      encodeAuctionCallback({
+        kind: "history",
+        lotId,
+        page: 0,
+        historyPage: 0,
+      }),
+    ],
+  ])(
+    "treats a missing lot behind %s as outdated instead of offering a futile retry",
+    async (_name, data) => {
+      const p = ports(identity({ rights: GUEST }));
+      vi.mocked(p.auction.getLot).mockRejectedValue(
+        new ConnectError("not found", Code.NotFound),
+      );
+
+      const outcome = await routeAuctionCallback({ ports: p, user, data });
+
+      expect(outcome.screen).toEqual({ kind: "outdated" });
+      expect(outcome.failure).toBeUndefined();
+    },
+  );
 
   // Критерий PER-306: недоступный Auction — именованный экран, а не пустая
   // лента.

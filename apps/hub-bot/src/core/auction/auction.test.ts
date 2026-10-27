@@ -9,6 +9,7 @@ import {
 } from "../../../gen/auction/v1/auction_events_pb.js";
 import {
   AuctionConfigSchema,
+  AuctionStepWindowSchema,
   OnlinePhaseSchema,
 } from "../../../gen/auction/v1/auction_pb.js";
 import { AuctionSnapshotSchema } from "../../../gen/auction/v1/auction_service_pb.js";
@@ -59,10 +60,99 @@ describe("auction snapshot for the root", () => {
     ).toEqual({ auctionId: AUCTION_ID, stage: "draft", final: false });
   });
 
-  // Отменённый аукцион экраны покажут в PER-606; до него перевод не выдумывает
-  // ему стадию.
-  it("throws on a cancelled auction until the screens show it", () => {
-    expect(() =>
+  // Программа недели (PER-724): окна конфигурации и запущенные одним списком
+  // по началу, ориентировочное время финала — как есть.
+  it("reads the windows of the week and the estimated final for the programme", () => {
+    const stepWindow = (from: string, until: string, lotIds: string[]) =>
+      create(AuctionStepWindowSchema, { from, until, lotIds });
+    expect(
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          finalAt: "2026-10-31T16:00:00Z",
+          config: create(AuctionConfigSchema, {
+            finalBlocks: 1,
+            stepWindows: [
+              stepWindow("2026-10-28T15:00:00Z", "2026-10-28T17:00:00Z", [
+                "lot-1",
+              ]),
+            ],
+          }),
+          launchedStepWindows: [
+            stepWindow("2026-10-27T15:00:00Z", "2026-10-27T16:00:00Z", [
+              "lot-2",
+              "lot-3",
+            ]),
+          ],
+          status: {
+            case: "prebidding",
+            value: create(AuctionState_PrebiddingSchema, {}),
+          },
+        }),
+      ),
+    ).toMatchObject({
+      finalAt: "2026-10-31T16:00:00Z",
+      stepWindows: [
+        {
+          from: "2026-10-27T15:00:00Z",
+          until: "2026-10-27T16:00:00Z",
+          lotIds: ["lot-2", "lot-3"],
+        },
+        {
+          from: "2026-10-28T15:00:00Z",
+          until: "2026-10-28T17:00:00Z",
+          lotIds: ["lot-1"],
+        },
+      ],
+    });
+  });
+
+  // Программа — подсказка: кривой момент выпадает из неё, а не роняет корень.
+  it("drops a window or a final time it cannot read instead of throwing", () => {
+    const view = auctionSummaryViewOf(
+      create(AuctionSnapshotSchema, {
+        id: AUCTION_ID,
+        finalAt: "soon",
+        launchedStepWindows: [
+          create(AuctionStepWindowSchema, {
+            from: "2026-10-27",
+            until: "2026-10-27T16:00:00Z",
+          }),
+        ],
+        status: {
+          case: "prebidding",
+          value: create(AuctionState_PrebiddingSchema, {}),
+        },
+      }),
+    );
+    expect(view).not.toHaveProperty("finalAt");
+    expect(view).not.toHaveProperty("stepWindows");
+  });
+
+  // Видимость (PER-673): признак есть только у скрытого и только `true`.
+  it("carries the hidden mark of an auction hidden from participants", () => {
+    expect(
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          hidden: true,
+          status: {
+            case: "draft",
+            value: create(AuctionState_DraftSchema, {}),
+          },
+        }),
+      ),
+    ).toEqual({
+      auctionId: AUCTION_ID,
+      stage: "draft",
+      final: false,
+      hidden: true,
+    });
+  });
+
+  // Отменённый аукцион — своя конечная стадия, а не завершённый (PER-606).
+  it("translates a cancelled auction to its own stage", () => {
+    expect(
       auctionSummaryViewOf(
         create(AuctionSnapshotSchema, {
           id: AUCTION_ID,
@@ -72,7 +162,7 @@ describe("auction snapshot for the root", () => {
           },
         }),
       ),
-    ).toThrow("auction snapshot is cancelled, not shown yet");
+    ).toEqual({ auctionId: AUCTION_ID, stage: "cancelled", final: false });
   });
 
   // Дефект соседа — отказ перевода, а не корень с выдуманной стадией.
@@ -105,6 +195,43 @@ describe("auction snapshot for the root", () => {
         }),
       ),
     ).toThrow("auction online phase start is not an instant");
+  });
+
+  // Момент Auction обещает в RFC 3339 (PER-688): мягкий `Date.parse` взял бы
+  // и дату без времени, и дату словами, и выдуманный срок попал бы в текст.
+  describe("instants of the online phase", () => {
+    const withPhase = (opensAt: string, closesAt: string) =>
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          config: create(AuctionConfigSchema, {
+            onlinePhase: create(OnlinePhaseSchema, { opensAt, closesAt }),
+          }),
+          status: {
+            case: "draft",
+            value: create(AuctionState_DraftSchema, {}),
+          },
+        }),
+      );
+
+    it.each(["2026-10-21", "Oct 21, 2026"])("refuses %s", (instant) => {
+      expect(() => withPhase(instant, "2026-10-29T18:00:00Z")).toThrow(
+        "auction online phase start is not an instant",
+      );
+      expect(() => withPhase("2026-10-26T09:00:00Z", instant)).toThrow(
+        "auction online phase end is not an instant",
+      );
+    });
+
+    it.each(["2026-10-21T21:00:00Z", "2026-10-21T21:00:00.123456Z"])(
+      "accepts %s",
+      (instant) => {
+        expect(withPhase(instant, instant)).toMatchObject({
+          opensAt: instant,
+          closesAt: instant,
+        });
+      },
+    );
   });
 
   // Состав финала (PER-639): лента в финале ставит лоты в порядке зала и

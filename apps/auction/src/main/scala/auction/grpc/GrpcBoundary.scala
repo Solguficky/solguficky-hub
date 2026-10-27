@@ -220,9 +220,14 @@ object GrpcBoundary {
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest): Future[wire.FaqAcknowledgement] = refuse
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest): Future[wire.FaqAcknowledgement] = refuse
     def getLotImage(in: wire.GetLotImageRequest): Future[wire.LotImage] = refuse
+    def addLotPhoto(in: wire.AddLotPhotoRequest): Future[wire.AddLotPhotoResponse] = refuse
+    def removeLotPhoto(in: wire.RemoveLotPhotoRequest): Future[wire.RemoveLotPhotoResponse] = refuse
+    def getLotPhoto(in: wire.GetLotPhotoRequest): Future[wire.LotImage] = refuse
     def draftAuction(in: wire.DraftAuctionRequest): Future[wire.DraftAuctionResponse] = refuse
     def addLot(in: wire.AddLotRequest): Future[wire.AddLotResponse] = refuse
     def removeLot(in: wire.RemoveLotRequest): Future[wire.RemoveLotResponse] = refuse
+    def saveLotSet(in: wire.SaveLotSetRequest): Future[wire.SaveLotSetResponse] = refuse
+    def deleteLotSet(in: wire.DeleteLotSetRequest): Future[wire.DeleteLotSetResponse] = refuse
     def scheduleLot(in: wire.ScheduleLotRequest): Future[wire.ScheduleLotResponse] = refuse
     def scheduleAuction(in: wire.ScheduleAuctionRequest): Future[wire.ScheduleAuctionResponse] = refuse
     def startPrebidding(in: wire.StartPrebiddingRequest): Future[wire.StartPrebiddingResponse] = refuse
@@ -230,6 +235,8 @@ object GrpcBoundary {
     def publishAuction(in: wire.PublishAuctionRequest): Future[wire.PublishAuctionResponse] = refuse
     def hideAuction(in: wire.HideAuctionRequest): Future[wire.HideAuctionResponse] = refuse
     def cancelAuction(in: wire.CancelAuctionRequest): Future[wire.CancelAuctionResponse] = refuse
+    def setFinalTime(in: wire.SetFinalTimeRequest): Future[wire.SetFinalTimeResponse] = refuse
+    def setLotLayout(in: wire.SetLotLayoutRequest): Future[wire.SetLotLayoutResponse] = refuse
     def selectForFinal(in: wire.SelectForFinalRequest): Future[wire.SelectForFinalResponse] = refuse
     def deselectForFinal(in: wire.DeselectForFinalRequest): Future[wire.DeselectForFinalResponse] = refuse
     def previewParticipantRemoval(
@@ -248,6 +255,8 @@ object GrpcBoundary {
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest): Future[wire.GetAuctionLotStatisticsResponse] =
       refuse
     def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest): Future[wire.GetAuctionDaySummaryResponse] = refuse
+    def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest): Future[wire.GetAuctionDayChronicleResponse] =
+      refuse
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
     def getAuction(in: wire.GetAuctionRequest): Future[wire.GetAuctionResponse] = refuse
     def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
@@ -256,6 +265,8 @@ object GrpcBoundary {
         in: wire.CancelRaffleRegistrationRequest
     ): Future[wire.CancelRaffleRegistrationResponse] = refuse
     def getRaffle(in: wire.GetRaffleRequest): Future[wire.GetRaffleResponse] = refuse
+    def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest): Future[wire.AssignRaffleWinnerResponse] = refuse
+    def changeRafflePrize(in: wire.ChangeRafflePrizeRequest): Future[wire.ChangeRafflePrizeResponse] = refuse
     def submitPrediction(in: wire.SubmitPredictionRequest): Future[wire.SubmitPredictionResponse] = refuse
     def getMyPredictions(in: wire.GetMyPredictionsRequest): Future[wire.GetMyPredictionsResponse] = refuse
     def getPredictionResults(in: wire.GetPredictionResultsRequest): Future[wire.GetPredictionResultsResponse] = refuse
@@ -268,5 +279,7 @@ object GrpcBoundary {
     def chooseFulfillment(in: wire.ChooseFulfillmentRequest): Future[wire.ChooseFulfillmentResponse] = refuse
     def listMyInvoices(in: wire.ListMyInvoicesRequest): Future[wire.ListMyInvoicesResponse] = refuse
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest): Future[wire.ListAuctionInvoicesResponse] = refuse
+    def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest): Future[wire.SetPaymentInstructionsResponse] =
+      refuse
   }
 }

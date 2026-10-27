@@ -82,11 +82,15 @@ export function raffleBody(
 }
 
 // Проверять есть что, пока у розыгрыша есть отпечаток или раскрытие: у
-// непроведённого их нет, и кнопки «Как проверить честность» тоже.
+// непроведённого их нет, и кнопки «Как проверить честность» тоже. У
+// отменённого отпечаток остаётся, но seed не раскроется — проверять нечего.
+// Итог, который назвал администратор (PER-727), маяка не брал — тоже нечего.
 function provable(raffle: RaffleView | undefined): boolean {
   return (
     raffle !== undefined &&
     raffle.status !== "not-held" &&
+    raffle.status !== "cancelled" &&
+    raffle.drawnByHand !== true &&
     (raffle.commitment !== undefined || raffle.reveal !== undefined)
   );
 }
@@ -141,7 +145,45 @@ export async function registerForRaffle(
   ) {
     return nameChoiceBody(context, auctionId);
   }
-  return settle(context, auctionId, outcome);
+  return outcome.kind === "accepted"
+    ? registeredBody(auctionId, outcome.raffle)
+    : settle(context, auctionId, outcome);
+}
+
+// Принятая регистрация — свой экран исхода (прогон 14.10, №69): отмена
+// регистрации, затем возвраты в розыгрыш и в корень аукциона — как у принятой
+// ставки «‹ Лот» и «‹ Лоты».
+function registeredBody(
+  auctionId: string,
+  raffle: RaffleView | undefined,
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "raffle-registered",
+        auctionId,
+        ...(raffle === undefined ? {} : { raffle }),
+      },
+    ],
+    keyboard: [
+      [
+        {
+          action: "raffle.cancel",
+          callbackData: encodeAuctionCallback({
+            kind: "raffle-cancel",
+            auctionId,
+          }),
+        },
+      ],
+      [toRaffle(auctionId)],
+      [
+        {
+          action: "raffle.back",
+          callbackData: encodeAuctionCallback({ kind: "root", auctionId }),
+        },
+      ],
+    ],
+  };
 }
 
 export async function cancelRaffleRegistration(

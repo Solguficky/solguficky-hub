@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   LotHeldSchema,
   LotPhase,
+  LotSaleSchema,
   LotTradingSchema,
   MoneySchema,
   WithdrawnReason,
@@ -260,6 +261,40 @@ describe("watch state of an AuctionWatch message", () => {
     expect(parsed.finished).toBe(true);
     expect(parsed.activeLot?.version).toBe(5);
     expect(parsed.lineup).toHaveLength(1);
+  });
+
+  // Конец аукциона приходит раньше продажи последнего лота финала, когда
+  // read model лотов отстала (PER-712): сервер ждёт её, и подписка тоже.
+  it("reads a finished auction as finished once no lot of the lineup trades", () => {
+    const price = create(MoneySchema, { minorUnits: 50000n, currency: "RUB" });
+    const finished = (status: LotSnapshot["status"]) =>
+      watchStateOf(
+        create(AuctionWatchSchema, {
+          auction: { id: AUCTION_ID, status: { case: "finished", value: {} } },
+          lineup: [
+            create(LotSnapshotSchema, {
+              id: AUCTION_ID,
+              auctionId: AUCTION_ID,
+              status,
+            }),
+          ],
+        }),
+      ).finished;
+    expect(
+      finished({
+        case: "trading",
+        value: create(LotTradingSchema, {
+          currentPrice: price,
+          phase: LotPhase.LIVE,
+        }),
+      }),
+    ).toBe(false);
+    expect(
+      finished({
+        case: "sold",
+        value: create(LotSaleSchema, { price, winnerId: AUCTION_ID }),
+      }),
+    ).toBe(true);
   });
 
   // Отменённый аукцион конечный, когда лоты состава сняты: тогда сервер

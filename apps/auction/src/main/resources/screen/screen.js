@@ -4,6 +4,7 @@
 
 import {
   createSseParser,
+  finaleText,
   heartbeatOf,
   initial,
   MAX_RETRY_MS,
@@ -115,9 +116,9 @@ function render(state) {
 function phase(view) {
   switch (view.phase) {
     case "upcoming":
-      return [heading("Аукцион"), line("finale", view.final ? finalAt() : "Торги идут онлайн")];
+      return [heading("Аукцион"), line("finale", view.final ? finalAt(view) : "Торги идут онлайн")];
     case "lineup":
-      return [heading("Состав финала"), lineup(view.lineup), line("finale", finalAt())];
+      return [heading("Состав финала"), lineup(view.lineup), line("finale", finalAt(view))];
     case "lot":
       return [live(view.lot)];
     case "between":
@@ -132,11 +133,12 @@ function phase(view) {
 }
 
 /**
- * Ориентировочного времени финала у аукциона пока нет: поток всегда отдаёт `final_at: null`, и экран пишет
- * «скоро». Обратный отсчёт придёт вместе с полем.
+ * Ориентировочное время финала администратор выставляет как анонс трансляции, и поток приносит его полем `final_at`
+ * (ADR-040, дополнение 2026-10-19). Экран пишет его по времени сообщества, а без времени — «Финал скоро» (`finaleText`).
+ * Каждый снимок рисуется заново, поэтому смена и снятие времени меняют подпись без перезагрузки. Обратного отсчёта нет.
  */
-function finalAt() {
-  return "Финал скоро";
+function finalAt(view) {
+  return finaleText(view.final_at, Date.now());
 }
 
 function live(lot) {

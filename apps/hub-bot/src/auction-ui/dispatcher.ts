@@ -8,7 +8,13 @@ import {
   confirmCommand,
   placeFinalBid,
 } from "./internal/use-cases/commands.js";
+import { openDayChronicle } from "./internal/use-cases/day-chronicle.js";
 import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
+import {
+  chooseFulfillment,
+  openInvoice,
+  openInvoices,
+} from "./internal/use-cases/invoices.js";
 import {
   answerNameQuestion,
   askNameAlias,
@@ -19,6 +25,8 @@ import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
+import { openSet } from "./internal/use-cases/open-set.js";
+import { openPredictionResults } from "./internal/use-cases/prediction-results.js";
 import {
   answerPredictionAlias,
   answerPredictionNumber,
@@ -93,6 +101,14 @@ export function dispatchAuctionIntent(input: {
         auctionId: intent.auctionId,
         page: intent.page,
       });
+    case "section":
+      return openFeed({
+        auction: input.auction,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+        page: intent.page,
+        sectionId: intent.sectionId,
+      });
     case "lot":
       return openLot({
         auction: input.auction,
@@ -111,6 +127,15 @@ export function dispatchAuctionIntent(input: {
         lotId: intent.lotId,
         page: intent.page,
         historyPage: intent.historyPage,
+      });
+    // Экран сета (ADR-073, п. 7): открывается с карточки лота сета.
+    case "set":
+      return openSet({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
       });
     case "confirm":
       return confirmCommand(context, intent);
@@ -153,6 +178,10 @@ export function dispatchAuctionIntent(input: {
           ? {}
           : { auctionId: intent.auctionId }),
       });
+    case "prediction-results":
+      return openPredictionResults(context, intent.auctionId);
+    case "day-chronicle":
+      return openDayChronicle(context, intent.auctionId);
     case "raffle":
       return openRaffle(context, intent.auctionId);
     case "raffle-register":
@@ -212,6 +241,12 @@ export function dispatchAuctionIntent(input: {
               ? {}
               : { text: input.answer.text }),
           });
+    case "invoices":
+      return openInvoices(context, intent.auctionId);
+    case "invoice":
+      return openInvoice(context, intent.lotId, intent.invoiceId);
+    case "fulfillment":
+      return chooseFulfillment(context, intent);
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

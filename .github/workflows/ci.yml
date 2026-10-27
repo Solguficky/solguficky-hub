@@ -29,6 +29,7 @@ jobs:
       bot-console: ${{ steps.filter.outputs.bot-console }}
       auction-seed: ${{ steps.filter.outputs.auction-seed }}
       auction: ${{ steps.filter.outputs.auction }}
+      achievements: ${{ steps.filter.outputs.achievements }}
       contour: ${{ steps.filter.outputs.contour }}
       nats-tester: ${{ steps.filter.outputs.nats-tester }}
       gate-observer: ${{ steps.filter.outputs.gate-observer }}
@@ -83,6 +84,10 @@ jobs:
               - 'apps/auction/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
+            achievements:
+              - 'apps/achievements/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
             community-site-api:
               - 'apps/community-site-api/**'
               # Тесты страницы и браузерные сценарии читают саму опубликованную
@@ -113,6 +118,7 @@ jobs:
               # правки графа ловит тест публикации.
               - 'apps/identity/Containerfile'
               - 'apps/hub-bot/Containerfile'
+              - 'apps/achievements/Containerfile'
               # CLI находит AppHost по этому файлу, путь в нём проверяет джоба.
               - 'aspire.config.json'
               - 'tools/apphost/**'
@@ -263,7 +269,8 @@ jobs:
       - run: buf generate --template apps/identity/buf.gen.yaml
       - run: go build ./...
         working-directory: apps/identity
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       # Фикстуры разбора лога — та же проверка, что в `just verify`.
       - run: just identity-test-log-check
       # Тесты через рецепт, а не прямым `go test`: тег integration, порог
@@ -311,7 +318,8 @@ jobs:
       # команды идут без working-directory.
       - run: dotnet tool restore
       - run: dotnet fantomas --check apps/meetups
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - run: dotnet build Meetups.sln --nologo
         working-directory: apps/meetups
       # Оба уровня через рецепты, а не прямым dotnet test: порог числа тестов и
@@ -340,7 +348,8 @@ jobs:
       - run: sh tools/notifications/check-contracts-generated.sh
       # Гейта форматирования здесь нет: Fantomas C# не форматирует, а своего
       # гейта для C# в репозитории нет ни у AppHost, ни у ServiceDefaults.
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - run: dotnet build Notifications.sln --nologo
         working-directory: apps/notifications
       # Через рецепты по той же причине, что у Meetups: порог и --fail-skips
@@ -455,7 +464,8 @@ jobs:
       - uses: actions/setup-dotnet@v6
         with:
           global-json-file: global.json
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       # До сборки: битый путь в aspire.config.json называет проверка, а не
       # поздний отказ CLI у человека.
       - run: just apphost-config-check
@@ -621,6 +631,46 @@ jobs:
         env:
           AUCTION_BROWSER_TESTS: "1"
 
+  # Achievements на Elixir: сборка и тесты с --warnings-as-errors, формат, L0 и
+  # L1. Версии Erlang/OTP и Elixir — apps/achievements/.tool-versions, тот же
+  # файл читает tools/env/install.sh; своих значений в workflow нет. Шаги идут
+  # рецептами, как у identity: порог и падение на пропуске живут в
+  # test_helper.exs, и копия здесь разошлась бы с `test-all` молча.
+  achievements:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.achievements == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: erlef/setup-beam@v1
+        with:
+          version-file: apps/achievements/.tool-versions
+          version-type: strict
+      # Скомпилированные зависимости по mix.lock и версиям BEAM: правка своего
+      # кода кэш не сбрасывает, смена библиотеки или OTP — сбрасывает.
+      - uses: actions/cache@v6
+        with:
+          path: |
+            apps/achievements/deps
+            apps/achievements/_build
+          key: achievements-${{ runner.os }}-${{ hashFiles('apps/achievements/.tool-versions', 'apps/achievements/mix.lock') }}
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
+      - run: just achievements-tools
+      - run: just achievements-format-check
+      - run: just achievements-build
+      - run: just achievements-test
+      # L1: PostgreSQL и NATS поднимает сам тест в Testcontainers; Docker на
+      # ubuntu-latest есть. В `verify` уровень не входит.
+      - run: just achievements-test-integration
+
   # nats-tester — единственный потребитель схем, чей сгенерированный код лежит
   # в Git: инструмент ставится без protoc, поэтому классы обязаны совпадать со
   # схемой. Джоба проверяет импорт, состав генерации и реестр, а затем
@@ -651,7 +701,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ steps.tools.outputs.python }}
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       # Установка не только для проверки: она же подтверждает, что пакет
       # собирается из pyproject и ставится.
       - run: python -m pip install -e tools/nats-tester
@@ -710,7 +761,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "22"
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - name: Skill frontmatter parses as a YAML mapping
         run: sh tools/skillshare/check-frontmatter.sh
       - name: Commands are generated from the rulesync source
@@ -772,7 +824,8 @@ jobs:
             apps/hub-bot/package-lock.json
       - run: npm ci
         working-directory: apps/hub-bot
-      - uses: extractions/setup-just@v4
+      - name: just из justfile
+        run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       - name: Contour contracts stay generated-only
         run: just contour-contracts-check
       # Через рецепт, а не напрямую: иначе порог --minimum-expected-tests

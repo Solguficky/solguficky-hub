@@ -85,15 +85,30 @@ const sendingMethods: ReadonlySet<string> = new Set([
 // Блок фото в ответе на rich-сообщение с загрузкой: бот берёт `file_id`
 // наибольшего размера в кэш, и без блока писал бы warn на каждой холодной
 // карточке (`lot image file_id missing in response`).
-const photoBlock = {
+// Блок на каждое фото сообщения, в порядке `media`: у карусели (PER-721)
+// `file_id` второго и следующих фото свои — `large-2` и дальше.
+const photoBlock = (index: number) => ({
   type: "photo",
   photo: [
     { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
-    { file_id: "large", file_unique_id: "l", width: 800, height: 800 },
+    {
+      file_id: index === 0 ? "large" : `large-${index + 1}`,
+      file_unique_id: "l",
+      width: 800,
+      height: 800,
+    },
   ],
-};
+});
 
 export type Respond = (method: ApiMethod, payload: ApiPayload) => unknown;
+
+function apiAnswer(answer: unknown): never {
+  return (
+    typeof answer === "object" && answer !== null && "ok" in answer
+      ? answer
+      : { ok: true, result: answer }
+  ) as never;
+}
 
 // Записывающий трансформер: вызов уходит в `calls`, экран сверяется с
 // каталогом поверхности и дизайн-кодом в момент отправки — найденное снимает
@@ -118,13 +133,10 @@ function recorder(
     // Ответ с полем `ok` — готовый ответ Bot API, в том числе отказ: из него
     // grammY сам соберёт GrammyError. Остальное — результат успешного вызова.
     const answer = respond?.(method, payload);
+    // Обещание — медленный Telegram: ответ приходит, когда оно исполнится.
+    if (answer instanceof Promise) return answer.then(apiAnswer);
     if (answer instanceof Error) return Promise.reject(answer);
-    if (typeof answer === "object" && answer !== null && "ok" in answer) {
-      return Promise.resolve(answer as never);
-    }
-    if (answer !== undefined) {
-      return Promise.resolve({ ok: true, result: answer as never });
-    }
+    if (answer !== undefined) return Promise.resolve(apiAnswer(answer));
     // Харнесс аукциона отвечает чатом получателя, харнесс хаба — всегда 42:
     // так они отвечали до общего kit, и наборы обеих поверхностей на это
     // опираются.
@@ -150,7 +162,7 @@ function recorder(
           date: 0,
           chat,
           rich_message: {
-            blocks: rich.media === undefined ? [] : [photoBlock],
+            blocks: (rich.media ?? []).map((_, index) => photoBlock(index)),
           },
         } as never,
       });
@@ -204,6 +216,7 @@ export type HarnessOptions = Partial<
     | "communityTimeZone"
     | "auctionBotUsername"
     | "supportBotUsername"
+    | "build"
     | "files"
     | "favorites"
     | "proxyExplainer"

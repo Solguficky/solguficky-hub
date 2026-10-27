@@ -6,6 +6,8 @@ import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.typesafe.config.ConfigFactory
 import io.grpc.Status
+import org.apache.pekko.Done
+import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.grpc.GrpcClientSettings
@@ -20,11 +22,15 @@ import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
 import org.apache.pekko.http.scaladsl.model.MediaType
 import org.apache.pekko.http.scaladsl.model.headers.RawHeader
+import org.apache.pekko.stream.scaladsl.Keep
 import org.apache.pekko.stream.scaladsl.Sink
 import org.apache.pekko.stream.scaladsl.Source
+import org.apache.pekko.stream.scaladsl.Tcp
 import org.apache.pekko.util.ByteString
 
 import java.nio.ByteBuffer
+import java.util.concurrent.ConcurrentLinkedQueue
+import java.util.concurrent.atomic.AtomicLong
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.concurrent.Eventually
@@ -56,7 +62,11 @@ final class GrpcBoundarySpec
   private val kit = ActorTestKit(
     "grpc-boundary",
     ConfigFactory
-      .parseString("pekko.actor.provider = local")
+      // Keepalive клиента pekko-http (PER-705) сжат до долей секунды: PING после 100 мс тишины.
+      .parseString("""
+        pekko.actor.provider = local
+        pekko.http.client.http2 { ping-interval = 100ms, ping-timeout = 100ms }
+      """)
       .withFallback(ConfigFactory.load())
   )
 
@@ -68,6 +78,9 @@ final class GrpcBoundarySpec
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)
+
+  /** Конец каждого открытого потока `open` в порядке открытия: по нему видно, что сервер поток отпустил. */
+  private val watchEnds = ConcurrentLinkedQueue[Future[Done]]()
 
   /** Заглушка сервиса: ставка принимается, чтение падает неожиданно, остальное не вызывается. */
   private object Stub extends wire.AuctionService {
@@ -88,11 +101,19 @@ final class GrpcBoundarySpec
     def advanceAsk(in: wire.AdvanceAskRequest) = unused
     def closeLot(in: wire.CloseLotRequest) = unused
     def watchAuction(in: wire.WatchAuctionRequest) =
-      if (in.auctionId == "open") Source.single(wire.AuctionWatch()).concat(Source.never)
+      if (in.auctionId == "open")
+        Source
+          .single(wire.AuctionWatch())
+          .concat(Source.never)
+          .watchTermination() { (_, done) =>
+            watchEnds.add(done)
+            NotUsed
+          }
       else Source.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest) = unused
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest) = unused
     def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest) = unused
+    def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest) = unused
     def createLotCard(in: wire.CreateLotCardRequest) = unused
     def editLotCard(in: wire.EditLotCardRequest) = unused
     def listAuctionLots(in: wire.ListAuctionLotsRequest) = unused
@@ -103,9 +124,14 @@ final class GrpcBoundarySpec
     def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest) = unused
     def acknowledgeFaq(in: wire.AcknowledgeFaqRequest) = unused
     def getLotImage(in: wire.GetLotImageRequest) = unused
+    def addLotPhoto(in: wire.AddLotPhotoRequest) = unused
+    def removeLotPhoto(in: wire.RemoveLotPhotoRequest) = unused
+    def getLotPhoto(in: wire.GetLotPhotoRequest) = unused
     def draftAuction(in: wire.DraftAuctionRequest) = unused
     def addLot(in: wire.AddLotRequest) = unused
     def removeLot(in: wire.RemoveLotRequest) = unused
+    def saveLotSet(in: wire.SaveLotSetRequest) = unused
+    def deleteLotSet(in: wire.DeleteLotSetRequest) = unused
     def scheduleLot(in: wire.ScheduleLotRequest) = unused
     def scheduleAuction(in: wire.ScheduleAuctionRequest) = unused
     def startPrebidding(in: wire.StartPrebiddingRequest) = unused
@@ -113,12 +139,15 @@ final class GrpcBoundarySpec
     def publishAuction(in: wire.PublishAuctionRequest) = unused
     def hideAuction(in: wire.HideAuctionRequest) = unused
     def cancelAuction(in: wire.CancelAuctionRequest) = unused
+    def setFinalTime(in: wire.SetFinalTimeRequest) = unused
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest) = unused
     def getAuction(in: wire.GetAuctionRequest) = unused
     def listAuctions(in: wire.ListAuctionsRequest) = unused
     def registerForRaffle(in: wire.RegisterForRaffleRequest) = unused
     def cancelRaffleRegistration(in: wire.CancelRaffleRegistrationRequest) = unused
     def getRaffle(in: wire.GetRaffleRequest) = unused
+    def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest) = unused
+    def changeRafflePrize(in: wire.ChangeRafflePrizeRequest) = unused
     def submitPrediction(in: wire.SubmitPredictionRequest) = unused
     def getMyPredictions(in: wire.GetMyPredictionsRequest) = unused
     def getPredictionResults(in: wire.GetPredictionResultsRequest) = unused
@@ -128,6 +157,8 @@ final class GrpcBoundarySpec
     def chooseFulfillment(in: wire.ChooseFulfillmentRequest) = unused
     def listMyInvoices(in: wire.ListMyInvoicesRequest) = unused
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest) = unused
+    def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest) = unused
+    def setLotLayout(in: wire.SetLotLayoutRequest) = unused
   }
 
   private lazy val binding =
@@ -394,6 +425,56 @@ final class GrpcBoundarySpec
       val written = record
       written("result") shouldBe "error"
       written("grpc_code") should not be "OK"
+    }
+  }
+
+  private def openWatch(through: wire.AuctionServiceClient): (Future[Done], Future[Done]) = {
+    val opened = watchEnds.size
+    val stream = through
+      .watchAuction()
+      .addHeader("authorization", "Bearer hub")
+      .invoke(wire.WatchAuctionRequest(auctionId = "open"))
+      .runWith(Sink.ignore)
+    eventually(watchEnds.size shouldBe opened + 1)
+    (stream, watchEnds.asScala.last)
+  }
+
+  // Полуоткрытое соединение замечает клиент своим PING (PER-705): сервер обязан на них отвечать, сколько бы их ни было.
+  "grpc boundary keepalive" should {
+
+    "keeps a watch open under the pings of a client far more frequent than the hub bot's" in {
+      // Ответы сервера клиенту: PING ACK — 17 байт кадра. Сам сервер не пингует, а поток после первого сообщения
+      // молчит, поэтому байты ответа за паузу — ответы на PING клиента: их там раз в 100 мс.
+      val answered = AtomicLong(0)
+      val relay = Tcp(kit.system)
+        .bind("127.0.0.1", 0)
+        .toMat(Sink.foreach { incoming =>
+          incoming.handleWith(
+            Tcp(kit.system).outgoingConnection("127.0.0.1", binding.localAddress.getPort).map { chunk =>
+              answered.addAndGet(chunk.length.toLong)
+              chunk
+            }
+          )
+        })(Keep.left)
+        .run()
+        .futureValue
+      val pinging = wire.AuctionServiceClient(
+        GrpcClientSettings
+          .connectToServiceAt("127.0.0.1", relay.localAddress.getPort)
+          .withTls(false)
+          .withBackend("pekko-http")
+      )
+      try {
+        val (stream, released) = openWatch(pinging)
+        val before = answered.get
+        Thread.sleep(2000)
+        (answered.get - before) should be >= 10L * 17
+        stream.isCompleted shouldBe false
+        released.isCompleted shouldBe false
+      } finally {
+        pinging.close().futureValue
+        relay.unbind().futureValue
+      }
     }
   }
 }

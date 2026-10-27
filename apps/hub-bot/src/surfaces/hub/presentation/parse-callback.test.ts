@@ -3,6 +3,7 @@ import { maxLotRubles } from "../application/lot-form.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
   auctionFaqData,
+  type CallbackAction,
   cardCursorData,
   consoleAskData,
   consoleCloseConfirmData,
@@ -12,6 +13,12 @@ import {
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
+  consoleFinalTimeData,
+  consoleFinalTimeRemoveData,
+  consoleLayoutData,
+  consoleLayoutListData,
+  consoleLayoutLotData,
+  consoleLayoutPlaceData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -20,18 +27,41 @@ import {
   consoleOpenData,
   consoleRaffleData,
   consoleRaffleRemoveData,
+  consoleSectionAskData,
+  consoleSectionDeleteData,
+  consoleSectionMoveData,
+  consoleSetAskData,
+  consoleSetData,
+  consoleSetDeleteConfirmData,
+  consoleSetDeleteData,
+  consoleSetLotData,
+  consoleSetsData,
   consoleStartFinalData,
   consoleViewData,
+  consoleVisibilityData,
   consoleWeekData,
   consoleWindowAskData,
   consoleWindowData,
+  consoleWindowLaunchData,
+  consoleWindowLaunchGoData,
+  consoleWindowLaunchLotData,
+  consoleWindowLaunchPageData,
   consoleWindowLotData,
   consoleWindowRemoveData,
   consoleWindowsData,
   lotAskData,
+  lotCopyData,
   lotFormData,
+  lotKeepStepData,
   lotNewData,
+  lotPhotoRemoveConfirmData,
+  lotPhotoRemoveData,
+  lotPhotosData,
   lotPreviewData,
+  lotRemoveConfirmData,
+  lotRemoveData,
+  lotScopeData,
+  lotSetRetryData,
   lotSkipData,
   lotStepModeData,
   parseCallback,
@@ -1159,6 +1189,18 @@ describe("lot form callbacks", () => {
         { kind: "lot-step-mode", lot, price: 1, mode: "single" },
       ],
       [lotSkipData(lot), { kind: "lot-skip", lot }],
+      [lotPhotosData(lot), { kind: "lot-photos", lot }],
+      // Прежняя «Убрать фото» под вопросом (PER-715) открывает экран фото.
+      [`v1:lot:rm:${lot}`, { kind: "lot-photos", lot, fromQuestion: true }],
+      [lotPhotoRemoveData(lot, 1), { kind: "lot-photo-remove", lot, index: 1 }],
+      [
+        lotPhotoRemoveData(lot, 10),
+        { kind: "lot-photo-remove", lot, index: 10 },
+      ],
+      [
+        lotPhotoRemoveConfirmData(lot, "0zz9a"),
+        { kind: "lot-photo-remove-confirm", lot, print: "0zz9a" },
+      ],
     ] as const;
     for (const [data, expected] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
@@ -1207,6 +1249,111 @@ describe("lot form callbacks", () => {
     }
   });
 
+  it("reads the kept step button with the largest price back from its data", () => {
+    const data = lotKeepStepData(lot, maxLotRubles);
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+    expect(parseCallback(data)).toEqual({
+      kind: "lot-keep-step",
+      lot,
+      price: maxLotRubles,
+    });
+  });
+
+  it("reads the copy, set and removal buttons of the lot form back within 64 bytes", () => {
+    const cases: readonly (readonly [string, CallbackAction])[] = [
+      [lotCopyData(lot), { kind: "lot-copy", lot }],
+      [lotRemoveData(lot), { kind: "lot-remove", lot }],
+      [lotRemoveConfirmData(lot), { kind: "lot-remove-confirm", lot }],
+      [
+        lotScopeData(lot, "description"),
+        { kind: "lot-scope", lot, field: "description" },
+      ],
+      [
+        lotSetRetryData(lot, "description"),
+        { kind: "lot-set-retry", lot, field: "description" },
+      ],
+      [
+        lotSetRetryData(lot, "image", "a1b2c"),
+        { kind: "lot-set-retry", lot, field: "image", print: "a1b2c" },
+      ],
+      [
+        lotAskData(lot, "description", "set"),
+        { kind: "lot-ask", lot, field: "description", set: true },
+      ],
+      [
+        lotAskData(lot, "title", "set"),
+        { kind: "lot-ask", lot, field: "title", set: true },
+      ],
+      [
+        lotStepModeData(lot, maxLotRubles, "tiered", "set"),
+        {
+          kind: "lot-step-mode",
+          lot,
+          price: maxLotRubles,
+          mode: "tiered",
+          set: true,
+        },
+      ],
+      [
+        lotKeepStepData(lot, maxLotRubles, true),
+        { kind: "lot-keep-step", lot, price: maxLotRubles, set: true },
+      ],
+    ];
+    for (const [data, expected] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(expected);
+    }
+    for (const broken of [
+      `v1:lot:cp:${lot}:extra`,
+      `v1:lot:sc:${lot}:step`,
+      `v1:lot:sr:${lot}`,
+      `v1:lot:sk:${lot}:700:c`,
+      `v1:lot:ask:${lot}:title:s:s`,
+    ]) {
+      expect(parseCallback(broken)).toEqual({ kind: "malformed" });
+    }
+  });
+
+  it("carries the step of the copy and whole-set questions in the cancel button within 64 bytes", () => {
+    const steps: readonly (readonly [string, QuestionStep])[] = [
+      [`v1:q:lc:${lot}`, { kind: "lot-copies", lot }],
+      [`v1:q:st:${lot}`, { kind: "lot-text", lot, field: "title", set: true }],
+      [
+        `v1:q:sd:${lot}`,
+        { kind: "lot-text", lot, field: "description", set: true },
+      ],
+      [`v1:q:sp:${lot}`, { kind: "lot-price", lot, set: true }],
+      [`v1:q:si:${lot}`, { kind: "lot-image", lot, set: true }],
+      [
+        `v1:q:ss:${lot}:${maxLotRubles}`,
+        {
+          kind: "lot-step",
+          lot,
+          price: maxLotRubles,
+          mode: "single",
+          set: true,
+        },
+      ],
+      [
+        `v1:q:sy:${lot}:${maxLotRubles}`,
+        {
+          kind: "lot-step",
+          lot,
+          price: maxLotRubles,
+          mode: "tiered",
+          set: true,
+        },
+      ],
+    ];
+    const askedBy = 9007199254740991;
+    for (const [data, step] of steps) {
+      const asked = `${data}:${askedBy}`;
+      expect(questionData(step, askedBy)).toBe(asked);
+      expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+      expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+    }
+  });
+
   it("rejects a lot callback with a broken token, field, price or shape", () => {
     for (const data of [
       "v1:lot",
@@ -1223,6 +1370,15 @@ describe("lot form callbacks", () => {
       `v1:lot:sm:${lot}:700:single:x`,
       `v1:lot:sm:${lot}:700:single:c:c`,
       `v1:lot:skip:${lot}:extra`,
+      // «Оставить шаг» (PER-714): цена обязательна, цепочки нет.
+      `v1:lot:sk:${lot}`,
+      `v1:lot:sk:${lot}:0`,
+      `v1:lot:sk:${lot}:${maxLotRubles + 1}`,
+      `v1:lot:sk:${lot}:700:c`,
+      `v1:lot:rm:${lot}:extra`,
+      `v1:lot:ry:${lot}`,
+      `v1:lot:ry:${lot}:ABCDE`,
+      `v1:lot:ry:${lot}:abcde:extra`,
       `v1:lot:drop:${lot}`,
       `v1:q:ln:${auction}`,
       `v1:q:ln:${auction}:short`,
@@ -1247,6 +1403,143 @@ describe("auction console callbacks", () => {
   const lot = "AZKbflwdej-OSy1snwobPA";
   const op = "AZnypHwefTqbIU-OEqs0qg";
   const defaultSort = { metric: "bids", direction: "descending" };
+
+  it("parses every button of the lot sets within the byte budget", () => {
+    // Худший случай: двузначный номер сета и четырёхзначная страница.
+    const set = { index: 99, print: "z0a9q" };
+    const cases = [
+      [consoleSetsData(auction), { kind: "console-sets", auction }],
+      [consoleSetAskData(auction), { kind: "console-set-ask", auction }],
+      [
+        consoleSetData(auction, set),
+        { kind: "console-set", auction, set, page: 0 },
+      ],
+      [
+        consoleSetData(auction, set, 9999),
+        { kind: "console-set", auction, set, page: 9999 },
+      ],
+      [
+        consoleSetLotData({ auction, set, lot, selected: true }),
+        { kind: "console-set-lot", auction, set, lot, selected: true },
+      ],
+      [
+        consoleSetLotData({ auction, set, lot, selected: false }),
+        { kind: "console-set-lot", auction, set, lot, selected: false },
+      ],
+      [
+        consoleSetDeleteData(auction, set),
+        { kind: "console-set-delete", auction, set },
+      ],
+      [
+        consoleSetDeleteConfirmData(auction, set),
+        { kind: "console-set-delete-confirm", auction, set },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    expect(
+      parseCallback(questionData({ kind: "console-set", auction }, 42)),
+    ).toEqual({
+      kind: "question",
+      step: { kind: "console-set", auction },
+      askedBy: 42,
+    });
+    // Лишняя часть и чужой номер — не кнопка сета.
+    expect(parseCallback(`${consoleSetsData(auction)}:1`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:ac:tw:${auction}:01:z0a9q`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
+  it("parses every button of the lot layout within the byte budget", () => {
+    // Худший случай: трёхзначный номер раздела и четырёхзначная страница.
+    const cases = [
+      [consoleLayoutData(auction), { kind: "console-layout", auction }],
+      [
+        consoleLayoutListData(auction, 0),
+        { kind: "console-layout-list", auction, place: 0, page: 0 },
+      ],
+      [
+        consoleLayoutListData(auction, 999, 9999),
+        { kind: "console-layout-list", auction, place: 999, page: 9999 },
+      ],
+      [
+        consoleLayoutLotData(auction, lot),
+        { kind: "console-layout-lot", auction, lot },
+      ],
+      [
+        consoleLayoutLotData(auction, lot, "up"),
+        { kind: "console-layout-lot-move", auction, lot, direction: "up" },
+      ],
+      [
+        consoleLayoutLotData(auction, lot, "down"),
+        { kind: "console-layout-lot-move", auction, lot, direction: "down" },
+      ],
+      [
+        consoleLayoutPlaceData(auction, lot, 999),
+        { kind: "console-layout-lot-place", auction, lot, place: 999 },
+      ],
+      [
+        consoleSectionAskData(auction),
+        { kind: "console-section-ask", auction },
+      ],
+      [
+        consoleSectionAskData(auction, 999),
+        { kind: "console-section-ask", auction, section: 999 },
+      ],
+      [
+        consoleSectionMoveData(auction, 2, "up"),
+        { kind: "console-section-move", auction, section: 2, direction: "up" },
+      ],
+      [
+        consoleSectionMoveData(auction, 2, "down"),
+        {
+          kind: "console-section-move",
+          auction,
+          section: 2,
+          direction: "down",
+        },
+      ],
+      [
+        consoleSectionDeleteData(auction, 2),
+        { kind: "console-section-delete", auction, section: 2 },
+      ],
+      [
+        consoleSectionDeleteData(auction, 2, true),
+        { kind: "console-section-delete-confirm", auction, section: 2 },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    for (const step of [
+      { kind: "console-section", auction },
+      { kind: "console-section", auction, section: 999 },
+    ] as const) {
+      expect(parseCallback(questionData(step, 42))).toEqual({
+        kind: "question",
+        step,
+        askedBy: 42,
+      });
+    }
+    // Раздел без номера, ноль у раздела и номер с ведущим нулём — не кнопка.
+    expect(parseCallback(`v1:ac:mr:${auction}:0`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:ac:ml:${auction}:01`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:ac:mv:${auction}:${lot}`)).toEqual({
+      kind: "malformed",
+    });
+  });
 
   it("parses every button of the happy hours within the byte budget", () => {
     // Худший случай: двузначный номер окна и четырёхзначная страница.
@@ -1304,6 +1597,60 @@ describe("auction console callbacks", () => {
     expect(parseCallback(data)).toEqual({ kind: "malformed" });
   });
 
+  it("parses every button of the window launch within the byte budget", () => {
+    // Худший случай: шестьдесят четыре лота в реестре и страница из четырёх
+    // цифр — черновик несёт в кнопке набор лотов маской.
+    const draft = {
+      from: "2026-10-20T15:00:00Z",
+      until: "2026-10-20T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+      lots: [0, 1, 63],
+    };
+    const cases = [
+      [
+        consoleWindowLaunchData(auction),
+        { kind: "console-window-launch", auction },
+      ],
+      [
+        consoleWindowLaunchGoData(auction, draft),
+        { kind: "console-window-launch-go", auction, draft },
+      ],
+      [
+        consoleWindowLaunchLotData(auction, draft, 63),
+        { kind: "console-window-launch-lot", auction, draft, lot: 63 },
+      ],
+      [
+        consoleWindowLaunchPageData(auction, draft, 9999),
+        { kind: "console-window-launch-page", auction, draft, page: 9999 },
+      ],
+      // Первая страница без номера — как у других экранов пульта.
+      [
+        consoleWindowLaunchPageData(auction, draft, 0),
+        { kind: "console-window-launch-page", auction, draft, page: 0 },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    expect(
+      parseCallback(questionData({ kind: "console-launch", auction }, 42)),
+    ).toEqual({
+      kind: "question",
+      step: { kind: "console-launch", auction },
+      askedBy: 42,
+    });
+  });
+
+  it.each([
+    `v1:ac:ht:${"2u8Fx81oUEiwPctIYOjccw"}:broken:1`,
+    `v1:ac:hm:${"2u8Fx81oUEiwPctIYOjccw"}:broken`,
+    `v1:ac:hp:${"2u8Fx81oUEiwPctIYOjccw"}:broken:1`,
+  ])("refuses a malformed window launch button %s", (data) => {
+    expect(parseCallback(data)).toEqual({ kind: "malformed" });
+  });
+
   it("parses every button of the console within the byte budget", () => {
     const cases = [
       [
@@ -1336,9 +1683,22 @@ describe("auction console callbacks", () => {
         consoleFinalData(auction, false),
         { kind: "console-final", auction, final: false },
       ],
+      [consoleFinalTimeData(auction), { kind: "console-final-time", auction }],
+      [
+        consoleFinalTimeRemoveData(auction),
+        { kind: "console-final-time-remove", auction },
+      ],
       [
         consoleFinalData(auction, true),
         { kind: "console-final", auction, final: true },
+      ],
+      [
+        consoleVisibilityData(auction, true),
+        { kind: "console-visibility", auction, published: true },
+      ],
+      [
+        consoleVisibilityData(auction, false),
+        { kind: "console-visibility", auction, published: false },
       ],
       [consoleOpenData(auction), { kind: "console-open", auction }],
       [
@@ -1488,6 +1848,15 @@ describe("auction console callbacks", () => {
     expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
   });
 
+  it("carries the auction of the final time question in its cancel button", () => {
+    const askedBy = 9007199254740991;
+    const step: QuestionStep = { kind: "console-final-time", auction };
+    const asked = `v1:q:ft:${auction}:${askedBy}`;
+    expect(questionData(step, askedBy)).toBe(asked);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+  });
+
   it("carries the auction and the lineup position of the final ask question in its cancel button", () => {
     const askedBy = 9007199254740991;
     const step: QuestionStep = { kind: "final-ask", auction, position: 99 };
@@ -1510,6 +1879,8 @@ describe("auction console callbacks", () => {
       `v1:ac:rx:${auction}:1`,
       `v1:ac:f:${auction}`,
       `v1:ac:f:${auction}:2`,
+      `v1:ac:p:${auction}`,
+      `v1:ac:p:${auction}:2`,
       `v1:ac:o:${auction}:1`,
       `v1:ac:y:${auction}`,
       `v1:ac:y:${auction}:short`,

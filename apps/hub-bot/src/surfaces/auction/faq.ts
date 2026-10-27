@@ -14,7 +14,9 @@ export { defaultFaq, readFaqContent } from "../../auction-faq.js";
 // единственное действие, которое ставит заявку (дополнение ADR-060).
 // `notify` — настройки уведомлений аукциона (PER-515, PER-539): без хвоста —
 // экран, с хвостом частоты — её выбор, с хвостом `final:<0|1>` — выключатель
-// анонса финала. `settings` — раздел «Настройки» (PER-595).
+// анонса финала. Хвост `:n` перед выбором — экран открыт из вести и возврата
+// в «Настройки» не несёт (№73 прогона 14 октября 2026 года). `settings` —
+// раздел «Настройки» (PER-595).
 export const ENTRY_ACTIONS = [
   "faq",
   "menu",
@@ -38,14 +40,20 @@ export const MAX_LIST_PAGE = 999;
 
 // `sourceCode` — код канала прихода: он есть только у повтора `/start` и у
 // «Подать заявку», хвостом действия. `choose` — выбранная настройка: целевое
-// значение, а не шаг, поэтому повтор нажатия безопасен.
+// значение, а не шаг, поэтому повтор нажатия безопасен. `detached` — экран
+// настроек открыт из вести, а не из «Настроек».
 export type EntryIntent =
   | {
       action: Exclude<EntryAction, "start" | "apply" | "notify">;
       page: number;
     }
   | { action: "start" | "apply"; page: 0; sourceCode?: string }
-  | { action: "notify"; page: 0; choose?: AuctionNotificationChange };
+  | {
+      action: "notify";
+      page: 0;
+      choose?: AuctionNotificationChange;
+      detached?: true;
+    };
 
 export function entryCallback(action: EntryAction): string {
   return `v1:entry:${action}`;
@@ -67,15 +75,23 @@ export function applyCallback(sourceCode?: string): string {
   return withSourceCode(entryCallback("apply"), sourceCode);
 }
 
-export function notifyCallback(choose?: AuctionNotificationChange): string {
-  if (choose === undefined) return entryCallback("notify");
+export function notifyCallback(
+  choose?: AuctionNotificationChange,
+  detached = false,
+): string {
+  const base = detached
+    ? `${entryCallback("notify")}:n`
+    : entryCallback("notify");
+  if (choose === undefined) return base;
   switch (choose.kind) {
     case "frequency":
-      return `${entryCallback("notify")}:${choose.frequency}`;
+      return `${base}:${choose.frequency}`;
     case "final":
-      return `${entryCallback("notify")}:final:${choose.enabled ? "1" : "0"}`;
+      return `${base}:final:${choose.enabled ? "1" : "0"}`;
     case "live":
-      return `${entryCallback("notify")}:live:${choose.enabled ? "1" : "0"}`;
+      return `${base}:live:${choose.enabled ? "1" : "0"}`;
+    case "announcements":
+      return `${base}:news:${choose.enabled ? "1" : "0"}`;
   }
 }
 
@@ -87,6 +103,8 @@ const NOTIFY_CHOICES: readonly AuctionNotificationChange[] = [
   { kind: "final", enabled: false },
   { kind: "live", enabled: true },
   { kind: "live", enabled: false },
+  { kind: "announcements", enabled: true },
+  { kind: "announcements", enabled: false },
 ];
 
 export function listCallback(action: ListAction, page: number): string {
@@ -107,8 +125,17 @@ export function parseEntryCallback(raw: unknown): EntryIntent | undefined {
   if (typeof raw !== "string") return undefined;
   const action = ENTRY_ACTIONS.find((each) => raw === entryCallback(each));
   if (action !== undefined) return { action, page: 0 };
+  if (raw === notifyCallback(undefined, true)) {
+    return { action: "notify", page: 0, detached: true };
+  }
   const choose = NOTIFY_CHOICES.find((each) => raw === notifyCallback(each));
   if (choose !== undefined) return { action: "notify", page: 0, choose };
+  const chosen = NOTIFY_CHOICES.find(
+    (each) => raw === notifyCallback(each, true),
+  );
+  if (chosen !== undefined) {
+    return { action: "notify", page: 0, choose: chosen, detached: true };
+  }
   const sourced = START_SOURCE.exec(raw);
   if (sourced !== null) {
     return {

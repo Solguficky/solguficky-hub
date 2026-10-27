@@ -9,7 +9,10 @@ import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.DiscardRefusal
 import auction.aggregate.FinalStartRefusal
+import auction.aggregate.FinalTimeRefusal
 import auction.aggregate.LineupRefusal
+import auction.aggregate.LotLayout
+import auction.aggregate.LotLayoutRefusal
 import auction.aggregate.LotEnding
 import auction.aggregate.NextLotRefusal
 import auction.aggregate.Drafted
@@ -18,8 +21,10 @@ import auction.aggregate.LaunchRefusal
 import auction.aggregate.LaunchStepWindowRejected
 import auction.aggregate.StepWindowConfig
 import auction.aggregate.LotSchedulingRefusal
+import auction.aggregate.LotSetRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.ParticipantRemovalRefusal
+import auction.aggregate.PaymentInstructionsRefusal
 import auction.aggregate.RemovalRefusal
 import auction.aggregate.SchedulingRefusal
 import auction.aggregate.VisibilityRefusal
@@ -136,7 +141,7 @@ object ResponseMapping {
       )
     )
 
-  private def displayName(name: DisplayName): wire.DisplayName = {
+  private[grpc] def displayName(name: DisplayName): wire.DisplayName = {
     val kind = name.kind match {
       case DisplayKind.Username => wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME
       case DisplayKind.Pseudonym => wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS
@@ -220,6 +225,8 @@ object ResponseMapping {
             throw new IllegalStateException("lot catalog creation refused with CardNotFound")
           case CatalogRefusal.CardClosed =>
             throw new IllegalStateException("lot catalog creation refused with CardClosed")
+          case CatalogRefusal.PhotoLimitReached(_) | CatalogRefusal.PhotoConflict =>
+            throw new IllegalStateException("lot catalog creation refused with a photo refusal")
         }
         wire.CreateLotCardResponse().withRefused(wire.CreateLotCardRefusal(reason))
     }
@@ -239,6 +246,8 @@ object ResponseMapping {
           case CatalogRefusal.CardClosed => wire.EditLotCardRefusal.Reason.CardClosed(wire.CardClosed())
           case CatalogRefusal.CardConflict =>
             throw new IllegalStateException("lot catalog edit refused with CardConflict")
+          case CatalogRefusal.PhotoLimitReached(_) | CatalogRefusal.PhotoConflict =>
+            throw new IllegalStateException("lot catalog edit refused with a photo refusal")
         }
         wire.EditLotCardResponse().withRefused(wire.EditLotCardRefusal(reason))
     }
@@ -267,6 +276,8 @@ object ResponseMapping {
         wire.PlaceBidRefusal.Reason.BidNotAtNextPrice(wire.BidNotAtNextPrice(Some(money(expected))))
       case PlaceBidRejected.BidBelowMinimum(minRequired) =>
         wire.PlaceBidRefusal.Reason.BidBelowMinimum(wire.BidBelowMinimum(Some(money(minRequired))))
+      case PlaceBidRejected.BidAboveMaximum(maximum) =>
+        wire.PlaceBidRefusal.Reason.BidAboveMaximum(wire.BidAboveMaximum(Some(money(maximum))))
       case PlaceBidRejected.ParticipantRemovedFromLot =>
         wire.PlaceBidRefusal.Reason.ParticipantRemovedFromLot(wire.ParticipantRemovedFromLot())
       case PlaceBidRejected.LotNotFound | PlaceBidRejected.OpIdTaken =>
@@ -374,6 +385,63 @@ object ResponseMapping {
         throw new IllegalStateException(s"lot removal answered $denial")
     }
 
+  /** Отказы определения сета (ADR-073): право, заморозка, название и лоты — одним `oneof`. */
+  def saveLotSet(outcome: Either[LotSetRefusal, Unit]): Either[Status, wire.SaveLotSetResponse] = {
+    def refused(reason: wire.SaveLotSetRefusal.Reason) =
+      Right(wire.SaveLotSetResponse().withRefused(wire.SaveLotSetRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SaveLotSetResponse().withAccepted(wire.LotSetSaved()))
+      case Left(LotSetRefusal.NameEmpty) => refused(wire.SaveLotSetRefusal.Reason.NameEmpty(wire.LotSetNameEmpty()))
+      case Left(LotSetRefusal.LotNotInAuction(lot)) =>
+        refused(wire.SaveLotSetRefusal.Reason.LotNotInAuction(wire.LotSetLotNotInAuction(lot.value.toString)))
+      case Left(LotSetRefusal.LotInAnotherSet(lot, set)) =>
+        refused(
+          wire.SaveLotSetRefusal.Reason.LotInAnotherSet(wire.LotInAnotherSet(lot.value.toString, set.value.toString))
+        )
+      case Left(LotSetRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(wire.SaveLotSetRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(wire.SaveLotSetRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(wire.SaveLotSetRefusal.Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(LotSetRefusal.Denied(Denial.LotsFrozen)) =>
+        refused(wire.SaveLotSetRefusal.Reason.LotsFrozen(wire.LotsFrozen()))
+      case Left(LotSetRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LotSetRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            refusal @ (LotSetRefusal.LotSetNotFound | LotSetRefusal.Denied(Denial.MeetupHidden) |
+            LotSetRefusal.Denied(Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"lot set saving answered $refusal")
+    }
+  }
+
+  def deleteLotSet(outcome: Either[LotSetRefusal, Unit]): Either[Status, wire.DeleteLotSetResponse] = {
+    def refused(reason: wire.DeleteLotSetRefusal.Reason) =
+      Right(wire.DeleteLotSetResponse().withRefused(wire.DeleteLotSetRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.DeleteLotSetResponse().withAccepted(wire.LotSetDeleted()))
+      case Left(LotSetRefusal.LotSetNotFound) =>
+        refused(wire.DeleteLotSetRefusal.Reason.LotSetNotFound(wire.LotSetNotFound()))
+      case Left(LotSetRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(LotSetRefusal.Denied(Denial.LotsFrozen)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.LotsFrozen(wire.LotsFrozen()))
+      case Left(LotSetRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LotSetRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            refusal @ (LotSetRefusal.NameEmpty | LotSetRefusal.LotNotInAuction(_) |
+            LotSetRefusal.LotInAnotherSet(_, _) | LotSetRefusal.Denied(Denial.MeetupHidden) |
+            LotSetRefusal.Denied(Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"lot set deletion answered $refusal")
+    }
+  }
+
   /**
    * Отказы `ScheduleLot` трёх источников — право, аукцион и лот — одним `oneof`. `OpIdTaken` — статус, как у команд
    * участника. Лот реестра без журнала невозможен: `AddLot` рождает лот раньше, чем пишет его в реестр.
@@ -471,6 +539,8 @@ object ResponseMapping {
         wire.ConfigInvalid.Reason.RafflePrizeBlank(wire.RafflePrizeBlank())
       case ConfigInvalid.RafflePrizeTooLong =>
         wire.ConfigInvalid.Reason.RafflePrizeTooLong(wire.RafflePrizeTooLong())
+      case ConfigInvalid.PaymentTermOutOfRange =>
+        wire.ConfigInvalid.Reason.PaymentTermOutOfRange(wire.PaymentTermOutOfRange())
     }
     wire.ConfigInvalid(named)
   }
@@ -556,6 +626,109 @@ object ResponseMapping {
             VisibilityRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
           ) =>
         throw new IllegalStateException(s"auction visibility answered $denial")
+    }
+  }
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19) отвечает формой остальных команд администратора:
+   * принятие — значением, отказ — именованным значением ответа, а не статусом.
+   */
+  def setFinalTime(outcome: Either[FinalTimeRefusal, Unit]): Either[Status, wire.SetFinalTimeResponse] = {
+    import wire.FinalTimeRefusal.Reason
+    def refused(reason: Reason) = Right(wire.SetFinalTimeResponse().withRefused(wire.FinalTimeRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SetFinalTimeResponse().withAccepted(wire.FinalTimeAccepted()))
+      case Left(FinalTimeRefusal.FinalAlreadyStarted) =>
+        refused(Reason.FinalAlreadyStarted(wire.FinalAlreadyStarted()))
+      case Left(FinalTimeRefusal.AuctionAlreadyFinished) =>
+        refused(Reason.AuctionAlreadyFinished(wire.AuctionAlreadyFinished()))
+      case Left(FinalTimeRefusal.AuctionAlreadyCancelled) =>
+        refused(Reason.AuctionAlreadyCancelled(wire.AuctionAlreadyCancelled()))
+      case Left(FinalTimeRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(FinalTimeRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(FinalTimeRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(FinalTimeRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(FinalTimeRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(FinalTimeRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            FinalTimeRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"auction final time answered $denial")
+    }
+  }
+
+  /**
+   * Порядок и разделы ленты (PER-719) отвечает формой времени финала: принятие — значением, отказ — именованным
+   * значением ответа, а не статусом.
+   */
+  def setLotLayout(outcome: Either[LotLayoutRefusal, Unit]): Either[Status, wire.SetLotLayoutResponse] = {
+    import wire.SetLotLayoutRefusal.Reason
+    def refused(reason: Reason) = Right(wire.SetLotLayoutResponse().withRefused(wire.SetLotLayoutRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SetLotLayoutResponse().withAccepted(wire.LotLayoutAccepted()))
+      case Left(LotLayoutRefusal.FinalAlreadyStarted) =>
+        refused(Reason.FinalAlreadyStarted(wire.FinalAlreadyStarted()))
+      case Left(LotLayoutRefusal.AuctionAlreadyFinished) =>
+        refused(Reason.AuctionAlreadyFinished(wire.AuctionAlreadyFinished()))
+      case Left(LotLayoutRefusal.AuctionAlreadyCancelled) =>
+        refused(Reason.AuctionAlreadyCancelled(wire.AuctionAlreadyCancelled()))
+      case Left(LotLayoutRefusal.LotNotInAuction(lot)) =>
+        refused(Reason.LotNotInAuction(wire.LotLayoutLotNotInAuction(lot.value.toString)))
+      case Left(LotLayoutRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LotLayoutRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LotLayoutRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(LotLayoutRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(LotLayoutRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LotLayoutRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            LotLayoutRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"auction lot layout answered $denial")
+    }
+  }
+
+  /** Раскладка ленты в форме чтения (PER-719); пустая не отдаётся — лента тогда в порядке создания. */
+  def lotLayout(layout: LotLayout): Option[wire.LotLayout] =
+    Option.unless(layout.isEmpty)(
+      wire.LotLayout(
+        lotIds = layout.lots.map(_.value.toString),
+        sections = layout.sections.map(section =>
+          wire.LotSection(section.id.value, section.name.value, section.lots.map(_.value.toString))
+        )
+      )
+    )
+
+  /**
+   * Текст «как оплатить и получить» (PER-322): ворот по сходке нет, поэтому отказов значением два — право и сходка.
+   */
+  def setPaymentInstructions(
+      outcome: Either[PaymentInstructionsRefusal, Unit]
+  ): Either[Status, wire.SetPaymentInstructionsResponse] = {
+    import wire.PaymentInstructionsRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.SetPaymentInstructionsResponse().withRefused(wire.PaymentInstructionsRefusal(reason)))
+    outcome match {
+      case Right(()) =>
+        Right(wire.SetPaymentInstructionsResponse().withAccepted(wire.PaymentInstructionsAccepted()))
+      case Left(PaymentInstructionsRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(PaymentInstructionsRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(PaymentInstructionsRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(PaymentInstructionsRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(PaymentInstructionsRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            PaymentInstructionsRefusal.Denied(
+              denial @ (Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
+        throw new IllegalStateException(s"auction payment instructions answered $denial")
     }
   }
 
@@ -950,6 +1123,38 @@ object ResponseMapping {
   def settleResultsDenied(denial: Denial): Either[Status, wire.SettlePredictionResultsManuallyResponse] =
     settleResultsRefusal(denial).map(wire.SettlePredictionResultsManuallyResponse().withRefused)
 
+  /** Отказ права на ручной итог розыгрыша — та же пара, что у ручной отметки итогов прогнозов (PER-727). */
+  def assignWinnerDenied(denial: Denial): Either[Status, wire.AssignRaffleWinnerResponse] = {
+    import wire.AssignRaffleWinnerRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.AssignRaffleWinnerResponse().withRefused(wire.AssignRaffleWinnerRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle winner authority answered $denial")
+    }
+  }
+
+  /** Отказ права на смену приза розыгрыша — та же пара, что у ручного итога (PER-737). */
+  def changePrizeDenied(denial: Denial): Either[Status, wire.ChangeRafflePrizeResponse] = {
+    import wire.ChangeRafflePrizeRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.ChangeRafflePrizeResponse().withRefused(wire.ChangeRafflePrizeRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle prize authority answered $denial")
+    }
+  }
+
   /** Ручная отметка принята: подсчёт подавлен, значения номинаций не несутся (ADR-067, п. 8). */
   val settleResultsAccepted: wire.SettlePredictionResultsManuallyResponse =
     wire.SettlePredictionResultsManuallyResponse().withAccepted(wire.PredictionResultsByHand())
@@ -988,7 +1193,8 @@ object ResponseMapping {
   /**
    * Снимок аукциона в форме `AuctionSnapshot`: те же поля, что `AuctionState` шины, кроме `meetup_id`. Конфигурации у
    * черновика нет, с `Scheduled` она есть всегда; реестр — по возрастанию `lot_id`, порядок смысла не несёт. Какие лоты
-   * подтвердили открытие, снимок не несёт: это знание entity, а не журнала.
+   * подтвердили открытие, снимок не несёт: это знание entity, а не журнала. Ориентировочное время финала — только у
+   * чтения: факта у него на шине нет (ADR-040, дополнение 2026-10-19).
    */
   def auctionSnapshot(view: AuctionSnapshotView): wire.AuctionSnapshot = {
     val (status, config) = view.auction.state match {
@@ -1017,6 +1223,11 @@ object ResponseMapping {
       config = config.map(AuctionValues.config),
       lotIds = view.auction.lots.toList.map(_.value).sorted.map(_.toString),
       hidden = view.auction.hidden,
+      finalAt = view.auction.finalAt.map(LotValues.instant),
+      lotLayout = lotLayout(view.auction.layout),
+      // Запущенные по ходу торгов окна (PER-724): участник видит их в программе недели рядом с объявленными, как
+      // администратор в пульте.
+      launchedStepWindows = view.auction.launched.map(_.window).map(AuctionValues.stepWindow),
       status = status
     )
   }
@@ -1037,7 +1248,42 @@ object ResponseMapping {
    * лота.
    */
   private[grpc] def lotCard(card: LotCard): wire.LotCard =
-    wire.LotCard(card.title.value, card.description, card.image.map(version => wire.LotImageRef(version.value)))
+    wire.LotCard(
+      card.title.value,
+      card.description,
+      card.image.map(version => wire.LotImageRef(version.value)),
+      card.photos.map(photo => wire.LotPhotoRef(photo.photoId.value.toString, photo.version.value))
+    )
+
+  /** Отказ команд фото (ADR-057, дополнение 2026-10-24); `AddLotPhoto` и `RemoveLotPhoto` делят его форму. */
+  private def photoRefusal(refusal: CatalogRefusal): wire.LotPhotoRefusal = {
+    val reason = refusal match {
+      case CatalogRefusal.NotAdmin => wire.LotPhotoRefusal.Reason.NotAdmin(wire.NotAdmin())
+      case CatalogRefusal.CardNotFound => wire.LotPhotoRefusal.Reason.CardNotFound(wire.CardNotFound())
+      case CatalogRefusal.CardClosed => wire.LotPhotoRefusal.Reason.CardClosed(wire.CardClosed())
+      case CatalogRefusal.ImageTooLarge(maxBytes) =>
+        wire.LotPhotoRefusal.Reason.ImageTooLarge(wire.ImageTooLarge(maxBytes.toLong))
+      case CatalogRefusal.UnsupportedImage => wire.LotPhotoRefusal.Reason.UnsupportedImage(wire.UnsupportedImage())
+      case CatalogRefusal.PhotoLimitReached(maxPhotos) =>
+        wire.LotPhotoRefusal.Reason.PhotoLimitReached(wire.PhotoLimitReached(maxPhotos))
+      case CatalogRefusal.PhotoConflict => wire.LotPhotoRefusal.Reason.PhotoConflict(wire.PhotoConflict())
+      case CatalogRefusal.EmptyTitle | CatalogRefusal.CardConflict =>
+        throw new IllegalStateException(s"lot photo command refused with $refusal")
+    }
+    wire.LotPhotoRefusal(reason)
+  }
+
+  def addLotPhoto(outcome: Either[CatalogRefusal, LotCard]): wire.AddLotPhotoResponse =
+    outcome match {
+      case Right(card) => wire.AddLotPhotoResponse().withAccepted(lotCard(card))
+      case Left(refusal) => wire.AddLotPhotoResponse().withRefused(photoRefusal(refusal))
+    }
+
+  def removeLotPhoto(outcome: Either[CatalogRefusal, LotCard]): wire.RemoveLotPhotoResponse =
+    outcome match {
+      case Right(card) => wire.RemoveLotPhotoResponse().withAccepted(lotCard(card))
+      case Left(refusal) => wire.RemoveLotPhotoResponse().withRefused(photoRefusal(refusal))
+    }
 
   /** Изображение из строки каталога как есть: версия — версия этих байтов, а не прочитанной раньше карточки. */
   def lotImage(image: LotImageView): wire.LotImage =

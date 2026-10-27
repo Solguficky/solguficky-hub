@@ -1,6 +1,7 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import type { Loaded } from "./config.js";
+import { packageEntry } from "./package-root.js";
 import type { Surface } from "./surface.js";
 
 // Записи «Что нового» (ADR-069, п. 1): одно видимое людям изменение — один
@@ -104,19 +105,11 @@ export function parseNote(id: string, content: string): Loaded<ReleaseNote> {
   return { ok: true, config: { id, surfaces, text } };
 }
 
-// Каталог записей лежит в корне пакета: рядом с `package.json` и в исходниках
-// (`src/core`), и в сборке (`dist/src/core`), и в образе (`/app`). Глубина у
-// этих мест разная, поэтому корень ищется подъёмом, а не числом `..`.
+// Каталог записей лежит в корне пакета, рядом с `package.json`.
 export function releaseNotesDirectory(
   from: string = import.meta.dirname,
 ): string {
-  let dir = from;
-  while (!existsSync(path.join(dir, "package.json"))) {
-    const parent = path.dirname(dir);
-    if (parent === dir) return path.join(from, "release-notes");
-    dir = parent;
-  }
-  return path.join(dir, "release-notes");
+  return packageEntry("release-notes", from);
 }
 
 export function readNoteFiles(directory: string): Loaded<ReleaseNote[]> {

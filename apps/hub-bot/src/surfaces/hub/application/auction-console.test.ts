@@ -8,7 +8,9 @@ import type {
   ActiveAuctionsResult,
   AdvanceAskResult,
   AuctionConsoles,
+  AuctionVisibilityResult,
   AuctionWeekConfig,
+  CancelAuctionResult,
   CloseLotResult,
   ConsoleRaffleResult,
   ConsoleReadResult,
@@ -18,16 +20,22 @@ import type {
   FinalBidsResult,
   FinalistResult,
   FinalLotCommand,
+  FinalTimeResult,
   FreezeFinalLineupResult,
+  LaunchStepWindowCommand,
+  LaunchStepWindowResult,
   LotStatisticsReadResult,
   ScheduleAuctionResult,
   StartFinalResult,
   StartNextLotResult,
   StartPrebiddingResult,
 } from "../auction/port.js";
+import type { ParticipantUsernameResult } from "../identity/port.js";
 import {
   createAuctionConsole,
   lineupPrint,
+  parseFinalTime,
+  parseLaunch,
   parseRaffle,
   parseWeek,
   parseWindow,
@@ -67,7 +75,15 @@ function view(
   status: AuctionConsoleView["status"],
   extra: Partial<AuctionConsoleView> = {},
 ): AuctionConsoleView {
-  return { auctionId, status, lots: [], ...extra };
+  return {
+    auctionId,
+    status,
+    hidden: false,
+    lots: [],
+    launchedWindows: [],
+    lotSets: [],
+    ...extra,
+  };
 }
 
 function fake(answers: {
@@ -80,6 +96,9 @@ function fake(answers: {
   start?: StartPrebiddingResult;
   mark?: FinalistResult;
   discard?: DiscardAuctionResult;
+  cancel?: CancelAuctionResult;
+  visibility?: AuctionVisibilityResult;
+  finalTime?: FinalTimeResult;
   freeze?: FreezeFinalLineupResult;
   startFinal?: StartFinalResult;
   nextLot?: StartNextLotResult;
@@ -87,15 +106,23 @@ function fake(answers: {
   close?: CloseLotResult;
   bids?: FinalBidsResult;
   names?: DisplayNamesResult;
+  // Настоящий аккаунт участника (PER-648), по идентификатору. Нет записи —
+  // Identity отказал, как участнику, открывшему карточку.
+  accounts?: Readonly<Record<string, ParticipantUsernameResult>>;
   raffle?: ConsoleRaffleResult;
   active?: ActiveAuctionsResult;
+  launch?: LaunchStepWindowResult;
 }) {
   const scheduled: AuctionWeekConfig[] = [];
   const reads = { raffle: 0, active: 0 };
   const asks: Money[] = [];
   const closes: FinalLotCommand[] = [];
+  const accountsAsked: string[] = [];
   const freezes: (readonly string[])[] = [];
   const windows: { auctionId: string; from: string; until: string }[] = [];
+  const launched: LaunchStepWindowCommand[] = [];
+  const visibility: { published: boolean; opId: string }[] = [];
+  const finalTimes: { finalAt?: string; opId: string }[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -118,8 +145,39 @@ function fake(answers: {
     },
     startPrebidding: async () => answers.start ?? { kind: "ok" },
     discardAuction: async () => answers.discard ?? { kind: "ok" },
+    cancelAuction: async () => answers.cancel ?? { kind: "ok" },
+    publishAuction: async (_person, publish) => {
+      visibility.push({ published: true, opId: publish.opId });
+      return answers.visibility ?? { kind: "ok" };
+    },
+    hideAuction: async (_person, hide) => {
+      visibility.push({ published: false, opId: hide.opId });
+      return answers.visibility ?? { kind: "ok" };
+    },
+    saveLotSet: async () => {
+      throw new Error("not used");
+    },
+    deleteLotSet: async () => {
+      throw new Error("not used");
+    },
+    setLotLayout: async () => {
+      throw new Error("not used");
+    },
+    setPaymentInstructions: async () => {
+      throw new Error("not used");
+    },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
+    setFinalTime: async (_person, command) => {
+      finalTimes.push({
+        ...(command.finalAt === undefined ? {} : { finalAt: command.finalAt }),
+        opId: command.opId,
+      });
+      if (answers.finalTime === undefined) {
+        throw new Error("final time response not configured by test");
+      }
+      return answers.finalTime;
+    },
     freezeFinalLineup: async (_person, freeze) => {
       freezes.push(freeze.lotIds);
       return answers.freeze ?? { kind: "ok" };
@@ -146,6 +204,27 @@ function fake(answers: {
     floorLot: async () => {
       throw new Error("lot read not used by the console");
     },
+    lotParticipants: async () => {
+      throw new Error("participant removal not used by the console");
+    },
+    previewParticipantRemoval: async () => {
+      throw new Error("participant removal not used by the console");
+    },
+    removeParticipant: async () => {
+      throw new Error("participant removal not used by the console");
+    },
+    listAuctionInvoices: async () => {
+      throw new Error("invoices not used by the console");
+    },
+    markInvoice: async () => {
+      throw new Error("invoices not used by the console");
+    },
+    assignRaffleWinner: async () => {
+      throw new Error("raffle winner not used by the console");
+    },
+    changeRafflePrize: async () => {
+      throw new Error("raffle prize change not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };
@@ -154,15 +233,34 @@ function fake(answers: {
       reads.active += 1;
       return answers.active ?? { kind: "ok", auctions: [] };
     },
+    launchStepWindow: async (_person, launch) => {
+      launched.push(launch);
+      return (
+        answers.launch ?? {
+          kind: "ok",
+          from: launch.from ?? "2026-10-20T15:00:00Z",
+          until: launch.until,
+        }
+      );
+    },
   };
   return {
-    run: createAuctionConsole(port, zone, () => answers.at ?? now),
+    run: createAuctionConsole(port, zone, () => answers.at ?? now, {
+      async resolveParticipantUsername(_viewer, identityId) {
+        accountsAsked.push(identityId);
+        return answers.accounts?.[identityId] ?? { kind: "denied" };
+      },
+    }),
     reads,
     scheduled,
     asks,
     closes,
+    accountsAsked,
     freezes,
     windows,
+    launched,
+    visibility,
+    finalTimes,
   };
 }
 
@@ -218,6 +316,157 @@ describe("parseWeek", () => {
     expect(
       parseWeek("01.10.2026 18:00 — 06.10.2026 12:01", zone, now),
     ).toMatchObject({ kind: "ok" });
+  });
+});
+
+// Ориентировочное время финала (PER-663): момент в поясе сообщества, формат
+// ввода хаба.
+describe("parseFinalTime", () => {
+  it("reads the moment in community time", () => {
+    expect(
+      parseFinalTime({ raw: " 31.10.2026 19:00 ", timeZone: zone, now }),
+    ).toEqual({
+      kind: "ok",
+      finalAt: "2026-10-31T16:00:00Z",
+    });
+  });
+
+  it.each([
+    ["no year", "31.10 19:00"],
+    ["a day the calendar lacks", "31.02.2026 19:00"],
+    ["an hour past the day", "31.10.2026 24:00"],
+    ["words", "завтра вечером"],
+  ])("refuses %s as a format error", (_name, raw) => {
+    expect(parseFinalTime({ raw, timeZone: zone, now })).toEqual({
+      kind: "rejected",
+      error: "final-time-format",
+    });
+  });
+
+  it("refuses a time the clocks skipped", () => {
+    expect(
+      parseFinalTime({
+        raw: "29.03.2026 02:30",
+        timeZone: "Europe/Berlin",
+        now,
+      }),
+    ).toEqual({
+      kind: "rejected",
+      error: "final-time-moment",
+    });
+  });
+
+  it("refuses a moment that has already come", () => {
+    expect(
+      parseFinalTime({ raw: "01.10.2026 18:00", timeZone: zone, now }),
+    ).toEqual({
+      kind: "rejected",
+      error: "final-time-past",
+    });
+  });
+});
+
+describe("the final time of the auction", () => {
+  const call = { identity: admin, auctionId };
+
+  it("sets the moment and shows it over a lagging read", async () => {
+    const { run, finalTimes } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", { week: { ...week, final: true } }),
+      },
+      statistics: noLotStatistics,
+      finalTime: { kind: "ok" },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "set-auction-final-time",
+      value: "31.10.2026 19:00",
+      opId,
+    });
+
+    expect(finalTimes).toEqual([{ opId, finalAt: "2026-10-31T16:00:00Z" }]);
+    expect(result).toEqual({
+      kind: "auction-console",
+      console: view("scheduled", {
+        week: { ...week, final: true },
+        finalAt: "2026-10-31T16:00:00Z",
+      }),
+      note: "final-time-saved",
+    });
+  });
+
+  it("asks the moment again with the reason and without a command", async () => {
+    const { run, finalTimes } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", { week: { ...week, final: true } }),
+      },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-final-time",
+        value: "завтра вечером",
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-final-time-ask",
+      auctionId,
+      error: "final-time-format",
+    });
+    expect(finalTimes).toEqual([]);
+  });
+
+  it("takes the announcement back with the same command", async () => {
+    const { run, finalTimes } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", {
+          week: { ...week, final: true },
+          finalAt: "2026-10-31T16:00:00Z",
+        }),
+      },
+      statistics: noLotStatistics,
+      finalTime: { kind: "ok" },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "remove-auction-final-time",
+      opId,
+    });
+
+    expect(finalTimes).toEqual([{ opId }]);
+    expect(result).toEqual({
+      kind: "auction-console",
+      console: view("scheduled", { week: { ...week, final: true } }),
+      note: "final-time-removed",
+    });
+  });
+
+  it("names the refusal of a final that has already started", async () => {
+    const { run, finalTimes } = fake({
+      read: { kind: "ok", console: view("final") },
+      statistics: noLotStatistics,
+      finalTime: { kind: "final-already-started" },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-final-time",
+        value: "31.10.2026 19:00",
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "final-already-started",
+    });
+    expect(finalTimes).toEqual([]);
   });
 });
 
@@ -378,18 +627,30 @@ describe("auction console", () => {
     });
   });
 
-  it("refuses the console of a cancelled meetup and the start of a hidden one", async () => {
-    for (const kind of ["meetup-cancelled", "meetup-hidden"] as const) {
-      const { run } = fake({
-        start: { kind },
-        read: { kind: "ok", console: view("scheduled") },
-        statistics: noLotStatistics,
-      });
+  // Скрытая сходка (PER-606) — исход пульта по перечитанному снимку с
+  // возвратом в пульт; отменённая закрывает пульт насовсем — кадр отказа, иначе
+  // «‹ Пульт» вёл бы по кругу к тем же командам.
+  it("names a hidden meetup as the outcome of the console and refuses a cancelled one", async () => {
+    const hidden = fake({
+      start: { kind: "meetup-hidden" },
+      read: { kind: "ok", console: view("scheduled") },
+      statistics: noLotStatistics,
+    });
+    const cancelled = fake({ start: { kind: "meetup-cancelled" } });
 
-      await expect(
-        run({ ...call, intent: "start-auction-week", opId }),
-      ).resolves.toEqual({ kind: "auction-console-refused", reason: kind });
-    }
+    await expect(
+      hidden.run({ ...call, intent: "start-auction-week", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: view("scheduled"),
+      note: "meetup-hidden",
+    });
+    await expect(
+      cancelled.run({ ...call, intent: "start-auction-week", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "meetup-cancelled",
+    });
   });
 
   it("shows an accepted start over a read that has not seen it yet", async () => {
@@ -617,7 +878,7 @@ describe("auction week start", () => {
 });
 
 // PER-618: строка розыгрыша пульта после закрытия регистрации — из
-// `GetRaffle`; до момента закрытия розыгрыш не читается.
+// `GetRaffle`; с PER-737 розыгрыш читается с открытия недели — ради приза.
 describe("auction console raffle", () => {
   const call = { identity: admin, auctionId };
   const raffle: RaffleView = {
@@ -658,9 +919,45 @@ describe("auction console raffle", () => {
     expect(reads.raffle).toBe(1);
   });
 
-  it("does not read the raffle before its registration closes", async () => {
+  // С открытия недели приз живёт у розыгрыша (PER-737): пульт читает его и
+  // до закрытия регистрации, чтобы показать приз, который сменили.
+  it("reads the raffle while its registration is still open", async () => {
+    const console = opened("2026-10-10T16:12:00Z");
+    const open: RaffleView = {
+      ...raffle,
+      status: "open",
+      tickets: [],
+      prize: "Кружка",
+    };
     const { run, reads } = fake({
-      read: { kind: "ok", console: opened("2026-10-10T16:12:00Z") },
+      read: { kind: "ok", console },
+      statistics: noLotStatistics,
+      raffle: { kind: "ok", raffle: open },
+    });
+
+    await expect(
+      run({ ...call, intent: "view-auction-console" }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: { ...console, raffle: open },
+    });
+    expect(reads.raffle).toBe(1);
+  });
+
+  it("does not read the raffle of a week that is not open yet", async () => {
+    const { run, reads } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", {
+          week: {
+            opensAt: "2026-10-05T15:00:00Z",
+            closesAt: "2026-10-12T15:00:00Z",
+            final: true,
+            windows: [],
+            raffleClosesAt: "2026-10-10T16:12:00Z",
+          },
+        }),
+      },
       statistics: noLotStatistics,
       raffle: { kind: "ok", raffle },
     });
@@ -682,6 +979,123 @@ describe("auction console raffle", () => {
     await expect(
       run({ ...call, intent: "view-auction-console" }),
     ).resolves.toEqual({ kind: "auction-console", console });
+  });
+});
+
+describe("auction cancel", () => {
+  const call = { identity: admin, auctionId };
+  const lot = (id: string, status: ConsoleLot["lot"]["status"]) => ({
+    lot: { lotId: id, auctionId, version: 1, proxyEnabled: false, status },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  });
+  const rub = (minorUnits: number) => ({ minorUnits, currency: "RUB" });
+
+  it("confirms the cancel with the number of sold lots once trading is open", async () => {
+    const ids = [
+      "0190f2a0-0000-7000-8000-000000000031",
+      "0190f2a0-0000-7000-8000-000000000032",
+      "0190f2a0-0000-7000-8000-000000000033",
+    ];
+    const { run } = fake({
+      read: {
+        kind: "ok",
+        console: view("break", {
+          lots: [
+            lot("0190f2a0-0000-7000-8000-000000000031", {
+              kind: "sold",
+              winnerId: "0190f2a0-0000-7000-8000-000000000041",
+              price: rub(100_000),
+            }),
+            lot("0190f2a0-0000-7000-8000-000000000032", {
+              kind: "held",
+              currentPrice: rub(50_000),
+            }),
+            lot("0190f2a0-0000-7000-8000-000000000033", { kind: "unsold" }),
+          ],
+        }),
+      },
+      statistics: {
+        kind: "ok",
+        lots: ids.map((lotId) => ({
+          lotId,
+          bidCount: 0,
+          uniqueParticipantCount: 0,
+        })),
+      },
+    });
+
+    await expect(
+      run({ ...call, intent: "prepare-auction-cancel", opId }),
+    ).resolves.toEqual({
+      kind: "auction-cancel-confirm",
+      auctionId,
+      opId,
+      sold: 1,
+    });
+  });
+
+  // До торгов действует удаление, после конца отменять нечего: подтверждения
+  // нет, пульт называет причину.
+  it("names a week not opened yet and an auction already over instead of a confirmation", async () => {
+    for (const [status, note] of [
+      ["scheduled", "cancel-too-early"],
+      ["finished", "cancel-too-late"],
+      ["cancelled", "already-cancelled"],
+    ] as const) {
+      const { run } = fake({
+        read: { kind: "ok", console: view(status) },
+        statistics: noLotStatistics,
+      });
+
+      await expect(
+        run({ ...call, intent: "prepare-auction-cancel", opId }),
+      ).resolves.toMatchObject({ kind: "auction-console", note });
+    }
+  });
+
+  it("shows the cancelled auction over a read that has not seen the cancel yet", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "cancel-auction", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: view("cancelled"),
+      note: "auction-cancelled",
+    });
+  });
+
+  it("names the refusals of Auction on the console", async () => {
+    for (const [cancel, note] of [
+      [{ kind: "not-started" }, "cancel-too-early"],
+      [{ kind: "already-finished" }, "cancel-too-late"],
+    ] as const) {
+      const { run } = fake({
+        cancel,
+        read: { kind: "ok", console: view("scheduled") },
+        statistics: noLotStatistics,
+      });
+
+      await expect(
+        run({ ...call, intent: "cancel-auction", opId }),
+      ).resolves.toMatchObject({ kind: "auction-console", note });
+    }
+    await expect(
+      fake({ cancel: { kind: "not-administrator" } }).run({
+        ...call,
+        intent: "cancel-auction",
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
   });
 });
 
@@ -743,6 +1157,111 @@ describe("auction discard", () => {
     });
     await expect(
       missing.run({ ...call, intent: "discard-auction", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "auction-not-found",
+    });
+  });
+});
+
+describe("auction visibility", () => {
+  const call = { identity: admin, auctionId };
+
+  it("publishes a hidden auction by the target of the button", async () => {
+    const hidden = {
+      kind: "ok",
+      console: view("draft", { hidden: true }),
+    } as const;
+    const publish = fake({ read: hidden, statistics: noLotStatistics });
+
+    await expect(
+      publish.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: true,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "published",
+    });
+    expect(publish.visibility).toEqual([{ published: true, opId }]);
+  });
+
+  it("hides a visible auction by the target of the button", async () => {
+    const hide = fake({ statistics: noLotStatistics });
+
+    await expect(
+      hide.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "unpublished",
+    });
+    expect(hide.visibility).toEqual([{ published: false, opId }]);
+  });
+
+  it("names a week that opened in between", async () => {
+    const { run } = fake({
+      visibility: { kind: "already-started" },
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "visibility-too-late",
+    });
+  });
+
+  it("refuses a cancelled meetup with its own text, not as a failure", async () => {
+    const { run } = fake({ visibility: { kind: "meetup-cancelled" } });
+
+    await expect(
+      run({ ...call, intent: "set-auction-visibility", published: true, opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "meetup-cancelled",
+    });
+  });
+
+  it("refuses a person Auction does not take for the administrator", async () => {
+    const forbidden = fake({ visibility: { kind: "not-administrator" } });
+
+    await expect(
+      forbidden.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: true,
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
+  });
+
+  it("refuses a missing auction", async () => {
+    const missing = fake({ visibility: { kind: "auction-not-found" } });
+
+    await expect(
+      missing.run({
+        ...call,
+        intent: "set-auction-visibility",
+        published: false,
+        opId,
+      }),
     ).resolves.toEqual({
       kind: "auction-console-refused",
       reason: "auction-not-found",
@@ -1172,6 +1691,110 @@ describe("final of the auctioneer", () => {
       title: "Картина",
       closure: { kind: "sold", price: rub(1_000) },
     });
+  });
+
+  it("names the account of the leader and of the buyer beside their pseudonyms", async () => {
+    const account = {
+      [leaderId]: {
+        kind: "resolved" as const,
+        telegramUsername: "batman",
+      },
+    };
+    const confirmation = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен*" } },
+      accounts: account,
+    });
+    const sold = running(final([live(leaderId), held], lotId), {
+      close: {
+        kind: "ok",
+        closure: { kind: "sold", winnerId: leaderId, price: rub(1_000) },
+      },
+      names: { kind: "ok", names: { [leaderId]: "Бэтмен*" } },
+      accounts: account,
+    });
+
+    await expect(
+      confirmation.run({
+        ...call,
+        intent: "prepare-final-close",
+        position: 0,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      leaderName: "Бэтмен*",
+      leaderUsername: "batman",
+    });
+    await expect(
+      sold.run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: sale,
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({
+      closure: { buyerName: "Бэтмен*", buyerUsername: "batman" },
+    });
+  });
+
+  it("leaves the account out when Identity refuses it", async () => {
+    const { run } = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен*" } },
+      accounts: { [leaderId]: { kind: "denied" } },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).toMatchObject({ leaderName: "Бэтмен*" });
+    expect(result).not.toHaveProperty("leaderUsername");
+  });
+
+  // Снимок ника в аукционе заморожен, и организатору нужен свежий аккаунт:
+  // имя, которое уже является ником, спрашивается так же (PER-648).
+  it("asks for the account even when the shown name already is one", async () => {
+    const { run, accountsAsked } = running(
+      final([live(leaderId), held], lotId),
+      {
+        bids: { kind: "ok", bids: [], names: { [leaderId]: "@old" } },
+        accounts: {
+          [leaderId]: { kind: "resolved", telegramUsername: "new" },
+        },
+      },
+    );
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).toMatchObject({
+      leaderName: "@old",
+      leaderUsername: "new",
+    });
+    expect(accountsAsked).toEqual([leaderId]);
+  });
+
+  it("leaves the account out when the screen names nobody", async () => {
+    const { run, accountsAsked } = running(final([live(), held], lotId), {
+      accounts: {
+        [leaderId]: { kind: "resolved", telegramUsername: "batman" },
+      },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "prepare-final-close",
+      position: 0,
+      opId,
+    });
+    expect(result).not.toHaveProperty("leaderUsername");
+    expect(accountsAsked).toEqual([]);
   });
 
   it("closes a lot without bids without a sale", async () => {
@@ -1729,6 +2352,249 @@ describe("happy hours", () => {
   });
 });
 
+// Запуск окна сниженного шага по ходу торгов (PER-615): вопрос о начале,
+// конце и шаге, выбор лотов и сама команда. Отказы Auction приходят текстом
+// формы — тем же, что у планирования окна.
+describe("step window launch", () => {
+  const call = { identity: admin, auctionId };
+  const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+  const entry = (id: string): ConsoleLot => ({
+    lot: {
+      lotId: id,
+      auctionId,
+      version: 1,
+      proxyEnabled: false,
+      status: { kind: "draft" },
+      card: { title: "Ваза", description: "" },
+    },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  });
+  const lots = [entry(lotId), entry(second)];
+  const statistics: LotStatisticsReadResult = {
+    kind: "ok",
+    lots: lots.map((each) => ({
+      lotId: each.lot.lotId,
+      bidCount: 0,
+      uniqueParticipantCount: 0,
+    })),
+  };
+  const trading = view("prebidding", {
+    week: { ...week, final: true, windows: [] },
+    lots,
+  });
+
+  it("reads «сейчас» as the start of the window", () => {
+    expect(parseLaunch("сейчас — 21.10.2026 21:00, 50", zone, now)).toEqual({
+      kind: "ok",
+      until: "2026-10-21T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+    });
+  });
+
+  it("reads the start and the end of the window in community time", () => {
+    expect(
+      parseLaunch("21.10.2026 18:00 — 21.10.2026 21:00, 50", zone, now),
+    ).toEqual({
+      kind: "ok",
+      from: "2026-10-21T15:00:00Z",
+      until: "2026-10-21T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+    });
+  });
+
+  it.each([
+    ["21.10.2026 18:00", "window-format"],
+    ["сейчас — 21.10.2026 21:00, полтинник", "amount-format"],
+    ["01.10.2026 18:00 — 21.10.2026 21:00, 50", "window-in-past"],
+    ["21.10.2026 21:00 — 21.10.2026 18:00, 50", "window-order"],
+  ])("refuses the answer %s", (raw, error) => {
+    expect(parseLaunch(raw, zone, now)).toEqual({ kind: "rejected", error });
+  });
+
+  it("refuses a window outside the online week", () => {
+    const short = { ...week, final: true, closesAt: "2026-10-21T12:00:00Z" };
+    expect(
+      parseLaunch("21.10.2026 18:00 — 21.10.2026 21:00, 50", zone, now, short),
+    ).toEqual({ kind: "rejected", error: "window-outside-week" });
+    expect(
+      parseLaunch("сейчас — 21.10.2026 21:00, 50", zone, now, short),
+    ).toEqual({ kind: "rejected", error: "window-outside-week" });
+  });
+
+  it("asks the start, the end and the step while the online trades run", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "ask-step-window-launch" }),
+    ).resolves.toMatchObject({ kind: "step-window-launch-ask" });
+  });
+
+  it("offers no launch after the common deadline", async () => {
+    const { run, launched } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+      at: new Date("2026-10-27T09:00:00Z"),
+    });
+
+    await expect(
+      run({ ...call, intent: "ask-step-window-launch" }),
+    ).resolves.toMatchObject({
+      kind: "step-windows",
+      note: { kind: "launch-closed" },
+    });
+    expect(launched).toEqual([]);
+  });
+
+  it("offers every lot of the registry to the launched window", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "add-step-window-launch",
+        value: "сейчас — 21.10.2026 21:00, 50",
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-window-launch",
+      draft: { lots: [0, 1] },
+    });
+  });
+
+  it("launches the window with the chosen lots", async () => {
+    const { run, launched } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "launch-step-window",
+        draft: {
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T18:00:00Z",
+          step: { minorUnits: 5_000, currency: "RUB" },
+          lots: [1],
+        },
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "step-windows" });
+    expect(launched).toEqual([
+      {
+        auctionId,
+        opId,
+        from: "2026-10-21T15:00:00Z",
+        until: "2026-10-21T18:00:00Z",
+        step: { minorUnits: 5_000, currency: "RUB" },
+        lotIds: [second],
+      },
+    ]);
+  });
+
+  it("asks the window again when the launch is refused", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+      launch: { kind: "window-in-past" },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "launch-step-window",
+        draft: {
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T18:00:00Z",
+          step: { minorUnits: 5_000, currency: "RUB" },
+          lots: [0],
+        },
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-window-launch-ask",
+      error: "window-in-past",
+    });
+  });
+
+  it("covers the first sixty four lots of a bigger registry", async () => {
+    const many = Array.from({ length: 70 }, (_, index) =>
+      entry(
+        `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a${index.toString(16).padStart(4, "0")}`,
+      ),
+    );
+    const { run } = fake({
+      read: {
+        kind: "ok",
+        console: view("prebidding", {
+          week: { ...week, final: true, windows: [] },
+          lots: many,
+        }),
+      },
+      statistics: {
+        kind: "ok",
+        lots: many.map((each) => ({
+          lotId: each.lot.lotId,
+          bidCount: 0,
+          uniqueParticipantCount: 0,
+        })),
+      },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "add-step-window-launch",
+      value: "сейчас — 21.10.2026 21:00, 50",
+    });
+
+    // Набор лотов едет в кнопке маской на 64 лота: запуск накрывает первые
+    // 64 лота реестра, а остальные в окно не входят.
+    expect(
+      result.kind === "step-window-launch" ? result.draft.lots : [],
+    ).toEqual(Array.from({ length: 64 }, (_, at) => at));
+  });
+
+  it("names the lot and the window the launch crosses", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+      launch: {
+        kind: "windows-overlap",
+        lotId,
+        from: "2026-10-21T16:00:00Z",
+        until: "2026-10-21T19:00:00Z",
+      },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "launch-step-window",
+        draft: {
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T18:00:00Z",
+          step: { minorUnits: 5_000, currency: "RUB" },
+          lots: [0],
+        },
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-window-launch-ask",
+      error: "launch-overlap",
+      lot: "Ваза",
+      other: { from: "2026-10-21T16:00:00Z", until: "2026-10-21T19:00:00Z" },
+    });
+  });
+});
+
 // Розыгрыш (PER-593): момент закрытия регистрации задаётся своим вопросом на
 // пульте, лежит строго внутри недели и едет в каждой команде над
 // конфигурацией — без него Auction стёр бы розыгрыш молча.
@@ -2039,11 +2905,13 @@ describe("day summary", () => {
     lots: [
       {
         lotId,
-        bidCount: 4,
+        bidCount: 2,
         maxPrice: { minorUnits: 150_000, currency: "RUB" },
         growth: { minorUnits: 30_000, currency: "RUB" },
+        leaderChangeCount: 2,
+        longestDuel: 2,
       },
-      { lotId: second, bidCount: 0 },
+      { lotId: second, bidCount: 0, leaderChangeCount: 0, longestDuel: 0 },
     ],
   };
 
@@ -2064,11 +2932,22 @@ describe("day summary", () => {
           {
             lotId,
             title: "Кружка",
-            bidCount: 4,
+            bidCount: 2,
             maxPrice: { minorUnits: 150_000, currency: "RUB" },
             growth: { minorUnits: 30_000, currency: "RUB" },
+            leaderChanges: 2,
+            longestDuel: 2,
+            // Три ставки за всё время, из них две — за сутки.
+            bidsBefore: 1,
           },
-          { lotId: second, title: "Плакат", bidCount: 0 },
+          {
+            lotId: second,
+            title: "Плакат",
+            bidCount: 0,
+            leaderChanges: 0,
+            longestDuel: 0,
+            bidsBefore: 3,
+          },
         ],
       },
     );
@@ -2085,7 +2964,10 @@ describe("day summary", () => {
     const { run } = fake({
       read: { kind: "ok", console: view("prebidding", { lots }) },
       statistics,
-      day: { kind: "ok", lots: [{ lotId, bidCount: 2 }] },
+      day: {
+        kind: "ok",
+        lots: [{ lotId, bidCount: 2, leaderChangeCount: 0, longestDuel: 0 }],
+      },
     });
 
     const result = await run({ ...call, intent: "view-day-summary" });

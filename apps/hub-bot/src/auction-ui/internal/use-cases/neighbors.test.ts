@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { LotView } from "../../ports.js";
-import { neighborsOf } from "./neighbors.js";
+import type { AuctionPort, LotView } from "../../ports.js";
+import { neighborsOf, readNeighbors } from "./neighbors.js";
 import { FEED_PAGE_SIZE } from "./open-feed.js";
 
 const lot = (n: number): LotView => ({
@@ -32,8 +32,49 @@ describe("lot neighbors", () => {
     });
   });
 
+  // Кнопки разделов занимают ряды первой страницы (PER-719), и страницы лотов
+  // сдвигаются.
+  it("shifts the pages of the general list by the section buttons", () => {
+    expect(neighborsOf(feed, "lot-1", FEED_PAGE_SIZE - 2)).toEqual({
+      prev: { lotId: "lot-0", page: 0 },
+      next: { lotId: "lot-2", page: 1 },
+    });
+  });
+
   it("has no neighbors for a lot outside the feed or alone in it", () => {
     expect(neighborsOf(feed, "lot-missing")).toEqual({});
     expect(neighborsOf([lot(0)], "lot-0")).toEqual({});
+  });
+});
+
+// Лот раздела (PER-719): соседи — из его раздела, и карточка знает раздел для
+// «‹ Лоты».
+describe("lot neighbors in a section", () => {
+  const lots = [lot(1), lot(2), lot(3), lot(4)];
+  const auction = {
+    listAuctionLots: async () => ({ lots, nextPageToken: "" }),
+    getAuction: async () => ({
+      auctionId: "auction",
+      stage: "prebidding" as const,
+      final: false,
+      layout: {
+        lotIds: [],
+        sections: [{ sectionId: 2, name: "Книги", lotIds: ["lot-3", "lot-1"] }],
+      },
+    }),
+  } as unknown as AuctionPort;
+  const viewer = { identityId: "viewer", rights: ["place-bids" as const] };
+
+  it("takes the neighbors from the section of the lot and names the section", async () => {
+    expect(await readNeighbors({ auction, viewer, lot: lot(1) })).toEqual({
+      prev: { lotId: "lot-3", page: 0 },
+      sectionId: 2,
+    });
+  });
+
+  it("takes the neighbors of a lot outside the sections from the general list", async () => {
+    expect(await readNeighbors({ auction, viewer, lot: lot(2) })).toEqual({
+      next: { lotId: "lot-4", page: 0 },
+    });
   });
 });

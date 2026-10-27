@@ -24,17 +24,42 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionAnnouncementNotice,
+  newAuctionNoticeOf,
+  tradingOpenedNoticeOf,
+} from "../../../core/notifications/auction-announcement-notice.js";
+import {
+  type AuctionCancelledNotice,
+  auctionCancelledNoticeOf,
+} from "../../../core/notifications/auction-cancelled-notice.js";
+import {
   type FinalNotice,
   finalNoticeOf,
 } from "../../../core/notifications/final-notice.js";
+import {
+  type InvoiceNotice,
+  invoiceNoticeOf,
+} from "../../../core/notifications/invoice-notice.js";
 import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
 import {
+  type LotSetNotice,
+  lotSetNoticeOf,
+} from "../../../core/notifications/lot-set-notice.js";
+import {
+  type PredictionResultsNotice,
+  predictionResultsNoticeOf,
+} from "../../../core/notifications/prediction-results-notice.js";
+import {
   type RaffleNotice,
   raffleNoticeOf,
 } from "../../../core/notifications/raffle-notice.js";
+import {
+  type StepWindowNotice,
+  stepWindowNoticeOf,
+} from "../../../core/notifications/step-window-notice.js";
 import type { ApplicationCursor } from "../identity/port.js";
 
 export type LocalDate = { year: number; month: number; day: number };
@@ -122,6 +147,22 @@ export type RenderableContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
   | RaffleNotice
+  // Напоминания о неоплаченном счёте (PER-330) с кнопкой на счёт (PER-322) —
+  // те же, что у бота аукциона.
+  | InvoiceNotice
+  | PredictionResultsNotice
+  // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота
+  // аукциона.
+  | AuctionCancelledNotice
+  // Начало окна «Счастливых часов» на отмеченных лотах (PER-616) — то же,
+  // что у бота аукциона.
+  | StepWindowNotice
+  // Вести о новом аукционе и об открытии торгов (PER-646) — те же, что у бота
+  // аукциона.
+  | AuctionAnnouncementNotice
+  // Собранный сет (PER-687): одно сообщение собравшему, состав по следу на
+  // существующий экран сета.
+  | LotSetNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
@@ -272,6 +313,7 @@ function toContent(message: Notification): NotificationContent | undefined {
     }
     case "lotOutbid":
     case "lotProxyRaised":
+    case "lotLeadRestored":
     case "lotPurchased":
     case "lotActivityDigest":
     case "lotReminder":
@@ -283,6 +325,26 @@ function toContent(message: Notification): NotificationContent | undefined {
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "invoiceReminder":
+      return invoiceNoticeOf("invoice-reminder", type.value);
+    case "invoiceDueReminder":
+      return invoiceNoticeOf("invoice-due-reminder", type.value);
+    case "lotSetCollected":
+      return lotSetNoticeOf(type.value);
+    // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
+    // факт несёт, разбор их не читает: они остаются на экране.
+    case "predictionResults":
+      return predictionResultsNoticeOf(type.value);
+    case "auctionCancelled":
+      return auctionCancelledNoticeOf(type.value);
+    // Начало окна «Счастливых часов» (PER-616): ветка своя, разбор общий —
+    // право получателя и названия лотов читает общий рендер вести.
+    case "stepWindowStarted":
+      return stepWindowNoticeOf(type.value);
+    case "auctionPublished":
+      return newAuctionNoticeOf(type.value);
+    case "auctionTradingOpened":
+      return tradingOpenedNoticeOf(type.value);
     case "releaseSummary": {
       const { summaryId, summarizedAt, recordIds } = type.value;
       if (summaryId === "" || summarizedAt === "" || recordIds.length === 0) {

@@ -91,12 +91,16 @@ public static class NotificationsHost
         builder.Services.AddSingleton<ReplicaTelemetry>();
         builder.Services.AddSingleton<FactTelemetry>();
         builder.Services.AddSingleton<AuctionTelemetry>();
+        builder.Services.AddSingleton<StepWindowTelemetry>();
+        builder.Services.AddSingleton<InvoiceReminderTelemetry>();
         builder.Services.AddOpenTelemetry()
             .WithMetrics(metrics => metrics
                 .AddMeter(ReminderTelemetry.MeterName)
                 .AddMeter(ReplicaTelemetry.MeterName)
                 .AddMeter(FactTelemetry.MeterName)
-                .AddMeter(AuctionTelemetry.MeterName));
+                .AddMeter(AuctionTelemetry.MeterName)
+                .AddMeter(StepWindowTelemetry.MeterName)
+                .AddMeter(InvoiceReminderTelemetry.MeterName));
 
         // Локальный diagnostics-профиль пишет те же логи в Loki через OTLP.
         // Обычные профили продолжают экспортировать их только в Aspire.
@@ -235,6 +239,20 @@ public static class NotificationsHost
         builder.Services.Configure<LotReminderOptions>(
             builder.Configuration.GetSection(LotReminderOptions.SectionName));
         builder.Services.AddSingleton<LotReminderTelemetry>();
+
+        // Начало окна сниженного шага (PER-614): задание на пару «аукцион и
+        // момент начала», грин на аукцион и своя таблица — тем же приёмом, что
+        // у напоминания о лоте.
+        builder.Services.Configure<StepWindowOptions>(
+            builder.Configuration.GetSection(StepWindowOptions.SectionName));
+        builder.Services.AddSingleton<StepWindowTaskStore>();
+
+        // Напоминание о неоплаченном счёте (PER-330) — ещё одна пара «таблица +
+        // грин»: свой ключ (счёт) и своё правило срабатывания. Обход всех таблиц
+        // заданий ведёт тот же проход sweeper'а.
+        builder.Services.Configure<InvoiceReminderOptions>(
+            builder.Configuration.GetSection(InvoiceReminderOptions.SectionName));
+        builder.Services.AddSingleton<InvoiceReminderTaskStore>();
 
         // Реплика чужих фактов (PER-215). Хранилище и чистка ключей не зависят
         // от шины: таблица ключей существует и без неё.

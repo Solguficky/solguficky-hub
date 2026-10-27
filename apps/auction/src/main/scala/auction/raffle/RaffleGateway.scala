@@ -18,6 +18,10 @@ trait RaffleGateway {
 
   def cancel(auction: AuctionId, command: CancelRegistration): Future[Either[RegistrationRejected, Raffle]]
 
+  def assign(auction: AuctionId, command: AssignWinner): Future[Either[AssignRejected, Raffle]]
+
+  def changePrize(auction: AuctionId, command: ChangePrize): Future[Either[ChangePrizeRejected, Raffle]]
+
   def get(auction: AuctionId): Future[Raffle]
 }
 
@@ -35,22 +39,40 @@ object RaffleGateway {
       def cancel(auction: AuctionId, command: CancelRegistration): Future[Either[RegistrationRejected, Raffle]] =
         entity(auction).ask(RaffleEntity.Leave(command, _))
 
+      def assign(auction: AuctionId, command: AssignWinner): Future[Either[AssignRejected, Raffle]] =
+        entity(auction).ask(RaffleEntity.Assign(command, _))
+
+      def changePrize(auction: AuctionId, command: ChangePrize): Future[Either[ChangePrizeRejected, Raffle]] =
+        entity(auction).ask(RaffleEntity.SetPrize(command, _))
+
       def get(auction: AuctionId): Future[Raffle] = entity(auction).ask(RaffleEntity.Get(_))
     }
 }
 
 object RaffleSettings {
 
-  /** Окно проверки права обязано кончиться до раунда маяка: иначе решение о пуле могло бы прийти после его выхода. */
+  /**
+   * Окно проверки права обязано кончиться до раунда маяка: иначе решение о пуле могло бы прийти после его выхода. Режим
+   * итога (`auction.raffle.draw`, переменная `AUCTION_RAFFLE_DRAW`) — `automatic` или `manual`; другое значение — отказ
+   * старта, а не молчаливая жеребьёвка по маяку (PER-727).
+   */
   def fromConfig(config: Config): Either[String, RaffleEntity.Settings] = {
     val section = "auction.raffle"
-    val settings = RaffleEntity.Settings(
-      screeningWindow = config.getDuration(s"$section.screening-window").toScala,
-      retryEvery = config.getDuration(s"$section.retry-every").toScala,
-      nameRetention = config.getDuration(s"$section.name-retention")
-    )
-    if (settings.screeningWindow.toNanos >= Quicknet.Margin.toNanos)
-      Left("auction raffle screening window must end before the beacon round: auction.raffle.screening-window")
-    else Right(settings)
+    val byHand = config.getString(s"$section.draw") match {
+      case "automatic" => Right(false)
+      case "manual" => Right(true)
+      case _ => Left("auction raffle draw must be automatic or manual: AUCTION_RAFFLE_DRAW")
+    }
+    byHand.flatMap { manual =>
+      val settings = RaffleEntity.Settings(
+        screeningWindow = config.getDuration(s"$section.screening-window").toScala,
+        retryEvery = config.getDuration(s"$section.retry-every").toScala,
+        nameRetention = config.getDuration(s"$section.name-retention"),
+        byHand = manual
+      )
+      if (settings.screeningWindow.toNanos >= Quicknet.Margin.toNanos)
+        Left("auction raffle screening window must end before the beacon round: auction.raffle.screening-window")
+      else Right(settings)
+    }
   }
 }

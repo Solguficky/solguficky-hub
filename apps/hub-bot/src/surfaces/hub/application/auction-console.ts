@@ -2,16 +2,20 @@ import type {
   AuctionSummaryView,
   RaffleView,
 } from "../../../auction-ui/index.js";
-import { rpcMeta } from "../../../core/rpc-metadata.js";
+import { type RpcMetadata, rpcMeta } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoles,
   AuctionFailure,
   ConsoleReadResult,
+  FinalTimeResult,
+  LaunchStepWindowResult,
   LotClosure,
   LotStatisticsReadResult,
   ScheduleAuctionResult,
 } from "../auction/port.js";
 import { communityDay, communityInstant } from "../community-time.js";
+import type { ParticipantUsernameResolver } from "../identity/port.js";
+import { fingerprint } from "./fingerprint.js";
 import { lotCurrency, parseRubles } from "./lot-form.js";
 import type {
   AuctionConsoleRequest,
@@ -23,9 +27,13 @@ import type {
   ConsoleNote,
   DaySummaryLot,
   ExecuteResult,
+  FinalTimeAskError,
   FinalTrading,
+  LaunchDraft,
   LineupPick,
   LotAmount,
+  PaymentTermAskError,
+  Person,
   RaffleAskError,
   RafflePrizeAskError,
   StepWindow,
@@ -34,6 +42,7 @@ import type {
   WindowAskError,
   WindowRef,
 } from "./types.js";
+import { launchLotLimit } from "./types.js";
 
 // Пульт аукциона администратора (PER-320): сроки онлайн-недели и финал,
 // открытие недели и отметка лотов для финала; в финале он же — пульт ведущего
@@ -160,6 +169,39 @@ export type RafflePrizeResult =
   | { kind: "ok"; prize: string }
   | { kind: "rejected"; error: RafflePrizeAskError };
 
+export type FinalTimeParseResult =
+  | { kind: "ok"; finalAt: string }
+  | { kind: "rejected"; error: FinalTimeAskError };
+
+const finalTimePattern = new RegExp(`^${momentPattern}$`);
+
+/**
+ * Ориентировочное время финала (PER-663) в виде `ДД.ММ.ГГГГ ЧЧ:ММ` по времени
+ * сообщества — тот же формат ввода, что у сроков недели и момента розыгрыша.
+ * Даты, которой нет в календаре, и времени, которого нет в поясе, нет и в
+ * ответе: подменять их соседними бот не вправе. Прошедший момент — не анонс:
+ * время выставляют заранее, а не задним числом.
+ */
+export function parseFinalTime(input: {
+  raw: string;
+  timeZone: string;
+  now: Date;
+}): FinalTimeParseResult {
+  const match = finalTimePattern.exec(input.raw.trim());
+  if (match === null) return { kind: "rejected", error: "final-time-format" };
+  const local = calendarMoment(match.slice(1).map(Number));
+  if (local === undefined)
+    return { kind: "rejected", error: "final-time-format" };
+  const finalAt = communityInstant(local, input.timeZone);
+  if (finalAt === undefined) {
+    return { kind: "rejected", error: "final-time-moment" };
+  }
+  if (Date.parse(finalAt) <= input.now.getTime()) {
+    return { kind: "rejected", error: "final-time-past" };
+  }
+  return { kind: "ok", finalAt };
+}
+
 /** Предел приза в знаках — тот же, что у `AuctionConfig.MaxRafflePrize`. */
 export const rafflePrizeLimit = 200;
 
@@ -176,6 +218,37 @@ export function parsePrize(raw: string): RafflePrizeResult {
     return { kind: "rejected", error: "prize-too-long" };
   }
   return { kind: "ok", prize };
+}
+
+export type PaymentTermResult =
+  | { kind: "ok"; seconds: number }
+  | { kind: "rejected"; error: PaymentTermAskError };
+
+/** Пределы срока оплаты в днях — те же, что у Auction (ADR-047). */
+export const paymentTermDays = { min: 1, max: 30 } as const;
+
+const daySeconds = 24 * 60 * 60;
+
+/**
+ * Срок оплаты счёта (PER-722) — целое число дней от 1 до 30: «1», «7», «30».
+ * Слово «дн.» или «дней» после числа не мешает. Дробь, ноль и число вне
+ * предела не принимаются: срок называют участникам в днях.
+ */
+export function parsePaymentTerm(raw: string): PaymentTermResult {
+  const match = /^(\d{1,3})(?:\s*(?:дн\.?|дня|дней|день))?$/iu.exec(raw.trim());
+  if (match === null) {
+    return { kind: "rejected", error: "payment-term-format" };
+  }
+  const days = Number(match[1]);
+  if (days < paymentTermDays.min || days > paymentTermDays.max) {
+    return { kind: "rejected", error: "payment-term-range" };
+  }
+  return { kind: "ok", seconds: days * daySeconds };
+}
+
+/** Срок оплаты в целых днях, как его называет пульт; доли дня — вверх. */
+export function paymentTermInDays(seconds: number): number {
+  return Math.ceil(seconds / daySeconds);
 }
 
 export type WindowResult =
@@ -225,19 +298,143 @@ export function parseWindow(
  * отпечаток отличает прежнее окно от того, что встало на его место.
  */
 export function windowPrint(window: StepWindow): string {
-  return print(
+  return fingerprint(
     `${window.from}|${window.until}|${window.step.minorUnits}|${window.step.currency}`,
   );
 }
 
-// Пять знаков base36 от строки (FNV-1a): отпечаток для кнопки пульта.
-function print(source: string): string {
-  let hash = 0x811c9dc5;
-  for (let index = 0; index < source.length; index += 1) {
-    hash ^= source.charCodeAt(index);
-    hash = Math.imul(hash, 0x01000193) >>> 0;
+/**
+ * Отпечаток сета лотов для кнопки (PER-509): пять знаков base36 от его
+ * идентификатора. Номер сета сдвигается, когда другой сет удалили, и
+ * отпечаток отличает прежний сет от того, что встал на его место.
+ */
+export function lotSetPrint(lotSetId: string): string {
+  return fingerprint(lotSetId);
+}
+
+/**
+ * Реестр лотов по возрастанию идентификатора: номера лотов в кнопке запуска
+ * окна указывают в него. Порядок задаёт сравнение строк, а не `localeCompare`:
+ * порядок locale зависит от языка среды, а кнопка переживает перезапуск
+ * процесса (PER-615).
+ */
+export function sortedLots(console: AuctionConsoleView): readonly ConsoleLot[] {
+  return [...console.lots].sort((a, b) =>
+    a.lot.lotId < b.lot.lotId ? -1 : a.lot.lotId > b.lot.lotId ? 1 : 0,
+  );
+}
+
+/** Идентификаторы лотов реестра в том же порядке, что `sortedLots`. */
+export function sortedLotIds(console: AuctionConsoleView): readonly string[] {
+  return sortedLots(console).map((each) => each.lot.lotId);
+}
+
+/**
+ * Лоты реестра, которые запускаемое окно может назвать (PER-615): набор едет в
+ * кнопке пульта битовой маской, а она несёт 64 лота. Реестр больше — окно
+ * накрывает первые лоты, и пульт говорит об этом на экране запуска.
+ */
+export function launchableLots(
+  console: AuctionConsoleView,
+): readonly ConsoleLot[] {
+  return sortedLots(console).slice(0, launchLotLimit);
+}
+
+// Разбор ответа на вопрос о запуске окна: сроки и шаг. Итог запуска —
+// другое, его приносит Auction.
+export type LaunchParse =
+  | { kind: "ok"; from?: string; until: string; step: LotAmount }
+  | { kind: "rejected"; error: WindowAskError };
+
+// Слово «сейчас» вместо начала окна: начало — момент, в который сервис решил
+// команду (ADR-047, дополнение 2026-10-12).
+const launchNow = "сейчас";
+
+/**
+ * Запуск окна по ходу торгов (PER-615) одним ответом: начало — «сейчас» или
+ * момент, конец — момент, шаг — целые рубли. Вид ответа — как у объявленного
+ * окна, только начало может быть «сейчас»: `сейчас — 21.10.2026 21:00, 50`
+ * либо `21.10.2026 18:00 — 21.10.2026 21:00, 50`.
+ *
+ * Окно лежит внутри онлайн-недели — так же, как требует Auction. Проверка
+ * здесь, а не отказом сервиса: черновик едет в кнопке, и сроки вне недели не
+ * помещаются в её поля.
+ */
+export function parseLaunch(
+  raw: string,
+  timeZone: string,
+  now: Date,
+  week?: AuctionWeek,
+): LaunchParse {
+  const text = raw.trim();
+  const comma = text.lastIndexOf(",");
+  if (comma === -1) return { kind: "rejected", error: "window-format" };
+  const step = parseRubles(text.slice(comma + 1));
+  if (step.kind === "rejected") return { kind: "rejected", error: step.reason };
+  // Верхняя граница недели: без неё запускаемое окно не имеет конца.
+  const closesAt = week?.closesAt;
+  const head = text.slice(0, comma).trim();
+  const startsNow = head.toLowerCase().startsWith(launchNow);
+  if (startsNow) {
+    const until = parseEnd(head.slice(launchNow.length), timeZone, now);
+    if (until.kind === "rejected") {
+      return { kind: "rejected", error: windowErrorOf[until.error] };
+    }
+    if (
+      closesAt !== undefined &&
+      Date.parse(until.until) > Date.parse(closesAt)
+    ) {
+      return { kind: "rejected", error: "window-outside-week" };
+    }
+    return {
+      kind: "ok",
+      until: until.until,
+      step: { minorUnits: step.rubles * 100, currency: lotCurrency },
+    };
   }
-  return (hash % 36 ** 5).toString(36).padStart(5, "0");
+  const interval = parseWeek(head, timeZone, now);
+  if (interval.kind === "rejected") {
+    return { kind: "rejected", error: windowErrorOf[interval.error] };
+  }
+  // Заданное начало раньше момента команды — окно не действует задним числом;
+  // решает Auction, но понятный текст бот даёт сам.
+  if (Date.parse(interval.opensAt) < now.getTime()) {
+    return { kind: "rejected", error: "window-in-past" };
+  }
+  const opensAt = week?.opensAt;
+  if (
+    (opensAt !== undefined &&
+      Date.parse(interval.opensAt) < Date.parse(opensAt)) ||
+    (closesAt !== undefined &&
+      Date.parse(interval.closesAt) > Date.parse(closesAt))
+  ) {
+    return { kind: "rejected", error: "window-outside-week" };
+  }
+  return {
+    kind: "ok",
+    from: interval.opensAt,
+    until: interval.closesAt,
+    step: { minorUnits: step.rubles * 100, currency: lotCurrency },
+  };
+}
+
+type EndResult =
+  | { kind: "ok"; until: string }
+  | { kind: "rejected"; error: WeekAskError };
+
+// Конец окна запуска одним моментом по времени сообщества.
+function parseEnd(raw: string, timeZone: string, now: Date): EndResult {
+  const text = raw.trim().replace(/^[-‒–—]\s*/, "");
+  const match = rafflePattern.exec(text);
+  if (match === null) return { kind: "rejected", error: "week-format" };
+  const local = calendarMoment(match.slice(1).map(Number));
+  if (local === undefined) return { kind: "rejected", error: "week-moment" };
+  const until = communityInstant(local, timeZone);
+  if (until === undefined) return { kind: "rejected", error: "week-moment" };
+  if (Date.parse(until) <= now.getTime()) {
+    return { kind: "rejected", error: "week-ended" };
+  }
+  return { kind: "ok", until };
 }
 
 // Сколько окон держит пульт: ряд на окно, «Добавить окно» и выход
@@ -272,7 +469,7 @@ export function heldLots(console: AuctionConsoleView): ConsoleLot[] {
 
 /** Отпечаток набора удержанных лотов: номера в кнопке указывают в него. */
 export function lineupPrint(held: readonly ConsoleLot[]): string {
-  return print(held.map((each) => each.lot.lotId).join("|"));
+  return fingerprint(held.map((each) => each.lot.lotId).join("|"));
 }
 
 /** Номера кнопки годятся для этого набора: каждый в нём и не повторяется. */
@@ -402,13 +599,12 @@ const auctionNotFound: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "auction-not-found",
 };
+// Отменённая сходка закрывает команды пульта насовсем (ADR-047, дополнение
+// 2026-10-12): возврат в пульт вёл бы по кругу к тем же командам, поэтому это
+// кадр отказа с выходом к сходкам, а не исход пульта.
 const meetupCancelled: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "meetup-cancelled",
-};
-const meetupHidden: ExecuteResult = {
-  kind: "auction-console-refused",
-  reason: "meetup-hidden",
 };
 
 // Лоты добавляются, пока онлайн-неделя не открыта; после старта Auction
@@ -417,9 +613,40 @@ export function acceptsLots(status: ConsoleAuctionStatus): boolean {
   return status === "draft" || status === "scheduled";
 }
 
+// Проданные лоты аукциона по пульту: их называет подтверждение отмены, и
+// отмена их не трогает (ADR-047, дополнение 2026-10-12).
+function soldLots(console: AuctionConsoleView): number {
+  return console.lots.filter((each) => each.lot.status.kind === "sold").length;
+}
+
 // Сроки, финал и окна меняются, пока онлайн-неделя не открыта.
 function editable(console: AuctionConsoleView): boolean {
   return acceptsLots(console.status);
+}
+
+// Ориентировочное время финала (PER-663) меняется, пока финал впереди:
+// после старта финала анонс кончился, а завершённый и отменённый аукцион
+// времени не имеют (ADR-040, дополнение 2026-10-19). Замороженный состав —
+// ещё впереди: Auction такой момент принимает.
+function finalTimeRefusal(
+  console: AuctionConsoleView,
+): ConsoleNote | undefined {
+  switch (console.status) {
+    case "final":
+      return "final-already-started";
+    case "finished":
+      return "auction-already-finished";
+    case "cancelled":
+      return "auction-already-cancelled";
+    default:
+      return undefined;
+  }
+}
+
+// Пульт без выставленного времени: снятый момент из снимка уходит.
+function withoutFinalTime(console: AuctionConsoleView): AuctionConsoleView {
+  const { finalAt: _finalAt, ...rest } = console;
+  return rest;
 }
 
 /** Окно по кнопке: номер и отпечаток совпали с прочитанной конфигурацией. */
@@ -446,6 +673,9 @@ export function createAuctionConsole(
   timeZone: string,
   // Часы бота: по ним решается, прошёл ли конец недели. Тест их подменяет.
   now: () => Date = () => new Date(),
+  // Настоящий аккаунт названного человека (PER-648). Порт необязателен: без
+  // Identity пульт показывает псевдоним, как раньше.
+  usernames?: ParticipantUsernameResolver,
 ) {
   type Read =
     | { kind: "ok"; console: AuctionConsoleView }
@@ -590,8 +820,6 @@ export function createAuctionConsole(
   async function daySummary(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
-    const current = await read(request);
-    if (current.kind === "refused") return current.result;
     const at = now();
     const day = communityDay(at, timeZone);
     // Пояса, у которого этой полуночи нет, — часы перевели вперёд: окно тогда
@@ -611,6 +839,12 @@ export function createAuctionConsole(
       rpcMeta(request),
     );
     if (summary.kind !== "ok") return readFailure(summary);
+    // Пульт — после суток (PER-511): ставки до окна — его число ставок минус
+    // ставки окна, и ставка между чтениями попадает только в «до», лишь
+    // завышая его. Обратный порядок занижал бы прошлое и пускал в «тёмную
+    // лошадку» лот, которому она не положена.
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
     const byLot = new Map(summary.lots.map((lot) => [lot.lotId, lot]));
     const lots: DaySummaryLot[] = [];
     for (const entry of current.console.lots) {
@@ -627,6 +861,12 @@ export function createAuctionConsole(
         ...(statistics.growth === undefined
           ? {}
           : { growth: statistics.growth }),
+        leaderChanges: statistics.leaderChangeCount,
+        longestDuel: statistics.longestDuel,
+        bidsBefore: Math.max(0, entry.bidCount - statistics.bidCount),
+        ...(entry.priceGrowth === undefined
+          ? {}
+          : { priceGrowth: entry.priceGrowth }),
       });
     }
     return {
@@ -675,21 +915,17 @@ export function createAuctionConsole(
     };
   }
 
-  // Розыгрыш для строки пульта (PER-618): читается, только когда момент
-  // закрытия регистрации у открытой недели прошёл, — до него строка называет
-  // момент, и вызов не нужен. Пульт ведущего строки розыгрыша не несёт и
-  // не читает его на каждом «Обновить». Отказ чтения пульт не роняет: строка
-  // остаётся прежней.
+  // Розыгрыш для строки пульта (PER-618) и его приза (PER-737): читается с
+  // открытия недели — до закрытия регистрации строка называет момент, а приз
+  // уже живёт у розыгрыша. Пульт ведущего строки розыгрыша не несёт и не
+  // читает его на каждом «Обновить». Отказ чтения пульт не роняет: строка
+  // остаётся прежней, а приз — из сроков.
   async function raffleOf(
     request: AuctionConsoleRequest,
     console: AuctionConsoleView,
   ): Promise<RaffleView | undefined> {
     const closesAt = console.week?.raffleClosesAt;
-    if (
-      closesAt === undefined ||
-      !rafflePhases.has(console.status) ||
-      Date.parse(closesAt) > now().getTime()
-    ) {
+    if (closesAt === undefined || !rafflePhases.has(console.status)) {
       return undefined;
     }
     const raffle = await consoles.consoleRaffle(
@@ -707,7 +943,8 @@ export function createAuctionConsole(
       auction.auctionId !== auctionId &&
       auction.stage !== "draft" &&
       auction.stage !== "scheduled" &&
-      auction.stage !== "finished";
+      auction.stage !== "finished" &&
+      auction.stage !== "cancelled";
   }
 
   function holderOf(auction: AuctionSummaryView): TradingHolder {
@@ -779,6 +1016,8 @@ export function createAuctionConsole(
     const windows = console.week?.windows ?? [];
     const raffleClosesAt = console.week?.raffleClosesAt;
     const rafflePrize = console.week?.rafflePrize;
+    // Срок оплаты едет так же (PER-722): без него Auction вернул бы семь дней.
+    const paymentTermSeconds = console.week?.paymentTermSeconds;
     const scheduled = await consoles.scheduleAuction(
       request.identity,
       {
@@ -790,6 +1029,7 @@ export function createAuctionConsole(
         windows,
         raffleClosesAt,
         rafflePrize,
+        paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -807,6 +1047,9 @@ export function createAuctionConsole(
               windows,
               ...(raffleClosesAt === undefined ? {} : { raffleClosesAt }),
               ...(rafflePrize === undefined ? {} : { rafflePrize }),
+              ...(paymentTermSeconds === undefined
+                ? {}
+                : { paymentTermSeconds }),
             },
           },
           note: "week-saved",
@@ -832,6 +1075,7 @@ export function createAuctionConsole(
       case "raffle-prize-without-raffle":
       case "raffle-prize-blank":
       case "raffle-prize-too-long":
+      case "payment-term-out-of-range":
         return storedRefused(scheduled);
       case "already-started":
         return after(request, "week-frozen");
@@ -880,6 +1124,7 @@ export function createAuctionConsole(
         windows: week.windows,
         raffleClosesAt: week.raffleClosesAt,
         rafflePrize: week.rafflePrize,
+        paymentTermSeconds: week.paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -900,6 +1145,7 @@ export function createAuctionConsole(
       case "raffle-prize-without-raffle":
       case "raffle-prize-blank":
       case "raffle-prize-too-long":
+      case "payment-term-out-of-range":
         return storedRefused(scheduled);
       case "not-administrator":
       case "meetup-not-found":
@@ -965,9 +1211,45 @@ export function createAuctionConsole(
       case "meetup-cancelled":
         return meetupCancelled;
       case "meetup-hidden":
-        return meetupHidden;
+        return after(request, "meetup-hidden");
       default:
         return failed(started);
+    }
+  }
+
+  // «Опубликовать» и «Снять с публикации» (PER-673): только пока неделя не
+  // открыта. Кнопка несёт целевое состояние, и команда идёт без сверки с
+  // прочитанным: повтор Auction пишет ещё раз (ADR-047, дополнение
+  // 2026-10-20), поэтому подпись, устаревшая от отставания чтения, повторит
+  // то же целевое состояние, а не перевернёт его.
+  async function setVisibility(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-auction-visibility" }
+    >,
+  ): Promise<ExecuteResult> {
+    const command = { auctionId: request.auctionId, opId: request.opId };
+    const changed = request.published
+      ? await consoles.publishAuction(
+          request.identity,
+          command,
+          rpcMeta(request),
+        )
+      : await consoles.hideAuction(request.identity, command, rpcMeta(request));
+    switch (changed.kind) {
+      case "ok":
+        return after(request, request.published ? "published" : "unpublished");
+      case "already-started":
+        return after(request, "visibility-too-late");
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(changed);
     }
   }
 
@@ -1015,6 +1297,64 @@ export function createAuctionConsole(
         return auctionNotFound;
       default:
         return failed(discarded);
+    }
+  }
+
+  // «Отменить аукцион» (ADR-047, дополнение 2026-10-12): после старта торгов
+  // и до конца аукциона. Подтверждение называет, сколько лотов уже продано, —
+  // они останутся проданными. Ключ отмены рождён краем и уедет в «Да».
+  async function prepareCancel(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "prepare-auction-cancel" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    if (editable(console)) {
+      return { kind: "auction-console", console, note: "cancel-too-early" };
+    }
+    if (console.status === "cancelled") {
+      return { kind: "auction-console", console, note: "already-cancelled" };
+    }
+    if (console.status === "finished") {
+      return { kind: "auction-console", console, note: "cancel-too-late" };
+    }
+    return {
+      kind: "auction-cancel-confirm",
+      auctionId: request.auctionId,
+      opId: request.opId,
+      sold: soldLots(console),
+    };
+  }
+
+  // Отмена. Повтор той же кнопки и отмену уже отменённого Auction принимает.
+  async function cancel(
+    request: Extract<AuctionConsoleRequest, { intent: "cancel-auction" }>,
+  ): Promise<ExecuteResult> {
+    const cancelled = await consoles.cancelAuction(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    switch (cancelled.kind) {
+      case "ok":
+        return after(request, "auction-cancelled", (console) => ({
+          ...console,
+          status: "cancelled",
+        }));
+      case "not-started":
+        return after(request, "cancel-too-early");
+      case "already-finished":
+        return after(request, "cancel-too-late");
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(cancelled);
     }
   }
 
@@ -1518,6 +1858,33 @@ export function createAuctionConsole(
     }
   }
 
+  // Настоящий аккаунт лидера или покупателя (PER-648). Identity отвечает
+  // только держателю права вести аукцион; отказ, недоступность, отсутствие
+  // ника и человека без имени на экране оставляют текст прежним. Имя, которое
+  // уже является ником, тоже спрашивается: снимок ника в аукционе заморожен,
+  // а организатору нужен свежий аккаунт.
+  async function participantAccount(
+    request: RpcMetadata & { identity: Person },
+    identityId: string | undefined,
+    shownName: string | undefined,
+  ): Promise<string | undefined> {
+    if (
+      usernames === undefined ||
+      identityId === undefined ||
+      shownName === undefined
+    ) {
+      return undefined;
+    }
+    const result = await usernames.resolveParticipantUsername(
+      { identityId: request.identity.identityId },
+      identityId,
+      rpcMeta(request),
+    );
+    return result.kind === "resolved" && result.telegramUsername !== ""
+      ? result.telegramUsername
+      : undefined;
+  }
+
   // «Продать»: подтверждение называет лот, цену и лидера, а без ставок —
   // закрытие без продажи. Ключ закрытия рождён краем и уедет в «Да».
   async function prepareClose(
@@ -1534,6 +1901,11 @@ export function createAuctionConsole(
       console.trading?.lotId === entry.lot.lotId
         ? console.trading.leaderName
         : undefined;
+    const leaderUsername = await participantAccount(
+      request,
+      status.leaderId,
+      leaderName,
+    );
     return {
       kind: "final-close-confirm",
       auctionId: request.auctionId,
@@ -1542,6 +1914,7 @@ export function createAuctionConsole(
       ...titled(entry),
       ...(status.leaderId === undefined ? {} : { price: status.currentPrice }),
       ...(leaderName === undefined ? {} : { leaderName }),
+      ...(leaderUsername === undefined ? {} : { leaderUsername }),
     };
   }
 
@@ -1573,12 +1946,18 @@ export function createAuctionConsole(
     );
     const buyerName =
       names.kind === "ok" ? names.names[closed.winnerId] : undefined;
+    const buyerUsername = await participantAccount(
+      request,
+      closed.winnerId,
+      buyerName,
+    );
     return {
       ...outcome,
       closure: {
         kind: "sold",
         price: closed.price,
         ...(buyerName === undefined ? {} : { buyerName }),
+        ...(buyerUsername === undefined ? {} : { buyerUsername }),
       },
     };
   }
@@ -1694,6 +2073,7 @@ export function createAuctionConsole(
         windows,
         raffleClosesAt: week.raffleClosesAt,
         rafflePrize: week.rafflePrize,
+        paymentTermSeconds: week.paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -1724,6 +2104,7 @@ export function createAuctionConsole(
       case "raffle-prize-without-raffle":
       case "raffle-prize-blank":
       case "raffle-prize-too-long":
+      case "payment-term-out-of-range":
         return storedRefused(scheduled);
       case "meetup-cancelled":
         return meetupCancelled;
@@ -1765,6 +2146,7 @@ export function createAuctionConsole(
         windows: week.windows,
         raffleClosesAt,
         rafflePrize,
+        paymentTermSeconds: week.paymentTermSeconds,
       },
       rpcMeta(request),
     );
@@ -1864,6 +2246,196 @@ export function createAuctionConsole(
           "raffle-removed",
         )
       : windowsRefused(request, scheduled);
+  }
+
+  // Срок оплаты счёта (PER-722) — часть той же конфигурации: команда отдаёт
+  // её целиком с новым сроком. Вопрос называет текущий срок в днях.
+  const paymentTermAsked = (week: ScheduledWeek, auctionId: string) => ({
+    kind: "auction-payment-term-ask" as const,
+    auctionId,
+    ...(week.paymentTermSeconds === undefined
+      ? {}
+      : { days: paymentTermInDays(week.paymentTermSeconds) }),
+  });
+
+  async function askPaymentTerm(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "ask-auction-payment-term" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    return paymentTermAsked(found.week, request.auctionId);
+  }
+
+  async function setPaymentTerm(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-auction-payment-term" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    const asked = paymentTermAsked(week, request.auctionId);
+    const parsed = parsePaymentTerm(request.value);
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    const scheduled = await consoles.scheduleAuction(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        opensAt: week.opensAt,
+        closesAt: week.closesAt,
+        final: week.final,
+        windows: week.windows,
+        raffleClosesAt: week.raffleClosesAt,
+        rafflePrize: week.rafflePrize,
+        paymentTermSeconds: parsed.seconds,
+      },
+      rpcMeta(request),
+    );
+    switch (scheduled.kind) {
+      // Чтение отстаёт от команды: принятый срок накладывается на прочитанное.
+      case "ok":
+        return {
+          kind: "auction-console",
+          console: {
+            ...console,
+            week: { ...week, paymentTermSeconds: parsed.seconds },
+          },
+          note: "payment-term-saved",
+        };
+      // Предел бот проверил сам: отказ Auction — тот же ответ человеку.
+      case "payment-term-out-of-range":
+        return { ...asked, error: "payment-term-range" };
+      default:
+        return windowsRefused(request, scheduled);
+    }
+  }
+
+  // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
+  // торгов. Выставляется и меняется, пока финал впереди, и снимается той же
+  // командой без момента (ADR-040, дополнение 2026-10-19).
+  const finalTimeAsked = (auctionId: string, finalAt: string | undefined) => ({
+    kind: "auction-final-time-ask" as const,
+    auctionId,
+    ...(finalAt === undefined ? {} : { finalAt }),
+  });
+
+  async function askFinalTime(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "ask-auction-final-time" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const tooLate = finalTimeRefusal(console);
+    if (tooLate !== undefined) {
+      return { kind: "auction-console", console, note: tooLate };
+    }
+    return finalTimeAsked(request.auctionId, console.finalAt);
+  }
+
+  async function setFinalTime(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-auction-final-time" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const tooLate = finalTimeRefusal(console);
+    if (tooLate !== undefined) {
+      return { kind: "auction-console", console, note: tooLate };
+    }
+    const asked = finalTimeAsked(request.auctionId, console.finalAt);
+    const parsed = parseFinalTime({
+      raw: request.value,
+      timeZone,
+      now: now(),
+    });
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    const changed = await consoles.setFinalTime(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        finalAt: parsed.finalAt,
+      },
+      rpcMeta(request),
+    );
+    // Чтение пульта отстаёт от команды, поэтому принятый момент накладывается
+    // на прочитанное, как это делает розыгрыш.
+    return finalTimeOutcome(request, changed, "final-time-saved", (each) => ({
+      ...each,
+      finalAt: parsed.finalAt,
+    }));
+  }
+
+  async function removeFinalTime(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "remove-auction-final-time" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const tooLate = finalTimeRefusal(console);
+    if (tooLate !== undefined) {
+      return { kind: "auction-console", console, note: tooLate };
+    }
+    if (console.finalAt === undefined) {
+      // Времени уже нет — команды нет, а ответ тот же: кнопка могла устареть.
+      return after(request, "final-time-removed", withoutFinalTime);
+    }
+    const changed = await consoles.setFinalTime(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    return finalTimeOutcome(
+      request,
+      changed,
+      "final-time-removed",
+      withoutFinalTime,
+    );
+  }
+
+  // Ответ команды времени финала (PER-663): принятие — пульт с исходом, именованный
+  // отказ Auction — тот же пульт со своей строкой, а отказ по правам — кадр
+  // отказа, как у остальных команд пульта.
+  async function finalTimeOutcome(
+    request: AuctionConsoleRequest,
+    changed: FinalTimeResult,
+    note: ConsoleNote,
+    accepted: (console: AuctionConsoleView) => AuctionConsoleView = (each) =>
+      each,
+  ): Promise<ExecuteResult> {
+    switch (changed.kind) {
+      case "ok":
+        return after(request, note, accepted);
+      case "final-already-started":
+        return after(request, "final-already-started");
+      case "auction-already-finished":
+        return after(request, "auction-already-finished");
+      case "auction-already-cancelled":
+        return after(request, "auction-already-cancelled");
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(changed);
+    }
   }
 
   // Приз розыгрыша (PER-649) живёт рядом с моментом: без розыгрыша приза нет,
@@ -2153,6 +2725,275 @@ export function createAuctionConsole(
       : windowsRefused(request, scheduled);
   }
 
+  // Запуск окна сниженного шага по ходу торгов (PER-615). Окно дописывается
+  // к списку аукциона, а не заменяет конфигурацию: после открытия недели
+  // конфигурация заморожена. Запуск доступен, пока идут онлайн-торги, а
+  // неделя без конца запуска не имеет: верхней границы окна нет.
+  function launchable(console: AuctionConsoleView, at: Date): boolean {
+    return (
+      console.status === "prebidding" &&
+      !weekEnded(console, at) &&
+      console.week?.closesAt !== undefined
+    );
+  }
+
+  // Гейт запуска: идут онлайн-торги, неделя не кончилась, в реестре есть лоты.
+  // Отказ — исход экрана окон, а не вопроса.
+  function launchRefusal(
+    console: AuctionConsoleView,
+  ): ExecuteResult | undefined {
+    if (!launchable(console, now())) {
+      return { kind: "step-windows", console, note: { kind: "launch-closed" } };
+    }
+    if (console.lots.length === 0) {
+      return { kind: "step-windows", console, note: { kind: "no-lots" } };
+    }
+    return undefined;
+  }
+
+  // Вопрос о запуске: сроки недели и аукцион — из пульта, прочитанного до
+  // вопроса. Тот же вопрос возвращается с текстом отказа.
+  function launchAsk(
+    auctionId: string,
+    console: AuctionConsoleView,
+  ): {
+    kind: "step-window-launch-ask";
+    auctionId: string;
+    week?: AuctionWeek;
+  } {
+    return {
+      kind: "step-window-launch-ask",
+      auctionId,
+      ...(console.week === undefined ? {} : { week: console.week }),
+    };
+  }
+
+  // Вопрос о запуске окна: пульт читается до него, потому что вопрос
+  // называет сроки недели, а запускается окно только в онлайн-торгах.
+  async function askLaunch(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "ask-step-window-launch" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    return launchAsk(request.auctionId, console);
+  }
+
+  // Ответ на вопрос о запуске: сроки и шаг разбираются тем же правилом, что у
+  // объявленного окна, а лоты по умолчанию все — «все» это выбор всех, лишние
+  // организатор снимает на экране запуска (как у объявленного окна, решение
+  // владельца 11 октября 2026 года).
+  async function addLaunch(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "add-step-window-launch" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const asked = launchAsk(request.auctionId, console);
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    const parsed = parseLaunch(request.value, timeZone, now(), console.week);
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    return {
+      kind: "step-window-launch",
+      console,
+      draft: {
+        ...(parsed.from === undefined ? {} : { from: parsed.from }),
+        until: parsed.until,
+        step: parsed.step,
+        lots: launchableLots(console).map((_, at) => at),
+      },
+      at: { page: 0 },
+    };
+  }
+
+  // Лот запускаемого окна: набор едет в кнопке, поэтому переключатель
+  // переворачивает состояние набора, а не читает его у сервиса.
+  async function setLaunchLot(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-step-window-launch-lot" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    const registry = sortedLotIds(console);
+    const { lot } = request;
+    if (lot < 0 || lot >= registry.length) {
+      return { kind: "step-windows", console, note: { kind: "changed" } };
+    }
+    const selected = request.draft.lots.includes(lot);
+    const lots = selected
+      ? request.draft.lots.filter((at) => at !== lot)
+      : [...request.draft.lots, lot].sort((a, b) => a - b);
+    // Пустого окна Auction не принимает: последний лот снять нельзя.
+    if (lots.length === 0) {
+      return { kind: "step-windows", console, note: { kind: "launch-empty" } };
+    }
+    return {
+      kind: "step-window-launch",
+      console,
+      draft: { ...request.draft, lots },
+      at: { lot },
+      toggled: { selected: !selected },
+    };
+  }
+
+  // Экран запуска окна на странице лотов: черновик едет в кнопке, а страница
+  // — в ней же.
+  async function viewLaunch(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "view-step-window-launch" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    return {
+      kind: "step-window-launch",
+      console,
+      draft: request.draft,
+      at: { page: request.page },
+    };
+  }
+
+  // Сама команда запуска. Отказ Auction приходит текстом формы — тем же, что
+  // у планирования окна, а новые случаи (начало в прошлом, торги не идут, лот
+  // не открыт, пересечение) получают свои тексты.
+  async function launchWindow(
+    request: Extract<AuctionConsoleRequest, { intent: "launch-step-window" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const asked = launchAsk(request.auctionId, console);
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    const registry = sortedLotIds(console);
+    const lotIds = request.draft.lots
+      .map((at) => registry[at])
+      .filter((lotId): lotId is string => lotId !== undefined);
+    if (lotIds.length === 0) {
+      return { kind: "step-windows", console, note: { kind: "launch-empty" } };
+    }
+    const launched = await consoles.launchStepWindow(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        ...(request.draft.from === undefined
+          ? {}
+          : { from: request.draft.from }),
+        until: request.draft.until,
+        step: request.draft.step,
+        lotIds,
+      },
+      rpcMeta(request),
+    );
+    return launchOutcome(console, asked, request, launched, lotIds);
+  }
+
+  function launchOutcome(
+    console: AuctionConsoleView,
+    asked: {
+      kind: "step-window-launch-ask";
+      auctionId: string;
+      week?: AuctionWeek;
+    },
+    request: Extract<AuctionConsoleRequest, { intent: "launch-step-window" }>,
+    launched: LaunchStepWindowResult,
+    lotIds: readonly string[],
+  ): ExecuteResult {
+    switch (launched.kind) {
+      case "ok":
+        return {
+          kind: "step-windows",
+          console: {
+            ...console,
+            launchedWindows: [
+              ...console.launchedWindows,
+              {
+                from: launched.from,
+                until: launched.until,
+                step: request.draft.step,
+                lotIds,
+              },
+            ],
+          },
+          note: {
+            kind: "launched",
+            from: launched.from,
+            until: launched.until,
+            step: request.draft.step,
+          },
+        };
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "auction-not-found":
+        return auctionNotFound;
+      case "not-in-prebidding":
+        return { ...asked, error: "window-not-in-prebidding" };
+      case "window-in-past":
+        return { ...asked, error: "window-in-past" };
+      case "window-outside-phase":
+        return { ...asked, error: "window-outside-week" };
+      case "window-step-invalid":
+        return { ...asked, error: "window-step" };
+      case "lot-not-in-auction":
+        return {
+          ...asked,
+          error: "window-lot-not-in-auction",
+          lot: titleOfLot(console, launched.lotId),
+        };
+      case "lot-not-open":
+        return {
+          ...asked,
+          error: "window-lot-not-open",
+          lot: titleOfLot(console, launched.lotId),
+        };
+      case "windows-overlap":
+        return {
+          ...asked,
+          error: "launch-overlap",
+          lot: titleOfLot(console, launched.lotId),
+          other: { from: launched.from, until: launched.until },
+        };
+      case "window-lots-empty":
+        // Бот не отправляет пустой набор лотов: отказ — дефект сборки формы.
+        return failed({
+          kind: "invalid",
+          cause: new Error("launch step window refused an empty lot set"),
+        });
+      default:
+        return failed(launched);
+    }
+  }
+
+  // Название лота для текста отказа: лот назван, но карточки у него может не
+  // быть — тогда отказ называет лот по идентификатору.
+  function titleOfLot(console: AuctionConsoleView, lotId: string): string {
+    const entry = console.lots.find((each) => each.lot.lotId === lotId);
+    const title = entry?.lot.card?.title;
+    return title === undefined ? lotId : title;
+  }
+
   return async function auctionConsole(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
@@ -2195,8 +3036,20 @@ export function createAuctionConsole(
         return setRafflePrize(request);
       case "remove-auction-raffle-prize":
         return removeRafflePrize(request);
+      case "ask-auction-payment-term":
+        return askPaymentTerm(request);
+      case "set-auction-payment-term":
+        return setPaymentTerm(request);
       case "set-auction-final":
         return setFinal(request);
+      case "set-auction-visibility":
+        return setVisibility(request);
+      case "ask-auction-final-time":
+        return askFinalTime(request);
+      case "set-auction-final-time":
+        return setFinalTime(request);
+      case "remove-auction-final-time":
+        return removeFinalTime(request);
       case "start-auction-week":
         return startWeek(request);
       case "mark-auction-finalist":
@@ -2205,11 +3058,19 @@ export function createAuctionConsole(
         return prepareDiscard(request);
       case "discard-auction":
         return discard(request);
+      case "prepare-auction-cancel":
+        return prepareCancel(request);
+      case "cancel-auction":
+        return cancel(request);
       case "view-step-windows": {
         const current = await read(request);
         return current.kind === "refused"
           ? current.result
-          : { kind: "step-windows", console: current.console };
+          : {
+              kind: "step-windows",
+              console: current.console,
+              launch: launchable(current.console, now()),
+            };
       }
       case "view-step-window":
         return viewWindow(request);
@@ -2221,6 +3082,16 @@ export function createAuctionConsole(
         return setWindowLot(request);
       case "remove-step-window":
         return removeWindow(request);
+      case "ask-step-window-launch":
+        return askLaunch(request);
+      case "add-step-window-launch":
+        return addLaunch(request);
+      case "set-step-window-launch-lot":
+        return setLaunchLot(request);
+      case "view-step-window-launch":
+        return viewLaunch(request);
+      case "launch-step-window":
+        return launchWindow(request);
       default: {
         const _exhaustive: never = request;
         return _exhaustive;

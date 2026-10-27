@@ -22,7 +22,13 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null,
+        "lotLayout": null
       }
     },
     {
@@ -40,7 +46,13 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null,
+        "lotLayout": null
       }
     }
   ],
@@ -51,5 +63,9 @@
   "cancelledBy": null,
   "completed": null,
   "launched": null,
-  "hidden": true
+  "hidden": true,
+  "finalAt": null,
+  "sets": null,
+  "paymentInstructions": null,
+  "layout": null
 }

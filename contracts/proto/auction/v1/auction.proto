@@ -173,6 +173,14 @@ message AuctionConfig {
   // Windows of the online phase with a reduced bid step on the lots they name.
   // Empty is a real value: no window.
   repeated AuctionStepWindow step_windows = 5;
+
+  // How long the winner of a lot has to pay its invoice, in whole seconds from
+  // the sale: InvoiceState.payment_due_at is LotSale.sold_at plus this term. From
+  // one day to thirty days. Unset in ScheduleAuction, the auction fills in the
+  // term of the platform, seven days, and stores it, so a stored configuration
+  // always carries it; a later change of the platform term does not reach an
+  // auction already scheduled.
+  optional int64 payment_term_seconds = 6;
 }
 
 // A window of reduced bid step: the half-open interval [from, until) of the

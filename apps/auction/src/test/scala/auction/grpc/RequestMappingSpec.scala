@@ -27,11 +27,15 @@ import auction.v1.auction.OnlinePhase as OnlinePhaseMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction.StepTier
 import auction.v1.auction.TieredSteps
+import auction.v1.auction_service.AddLotPhotoRequest
 import auction.v1.auction_service.AdvanceAskRequest
+import auction.v1.auction_service.GetLotPhotoRequest
+import auction.v1.auction_service.RemoveLotPhotoRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
+import auction.v1.auction_service.GetAuctionDayChronicleRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.LotImageRemoval
@@ -157,6 +161,17 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         .value shouldBe FormError("auction_id")
     }
 
+    "maps the day chronicle of a participant to the auction of a meetup without a window" in {
+      val query =
+        RequestMapping.getAuctionDayChronicle(GetAuctionDayChronicleRequest(Some(viewer), meetupAuction)).value
+
+      query.auctionId.value.toString shouldBe meetupAuction
+      query.acting.viewer.rights shouldBe Set(AccessRight.PlaceBids)
+      RequestMapping.getAuctionDayChronicle(GetAuctionDayChronicleRequest(Some(viewer), lot)).left.value shouldBe
+        FormError("auction_id")
+      RequestMapping.getAuctionDayChronicle(GetAuctionDayChronicleRequest(None, meetupAuction)).isLeft shouldBe true
+    }
+
     "names new_ask as the invalid field of an ask without an amount" in {
       RequestMapping.advanceAsk(validAsk.clearNewAsk).left.value shouldBe FormError("new_ask")
     }
@@ -250,6 +265,28 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         FormError("lot_id")
       RequestMapping.getLotImage(GetLotImageRequest(Some(viewer), "")).left.value shouldBe FormError("lot_id")
       RequestMapping.getLotImage(GetLotImageRequest(Some(viewer), lot)).value.lotId shouldBe UUID.fromString(lot)
+    }
+
+    "requires a canonical UUIDv7 id of a photo to add, remove or read" in {
+      val upload = Some(LotImageUpload(ByteString.copyFrom(Array[Byte](1, 2, 3))))
+      val random = UUID.randomUUID().toString
+      RequestMapping.addLotPhoto(AddLotPhotoRequest(Some(viewer), lot, lot, upload)).value.photoId.value shouldBe
+        UUID.fromString(lot)
+      RequestMapping.addLotPhoto(AddLotPhotoRequest(Some(viewer), lot, random, upload)).left.value shouldBe
+        FormError("photo_id")
+      RequestMapping.addLotPhoto(AddLotPhotoRequest(Some(viewer), lot, lot, None)).left.value shouldBe
+        FormError("photo")
+      RequestMapping.removeLotPhoto(RemoveLotPhotoRequest(Some(viewer), lot, lot)).value.photoId.value shouldBe
+        UUID.fromString(lot)
+      RequestMapping.removeLotPhoto(RemoveLotPhotoRequest(Some(viewer), lot, random)).left.value shouldBe
+        FormError("photo_id")
+      RequestMapping.removeLotPhoto(RemoveLotPhotoRequest(Some(viewer), lot, lot.toUpperCase)).left.value shouldBe
+        FormError("photo_id")
+      RequestMapping.getLotPhoto(GetLotPhotoRequest(Some(viewer), lot, lot)).value.photoId shouldBe
+        UUID.fromString(lot)
+      RequestMapping.getLotPhoto(GetLotPhotoRequest(Some(viewer), lot, random)).left.value shouldBe
+        FormError("photo_id")
+      RequestMapping.getLotPhoto(GetLotPhotoRequest(Some(viewer), "", lot)).left.value shouldBe FormError("lot_id")
     }
 
     "maps the conditions of a lot with the price and a fixed step as sent" in {

@@ -1,6 +1,6 @@
 # Stage хаба на VPS
 
-Stage — хаб с аукционом и три бота в namespace `test` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454), [PER-624](https://linear.app/anticnvm/issue/per-624)): семь сервисов чарта из AppHost, PostgreSQL на CloudNativePG и NATS JetStream. Раз в сутки ветка `stage` догоняет `develop`, и новые образы и чарт из неё stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06, 2026-10-07 и 2026-10-18. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
+Stage — хаб с аукционом и три бота в namespace `stage` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454), [PER-624](https://linear.app/anticnvm/issue/per-624)): семь сервисов чарта из AppHost и выключенный workload Achievements, PostgreSQL на CloudNativePG и NATS JetStream. Раз в сутки ветка `stage` догоняет `develop`, и новые образы и чарт из неё stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06, 2026-10-07, 2026-10-18 и 2026-10-20. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
 
 Описание stage живёт в приватном ops-репозитории `solguficky-ops`, а не здесь: values с digest образов, манифесты PostgreSQL и NATS, сетевые разрешения и скрипты выкладки. Публичный репозиторий топологию среды не раскрывает (ADR-055, «Обоснование»). Этот файл — устойчивые правила работы со stage; команды и раскладка файлов — README ops-репозитория.
 
@@ -8,29 +8,50 @@ Stage — хаб с аукционом и три бота в namespace `test` k3
 
 | Что | Где | Кто применяет |
 |---|---|---|
-| namespace `test`: квота 1424Mi памяти, LimitRange, Pod Security `restricted`, NetworkPolicy, учётка выкатки | ops, `cluster/` | `ansible-playbook site.yml -K --tags cluster`, под sudo владельца |
+| namespace `stage`: квота 1424Mi памяти, LimitRange, Pod Security `restricted`, NetworkPolicy, учётка выкатки | ops, `cluster/` | `ansible-playbook site.yml -K --tags cluster`, под sudo владельца |
 | оператор CNPG, metrics-server, helm на хосте | ops, `cluster/`, `tasks/` | тот же playbook, теги `cluster` и `k3s` |
 | таймер автовыкладки, клон ops-репозитория под `ops` и его read-only deploy key | ops, `tasks/autodeploy.yml` | тот же playbook, тег `autodeploy` |
-| PostgreSQL 16 — кластер CNPG `hub-pg`, роль и база на сервис, роль `ops_readonly` | ops, `stage/test/postgres.yaml` | выкладка |
-| NATS 2.12 с JetStream на томе | ops, `stage/test/nats.yaml` | выкладка |
+| PostgreSQL 16 — кластер CNPG `hub-pg`, роль и база на сервис, роль `ops_readonly` | ops, `envs/stage/postgres.yaml` | выкладка |
+| NATS 2.12 с JetStream на томе | ops, `envs/stage/nats.yaml` | выкладка |
 | streams, durables, KV | чарт, Job `jetstream-topology` | Helm-hook при каждой выкладке |
-| семь сервисов, из них три бота | чарт из AppHost, версия — ops `stage/test/release.yaml`, digest'ы — `stage/test/values.yaml` | выкладка |
+| семь сервисов, из них три бота, и выключенный Achievements | чарт из AppHost, версия — ops `envs/stage/release.yaml`, digest'ы — `envs/stage/values.yaml` | выкладка |
 
 Выкладка — одна и та же: её запускает таймер на хосте после нового коммита в ops-репозитории или человек командой `bin/stage deploy`.
+
+Прод в namespace `prod` выкладывается тем же скриптом из своего каталога `envs/prod/` и своим файлом секретов, но только руками — `bin/prod deploy`: таймер катит один stage ([PER-676](https://linear.app/anticnvm/issue/per-676)). Прод собирается не со stage, а из `main`: мерж pull request'а `develop → main` публикует изменённые образы и чарт теми же workflow, и CI пишет их digest'ы и версию в `envs/prod/`. Digest прода — своя сборка того же кода, а не digest, прошедший stage (дополнение ADR-055 от 2026-10-22, [PER-384](https://linear.app/anticnvm/issue/per-384)). Выпуск, выкладка и откат прода — runbook README ops-репозитория, раздел «Prod».
 
 Тома PostgreSQL и NATS — `local-path` на LV `/srv/state` хоста: они переживают рестарт пода и хоста.
 
 ## Секреты
 
-Секреты лежат в файле `~/.config/solguficky/test.env` на хосте, права 0600, владелец `ops`. В Git и в values их нет. `bin/stage init` создаёт файл и генерирует сервисные токены и пароли ролей. Токены трёх тестовых ботов, `HUB_BOT_TOKEN`, `AUCTION_BOT_TOKEN` и `SUPPORT_BOT_TOKEN`, вписываются руками. Повторный `init` дописывает только новые переменные и прежних значений не меняет.
+Секреты лежат в файле `~/.config/solguficky/stage.env` на хосте, права 0600, владелец `ops`. В Git и в values их нет. `bin/stage init` создаёт файл и генерирует сервисные токены и пароли ролей. Токены трёх тестовых ботов, `HUB_BOT_TOKEN`, `AUCTION_BOT_TOKEN` и `SUPPORT_BOT_TOKEN`, вписываются руками. Повторный `init` дописывает только новые переменные и прежних значений не меняет.
 
 При выкладке из файла собираются Secret'ы ролей PostgreSQL и values секретов чарта. Последние передаются helm временным файлом в tmpfs и удаляются после установки. Каждый секрет чарта берётся из переменной с его именем в верхнем регистре (`secrets.auction.auction_db_user` — `AUCTION_DB_USER`). Секрет, которого в файле нет, роняет выкладку, а не уезжает пустой строкой.
 
-Боты stage — три отдельных тестовых бота продакшн-среды Telegram, по одному на бот хаба, бот аукциона и бот поддержки. Два поллера на одном боте получают `409 Conflict` по очереди, и не работает ни один. Поэтому выкладка сравнивает id ботов каждой пары — часть токена до двоеточия — и при совпадении отказывает до первого изменения кластера, без значения токена в выводе (дополнение ADR-055 от 2026-10-07). Тот же токен нельзя одновременно держать в локальном `aspire run`: этого выкладка не видит, и второй поллер получит `409 Conflict`.
+Боты stage — три отдельных тестовых бота продакшн-среды Telegram, по одному на бот хаба, бот аукциона и бот поддержки. Два поллера на одном боте получают `409 Conflict` по очереди, и не работает ни один. Поэтому выкладка сравнивает id ботов каждой пары — часть токена до двоеточия — и при совпадении отказывает до первого изменения кластера, без значения токена в выводе (дополнение ADR-055 от 2026-10-07). Так же она сравнивает id своих ботов с id ботов из файла секретов соседней среды на хосте — у прода это `prod.env`: бот одной среды в другой положил бы обе (дополнение 2026-10-20). Тот же токен нельзя одновременно держать в локальном `aspire run`: этого выкладка не видит, и второй поллер получит `409 Conflict`.
 
 Бот поддержки ([ADR-068](../decisions/ADR-068-support-bot-with-operator-topics.md)) кладёт темы в тестовую супергруппу операторов, и он в ней администратор с правом управлять темами. Её id и ник бота поддержки — не секреты, а values среды: `config.support_bot.support_bot_group_id` и `config.hub_bot.support_bot_username` с `config.auction_bot.support_bot_username` — генератор чарта заводит ключ имени под каждым ботом, который его читает. Без id группы бот поддержки не стартует. Пустой ник выкладка не ловит, а «Задать вопрос ↗» бота аукциона тогда ведёт на `https://t.me/?start=auction`: ник в values — часть заведения бота, а не необязательная настройка.
 
 Сводка «Что нового» на stage включена тем, кто переключатель не трогал ([ADR-069](../decisions/ADR-069-release-notes-as-environment-data.md), п. 5): values stage ставят `config.notifications.notifications_release_notes_enabled_by_default: "true"`. В чарте значение `false`: среда без ключа шлёт сводку только тем, кто включил категорию сам, а остальным сводки видны лишь в «Что нового». Иное значение, кроме `true` и `false`, роняет старт Notifications.
+
+## Публичный вход
+
+Экран зала выходит в интернет через Cloudflare Tunnel, workload `cloudflared` чарта ([ADR-071](../decisions/ADR-071-public-entry-through-cloudflare-tunnel.md), [PER-661](https://linear.app/anticnvm/issue/per-661)). Устройство в чарте — [local-development.md](local-development.md#публикация-чарта-прода). Что нужно среде:
+
+- **Порядок.** Секрет `secrets.cloudflared.cloudflared_tunnel_token` входит в чарт всегда, и выкладка без переменной `CLOUDFLARED_TUNNEL_TOKEN` в файле секретов падает, даже когда туннель выключен. Пока туннеля нет, значение — заглушка `disabled`, её дописывает `init` обёртки: workload без `enabled.cloudflared: true` стоит с нулём реплик, выкладка токен не читает и пропускает и заглушку, и пустую строку. Включённый туннель с пустым токеном или с тем, что не разбирается как токен туннеля, выкладка отвергает до изменения кластера, как и токен с id туннеля соседней среды: два коннектора одного туннеля делят его запросы между средами ([PER-696](https://linear.app/anticnvm/issue/per-696)).
+- **Туннель управляется локально.** Он заводится командой `cloudflared tunnel create`, а не в дашборде: правила лежат в чарте, а туннель, созданный в дашборде, берёт правила с edge Cloudflare и молча игнорирует смонтированные. Токен — `cloudflared tunnel token <туннель>`, адрес — `cloudflared tunnel route dns <туннель> <хост>` в зоне домена на Cloudflare. Токен у stage и prod разный. Шаги владельца — раздел «Публичный вход» README ops-репозитория.
+- **Включение.** values среды ставят `enabled.cloudflared: true`. Без ключа workload стоит с нулём реплик.
+- **NetworkPolicy** ops-каркаса разрешают поду с меткой `app.kubernetes.io/component: cloudflared` выход на порт 7844 по TCP и UDP к сетям `198.41.192.0/24` и `198.41.200.0/24` — адресам `region1.v2.argotunnel.com` и `region2.v2.argotunnel.com` — и DNS к `kube-dns`. Порт 443 туннелю не нужен: обновлений образ не проверяет. Вход к Auction туннель получает общим правилом «поды своей среды между собой», то есть на все порты; сужение до 8080 входит в сужение «под — под» [PER-380](https://linear.app/anticnvm/issue/per-380). Адреса Cloudflare — [Tunnel with firewall](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/tunnel-with-firewall/).
+- **Квота.** Под туннеля просит 10m и 32Mi, лимит 200m и 128Mi; лимит памяти ложится в квоту namespace.
+
+Готовность пода туннеля связи с Cloudflare не означает: пробы смотрят только порт метрик, чтобы выкладка не ждала чужую сеть. Связь видна в логе пода (`Registered tunnel connection`). Проверка после включения: страница `/screen/<auction_id>` открывается по публичному адресу, `curl -i https://<хост>/health` отвечает 404 от самого туннеля, а снаружи хоста по-прежнему открыт только SSH.
+
+## Achievements
+
+Чарт везёт workload `achievements` ([ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md), дополнение 2026-10-26) выключенным: без ключа `enabled.achievements: true` в values среды он стоит с нулём реплик, а включение — решение владельца, не выкладки.
+
+- **Значения.** Digest образа `parameters.achievements.achievements_image` приходит в values джобой `ops` из `image-achievements.yml`, как у остальных сервисов. Строка подключения `achievements-db` — URI PostgreSQL в форме libpq с `sslmode`; пока workload выключен, ей можно оставаться пустой.
+- **Квота.** Под просит 50m и 96Mi, лимит 500m и 192Mi.
 
 ## Автовыкладка
 
@@ -38,7 +59,7 @@ Stage — хаб с аукционом и три бота в namespace `test` k3
 
 1. `stage-sync.yml` в 03:07 по Москве (`7 0 * * *` UTC) переносит ветку `stage` на `develop` fast-forward'ом. Push идёт deploy key'ем `STAGE_SYNC_KEY` из environment `stage-sync`, допущенного только для `main`: push под `GITHUB_TOKEN` не запустил бы публикации. Если в `stage` есть коммит, которого нет в `develop`, джоба красная, а ветка остаётся как была.
 2. CI публикует изменённые этим переносом образы и чарт в GHCR (`image-*.yml`, `chart-publish.yml` на push в `stage`, по своим фильтрам путей).
-3. Джоба `stage` того же workflow (`stage-bump.yml`) коммитит digest в `stage/test/values.yaml` или версию чарта в `stage/test/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для ветки `stage`.
+3. Джоба `ops` того же workflow (`ops-bump.yml`) коммитит digest в `envs/stage/values.yaml` или версию чарта в `envs/stage/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для ветки `stage`.
 4. Таймер `solguficky-stage-autodeploy` на хосте раз в две минуты тянет клон ops-репозитория своим read-only deploy key и выкатывает новый коммит.
 
 Образ у трёх ботов один — `hub-bot`, и ключ digest'а в `values.yaml` у них один: `parameters.hub_bot.hub_bot_image`. Новый digest перекатывает все три бота, а откатить образ одного бота отдельно нельзя. Ключ `parameters.auction_bot.auction_bot_image` новый чарт не читает, а CI его больше не двигает ([PER-538](https://linear.app/anticnvm/issue/per-538)). Из `values.yaml` он не удаляется: его читают версии чарта до PER-538. Откат `release.yaml` на такую версию ставит бот аукциона на последний записанный туда digest. Без ключа старый чарт взял бы свою заглушку `auction-bot:latest`, и выкладка отказала бы на проверке digest.
@@ -77,16 +98,16 @@ bin/stage resume                  # вернуть; следующий тик в
 | переопубликовать чарт и выкатить | `gh workflow run chart-publish.yml --ref stage` | новая версия `0.1.<N>` в `release.yaml`, выкладка |
 | выкатить то, что уже записано в ops | `bin/stage resume` | следующий тик выкатывает `main` ops без сборки |
 | то же сразу, не дожидаясь таймера | `bin/stage deploy` | ручная выкладка из `release.yaml` и `values.yaml` |
-| вернуть образ на прежний digest | правка `stage/test/values.yaml` коммитом в `main` ops | таймер выкатит этот коммит |
+| вернуть образ на прежний digest | правка `envs/stage/values.yaml` коммитом в `main` ops | таймер выкатит этот коммит |
 
-Ручной запуск с другой ветки на stage не попадёт: публикация идёт только на ветке `stage`, и environment `stage` отдаёт секрет только ей. Чарт ветки ставится руками — раздел «Ручная выкладка».
+Ручной запуск с другой ветки на stage не попадёт: публикация для stage идёт только на ветке `stage`, и environment `stage` отдаёт секрет только ей. Запуск на `main` публикует для прода: та же джоба пишет в `envs/prod/` ключом environment `prod`, допущенного только для `main`. Чарт ветки ставится руками — раздел «Ручная выкладка».
 
 ## Ручная выкладка
 
-Команды запускаются с control node (WSL) из корня ops-репозитория. kubeconfig среды хост не покидает, поэтому `bin/stage` копирует `stage/` на хост и запускает там helm и kubectl учёткой выкатки. Ручная выкладка и таймер берут один lock и идут по очереди. CI пишет в `origin/main` ops-репозитория, поэтому копия на control node отстаёт сама: `bin/stage deploy` отказывает, пока в ней нет `origin/main`, — иначе он выкатил бы старые digest'ы, а таймер, у которого этот коммит уже отмечен, их бы не вернул.
+Команды запускаются с control node (WSL) из корня ops-репозитория. kubeconfig среды хост не покидает, поэтому `bin/stage` копирует `stage/` и `envs/` в `~/deploy` хоста и запускает там helm и kubectl учёткой выкатки. Ручная выкладка и таймер берут один lock и идут по очереди. CI пишет в `origin/main` ops-репозитория, поэтому копия на control node отстаёт сама: `bin/stage deploy` отказывает, пока в ней нет `origin/main`, — иначе он выкатил бы старые digest'ы, а таймер, у которого этот коммит уже отмечен, их бы не вернул.
 
 ```bash
-bin/stage deploy                                 # чарт и версия из stage/test/release.yaml — то же, что делает таймер
+bin/stage deploy                                 # чарт и версия из envs/stage/release.yaml — то же, что делает таймер
 bin/stage deploy ./solguficky-hub-<версия>.tgz   # чарт ветки до публикации
 ```
 
@@ -155,7 +176,7 @@ bin/stage db <база>                                      # туннель н
 
 Логи подов хранятся на хосте 14 дней (дополнение ADR-055 от 2026-10-05), но только для живых подов: лог пересозданного пода уходит вместе с ним, `--previous` даёт только прошлый рестарт контейнера.
 
-Поиск по логам, метрики и трейсы stage — в своём источнике Better Stack, отдельном от прода (дополнение 2026-10-08 к [ADR-053](../decisions/ADR-053-production-observability-otlp-better-stack.md), [PER-378](https://linear.app/anticnvm/issue/per-378)). Источник видит не всё: логи туда идут от `Warning`, трейсы — выборкой 10 %, а хранятся 3 дня. Остальное — `bin/stage logs` в пределах тех же 14 дней на хосте.
+Поиск по логам, метрики и трейсы stage — в своём источнике Better Stack, отдельном от прода (дополнения 2026-10-08 и 2026-10-15 к [ADR-053](../decisions/ADR-053-production-observability-otlp-better-stack.md), [PER-378](https://linear.app/anticnvm/issue/per-378), [PER-630](https://linear.app/anticnvm/issue/per-630)). Логи туда идут от `Debug`, метрики — то, что шлют сервисы, трейсы — выборкой 10 %. Логи хранятся 3 дня. Метрики узла остаются в источнике прода. `Debug` получает код сервисов, а не библиотеки; уровни задаёт ops post-renderer'ом выкладки, не чарт, — перечень переменных в дополнении 2026-10-15 к ADR-053. Пол Collector на конвейере stage — тот же `Debug`. Состояние подов — остановка, неготовность, рестарт с причиной и памятью, память у лимита — пишет строками таймер ops `solguficky-stage-watch` на хосте, и агент Collector отдаёт их в тот же источник как лог. Алерты недели теста — в Slack: строка `error` любого сервиса и события таймера. Что не дошло до источника, читает `bin/stage logs` в пределах тех же 14 дней на хосте.
 
 `bin/stage db` печатает строку подключения для psql или DBeaver. Роль `ops_readonly` состоит в `pg_read_all_data`: читает все таблицы всех четырёх баз и ничего не пишет. Пароль — в файле секретов на хосте.
 
@@ -180,7 +201,7 @@ bin/stage presets         # активные наборы: ник и набор
 Переход на круг, наборы и права с глаголом ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)) меняет контракты пяти сервисов без обратной совместимости, поэтому выкатывается один раз, целиком и в таком порядке. Сброс данных не нужен: миграции Identity 017 и Notifications 024 переносят состояние, а мейнтейнер stage получает наборы `maintainer` и `admin` и назначать себя заново ему не нужно.
 
 1. **До мержа — `bin/stage pause`.** Автовыкладка катит каждую публикацию мержа отдельным коммитом ops раз в две минуты. Без паузы новый образ одного сервиса встанет рядом со старыми соседями, а Identity применит миграцию раньше, чем остановлены боты.
-2. **Мерж и публикации.** Мержится pull request, а ветка `stage` догоняет `develop` ночью или по `gh workflow run stage-sync.yml --ref main`; CI публикует образы `identity`, `meetups`, `notifications`, `auction`, `hub-bot` и чарт. Дождаться, пока все джобы `stage` этих публикаций зелёные (`gh run list --branch stage`), и `git pull` в копии ops: в `stage/test/values.yaml` новые digest'ы пяти образов, в `release.yaml` новая версия чарта.
+2. **Мерж и публикации.** Мержится pull request, а ветка `stage` догоняет `develop` ночью или по `gh workflow run stage-sync.yml --ref main`; CI публикует образы `identity`, `meetups`, `notifications`, `auction`, `hub-bot` и чарт. Дождаться, пока все джобы `stage` этих публикаций зелёные (`gh run list --branch stage`), и `git pull` в копии ops: в `envs/stage/values.yaml` новые digest'ы пяти образов, в `release.yaml` новая версия чарта.
 3. **Остановить ботов** — `bin/stage stop hub-bot`, `bin/stage stop auction-bot`. Без них Identity не пишет новых событий, а Notifications дочитывает старые.
 4. **Проверки до выкладки** в `bin/stage db identity`:
    - `SELECT count(*) FROM identity_outbox WHERE published_at IS NULL;` — 0. Иначе подождать: релей старого Identity ещё работает. Миграция 017 помечает неопубликованные строки прежней формы опубликованными — в новой форме их не закодировать, и событие пропало бы.
@@ -198,7 +219,7 @@ bin/stage presets         # активные наборы: ник и набор
 
 Каталог — JSON: сходка (`title`, `description`, `venue`, `startsAt` вида «31.10.2026 19:00» во времени сообщества) и лоты (`title`, `description`, путь `image` относительно файла каталога, `startingPrice` и `step` целыми рублями). Образец с фото — `tools/auction-seed/example/catalog.json`. Каталог проверяется целиком до первого вызова, и отказ перечисляет все ошибки с номерами лотов. Отказ сервиса посреди наполнения называет лот и шаг; то, что уже заведено, остаётся, и следующий запуск заводит новую сходку — каждый запуск новый.
 
-Сроки недели, «Счастливые часы», розыгрыш и открытие недели команда не задаёт: это пульт администратора в боте хаба.
+Последний шаг публикует аукцион (`PublishAuction`, [PER-673](https://linear.app/anticnvm/issue/per-673)): новый аукцион рождается скрытым от участников, а после наполнения его лоты должны быть видны. Отказ публикации останавливает прогон с причиной, как отказ посреди лотов. Сроки недели, «Счастливые часы», розыгрыш и открытие недели команда не задаёт: это пульт администратора в боте хаба; там же аукцион снимают с публикации, пока неделя не открыта.
 
 Переменные — без умолчаний: `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL`, `AUCTION_GRPC_URL`, `HUB_BOT_SERVICE_TOKEN`, `AUCTION_SEED_ADMIN_TELEGRAM_ID`, `BOT_COMMUNITY_TIME_ZONE`. Адреса и токен — те же имена, что отдаёт `Contour.Host --with-auction`, поэтому команда без переименований идёт и против контура. Для stage значения берутся из файла секретов хоста (токен вызывающего бота хаба), а адреса — туннелем с control node к Service'ам Identity, Meetups и Auction: порты подов снаружи закрыты. Команды туннеля — README ops-репозитория.
 
@@ -224,4 +245,4 @@ bin/stage presets         # активные наборы: ник и набор
 - **Простой PostgreSQL на обновлении оператора CNPG.** Инстанс один, и смена образа оператора пересоздаёт его: около трёх минут сервисы получают `connection refused`, а бот отвечает ошибкой зависимости. Так было 2026-10-06 после закрепления образа оператора по digest.
 - **Первое подключение нового пода к базе бывает отвергнуто.** Identity однажды перезапустился на старте с `connection refused` до `hub-pg-rw`, хотя PostgreSQL работал. Похоже на задержку, с которой NetworkPolicy k3s узнаёт адрес нового пода; рестарт её снимает. Повторилось 2026-10-07 на автовыкладке нового образа Identity: один рестарт, код 1, `connection refused`.
 - **NATS на stage новее локального.** Stage работает на nats-server 2.12, AppHost локально — на `nats:2.10-alpine`. Топология и сервисы на 2.12 работают, но опираться на возможности 2.12 нельзя, пока версии не выровнены решением об обновлении.
-- **Память урезана.** Лимиты сервисов stage в сумме 944Mi против формы чарта 2048Mi. На 2026-10-07 в простое Auction занимает 295Mi из 320Mi, бот хаба — 84Mi из 112Mi, Identity — 14Mi из 48Mi. OOMKilled — сигнал поднять квоту `test`, а не снять лимиты (дополнения ADR-055 от 2026-10-06 и 2026-10-07).
+- **Память урезана.** Лимиты сервисов stage в сумме 944Mi против формы чарта 2048Mi. На 2026-10-07 в простое Auction занимает 295Mi из 320Mi, бот хаба — 84Mi из 112Mi, Identity — 14Mi из 48Mi. OOMKilled — сигнал поднять квоту `stage`, а не снять лимиты (дополнения ADR-055 от 2026-10-06 и 2026-10-07).

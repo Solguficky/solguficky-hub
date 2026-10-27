@@ -25,6 +25,7 @@ import org.scalatest.wordspec.AnyWordSpec
 import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
 
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 
 final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPropertyChecks {
@@ -34,6 +35,9 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
 
   private val meetup = MeetupId(UUID.fromString("0190a0e0-0000-7000-8000-000000000001"))
   private val lot = LotId(new UUID(5L, 1L))
+
+  /** Ориентировочное время финала: подпись администратора, а не условие торгов (ADR-040, дополнение 2026-10-19). */
+  private val finalAt: Instant = Instant.parse("2026-10-09T18:00:00Z")
 
   private def born: Auction =
     Auction.apply(Auction.initial, AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)))
@@ -794,6 +798,216 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.decide(first, CancelAuction(op(30))) shouldBe Right(
         AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
       )
+    }
+  }
+
+  // ADR-040, дополнение 2026-10-19: ориентировочное время финала — подпись, а не условие торгов.
+  "estimated time of the final" should {
+
+    "sets, changes and clears the estimated time of the final before the final starts" in {
+      val set = Auction.decide(scheduled, SetFinalTime(Some(finalAt), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt)))
+      val withTime = applied(scheduled, set.toOption.get, 10, 10)
+      withTime.finalAt shouldBe Some(finalAt)
+
+      val changed = Auction.decide(withTime, SetFinalTime(Some(finalAt.plusSeconds(3600)), op(11)))
+      changed shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt.plusSeconds(3600))))
+      applied(withTime, changed.toOption.get, 11, 11).finalAt shouldBe Some(finalAt.plusSeconds(3600))
+
+      val cleared = Auction.decide(withTime, SetFinalTime(None, op(12)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeCleared))
+      applied(withTime, cleared.toOption.get, 12, 12).finalAt shouldBe None
+    }
+
+    "sets the estimated time while the online trading is going on" in {
+      Auction.decide(started, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt)))
+    }
+
+    "refuses the estimated time once the final has started and once the auction is over" in {
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      Auction.decide(inFinal, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.FinalAlreadyStarted)
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      Auction.decide(finished, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionAlreadyFinished)
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      Auction.decide(cancelled, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionAlreadyCancelled)
+      Auction.decide(Auction.initial, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val set = applied(scheduled, Auction.decide(scheduled, SetFinalTime(Some(finalAt), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.FinalTimeSet(finalAt))))
+    }
+  }
+
+  // PER-322: текст «как оплатить и получить» — не условие торгов, живёт в любом рождённом аукционе.
+  "payment instructions" should {
+
+    val text = PaymentInstructions.parse("Перевод на карту до срока").get
+
+    "sets, changes and clears the text before the trading" in {
+      val set = Auction.decide(scheduled, SetPaymentInstructions(Some(text), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsSet(text)))
+      val withText = applied(scheduled, set.toOption.get, 10, 10)
+      withText.paymentInstructions shouldBe Some(text)
+      withText.state shouldBe scheduled.state
+
+      val cleared = Auction.decide(withText, SetPaymentInstructions(None, op(11)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsCleared))
+      applied(withText, cleared.toOption.get, 11, 11).paymentInstructions shouldBe None
+    }
+
+    "sets the text after the end and after the cancellation of the auction: invoices outlive both" in {
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      List(started, inFinal, finished, cancelled).foreach { auction =>
+        val decided = Auction.decide(auction, SetPaymentInstructions(Some(text), op(10)))
+        decided shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PaymentInstructionsSet(text)))
+        applied(auction, decided.toOption.get, 10, 10).paymentInstructions shouldBe Some(text)
+      }
+    }
+
+    "refuses the text of an auction that does not exist" in {
+      Auction.decide(Auction.initial, SetPaymentInstructions(Some(text), op(10))) shouldBe
+        Left(PaymentInstructionsRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val set =
+        applied(scheduled, Auction.decide(scheduled, SetPaymentInstructions(Some(text), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetPaymentInstructions(None, op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.PaymentInstructionsSet(text))))
+    }
+
+    "forgets the text when the auction is discarded before the trading" in {
+      val withText = scheduled.copy(paymentInstructions = Some(text))
+      Auction.apply(withText, AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded)).paymentInstructions shouldBe
+        None
+    }
+  }
+
+  // PER-719: порядок и разделы ленты — показ, а не условие торгов; меняются, пока финал впереди.
+  "lot layout" should {
+
+    val other = LotId(new UUID(5L, 2L))
+
+    def section(id: Int, name: String, lots: LotId*): LotSection =
+      LotSection(LotSectionId(id).get, LotSectionName(name).get, lots.toList)
+
+    def layout(lots: List[LotId], sections: LotSection*): LotLayout = LotLayout.of(lots, sections.toList).toOption.get
+
+    def withLots(auction: Auction): Auction =
+      Auction.apply(holding(auction), AuctionEnvelope(11, op(11), AuctionEvent.LotAdded(other)))
+
+    val arranged = layout(List(other), section(1, "Книги", lot))
+
+    "sets the layout before the trading and replaces it as a whole" in {
+      val auction = withLots(scheduled)
+      val set = Auction.decide(auction, SetLotLayout(arranged, op(20)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.LotLayoutSet(arranged)))
+      val withLayout = applied(auction, set.toOption.get, 20, 20)
+      withLayout.layout shouldBe arranged
+      withLayout.state shouldBe auction.state
+
+      val flat = layout(List(lot, other))
+      val replaced = applied(withLayout, Auction.decide(withLayout, SetLotLayout(flat, op(21))).toOption.get, 21, 21)
+      replaced.layout shouldBe flat
+      replaced.layout.sections shouldBe Nil
+    }
+
+    "sets the layout during the online trading, in the break and with the lineup frozen" in {
+      val trading = Auction.apply(withLots(scheduled), AuctionEnvelope(12, op(12), AuctionEvent.PrebiddingStarted))
+      val break = trading.copy(state = AuctionState.Break(config(), op(12)))
+      val frozen = trading.copy(state = AuctionState.LineupFrozen(config(), op(12), List(lot)))
+      List(trading, break, frozen).foreach { auction =>
+        val decided = Auction.decide(auction, SetLotLayout(arranged, op(20)))
+        decided shouldBe Right(AuctionDecision.Accepted(AuctionEvent.LotLayoutSet(arranged)))
+        applied(auction, decided.toOption.get, 20, 20).layout shouldBe arranged
+      }
+    }
+
+    "refuses the layout once the final has started and once the auction is over" in {
+      val trading = Auction.apply(withLots(scheduled), AuctionEnvelope(12, op(12), AuctionEvent.PrebiddingStarted))
+      val inFinal = trading.copy(state = AuctionState.Final(config(), op(12), List(lot), Nil, Nil))
+      Auction.decide(inFinal, SetLotLayout(arranged, op(20))) shouldBe Left(LotLayoutRejected.FinalAlreadyStarted)
+      val finished = trading.copy(state = AuctionState.Finished(config(), op(12)))
+      Auction.decide(finished, SetLotLayout(arranged, op(20))) shouldBe Left(LotLayoutRejected.AuctionAlreadyFinished)
+      val cancelled = trading.copy(state = AuctionState.Cancelled(config(), op(12), op(13)))
+      Auction.decide(cancelled, SetLotLayout(arranged, op(20))) shouldBe
+        Left(LotLayoutRejected.AuctionAlreadyCancelled)
+      Auction.decide(Auction.initial, SetLotLayout(arranged, op(20))) shouldBe Left(LotLayoutRejected.AuctionNotFound)
+    }
+
+    "refuses a lot outside the registry, naming the first one with the sections first" in {
+      val stranger = LotId(new UUID(5L, 3L))
+      val auction = holding(scheduled)
+      Auction.decide(auction, SetLotLayout(layout(List(stranger), section(1, "Книги", lot, other)), op(20))) shouldBe
+        Left(LotLayoutRejected.LotNotInAuction(other))
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val auction = withLots(scheduled)
+      val set = applied(auction, Auction.decide(auction, SetLotLayout(arranged, op(20))).toOption.get, 20, 20)
+      Auction.decide(set, SetLotLayout(LotLayout.empty, op(20))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(20, op(20), AuctionEvent.LotLayoutSet(arranged))))
+    }
+
+    "drops a lot removed from the registry from its place and keeps its section" in {
+      val auction = withLots(scheduled).copy(layout = arranged)
+      val removed = Auction.apply(auction, AuctionEnvelope(20, op(20), AuctionEvent.LotRemoved(lot)))
+      removed.layout shouldBe layout(List(other), section(1, "Книги"))
+    }
+
+    "forgets the layout when the auction is discarded before the trading" in {
+      val auction = withLots(scheduled).copy(layout = arranged)
+      Auction.apply(auction, AuctionEnvelope(20, op(20), AuctionEvent.AuctionDiscarded)).layout shouldBe LotLayout.empty
+    }
+  }
+
+  "lot layout form" should {
+
+    val other = LotId(new UUID(5L, 2L))
+
+    "refuses a lot named twice, in a section and outside the sections alike" in {
+      val books = LotSection(LotSectionId(1).get, LotSectionName("Книги").get, List(lot))
+      LotLayout.of(List(lot), List(books)) shouldBe Left(LotLayoutInvalid.LotRepeated(lot))
+      LotLayout.of(List(other, other), Nil) shouldBe Left(LotLayoutInvalid.LotRepeated(other))
+    }
+
+    "refuses a section number named twice" in {
+      val first = LotSection(LotSectionId(2).get, LotSectionName("Книги").get, List(lot))
+      val second = LotSection(LotSectionId(2).get, LotSectionName("Посуда").get, List(other))
+      LotLayout.of(Nil, List(first, second)) shouldBe Left(LotLayoutInvalid.SectionRepeated(LotSectionId(2).get))
+    }
+
+    "accepts only a positive section number and a name that is not blank" in {
+      LotSectionId(0) shouldBe None
+      LotSectionId(-1) shouldBe None
+      LotSectionId(1).map(_.value) shouldBe Some(1)
+      LotSectionName(" \u00a0 ") shouldBe None
+      LotSectionName("Книги").map(_.value) shouldBe Some("Книги")
+    }
+  }
+
+  "payment instructions text" should {
+
+    "keeps line breaks and strips the edges" in {
+      PaymentInstructions.parse("  Карта\nСамовывоз  ").map(_.value) shouldBe Some("Карта\nСамовывоз")
+    }
+
+    "refuses a blank text and a text over the limit, counting characters rather than UTF-16 units" in {
+      PaymentInstructions.parse(" \n ") shouldBe None
+      PaymentInstructions.parse("я" * PaymentInstructions.MaxLength).map(_.value.length) shouldBe
+        Some(PaymentInstructions.MaxLength)
+      PaymentInstructions.parse("я" * (PaymentInstructions.MaxLength + 1)) shouldBe None
+      // Эмодзи вне BMP — две единицы UTF-16, но один знак.
+      PaymentInstructions.parse("😀" * PaymentInstructions.MaxLength) shouldBe defined
     }
   }
 }

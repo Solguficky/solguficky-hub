@@ -32,6 +32,7 @@ import {
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
+  createParticipantUsernameResolver,
   createPlaceBidsReader,
   createRightRecordAdministrator,
   createTelegramRecipientResolver,
@@ -410,6 +411,95 @@ describe("organizer resolver", () => {
         new ConnectError("outside the hub", Code.PermissionDenied),
       ).resolveOrganizerUsername(viewer, organizerId),
     ).resolves.toMatchObject({ kind: "rejected", code: "PermissionDenied" });
+  });
+});
+
+describe("participant username resolver", () => {
+  const winnerId = "0192f0a0-0000-7000-8000-00000000a002";
+  const viewer = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+  };
+
+  function failing(cause: unknown, refused?: (failure: unknown) => void) {
+    return createParticipantUsernameResolver(
+      {
+        resolveParticipantUsername: () => Promise.reject(cause),
+      },
+      3_000,
+      refused,
+    );
+  }
+
+  it("sends the viewer as the actor and returns the username", async () => {
+    const rpc = vi.fn().mockResolvedValue({ telegramUsername: "owl" });
+    const participants = createParticipantUsernameResolver({
+      resolveParticipantUsername: rpc,
+    });
+    await expect(
+      participants.resolveParticipantUsername(viewer, winnerId, {
+        requestId: "req-2",
+      }),
+    ).resolves.toEqual({ kind: "resolved", telegramUsername: "owl" });
+    expect(rpc).toHaveBeenCalledWith(
+      {
+        actor: { identityId: viewer.identityId },
+        identityId: winnerId,
+      },
+      expect.objectContaining({ headers: { [requestIdHeader]: "req-2" } }),
+    );
+  });
+
+  it("resolves a participant without a username to an absent field", async () => {
+    const participants = createParticipantUsernameResolver({
+      resolveParticipantUsername: vi.fn().mockResolvedValue({}),
+    });
+    await expect(
+      participants.resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toEqual({ kind: "resolved" });
+  });
+
+  // Отказ участнику — не сбой: во второй раз он и не повторится, и записи
+  // на warn не заслуживает.
+  it("keeps the refusal of a participant apart from a failure", async () => {
+    const refused = vi.fn();
+    await expect(
+      failing(
+        new ConnectError("not an organizer", Code.PermissionDenied),
+        refused,
+      ).resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toEqual({ kind: "denied" });
+    expect(refused).not.toHaveBeenCalled();
+  });
+
+  it("separates not-found from an unanswered call", async () => {
+    await expect(
+      failing(
+        new ConnectError("unknown", Code.NotFound),
+      ).resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toEqual({ kind: "not-found" });
+    const refused = vi.fn();
+    await expect(
+      failing(
+        new ConnectError("down", Code.Unavailable),
+        refused,
+      ).resolveParticipantUsername(viewer, winnerId, { requestId: "req-3" }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    expect(refused).toHaveBeenCalledWith(
+      expect.objectContaining({ requestId: "req-3" }),
+    );
+  });
+
+  it("reports a contract violation to the caller as a refusal", async () => {
+    const refused = vi.fn();
+    await expect(
+      failing(
+        new ConnectError("bad id", Code.InvalidArgument),
+        refused,
+      ).resolveParticipantUsername(viewer, winnerId),
+    ).resolves.toMatchObject({ kind: "rejected", code: "InvalidArgument" });
+    expect(refused).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "InvalidArgument" }),
+    );
   });
 });
 
@@ -1331,8 +1421,10 @@ describe("access requester", () => {
     [AccessRequestOutcome.PENDING, "pending"],
     [AccessRequestOutcome.DECLINED, "declined"],
     [AccessRequestOutcome.BLOCKED, "blocked"],
+    [AccessRequestOutcome.INVITATION_ONLY, "invitation-only"],
     [AccessRequestOutcome.UNSPECIFIED, "unspecified"],
-    // Число, которого словарь ещё не знает, — отказ, а не допуск.
+    // Число, которого словарь ещё не знает, — отказ, а не допуск. Так бот,
+    // собранный до INVITATION_ONLY (PER-739), читает и шестёрку.
     [99 as AccessRequestOutcome, "unspecified"],
   ])("reads the outcome %s as %s", async (wire, outcome) => {
     const identity = createAccessRequester({

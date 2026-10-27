@@ -22,6 +22,7 @@ import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickPredictionStore
 import auction.persistence.SlickRaffleTickets
 import auction.persistence.SlickResultsOutcomes
+import auction.persistence.SlickSetOutcomes
 import auction.persistence.SlickResultsStore
 import auction.naming.DisplayNameCommands
 import auction.raffle.RaffleSettings
@@ -112,6 +113,12 @@ object Main {
       case Right(settings) => settings
       case Left(reason) => fail(reason, None)
     }
+    // Режим итога розыгрыша (PER-727) виден в логе старта: на проде его включает values среды, и запись — способ
+    // убедиться, что выкладка его донесла.
+    logger.info(
+      "auction raffle draw configured",
+      StructuredArguments.keyValue("raffle_draw", if (raffle.byHand) "manual" else "automatic")
+    )
     val erasureEvery: FiniteDuration = config.getDuration("auction.raffle.erasure-every").toScala
 
     // Схема применяется до ActorSystem: журнал, поднятый на базе без таблиц,
@@ -184,8 +191,10 @@ object Main {
       AuctionRaffle.sharded(sharding, askTimeout),
       AuctionNode.registerSlot(sharding, clock, UuidV7.generator(clock), slot),
       predictions,
-      results
+      results,
+      SlickSetOutcomes(system)
     )
+    val invoices = AuctionNode.registerInvoices(sharding, clock, UuidV7.generator(clock), askTimeout)
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)
       logger.warn(
@@ -197,6 +206,7 @@ object Main {
       )
     val projectionMetrics = ProjectionMetrics(telemetry.getMeter("auction"), clock)
     AuctionNode.startProjection(system, projectionMetrics, backlogTimeout)
+    AuctionNode.startInvoicing(system, sharding, invoices, projectionMetrics, askTimeout, backlogTimeout)
     AuctionNode.watchDeadlines(
       system,
       DeadlineMetrics(telemetry.getMeter("auction")),
@@ -251,7 +261,9 @@ object Main {
           placeBidsAccess.holdsRight,
           changes,
           clock,
-          overdueGrace
+          overdueGrace,
+          invoices,
+          raffle.byHand
         )
       )
       .onComplete(bound("grpc", system))

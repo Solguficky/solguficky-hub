@@ -255,6 +255,9 @@ async function routeEntry(input: {
             screen: { kind: "denied", reason: entry.reason },
             identityId: entry.identityId,
           };
+        // Политика отдаёт `invitation-only` только хабу; ветка здесь ради
+        // полноты типа и отвечает, как на незнакомый исход.
+        case "invitation-only":
         case "unknown-outcome":
           return {
             screen: unavailable,
@@ -412,6 +415,7 @@ async function routeEntry(input: {
         viewer,
         exit,
         ...(local.choose === undefined ? {} : { choose: local.choose }),
+        ...(local.detached === true ? { detached: true } : {}),
       });
     }
     const listScreen = async (list: ListAction): Promise<RouteOutcome> => {
@@ -451,6 +455,27 @@ async function routeEntry(input: {
       }),
     );
   } catch (cause) {
+    // Карточка, хронология, избранное и экран сета начинаются с GetLot. Лот,
+    // который исчез или стал невидимым, — устаревшая кнопка, а не временный
+    // отказ Auction: повтор того же callback его не откроет. Список намерений
+    // тот же, что у хаба (bot.ts).
+    if (
+      cause instanceof ConnectError &&
+      cause.code === Code.NotFound &&
+      input.action.kind === "callback"
+    ) {
+      const parsed = parseAuctionCallback(input.action.data);
+      if (
+        parsed.ok &&
+        (parsed.intent.kind === "lot" ||
+          parsed.intent.kind === "set" ||
+          parsed.intent.kind === "history" ||
+          parsed.intent.kind === "follow" ||
+          parsed.intent.kind === "unfollow")
+      ) {
+        return { screen: { kind: "outdated" }, identityId };
+      }
+    }
     return { screen: unavailable, identityId, failure: classify(cause) };
   }
 }
@@ -465,6 +490,8 @@ async function outbidSettings(input: {
   viewer: Viewer;
   exit: UnavailableExit;
   choose?: AuctionNotificationChange;
+  // Экран открыт из вести (№73 прогона 14 октября 2026 года).
+  detached?: true;
 }): Promise<RouteOutcome> {
   const { outbid } = input.ports;
   const identityId = input.viewer.identityId;
@@ -495,7 +522,11 @@ async function outbidSettings(input: {
     };
   }
   return {
-    screen: { kind: "notify", current },
+    screen: {
+      kind: "notify",
+      current,
+      ...(input.detached === true ? { detached: true } : {}),
+    },
     identityId,
     ...(input.choose === undefined
       ? {}

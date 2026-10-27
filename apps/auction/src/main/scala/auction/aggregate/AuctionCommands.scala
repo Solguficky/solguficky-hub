@@ -24,6 +24,8 @@ import auction.lot.UnmarkForFinalRejected
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
+import java.time.Instant
+
 /**
  * Ответ Meetups на `CheckMeetupAuthority` (ADR-051) в домене Auction. `Unavailable` — право сейчас не подтвердить: это
  * статус ответа, а не отказ, и события он не порождает. Сбой самой проверки — неудачное `Future`. `Granted` несёт
@@ -77,6 +79,18 @@ enum RemovalRefusal {
   case LotNotInAuction
 }
 
+/**
+ * Отказ определения и удаления сета (ADR-073): проверка до агрегата или решение агрегата. Замороженные сеты —
+ * `Denied(LotsFrozen)`, как у реестра.
+ */
+enum LotSetRefusal {
+  case Denied(denial: Denial)
+  case NameEmpty
+  case LotNotInAuction(lot: LotId)
+  case LotInAnotherSet(lot: LotId, set: LotSetId)
+  case LotSetNotFound
+}
+
 /** Отказ `ScheduleAuction`: проверка до агрегата или решение агрегата. */
 enum SchedulingRefusal {
   case Denied(denial: Denial)
@@ -97,6 +111,41 @@ enum DiscardRefusal {
 enum VisibilityRefusal {
   case Denied(denial: Denial)
   case AuctionAlreadyStarted
+  case OpIdTaken
+}
+
+/**
+ * Отказ выставления ориентировочного времени финала: проверка до агрегата или решение агрегата. `OpIdTaken` — под этим
+ * `op_id` записана другая команда аукциона: у пары взаимно обратных команд тихое «принято» на чужой повтор оставило бы
+ * видимость не той.
+ */
+enum FinalTimeRefusal {
+  case Denied(denial: Denial)
+  case FinalAlreadyStarted
+  case AuctionAlreadyFinished
+  case AuctionAlreadyCancelled
+  case OpIdTaken
+}
+
+/**
+ * Отказ текста оплаты (PER-322): проверка до агрегата. `OpIdTaken` — под этим `op_id` записана другая команда: у
+ * выставления и снятия, как у времени финала, тихое «принято» на чужой повтор оставило бы не тот текст.
+ */
+enum PaymentInstructionsRefusal {
+  case Denied(denial: Denial)
+  case OpIdTaken
+}
+
+/**
+ * Отказ раскладки ленты (PER-719): проверка до агрегата или решение агрегата. `OpIdTaken` — под этим `op_id` записана
+ * другая команда или другая раскладка: тихое «принято» сообщило бы о порядке, которого в журнале нет.
+ */
+enum LotLayoutRefusal {
+  case Denied(denial: Denial)
+  case FinalAlreadyStarted
+  case AuctionAlreadyFinished
+  case AuctionAlreadyCancelled
+  case LotNotInAuction(lot: LotId)
   case OpIdTaken
 }
 
@@ -321,6 +370,59 @@ final class AuctionCommands(
         }
     }
 
+  /**
+   * Определение сета (ADR-073): тот же порядок, что у реестра, — повтор, аукцион, право у Meetups, затем название и
+   * решение агрегата. Название проверяется после права, как у карточки каталога.
+   */
+  def saveLotSet(
+      auctionId: AuctionId,
+      set: LotSetId,
+      name: String,
+      lots: List[LotId],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[LotSetRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(LotSetRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, LotSetRefusal.Denied(_)) {
+          LotSetName(name) match {
+            case Left(_) => Future.successful(Left(LotSetRefusal.NameEmpty))
+            case Right(named) =>
+              auctions.saveLotSet(auctionId, SaveLotSet(set, named, lots, opId), Initiator.Operator(person)).map {
+                case Left(SaveLotSetRejected.AuctionNotFound) => Left(LotSetRefusal.Denied(Denial.AuctionNotFound))
+                case Left(SaveLotSetRejected.LotsFrozen) => Left(LotSetRefusal.Denied(Denial.LotsFrozen))
+                case Left(SaveLotSetRejected.NameEmpty) => Left(LotSetRefusal.NameEmpty)
+                case Left(SaveLotSetRejected.LotNotInAuction(lot)) => Left(LotSetRefusal.LotNotInAuction(lot))
+                case Left(SaveLotSetRejected.LotInAnotherSet(lot, owner)) =>
+                  Left(LotSetRefusal.LotInAnotherSet(lot, owner))
+                case Right(_) => Right(())
+              }
+          }
+        }
+    }
+
+  def deleteLotSet(
+      auctionId: AuctionId,
+      set: LotSetId,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[LotSetRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(LotSetRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, LotSetRefusal.Denied(_)) {
+          auctions.deleteLotSet(auctionId, DeleteLotSet(set, opId), Initiator.Operator(person)).map {
+            case Left(DeleteLotSetRejected.AuctionNotFound) => Left(LotSetRefusal.Denied(Denial.AuctionNotFound))
+            case Left(DeleteLotSetRejected.LotsFrozen) => Left(LotSetRefusal.Denied(Denial.LotsFrozen))
+            case Left(DeleteLotSetRejected.LotSetNotFound) => Left(LotSetRefusal.LotSetNotFound)
+            case Right(_) => Right(())
+          }
+        }
+    }
+
   def schedule(
       auctionId: AuctionId,
       config: AuctionConfigInput,
@@ -403,6 +505,120 @@ final class AuctionCommands(
           }
         }
     }
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): выставить, изменить или снять. Порядок тот же, что у
+   * остальных команд: повтор, аукцион без журнала, право у Meetups, затем агрегат. Ворота — сходка не отменена.
+   */
+  def setFinalTime(
+      auctionId: AuctionId,
+      at: Option[Instant],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[FinalTimeRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        // Выставить и снять — разные события: снятие под `op_id` выставления — чужая команда, как публикация под
+        // `op_id` снятия (ADR-047, дополнение 2026-10-20). Тихое «принято» оставило бы время на месте.
+        val same = original.event match {
+          case AuctionEvent.FinalTimeSet(_) => at.isDefined
+          case AuctionEvent.FinalTimeCleared => at.isEmpty
+          case _ => false
+        }
+        Future.successful(Either.cond(same, (), FinalTimeRefusal.OpIdTaken))
+      case Inspection.Absent => Future.successful(Left(FinalTimeRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, FinalTimeRefusal.Denied(_)) {
+          auctions.setFinalTime(auctionId, SetFinalTime(at, opId), Initiator.Operator(person)).map {
+            case Left(FinalTimeRejected.AuctionNotFound) => Left(FinalTimeRefusal.Denied(Denial.AuctionNotFound))
+            case Left(FinalTimeRejected.FinalAlreadyStarted) => Left(FinalTimeRefusal.FinalAlreadyStarted)
+            case Left(FinalTimeRejected.AuctionAlreadyFinished) => Left(FinalTimeRefusal.AuctionAlreadyFinished)
+            case Left(FinalTimeRejected.AuctionAlreadyCancelled) => Left(FinalTimeRefusal.AuctionAlreadyCancelled)
+            // Ответ entity — записанный конверт: чужое событие под тем же `op_id` значит, что время не выставлено
+            // (ADR-047, «Открыто»: повтор отвечает исходным ответом только своей команде).
+            case Right(AuctionAnswer.Written(original)) =>
+              val ours = original.event match {
+                case AuctionEvent.FinalTimeSet(_) => at.isDefined
+                case AuctionEvent.FinalTimeCleared => at.isEmpty
+                case _ => false
+              }
+              Either.cond(ours, (), FinalTimeRefusal.OpIdTaken)
+            case Right(AuctionAnswer.Unchanged) => Right(())
+          }
+        }
+    }
+
+  /**
+   * Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. Порядок тот же, что у времени финала, а
+   * ворот по сходке нет, как у отметок счёта: проданный лот ждёт оплаты и у отменённой сходки.
+   */
+  def setPaymentInstructions(
+      auctionId: AuctionId,
+      text: Option[PaymentInstructions],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[PaymentInstructionsRefusal, Unit]] = {
+    // Выставить и снять — разные события: снятие под `op_id` выставления — чужая команда. Другой текст под тем же
+    // `op_id` — тоже чужая команда: тихое «принято» сообщило бы о тексте, которого в журнале нет.
+    def ours(envelope: AuctionEnvelope): Boolean =
+      envelope.event match {
+        case AuctionEvent.PaymentInstructionsSet(recorded) => text.contains(recorded)
+        case AuctionEvent.PaymentInstructionsCleared => text.isEmpty
+        case _ => false
+      }
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        Future.successful(Either.cond(ours(original), (), PaymentInstructionsRefusal.OpIdTaken))
+      case Inspection.Absent => Future.successful(Left(PaymentInstructionsRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.Unconditional, PaymentInstructionsRefusal.Denied(_)) {
+          auctions
+            .setPaymentInstructions(auctionId, SetPaymentInstructions(text, opId), Initiator.Operator(person))
+            .map {
+              case Left(PaymentInstructionsRejected.AuctionNotFound) =>
+                Left(PaymentInstructionsRefusal.Denied(Denial.AuctionNotFound))
+              case Right(AuctionAnswer.Written(original)) =>
+                Either.cond(ours(original), (), PaymentInstructionsRefusal.OpIdTaken)
+              case Right(AuctionAnswer.Unchanged) => Right(())
+            }
+        }
+    }
+  }
+
+  /**
+   * Порядок и разделы ленты (PER-719): раскладка целиком. Порядок тот же, что у времени финала: повтор, аукцион без
+   * журнала, право у Meetups, затем агрегат. Ворота — сходка не отменена.
+   */
+  def setLotLayout(
+      auctionId: AuctionId,
+      layout: LotLayout,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[LotLayoutRefusal, Unit]] = {
+    // Другая раскладка под тем же `op_id` — чужая команда, как другой текст оплаты.
+    def ours(envelope: AuctionEnvelope): Boolean =
+      envelope.event match {
+        case AuctionEvent.LotLayoutSet(recorded) => recorded == layout
+        case _ => false
+      }
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        Future.successful(Either.cond(ours(original), (), LotLayoutRefusal.OpIdTaken))
+      case Inspection.Absent => Future.successful(Left(LotLayoutRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, LotLayoutRefusal.Denied(_)) {
+          auctions.setLotLayout(auctionId, SetLotLayout(layout, opId), Initiator.Operator(person)).map {
+            case Left(LotLayoutRejected.AuctionNotFound) => Left(LotLayoutRefusal.Denied(Denial.AuctionNotFound))
+            case Left(LotLayoutRejected.FinalAlreadyStarted) => Left(LotLayoutRefusal.FinalAlreadyStarted)
+            case Left(LotLayoutRejected.AuctionAlreadyFinished) => Left(LotLayoutRefusal.AuctionAlreadyFinished)
+            case Left(LotLayoutRejected.AuctionAlreadyCancelled) => Left(LotLayoutRefusal.AuctionAlreadyCancelled)
+            case Left(LotLayoutRejected.LotNotInAuction(lot)) => Left(LotLayoutRefusal.LotNotInAuction(lot))
+            case Right(AuctionAnswer.Written(original)) => Either.cond(ours(original), (), LotLayoutRefusal.OpIdTaken)
+            case Right(AuctionAnswer.Unchanged) => Right(())
+          }
+        }
+    }
+  }
 
   /**
    * Отмена аукциона после старта торгов (ADR-047, дополнение 2026-10-12). Порядок тот же, что у остальных команд. Как у
@@ -767,7 +983,10 @@ final class AuctionCommands(
           AuctionEvent.PrebiddingDeadlineReached | AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) |
           AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) | AuctionEvent.FinalLotCompleted(_) |
           AuctionEvent.AuctionFinished | AuctionEvent.StepWindowLaunched(_) | AuctionEvent.AuctionPublished |
-          AuctionEvent.AuctionHidden =>
+          AuctionEvent.AuctionHidden | AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared |
+          AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared |
+          AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) | AuctionEvent.LotSetSettled(_, _) |
+          AuctionEvent.LotLayoutSet(_) =>
         false
     }
 }

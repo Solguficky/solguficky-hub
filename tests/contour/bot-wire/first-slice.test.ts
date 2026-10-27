@@ -98,7 +98,7 @@ describe("сценарий первого среза", () => {
     expect(member.buttons()).toContain("Сходки");
     expect(member.buttons()).not.toContain("Управление");
     await member.presses("Сходки");
-    expect(member.buttons()).toContain("Архив");
+    expect(member.buttons()).toContain("🗂 Архив");
     await member.says("/manage");
     expect(member.sees()).toBe("Управление сходками доступно администратору.");
   });

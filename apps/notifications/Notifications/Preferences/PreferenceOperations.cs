@@ -3,6 +3,8 @@ using Notifications.Infrastructure;
 using Notifications.V1;
 using Npgsql;
 
+using Notifications.Auction;
+
 namespace Notifications.Preferences;
 
 /// <summary>
@@ -158,6 +160,7 @@ public sealed class PreferenceOperations(
         OutbidFrequency? frequency,
         bool? finalAnnouncements,
         bool? liveFinalOutbids,
+        bool? auctionAnnouncements,
         CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
@@ -175,6 +178,10 @@ public sealed class PreferenceOperations(
         {
             await OutbidStore.SetLiveFinal(work, identityId, live, now, cancellationToken);
         }
+        if (auctionAnnouncements is { } announcements)
+        {
+            await AuctionAnnouncementStore.Set(work, identityId, announcements, now, cancellationToken);
+        }
         var stored = await ReadAuction(work, identityId, cancellationToken);
 
         await work.Commit(cancellationToken);
@@ -186,7 +193,8 @@ public sealed class PreferenceOperations(
         CancellationToken cancellationToken) =>
         new(await OutbidStore.ReadPreference(work, identityId, cancellationToken) ?? OutbidFrequencies.Default,
             await FinalStore.ReadAnnouncements(work, identityId, cancellationToken) ?? true,
-            await OutbidStore.ReadLiveFinal(work, identityId, cancellationToken) ?? OutbidFrequencies.LiveFinalDefault);
+            await OutbidStore.ReadLiveFinal(work, identityId, cancellationToken) ?? OutbidFrequencies.LiveFinalDefault,
+            await AuctionAnnouncementStore.Read(work, identityId, cancellationToken) ?? AuctionAnnouncementStore.Default);
 
     /// <summary>Видел ли человек пояснение автоставки (PER-517).</summary>
     public async Task<bool> ReadProxyExplainer(Guid identityId, CancellationToken cancellationToken)

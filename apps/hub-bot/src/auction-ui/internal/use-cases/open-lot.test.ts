@@ -46,7 +46,17 @@ const auction: AuctionPort = {
   cancelRaffleRegistration: async () => {
     throw new Error("not used");
   },
+  listMyInvoices: async () => ({ invoices: [] }),
+  chooseFulfillment: async () => {
+    throw new Error("not used");
+  },
   getMyPredictions: async () => [],
+  getPredictionResults: async () => {
+    throw new Error("not used");
+  },
+  getDayChronicle: async () => {
+    throw new Error("not used");
+  },
   submitPrediction: async () => {
     throw new Error("not used");
   },

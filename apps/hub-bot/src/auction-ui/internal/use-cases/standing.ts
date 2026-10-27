@@ -32,6 +32,9 @@ export function feedItemOf(lot: LotView, viewer: Viewer): FeedItem {
       ? {}
       : { activeWindow: lot.activeWindow }),
     ...(standing === undefined ? {} : { standing }),
+    // Сет, в который входит лот (ADR-073): строка ленты отмечает
+    // принадлежность к нему.
+    ...(lot.lotSet === undefined ? {} : { setName: lot.lotSet.name }),
   };
 }
 

@@ -69,7 +69,7 @@ on:
     needs: publish
     uses: ./.github/workflows/stage-bump.yml
     with:
-      file: stage/test/values.yaml
+      file: envs/stage/values.yaml
       key: .parameters.hub_bot.hub_bot_image
       value: ${{ needs.publish.outputs.ref }}
 ```

@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
+  AntiSnipeSchema,
   LotConfigSchema,
   LotPhase,
   type Money,
@@ -12,6 +13,9 @@ import {
   WithdrawnReason,
 } from "../../../gen/auction/v1/auction_pb.js";
 import {
+  DisplayNameKind,
+  DisplayNameSchema,
+  LotSetMembershipSchema,
   LotSnapshotSchema,
   LotStepWindowSchema,
 } from "../../../gen/auction/v1/auction_service_pb.js";
@@ -47,6 +51,7 @@ describe("lotViewOf", () => {
         currentPrice: { minorUnits: 120_000, currency: "RUB" },
         leaderId: "p-1",
         deadline: "2026-10-10T18:00:00Z",
+        extensionsUsed: 0,
         phase: "online",
       },
     ],
@@ -58,6 +63,7 @@ describe("lotViewOf", () => {
       {
         kind: "trading",
         currentPrice: { minorUnits: 10_000, currency: "RUB" },
+        extensionsUsed: 0,
         phase: "live",
       },
     ],
@@ -74,6 +80,7 @@ describe("lotViewOf", () => {
       {
         kind: "trading",
         currentPrice: { minorUnits: 10_000, currency: "RUB" },
+        extensionsUsed: 0,
         phase: "live",
         ask: { minorUnits: 15_000, currency: "RUB" },
       },
@@ -91,6 +98,7 @@ describe("lotViewOf", () => {
       {
         kind: "trading",
         currentPrice: { minorUnits: 15_000, currency: "RUB" },
+        extensionsUsed: 0,
         phase: "live",
       },
     ],
@@ -232,6 +240,34 @@ describe("lotViewOf", () => {
     });
   });
 
+  // Экран принятой ставки называет продление анти-снайпом (PER-631, №107):
+  // условия и счётчик продлений доходят до дерева как есть.
+  it("reads the anti-sniping terms and the extensions used", () => {
+    const view = lotViewOf(
+      create(LotSnapshotSchema, {
+        ...base,
+        config: create(LotConfigSchema, {
+          antiSnipe: create(AntiSnipeSchema, {
+            windowSeconds: 120n,
+            extensionSeconds: 120n,
+            maxExtensions: 3,
+          }),
+        }),
+        status: {
+          case: "trading",
+          value: {
+            currentPrice: rub(1200n),
+            deadline: "2026-10-10T18:00:00Z",
+            extensionsUsed: 2,
+            phase: LotPhase.ONLINE,
+          },
+        },
+      }),
+    );
+    expect(view.antiSnipe).toEqual({ windowSeconds: 120, maxExtensions: 3 });
+    expect(view.status).toMatchObject({ kind: "trading", extensionsUsed: 2 });
+  });
+
   it("refuses a window without a step", () => {
     const snapshot = create(LotSnapshotSchema, {
       ...base,
@@ -245,6 +281,44 @@ describe("lotViewOf", () => {
       },
     });
     expect(() => lotViewOf(snapshot)).toThrow("without an amount");
+  });
+
+  // Сет лота (ADR-073, п. 7): название, состав по порядку организатора и
+  // собравший по отображаемому имени. До итога сета имени нет.
+  it("reads the set of the lot and the collector after the outcome", () => {
+    const set = create(LotSetMembershipSchema, {
+      lotSetId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1",
+      name: "Лесные дары",
+      lotIds: ["lot-1", "lot-2"],
+    });
+    const before = create(LotSnapshotSchema, {
+      ...base,
+      lotSet: set,
+      status: { case: "unsold", value: UnsoldReason.NO_BIDS },
+    });
+    expect(lotViewOf(before).lotSet).toEqual({
+      name: "Лесные дары",
+      lotIds: ["lot-1", "lot-2"],
+    });
+    const after = create(LotSnapshotSchema, {
+      ...base,
+      lotSet: create(LotSetMembershipSchema, {
+        lotSetId: "01929b7e-5c1d-7a3f-8e4b-0000000000a1",
+        name: "Лесные дары",
+        lotIds: ["lot-1", "lot-2"],
+        collectorId: "p-1",
+        collectorName: create(DisplayNameSchema, {
+          text: "@owl",
+          kind: DisplayNameKind.TELEGRAM_USERNAME,
+        }),
+      }),
+      status: { case: "unsold", value: UnsoldReason.NO_BIDS },
+    });
+    expect(lotViewOf(after).lotSet).toEqual({
+      name: "Лесные дары",
+      lotIds: ["lot-1", "lot-2"],
+      collectorName: "@owl",
+    });
   });
 
   it("refuses a snapshot without status", () => {

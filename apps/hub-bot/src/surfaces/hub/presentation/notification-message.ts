@@ -7,12 +7,21 @@ import {
   type SendResult,
 } from "../../../core/delivery/index.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
+import { renderAuctionAnnouncement } from "../../../core/notifications/auction-announcement-notice.js";
+import { renderAuctionCancelledNotice } from "../../../core/notifications/auction-cancelled-notice.js";
 import type { FinalNotice } from "../../../core/notifications/final-notice.js";
+import type {
+  InvoiceNotice,
+  InvoiceNoticeView,
+} from "../../../core/notifications/invoice-notice.js";
 import type {
   LotNotice,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
+import { renderLotSetNotice } from "../../../core/notifications/lot-set-notice.js";
+import { renderPredictionResultsNotice } from "../../../core/notifications/prediction-results-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
+import type { StepWindowNotice } from "../../../core/notifications/step-window-notice.js";
 import {
   admitLabel,
   declineLabel,
@@ -44,6 +53,7 @@ import {
   toManage,
 } from "./screens/kit.js";
 import { releasePostData } from "./screens/release-notes.js";
+import { screenMark } from "./screens/show.js";
 
 // Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
 // нажатие даёт то же «выключено», а не включает категорию обратно.
@@ -119,10 +129,17 @@ export type ReleaseNote = {
 export type OutgoingNotification =
   | Exclude<
       RenderableContent,
-      LotNotice | FinalNotice | { kind: "release-summary" }
+      | LotNotice
+      | FinalNotice
+      | StepWindowNotice
+      | InvoiceNotice
+      | { kind: "release-summary" }
     >
   | AccessRequestView
   | { kind: "lot-notice"; view: LotNoticeView }
+  // Напоминание о счёте (PER-322) приходит собранным: название лота читается
+  // у Auction до отправителя.
+  | { kind: "invoice-notice"; view: InvoiceNoticeView }
   | ReleaseNote;
 
 // Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
@@ -134,6 +151,7 @@ export function renderNotification(
   content: OutgoingNotification,
   auctionBotUsername?: string,
   today?: CommunityDay,
+  timeZone = "UTC",
 ): NotificationMessage {
   if (
     content.kind === "access-requested" ||
@@ -182,6 +200,21 @@ export function renderNotification(
       keyboard: undefined,
     };
   }
+  if (content.kind === "prediction-results") {
+    const view = renderPredictionResultsNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({
+            kind: "prediction-results",
+            auctionId: view.button.auctionId,
+          }).slice(3)}`,
+        ),
+      ),
+    };
+  }
   if (content.kind === "raffle-result") {
     // Итог розыгрыша (PER-620): кнопка следа — экран итога розыгрыша аукционного
     // дерева придёт новым сообщением, весть останется в истории.
@@ -196,8 +229,76 @@ export function renderNotification(
       ),
     };
   }
+  if (content.kind === "invoice-notice") {
+    // Напоминание о счёте (PER-322): кнопка следа — экран счёта придёт новым
+    // сообщением, весть останется в истории.
+    const { button } = content.view;
+    return {
+      text: content.view.text,
+      format: content.view.format,
+      keyboard: new InlineKeyboard().text(
+        button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "invoice", lotId: button.lotId, invoiceId: button.invoiceId }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "lot-set-collected") {
+    // Собранный сет (PER-687): весть простым текстом, как итог розыгрыша, так
+    // что имя сета от организатора экранировать не нужно; кнопка следа
+    // открывает существующий экран сета новым сообщением, не изменяя весть.
+    const view = renderLotSetNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "set", lotId: view.button.lotId, page: 0 }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "auction-cancelled") {
+    // Отмена аукциона (PER-606): кнопка следа — корень аукциона придёт новым
+    // сообщением, весть останется в истории.
+    const view = renderAuctionCancelledNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "root", auctionId: view.button.auctionId }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "new-auction" || content.kind === "trading-opened") {
+    // Вести о новом аукционе и об открытии торгов (PER-646): кнопка следа —
+    // корень аукциона или его лента, экран придёт новым сообщением.
+    const view = renderAuctionAnnouncement(content, timeZone);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback(
+            content.kind === "new-auction"
+              ? { kind: "root", auctionId: view.button.auctionId }
+              : { kind: "feed", auctionId: view.button.auctionId, page: 0 },
+          ).slice(3)}`,
+        ),
+      ),
+    };
+  }
   if (content.kind === "lot-notice") {
-    return { text: content.view.text, keyboard: lotKeyboard(content.view) };
+    return {
+      text: content.view.text,
+      keyboard: lotKeyboard(content.view),
+      ...(content.view.format === undefined
+        ? {}
+        : { format: content.view.format }),
+    };
   }
   if (content.kind === "community-announcement") {
     return {
@@ -569,6 +670,7 @@ export function createNotificationSender(
   api: SendMessageApi,
   auctionBotUsername?: string,
   today?: () => CommunityDay,
+  timeZone = "UTC",
 ): NotificationSender<OutgoingNotification> {
   return {
     async send({ telegramUserId, message: content }) {
@@ -576,11 +678,15 @@ export function createNotificationSender(
         content,
         auctionBotUsername,
         today?.(),
+        timeZone,
       );
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
-        // 52 битах, поэтому переход из bigint в number точен.
+        // 52 битах, поэтому переход из bigint в number точен. Метка каталога —
+        // чтобы линтер test kit видел и эту отправку: весть идёт мимо
+        // адаптера экранов.
         await api.sendMessage(Number(telegramUserId), message.text, {
+          ...screenMark("notification"),
           ...(message.keyboard === undefined
             ? {}
             : { reply_markup: message.keyboard }),

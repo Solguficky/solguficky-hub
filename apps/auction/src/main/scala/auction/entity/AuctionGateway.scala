@@ -32,6 +32,19 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[RemoveLotRejected, AuctionAnswer]]
 
+  /** Определение сета лотов до старта торгов (ADR-073). */
+  def saveLotSet(
+      auctionId: AuctionId,
+      command: SaveLotSet,
+      initiator: Initiator
+  ): Future[Either[SaveLotSetRejected, AuctionAnswer]]
+
+  def deleteLotSet(
+      auctionId: AuctionId,
+      command: DeleteLotSet,
+      initiator: Initiator
+  ): Future[Either[DeleteLotSetRejected, AuctionAnswer]]
+
   def schedule(
       auctionId: AuctionId,
       command: ScheduleAuction,
@@ -58,6 +71,27 @@ trait AuctionGateway {
       command: ChangeVisibility,
       initiator: Initiator
   ): Future[Either[VisibilityRejected, AuctionAnswer]]
+
+  /** Ориентировочное время финала (ADR-040, дополнение 2026-10-19): выставить, изменить или снять. */
+  def setFinalTime(
+      auctionId: AuctionId,
+      command: SetFinalTime,
+      initiator: Initiator
+  ): Future[Either[FinalTimeRejected, AuctionAnswer]]
+
+  /** Порядок и разделы ленты (PER-719): раскладка целиком. */
+  def setLotLayout(
+      auctionId: AuctionId,
+      command: SetLotLayout,
+      initiator: Initiator
+  ): Future[Either[LotLayoutRejected, AuctionAnswer]]
+
+  /** Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. */
+  def setPaymentInstructions(
+      auctionId: AuctionId,
+      command: SetPaymentInstructions,
+      initiator: Initiator
+  ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]]
 
   /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
   def cancel(
@@ -176,6 +210,20 @@ object AuctionGateway {
       ): Future[Either[RemoveLotRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Remove(command, initiator, _))
 
+      def saveLotSet(
+          auctionId: AuctionId,
+          command: SaveLotSet,
+          initiator: Initiator
+      ): Future[Either[SaveLotSetRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.SaveSet(command, initiator, _))
+
+      def deleteLotSet(
+          auctionId: AuctionId,
+          command: DeleteLotSet,
+          initiator: Initiator
+      ): Future[Either[DeleteLotSetRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.DeleteSet(command, initiator, _))
+
       def schedule(
           auctionId: AuctionId,
           command: ScheduleAuction,
@@ -203,6 +251,27 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[VisibilityRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Show(command, initiator, _))
+
+      def setFinalTime(
+          auctionId: AuctionId,
+          command: SetFinalTime,
+          initiator: Initiator
+      ): Future[Either[FinalTimeRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Announce(command, initiator, _))
+
+      def setLotLayout(
+          auctionId: AuctionId,
+          command: SetLotLayout,
+          initiator: Initiator
+      ): Future[Either[LotLayoutRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Arrange(command, initiator, _))
+
+      def setPaymentInstructions(
+          auctionId: AuctionId,
+          command: SetPaymentInstructions,
+          initiator: Initiator
+      ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Instruct(command, initiator, _))
 
       def cancel(
           auctionId: AuctionId,

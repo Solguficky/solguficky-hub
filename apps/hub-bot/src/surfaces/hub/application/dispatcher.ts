@@ -5,16 +5,23 @@ import type {
   LotAdministration,
   MeetupAuctions,
 } from "../auction/port.js";
+import type { ParticipantUsernameResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createAuctionConsole } from "./auction-console.js";
+import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createFloorBids } from "./floor-bids.js";
 import { createLotForm } from "./lot-form.js";
+import { createLotLayout } from "./lot-layout.js";
+import { createLotSets } from "./lot-sets.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
+import { createParticipantRemoval } from "./participant-removal.js";
+import { createRafflePrizeChange } from "./raffle-prize-change.js";
+import { createRaffleWinner } from "./raffle-winner.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
@@ -36,10 +43,16 @@ export function createDispatcher(
     timeZone: string;
     // Часы бота; тест их подменяет.
     now?: () => Date;
+    // Настоящий аккаунт победителя для пульта (PER-648): его отдаёт Identity
+    // по праву ведущего.
+    usernames?: ParticipantUsernameResolver;
   },
   releaseNotes?: ReleaseNotes,
 ): Dispatcher {
-  const lotForm = lots === undefined ? undefined : createLotForm(lots);
+  // Форма лота читает пульт аукциона (PER-716): реестр и сеты нужны копиям,
+  // удалению и правке всего сета; без пульта она — форма одного лота.
+  const lotForm =
+    lots === undefined ? undefined : createLotForm(lots, consoles?.auctions);
   const auctionConsole =
     consoles === undefined
       ? undefined
@@ -47,11 +60,41 @@ export function createDispatcher(
           consoles.auctions,
           consoles.timeZone,
           consoles.now,
+          consoles.usernames,
         );
   // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
   // пускает право вести аукцион.
   const floorBids =
     consoles === undefined ? undefined : createFloorBids(consoles.auctions);
+  // Снятие участника с лота (PER-659) — тот же порт: команды администратора
+  // пускает право вести аукцион.
+  const participantRemoval =
+    consoles === undefined
+      ? undefined
+      : createParticipantRemoval(consoles.auctions);
+  // Сеты лотов (PER-509) — тот же порт: команды сета пускает право вести
+  // аукцион.
+  const lotSets =
+    consoles === undefined ? undefined : createLotSets(consoles.auctions);
+  // Порядок и разделы ленты (PER-719) — тот же порт: раскладку пускает право
+  // вести аукцион.
+  const lotLayout =
+    consoles === undefined ? undefined : createLotLayout(consoles.auctions);
+  // Счета аукциона (PER-321) — тот же порт: сводку и отметки пускает право
+  // вести аукцион.
+  const auctionInvoices =
+    consoles === undefined
+      ? undefined
+      : createAuctionInvoices(consoles.auctions, consoles.now);
+  // Итог розыгрыша вручную (PER-727) — тот же порт: назначение победителя
+  // пускает право вести аукцион.
+  const raffleWinner =
+    consoles === undefined ? undefined : createRaffleWinner(consoles.auctions);
+  // Смена приза идущего розыгрыша (PER-737) — тот же порт и то же право.
+  const rafflePrizeChange =
+    consoles === undefined
+      ? undefined
+      : createRafflePrizeChange(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -112,12 +155,22 @@ export function createDispatcher(
       // Meetups и остаётся верной. Состояние подписки при этом не
       // показывается, и кнопки подписки в кадре не будет — вместо
       // выдуманного «выключены» человек видит отсутствие выбора.
+      const cancelConsequence =
+        request.intent === "view-meetup" &&
+        request.withCancelConsequence === true &&
+        meetupAuction !== undefined
+          ? await meetupAuction.cancelConsequence(withAuction.auction, request)
+          : undefined;
+      const shown =
+        cancelConsequence === undefined
+          ? withAuction
+          : { ...withAuction, cancelConsequence };
       return preferences?.kind === "ok"
         ? {
-            ...withAuction,
+            ...shown,
             subscribed: preferences.preferences.subscribed,
           }
-        : withAuction;
+        : shown;
     }
     if (result.kind === "not-found") return { kind: "meetup-not-found" };
     return result.kind === "invalid"
@@ -232,7 +285,12 @@ export function createDispatcher(
         case "set-lot-text":
         case "check-lot-price":
         case "set-lot-terms":
-        case "set-lot-image":
+        case "keep-lot-step":
+        case "add-lot-photo":
+        case "remove-lot-photo":
+        case "retry-lot-set":
+        case "copy-lot":
+        case "remove-lot":
           return lotForm === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);
@@ -247,11 +305,19 @@ export function createDispatcher(
         case "ask-auction-raffle-prize":
         case "set-auction-raffle-prize":
         case "remove-auction-raffle-prize":
+        case "ask-auction-payment-term":
+        case "set-auction-payment-term":
         case "set-auction-final":
+        case "set-auction-visibility":
+        case "ask-auction-final-time":
+        case "set-auction-final-time":
+        case "remove-auction-final-time":
         case "start-auction-week":
         case "mark-auction-finalist":
         case "prepare-auction-discard":
         case "discard-auction":
+        case "prepare-auction-cancel":
+        case "cancel-auction":
         case "order-final-lineup":
         case "freeze-final-lineup":
         case "start-auction-final":
@@ -266,6 +332,11 @@ export function createDispatcher(
         case "add-step-window":
         case "set-step-window-lot":
         case "remove-step-window":
+        case "ask-step-window-launch":
+        case "add-step-window-launch":
+        case "set-step-window-launch-lot":
+        case "view-step-window-launch":
+        case "launch-step-window":
           return auctionConsole === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);
@@ -276,6 +347,59 @@ export function createDispatcher(
           return floorBids === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : floorBids(request);
+        case "view-lot-removal":
+        case "prepare-participant-removal":
+        case "remove-participant":
+          return participantRemoval === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : participantRemoval(request);
+        case "view-lot-sets":
+        case "ask-lot-set":
+        case "add-lot-set":
+        case "view-lot-set":
+        case "set-lot-set-lot":
+        case "prepare-lot-set-delete":
+        case "delete-lot-set":
+          return lotSets === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : lotSets(request);
+        case "view-lot-layout":
+        case "view-lot-layout-list":
+        case "view-lot-layout-lot":
+        case "move-lot-layout-lot":
+        case "place-lot-layout-lot":
+        case "ask-lot-section":
+        case "name-lot-section":
+        case "move-lot-section":
+        case "prepare-lot-section-delete":
+        case "delete-lot-section":
+          return lotLayout === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : lotLayout(request);
+        case "view-auction-invoices":
+        case "view-auction-invoice":
+        case "prepare-invoice-mark":
+        case "mark-invoice":
+        case "ask-auction-payment-text":
+        case "set-auction-payment-text":
+        case "remove-auction-payment-text":
+          return auctionInvoices === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : auctionInvoices(request);
+        case "view-raffle-winner":
+        case "ask-raffle-winner":
+        case "pick-raffle-winner":
+        case "prepare-raffle-winner":
+        case "assign-raffle-winner":
+          return raffleWinner === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : raffleWinner(request);
+        case "ask-raffle-prize-change":
+        case "pick-raffle-prize-change":
+        case "change-raffle-prize":
+          return rafflePrizeChange === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : rafflePrizeChange(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

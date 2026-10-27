@@ -12,42 +12,39 @@ import {
 } from "./faq.js";
 
 describe("FAQ content", () => {
-  it("keeps explicit placeholders until the organizer supplies text", () => {
+  it("shows the organizer's FAQ text without configuration", () => {
     expect(readFaqContent({})).toEqual({ ok: true, content: defaultFaq });
     const screen = renderEntryScreen(
       { kind: "faq" },
       { timeZone: "Europe/Moscow" },
     );
-    expect(screen.text).toContain("Отменить сделанную ставку нельзя");
-    for (const text of Object.values(defaultFaq))
-      expect(screen.text).toContain(text);
+    expect(screen.text).toBe(defaultFaq.text);
+    expect(screen.text).toContain("Отменить ставку нельзя");
     // Только «Аукционы» ставит отметку ознакомления; последний ряд —
-    // возврат в меню (PER-592).
+    // возврат в меню (PER-592). Без ссылки организатора «Прочитать
+    // подробнее» нет: текст уже в сообщении (решение владельца 24.10.2026).
     expect(screen.keyboard).toEqual([
-      [{ text: "Прочитать подробнее", callback_data: "v1:entry:details" }],
       [{ text: "Задать вопрос", callback_data: "v1:entry:question" }],
       [{ text: "Аукционы", callback_data: "v1:entry:read" }],
       [{ text: "‹ Меню", callback_data: "v1:entry:menu" }],
     ]);
   });
 
-  it("renders the organizer's rules verbatim, escaped, and marks external buttons", () => {
+  it("renders the organizer's text verbatim and marks external buttons", () => {
     const result = readFaqContent({
-      AUCTION_FAQ_SIMULTANEOUS_BIDS: "  Порядок организатора  ",
-      AUCTION_FAQ_CONNECTION_FAILURE: "После сбоя: <текст>",
-      AUCTION_FAQ_DELIVERY: "Условия доставки",
       AUCTION_FAQ_DETAILS_URL: "https://example.org/rules",
       AUCTION_FAQ_QUESTION_URL: "https://t.me/organizer",
     });
     if (!result.ok) throw new Error(result.error);
     const screen = renderEntryScreen(
       { kind: "faq" },
-      { faq: result.content, timeZone: "Europe/Moscow" },
+      {
+        faq: { ...result.content, text: "<b>Правила</b>\n\nТекст &amp; ещё" },
+        timeZone: "Europe/Moscow",
+      },
     );
-    expect(screen.text).toContain("Порядок организатора");
-    // Текст организатора разметкой не становится: `<` уходит сущностью.
-    expect(screen.text).toContain("После сбоя: &lt;текст&gt;");
-    expect(screen.text).toContain("Условия доставки");
+    // Текст организатора уже размечен и уходит как есть.
+    expect(screen.text).toBe("<b>Правила</b>\n\nТекст &amp; ещё");
     expect(screen.keyboard[0]).toEqual([
       { text: "Прочитать подробнее ↗", url: "https://example.org/rules" },
     ]);
@@ -66,27 +63,7 @@ describe("FAQ content", () => {
     expect(readFaqContent({ AUCTION_FAQ_QUESTION_URL: url }).ok).toBe(false);
   });
 
-  it("bounds the whole FAQ below Telegram's message budget", () => {
-    const env = Object.fromEntries(
-      [
-        "ITEMS",
-        "PURPOSE",
-        "SIMULTANEOUS_BIDS",
-        "CONNECTION_FAILURE",
-        "DELIVERY",
-      ].map((key) => [`AUCTION_FAQ_${key}`, "😀".repeat(250)]),
-    );
-    const result = readFaqContent(env);
-    if (!result.ok) throw new Error(result.error);
-    expect(
-      renderEntryScreen(
-        { kind: "faq" },
-        { faq: result.content, timeZone: "Europe/Moscow" },
-      ).text.length,
-    ).toBeLessThan(4096);
-    expect(readFaqContent({ AUCTION_FAQ_ITEMS: "x".repeat(501) }).ok).toBe(
-      false,
-    );
+  it("bounds the organizer's links", () => {
     expect(
       readFaqContent({
         AUCTION_FAQ_DETAILS_URL: `https://example.org/${"x".repeat(2048)}`,

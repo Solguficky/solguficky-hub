@@ -28,6 +28,16 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
         GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
     }
 
+    // PER-725: хроники дня — чтение участника, его открывают оба бота, а сводку дня пульта — только хаб.
+    "admits both bots on the day chronicle and only the hub bot on the day summary" in {
+      CallerGate.decide(table, Some("GetAuctionDayChronicle"), Some("Bearer hub")) shouldBe
+        GateDecision.Admitted(Caller.HubBot)
+      CallerGate.decide(table, Some("GetAuctionDayChronicle"), Some("Bearer auction")) shouldBe
+        GateDecision.Admitted(Caller.AuctionBot)
+      CallerGate.decide(table, Some("GetAuctionDaySummary"), Some("Bearer auction")) shouldBe
+        GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
+    }
+
     "admits only the auction bot on the FAQ methods" in {
       List("GetFaqAcknowledgement", "AcknowledgeFaq").foreach { method =>
         CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)
@@ -53,6 +63,20 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
         GateDecision.Admitted(Caller.HubBot)
       CallerGate.decide(table, Some("ListAuctionNames"), Some("Bearer auction")) shouldBe
         GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
+    }
+
+    // Счета победителя открыты обоим ботам (PER-322): выигрывает и участник сообщества, а он ставит в боте хаба.
+    "admits only the hub bot on the organizer's invoices and both bots on the winner's" in {
+      List("MarkInvoicePaid", "MarkInvoiceHandedOver", "ListAuctionInvoices", "SetPaymentInstructions").foreach {
+        method =>
+          CallerGate.decide(table, Some(method), Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
+          CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe
+            GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
+      }
+      List("ChooseFulfillment", "ListMyInvoices").foreach { method =>
+        CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)
+        CallerGate.decide(table, Some(method), Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
+      }
     }
 
     "admits a declared caller that presents its bearer token" in {

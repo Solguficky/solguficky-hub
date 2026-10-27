@@ -3,6 +3,7 @@ import type {
   AccessRight,
   ApplicationQueue,
 } from "../../../../auction-ui/index.js";
+import type { BuildInfo } from "../../../../core/build-info.js";
 import {
   menuTitle,
   supportBotLink,
@@ -357,16 +358,29 @@ export function settingsScreen(): ShownScreen {
 const extensionsHelp = `Расширения сходки, например аукцион, — кнопка «${extensionsLabel}» в её карточке.`;
 
 /**
+ * Строка версии образа (PER-736): короткий коммит и дата его коммита из данных
+ * сборки, без них — «локальная сборка».
+ */
+export function versionLine(build: BuildInfo): string {
+  if (build.kind === "local") return "Версия бота: локальная сборка.";
+  const [year, month, day] = build.date.split("-");
+  return `Версия бота: ${build.commit} от ${day}.${month}.${year}.`;
+}
+
+/**
  * «Помощь» — раздел под меню: текст о боте и команды строками. Под текстом
  * «Что нового», при адресе бота поддержки — «Написать в поддержку ↗»
  * (PER-625), последним рядом «‹ Меню». `welcome` — текст о боте, абзацы через
- * пустую строку.
+ * пустую строку. Строку версии видит только мейнтейнер (решение владельца
+ * 25 октября 2026 года, PER-736): его право `grant-admins` даёт один набор
+ * `maintainer` (ADR-065, п. 3).
  */
 export function helpScreen(
   person: Viewer,
   welcome: string,
-  supportBotUsername?: string,
+  options: { build: BuildInfo; supportBotUsername?: string },
 ): ShownScreen {
+  const { build, supportBotUsername } = options;
   const keyboard = new InlineKeyboard().text("Что нового", "v1:wn").row();
   if (supportBotUsername !== undefined) {
     keyboard.url(supportLabel, supportBotLink(supportBotUsername, "hub")).row();
@@ -383,6 +397,7 @@ export function helpScreen(
           bullet(`/${entry.command} — ${entry.description}`),
         ),
       ].join("\n"),
+      canGrantAdmins(person) ? escapeHtml(versionLine(build)) : undefined,
     ),
     keyboard: withNav(keyboard, toMenu),
     format: "HTML",

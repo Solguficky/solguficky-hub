@@ -601,9 +601,39 @@ object Lot {
   def floor(trading: TradingState): Money =
     trading.ask.filter(_ > trading.currentPrice).getOrElse(trading.currentPrice)
 
+  private val OnlineBidCeiling = 5
+
+  /**
+   * Следующая цена без окна сниженного шага: ask, если он выше текущей, иначе стартовая, пока лидера нет, иначе цена
+   * плюс обычный шаг. Потолок ручной онлайн-ставки считается от неё, и счастливый час его не сдвигает (PER-660).
+   */
+  private def ceilingReference(trading: TradingState): Money =
+    trading.ask.filter(_ > trading.currentPrice) match {
+      case Some(ask) => ask
+      case None if opening(trading) => trading.currentPrice
+      case None => saturatedPlus(trading.currentPrice, baseStep(trading, trading.currentPrice))
+    }
+
+  /**
+   * Пять баз, насыщенные на край `Long`. Произведение, которое в него не входит, не бросает исключение. Если пять баз
+   * ниже следующей цены — так бывает при отрицательной базе, — потолок равен ей, а не этой пятёрке (PER-660).
+   */
+  private def onlineMaximum(trading: TradingState, required: Money): Money = {
+    val reference = ceilingReference(trading)
+    val units = reference.minorUnits
+    val scale = OnlineBidCeiling.toLong
+    val scaled =
+      if (units > 0 && units > Long.MaxValue / scale) Long.MaxValue
+      else if (units < 0 && units < Long.MinValue / scale) Long.MinValue
+      else units * scale
+    val ceiling = reference.copy(minorUnits = scaled)
+    if (ceiling < required) required else ceiling
+  }
+
   /**
    * Порядок проверок повторяет RFC-011: валюта, лидерство, затем порог. В `Live` сумма — ожидаемая цена, и проверка
-   * `BidNotAtNextPrice` стоит выше `BidBelowMinimum`, чтобы отказ в финале был один и называл цену (ADR-049).
+   * `BidNotAtNextPrice` стоит выше `BidBelowMinimum`, чтобы отказ в финале был один и называл цену (ADR-049). В
+   * `Online` сумма выше пяти [[ceilingReference]] — `BidAboveMaximum` с этим максимумом (PER-660).
    *
    * Ставку зала лот принимает только в живом финале: зала в онлайн-неделе нет, а право человека в зале никто не
    * проверяет — его заменяет право помощника ведущего (решение владельца в PER-293). Вне `Live` она — `LotNotOpen`, и
@@ -622,16 +652,22 @@ object Lot {
     else if (trading.phase == Phase.Live && command.amount != required)
       Left(PlaceBidRejected.BidNotAtNextPrice(required))
     else if (command.amount < required) Left(PlaceBidRejected.BidBelowMinimum(required))
-    else
-      Right(
-        LotEvent.BidPlaced(
-          bidId = bidId,
-          participant = command.participant,
-          amount = command.amount,
-          previousLeader = trading.leader,
-          origin = BidOrigin.Manual(command.source)
-        )
-      )
+    else {
+      val maximum = if (trading.phase == Phase.Online) Some(onlineMaximum(trading, required)) else None
+      maximum.filter(command.amount > _) match {
+        case Some(ceiling) => Left(PlaceBidRejected.BidAboveMaximum(ceiling))
+        case None =>
+          Right(
+            LotEvent.BidPlaced(
+              bidId = bidId,
+              participant = command.participant,
+              amount = command.amount,
+              previousLeader = trading.leader,
+              origin = BidOrigin.Manual(command.source)
+            )
+          )
+      }
+    }
   }
 
   /** Проверки лимита, общие для торгов и удержания; лидер ставить лимит вправе (О-3). */

@@ -22,7 +22,13 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null,
+        "lotLayout": null
       }
     },
     {
@@ -40,7 +46,13 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null,
+        "lotLayout": null
       }
     },
     {
@@ -82,13 +94,20 @@
             },
             "proxyEnabled": true
           },
-          "stepWindows": null
+          "stepWindows": null,
+          "paymentTerm": "PT168H"
         },
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null,
+        "lotLayout": null
       }
     },
     {
@@ -104,7 +123,13 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null,
+        "paymentInstructions": null,
+        "lotLayout": null
       }
     }
   ],
@@ -139,7 +164,8 @@
       },
       "proxyEnabled": true
     },
-    "stepWindows": null
+    "stepWindows": null,
+    "paymentTerm": "PT168H"
   },
   "startedBy": "00000000-0000-0003-0000-000000000004",
   "order": null,
@@ -147,5 +173,9 @@
   "cancelledBy": null,
   "completed": null,
   "launched": null,
-  "hidden": null
+  "hidden": null,
+  "finalAt": null,
+  "sets": null,
+  "paymentInstructions": null,
+  "layout": null
 }

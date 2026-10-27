@@ -334,13 +334,13 @@ describe("renderEntryScreen", () => {
         "<p>Следующая ставка: от 1 250 ₽<br>Шаг: 50 ₽</p>" +
         "<p>Роспись.</p>",
     );
-    expect(screen.photo).toBeUndefined();
+    expect(screen.photos).toBeUndefined();
   });
 
   // Пустое описание — заглушка, та же, что у карточки сходки хаба (PER-594).
   it("shows the placeholder for an empty description of a lot without a photo", () => {
     const screen = lotScreen({ card: { title: "Кружка", description: "" } });
-    expect(screen.photo).toBeUndefined();
+    expect(screen.photos).toBeUndefined();
     expect(plain(screen.text)).toMatch(
       /<\/p><p>Описание пока не добавлено\.<\/p>$/,
     );
@@ -390,7 +390,7 @@ describe("renderEntryScreen", () => {
     const screen = lotScreen({
       card: { title: "Кружка", description, image: { version: "img-1" } },
     });
-    expect(screen.photo).toEqual({ lotId: "lot-1", version: "img-1" });
+    expect(screen.photos).toEqual([{ lotId: "lot-1", version: "img-1" }]);
     expect(screen.text).toContain(`<p>${description}</p>`);
     expect(screen.text).not.toContain("…");
   });
@@ -437,7 +437,7 @@ describe("renderEntryScreen", () => {
       plainCard,
     );
     expect(screen.format).toBe("html");
-    expect(screen.photo).toBeUndefined();
+    expect(screen.photos).toBeUndefined();
     expect(screen.text).toBe(
       "<b>Кружка &lt;XL&gt;</b>\n\nСтатус: не продан\n\nРоспись &amp; глазурь.",
     );
@@ -486,10 +486,67 @@ describe("renderEntryScreen", () => {
     );
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\n💰 Цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
+        "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
         "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81):
+  // строка говорит, что он исчерпан. Лидеру тот же лимит — обычная строка.
+  it("names an exhausted own limit of a participant who does not lead", () => {
+    const course = (standing?: "leader") =>
+      plain(
+        lotScreen(
+          {
+            card: { title: "Кружка", description: "" },
+            nextPrice: rub(950),
+            status: {
+              kind: "trading",
+              currentPrice: rub(900),
+              leaderId: "p-2",
+              phase: "online",
+            },
+            viewerProxyLimit: rub(900),
+            ...(standing === undefined ? {} : { standing }),
+          },
+          plainCard,
+        ).text,
+      );
+    expect(course()).toContain("Автоставка до 900 ₽ исчерпана — подними лимит");
+    expect(course()).not.toContain("Твоя автоставка");
+    expect(course("leader")).toContain(
+      "Твоя автоставка: до 900 ₽ (видишь только ты)",
+    );
+  });
+
+  // В живом финале кнопки «Автоставка» нет (PER-713): исчерпанный лимит не
+  // советует его поднять, а лимит лидера ниже текущей цены — его ставка рукой
+  // выше лимита — не показан действующим.
+  it("names an exhausted own limit in the live final without advising to raise it", () => {
+    const course = (standing?: "leader") =>
+      plain(
+        lotScreen(
+          {
+            card: { title: "Кружка", description: "" },
+            nextPrice: rub(1550),
+            status: {
+              kind: "trading",
+              currentPrice: rub(1500),
+              leaderId: standing === "leader" ? "viewer" : "p-2",
+              phase: "live",
+            },
+            viewerProxyLimit: rub(1450),
+            ...(standing === undefined ? {} : { standing }),
+          },
+          plainCard,
+        ).text,
+      );
+    for (const text of [course(), course("leader")]) {
+      expect(text).toContain("Автоставка до 1 450 ₽ исчерпана");
+      expect(text).not.toContain("подними лимит");
+      expect(text).not.toContain("Твоя автоставка");
+    }
   });
 
   // Отказ команды — свой экран исхода (PER-472): исход в заголовке, лот
@@ -526,6 +583,36 @@ describe("renderEntryScreen", () => {
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       ["‹ Лот"],
     ]);
+  });
+
+  it("names five times the next price when a bid is above the ceiling", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "result",
+              result: {
+                command: "bid",
+                kind: "refused",
+                refusal: { kind: "bid-above-maximum", next: rub(5100) },
+              },
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
+            },
+          ],
+          keyboard: [
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toBe(
+      "<b>Ставка выше потолка</b>\n\n<b>Кружка</b>\n\nМаксимум сейчас — 5 × 5 100 ₽.",
+    );
   });
 
   // Чужой год называется в дате (дизайн-код, «Формат»).
@@ -772,6 +859,7 @@ describe("bid sheet screens", () => {
       lotId: "lot-1",
       auctionId: "auc-1",
       title: "Кружка",
+      status: { kind: "unsold" },
       page: 0,
       pageCount: 1,
       entries: [
@@ -787,6 +875,61 @@ describe("bid sheet screens", () => {
     });
     expect(plain(screen.text)).toBe(
       "<b>Ставки</b>\n<i>Кружка</i>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+    );
+  });
+
+  it("strikes the bids of a removed participant and shows the removal as its own line", () => {
+    const screen = body({
+      kind: "history",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка",
+      status: { kind: "unsold" },
+      page: 0,
+      pageCount: 1,
+      entries: [
+        {
+          kind: "bid",
+          sequence: 1,
+          occurredAt: "2025-10-03T16:04:00Z",
+          amount: rub(500),
+          origin: { kind: "manual", source: "bot" },
+          participantName: "@jay",
+          removed: true,
+        },
+        {
+          kind: "bid",
+          sequence: 2,
+          occurredAt: "2025-10-03T16:05:00Z",
+          amount: rub(450),
+          origin: { kind: "proxy" },
+          participantName: "@owl",
+        },
+        {
+          kind: "removal",
+          sequence: 3,
+          occurredAt: "2025-10-03T16:06:00Z",
+          price: rub(400),
+          leaderName: "@owl",
+        },
+        {
+          kind: "removal",
+          sequence: 4,
+          occurredAt: "2025-10-03T16:07:00Z",
+          price: rub(300),
+        },
+      ],
+    });
+    expect(plain(screen.text)).toBe(
+      [
+        "<b>Ставки</b>",
+        "<i>Кружка</i>",
+        "",
+        "• <s>3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную</s>",
+        "• 3 октября 2025, пт, 19:05 · @owl · 450 ₽ · авто",
+        "• 3 октября 2025, пт, 19:06 · участник снят · цена 400 ₽ · ведёт @owl",
+        "• 3 октября 2025, пт, 19:07 · участник снят · цена 300 ₽",
+      ].join("\n"),
     );
   });
 });
@@ -932,7 +1075,7 @@ describe("auction lists", () => {
     // Пустой список — не тупик (PER-592): «Прошедшие» внутри раздела и
     // возврат в меню.
     expect(screen.keyboard).toEqual([
-      [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+      [{ text: "🗂 Прошедшие", callback_data: entryCallback("past") }],
       [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
     ]);
   });

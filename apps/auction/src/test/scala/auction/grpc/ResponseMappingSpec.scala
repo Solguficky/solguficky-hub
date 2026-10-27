@@ -19,6 +19,8 @@ import auction.catalog.CatalogRefusal
 import auction.catalog.ImageVersion
 import auction.catalog.LotCard
 import auction.catalog.LotId
+import auction.catalog.LotPhotoRef
+import auction.catalog.PhotoId
 import auction.catalog.LotTitle
 import auction.lot.BidOrigin
 import auction.lot.BidSource
@@ -59,6 +61,11 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
     "carries the minimum price in a below-minimum refusal" in {
       refused(PlaceBidRejected.BidBelowMinimum(money(110))) shouldBe
         wire.PlaceBidRefusal.Reason.BidBelowMinimum(wire.BidBelowMinimum(Some(MoneyMessage(110, "RUB"))))
+    }
+
+    "carries the maximum price in an above-ceiling refusal" in {
+      refused(PlaceBidRejected.BidAboveMaximum(money(550))) shouldBe
+        wire.PlaceBidRefusal.Reason.BidAboveMaximum(wire.BidAboveMaximum(Some(MoneyMessage(550, "RUB"))))
     }
 
     "carries the expected price in a not-at-next-price refusal" in {
@@ -141,6 +148,32 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
     "answers an accepted card with the version of its image and without the bytes" in {
       val card = LotCard(LotId(UUID.randomUUID()), LotTitle("Лот").value, "", Some(ImageVersion("v1")))
       ResponseMapping.editLotCard(Right(card)).getAccepted.image shouldBe Some(wire.LotImageRef("v1"))
+    }
+
+    "answers photo commands with the card and its photos in order or a named refusal" in {
+      val (first, second) = (UUID.randomUUID(), UUID.randomUUID())
+      val photos = Vector(
+        LotPhotoRef(PhotoId(first), ImageVersion("v1")),
+        LotPhotoRef(PhotoId(second), ImageVersion("v2"))
+      )
+      val card = LotCard(LotId(UUID.randomUUID()), LotTitle("Лот").value, "", Some(ImageVersion("v1")), photos)
+      ResponseMapping.addLotPhoto(Right(card)).getAccepted.photos shouldBe Seq(
+        wire.LotPhotoRef(first.toString, "v1"),
+        wire.LotPhotoRef(second.toString, "v2")
+      )
+      ResponseMapping.removeLotPhoto(Right(card)).getAccepted.image shouldBe Some(wire.LotImageRef("v1"))
+      ResponseMapping
+        .addLotPhoto(Left(CatalogRefusal.PhotoLimitReached(10)))
+        .getRefused
+        .reason
+        .photoLimitReached shouldBe
+        Some(wire.PhotoLimitReached(10))
+      ResponseMapping.addLotPhoto(Left(CatalogRefusal.PhotoConflict)).getRefused.reason.isPhotoConflict shouldBe true
+      ResponseMapping.addLotPhoto(Left(CatalogRefusal.ImageTooLarge(2048))).getRefused.reason.imageTooLarge shouldBe
+        Some(wire.ImageTooLarge(2048))
+      ResponseMapping.removeLotPhoto(Left(CatalogRefusal.CardClosed)).getRefused.reason.isCardClosed shouldBe true
+      ResponseMapping.removeLotPhoto(Left(CatalogRefusal.NotAdmin)).getRefused.reason.isNotAdmin shouldBe true
+      ResponseMapping.removeLotPhoto(Left(CatalogRefusal.CardNotFound)).getRefused.reason.isCardNotFound shouldBe true
     }
 
     "carries the limit in an image-too-large refusal of both catalog commands" in {

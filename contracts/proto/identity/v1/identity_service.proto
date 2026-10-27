@@ -23,6 +23,9 @@ service IdentityService {
   // Resolves the author of a meetup to their Telegram username for the meetup
   // card.
   rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
+  // Resolves an identity id to that person's Telegram username for the screens
+  // of an auction organizer.
+  rpc ResolveParticipantUsername(ResolveParticipantUsernameRequest) returns (ResolveParticipantUsernameResponse);
   // Grants a preset to an existing identity. Requires maintainer
   // authentication: the shared secret is the only way to grant
   // PRESET_MAINTAINER. A person without the member circle gets it in the same
@@ -497,6 +500,12 @@ enum AccessRequestOutcome {
 
   // The profile is blocked.
   ACCESS_REQUEST_OUTCOME_BLOCKED = 5;
+
+  // The queue is closed to applications by the service setting: access comes
+  // only from an allowed usernames entry, none matched, and no application was
+  // opened. Only the community queue closes. A consumer that does not know the
+  // value reads it as UNSPECIFIED, a refusal.
+  ACCESS_REQUEST_OUTCOME_INVITATION_ONLY = 6;
 }
 
 message RequestAccessResponse {
@@ -559,6 +568,21 @@ message ResolveOrganizerUsernameResponse {
   // Username without the leading '@'. Absent only when the organizer has none:
   // a profile the call does not answer for is a failed call, never an absent
   // field here.
+  optional string telegram_username = 1;
+}
+
+message ResolveParticipantUsernameRequest {
+  // The viewer of the organizer's screen.
+  IdentityActor actor = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens: a participant of the
+  // auction, the same id leader_id and winner_id carry.
+  string identity_id = 2;
+}
+
+message ResolveParticipantUsernameResponse {
+  // Username without the leading '@'. Absent only when the participant has
+  // none; a call that is not answered is an error, never an absent field.
   optional string telegram_username = 1;
 }
 

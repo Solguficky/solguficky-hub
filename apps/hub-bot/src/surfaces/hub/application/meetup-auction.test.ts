@@ -63,7 +63,11 @@ function auctions() {
     auctionId,
     alreadyExisted: false,
   }));
-  return { getMeetupAuction, enableAuction };
+  const soldLots = vi.fn<MeetupAuctions["soldLots"]>(async () => ({
+    kind: "ok",
+    sold: 2,
+  }));
+  return { getMeetupAuction, enableAuction, soldLots };
 }
 
 // Роли ничего не решают: край зовёт Auction по праву хаба.
@@ -246,5 +250,78 @@ describe("meetup auction", () => {
       }),
     ).resolves.toMatchObject({ kind: "meetup-card", subscribed: true });
     expect(port.getMeetupAuction).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Последствие отмены сходки для её аукциона (PER-606; ADR-064, дополнение
+// 2026-10-12): его читает только подтверждение отмены, и сбой Auction даёт
+// условное последствие, а не закрывает отмену.
+describe("auction consequence of a meetup cancel", () => {
+  const view = (port: ReturnType<typeof auctions>, flag = true) =>
+    createDispatcher(meetups(), undefined, undefined, port).execute({
+      identity: person(ADMIN),
+      intent: "view-meetup",
+      meetupId,
+      ...(flag ? { withCancelConsequence: true as const } : {}),
+    });
+
+  it("counts the sold lots of an auction with trading under way", async () => {
+    const port = auctions();
+
+    await expect(view(port)).resolves.toMatchObject({
+      cancelConsequence: { kind: "trading", sold: 2 },
+    });
+    expect(port.soldLots).toHaveBeenCalledWith(
+      expect.anything(),
+      auctionId,
+      undefined,
+    );
+  });
+
+  it("reads no lots for a card without the confirmation", async () => {
+    const port = auctions();
+
+    const card = await view(port, false);
+
+    expect(card).not.toHaveProperty("cancelConsequence");
+    expect(port.soldLots).not.toHaveBeenCalled();
+  });
+
+  it("names no consequence before trading and without an auction", async () => {
+    for (const answer of [
+      {
+        kind: "ok" as const,
+        auction: { ...auction, stage: "scheduled" as const },
+      },
+      { kind: "ok" as const },
+    ]) {
+      const port = auctions();
+      port.getMeetupAuction.mockResolvedValue(answer);
+
+      const card = await view(port);
+
+      expect(card).not.toHaveProperty("cancelConsequence");
+      expect(port.soldLots).not.toHaveBeenCalled();
+    }
+  });
+
+  it("names the consequence without a number when Auction does not answer", async () => {
+    const down = auctions();
+    down.getMeetupAuction.mockResolvedValue({
+      kind: "unavailable",
+      cause: new Error("down"),
+    });
+    const lots = auctions();
+    lots.soldLots.mockResolvedValue({
+      kind: "timeout",
+      cause: new Error("slow"),
+    });
+
+    await expect(view(down)).resolves.toMatchObject({
+      cancelConsequence: { kind: "unknown" },
+    });
+    await expect(view(lots)).resolves.toMatchObject({
+      cancelConsequence: { kind: "unknown" },
+    });
   });
 });

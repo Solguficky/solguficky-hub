@@ -4,14 +4,17 @@ import auction.aggregate.AuctionCommands
 import auction.aggregate.MeetupAuthority
 import auction.boundary.ScreenRoutes
 import auction.catalog.LotCatalogCommands
+import auction.catalog.PhotoId
 import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
 import auction.entity.AuctionLots
 import auction.entity.AuctionPredictions
 import auction.entity.AuctionRaffle
 import auction.entity.AuctionResults
+import auction.entity.AuctionSetOutcomes
 import auction.entity.AuctionSlot
 import auction.entity.LotCardGate
+import auction.entity.UuidV7
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
@@ -64,6 +67,13 @@ import auction.raffle.RaffleTickets
 import auction.raffle.Seed
 import auction.results.ResultNames
 import auction.results.ResultsEntity
+import auction.invoice.InvoiceGateway
+import auction.persistence.SlickInvoiceViews
+import auction.projection.InvoiceProjection
+import auction.projection.InvoicePublicationHandler
+import auction.projection.InvoiceViewHandler
+import auction.projection.InvoicingHandler
+import auction.projection.InvoicingProjection
 import auction.results.ResultsForecasts
 import auction.results.ResultsGateway
 import auction.results.ResultsOutcomes
@@ -153,7 +163,8 @@ object AuctionNode {
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
       predictions: AuctionPredictions = AuctionPredictions.none,
-      results: AuctionResults = AuctionResults.none
+      results: AuctionResults = AuctionResults.none,
+      setOutcomes: AuctionSetOutcomes = AuctionSetOutcomes.none
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
     sharding.init(
@@ -167,7 +178,8 @@ object AuctionNode {
           raffle = raffle,
           slot = slot,
           predictions = predictions,
-          results = results
+          results = results,
+          setOutcomes = setOutcomes
         )
       }
         .withSettings(remembered(system))
@@ -231,6 +243,42 @@ object AuctionNode {
       )
     )
     AuctionResults.sharded(sharding, askTimeout)
+  }
+
+  /**
+   * Регистрирует entity счёта проданного лота (PER-338); идентификатор entity — идентификатор счёта, UUIDv5 от `bid_id`
+   * продажи. Таймеров у неё нет, поэтому шардинг её не помнит. Выставляет счета [[startInvoicing]], команды и чтения —
+   * gRPC-граница.
+   */
+  def registerInvoices(
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID,
+      askTimeout: FiniteDuration
+  ): InvoiceGateway =
+    InvoiceGateway.sharded(sharding, clock, newId, askTimeout)
+
+  /**
+   * Выставление счетов по продажам (PER-338): проекция журнала лотов `lot-invoicing` на каждый `LotSold` спрашивает
+   * срок оплаты у entity аукциона и выставляет счёт entity счёта. Entity лота, аукциона и счёта к этому моменту уже
+   * зарегистрированы в `sharding`.
+   */
+  def startInvoicing(
+      system: ActorSystem[?],
+      sharding: ClusterSharding,
+      invoices: InvoiceGateway,
+      metrics: ProjectionMetrics,
+      askTimeout: FiniteDuration,
+      backlogTimeout: FiniteDuration
+  ): Unit = {
+    import system.executionContext
+    val auctions = AuctionGateway.sharded(sharding, askTimeout)
+    InvoicingProjection.init(
+      system,
+      metrics,
+      () => InvoicingHandler(auction => auctions.get(auction).map(InvoicingHandler.termOf), invoices.issue)
+    )
+    metrics.watchBacklog(InvoicingProjection.Name, InvoicingProjection.backlog(system, backlogTimeout))
   }
 
   /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */
@@ -313,6 +361,11 @@ object AuctionNode {
       AuctionProjection.Name,
       AuctionProjection.backlog(system, AuctionProjection.Name, backlogTimeout)
     )
+    InvoiceProjection.init(system, InvoiceProjection.ViewName, metrics, () => InvoiceViewHandler(system))
+    metrics.watchBacklog(
+      InvoiceProjection.ViewName,
+      InvoiceProjection.backlog(system, InvoiceProjection.ViewName, backlogTimeout)
+    )
   }
 
   /**
@@ -360,6 +413,16 @@ object AuctionNode {
     metrics.watchBacklog(
       ResultsProjection.PublicationName,
       ResultsProjection.backlog(system, ResultsProjection.PublicationName, backlogTimeout)
+    )
+    InvoiceProjection.init(
+      system,
+      InvoiceProjection.PublicationName,
+      metrics,
+      () => InvoicePublicationHandler(system)
+    )
+    metrics.watchBacklog(
+      InvoiceProjection.PublicationName,
+      InvoiceProjection.backlog(system, InvoiceProjection.PublicationName, backlogTimeout)
     )
     val pool = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database.source
     val outbox = LotOutbox(() => pool.createConnection())
@@ -473,7 +536,9 @@ object AuctionNode {
       placeBidsRight: ParticipantId => Future[Boolean],
       changes: AuctionChanges,
       clock: Clock = Clock.systemUTC(),
-      overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace
+      overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace,
+      invoices: InvoiceGateway = InvoiceGateway.none,
+      raffleByHand: Boolean = false
   ): HttpRequest => Future[HttpResponse] = {
     given ActorSystem[?] = system
     import system.executionContext
@@ -484,7 +549,8 @@ object AuctionNode {
       lots,
       LotCatalogCommands(
         SlickLotCatalogStore(system),
-        id => lots.stateOf(id.value).map(LotCardGate.standing)
+        id => lots.stateOf(id.value).map(LotCardGate.standing),
+        { val next = UuidV7.generator(clock); () => PhotoId(next()) }
       ),
       SlickFaqAcknowledgements(system),
       SlickLotViews(system),
@@ -500,7 +566,10 @@ object AuctionNode {
       watchViews = SlickAuctionWatchViews(system),
       changes = changes,
       placeBidsRight = placeBidsRight,
-      finalBids = SlickFinalBids(system)
+      finalBids = SlickFinalBids(system),
+      invoices = invoices,
+      invoiceViews = SlickInvoiceViews(system),
+      raffleByHand = raffleByHand
     )
     GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
   }

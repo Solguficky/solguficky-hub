@@ -119,10 +119,16 @@ jobs:
         if: ${{ inputs.builder == 'containerfile' }}
         run: sh tools/image/check-containerfile.sh "$CONTAINERFILE"
 
+      # Данные сборки (PER-736): короткий коммит и дата коммита аргументами
+      # сборки. Containerfile, который их читает, кладёт их в образ — так бот
+      # называет свою версию; остальные аргументы не объявляют и пропускают.
       - name: Сборка по Containerfile
         if: ${{ inputs.builder == 'containerfile' }}
         run: |
+          commit=$(git rev-parse --short=7 HEAD)
+          date=$(TZ=UTC git show -s --date=format-local:%Y-%m-%d --format=%cd HEAD)
           podman build -f "$CONTAINERFILE" --ignorefile "$CONTAINERFILE.dockerignore" \
+            --build-arg "BUILD_COMMIT=$commit" --build-arg "BUILD_DATE=$date" \
             -t "localhost/$IMAGE_NAME:candidate" .
           echo "IMAGE=localhost/$IMAGE_NAME:candidate" >> "$GITHUB_ENV"
 
@@ -263,8 +269,9 @@ jobs:
           push-to-registry: true
 
       # Та же команда, которой хост проверит образ перед выкаткой: подписант —
-      # этот workflow, а не вызывающий, и только со stage. Без --source-ref
-      # проверку прошёл бы образ, опубликованный этим же файлом из любой ветки.
+      # этот workflow, а не вызывающий, и только из ветки среды — stage или main
+      # (дополнение ADR-055 от 2026-10-22). Без --source-ref проверку прошёл бы
+      # образ, опубликованный этим же файлом из любой ветки.
       - name: Проверка attestation
         if: ${{ inputs.publish }}
         env:
@@ -273,4 +280,4 @@ jobs:
           gh attestation verify "oci://$IMAGE" \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/image-publish.yml" \
-            --source-ref refs/heads/stage
+            --source-ref "$GITHUB_REF"

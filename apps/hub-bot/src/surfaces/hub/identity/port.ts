@@ -116,6 +116,25 @@ export type OrganizerResolver = {
     meta?: RpcMetadata,
   ): Promise<OrganizerUsernameResult>;
 };
+
+// Настоящий аккаунт участника аукциона для экранов организатора (PER-648).
+// Identity отвечает только держателю права `run-auctions`: `denied` — обычный
+// ответ участнику, который открыл карточку проданного лота, и экран остаётся с
+// псевдонимом. Отсутствие ника — `resolved` без поля, а не отказ.
+export type ParticipantUsernameResult =
+  | { kind: "resolved"; telegramUsername?: string }
+  | { kind: "denied" }
+  | { kind: "not-found" }
+  | { kind: "unavailable"; cause: unknown }
+  | { kind: "rejected"; code: string; cause: unknown };
+
+export type ParticipantUsernameResolver = {
+  resolveParticipantUsername(
+    viewer: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<ParticipantUsernameResult>;
+};
 // Круг человека состава (ADR-065, п. 1). `none` — круга нет: человек нажал
 // кнопку бота, но не допущен ни в один круг.
 export type CommunityCircle = "member" | "guest" | "none";

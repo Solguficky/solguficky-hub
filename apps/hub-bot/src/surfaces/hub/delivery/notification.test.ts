@@ -17,6 +17,7 @@ import {
   CircleChangedSchema,
   CommunityAnnouncementSchema,
   LotActivityKind,
+  LotSetCollectedSchema,
   MeetupAspect,
   type MeetupCard,
   MeetupPublishedSchema,
@@ -26,6 +27,7 @@ import {
   OrganizerMessageSchema,
   PresetGrantedSchema,
   ReleaseSummarySchema,
+  StepWindowStartedSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -216,6 +218,16 @@ describe("decodeNotification", () => {
         value: { lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0" },
       },
     ],
+    [
+      "lotLeadRestored",
+      {
+        case: "lotLeadRestored",
+        value: {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          currentPrice: { minorUnits: 150_000n, currency: "RUB" },
+        },
+      },
+    ],
   ] as const)(
     "decodes the auction branch %s for the hub recipient",
     (name, type) => {
@@ -239,6 +251,7 @@ describe("decodeNotification", () => {
               lotProxyRaised: "lot-proxy-raised",
               lotPurchased: "lot-purchased",
               lotReminder: "lot-reminder",
+              lotLeadRestored: "lot-lead-restored",
             }[name],
           },
         },
@@ -320,6 +333,54 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Начало окна «Счастливых часов» (PER-616) участнику доставляет бот хаба,
+  // как вести о лотах: без разбора ветка ушла бы в отказ `unrendered_type`.
+  it("decodes the start of a window for a community member", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-10-21T19:00:00Z",
+            type: {
+              case: "stepWindowStarted",
+              value: create(StepWindowStartedSchema, {
+                auctionId,
+                startsAt: "2026-10-21T19:00:00Z",
+                lots: [
+                  {
+                    lotId,
+                    until: "2026-10-21T21:00:00Z",
+                    step: { minorUnits: 50_000n, currency: "RUB" },
+                  },
+                ],
+              }),
+            },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "step-window-started",
+          auctionId,
+          lots: [
+            {
+              lotId,
+              until: "2026-10-21T21:00:00Z",
+              step: { minorUnits: 50_000, currency: "RUB" },
+            },
+          ],
+        },
+      },
+    });
+  });
+
   // Итог розыгрыша (PER-620) участнику доставляет бот хаба, как вести о лотах.
   describe("a raffle result", () => {
     const raffle = (value: {
@@ -362,6 +423,132 @@ describe("decodeNotification", () => {
       expect(
         raffle({ auctionId, ticket: 13, winningTicket: 7, ticketCount: 12 }),
       ).toMatchObject({ kind: "malformed" });
+    });
+  });
+
+  // Собранный сет (PER-687) доставляется ботом круга получателя.
+  it("decodes a collected set with its screen anchor", () => {
+    const anchor = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "lotSetCollected",
+            value: create(LotSetCollectedSchema, {
+              setName: "Сервиз",
+              lotCount: 3,
+              lotId: anchor,
+            }),
+          };
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-set-collected",
+          setName: "Сервиз",
+          lotCount: 3,
+          lotId: anchor,
+        },
+      },
+    });
+  });
+
+  // Итоги прогнозов (PER-568) участнику доставляет бот хаба.
+  it("decodes prediction results as the thin notice", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type: { case: "predictionResults", value: { auctionId } },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "prediction-results", auctionId },
+      },
+    });
+  });
+
+  // Извещение об отмене аукциона (PER-606) участнику доставляет бот хаба.
+  it("decodes a cancelled auction with the purchases of the recipient", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type: {
+              case: "auctionCancelled",
+              value: {
+                auctionId,
+                meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+              },
+            },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "auction-cancelled", auctionId, purchases: [] },
+      },
+    });
+  });
+
+  // Вести о новом аукционе и об открытии торгов (PER-646) участнику доставляет
+  // бот хаба; гостю те же ветки приходят в боте аукциона.
+  it("decodes a published auction and the opening of its trading", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    const decode = (type: "auctionPublished" | "auctionTradingOpened") =>
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type:
+              type === "auctionPublished"
+                ? {
+                    case: "auctionPublished",
+                    value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+                  }
+                : {
+                    case: "auctionTradingOpened",
+                    value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+                  },
+          }),
+        ),
+      );
+
+    expect(decode("auctionPublished")).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "new-auction", auctionId, meetupTitle: "Пятничная" },
+      },
+    });
+    expect(decode("auctionTradingOpened")).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "trading-opened",
+          auctionId,
+          meetupTitle: "Пятничная",
+        },
+      },
     });
   });
 

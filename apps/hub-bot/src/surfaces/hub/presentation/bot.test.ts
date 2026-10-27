@@ -25,6 +25,7 @@ import {
   blockedHubAccessText,
   declinedHubAccessText,
   hubWelcome,
+  invitationOnlyHub,
   pendingHubAccessText,
 } from "../application/hub-access.js";
 import { rejectedValueText } from "../application/meetup-form.js";
@@ -148,6 +149,13 @@ function forwardedReplyUpdate(replyMessageId: number): Update {
       } as never,
     },
   };
+}
+
+// Пересылка так, как её шлёт клиент: ответом на вопрос она прийти не может.
+function forwardedUpdate(): Update {
+  const update = forwardedReplyUpdate(0);
+  const { reply_to_message: _reply, ...message } = update.message ?? {};
+  return { ...update, message } as Update;
 }
 
 // Клавиатура вопроса: режим ответа и «Отмена» с его шагом.
@@ -823,7 +831,9 @@ describe("presentation adapter", () => {
     expect(rejection?.method).toBe("sendMessage");
     // Прежний вопрос снимается после того, как ушёл новый.
     expect(calls.at(-1)?.method).toBe("editMessageReplyMarkup");
-    expect(JSON.stringify(rejection?.payload)).toContain("нельзя дать ссылку");
+    expect(JSON.stringify(rejection?.payload)).toContain(
+      "Текст сам по себе не материал",
+    );
     expect(JSON.stringify(rejection?.payload)).not.toContain("force_reply");
     expect(JSON.stringify(rejection?.payload)).toContain(
       '"text":"Ввести заново","callback_data":"v1:mm:add:AZLzpLXGfY6fChssPU5fYA"',
@@ -834,6 +844,52 @@ describe("presentation adapter", () => {
 
     await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
     await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
+
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
+      "Как назвать материал",
+    );
+  });
+
+  // Клиент Telegram не умеет переслать сообщение ответом на вопрос: пересылка
+  // без ответа идёт ответом на открытый вопрос об источнике.
+  it("takes a forward without reply as the material source", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(forwardedUpdate());
+
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
+      "Как назвать материал",
+    );
+  });
+
+  // Подпись к пересылке клиент шлёт отдельным сообщением перед ней: набранный
+  // текст без ответа вопрос не снимает, и пересылка следом его находит.
+  it("keeps the source question open for a typed text without reply", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(messageUpdate("вот афиша"));
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).not.toContain(
+      "Текст сам по себе не материал",
+    );
+    await bot.handleUpdate(forwardedUpdate());
 
     expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
       "Как назвать материал",
@@ -1484,6 +1540,38 @@ describe("presentation adapter", () => {
       use_case: "find_meetup",
     });
     expect(records[0]?.fields.error).toBe("hub_access_declined");
+    expect(records[0]?.fields.identity_id).toBe(resolvedId);
+  });
+
+  // Закрытая очередь сообщества (дополнение ADR-060 от 2026-10-25): заявки
+  // нет, кадр «только по приглашению» с той же кнопкой и тем же кодом канала —
+  // ник, добавленный в список позже, она пропустит.
+  it("answers a closed community queue with the invitation-only frame", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      entering(answered("invitation-only", ["place-bids"])),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:apply:tg_ads"));
+    const shown = calls.find((call) => call.method === "editMessageText");
+    expect(screen(shown).text).toBe(
+      screenText(
+        invitationOnlyHub.title,
+        ...invitationOnlyHub.paragraphs.map(escapeHtml),
+      ),
+    );
+    expect(buttonLabels(shown)).toEqual(["Подать заявку"]);
+    expect(JSON.stringify(shown?.payload)).toContain('"v1:apply:tg_ads"');
+    expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "authorization",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("hub_access_invitation_only");
     expect(records[0]?.fields.identity_id).toBe(resolvedId);
   });
 
@@ -2885,7 +2973,7 @@ describe("presentation adapter", () => {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Архив", callback_data: "v1:nav:archive" }],
+            [{ text: "🗂 Архив", callback_data: "v1:nav:archive" }],
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
@@ -2958,7 +3046,7 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [{ text: "Архив", callback_data: "v1:nav:archive" }],
+            [{ text: "🗂 Архив", callback_data: "v1:nav:archive" }],
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
@@ -3627,6 +3715,62 @@ describe("presentation adapter", () => {
       useCase: "update_meetup",
       deadlineAt: expect.any(Number),
     });
+  });
+
+  // Отмена сходки с идущими торгами называет последствие для аукциона до
+  // подтверждения (PER-606; ADR-064, дополнение 2026-10-12): с числом
+  // проданных, а без ответа Auction — условно. Без торгов подтверждение
+  // прежнее, и другие шаги управления последствия не просят.
+  it("names the consequence for the auction before a meetup cancel is confirmed", async () => {
+    const meetup = publishedMeetup();
+    for (const [consequence, line] of [
+      [
+        { kind: "trading", sold: 3 },
+        "У сходки идут торги: аукцион будет отменён, проданные лоты (3) останутся проданными.",
+      ],
+      [
+        { kind: "unknown" },
+        "Если у сходки идут торги, аукцион будет отменён; проданные лоты останутся проданными.",
+      ],
+      [undefined, undefined],
+    ] as const) {
+      const execute = vi.fn<Dispatcher["execute"]>(async () => ({
+        kind: "meetup-card",
+        meetup,
+        ...(consequence === undefined
+          ? {}
+          : { cancelConsequence: consequence }),
+      }));
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:manage:cancel:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "view-meetup",
+          withCancelConsequence: true,
+        }),
+      );
+      const payload = calls.at(-1)?.payload as { text?: string } | undefined;
+      const text = String(payload?.text);
+      expect(text).toContain("Отменить сходку?");
+      if (line === undefined) {
+        expect(text).not.toContain("аукцион будет отменён");
+      } else {
+        expect(text).toContain(line);
+      }
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:manage:hold:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      expect(execute.mock.lastCall?.[0]).not.toHaveProperty(
+        "withCancelConsequence",
+      );
+    }
   });
 
   it("answers an old management button from an already cancelled meetup", async () => {
@@ -6959,6 +7103,7 @@ describe("notification frames", () => {
           frequency: "off",
           finalAnnouncements: true,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -6974,6 +7119,7 @@ describe("notification frames", () => {
       expect(payload.text).toContain("Перебили в финале");
       expect(payload.text).toContain("Анонс финала");
       expect(payload.text).toContain("О покупке лота пишу всегда");
+      expect(payload.text).toContain("Новый аукцион и торги");
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [
           {
@@ -6988,6 +7134,12 @@ describe("notification frames", () => {
           },
         ],
         [{ text: "🔔 Вкл · Анонс финала", callback_data: "v1:notify:final:0" }],
+        [
+          {
+            text: "🔔 Вкл · Новый аукцион и торги",
+            callback_data: "v1:notify:news:0",
+          },
+        ],
         [{ text: "‹ Аукцион", callback_data: "v1:nav:exta" }],
       ]);
     });
@@ -7000,6 +7152,7 @@ describe("notification frames", () => {
           frequency: "every",
           finalAnnouncements: true,
           liveFinalOutbids: true,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7029,6 +7182,7 @@ describe("notification frames", () => {
           frequency: "every",
           finalAnnouncements: false,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7067,6 +7221,7 @@ describe("notification frames", () => {
           frequency: "15",
           finalAnnouncements: true,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7143,15 +7298,17 @@ describe("notification frames", () => {
 
     // «Частота уведомлений» под перебитием — след: экран приходит новым
     // сообщением, а уведомление остаётся как было. Данные кнопки прежние,
-    // поэтому и «Реже» из старого сообщения открывает частоту на новом месте —
-    // под «Аукционом» «Расширений» настроек (PER-605, PER-598, №74).
-    it("opens the frequency from a notification as a new message at its new place", async () => {
+    // поэтому и «Реже» из старого сообщения открывает тот же экран. Человек
+    // пришёл из вести, а не из «Настроек», и возврата в дерево у экрана нет
+    // (№73 прогона 14 октября 2026 года): выбор режима этот вид держит.
+    it("opens the frequency from a notification as a new message without the way back", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
         settings: {
           frequency: "every",
           finalAnnouncements: true,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7162,7 +7319,44 @@ describe("notification frames", () => {
       expect(methods).not.toContain("editMessageText");
       const sent = screen(calls.find((call) => call.method === "sendMessage"));
       expect(JSON.stringify(sent.reply_markup)).toContain("Перебили: о каждом");
-      expect(sent.reply_markup?.inline_keyboard.at(-1)).toEqual([
+      const buttons = (sent.reply_markup?.inline_keyboard ?? []).flat();
+      expect(buttons.some((button) => button.text.startsWith("‹"))).toBe(false);
+      expect(buttons[0]?.callback_data).toBe("v1:notify:outbid:5:n");
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid:5:n"));
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "set-auction-notifications",
+          change: { kind: "frequency", frequency: "5" },
+        }),
+      );
+      const chosen = screen(
+        calls.findLast((call) => call.method !== "answerCallbackQuery"),
+      );
+      expect(
+        (chosen.reply_markup?.inline_keyboard ?? [])
+          .flat()
+          .some((button) => button.text.startsWith("‹")),
+      ).toBe(false);
+    });
+
+    // Из «Настроек» экран по-прежнему возвращает в «Аукцион» «Расширений».
+    it("keeps the way back when the frequency opens from the settings", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "auction-notifications",
+        settings: {
+          frequency: "every",
+          finalAnnouncements: true,
+          liveFinalOutbids: false,
+          auctionAnnouncements: true,
+        },
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid"));
+      const shown = screen(
+        calls.findLast((call) => call.method !== "answerCallbackQuery"),
+      );
+      expect(shown.reply_markup?.inline_keyboard.at(-1)).toEqual([
         { text: "‹ Аукцион", callback_data: "v1:nav:exta" },
       ]);
     });

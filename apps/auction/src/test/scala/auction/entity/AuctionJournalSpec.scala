@@ -37,6 +37,9 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
   private val drafted = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup))
 
+  private val instructions =
+    PaymentInstructions.parse("Перевод на карту организатора до срока.\nСамовывоз — на сходке.").get
+
   /** Рождение, записанное до признака видимости: строка без него читается видимым аукционом. */
   private val draftedVisible = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup, hidden = false))
   private val added = AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot))
@@ -52,6 +55,9 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
   private val activated = AuctionEnvelope(9, op(9), AuctionEvent.FinalLotActivated(lot))
 
   private val inFinal = Auction.replay(prebidding, List(deadline, ended, frozen, finalStarted, activated))
+
+  private def restored(row: AnyRef): AuctionEvent =
+    AuctionJournal.restoreEvent(row.asInstanceOf[StoredAuctionEvent].event)
 
   /** Строка прежней формы: байты эталона под manifest и сериализатором нынешнего класса. */
   private def legacy(name: String, current: AnyRef): AnyRef =
@@ -85,6 +91,14 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(open.copy(hidden = Some(true)))
     }
 
+    "reads a schedule written before the payment term with the term of the platform" in {
+      restored(legacy("auction-scheduled-without-payment-term", stored(scheduled.event, 3))) shouldBe scheduled.event
+      scheduled.event match {
+        case AuctionEvent.AuctionScheduled(config) => config.paymentTerm shouldBe AuctionConfig.PlatformPaymentTerm
+        case other => fail(s"unexpected $other")
+      }
+    }
+
     "keeps the stored form of a schedule with step windows and reads it back as one" in {
       val windowed = AuctionEvent.AuctionScheduled(
         AuctionFixtures.config(
@@ -111,6 +125,47 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 5)) shouldBe after
     }
 
+    "keeps the stored form of the lot set events and of a snapshot with sets equal to their golden files" in {
+      val set = LotSetId(uuid(20))
+      val second = LotId(uuid(12))
+      val name = LotSetName("Красный сет").toOption.get
+      val defined = AuctionEnvelope(3, op(3), AuctionEvent.LotSetDefined(set, name, List(second, lot)))
+      keepsGolden("lot-set-defined", stored(defined.event, 3))
+      keepsGolden("lot-set-deleted", stored(AuctionEvent.LotSetDeleted(set), 3))
+      val collected = AuctionEvent.LotSetSettled(set, LotSetSettlement.Collected(participant(2)))
+      keepsGolden("lot-set-settled", stored(collected, 5))
+      keepsGolden(
+        "lot-set-settled-uncollected",
+        stored(AuctionEvent.LotSetSettled(set, LotSetSettlement.NotCollected), 5)
+      )
+
+      val registry =
+        Auction.replay(Auction.initial, List(drafted, added, AuctionEnvelope(3, op(13), AuctionEvent.LotAdded(second))))
+      val withSet = Auction.replay(
+        registry,
+        List(
+          AuctionEnvelope(4, op(3), AuctionEvent.LotSetDefined(set, name, List(second, lot))),
+          AuctionEnvelope(5, op(14), AuctionEvent.AuctionScheduled(config())),
+          AuctionEnvelope(6, op(4), AuctionEvent.PrebiddingStarted),
+          AuctionEnvelope(7, op(5), collected)
+        )
+      )
+      withSet.sets(set).settlement shouldBe Some(LotSetSettlement.Collected(participant(2)))
+      keepsGolden("auction-snapshot-sets", AuctionJournal.storeAuction(withSet, sequence = 7))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(withSet, sequence = 7)) shouldBe withSet
+    }
+
+    "refuses a snapshot with a collector of a set that has no outcome" in {
+      val set = LotSetId(uuid(20))
+      val unsettled = Auction.apply(
+        Auction.replay(Auction.initial, List(drafted, added)),
+        AuctionEnvelope(3, op(3), AuctionEvent.LotSetDefined(set, LotSetName("Сет").toOption.get, List(lot)))
+      )
+      val stored = AuctionJournal.storeAuction(unsettled, sequence = 3)
+      val forged = stored.copy(sets = stored.sets.map(_.map(_.copy(collector = Some(uuid(30))))))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(forged)
+    }
+
     "refuses a launched window with no lot instead of recording it" in {
       val body = stored(
         AuctionEvent.StepWindowLaunched(StepWindowConfig(decidedAt, decidedAt.plusSeconds(60), money(100), Set.empty)),
@@ -122,6 +177,77 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
     "keeps the stored form of a schedule without lot defaults and reads it back as one" in {
       val bare = AuctionEvent.AuctionScheduled(AuctionFixtures.config(AuctionFixtures.configInput(lotDefaults = None)))
       keepsGolden("auction-scheduled-without-defaults", stored(bare, 3))
+    }
+
+    "keeps the stored form of the estimated time of the final and reads it back" in {
+      keepsGolden("final-time-set", stored(AuctionEvent.FinalTimeSet(decidedAt), 5))
+      keepsGolden("final-time-cleared", stored(AuctionEvent.FinalTimeCleared, 6))
+    }
+
+    "keeps the estimated time of the final in the snapshot and reads it back" in {
+      val withTime = Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.FinalTimeSet(decidedAt)))
+      val stored = AuctionJournal.storeAuction(withTime, sequence = 5)
+      stored.finalAt shouldBe Some(decidedAt)
+      AuctionJournal.restoreAuction(stored) shouldBe withTime
+      val cleared = Auction.apply(withTime, AuctionEnvelope(6, op(6), AuctionEvent.FinalTimeCleared))
+      val without = AuctionJournal.storeAuction(cleared, sequence = 6)
+      without.finalAt shouldBe None
+      AuctionJournal.restoreAuction(without) shouldBe cleared
+    }
+
+    "keeps the stored form of the payment instructions and reads it back" in {
+      keepsGolden("payment-instructions-set", stored(AuctionEvent.PaymentInstructionsSet(instructions), 7))
+      keepsGolden("payment-instructions-cleared", stored(AuctionEvent.PaymentInstructionsCleared, 8))
+    }
+
+    "keeps the payment instructions in the snapshot and reads them back" in {
+      val withText =
+        Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.PaymentInstructionsSet(instructions)))
+      val stored = AuctionJournal.storeAuction(withText, sequence = 5)
+      stored.paymentInstructions shouldBe Some(instructions.value)
+      AuctionJournal.restoreAuction(stored) shouldBe withText
+      val cleared = Auction.apply(withText, AuctionEnvelope(6, op(6), AuctionEvent.PaymentInstructionsCleared))
+      val without = AuctionJournal.storeAuction(cleared, sequence = 6)
+      without.paymentInstructions shouldBe None
+      AuctionJournal.restoreAuction(without) shouldBe cleared
+    }
+
+    "keeps the stored form of the lot layout and of a snapshot that holds it equal to their golden files" in {
+      def section(id: Int, name: String, lots: LotId*) =
+        LotSection(LotSectionId(id).get, LotSectionName(name).get, lots.toList)
+      val event = LotLayout.of(List(LotId(uuid(12))), List(section(1, "Книги и комиксы", lot))).toOption.get
+      keepsGolden("lot-layout-set", stored(AuctionEvent.LotLayoutSet(event), 5))
+
+      val books = LotLayout.of(Nil, List(section(1, "Книги", lot))).toOption.get
+      val withLayout = Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.LotLayoutSet(books)))
+      withLayout.layout shouldBe books
+      keepsGolden("auction-snapshot-layout", AuctionJournal.storeAuction(withLayout, sequence = 5))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(withLayout, sequence = 5)) shouldBe withLayout
+    }
+
+    // Строка, записанная до раскладки ленты (PER-719): лента в порядке создания.
+    "reads a snapshot written before the lot layout as an auction without one" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).layout shouldBe LotLayout.empty
+    }
+
+    "refuses a stored lot layout that names a lot twice" in {
+      val twice = StoredAuctionEventBody
+        .of("LotLayoutSet")
+        .copy(lotLayout = Some(StoredLotLayout(List(uuid(11)), List(StoredLotSection(1, "Книги", List(uuid(11)))))))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(twice)
+    }
+
+    // Строка, записанная до текста оплаты (PER-322): аукцион без текста.
+    "reads a snapshot written before the payment instructions as an auction without them" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).paymentInstructions shouldBe None
+    }
+
+    // Строка, записанная до поля времени: аукцион без ориентировочного времени финала (ADR-040, дополнение 2026-10-19).
+    "reads a snapshot written before the estimated time of the final as an auction without it" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).finalAt shouldBe None
     }
 
     "keeps the stored form of a snapshot in prebidding with its config and the op_id of the start" in {
@@ -240,7 +366,8 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
     }
 
     "reads a schedule written before the raffle existed as a schedule without a raffle" in {
-      legacy("auction-scheduled-without-raffle", stored(scheduled.event, 3)) shouldBe stored(scheduled.event, 3)
+      // Прежняя строка не несёт и срока оплаты (дополнение 2026-10-21): сравнивается событие, а не форма хранения.
+      restored(legacy("auction-scheduled-without-raffle", stored(scheduled.event, 3))) shouldBe scheduled.event
       config().raffleClosesAt shouldBe None
     }
 
@@ -252,7 +379,7 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
           )
         )
       )
-      legacy("auction-scheduled-with-raffle", stored(raffled, 3)) shouldBe stored(raffled, 3)
+      restored(legacy("auction-scheduled-with-raffle", stored(raffled, 3))) shouldBe raffled
       raffled.config.rafflePrize shouldBe None
     }
 

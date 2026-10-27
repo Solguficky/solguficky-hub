@@ -1,11 +1,13 @@
 import { GrammyError, HttpError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
+import { inspectCall } from "../../../../testkit/screen-lint.js";
 import { encodeAuctionCallback } from "../../../auction-ui/index.js";
 import { renderFinalNotice } from "../../../core/notifications/final-notice.js";
 import {
   createLotNoticeRender,
   type LotNotice,
 } from "../../../core/notifications/lot-notice.js";
+import { renderStepWindowNotice } from "../../../core/notifications/step-window-notice.js";
 import type {
   MeetupAspect,
   MeetupLifecycle,
@@ -140,8 +142,84 @@ describe("renderNotification", () => {
     });
   });
 
+  // Начало окна «Счастливых часов» (PER-616): ряд на каждый лот окна, след на
+  // карточку лота аукционного дерева.
+  function windowView() {
+    return renderStepWindowNotice(
+      {
+        kind: "step-window-started",
+        auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        lots: [
+          {
+            lotId,
+            until: "2026-10-21T21:00:00Z",
+            step: { minorUnits: 50_000, currency: "RUB" },
+          },
+        ],
+      },
+      { lots: new Map([[lotId, { title: "Кружка" }]]), timeZone: "UTC" },
+    );
+  }
+
+  it("traces the card of every lot of the window", () => {
+    const message = renderNotification({
+      kind: "lot-notice",
+      view: windowView(),
+    });
+    expect(message.text.split("\n")[0]).toBe("Счастливые часы начались:");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Кружка",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "lot", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  // Линтер дизайн-кода: весть идёт мимо адаптера экранов, и без метки
+  // каталога линтер её не увидел бы.
+  it("passes the screen linter", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: { kind: "lot-notice", view: windowView() },
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
+  });
+
   // Итог розыгрыша (PER-620): победителю своя фраза, остальным — номер
   // выигравшего билета и свой; кнопка следа ведёт на экран итога.
+  it("tells a community member that prediction results are ready", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const message = renderNotification({
+      kind: "prediction-results",
+      auctionId,
+    });
+    expect(message.text).toBe("Итоги твоих прогнозов подведены.");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К итогам",
+          callback_data: `v1:t:${encodeAuctionCallback({
+            kind: "prediction-results",
+            auctionId,
+          }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
   it("tells the winner and the others the raffle result with a traced button", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
     const result = (ticket: number, prize?: string) =>
@@ -174,6 +252,89 @@ describe("renderNotification", () => {
     ]);
   });
 
+  // Собранный сет (PER-687): весть простым текстом, имя организатора — как
+  // есть, а след открывает существующий экран состава новым сообщением.
+  it("names and counts the collected set with one traced button", () => {
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: "<Сервиз & чашки>",
+      lotCount: 3,
+      lotId,
+    });
+
+    expect(message.text).toBe(
+      "Ты собрал сет «<Сервиз & чашки>»: в нём 3 лота.",
+    );
+    expect(message.format).toBeUndefined();
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К сету",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "set", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  it("passes the screen linter with organizer text in plain text", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: {
+        kind: "lot-set-collected",
+        setName: "<Сервиз & чашки>",
+        lotCount: 3,
+        lotId,
+      },
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
+  });
+
+  it("keeps a long set name within Telegram's text limit", () => {
+    const message = renderNotification({
+      kind: "lot-set-collected",
+      setName: '"'.repeat(1_000),
+      lotCount: 3,
+      lotId,
+    });
+
+    expect(message.text.length).toBeLessThanOrEqual(telegramTextLimit);
+  });
+
+  // Извещение об отмене аукциона (PER-606): покупателю — строка о покупке,
+  // кнопка следа — корень аукциона новым сообщением.
+  it("tells about a cancelled auction with a traced button to its root", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const message = renderNotification({
+      kind: "auction-cancelled",
+      auctionId,
+      purchases: [{ minorUnits: 150_000, currency: "RUB" }],
+    });
+
+    expect(message.text).toContain(
+      "Аукцион отменили: торги по лотам остановлены, ставки больше не действуют.",
+    );
+    expect(message.text).toContain("Твоя покупка за");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К аукциону",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "root", auctionId }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
   // Записи 30 и 32 прогона 12.10: участник сообщества видит название лота, как
   // гость в боте аукциона, а под перебитием — «Частота уведомлений» вместо
   // «Реже» (PER-598).
@@ -184,9 +345,11 @@ describe("renderNotification", () => {
       currentPrice: { minorUnits: 150_000, currency: "RUB" },
     });
 
+    // Название жирным, после «перебили» (№71 прогона 14 октября 2026 года).
     expect(rendered.text).toBe(
-      "Твою ставку на «Кружка» перебили. Текущая цена — 1 500 ₽.",
+      "Твою ставку перебили: лот «<b>Кружка</b>», цена 1 500 ₽.",
     );
+    expect(rendered.format).toBe("HTML");
     const button = rendered.keyboard?.inline_keyboard[0]?.[0];
     expect(button?.text).toBe("К лоту");
     expect(button).toMatchObject({
@@ -220,7 +383,7 @@ describe("renderNotification", () => {
       price: { minorUnits: 150_000, currency: "RUB" },
     });
     expect(rendered.text).toBe(
-      "Лот «Кружка» твой за 1 500 ₽. Как оплатить и забрать — напишет организатор аукциона.",
+      "Лот «<b>Кружка</b>» твой за 1 500 ₽. Счёт и как оплатить — в «Моих счетах» аукциона.",
     );
     expect(rendered.keyboard?.inline_keyboard).toEqual([
       [expect.objectContaining({ text: "К лоту" })],

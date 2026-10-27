@@ -1,6 +1,7 @@
 import { BidSource } from "../../../gen/auction/v1/auction_pb.js";
 import type {
   HistoryBid,
+  HistoryRemoval,
   ListLotHistoryResponse,
 } from "../../../gen/auction/v1/auction_service_pb.js";
 import type {
@@ -21,10 +22,10 @@ export function historyPageOf(page: ListLotHistoryResponse): LotHistoryPage {
       switch (entry.kind.case) {
         case "bid":
           return [bidOf(entry.sequence, entry.occurredAt, entry.kind.value)];
-        // Снятие участника и пометку снятых ставок хронология бота покажет
-        // вместе с пультом (PER-659); до него запись пропускается, как
-        // запись неизвестного вида.
         case "removal":
+          return [
+            removalOf(entry.sequence, entry.occurredAt, entry.kind.value),
+          ];
         case undefined:
           return [];
         default: {
@@ -51,6 +52,26 @@ function bidOf(
     participantId: bid.participantId,
     amount: moneyOf(bid.amount),
     origin: originOf(bid.origin),
+    ...(bid.removed ? { removed: true as const } : {}),
+  };
+}
+
+// Снятие участника (ADR-072): цена, с которой лот пошёл дальше, и лидер.
+// Снятие без цены — дефект соседа, как ставка без суммы.
+function removalOf(
+  sequence: bigint,
+  occurredAt: string,
+  removal: HistoryRemoval,
+): LotHistoryEntryView {
+  if (removal.price === undefined) {
+    throw new Error("history removal without price");
+  }
+  return {
+    kind: "removal",
+    sequence: Number(sequence),
+    occurredAt,
+    price: moneyOf(removal.price),
+    ...(removal.leaderId === undefined ? {} : { leaderId: removal.leaderId }),
   };
 }
 

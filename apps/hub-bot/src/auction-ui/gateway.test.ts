@@ -105,8 +105,20 @@ function surfaceFor(
         async cancelRaffleRegistration() {
           throw new Error("not used");
         },
+        async listMyInvoices() {
+          return { invoices: [] };
+        },
+        async chooseFulfillment() {
+          throw new Error("not used");
+        },
         async getMyPredictions() {
           return [];
+        },
+        async getPredictionResults() {
+          throw new Error("not used");
+        },
+        getDayChronicle: async () => {
+          throw new Error("not used");
         },
         async submitPrediction() {
           throw new Error("not used");
@@ -186,11 +198,11 @@ describe("handleAuctionUpdate gateway", () => {
     expect(calls.auction).toBe(0);
   });
 
-  // Участник и администратор в боте аукциона получают переход в бот хаба: и
-  // подделанная кнопка `auc` до Auction не доходит (ADR-064, пункт 2).
+  // Участник в боте аукциона получает переход в бот хаба: и подделанная
+  // кнопка `auc` до Auction не доходит (ADR-064, пункт 2). Администратора бот
+  // аукциона пускает (решение владельца 24.10.2026).
   it.each<[string, AccessRight[]]>([
     ["a member", MEMBER],
-    ["an admin", ADMIN],
     ["a hub right alone", ["access-hub"]],
   ])("sends %s from the auction bot to the hub bot", async (_name, rights) => {
     const { press, calls } = surfaceFor("auction", { rights, blocked: false });
@@ -327,7 +339,6 @@ describe("surface entry on /start", () => {
   // аукциона, кроме блокировки и незнакомого исхода.
   it.each<[AccessRequestOutcome, AccessRight[]]>([
     ["already-held", MEMBER],
-    ["already-held", ADMIN],
     ["granted-by-allowlist", MEMBER],
     ["pending", ["access-hub"]],
     ["declined", MEMBER],
@@ -343,6 +354,20 @@ describe("surface entry on /start", () => {
       });
     },
   );
+
+  // Администратор проверяет бот аукциона глазами гостя (решение владельца
+  // 24.10.2026): вход ему открыт, как гостю с правом ставок.
+  it("lets an admin into the auction bot", () => {
+    expect(
+      decideEntry("auction", {
+        viewer: { ...VIEWER, rights: ADMIN },
+        outcome: "already-held",
+      }),
+    ).toEqual({
+      kind: "entered",
+      identity: { viewer: { ...VIEWER, rights: ADMIN }, blocked: false },
+    });
+  });
 
   it("refuses the blocked on the auction bot whatever the rights say", () => {
     expect(
@@ -373,6 +398,26 @@ describe("surface entry on /start", () => {
       decideEntry("hub", {
         viewer: { ...VIEWER, rights: MEMBER },
         outcome: "unspecified",
+      }),
+    ).toEqual({ kind: "unknown-outcome", identityId: IDENTITY_ID });
+  });
+
+  // Закрытая очередь сообщества (дополнение ADR-060 от 2026-10-25): хабу —
+  // свой ответ, боту аукциона — незнакомый исход: его очередь не закрывается.
+  it("answers the hub on a closed queue as invitation only", () => {
+    expect(
+      decideEntry("hub", {
+        viewer: { ...VIEWER, rights: ["place-bids"] },
+        outcome: "invitation-only",
+      }),
+    ).toEqual({ kind: "invitation-only", identityId: IDENTITY_ID });
+  });
+
+  it("reads invitation only in the auction queue as an unknown outcome", () => {
+    expect(
+      decideEntry("auction", {
+        viewer: { ...VIEWER, rights: [] },
+        outcome: "invitation-only",
       }),
     ).toEqual({ kind: "unknown-outcome", identityId: IDENTITY_ID });
   });

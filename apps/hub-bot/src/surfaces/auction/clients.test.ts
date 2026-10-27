@@ -76,11 +76,12 @@ function rpcs() {
               participantId: "p-2",
               amount: { minorUnits: 160_000n, currency: "RUB" },
               origin: { case: "proxy", value: {} },
+              removed: true,
             },
           },
         },
-        // Снятие участника бот покажет вместе с пультом (PER-659), а до
-        // него пропускает так же, как незнакомую запись.
+        // Снятие участника (ADR-072): ставки снятого помечены, а снятие —
+        // своя запись с ценой и лидером.
         {
           sequence: 7n,
           occurredAt: "2026-10-03T16:06:00Z",
@@ -222,8 +223,10 @@ describe("createPorts", () => {
     [AccessRequestOutcome.PENDING, "pending"],
     [AccessRequestOutcome.DECLINED, "declined"],
     [AccessRequestOutcome.BLOCKED, "blocked"],
+    [AccessRequestOutcome.INVITATION_ONLY, "invitation-only"],
     [AccessRequestOutcome.UNSPECIFIED, "unspecified"],
-    // Число, которого словарь ещё не знает, — отказ, а не допуск.
+    // Число, которого словарь ещё не знает, — отказ, а не допуск. Так бот,
+    // собранный до INVITATION_ONLY (PER-739), читает и шестёрку.
     [99 as AccessRequestOutcome, "unspecified"],
   ])("reads the outcome %s as %s", async (wire, outcome) => {
     const { identity, ports } = rpcs();
@@ -271,7 +274,7 @@ describe("createPorts", () => {
     );
   });
 
-  it("reads the history of a lot and skips an entry of a kind it does not know", async () => {
+  it("reads the history of a lot with removals and skips an entry of a kind it does not know", async () => {
     const { auction, ports } = rpcs();
     const page = await ports.auction.listLotHistory({
       viewer,
@@ -297,6 +300,14 @@ describe("createPorts", () => {
           participantId: "p-2",
           amount: { minorUnits: 160_000, currency: "RUB" },
           origin: { kind: "proxy" },
+          removed: true,
+        },
+        {
+          kind: "removal",
+          sequence: 7,
+          occurredAt: "2026-10-03T16:06:00Z",
+          price: { minorUnits: 150_000, currency: "RUB" },
+          leaderId: "p-1",
         },
       ],
       nextPageToken: "",

@@ -7,7 +7,9 @@ import {
 } from "../../../../gen/identity/v1/access_pb.js";
 import {
   LotActivityKind,
+  LotSetCollectedSchema,
   NotificationSchema,
+  StepWindowStartedSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -202,6 +204,28 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Ведение лота вернулось: снятие участника оставило лот новому лидеру
+  // (ADR-072, п. 5). Ветка приходит в auction subject и разбирается этим ботом.
+  it("decodes a restored lead with the lot and the current price", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "lotLeadRestored",
+          value: { lotId, currentPrice: price },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-lead-restored",
+          lotId,
+          currentPrice: { minorUnits: 150_000, currency: "RUB" },
+        },
+      },
+    });
+  });
+
   it("decodes a purchase fact with the sale price", () => {
     expect(
       decodeNotification(
@@ -250,6 +274,163 @@ describe("decodeNotification", () => {
           ticket: 7,
           winningTicket: 7,
           ticketCount: 12,
+        },
+      },
+    });
+  });
+
+  // Гостю сообщение о собранном сете доставляет бот аукциона.
+  it("decodes a collected lot set with its screen anchor", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "lotSetCollected",
+          value: create(LotSetCollectedSchema, {
+            setName: "Сервиз",
+            lotCount: 3,
+            lotId,
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-set-collected",
+          setName: "Сервиз",
+          lotCount: 3,
+          lotId,
+        },
+      },
+    });
+  });
+
+  // Итоги прогнозов (PER-568) гостю доставляет бот аукциона. Списки номинаций
+  // факт несёт, весть их не разбирает.
+  it("decodes prediction results as the thin notice", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({ case: "predictionResults", value: { auctionId } }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "prediction-results", auctionId },
+      },
+    });
+  });
+
+  it("rejects prediction results without a canonical auction id", () => {
+    expect(
+      decodeNotification(
+        fact({ case: "predictionResults", value: { auctionId: "not-a-uuid" } }),
+      ),
+    ).toMatchObject({ kind: "malformed" });
+  });
+
+  // Вести о новом аукционе и об открытии торгов (PER-646) гостю доставляет
+  // бот аукциона; участнику те же ветки приходят в боте хаба.
+  it("decodes a published auction and the opening of its trading", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+    expect(
+      decodeNotification(
+        fact({
+          case: "auctionPublished",
+          value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "new-auction", auctionId, meetupTitle: "Пятничная" },
+      },
+    });
+    expect(
+      decodeNotification(
+        fact({
+          case: "auctionTradingOpened",
+          value: { auctionId, meetupId, meetupTitle: "Пятничная" },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "trading-opened",
+          auctionId,
+          meetupTitle: "Пятничная",
+        },
+      },
+    });
+  });
+
+  // Извещение об отмене аукциона (PER-606) гостю доставляет бот аукциона.
+  it("decodes a cancelled auction with the purchases of the recipient", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({
+          case: "auctionCancelled",
+          value: {
+            auctionId,
+            meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+            purchases: [
+              {
+                lotId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61",
+                price: { minorUnits: 150_000n, currency: "RUB" },
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "auction-cancelled",
+          auctionId,
+          purchases: [{ minorUnits: 150_000, currency: "RUB" }],
+        },
+      },
+    });
+  });
+
+  // Начало окна «Счастливых часов» (PER-616) гостю доставляет бот аукциона,
+  // как вести о лотах: без разбора ветка ушла бы в отказ `unrendered_type`.
+  it("decodes the start of a window with the lots of the recipient", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({
+          case: "stepWindowStarted",
+          value: create(StepWindowStartedSchema, {
+            auctionId,
+            startsAt: "2026-10-21T19:00:00Z",
+            lots: [
+              {
+                lotId,
+                until: "2026-10-21T21:00:00Z",
+                step: { minorUnits: 50_000n, currency: "RUB" },
+              },
+            ],
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "step-window-started",
+          auctionId,
+          lots: [
+            {
+              lotId,
+              until: "2026-10-21T21:00:00Z",
+              step: { minorUnits: 50_000, currency: "RUB" },
+            },
+          ],
         },
       },
     });

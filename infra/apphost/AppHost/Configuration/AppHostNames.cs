@@ -21,6 +21,8 @@ public static class AppHostNames
         public const string NotificationsDbName = "notifications";
         public const string AuctionDb = "auction-db";
         public const string AuctionDbName = "auction";
+        public const string AchievementsDb = "achievements-db";
+        public const string AchievementsDbName = "achievements";
 
         public const string Nats = "nats";
         public const string Loki = "loki";
@@ -37,6 +39,12 @@ public static class AppHostNames
 
         // Бот поддержки (ADR-068).
         public const string SupportBot = "support-bot";
+
+        // Сквозной сервис ачивок (ADR-077).
+        public const string Achievements = "achievements";
+
+        // Публичный вход к экрану зала, только в чарте (ADR-071).
+        public const string Cloudflared = "cloudflared";
     }
 
     /// <summary>
@@ -60,5 +68,9 @@ public static class AppHostNames
         public const string Identity = "identity.v1.IdentityService";
         public const string Meetups = "meetups.v1.MeetupsService";
         public const string Notifications = "notifications.v1.NotificationsService";
+
+        // Сервиса в контракте ещё нет: имя занято заранее, и контракт Achievements
+        // обязан назвать свой основной сервис так же.
+        public const string Achievements = "achievements.v1.AchievementsService";
     }
 }

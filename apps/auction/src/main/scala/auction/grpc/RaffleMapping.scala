@@ -1,10 +1,13 @@
 package auction.grpc
 
 import auction.contract.LotValues
+import auction.raffle.AssignRejected
+import auction.raffle.ChangePrizeRejected
 import auction.raffle.RaffleStatus
 import auction.raffle.RaffleView
 import auction.raffle.RegistrationRejected
 import auction.v1.auction_service as wire
+import auction.v1.auction_service.ChangeRafflePrizeRefusal.Reason as PrizeReason
 import io.grpc.Status
 
 /**
@@ -30,9 +33,10 @@ object RaffleMapping {
           seed = reveal.seed.hex,
           randomness = reveal.draw.fold("")(_.randomness.hex),
           value = reveal.draw.fold("")(_.value),
-          winningTicket = reveal.draw.map(_.winningTicket)
+          winningTicket = reveal.winningTicket
         )
-      }
+      },
+      drawnByHand = view.byHand
     )
 
   private def status(value: RaffleStatus): wire.RaffleStatus =
@@ -40,6 +44,7 @@ object RaffleMapping {
       case RaffleStatus.Open => wire.RaffleStatus.RAFFLE_STATUS_OPEN
       case RaffleStatus.Closing => wire.RaffleStatus.RAFFLE_STATUS_CLOSING
       case RaffleStatus.AwaitingBeacon => wire.RaffleStatus.RAFFLE_STATUS_AWAITING_BEACON
+      case RaffleStatus.AwaitingWinner => wire.RaffleStatus.RAFFLE_STATUS_AWAITING_WINNER
       case RaffleStatus.Drawn => wire.RaffleStatus.RAFFLE_STATUS_DRAWN
       case RaffleStatus.NoTickets => wire.RaffleStatus.RAFFLE_STATUS_NO_TICKETS
       case RaffleStatus.NotHeld => wire.RaffleStatus.RAFFLE_STATUS_NOT_HELD
@@ -83,6 +88,44 @@ object RaffleMapping {
       case Left(RegistrationRejected.OpIdTaken) => Left(opIdTaken)
     }
   }
+
+  /** Ручной итог (PER-727): чужой `op_id` — `ALREADY_EXISTS`, остальные отказы — значения ответа. */
+  def assign(outcome: Either[AssignRejected, wire.Raffle]): Either[Status, wire.AssignRaffleWinnerResponse] = {
+    import wire.AssignRaffleWinnerRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.AssignRaffleWinnerResponse().withRefused(wire.AssignRaffleWinnerRefusal(reason)))
+    outcome match {
+      case Right(raffle) => Right(wire.AssignRaffleWinnerResponse().withAccepted(raffle))
+      case Left(AssignRejected.RaffleNotFound) => refused(Reason.RaffleNotFound(wire.RaffleNotFound()))
+      case Left(AssignRejected.NotAwaitingWinner) => refused(Reason.NotAwaitingWinner(wire.RaffleNotAwaitingWinner()))
+      case Left(AssignRejected.TicketNotInPool(tickets)) =>
+        refused(Reason.TicketNotInPool(wire.RaffleTicketNotInPool(tickets)))
+      case Left(AssignRejected.AlreadyDrawn(winningTicket)) =>
+        refused(Reason.AlreadyDrawn(wire.RaffleAlreadyDrawn(winningTicket)))
+      case Left(AssignRejected.OpIdTaken) => Left(opIdTaken)
+    }
+  }
+
+  /** Смена приза (PER-737): чужой `op_id` — `ALREADY_EXISTS`, остальные отказы — значения ответа. */
+  def changePrize(outcome: Either[ChangePrizeRejected, wire.Raffle]): Either[Status, wire.ChangeRafflePrizeResponse] =
+    outcome match {
+      case Right(raffle) => Right(wire.ChangeRafflePrizeResponse().withAccepted(raffle))
+      case Left(ChangePrizeRejected.RaffleNotFound) =>
+        Right(prizeRefused(PrizeReason.RaffleNotFound(wire.RaffleNotFound())))
+      case Left(ChangePrizeRejected.AlreadyDrawn(winningTicket)) =>
+        Right(prizeRefused(PrizeReason.AlreadyDrawn(wire.RaffleAlreadyDrawn(winningTicket))))
+      case Left(ChangePrizeRejected.WithoutResult) =>
+        Right(prizeRefused(PrizeReason.WithoutResult(wire.RaffleWithoutResult())))
+      case Left(ChangePrizeRejected.OpIdTaken) => Left(opIdTaken)
+    }
+
+  /** Текст приза отвергнут тем же отказом, что приз конфигурации. */
+  def prizeBlank: wire.ChangeRafflePrizeResponse = prizeRefused(PrizeReason.PrizeBlank(wire.RafflePrizeBlank()))
+
+  def prizeTooLong: wire.ChangeRafflePrizeResponse = prizeRefused(PrizeReason.PrizeTooLong(wire.RafflePrizeTooLong()))
+
+  private def prizeRefused(reason: PrizeReason): wire.ChangeRafflePrizeResponse =
+    wire.ChangeRafflePrizeResponse().withRefused(wire.ChangeRafflePrizeRefusal(reason))
 
   private def opIdTaken: Status = Status.ALREADY_EXISTS.withDescription("op_id belongs to another command")
 }

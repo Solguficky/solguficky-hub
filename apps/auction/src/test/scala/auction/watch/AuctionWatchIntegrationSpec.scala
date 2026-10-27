@@ -4,10 +4,12 @@ import auction.AuctionNode
 import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.configInput
 import auction.catalog.CardEdit
+import auction.catalog.CardInsertion
 import auction.catalog.ImageChange
 import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.catalog.NewCard
+import auction.catalog.PhotoId
 import auction.entity.Initiator
 import auction.entity.LotEntity
 import auction.entity.LotGateway
@@ -154,10 +156,13 @@ final class AuctionWatchIntegrationSpec
       try {
         val store = SlickLotCatalogStore(kit.system)
         val title = LotTitle("Солегуф").fold(refusal => fail(s"title refused: $refusal"), valid => valid)
-        store.insertIfAbsent(NewCard(lot, title, "описание", None)).futureValue shouldBe None
+        val photo = PhotoId(UUID.randomUUID())
+        store
+          .insertIfAbsent(NewCard(lot, title, "описание", None, photo))
+          .futureValue shouldBe a[CardInsertion.Inserted]
         queue.next(2.seconds) shouldBe Some(())
 
-        store.update(CardEdit(lot, title, "новое описание", ImageChange.Keep)).futureValue should not be empty
+        store.update(CardEdit(lot, title, "новое описание", ImageChange.Keep, photo)).futureValue should not be empty
         queue.next(2.seconds) shouldBe Some(())
       } finally kit.shutdownTestKit()
     }
@@ -217,6 +222,63 @@ final class AuctionWatchIntegrationSpec
       }
     }
 
+    "sends the sale of the last lot of the final before it ends the stream" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val (_, inFinal) = watchingFinal(node)
+        sellLast(node, inFinal)
+
+        val last = untilEnd(inFinal.queue).lastOption.getOrElse(fail("the stream ended without a message"))
+        last.getAuction.status.isFinished shouldBe true
+        last.lineup.map(lot => lot.id -> lot.status.isSold) shouldBe Seq(inFinal.lot.value.toString -> true)
+      }
+    }
+
+    "gives a watcher who comes after the end one message with the sold lineup and ends the stream" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val (request, inFinal) = watchingFinal(node)
+        inFinal.queue.cancel()
+        sellLast(node, inFinal)
+        // Продажа лота и конец аукциона уже в read model: поздний подписчик читает их одним чтением.
+        eventually {
+          node.client
+            .getAuction()
+            .addHeader("authorization", s"Bearer $hubToken")
+            .invoke(wire.GetAuctionRequest(Some(watcher), inFinal.message.getAuction.id))
+            .futureValue
+            .getAuction
+            .status
+            .isFinished shouldBe true
+        }
+
+        val messages = untilEnd(node.watch(request))
+        messages.last.getAuction.status.isFinished shouldBe true
+        messages.last.lineup.map(lot => lot.id -> lot.status.isSold) shouldBe Seq(inFinal.lot.value.toString -> true)
+      }
+    }
+
+    "carries the estimated time of the final to the open stream without a reconnect" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val auction = onlineWeek(node)
+        awaitVisible(node, auction)
+        val queue = node.watch(wire.WatchAuctionRequest(Some(watcher), auction.value.toString))
+        val reader = Reader(queue)
+        reader.next(10.seconds).getOrElse(fail("the stream ended")).getAuction.finalAt shouldBe empty
+        val at = Instant.now().plusSeconds(3600)
+
+        node.commands.setFinalTime(auction, Some(at), newOp(), person).futureValue shouldBe Right(())
+
+        val changed = reader.next(10.seconds).getOrElse(fail("the estimated time did not arrive"))
+        Instant.parse(changed.getAuction.finalAt.getOrElse(fail("the estimated time is absent"))) shouldBe at
+        reader.cancel()
+      }
+    }
+
     "answers an auction that was never drafted with not found" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
@@ -271,9 +333,13 @@ final class AuctionWatchIntegrationSpec
     val (auction, finalist) = liveFinal(node)
     val request = wire.WatchAuctionRequest(Some(watcher), auction.value.toString)
     val queue = node.watch(request)
+    // Активный лот называет проекция аукционов, а его торги — проекция лотов, и вторая может отстать: пока лот в read
+    // model удержан, `next_price` не выставлен, и ставка по нему была бы отказом. Ждём сообщения, где лот уже торгуется.
     val message = eventually {
       val next = queue.pull().futureValue.getOrElse(fail("the stream ended"))
       next.activeLot.map(_.id) shouldBe Some(finalist.value.toString)
+      next.getActiveLot.status.isTrading shouldBe true
+      next.getActiveLot.nextPrice should not be empty
       next
     }
     message.getAuction.status.isInFinal shouldBe true
@@ -290,6 +356,21 @@ final class AuctionWatchIntegrationSpec
       )
       .futureValue
       .isRight shouldBe true
+
+  /** Ставка по следующей цене и продажа активного лота ведущим: состав из одного лота, и аукцион заканчивается. */
+  private def sellLast(node: Node, inFinal: InFinal): Unit = {
+    bid(node, inFinal.lot, inFinal.message.getActiveLot.getNextPrice, participant(2))
+    val auction = AuctionId(UUID.fromString(inFinal.message.getAuction.id))
+    eventually(node.commands.closeLot(auction, inFinal.lot, newOp(), person).futureValue.isRight shouldBe true)
+  }
+
+  /** Сообщения потока до его конца; поток, не закрывшийся за срок, — провал. */
+  private def untilEnd(queue: SinkQueueWithCancel[wire.AuctionWatch]): List[wire.AuctionWatch] =
+    Iterator
+      .continually(queue.pull().futureValue)
+      .takeWhile(_.isDefined)
+      .flatten
+      .toList
 
   private final case class Node(
       commands: AuctionCommands,
@@ -375,6 +456,33 @@ final class AuctionWatchIntegrationSpec
     node.commands.startNextLot(auction, newOp(), person).futureValue shouldBe Right(finalist)
     (auction, finalist)
   }
+
+  /**
+   * Аукцион с открытой онлайн-неделей: время финала в нём ещё можно выставить, а снимок читается.
+   */
+  private def onlineWeek(node: Node): AuctionId = {
+    val auction = node.commands
+      .draft(MeetupId(newId()), newOp(), person)
+      .futureValue
+      .fold(denial => fail(s"the auction was not drafted: $denial"), _.auctionId)
+    val week = OnlinePhase(Instant.now().minusSeconds(3600), Some(Instant.now().plusSeconds(600)), closesLots = true)
+    node.commands.schedule(auction, configInput(Some(week)), newOp(), person).futureValue shouldBe Right(())
+    node.commands.startPrebidding(auction, newOp(), person).futureValue shouldBe Right(())
+    auction
+  }
+
+  /**
+   * Ждёт, пока проекция опубликует аукцион: до этого он скрыт, и поток отвечает «не найден».
+   */
+  private def awaitVisible(node: Node, auction: AuctionId): Unit =
+    eventually {
+      val read = node.client
+        .getAuction()
+        .addHeader("authorization", s"Bearer $hubToken")
+        .invoke(wire.GetAuctionRequest(Some(watcher), auction.value.toString))
+        .futureValue
+      read.auction.isDefined shouldBe true
+    }
 
   private def quietLot() =
     _root_.auction.lot.LotFixtures

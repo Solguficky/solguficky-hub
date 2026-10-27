@@ -1,5 +1,6 @@
 package auction.publication
 
+import auction.telemetry.NatsClientLog
 import auction.telemetry.OutboxBacklog
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.actor.Cancellable
@@ -144,7 +145,7 @@ object OutboxRelay {
    * заменяется до записи.
    */
   private[publication] def withoutCredentials(text: String): String =
-    text.replaceAll("""([a-zA-Z][a-zA-Z0-9+.-]*://)[^@/\s]+@""", "$1***@")
+    NatsClientLog.withoutCredentials(text)
 
   private def stackOf(cause: Throwable): String = {
     val text = new StringWriter()

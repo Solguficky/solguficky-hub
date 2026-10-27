@@ -32,6 +32,12 @@ export type ShownScreen = {
   /** `new` — экран приходит новым сообщением, даже если его открыло нажатие. */
   delivery?: "auto" | "new";
   /**
+   * Сообщение этого чата, которое экран правит вместо нового: исход альбома
+   * фото лота — один экран на все снимки (PER-721). Правка не прошла —
+   * экран приходит новым сообщением.
+   */
+  editOf?: number;
+  /**
    * Что остаётся подписью у сообщения с файлом, под которым нажали кнопку: оно
    * становится следом. Без подписи у него только снимается клавиатура.
    */
@@ -101,6 +107,7 @@ async function deliverScreen(
     fileTrace,
     media,
     strict,
+    editOf,
   }: ShownScreen,
 ): Promise<Message | undefined> {
   const rich = {
@@ -126,6 +133,16 @@ async function deliverScreen(
     format === "rich"
       ? ctx.replyWithRichMessage(rich, other)
       : ctx.reply(text, other);
+  const chatId = ctx.chat?.id;
+  if (editOf !== undefined && chatId !== undefined && format !== "rich") {
+    try {
+      const edited = await ctx.api.editMessageText(chatId, editOf, text, other);
+      return edited === true ? undefined : edited;
+    } catch (cause) {
+      if (isNotModified(cause)) return undefined;
+      return await send();
+    }
+  }
   const message = ctx.callbackQuery?.message;
   if (message === undefined || delivery === "new" || ctx.fresh === true) {
     return await send();

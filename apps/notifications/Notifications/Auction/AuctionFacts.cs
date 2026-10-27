@@ -11,6 +11,13 @@ public static class AuctionFacts
     public const string ProxyRaisedType = "lot_proxy_raised";
     public const string CauseKind = "auction_lot_event";
 
+    /// <summary>
+    /// Ведение лота вернулось: администратор снял участника, который его вёл
+    /// (ADR-072, п. 5, PER-672). Настройка перебитий его не гасит — ставки
+    /// получатель не делал.
+    /// </summary>
+    public const string LeadRestoredType = "lot_lead_restored";
+
     public const string DigestType = "lot_activity_digest";
     public const string DigestCauseKind = "outbid_digest";
 
@@ -27,10 +34,23 @@ public static class AuctionFacts
     public const string RaffleResultType = "raffle_result";
     public const string RaffleCauseKind = "auction_raffle_event";
 
+    /// <summary>Собранный сет: одно сообщение самому собравшему (PER-687).</summary>
+    public const string LotSetCollectedType = "lot_set_collected";
+
     public const string PredictionResultsType = "prediction_results";
     public const string PredictionResultsCauseKind = "auction_prediction_results_event";
 
     public const string AuctionCancelledType = "auction_cancelled";
+
+    /// <summary>
+    /// Весть «Новый аукцион» (PER-646). Повод — факт публикации аукциона.
+    /// </summary>
+    public const string PublishedType = "auction_published";
+
+    /// <summary>
+    /// Весть «Торги открыты» (PER-646). Повод — факт открытия онлайн-недели.
+    /// </summary>
+    public const string TradingOpenedType = "auction_trading_opened";
 
     /// <summary>
     /// Адресаты отмены аукциона (ADR-047, дополнение 2026-10-12, «Факт
@@ -77,6 +97,53 @@ public static class AuctionFacts
             NotAfter = notAfter.ToUniversalTime().ToString("O"),
             Cause = new Cause { AuctionEventId = cancellationEventId.ToString() },
             AuctionCancelled = body,
+        };
+    }
+
+    /// <summary>
+    /// Весть о новом аукционе или об открытии торгов одному держателю права
+    /// <c>place_bids</c> (PER-646). Название сходки приходит из реплики: канал
+    /// рисует весть без звонков, а у аукциона своего названия нет. Неделя есть
+    /// только у запланированного аукциона: у черновика она отсутствует, а не
+    /// пуста.
+    /// </summary>
+    public static Notification Announcement(Guid notificationId, Guid recipientId,
+        AuctionAnnouncement announcement, string type, string meetupTitle, DateTimeOffset now, DateTimeOffset notAfter)
+    {
+        var cause = new Cause { AuctionEventId = announcement.EventId.ToString() };
+        if (type == PublishedType)
+        {
+            return new Notification
+            {
+                NotificationId = notificationId.ToString(),
+                RecipientId = recipientId.ToString(),
+                CreatedAt = now.ToUniversalTime().ToString("O"),
+                NotAfter = notAfter.ToUniversalTime().ToString("O"),
+                Cause = cause,
+                AuctionPublished = new AuctionPublished
+                {
+                    AuctionId = announcement.AuctionId.ToString(),
+                    MeetupId = announcement.MeetupId.ToString(),
+                    MeetupTitle = meetupTitle,
+                    OnlinePhase = announcement.OnlinePhase?.Clone(),
+                },
+            };
+        }
+
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = recipientId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = cause,
+            AuctionTradingOpened = new AuctionTradingOpened
+            {
+                AuctionId = announcement.AuctionId.ToString(),
+                MeetupId = announcement.MeetupId.ToString(),
+                MeetupTitle = meetupTitle,
+                OnlinePhase = announcement.OnlinePhase?.Clone(),
+            },
         };
     }
 
@@ -152,6 +219,27 @@ public static class AuctionFacts
             RaffleResult = body,
         };
     }
+
+    /// <summary>
+    /// Итог сета одному собравшему. Состав лотов не несём: канал открывает
+    /// существующий экран сета с первого лота по порядку организатора. Сет
+    /// меньше двух лотов сюда не доходит: его отравляет разбор факта.
+    /// </summary>
+    public static Notification LotSetCollected(Guid notificationId, CollectedLotSet set, DateTimeOffset now,
+        DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = set.CollectorId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionEventId = set.EventId.ToString() },
+        LotSetCollected = new global::Notifications.V1.LotSetCollected
+        {
+            SetName = set.Name,
+            LotCount = (uint)set.LotIds.Count,
+            LotId = set.LotIds[0].ToString(),
+        },
+    };
 
     /// <summary>
     /// Анонс состава одному человеку: весь состав с ценами удержания и те его
@@ -283,5 +371,25 @@ public static class AuctionFacts
         NotAfter = notAfter.ToUniversalTime().ToString("O"),
         Cause = new Cause { AuctionLotEventId = sale.EventId.ToString() },
         LotPurchased = new LotPurchased { LotId = sale.LotId.ToString(), Price = sale.Price.Clone() },
+    };
+
+    /// <summary>
+    /// Снятие вернуло ведение новому лидеру (PER-672). Адресат — он и только он:
+    /// снятому не пишут, а кого сняли, факт и не несёт.
+    /// </summary>
+    public static Notification LeadRestored(Guid notificationId, AuctionRemoval removal, DateTimeOffset now,
+        DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = (removal.RestoredRecipient ??
+                       throw new ArgumentException("removal did not restore the lead", nameof(removal))).ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionLotEventId = removal.EventId.ToString() },
+        LotLeadRestored = new LotLeadRestored
+        {
+            LotId = removal.Snapshot.LotId.ToString(),
+            CurrentPrice = removal.Price.Clone(),
+        },
     };
 }

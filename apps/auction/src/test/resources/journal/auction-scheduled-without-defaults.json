@@ -28,12 +28,19 @@
         }
       },
       "lotDefaults": null,
-      "stepWindows": null
+      "stepWindows": null,
+      "paymentTerm": "PT168H"
     },
     "prebiddingEnded": null,
     "finalLineupFrozen": null,
     "finalLotActivated": null,
     "finalLotCompleted": null,
-    "stepWindowLaunched": null
+    "stepWindowLaunched": null,
+    "finalTime": null,
+    "lotSetDefined": null,
+    "lotSetDeleted": null,
+    "lotSetSettled": null,
+    "paymentInstructions": null,
+    "lotLayout": null
   }
 }

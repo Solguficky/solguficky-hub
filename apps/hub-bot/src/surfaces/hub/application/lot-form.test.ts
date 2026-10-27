@@ -4,11 +4,21 @@ import type {
   AddLotResult,
   LotAdministration,
   LotCardResult,
+  LotPhotoResult,
   LotReadResult,
   ScheduleLotResult,
 } from "../auction/port.js";
 import { createDispatcher } from "./dispatcher.js";
-import { lotReadWindowMs, parseRubles } from "./lot-form.js";
+import { fingerprint } from "./fingerprint.js";
+import {
+  baseTitle,
+  lotCopyId,
+  lotCopySetId,
+  lotReadWindowMs,
+  numberedTitle,
+  parseLotCopies,
+  parseRubles,
+} from "./lot-form.js";
 import type { NewLotId } from "./types.js";
 
 // Форма лота администратора (PER-319) через диспетчер: что уходит в Auction на
@@ -35,10 +45,27 @@ const drafted: LotView = {
   status: { kind: "draft" },
 };
 
+const photoId = "0198f2a4-7c1e-7d3a-9b21-00000000f001";
+const firstPhoto = "0198f2a4-7c1e-7d3a-9b21-00000000f011";
+const secondPhoto = "0198f2a4-7c1e-7d3a-9b21-00000000f012";
+const withPhotos: LotView = {
+  ...drafted,
+  card: {
+    title: "Ваза",
+    description: "Синяя.",
+    image: { version: "img-1" },
+    photos: [
+      { photoId: firstPhoto, version: "img-1" },
+      { photoId: secondPhoto, version: "img-2" },
+    ],
+  },
+};
+
 function fakeLots(
   answers: {
     create?: LotCardResult;
     edit?: LotCardResult;
+    photo?: LotPhotoResult;
     add?: AddLotResult;
     schedule?: ScheduleLotResult;
     read?: LotReadResult;
@@ -59,6 +86,19 @@ function fakeLots(
       calls.push({ method: "editLotCard", args: card });
       return answers.edit ?? { kind: "ok" };
     },
+    async addLotPhoto(_person, photo) {
+      calls.push({ method: "addLotPhoto", args: photo });
+      return (
+        answers.photo ?? {
+          kind: "ok",
+          photos: [{ photoId: photo.photoId, version: "img-new" }],
+        }
+      );
+    },
+    async removeLotPhoto(_person, photo) {
+      calls.push({ method: "removeLotPhoto", args: photo });
+      return answers.photo ?? { kind: "ok", photos: [] };
+    },
     async addLot(_person, lot) {
       calls.push({ method: "addLot", args: lot });
       return answers.add ?? { kind: "ok" };
@@ -71,6 +111,18 @@ function fakeLots(
       calls.push({ method: "getLot", args: id });
       readDeadlines.push(meta?.deadlineAt);
       return reads.shift() ?? answers.read ?? { kind: "ok", lot: drafted };
+    },
+    async removeLot(_person, lot) {
+      calls.push({ method: "removeLot", args: lot });
+      return { kind: "ok" };
+    },
+    async getLotImage(_person, id) {
+      calls.push({ method: "getLotImage", args: id });
+      return { kind: "not-found" };
+    },
+    async getLotPhoto(_person, photo) {
+      calls.push({ method: "getLotPhoto", args: photo });
+      return { kind: "not-found" };
     },
   };
   const dispatcher = createDispatcher(
@@ -87,6 +139,44 @@ function fakeLots(
     methods: () => calls.map((call) => call.method),
   };
 }
+
+describe("lot copies of the lot form", () => {
+  it.each([
+    ["2", 2],
+    [" 7 ", 7],
+    ["20", 20],
+  ])("reads %j as %d lots in all", (raw, count) => {
+    expect(parseLotCopies(raw)).toBe(count);
+  });
+
+  it.each(["0", "1", "21", "007", "семь", "7.5", ""])(
+    "refuses %j as a count of lots",
+    (raw) => {
+      expect(parseLotCopies(raw)).toBeUndefined();
+    },
+  );
+
+  it("numbers a title by its place in the set and strips a number the title already has", () => {
+    expect(numberedTitle("Ваза", 3, 7)).toBe("Ваза | 3 из 7");
+    expect(baseTitle("Ваза | 3 из 7")).toBe("Ваза");
+    expect(baseTitle("Ваза|3 из 7 ")).toBe("Ваза");
+    expect(baseTitle("Ваза | синяя")).toBe("Ваза | синяя");
+  });
+
+  it("derives the same canonical UUIDv7 for a copy and the set of one lot, ordered after it", () => {
+    const v7 =
+      /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+    const copies = [2, 3, 4].map((position) => lotCopyId(lotId, position));
+    expect(copies.map((copy) => lotCopyId(lotId, 2) === copy)).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    for (const id of [...copies, lotCopySetId(lotId)]) expect(id).toMatch(v7);
+    expect([lotId, ...copies]).toEqual([lotId, ...copies].toSorted());
+    expect(lotCopySetId(lotId)).toBe(lotCopySetId(lotId));
+  });
+});
 
 describe("rubles of the lot form", () => {
   it.each([
@@ -147,7 +237,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза",
         description: "",
-        hasImage: false,
+        photos: [],
         terms: { kind: "unset" },
       },
       saved: "created",
@@ -219,7 +309,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза синяя",
         description: "Синяя.",
-        hasImage: false,
+        photos: [],
         terms: {
           kind: "set",
           startingPrice: { minorUnits: 150_000, currency: "RUB" },
@@ -330,7 +420,7 @@ describe("lot form", () => {
         auctionId,
         title: "Ваза",
         description: "Синяя.",
-        hasImage: false,
+        photos: [],
         terms: {
           kind: "set",
           startingPrice: { minorUnits: 150_000, currency: "RUB" },
@@ -380,20 +470,21 @@ describe("lot form", () => {
 
       const result = dispatcher.execute({
         identity: admin,
-        intent: "set-lot-image",
+        intent: "add-lot-photo",
         lotId,
+        photoId,
         image: new Uint8Array([1, 2, 3]),
       });
       await vi.advanceTimersByTimeAsync(lotReadWindowMs);
 
       await expect(result).resolves.toMatchObject({
         kind: "lot-form",
-        saved: "image",
+        saved: "photo-added",
       });
       expect(calls.map((call) => call.method)).toEqual([
         "getLot",
         "getLot",
-        "editLotCard",
+        "addLotPhoto",
       ]);
     });
 
@@ -427,8 +518,9 @@ describe("lot form", () => {
 
       const result = dispatcher.execute({
         identity: admin,
-        intent: "set-lot-image",
+        intent: "add-lot-photo",
         lotId,
+        photoId,
         image: new Uint8Array([1, 2, 3]),
         deadlineAt,
       });
@@ -504,25 +596,180 @@ describe("lot form", () => {
     });
   });
 
-  it("replaces the image of the card and resends both texts as they are stored", async () => {
-    const { dispatcher, calls } = fakeLots();
+  it("adds a photo to the end and counts the photos from the answer of Auction", async () => {
+    const { dispatcher, calls } = fakeLots({
+      photo: {
+        kind: "ok",
+        photos: [
+          { photoId: "01929b7e-0000-7000-8000-000000000001", version: "img-1" },
+          { photoId, version: "img-2" },
+        ],
+      },
+    });
     const image = new Uint8Array([0xff, 0xd8, 0xff]);
 
     const result = await dispatcher.execute({
       identity: admin,
-      intent: "set-lot-image",
+      intent: "add-lot-photo",
       lotId,
+      photoId,
       image,
     });
 
     expect(calls.at(-1)).toEqual({
-      method: "editLotCard",
-      args: { lotId, title: "Ваза", description: "Синяя.", image },
+      method: "addLotPhoto",
+      args: { lotId, photoId, image },
     });
     expect(result).toMatchObject({
       kind: "lot-form",
-      lot: { hasImage: true },
-      saved: "image",
+      lot: {
+        photos: [
+          { print: fingerprint("01929b7e-0000-7000-8000-000000000001") },
+          { print: fingerprint(photoId), photoId },
+        ],
+      },
+      saved: "photo-added",
+    });
+  });
+
+  it("removes the confirmed photo by its id", async () => {
+    const { dispatcher, calls } = fakeLots({
+      read: { kind: "ok", lot: withPhotos },
+    });
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "remove-lot-photo",
+      lotId,
+      photoPrint: fingerprint(secondPhoto),
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "removeLotPhoto",
+      args: { lotId, photoId: secondPhoto },
+    });
+    expect(result).toMatchObject({
+      kind: "lot-form",
+      lot: { photos: [] },
+      saved: "photo-removed",
+    });
+  });
+
+  it("removes the cover of an Auction without the photo list by a card edit with both texts", async () => {
+    const { dispatcher, calls } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          card: {
+            title: "Ваза",
+            description: "Синяя.",
+            image: { version: "img-1" },
+          },
+        },
+      },
+    });
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "remove-lot-photo",
+      lotId,
+      photoPrint: fingerprint("img-1"),
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "editLotCard",
+      args: { lotId, title: "Ваза", description: "Синяя.", removeImage: true },
+    });
+    expect(result).toMatchObject({
+      kind: "lot-form",
+      lot: { photos: [] },
+      saved: "photo-removed",
+    });
+  });
+
+  it("sends no command when the confirmed photo is already gone and says so", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: { kind: "ok", lot: withPhotos },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-photo",
+        lotId,
+        photoPrint: fingerprint("gone"),
+      }),
+    ).resolves.toMatchObject({
+      kind: "lot-form",
+      lot: { photos: [{ photoId: firstPhoto }, { photoId: secondPhoto }] },
+      saved: "photo-missing",
+    });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  it("removes the cover under a confirmation sent before the photo list by the print of its version", async () => {
+    const { dispatcher, calls } = fakeLots({
+      read: { kind: "ok", lot: withPhotos },
+    });
+
+    await dispatcher.execute({
+      identity: admin,
+      intent: "remove-lot-photo",
+      lotId,
+      photoPrint: fingerprint("img-1"),
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "removeLotPhoto",
+      args: { lotId, photoId: firstPhoto },
+    });
+  });
+
+  it("refuses to remove a photo of a sold lot before Auction", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...withPhotos,
+          status: {
+            kind: "sold",
+            winnerId: admin.identityId,
+            price: { minorUnits: 90_000, currency: "RUB" },
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "remove-lot-photo",
+        lotId,
+        photoPrint: fingerprint(firstPhoto),
+      }),
+    ).resolves.toMatchObject({ kind: "lot-refused", reason: "lot-sold" });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  it("refuses the photo over the limit of Auction with the limit frame", async () => {
+    const { dispatcher } = fakeLots({
+      photo: { kind: "photo-limit", maxPhotos: 10 },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "add-lot-photo",
+        lotId,
+        photoId,
+        image: new Uint8Array([1]),
+      }),
+    ).resolves.toEqual({
+      kind: "lot-refused",
+      reason: "photo-limit",
+      lotId,
+      maxPhotos: 10,
     });
   });
 
@@ -535,19 +782,20 @@ describe("lot form", () => {
   ])(
     "asks for the photo again when Auction refuses it with %o",
     async (refusal, expected) => {
-      const { dispatcher } = fakeLots({ edit: refusal });
+      const { dispatcher } = fakeLots({ photo: refusal });
 
       await expect(
         dispatcher.execute({
           identity: admin,
-          intent: "set-lot-image",
+          intent: "add-lot-photo",
           lotId,
+          photoId,
           image: new Uint8Array([1]),
         }),
       ).resolves.toEqual({
         kind: "lot-ask",
         question: { kind: "image", lotId },
-        lot: expect.objectContaining({ lotId, hasImage: false }),
+        lot: expect.objectContaining({ lotId, photos: [] }),
         ...expected,
       });
     },
@@ -727,7 +975,83 @@ describe("lot form", () => {
     });
   });
 
-  it("refuses thresholds that do not start at zero or do not ascend", async () => {
+  it("refuses thresholds that start at the starting price and suggests the same lines from zero", async () => {
+    const { dispatcher, methods } = fakeLots();
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-terms",
+      lotId,
+      priceRubles: 1500,
+      mode: "tiered",
+      value: "1500 — 100\n3000 — 200",
+      opId,
+    });
+
+    expect(result).toMatchObject({
+      kind: "lot-ask",
+      question: { kind: "step", lotId, priceRubles: 1500, mode: "tiered" },
+      error: "step-start",
+      suggestedTiers: [
+        {
+          lowerBound: { minorUnits: 0, currency: "RUB" },
+          step: { minorUnits: 10_000, currency: "RUB" },
+        },
+        {
+          lowerBound: { minorUnits: 300_000, currency: "RUB" },
+          step: { minorUnits: 20_000, currency: "RUB" },
+        },
+      ],
+    });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  // Порядок сверяется по присланным строкам, а не по исправленным: замена
+  // первой границы нулём не должна прятать нарушение порядка или шага.
+  it.each([
+    ["a zero line below the first one", "100 — 10\n0 — 20"],
+    ["descending bounds", "5000 — 100\n3000 — 200"],
+    ["a repeated bound", "1500 — 100\n1500 — 200"],
+    ["a decreasing step", "1500 — 200\n3000 — 100"],
+  ])("suggests no corrected thresholds for lines with %s", async (_, value) => {
+    const { dispatcher } = fakeLots();
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-terms",
+      lotId,
+      priceRubles: 1000,
+      mode: "tiered",
+      value,
+      opId,
+    });
+
+    expect(result).toMatchObject({ kind: "lot-ask", error: "step-start" });
+    expect(result).not.toHaveProperty("suggestedTiers");
+  });
+
+  it("suggests no corrected thresholds when there are too many to repeat", async () => {
+    const { dispatcher } = fakeLots();
+    const value = Array.from(
+      { length: 21 },
+      (_, i) => `${(i + 1) * 100} — 10`,
+    ).join("\n");
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-terms",
+      lotId,
+      priceRubles: 1000,
+      mode: "tiered",
+      value,
+      opId,
+    });
+
+    expect(result).toMatchObject({ kind: "lot-ask", error: "step-start" });
+    expect(result).not.toHaveProperty("suggestedTiers");
+  });
+
+  it("refuses thresholds whose step decreases", async () => {
     const { dispatcher, methods } = fakeLots();
 
     await expect(
@@ -737,10 +1061,36 @@ describe("lot form", () => {
         lotId,
         priceRubles: 1000,
         mode: "tiered",
-        value: "100 — 10\n0 — 20",
+        value: "0 — 500\n5000 — 100",
         opId,
       }),
-    ).resolves.toMatchObject({ kind: "lot-ask", error: "step-order" });
+    ).resolves.toMatchObject({ kind: "lot-ask", error: "step-decreasing" });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  // Равный шаг на следующем пороге не убывает.
+  it.each([
+    ["grows", "0 — 100\n5000 — 250"],
+    ["stays the same", "0 — 100\n5000 — 100"],
+  ])("accepts thresholds whose step %s", async (_, value) => {
+    const { dispatcher } = fakeLots();
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-terms",
+        lotId,
+        priceRubles: 1000,
+        mode: "tiered",
+        value,
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-form", saved: "terms" });
+  });
+
+  it("refuses thresholds that do not ascend", async () => {
+    const { dispatcher, methods } = fakeLots();
+
     await expect(
       dispatcher.execute({
         identity: admin,
@@ -752,7 +1102,7 @@ describe("lot form", () => {
         opId,
       }),
     ).resolves.toMatchObject({ kind: "lot-ask", error: "step-order" });
-    expect(methods()).toEqual(["getLot", "getLot"]);
+    expect(methods()).toEqual(["getLot"]);
   });
 
   it("refuses a threshold line without a dash separator", async () => {
@@ -790,6 +1140,67 @@ describe("lot form", () => {
       question: { kind: "step", lotId, priceRubles: 1500 },
       error: "amount-range",
     });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
+  // Черновой лот и пороги без строк: Auction пустые пороги не примет, и
+  // оставлять нечего.
+  it.each([
+    ["a draft lot", drafted],
+    [
+      "empty thresholds",
+      {
+        ...drafted,
+        tiers: [],
+        status: {
+          kind: "scheduled",
+          startingPrice: { minorUnits: 150_000, currency: "RUB" },
+        },
+      } satisfies LotView,
+    ],
+  ])(
+    "asks the step mode again for %s with no step to keep and sends no command",
+    async (_, lot) => {
+      const { dispatcher, methods } = fakeLots({ read: { kind: "ok", lot } });
+
+      await expect(
+        dispatcher.execute({
+          identity: admin,
+          intent: "keep-lot-step",
+          lotId,
+          priceRubles: 2500,
+          opId,
+        }),
+      ).resolves.toMatchObject({ kind: "lot-step-mode", priceRubles: 2500 });
+      expect(methods()).toEqual(["getLot"]);
+    },
+  );
+
+  it("refuses to keep the step once the trading of the lot has begun", async () => {
+    const { dispatcher, methods } = fakeLots({
+      read: {
+        kind: "ok",
+        lot: {
+          ...drafted,
+          fixedStep: { minorUnits: 10_000, currency: "RUB" },
+          status: {
+            kind: "trading",
+            currentPrice: { minorUnits: 150_000, currency: "RUB" },
+            phase: "online",
+          },
+        },
+      },
+    });
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "keep-lot-step",
+        lotId,
+        priceRubles: 2500,
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-refused", reason: "terms-closed" });
     expect(methods()).toEqual(["getLot"]);
   });
 

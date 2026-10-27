@@ -165,15 +165,24 @@ export function meetupNotificationsScreen(settings: {
  */
 export function auctionNotificationsChangeData(
   change: AuctionNotificationChange,
+  detached = false,
 ): string {
+  const tail = detached ? ":n" : "";
   switch (change.kind) {
     case "frequency":
-      return `v1:notify:outbid:${change.frequency}`;
+      return `v1:notify:outbid:${change.frequency}${tail}`;
     case "final":
-      return `v1:notify:final:${change.enabled ? "1" : "0"}`;
+      return `v1:notify:final:${change.enabled ? "1" : "0"}${tail}`;
     case "live":
-      return `v1:notify:live:${change.enabled ? "1" : "0"}`;
+      return `v1:notify:live:${change.enabled ? "1" : "0"}${tail}`;
+    case "announcements":
+      return `v1:notify:news:${change.enabled ? "1" : "0"}${tail}`;
   }
+}
+
+/** Экран настроек аукциона: из «Настроек» или, с `detached`, из вести (№73). */
+export function auctionNotificationsData(detached = false): string {
+  return detached ? "v1:notify:outbid:n" : "v1:notify:outbid";
 }
 
 /**
@@ -184,19 +193,26 @@ export function auctionNotificationsChangeData(
  * того же экрана, поэтому подтверждения «Да» нет: что сработало, говорит
  * ответ на нажатие. Это «Уведомления» расширения «Аукцион» в «Настройках» →
  * «Расширения» (№74): в «Уведомлениях» настроек остаются только категории
- * ядра (PER-605).
+ * ядра (PER-605). Открытый кнопкой вести экран возврата в дерево не несёт:
+ * человек пришёл из вести, и она остаётся выше в чате (№73 прогона
+ * 14 октября 2026 года); выбор на нём держит тот же вид.
  */
 export function auctionNotificationsScreen(
   current: AuctionNotificationSettings,
+  detached = false,
 ): ShownScreen {
-  const keyboard = new InlineKeyboard();
-  for (const row of auctionNotificationsRows(current)) {
-    keyboard.text(row.text, auctionNotificationsChangeData(row.change)).row();
-  }
+  const keyboard = InlineKeyboard.from(
+    auctionNotificationsRows(current).map((row) => [
+      InlineKeyboard.text(
+        row.text,
+        auctionNotificationsChangeData(row.change, detached),
+      ),
+    ]),
+  );
   return {
-    id: "notify-outbid",
+    id: detached ? "notify-outbid-notice" : "notify-outbid",
     text: screenText("Уведомления", ...auctionNotificationsExplanation),
-    keyboard: withNav(keyboard, toSettingsAuction),
+    keyboard: detached ? keyboard : withNav(keyboard, toSettingsAuction),
     format: "HTML",
   };
 }

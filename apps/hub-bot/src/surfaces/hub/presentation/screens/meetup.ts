@@ -8,6 +8,7 @@ import {
   pictogram,
 } from "../../../../core/pictograms.js";
 import type {
+  AuctionCancelConsequence,
   MeetupAuthor,
   MeetupStateAction,
 } from "../../application/types.js";
@@ -19,7 +20,7 @@ import type {
   MeetupSummary,
 } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { auctionStateLine } from "./auction-stage.js";
+import { auctionCancelConsequence, auctionStateLine } from "./auction-stage.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -192,7 +193,7 @@ export function meetupsScreen(
                   `v1:manage:new:${newMeetupToken}:s`,
                 ),
           ),
-        ).text(toArchive.name, toArchive.data),
+        ).text(marked(pictogram.history, toArchive.name), toArchive.data),
         page,
         (to) => `v1:nav:hub:${to}`,
       ),
@@ -797,8 +798,11 @@ export function stateConfirmScreen(confirm: {
   meetup: Pick<MeetupSnapshot, "id" | "title" | "version">;
   /** Куда возвращает «Нет»: экран, с которого подтверждение открыто. */
   back: string;
+  /** Отмена сходки с идущими торгами называет последствие для аукциона. */
+  consequence?: AuctionCancelConsequence;
 }): ShownScreen {
   const copy = stateActionCopy[confirm.action];
+  const consequence = confirm.consequence;
   const token = uuidToToken(confirm.meetup.id);
   return {
     // Обратимое и необратимое подтверждения — разные записи каталога: по ним
@@ -809,6 +813,15 @@ export function stateConfirmScreen(confirm: {
       heading(copy.question),
       "",
       subjectLine(meetupTitleLabel(confirm.meetup.title)),
+      ...(consequence === undefined
+        ? []
+        : [
+            escapeHtml(
+              auctionCancelConsequence(
+                consequence.kind === "trading" ? consequence.sold : undefined,
+              ),
+            ),
+          ]),
       ...(copy.irreversible === undefined ? [] : [copy.irreversible]),
     ].join("\n"),
     keyboard: confirmKeyboard({

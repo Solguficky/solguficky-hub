@@ -51,29 +51,70 @@ final class LotCatalogCommandsSpec
   /** Хранилище, которое нельзя трогать: любой вызов роняет тест. */
   private object Untouchable extends LotCatalogStore {
     private def touched = fail("the store was touched")
-    def insertIfAbsent(card: NewCard): Future[Option[LotCard]] = touched
+    def insertIfAbsent(card: NewCard): Future[CardInsertion] = touched
     def update(edit: CardEdit): Future[Option[LotCard]] = touched
+    def addPhoto(addition: PhotoAddition, maxPhotos: Int): Future[Either[CatalogRefusal, LotCard]] = touched
+    def removePhoto(removal: PhotoRemoval): Future[Either[CatalogRefusal, LotCard]] = touched
     def find(lotId: LotId): Future[Option[LotCard]] = touched
   }
 
-  /** Строка в памяти: изображение — только версия, как его видит карточка. */
+  /**
+   * Строка в памяти: изображение — только версия, как его видит карточка, и всегда равно первому фото. Правила записи в
+   * базу держит L1 `LotCatalogIntegrationSpec`; здесь — то, что команды решают до хранилища.
+   */
   private final class InMemory extends LotCatalogStore {
     val rows = TrieMap.empty[LotId, LotCard]
-    def insertIfAbsent(created: NewCard): Future[Option[LotCard]] =
-      Future.successful(rows.putIfAbsent(created.lotId, created.card))
+    private def withPhotos(card: LotCard, photos: Vector[LotPhotoRef]) =
+      card.copy(image = photos.headOption.map(_.version), photos = photos)
+    def insertIfAbsent(created: NewCard): Future[CardInsertion] =
+      Future.successful(
+        rows.putIfAbsent(created.lotId, created.card) match {
+          case None => CardInsertion.Inserted(created.card)
+          case Some(existing) => CardInsertion.Existing(existing)
+        }
+      )
     def update(edit: CardEdit): Future[Option[LotCard]] =
       Future.successful(rows.get(edit.lotId).map { stored =>
-        val image = edit.image match {
-          case ImageChange.Keep => stored.image
-          case ImageChange.Replace(replacement) => Some(replacement.version)
-          case ImageChange.Remove => None
+        val photos = edit.image match {
+          case ImageChange.Keep => stored.photos
+          case ImageChange.Replace(replacement) =>
+            stored.photos.headOption match {
+              case Some(cover) => cover.copy(version = replacement.version) +: stored.photos.tail
+              case None => Vector(LotPhotoRef(edit.photoId, replacement.version))
+            }
+          case ImageChange.Remove => stored.photos.drop(1)
         }
-        val card = LotCard(edit.lotId, edit.title, edit.description, image)
+        val card = withPhotos(stored.copy(title = edit.title, description = edit.description), photos)
         rows.update(edit.lotId, card)
+        card
+      })
+    def addPhoto(addition: PhotoAddition, maxPhotos: Int): Future[Either[CatalogRefusal, LotCard]] =
+      Future.successful(
+        rows
+          .get(addition.lotId)
+          .toRight(CatalogRefusal.CardNotFound)
+          .flatMap { stored =>
+            stored.photos.find(_.photoId == addition.photoId) match {
+              case Some(photo) if photo.version == addition.image.version => Right(stored)
+              case Some(_) => Left(CatalogRefusal.PhotoConflict)
+              case None if stored.photos.size >= maxPhotos => Left(CatalogRefusal.PhotoLimitReached(maxPhotos))
+              case None =>
+                val card = withPhotos(stored, stored.photos :+ LotPhotoRef(addition.photoId, addition.image.version))
+                rows.update(addition.lotId, card)
+                Right(card)
+            }
+          }
+      )
+    def removePhoto(removal: PhotoRemoval): Future[Either[CatalogRefusal, LotCard]] =
+      Future.successful(rows.get(removal.lotId).toRight(CatalogRefusal.CardNotFound).map { stored =>
+        val card = withPhotos(stored, stored.photos.filterNot(_.photoId == removal.photoId))
+        rows.update(removal.lotId, card)
         card
       })
     def find(lotId: LotId): Future[Option[LotCard]] = Future.successful(rows.get(lotId))
   }
+
+  private def photoId() = PhotoId(UUID.randomUUID())
 
   "lot catalog commands" should {
 
@@ -229,6 +270,61 @@ final class LotCatalogCommandsSpec
       catalog(Untouchable, _ => fail("the lot was asked"))
         .edit(admin, lotId(), " ", "", ImageChange.Keep)
         .futureValue shouldBe Left(CatalogRefusal.EmptyTitle)
+    }
+
+    "refuses photo commands of a viewer who is not a meetup administrator before asking the lot or the store" in {
+      val commands = catalog(Untouchable, _ => fail("the lot was asked"))
+      forAll(notAdmins) { viewer =>
+        commands.addPhoto(viewer, lotId(), photoId(), TestImages.jpeg()).futureValue shouldBe
+          Left(CatalogRefusal.NotAdmin)
+        commands.removePhoto(viewer, lotId(), photoId()).futureValue shouldBe Left(CatalogRefusal.NotAdmin)
+      }
+    }
+
+    "refuses an oversized photo and bytes that are not an image before asking the lot or the store" in {
+      val commands = catalog(Untouchable, _ => fail("the lot was asked"))
+      val text = IArray.from("не картинка".getBytes(java.nio.charset.StandardCharsets.UTF_8))
+
+      commands.addPhoto(admin, lotId(), photoId(), oversized).futureValue shouldBe
+        Left(CatalogRefusal.ImageTooLarge(LotImage.MaxBytes))
+      commands.addPhoto(admin, lotId(), photoId(), text).futureValue shouldBe Left(CatalogRefusal.UnsupportedImage)
+    }
+
+    "refuses to add or remove a photo of a closed card and does not touch the store" in {
+      val closed = catalog(Untouchable, _ => Future.successful(CardStanding.Closed))
+
+      closed.addPhoto(admin, lotId(), photoId(), TestImages.jpeg()).futureValue shouldBe
+        Left(CatalogRefusal.CardClosed)
+      closed.removePhoto(admin, lotId(), photoId()).futureValue shouldBe Left(CatalogRefusal.CardClosed)
+    }
+
+    "keeps the image of the card equal to the first photo as photos come and go" in {
+      val store = InMemory()
+      val commands = catalog(store)
+      val id = lotId()
+      val (first, second) = (photoId(), photoId())
+      commands.create(admin, id, "Кружка", "", None).futureValue
+
+      commands.addPhoto(admin, id, first, TestImages.jpeg(fill = 1)).futureValue
+      val added = commands.addPhoto(admin, id, second, TestImages.jpeg(fill = 2)).futureValue
+      val removed = commands.removePhoto(admin, id, first).futureValue
+
+      added.map(_.image) shouldBe Right(Some(versionOf(TestImages.jpeg(fill = 1))))
+      added.map(_.photos.map(_.photoId)) shouldBe Right(Vector(first, second))
+      removed.map(_.image) shouldBe Right(Some(versionOf(TestImages.jpeg(fill = 2))))
+    }
+
+    "passes the photo limit to the store" in {
+      val store = InMemory()
+      val commands = catalog(store)
+      val id = lotId()
+      commands.create(admin, id, "Кружка", "", None).futureValue
+      (1 to LotImage.MaxPhotos).foreach(fill =>
+        commands.addPhoto(admin, id, photoId(), TestImages.jpeg(fill = fill.toByte)).futureValue.isRight shouldBe true
+      )
+
+      commands.addPhoto(admin, id, photoId(), TestImages.jpeg(fill = 99)).futureValue shouldBe
+        Left(CatalogRefusal.PhotoLimitReached(LotImage.MaxPhotos))
     }
 
     "does not write the card when the lot does not answer" in {

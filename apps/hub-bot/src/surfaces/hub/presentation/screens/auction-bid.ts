@@ -2,6 +2,7 @@ import { InlineKeyboard } from "grammy";
 import {
   autoFollowNote,
   currentValueLine,
+  extensionLine,
   nameSettingsParagraphs,
   nameSettingsTitle,
   proxyHintLead,
@@ -82,9 +83,8 @@ export function confirmScreen(
           `${proxyGap(block.currentPrice, block.amount, money, block.firstBid)}\nЛимит видишь только ты.`,
         ),
     keyboard: confirmKeyboard({
-      yes: bid
-        ? `Да, поставить ${money(block.amount)}`
-        : "Да, включить автоставку",
+      // Сумма — в вопросе: с ней «Да» обрезалось в паре с «Нет» (PER-631, №86).
+      yes: bid ? "Да, поставить" : "Да, включить автоставку",
       yesData: dataOf(keyboard, "confirm.yes"),
       noData: dataOf(keyboard, "confirm.no"),
       irreversible: true,
@@ -96,26 +96,34 @@ export function confirmScreen(
 // Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с новой
 // ценой открывает «‹ Лот», ленту — «‹ Лоты» (PER-595); кнопки «Меню» нет
 // (решение владельца 10 октября 2026 года). У бота с избранным экран
-// говорит, что ставка кладёт лот туда сама (ADR-063).
+// говорит, что ставка кладёт лот туда сама (ADR-063), если лота там не было,
+// а продление анти-снайпом называет новый дедлайн (PER-631, №107).
 export function acceptedScreen(
   block: AcceptedBlock,
   keyboard: readonly (readonly AuctionButton[])[],
   money: (amount: Money) => string,
+  timeZone: string,
 ): ShownScreen {
   const bid = block.command === "bid";
   const note = block.favorites === true ? autoFollowNote : undefined;
+  const extension =
+    block.extension === undefined
+      ? undefined
+      : extensionLine(block.extension, timeZone);
   return {
     id: bid ? "bid-accepted" : "proxy-accepted",
     text: bid
       ? screenText(
           `Ставка ${money(block.amount)} принята`,
           lotSubject(block.title),
+          extension,
           note,
         )
       : screenText(
           `Автоставка до ${money(block.amount)} включена`,
           lotSubject(block.title),
           "Лимит видишь только ты.",
+          extension,
           note,
         ),
     keyboard: new InlineKeyboard()
@@ -426,6 +434,11 @@ function resultOutcome(
       return {
         title: "Ставка ниже порога",
         detail: `Сейчас можно от ${money(refusal.minRequired)}.`,
+      };
+    case "bid-above-maximum":
+      return {
+        title: "Ставка выше потолка",
+        detail: `Максимум сейчас — 5 × ${money(refusal.next)}.`,
       };
     case "bid-not-at-next-price":
       return {

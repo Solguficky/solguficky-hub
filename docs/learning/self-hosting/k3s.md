@@ -72,7 +72,7 @@ spec:
 
 Эта политика ничего не разрешает: она только выбирает все поды по обоим направлениям, и всё становится запрещено. Следом `allow-dns` разрешает выход к подам CoreDNS (`k8s-app: kube-dns` в namespace `kube-system`) на порт 53. `allow-https-egress` разрешает TCP 443 в `0.0.0.0/0`, кроме частных сетей: Telegram API нужен обеим средам, а его адреса не закреплены. Сеть подов `10.42.0.0/16` входит в исключённую `10.0.0.0/8`, поэтому HTTPS к соседям по кластеру этой политикой не открыт.
 
-Проверено на хосте парой: клиент в `prod` с разрешающей политикой пары `verify` получает `200` от сервера в `prod`, а под в `test` по адресу того же сервера в ту же минуту получает отказ (`cross-blocked`).
+Проверено на хосте парой: клиент в `prod` с разрешающей политикой пары `verify` получает `200` от сервера в `prod`, а под в `stage` по адресу того же сервера в ту же минуту получает отказ (`cross-blocked`).
 
 **Гонка свежего пода.** kube-router переводит селекторы политик в наборы адресов (ipset) и обновляет их по событиям API. Под, только что запущенный и сразу шлющий запрос, в набор ещё не попал. В лаборатории первый `curl` клиента получил отказ за `0 ms`, а тот же клиент с паузой 20 секунд получил `200` по обоим адресам. Поэтому клиенты в `verify.yml` повторяют запрос в цикле `until curl …; do sleep 2; done`, а общий потолок держит `kubectl wait` на 120 секунд.
 
@@ -135,7 +135,7 @@ Anywhere                   ALLOW FWD   10.42.0.0/16               # k3s
 
 ### Каркас сред: namespace, Pod Security, квоты
 
-**Namespace** — папка для объектов кластера: имена внутри уникальны, права и квоты вешаются на неё. Среды `test` и `prod` — два namespace одного k3s.
+**Namespace** — папка для объектов кластера: имена внутри уникальны, права и квоты вешаются на неё. Среды `stage` и `prod` — два namespace одного k3s.
 
 **Pod Security Admission** — встроенная проверка подов при создании. Метка namespace `pod-security.kubernetes.io/enforce: restricted` включает самый строгий профиль: запрещены root, повышение прав, `hostNetwork`, `hostPort`, лишние capabilities, обязателен seccomp. Под, который нарушает профиль, API-сервер не создаёт. Проверка в `verify.yml` — `kubectl apply --dry-run=server` пода с `runAsUser: 0`: ответ содержит `violates PodSecurity`. `--dry-run=server` прогоняет запрос через все проверки API-сервера и ничего не сохраняет.
 
@@ -147,13 +147,13 @@ Anywhere                   ALLOW FWD   10.42.0.0/16               # k3s
 
 Ещё две строки квоты — `services.nodeports: "0"` и `services.loadbalancers: "0"`. Сервис типа NodePort открывает порт на адресе узла. Квотой такой сервис просто не создаётся, и модель «снаружи только SSH» не зависит от того, помнит ли о ней автор чарта.
 
-Отказ квоты проверен так же: под с лимитом `2Gi` в `test` при квоте `1Gi` даёт `exceeded quota`. Контроль — тот же манифест с `64Mi` и без root проходит `--dry-run=server`.
+Отказ квоты проверен так же: под с лимитом `2Gi` в `stage` при квоте `1Gi` даёт `exceeded quota`. Контроль — тот же манифест с `64Mi` и без root проходит `--dry-run=server`.
 
 ### Права: ServiceAccount, Role и kubeconfig
 
 У людей и программ в Kubernetes разные учётки. **ServiceAccount** — учётка программы внутри namespace. Права в Kubernetes только разрешающие: **Role** перечисляет, что можно делать с какими ресурсами в одном namespace, а **RoleBinding** выдаёт роль учётке. Чего роль не назвала, того нельзя.
 
-Учётка `deployer` в каждой среде получила роль «как встроенная `edit`, но NetworkPolicy, ResourceQuota и LimitRange — только на чтение». Держатель kubeconfig не снимет `default-deny` своего namespace и не поднимет себе квоту. На хосте это доказано парой: `kubectl auth can-i delete networkpolicies -n test` с этим kubeconfig отвечает `no` с кодом 1, а `kubectl auth can-i delete pods -n test` — `yes` с кодом 0. Запрос того же kubeconfig к `prod` получает `Forbidden`: роль и привязка живут в `test` и на `prod` не распространяются.
+Учётка `deployer` в каждой среде получила роль «как встроенная `edit`, но NetworkPolicy, ResourceQuota и LimitRange — только на чтение». Держатель kubeconfig не снимет `default-deny` своего namespace и не поднимет себе квоту. На хосте это доказано парой: `kubectl auth can-i delete networkpolicies -n stage` с этим kubeconfig отвечает `no` с кодом 1, а `kubectl auth can-i delete pods -n stage` — `yes` с кодом 0. Запрос того же kubeconfig к `prod` получает `Forbidden`: роль и привязка живут в `stage` и на `prod` не распространяются.
 
 **kubeconfig** — файл с адресом API, сертификатом его удостоверяющего центра и учётными данными. Для учётки программы учётные данные — токен. Токен здесь берётся из Secret особого типа:
 
@@ -166,11 +166,11 @@ metadata:
 type: kubernetes.io/service-account-token
 ```
 
-Контроллер k3s сам дописывает в такой Secret токен и `ca.crt` через мгновение после создания. Playbook ждёт их и собирает `~ops/.kube/test.yaml` и `prod.yaml` с сервером `https://127.0.0.1:6443`: файлы читаются на самом хосте, где localhost — это узел. Токен долгоживущий, поэтому повторный прогон собирает тот же файл и даёт `changed=0`. Ротация — удалить Secret и прогнать playbook. Альтернатива — короткоживущие токены через TokenRequest, но тогда файл менялся бы на каждом прогоне.
+Контроллер k3s сам дописывает в такой Secret токен и `ca.crt` через мгновение после создания. Playbook ждёт их и собирает `~ops/.kube/stage.yaml` и `prod.yaml` с сервером `https://127.0.0.1:6443`: файлы читаются на самом хосте, где localhost — это узел. Токен долгоживущий, поэтому повторный прогон собирает тот же файл и даёт `changed=0`. Ротация — удалить Secret и прогнать playbook. Альтернатива — короткоживущие токены через TokenRequest, но тогда файл менялся бы на каждом прогоне.
 
 ### Server-side apply и владелец полей
 
-Объекты кластера лежат kustomize-деревом `cluster/`: общая часть `env/` и оверлеи `test/`, `prod/`, где оверлей проставляет `namespace:`. Kustomize переписывает и пространство имён субъекта в RoleBinding — в собранном дереве у `deployer` стоит `namespace: prod` и `namespace: test`.
+Объекты кластера лежат kustomize-деревом `cluster/`: общая часть `env/` и оверлеи `stage/`, `prod/`, где оверлей проставляет `namespace:`. Kustomize переписывает и пространство имён субъекта в RoleBinding — в собранном дереве у `deployer` стоит `namespace: prod` и `namespace: stage`.
 
 Применяет дерево Ansible через **server-side apply**: клиент отправляет желаемый объект целиком, а API-сервер сам сливает его с текущим и запоминает, какой **field manager** владеет каким полем. У нас менеджер — `ansible-ops`. Поля, которые дописал кто-то другой (токен в Secret — контроллер), остаются за ним и не конфликтуют. Когда придёт Flux, он применит тот же путь своим менеджером и с `force` заберёт поля себе, не пересоздавая объектов.
 
@@ -242,8 +242,8 @@ flowchart LR
     pod[под сервера 10.42.x.x]
     client[под клиента]
   end
-  subgraph test[namespace test]
-    tpod[под теста]
+  subgraph stage[namespace stage]
+    tpod[под stage]
   end
   agent --> nat --> guard -. reject .-> agent
   root --> nat
@@ -260,7 +260,7 @@ flowchart TD
   node --> dns[CoreDNS Ready<br/>сеть подов и ufw работают]
   dns --> cluster[--tags cluster:<br/>server-side apply cluster/]
   cluster --> tokens[токены deployer-token]
-  tokens --> kube[~ops/.kube/test.yaml, prod.yaml]
+  tokens --> kube[~ops/.kube/stage.yaml, prod.yaml]
 ```
 
 ## Первоисточники
@@ -286,10 +286,10 @@ flowchart TD
 
 1. **Какие компоненты k3s работают подами, а какие — внутри процесса?** `sudo k3s kubectl get pods -n kube-system` — только `coredns` и `local-path-provisioner`; `ps -C k3s-server -o rss,cmd` — один процесс сервера.
 2. **Почему под не достучится до API по `localhost:6443`?** Не запускалось. `sudo k3s kubectl get endpoints kubernetes -n default` должен показать адрес узла и порт 6443, а не `127.0.0.1`: клиенты в подах ходят на него через ClusterIP `10.43.0.1`.
-3. **Есть ли правило host guard и работает ли оно?** `sudo nft list table inet solguficky_hostguard` — таблица с одной `/15` и счётчиком. `cd ~/solguficky-ops && ansible-playbook verify.yml -K --tags network` — счётчик растёт на два, клиент `prod` получает `200`, под `test` — `cross-blocked`.
+3. **Есть ли правило host guard и работает ли оно?** `sudo nft list table inet solguficky_hostguard` — таблица с одной `/15` и счётчиком. `cd ~/solguficky-ops && ansible-playbook verify.yml -K --tags network` — счётчик растёт на два, клиент `prod` получает `200`, под `stage` — `cross-blocked`.
 4. **Пускает ли ufw сеть подов?** `sudo ufw status verbose` — строки `ALLOW IN` и `ALLOW FWD` от `10.42.0.0/16`.
-5. **Что запрещает учётка среды?** `kubectl --kubeconfig ~/.kube/test.yaml -n test auth can-i delete networkpolicies` — `no`; `… auth can-i delete pods` — `yes`; `… -n prod get pods` — `Forbidden`.
-6. **Отклонит ли API под с root в `test`?** `ansible-playbook verify.yml -K --tags admission`: три шага, отказ root и сверхквоты и приём контрольного пода.
+5. **Что запрещает учётка среды?** `kubectl --kubeconfig ~/.kube/stage.yaml -n stage auth can-i delete networkpolicies` — `no`; `… auth can-i delete pods` — `yes`; `… -n prod get pods` — `Forbidden`.
+6. **Отклонит ли API под с root в `stage`?** `ansible-playbook verify.yml -K --tags admission`: три шага, отказ root и сверхквоты и приём контрольного пода.
 7. **Сколько логов держит один контейнер?** `sudo ls -la /var/log/pods/kube-system_coredns-*/coredns/` — до пяти файлов, каждый до 10 MiB.
 8. **Почему swap 1 GiB показан на 4 KiB меньше?** `swapon --show --bytes` — `1073737728`: первая страница устройства — заголовок swap.
 9. **Остановит ли остановка host guard и k3s?** Не запускалось на хосте. Проверь без остановки: `systemctl list-dependencies --reverse solguficky-hostguard` должен показать `k3s.service`.

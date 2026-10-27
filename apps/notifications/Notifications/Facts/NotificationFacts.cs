@@ -43,6 +43,39 @@ public static class NotificationFacts
     public const string LotDeadlineCloseType = "lot_deadline_close";
 
     /// <summary>
+    /// Начало окна сниженного шага на лоте избранного (ADR-047, дополнение
+    /// 2026-10-12). Категории у повода нет: выключить — снять отметку.
+    /// </summary>
+    public const string StepWindowStartedType = "step_window_started";
+
+    /// <summary>
+    /// Напоминание о неоплаченном счёте: момент за 24 часа до срока оплаты
+    /// (PER-726; до него — через 12 часов после победы, PER-330). Категории у
+    /// повода нет: счёт — дело победителя, а деньги через продукт не проходят.
+    /// </summary>
+    public const string InvoiceReminderType = "invoice_reminder";
+
+    /// <summary>
+    /// Ближние моменты того же напоминания о счёте — за 12 часов и за час до
+    /// срока оплаты (PER-726). Текст канала называет срок, а не остаток
+    /// времени, поэтому одно тело верно для обоих моментов.
+    /// </summary>
+    public const string InvoiceDueReminderType = "invoice_due_reminder";
+
+    /// <summary>
+    /// Тип факта по виду напоминания о счёте. Ключ повода — сработавшее
+    /// задание, поэтому два вида на одном типе не совпадают на ключе: у
+    /// каждого момента своё задание. Новых типов контракта PER-726 не заводит.
+    /// </summary>
+    public static string TypeOf(InvoiceReminderKind kind) => kind switch
+    {
+        InvoiceReminderKind.AfterWin or InvoiceReminderKind.DayBefore => InvoiceReminderType,
+        InvoiceReminderKind.BeforeDue or InvoiceReminderKind.HalfDayBefore or InvoiceReminderKind.HourBefore =>
+            InvoiceDueReminderType,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    /// <summary>
     /// Тип факта по виду напоминания лота: у вида свой тип, иначе два момента
     /// напоминания совпали бы на одном ключе повода.
     /// </summary>
@@ -106,6 +139,17 @@ public static class NotificationFacts
     public const string WithdrawnOnApplicationClosed = "application_closed";
 
     /// <summary>
+    /// Аукцион сняли с публикации, пока весть о нём ждала релея (PER-646).
+    /// </summary>
+    public const string WithdrawnOnAuctionHidden = "auction_hidden";
+
+    /// <summary>
+    /// Счёт оплатили, пока напоминание о неоплаченном счёте ждало релея
+    /// (PER-330).
+    /// </summary>
+    public const string WithdrawnOnInvoicePaid = "invoice_paid";
+
+    /// <summary>
     /// Категория, которой человек отказывается от «новой сходки». Настраивается
     /// только глобально: подписаться на ещё не созданную сходку нельзя.
     /// </summary>
@@ -136,6 +180,14 @@ public static class NotificationFacts
     /// положена.
     /// </summary>
     public const string HubRight = "access_hub";
+
+    /// <summary>
+    /// Право ставок: весть о новом аукционе и об открытии торгов адресуется
+    /// его держателям (PER-646). Круг `member` несёт его набором, допущенный
+    /// гость — записью, поэтому «гость без права аукциона» отсекается тем же
+    /// предикатом (ADR-065).
+    /// </summary>
+    public const string PlaceBidsRight = "place_bids";
 
     /// <summary>Значение категории для человека без строки настроек.</summary>
     public static bool MeetupPublishedByDefault => NotificationCategories.DefaultEnabled(MeetupPublishedCategory);
@@ -297,6 +349,132 @@ public static class NotificationFacts
             now,
             notAfter);
         notification.LotDeadlineClose = new V1.LotDeadlineClose { LotId = lotId.ToString() };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Напоминание о неоплаченном счёте одному получателю: момент за 24 часа до
+    /// срока оплаты.
+    /// </summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="invoiceId">Счёт проданного лота.</param>
+    /// <param name="lotId">Проданный лот; название канал читает у Auction.</param>
+    /// <param name="amount">Сумма к оплате: цена продажи.</param>
+    /// <param name="paymentDueAt">
+    /// Срок оплаты: напоминание, не ушедшее до срока, уже шум, и релей снимет
+    /// его по сроку.
+    /// </param>
+    /// <remarks>
+    /// <c>request_id</c> у факта нет: у срабатывания таймера нет цепочки, которую
+    /// начал человек. Название лота в сообщении нет — оно вне домена торгов, его
+    /// бот берёт сам по <c>lot_id</c>.
+    /// </remarks>
+    public static Notification InvoiceReminder(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid invoiceId,
+        Guid lotId,
+        global::Auction.V1.Money amount,
+        DateTimeOffset paymentDueAt,
+        DateTimeOffset now)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            paymentDueAt);
+        notification.InvoiceReminder = new V1.InvoiceReminder
+        {
+            InvoiceId = invoiceId.ToString(),
+            LotId = lotId.ToString(),
+            Amount = amount.Clone(),
+            PaymentDueAt = Instant(paymentDueAt),
+        };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Ближнее напоминание о неоплаченном счёте одному получателю: за 12 часов
+    /// или за час до срока оплаты. Тело то же, что у дальнего: счёт, лот, сумма
+    /// и срок — те же значения, различаются моменты.
+    /// </summary>
+    public static Notification InvoiceDueReminder(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid invoiceId,
+        Guid lotId,
+        global::Auction.V1.Money amount,
+        DateTimeOffset paymentDueAt,
+        DateTimeOffset now)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            paymentDueAt);
+        notification.InvoiceDueReminder = new V1.InvoiceDueReminder
+        {
+            InvoiceId = invoiceId.ToString(),
+            LotId = lotId.ToString(),
+            Amount = amount.Clone(),
+            PaymentDueAt = Instant(paymentDueAt),
+        };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Начало окна сниженного шага одному следящему: все его лоты этого окна,
+    /// каждый со своим шагом и концом (ADR-047, дополнение 2026-10-12).
+    /// </summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="auctionId">Аукцион, к которому относится окно.</param>
+    /// <param name="startsAt">Начало окна: одно у всех лотов одного запуска.</param>
+    /// <param name="lots">
+    /// Лоты получателя, у которых окно начинается в <paramref name="startsAt" />.
+    /// Список не пуст: без него факта нет.
+    /// </param>
+    /// <param name="notAfter">
+    /// Конец последнего из названных окон: сообщение о начале окна, ушедшее
+    /// после его конца, уже шум, и релей снимет его по сроку.
+    /// </param>
+    public static Notification StepWindowStarted(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid auctionId,
+        DateTimeOffset startsAt,
+        IReadOnlyList<StepWindowNoticeLot> lots,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        var body = new V1.StepWindowStarted
+        {
+            AuctionId = auctionId.ToString(),
+            StartsAt = Instant(startsAt),
+        };
+        body.Lots.AddRange(lots.Select(lot => new V1.StepWindowLot
+        {
+            LotId = lot.LotId.ToString(),
+            Until = Instant(lot.Until),
+            Step = lot.Step.Clone(),
+        }));
+        notification.StepWindowStarted = body;
 
         return notification;
     }

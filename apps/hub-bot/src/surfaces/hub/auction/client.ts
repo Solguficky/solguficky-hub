@@ -4,12 +4,17 @@ import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
+  type Http2SessionOptions,
 } from "@connectrpc/connect-node";
 import {
   BidSource,
+  FulfillmentMethod,
   type StepPolicySchema,
 } from "../../../../gen/auction/v1/auction_pb.js";
-import type { AuctionSnapshot } from "../../../../gen/auction/v1/auction_service_pb.js";
+import type {
+  AuctionSnapshot,
+  InvoiceSnapshot,
+} from "../../../../gen/auction/v1/auction_service_pb.js";
 import {
   AuctionListing,
   AuctionService,
@@ -28,8 +33,15 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../../core/auction/commands.js";
+import { dayChronicleOf } from "../../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
+import {
+  fulfillmentOutcomeOn,
+  myInvoicesOf,
+  wireFulfillment,
+} from "../../../core/auction/invoices.js";
+import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
   predictionOutcomeOf,
@@ -43,6 +55,7 @@ import {
 } from "../../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../../core/auction/snapshot.js";
 import {
+  AUCTION_KEEPALIVE,
   type AuctionWatchSource,
   watchSourceOf,
 } from "../../../core/auction/watch.js";
@@ -59,29 +72,52 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
-import type { Person } from "../application/types.js";
+import type {
+  FulfillmentMethod as FulfillmentView,
+  Invoice,
+  Person,
+  RemovalRefusal,
+} from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
   type AddLotResult,
   type AdvanceAskResult,
+  type AssignRaffleWinnerResult,
   type AuctionConsoles,
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
+  type AuctionVisibilityResult,
+  type CancelAuctionResult,
+  type ChangeRafflePrizeResult,
   type CloseLotResult,
   type ConsoleReadResult,
   type DaySummaryReadResult,
+  type DeleteLotSetResult,
   type DiscardAuctionResult,
   type EnableAuctionResult,
   type FinalistRefusal,
   type FinalistResult,
+  type FinalTimeResult,
   type FloorBidResult,
   type FreezeFinalLineupResult,
+  type InvoiceMarkResult,
+  type InvoicesReadResult,
+  type LaunchStepWindowResult,
   type LotAdministration,
   type LotCardResult,
+  type LotImageResult,
+  type LotLayoutResult,
+  type LotParticipant,
+  type LotPhotoResult,
   type LotStatisticsReadResult,
   type LotStepPolicyInput,
   type MeetupAuctions,
+  type PaymentInstructionsResult,
+  type RemovalPreviewResult,
+  type RemoveLotResult,
+  type RemoveParticipantResult,
+  type SaveLotSetResult,
   type ScheduleAuctionResult,
   type ScheduleLotResult,
   type StartFinalResult,
@@ -102,6 +138,7 @@ type AuctionRpc = Pick<
   | "createLotCard"
   | "editLotCard"
   | "addLot"
+  | "removeLot"
   | "scheduleLot"
   | "getLot"
   | "listAuctionLots"
@@ -113,17 +150,34 @@ type AuctionRpc = Pick<
   | "chooseDisplayName"
   | "getAuction"
   | "getRaffle"
+  | "assignRaffleWinner"
+  | "changeRafflePrize"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
+  | "listMyInvoices"
+  | "chooseFulfillment"
   | "getMyPredictions"
+  | "getPredictionResults"
+  | "getAuctionDayChronicle"
   | "submitPrediction"
   | "getLotImage"
+  | "getLotPhoto"
+  | "addLotPhoto"
+  | "removeLotPhoto"
   | "getAuctionConsole"
   | "getAuctionLotStatistics"
   | "getAuctionDaySummary"
   | "scheduleAuction"
+  | "launchStepWindow"
   | "startPrebidding"
   | "discardAuction"
+  | "cancelAuction"
+  | "publishAuction"
+  | "hideAuction"
+  | "setFinalTime"
+  | "saveLotSet"
+  | "deleteLotSet"
+  | "setLotLayout"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -131,6 +185,12 @@ type AuctionRpc = Pick<
   | "startNextLot"
   | "advanceAsk"
   | "closeLot"
+  | "previewParticipantRemoval"
+  | "removeParticipant"
+  | "listAuctionInvoices"
+  | "markInvoicePaid"
+  | "markInvoiceHandedOver"
+  | "setPaymentInstructions"
 >;
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
@@ -181,10 +241,14 @@ export function createAuctionClient(
     timeoutMs = 3_000,
     onNamesRefused,
     onRaffleRefused,
+    keepalive = AUCTION_KEEPALIVE,
   }: RpcClientOptions &
-    Pick<AuctionAdapterOptions, "onNamesRefused" | "onRaffleRefused">,
+    Pick<AuctionAdapterOptions, "onNamesRefused" | "onRaffleRefused"> & {
+      // Keepalive соединения; тесты сжимают его до долей секунды.
+      keepalive?: Http2SessionOptions;
+    },
 ): AuctionClient & LotInfoReader {
-  const sessionManager = new Http2SessionManager(baseUrl);
+  const sessionManager = new Http2SessionManager(baseUrl, keepalive);
   const rpc = createClient(
     AuctionService,
     createGrpcTransport({
@@ -295,6 +359,30 @@ export function createAuctionAdapter(
         return toFailure(cause);
       }
     },
+    async soldLots(person, auctionId, meta) {
+      try {
+        let sold = 0;
+        let pageToken = "";
+        const seen = new Set<string>();
+        for (let pages = 0; ; pages++) {
+          // Повтор токена или бесконечный реестр — дефект соседа, а не повод
+          // крутиться: исход тогда «не знаю», как у отказа.
+          if (pages >= MAX_SOLD_PAGES || seen.has(pageToken)) {
+            return defect("auction lot pages do not end");
+          }
+          seen.add(pageToken);
+          const page = await rpc.listAuctionLots(
+            { viewer: wireViewer(viewerOf(person)), auctionId, pageToken },
+            options(meta),
+          );
+          sold += page.lots.filter((lot) => lot.status.case === "sold").length;
+          if (page.nextPageToken === "") return { kind: "ok", sold };
+          pageToken = page.nextPageToken;
+        }
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
     async currentAuction(person, meta) {
       try {
         const auctions = await listActive(person, meta);
@@ -334,6 +422,32 @@ export function createAuctionAdapter(
         return toFailure(cause);
       }
     },
+    // Повтора нет: ключ рождается на нажатие «Да», а повтор того же «Да»
+    // Auction примет без второго итога.
+    async assignRaffleWinner(person, command, meta) {
+      try {
+        const response = await rpc.assignRaffleWinner(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return assignRaffleWinnerResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Повтора нет, как у итога: ключ рождается на нажатие «Да», а повтор того
+    // же «Да» Auction примет без второй смены.
+    async changeRafflePrize(person, command, meta) {
+      try {
+        const response = await rpc.changeRafflePrize(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return changeRafflePrizeResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
     async enableAuction(person, meetupId, opId, meta) {
       try {
         const response = await rpc.draftAuction(
@@ -357,24 +471,57 @@ export function createAuctionAdapter(
       }
     },
     async editLotCard(person, card, meta) {
-      const { image, ...text } = card;
+      const { image, removeImage, ...text } = card;
       try {
         const response = await rpc.editLotCard(
           {
             viewer: wireViewer(viewerOf(person)),
             ...text,
-            ...(image === undefined
-              ? {}
-              : {
-                  imageChange: {
-                    case: "replaceImage",
-                    value: { content: image },
-                  },
-                }),
+            ...(removeImage === true
+              ? { imageChange: { case: "removeImage", value: {} } }
+              : image === undefined
+                ? {}
+                : {
+                    imageChange: {
+                      case: "replaceImage",
+                      value: { content: image },
+                    },
+                  }),
           },
           options(meta),
         );
         return cardResult(response.outcome, image !== undefined);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async addLotPhoto(person, photo, meta) {
+      try {
+        const response = await rpc.addLotPhoto(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            lotId: photo.lotId,
+            photoId: photo.photoId,
+            photo: { content: photo.image },
+          },
+          options(meta),
+        );
+        return photoResult(response.outcome, true);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async removeLotPhoto(person, photo, meta) {
+      try {
+        const response = await rpc.removeLotPhoto(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            lotId: photo.lotId,
+            photoId: photo.photoId,
+          },
+          options(meta),
+        );
+        return photoResult(response.outcome, false);
       } catch (cause) {
         return toFailure(cause);
       }
@@ -388,6 +535,45 @@ export function createAuctionAdapter(
         return addLotResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async removeLot(person, lot, meta) {
+      try {
+        const response = await rpc.removeLot(
+          { viewer: wireViewer(viewerOf(person)), ...lot },
+          options(meta),
+        );
+        return removeLotResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async getLotImage(person, lotId, meta): Promise<LotImageResult> {
+      try {
+        const image = await rpc.getLotImage(
+          { viewer: wireViewer(viewerOf(person)), lotId },
+          options(meta),
+        );
+        return { kind: "ok", content: image.content, version: image.version };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        return toFailure(cause);
+      }
+    },
+    async getLotPhoto(person, photo, meta): Promise<LotImageResult> {
+      try {
+        const image = await rpc.getLotPhoto(
+          { viewer: wireViewer(viewerOf(person)), ...photo },
+          options(meta),
+        );
+        return { kind: "ok", content: image.content, version: image.version };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        return toFailure(cause);
       }
     },
     async scheduleLot(person, terms, meta) {
@@ -500,11 +686,38 @@ export function createAuctionAdapter(
                 step: wireMoney(window.step),
                 lotIds: [...window.lotIds],
               })),
+              // Срок оплаты счёта едет по той же причине (PER-722): без него
+              // Auction вернул бы срок платформы.
+              ...(week.paymentTermSeconds === undefined
+                ? {}
+                : { paymentTermSeconds: BigInt(week.paymentTermSeconds) }),
             },
           },
           options(meta),
         );
         return scheduleAuctionResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Запуск окна сниженного шага по ходу торгов (PER-615): окно дописывается
+    // к списку аукциона, а конфигурация не меняется. `from` не задан — окно
+    // начинается с момента, в который сервис решил команду.
+    async launchStepWindow(person, launch, meta) {
+      try {
+        const response = await rpc.launchStepWindow(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: launch.auctionId,
+            opId: launch.opId,
+            ...(launch.from === undefined ? {} : { from: launch.from }),
+            until: launch.until,
+            step: wireMoney(launch.step),
+            lotIds: [...launch.lotIds],
+          },
+          options(meta),
+        );
+        return launchStepWindowResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -527,6 +740,102 @@ export function createAuctionAdapter(
           options(meta),
         );
         return discardAuctionResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async cancelAuction(person, cancel, meta) {
+      try {
+        const response = await rpc.cancelAuction(
+          { viewer: wireViewer(viewerOf(person)), ...cancel },
+          options(meta),
+        );
+        return cancelAuctionResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async publishAuction(person, publish, meta) {
+      try {
+        const response = await rpc.publishAuction(
+          { viewer: wireViewer(viewerOf(person)), ...publish },
+          options(meta),
+        );
+        return visibilityResult(response.outcome, "publish");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async hideAuction(person, hide, meta) {
+      try {
+        const response = await rpc.hideAuction(
+          { viewer: wireViewer(viewerOf(person)), ...hide },
+          options(meta),
+        );
+        return visibilityResult(response.outcome, "hide");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Ориентировочное время финала (PER-663). Момент без — снятие анонса, и
+    // Auction отвечает тем же приёмом.
+    async setFinalTime(person, command, meta) {
+      try {
+        const response = await rpc.setFinalTime(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return finalTimeResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async saveLotSet(person, set, meta) {
+      try {
+        const response = await rpc.saveLotSet(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            ...set,
+            lotIds: [...set.lotIds],
+          },
+          options(meta),
+        );
+        return saveLotSetResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Порядок и разделы ленты (PER-719): раскладка уходит целиком.
+    async setLotLayout(person, command, meta) {
+      try {
+        const response = await rpc.setLotLayout(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            opId: command.opId,
+            layout: {
+              lotIds: [...command.layout.lotIds],
+              sections: command.layout.sections.map((section) => ({
+                sectionId: section.sectionId,
+                name: section.name,
+                lotIds: [...section.lotIds],
+              })),
+            },
+          },
+          options(meta),
+        );
+        return lotLayoutResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async deleteLotSet(person, set, meta) {
+      try {
+        const response = await rpc.deleteLotSet(
+          { viewer: wireViewer(viewerOf(person)), ...set },
+          options(meta),
+        );
+        return deleteLotSetResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -663,10 +972,13 @@ export function createAuctionAdapter(
           );
           bids = [
             ...bids,
-            ...history.entries.map((entry) => ({
-              amount: entry.amount,
-              participantId: entry.participantId,
-            })),
+            // Снятый с лота (ADR-072) на нём больше не ставит: его ставки и
+            // запись снятия в последние ставки не идут.
+            ...history.entries.flatMap((entry) =>
+              entry.kind === "bid" && entry.removed !== true
+                ? [{ amount: entry.amount, participantId: entry.participantId }]
+                : [],
+            ),
           ].slice(-read.limit);
           pageToken = history.nextPageToken;
           if (pageToken === "") break;
@@ -759,6 +1071,131 @@ export function createAuctionAdapter(
           return { kind: "not-found" };
         }
         return toFailure(cause);
+      }
+    },
+    // Участники лота для снятия (PER-659): хронология целиком, порядок —
+    // первой ставки. Недочитанная хронология дала бы неполный список, а
+    // человек, которого нет в списке, снять не может, — это отказ, а не
+    // экран. Имена — одним вызовом; их отказ роняет экран: кнопка без имени
+    // назвала бы человека идентификатором.
+    async lotParticipants(person, read, meta) {
+      const viewer = wireViewer(viewerOf(person));
+      const participants = new Map<string, LotParticipant>();
+      try {
+        let pageToken = "";
+        for (let page = 0; page < historyPageLimit; page += 1) {
+          const history = historyPageOf(
+            await rpc.listLotHistory(
+              { viewer, lotId: read.lotId, pageToken },
+              options(meta),
+            ),
+          );
+          for (const entry of history.entries) {
+            if (entry.kind !== "bid") continue;
+            const known = participants.get(entry.participantId);
+            participants.set(entry.participantId, {
+              participantId: entry.participantId,
+              removed: known?.removed === true || entry.removed === true,
+            });
+          }
+          pageToken = history.nextPageToken;
+          if (pageToken === "") break;
+        }
+        if (pageToken !== "") {
+          return defect(`lot history longer than ${historyPageLimit} pages`);
+        }
+      } catch (cause) {
+        return toFailure(cause);
+      }
+      const ids = [...participants.keys()];
+      if (ids.length === 0) return { kind: "ok", participants: [] };
+      try {
+        const response = await rpc.getDisplayNames(
+          { viewer, auctionId: read.auctionId, participantIds: ids },
+          options(meta),
+        );
+        return {
+          kind: "ok",
+          participants: [...participants.values()].map((each) => {
+            const name = response.names[each.participantId]?.text;
+            return name === undefined || name === "" ? each : { ...each, name };
+          }),
+        };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async previewParticipantRemoval(person, target, meta) {
+      try {
+        const response = await rpc.previewParticipantRemoval(
+          { viewer: wireViewer(viewerOf(person)), ...target },
+          options(meta),
+        );
+        return removalPreviewResult(response.outcome);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async removeParticipant(person, removal, meta) {
+      try {
+        const response = await rpc.removeParticipant(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: removal.auctionId,
+            lotId: removal.lotId,
+            participantId: removal.participantId,
+            expectedVersion: BigInt(removal.expectedVersion),
+            opId: removal.opId,
+          },
+          options(meta),
+        );
+        return removeParticipantResult(response.outcome);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async listAuctionInvoices(person, auctionId, meta) {
+      try {
+        const response = await rpc.listAuctionInvoices(
+          { viewer: wireViewer(viewerOf(person)), auctionId },
+          options(meta),
+        );
+        return invoicesResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Повтора нет: ключ рождается на нажатие «Да», а повтор того же «Да»
+    // Auction примет без второго перехода.
+    async markInvoice(person, mark, meta) {
+      const request = {
+        viewer: wireViewer(viewerOf(person)),
+        invoiceId: mark.invoiceId,
+        opId: mark.opId,
+      };
+      try {
+        const outcome =
+          mark.mark === "paid"
+            ? (await rpc.markInvoicePaid(request, options(meta))).outcome
+            : (await rpc.markInvoiceHandedOver(request, options(meta))).outcome;
+        return invoiceMarkResult(outcome);
+      } catch (cause) {
+        return cause instanceof ConnectError && cause.code === Code.NotFound
+          ? { kind: "invoice-not-found" }
+          : toFailure(cause);
+      }
+    },
+    // Текст «Как оплатить и получить» (PER-322). Текст без — снятие, и
+    // Auction отвечает тем же приёмом.
+    async setPaymentInstructions(person, command, meta) {
+      try {
+        const response = await rpc.setPaymentInstructions(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return paymentInstructionsResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
       }
     },
     screenPorts(meta): AuctionScreenPorts {
@@ -923,6 +1360,32 @@ export function createAuctionAdapter(
               throw cause;
             }
           },
+          // Счета победителя (PER-322): чтение бросает отказ, выбор способа —
+          // исход с `not-found` и `unanswered`, как команды участника.
+          async listMyInvoices(request) {
+            return myInvoicesOf(
+              await rpc.listMyInvoices(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                },
+                options(meta),
+              ),
+            );
+          },
+          chooseFulfillment(request) {
+            return fulfillmentOutcomeOn(() =>
+              rpc.chooseFulfillment(
+                {
+                  viewer: wireViewer(request.viewer),
+                  invoiceId: request.invoiceId,
+                  method: wireFulfillment(request.method),
+                  opId: request.opId,
+                },
+                options(meta),
+              ),
+            );
+          },
           registerForRaffle(request) {
             return unansweredOn(async () =>
               registrationOutcomeOf(
@@ -961,6 +1424,26 @@ export function createAuctionAdapter(
             );
             return myPredictionsOf(response);
           },
+          async getPredictionResults(request) {
+            const response = await rpc.getPredictionResults(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return predictionResultsOf(response);
+          },
+          async getDayChronicle(request) {
+            const response = await rpc.getAuctionDayChronicle(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return dayChronicleOf(response);
+          },
           submitPrediction(request) {
             return unansweredOn(async () =>
               predictionOutcomeOf(
@@ -983,6 +1466,21 @@ export function createAuctionAdapter(
           async getLotImage(request) {
             const image = await rpc.getLotImage(
               { viewer: wireViewer(request.viewer), lotId: request.lotId },
+              options(meta),
+            );
+            return {
+              content: image.content,
+              mediaType: image.mediaType,
+              version: image.version,
+            };
+          },
+          async getLotPhoto(request) {
+            const image = await rpc.getLotPhoto(
+              {
+                viewer: wireViewer(request.viewer),
+                lotId: request.lotId,
+                photoId: request.photoId,
+              },
               options(meta),
             );
             return {
@@ -1039,6 +1537,10 @@ function enableResult(
   }
 }
 
+// Предохранитель обхода реестра для подсчёта продаж: столько страниц у
+// аукциона сообщества не бывает.
+const MAX_SOLD_PAGES = 200;
+
 // Пустой `oneof` и отказ, которого у команды без изображения быть не может, —
 // дефект соседа, а не решение: экран отвечает как на сбой, а причина уходит в
 // запись границы.
@@ -1049,6 +1551,67 @@ function defect(what: string): AuctionFailure {
 type CardOutcome =
   | Awaited<ReturnType<AuctionRpc["createLotCard"]>>["outcome"]
   | Awaited<ReturnType<AuctionRpc["editLotCard"]>>["outcome"];
+
+type PhotoOutcome =
+  | Awaited<ReturnType<AuctionRpc["addLotPhoto"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["removeLotPhoto"]>>["outcome"];
+
+// Команды фото лота (PER-721). Отказ изображения и предела бывает только у
+// добавления: у снятия он — дефект соседа, как у карточки.
+function photoResult(outcome: PhotoOutcome, adding: boolean): LotPhotoResult {
+  switch (outcome.case) {
+    case "accepted":
+      return {
+        kind: "ok",
+        photos: outcome.value.photos.map((photo) => ({
+          photoId: photo.photoId,
+          version: photo.version,
+        })),
+      };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notAdmin":
+          return { kind: "not-admin" };
+        case "cardNotFound":
+          return { kind: "card-not-found" };
+        case "cardClosed":
+          return { kind: "card-closed" };
+        case "imageTooLarge":
+          return adding
+            ? {
+                kind: "image-too-large",
+                maxBytes: Number(reason.value.maxBytes),
+              }
+            : defect("lot photo removal refused an image");
+        case "unsupportedImage":
+          return adding
+            ? { kind: "unsupported-image" }
+            : defect("lot photo removal refused an image");
+        case "photoLimitReached":
+          return adding
+            ? { kind: "photo-limit", maxPhotos: reason.value.maxPhotos }
+            : defect("lot photo removal refused by the photo limit");
+        case "photoConflict":
+          return adding
+            ? { kind: "photo-conflict" }
+            : defect("lot photo removal answered a photo conflict");
+        case undefined:
+          return defect("lot photo refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("lot photo response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
 
 // Отказ изображения — ответ на команду, которая его прислала. У команды без
 // изображения такого отказа быть не может, и он — дефект соседа.
@@ -1120,6 +1683,40 @@ function addLotResult(
       }
     case undefined:
       return defect("add lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function removeLotResult(
+  outcome: Awaited<ReturnType<AuctionRpc["removeLot"]>>["outcome"],
+): RemoveLotResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction" };
+        case undefined:
+          return defect("remove lot refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("remove lot response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -1270,9 +1867,19 @@ function daySummaryResult(
         kind: "ok",
         lots: outcome.value.lots.map((lot) => {
           const bidCount = safeCount(lot.bidCount, "day summary bid count");
+          const leaderChangeCount = safeCount(
+            lot.leaderChangeCount,
+            "day summary leader change count",
+          );
+          const longestDuel = safeCount(
+            lot.longestDuel,
+            "day summary longest duel",
+          );
           return {
             lotId: lot.lotId,
             bidCount,
+            leaderChangeCount,
+            longestDuel,
             ...(lot.maxPrice === undefined
               ? {}
               : { maxPrice: moneyOf(lot.maxPrice) }),
@@ -1320,8 +1927,8 @@ function moneyOf(value: { minorUnits: bigint; currency: string }): Money {
   return { minorUnits, currency: value.currency };
 }
 
-// Конфигурацию собирает бот: конец позже начала, окна «Счастливых часов» и
-// момент розыгрыша задаёт человек, а остальные отказы — дефект сборки, а не
+// Конфигурацию собирает бот: конец позже начала, окна «Счастливых часов»,
+// момент розыгрыша и срок оплаты задаёт человек, а остальные отказы — дефект сборки, а не
 // ответ человеку.
 // Окно без `closes_at` бот не соберёт: сроки недели он шлёт всегда.
 function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
@@ -1352,6 +1959,9 @@ function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
       return { kind: "raffle-prize-blank" };
     case "rafflePrizeTooLong":
       return { kind: "raffle-prize-too-long" };
+    // Срок оплаты счёта (PER-722): правило то же, что проверяет бот.
+    case "paymentTermOutOfRange":
+      return { kind: "payment-term-out-of-range" };
     default:
       return defect(
         `schedule auction refused the configuration: ${reason.case ?? "no reason"}`,
@@ -1393,6 +2003,70 @@ function scheduleAuctionResult(
   }
 }
 
+// Запуск окна сниженного шага (PER-615). Отказы окна запуска — свои, без
+// номера окна: номер у отказов `ConfigInvalid` называет место в
+// `step_windows`, а окно запуска одно (ADR-047, дополнение 2026-10-12).
+function launchStepWindowResult(
+  outcome: Awaited<ReturnType<AuctionRpc["launchStepWindow"]>>["outcome"],
+): LaunchStepWindowResult {
+  switch (outcome.case) {
+    case "accepted":
+      return {
+        kind: "ok",
+        from: outcome.value.from,
+        until: outcome.value.until,
+      };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "notInPrebidding":
+          return { kind: "not-in-prebidding" };
+        case "stepWindowInPast":
+          return { kind: "window-in-past" };
+        case "stepWindowOutsideOnlinePhase":
+          return { kind: "window-outside-phase" };
+        case "stepWindowStepInvalid":
+          return { kind: "window-step-invalid" };
+        case "stepWindowLotsEmpty":
+          return { kind: "window-lots-empty" };
+        case "lotNotInAuction":
+          return {
+            kind: "lot-not-in-auction",
+            lotId: outcome.value.reason.value.lotId,
+          };
+        case "lotNotOpen":
+          return {
+            kind: "lot-not-open",
+            lotId: outcome.value.reason.value.lotId,
+          };
+        case "stepWindowsOverlap":
+          return {
+            kind: "windows-overlap",
+            lotId: outcome.value.reason.value.lotId,
+            from: outcome.value.reason.value.from,
+            until: outcome.value.reason.value.until,
+          };
+        case undefined:
+          return defect("launch step window refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("launch step window answer without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
 function startPrebiddingResult(
   outcome: Awaited<ReturnType<AuctionRpc["startPrebidding"]>>["outcome"],
 ): StartPrebiddingResult {
@@ -1425,6 +2099,233 @@ function startPrebiddingResult(
       }
     case undefined:
       return defect("start prebidding response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function cancelAuctionResult(
+  outcome: Awaited<ReturnType<AuctionRpc["cancelAuction"]>>["outcome"],
+): CancelAuctionResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "auctionNotStarted":
+          return { kind: "not-started" };
+        case "auctionAlreadyFinished":
+          return { kind: "already-finished" };
+        case undefined:
+          return defect("cancel auction refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("cancel auction response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Раскладка ленты (PER-719): принятие без полей, отказ лота называет лот.
+function lotLayoutResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setLotLayout"]>>["outcome"],
+): LotLayoutResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "finalAlreadyStarted":
+          return { kind: "final-already-started" };
+        case "auctionAlreadyFinished":
+          return { kind: "auction-already-finished" };
+        case "auctionAlreadyCancelled":
+          return { kind: "auction-already-cancelled" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction", lotId: reason.value.lotId };
+        case undefined:
+          return defect("lot layout refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("lot layout response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Сохранение сета (ADR-073, PER-509): принятие без полей, отказ лота называет
+// лот, а лот чужого сета — ещё и сет.
+function saveLotSetResult(
+  outcome: Awaited<ReturnType<AuctionRpc["saveLotSet"]>>["outcome"],
+): SaveLotSetResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case "nameEmpty":
+          return { kind: "name-empty" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction", lotId: reason.value.lotId };
+        case "lotInAnotherSet":
+          return {
+            kind: "lot-in-another-set",
+            lotId: reason.value.lotId,
+            lotSetId: reason.value.lotSetId,
+          };
+        case undefined:
+          return defect("save lot set refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("save lot set response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function deleteLotSetResult(
+  outcome: Awaited<ReturnType<AuctionRpc["deleteLotSet"]>>["outcome"],
+): DeleteLotSetResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case "lotSetNotFound":
+          return { kind: "lot-set-not-found" };
+        case undefined:
+          return defect("delete lot set refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("delete lot set response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы публикации и снятия одной формы (PER-673): общий
+// `AuctionVisibilityRefusal`, принятие без полей.
+function visibilityResult(
+  outcome: Awaited<ReturnType<AuctionRpc["publishAuction"]>>["outcome"],
+  command: "publish" | "hide",
+): AuctionVisibilityResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "auctionAlreadyStarted":
+          return { kind: "already-started" };
+        case undefined:
+          return defect(`${command} auction refusal without a reason`);
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect(`${command} auction response without an outcome`);
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы выставления времени финала (PER-663): именованный отказ Auction —
+// значение ответа, а не сбой вызова. Время в ответе нет: его показывает
+// перечитанный снимок `final_at`.
+function finalTimeResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setFinalTime"]>>["outcome"],
+): FinalTimeResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "finalAlreadyStarted":
+          return { kind: "final-already-started" };
+        case "auctionAlreadyFinished":
+          return { kind: "auction-already-finished" };
+        case "auctionAlreadyCancelled":
+          return { kind: "auction-already-cancelled" };
+        case undefined:
+          return defect("set final time refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("set final time response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -1742,9 +2643,353 @@ function closeLotResult(
   }
 }
 
-// Исходы ставки зала (PER-565, ADR-070 п. 5). Ниже минимума и чужая валюта в
-// живом финале не случаются: сумма — следующая цена лота в его валюте, и такой
-// отказ — дефект соседа.
+// Отказ снятия участника (ADR-072). Право и сходку пульт называет общими
+// кадрами; `lot-changed` предпросмотр не отдаёт — у него это дефект соседа.
+type RemovalReason = Extract<
+  Awaited<ReturnType<AuctionRpc["removeParticipant"]>>["outcome"],
+  { case: "refused" }
+>["value"]["reason"];
+
+function removalRefusal(
+  reason: RemovalReason,
+  command: string,
+): Exclude<RemoveParticipantResult, { kind: "ok" }> {
+  const refused = (reason: RemovalRefusal) => ({
+    kind: "refused" as const,
+    reason,
+  });
+  switch (reason.case) {
+    case "notMeetupAdministrator":
+      return { kind: "not-administrator" };
+    case "meetupNotFound":
+      return { kind: "meetup-not-found" };
+    case "meetupCancelled":
+      return { kind: "meetup-cancelled" };
+    case "lotNotInAuction":
+      return refused("lot-not-in-auction");
+    case "notInPrebidding":
+      return refused("not-in-prebidding");
+    case "lineupFrozen":
+      return refused("lineup-frozen");
+    case "lotNotOpen":
+      return refused("lot-not-open");
+    case "notInOnlinePhase":
+      return refused("not-in-online-phase");
+    case "deadlinePassed":
+      return refused("deadline-passed");
+    case "notALotParticipant":
+      return refused("not-a-lot-participant");
+    case "participantAlreadyRemoved":
+      return refused("already-removed");
+    case "lotChanged":
+      return { kind: "lot-changed" };
+    case undefined:
+      return defect(`${command} refusal without a reason`);
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+function removalPreviewResult(
+  outcome: Awaited<
+    ReturnType<AuctionRpc["previewParticipantRemoval"]>
+  >["outcome"],
+): RemovalPreviewResult {
+  switch (outcome.case) {
+    case "preview": {
+      const preview = outcome.value;
+      if (preview.price === undefined || preview.version < 1n) {
+        return defect("removal preview without a price or version");
+      }
+      return {
+        kind: "ok",
+        preview: {
+          price: moneyOf(preview.price),
+          version: Number(preview.version),
+          ...(preview.leaderId === undefined
+            ? {}
+            : { leaderId: preview.leaderId }),
+          ...(preview.extendedDeadline === undefined
+            ? {}
+            : { extendedDeadline: preview.extendedDeadline }),
+        },
+      };
+    }
+    case "refused": {
+      const refused = removalRefusal(outcome.value.reason, "removal preview");
+      return refused.kind === "lot-changed"
+        ? defect("removal preview refused with lot changed")
+        : refused;
+    }
+    case undefined:
+      return defect("removal preview response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function removeParticipantResult(
+  outcome: Awaited<ReturnType<AuctionRpc["removeParticipant"]>>["outcome"],
+): RemoveParticipantResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", lotVersion: Number(outcome.value.lotVersion) };
+    case "refused":
+      return removalRefusal(outcome.value.reason, "remove participant");
+    case undefined:
+      return defect("remove participant response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function invoicesResult(
+  outcome: Awaited<ReturnType<AuctionRpc["listAuctionInvoices"]>>["outcome"],
+): InvoicesReadResult {
+  switch (outcome.case) {
+    case "invoices": {
+      const invoices: Invoice[] = [];
+      for (const snapshot of outcome.value.invoices) {
+        const invoice = invoiceOf(snapshot);
+        if (invoice === undefined) {
+          return defect(
+            "auction invoice without an amount, a status or a due moment",
+          );
+        }
+        invoices.push(invoice);
+      }
+      const text = outcome.value.paymentInstructions;
+      return text === undefined
+        ? { kind: "ok", invoices }
+        : { kind: "ok", invoices, paymentInstructions: text };
+    }
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case undefined:
+          return defect("auction invoices refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("auction invoices response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Счёт без суммы, статуса или разборчивого срока оплаты — дефект соседа:
+// `undefined`, и чтение целиком отказывает, а не показывает счёт без денег и
+// не роняет экран на сроке.
+function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
+  if (snapshot.amount === undefined) return undefined;
+  if (Number.isNaN(Date.parse(snapshot.paymentDueAt))) return undefined;
+  const status =
+    snapshot.status.case === "awaitingPayment"
+      ? "awaiting-payment"
+      : snapshot.status.case === "paid"
+        ? "paid"
+        : snapshot.status.case === "handedOver"
+          ? "handed-over"
+          : undefined;
+  if (status === undefined) return undefined;
+  return {
+    invoiceId: snapshot.id,
+    auctionId: snapshot.auctionId,
+    lotId: snapshot.lotId,
+    winnerId: snapshot.winnerId,
+    amount: moneyOf(snapshot.amount),
+    paymentDueAt: snapshot.paymentDueAt,
+    fulfillment: fulfillmentOf(snapshot.fulfillment),
+    status,
+  };
+}
+
+// Способ новее схемы бот не знает и показывает как невыбранный: счёт важнее
+// подписи способа.
+function fulfillmentOf(method: FulfillmentMethod): FulfillmentView {
+  switch (method) {
+    case FulfillmentMethod.PICKUP:
+      return "pickup";
+    case FulfillmentMethod.DELIVERY:
+      return "delivery";
+    case FulfillmentMethod.DIGITAL:
+      return "digital";
+    default:
+      return "unspecified";
+  }
+}
+
+// Ответы текста «Как оплатить и получить» (PER-322): именованный отказ
+// Auction — значение ответа, а не сбой вызова.
+function paymentInstructionsResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setPaymentInstructions"]>>["outcome"],
+): PaymentInstructionsResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case undefined:
+          return defect("payment instructions refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("payment instructions response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы ручного итога розыгрыша (PER-727): именованный отказ Auction —
+// значение ответа, а не сбой вызова.
+function assignRaffleWinnerResult(
+  outcome: Awaited<ReturnType<AuctionRpc["assignRaffleWinner"]>>["outcome"],
+): AssignRaffleWinnerResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "notAwaitingWinner":
+          return { kind: "not-awaiting-winner" };
+        case "ticketNotInPool":
+          return { kind: "ticket-not-in-pool", tickets: reason.value.tickets };
+        case "alreadyDrawn":
+          return {
+            kind: "already-drawn",
+            winningTicket: reason.value.winningTicket,
+          };
+        case undefined:
+          return defect("raffle winner refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle winner response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы смены приза розыгрыша (PER-737): именованный отказ Auction —
+// значение ответа, а не сбой вызова.
+function changeRafflePrizeResult(
+  outcome: Awaited<ReturnType<AuctionRpc["changeRafflePrize"]>>["outcome"],
+): ChangeRafflePrizeResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "prizeBlank":
+          return { kind: "prize-blank" };
+        case "prizeTooLong":
+          return { kind: "prize-too-long" };
+        case "alreadyDrawn":
+          return {
+            kind: "already-drawn",
+            winningTicket: reason.value.winningTicket,
+          };
+        case "withoutResult":
+          return { kind: "without-result" };
+        case undefined:
+          return defect("raffle prize refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle prize response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+type InvoiceMarkOutcome =
+  | Awaited<ReturnType<AuctionRpc["markInvoicePaid"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["markInvoiceHandedOver"]>>["outcome"];
+
+function invoiceMarkResult(outcome: InvoiceMarkOutcome): InvoiceMarkResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "invoiceNotPaid":
+          return { kind: "invoice-not-paid" };
+        case undefined:
+          return defect("invoice mark refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("invoice mark response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Исходы ставки зала (PER-565, ADR-070 п. 5). Ниже минимума, выше потолка
+// онлайн-недели и чужая валюта в живом финале не случаются: сумма — следующая
+// цена лота в его валюте, и такой отказ — дефект соседа.
 function floorBidResult(
   outcome: Awaited<ReturnType<AuctionRpc["placeBid"]>>["outcome"],
 ): FloorBidResult {
@@ -1779,6 +3024,7 @@ function floorBidResult(
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
         case "bidBelowMinimum":
+        case "bidAboveMaximum":
         case "currencyMismatch":
           return defect(`floor bid refused as ${reason.case}`);
         case undefined:

@@ -11,6 +11,14 @@ import auction.lot.LotFixtures.*
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.persistence.SlickLotViews
+import auction.persistence.SlickSetOutcomes
+import auction.aggregate.AuctionEvent
+import auction.aggregate.LotSetId
+import auction.aggregate.LotSetSettlement
+import auction.catalog.LotId
+import auction.entity.AuctionJournal
+import org.apache.pekko.persistence.query.Sequence
+import org.apache.pekko.projection.eventsourced.EventEnvelope
 import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
 import com.typesafe.config.ConfigFactory
@@ -102,7 +110,8 @@ final class LotProjectionIntegrationSpec
       priceGrowth: Option[Money],
       lastBidAt: Option[Instant],
       finalGrowth: Option[Money],
-      finalBidCount: Option[Long]
+      finalBidCount: Option[Long],
+      contest: LotContest = LotContest.none
   )
 
   private def withNode[A](database: DatabaseSettings, clock: Clock = Clock.systemUTC())(use: Node => A): A = {
@@ -284,7 +293,8 @@ final class LotProjectionIntegrationSpec
           view.priceGrowth,
           view.lastBidAt,
           view.finalGrowth,
-          view.finalBidCount
+          view.finalBidCount,
+          view.contest
         )
       )
 
@@ -445,6 +455,8 @@ final class LotProjectionIntegrationSpec
       bidders(database, busy) should not contain participant(9).value
       busyStatistics.lastBidAt shouldBe lastBid
       busyStatistics.priceGrowth.map(_.minorUnits).exists(_ > 0) shouldBe true
+      // Лидеры по журналу — 1, 2, 1, 2, а ставки лидера от лимитов третьего и четвёртого лидера не меняют (PER-511).
+      busyStatistics.contest shouldBe LotContest(leaderChanges = 3, longestDuel = 3)
       incremental.find(_.lotId == quiet) shouldBe
         Some(Statistics(quiet, 0L, 0L, Some(money(0)), None, None, None))
 
@@ -511,6 +523,66 @@ final class LotProjectionIntegrationSpec
           outside.finalGrowth shouldBe None
           outside.finalBidCount shouldBe None
         }
+      }
+    }
+
+    "shows a complete set of the auction in the snapshot of its lots, with the collector once the set is settled" in {
+      val database = migrated()
+      // Аукцион, в котором фикстура рождает лоты: сет ищется в аукционе лота.
+      val auctionId = LotFixtures.auctionId(1).value
+      val set = UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000031")
+      withNode(database) { node =>
+        val (first, second) = (tradingLot(node), tradingLot(node))
+        // Проекции лотов идут независимо: строка второго лота не значит, что первый уже в read model, а сет ищется по
+        // первому.
+        eventually {
+          version(database, first) shouldBe Some(3L)
+          version(database, second) shouldBe Some(3L)
+        }
+        val name = auction.aggregate.LotSetName("Красный сет").toOption.get
+        val events = List(
+          AuctionEvent.AuctionDrafted(auction.aggregate.MeetupId(UUID.randomUUID())),
+          AuctionEvent.LotAdded(LotId(first)),
+          AuctionEvent.LotAdded(LotId(second)),
+          AuctionEvent.LotSetDefined(LotSetId(set), name, List(LotId(first))),
+          AuctionEvent.LotSetDefined(LotSetId(set), name, List(LotId(second), LotId(first))),
+          AuctionEvent.AuctionScheduled(auction.aggregate.AuctionFixtures.config()),
+          AuctionEvent.PrebiddingStarted,
+          AuctionEvent.LotSetSettled(LotSetId(set), LotSetSettlement.Collected(participant(2)))
+        )
+        val handler = AuctionViewHandler(node.kit.system)
+        val views = SlickLotViews(node.kit.system)
+        events.zipWithIndex.foreach { (event, index) =>
+          val sequence = index + 1L
+          withConnection(database) { connection =>
+            val session = new JdbcSession {
+              def withConnection[R](func: org.apache.pekko.japi.function.Function[Connection, R]): R = func(connection)
+              def commit(): Unit = ()
+              def rollback(): Unit = ()
+              def close(): Unit = ()
+            }
+            val stored = AuctionJournal.store(ids(), ids(), op(200 + index), Instant.now(), Initiator.Scheduler)(event)
+            handler.process(
+              session,
+              EventEnvelope(Sequence(sequence), s"auction|$auctionId", sequence, stored, 0L)
+            )
+          }
+          val seen = views.find(first).futureValue.flatMap(_.lotSet)
+          sequence match {
+            // Сет из одного лота неполный: участнику он не показывается.
+            case 4 => seen shouldBe None
+            case 5 => seen shouldBe Some(LotSetView(set, "Красный сет", List(second, first), None))
+            case 8 =>
+              seen shouldBe Some(LotSetView(set, "Красный сет", List(second, first), Some(participant(2).value)))
+            case _ => ()
+          }
+        }
+        views.registryPage(auctionId, None, 10).futureValue.map(_.lotSet.map(_.lotSetId)) shouldBe List(
+          Some(set),
+          Some(set)
+        )
+        // Лоты ещё торгуются: исхода нет ни у одного.
+        SlickSetOutcomes(node.kit.system).outcomes(Set(LotId(first), LotId(second))).futureValue shouldBe empty
       }
     }
 

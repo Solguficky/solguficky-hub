@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { FulfillmentMethod } from "./ports.js";
 import {
   type PredictionNomination,
   type PredictionRound,
@@ -62,7 +63,14 @@ const MAX_BYTES = 64;
 export type AuctionCommand = "bid" | "proxy";
 
 // Команда, отложенная до выбора имени: её вид и сумма.
-export type PendingCommand = { command: AuctionCommand; amount: number };
+// `final` — ставка, начатая кнопкой «Поставить» карточки финала (PER-713):
+// после выбора имени она уходит сразу, без подтверждения. Ставка онлайн-недели
+// ждёт своего «Да», даже если лот за это время вышел в финал.
+export type PendingCommand = {
+  command: AuctionCommand;
+  amount: number;
+  final?: true;
+};
 
 export type AuctionQuestion = "bid" | "proxy" | "alias";
 
@@ -70,7 +78,14 @@ export type AuctionIntent =
   // Корень аукциона (PER-605): стадия, сроки и входы в лоты и розыгрыш.
   | { kind: "root"; auctionId: string }
   | { kind: "feed"; auctionId: string; page: number }
+  // Раздел ленты (PER-719): номер раздела выбрал пульт, лоты — в порядке
+  // администратора, листание — по ним. Раздела нет — открывается лента.
+  | { kind: "section"; auctionId: string; sectionId: number; page: number }
   | { kind: "lot"; lotId: string; page: number; atLeastVersion?: number }
+  // Экран сета (ADR-073, п. 7): открывается с карточки лота сета, поэтому
+  // несёт его — сет читается из снимка лота. `page` — страница ленты, с
+  // которой открыли карточку: ею возвращается и карточка лота сета.
+  | { kind: "set"; lotId: string; page: number }
   | { kind: "history"; lotId: string; page: number; historyPage: number }
   | {
       kind: "confirm";
@@ -116,6 +131,9 @@ export type AuctionIntent =
   // для регистрации без имени — выбор имени, как у ставки: ник, вопрос
   // псевдонима и его шаг с адресатом. `op_id` команды рождается на нажатии:
   // повторная регистрация возвращает ту же, второго билета не бывает.
+  | { kind: "prediction-results"; auctionId: string }
+  // Хроники дня (PER-725): номинации последних суток из корня аукциона.
+  | { kind: "day-chronicle"; auctionId: string }
   | { kind: "raffle"; auctionId: string }
   | { kind: "raffle-register"; auctionId: string }
   | { kind: "raffle-cancel"; auctionId: string }
@@ -188,11 +206,26 @@ export type AuctionIntent =
   | { kind: "name"; auctionId: string }
   | { kind: "name-username"; auctionId: string }
   | { kind: "name-ask-alias"; auctionId: string }
-  | { kind: "name-question"; auctionId: string; addressee: number };
+  | { kind: "name-question"; auctionId: string; addressee: number }
+  // Счета победителя (PER-322): список аукциона из его корня, счёт и выбор
+  // способа получения. Счёт несёт свой лот: по нему экран находит аукцион и
+  // название, а кнопку счёта в напоминании строит канал, который аукциона не
+  // знает. `op_id` выбора рождается на нажатии: выбор — замена, и повтор того
+  // же способа ничего не портит.
+  | { kind: "invoices"; auctionId: string }
+  | { kind: "invoice"; lotId: string; invoiceId: string }
+  | {
+      kind: "fulfillment";
+      lotId: string;
+      invoiceId: string;
+      method: FulfillmentMethod;
+    };
 
 // Действия с одним токеном аукциона и шаг вопроса с адресатом — у розыгрыша и
 // у имени из настроек.
 const AUCTION_ACTION = {
+  "prediction-results": "pi",
+  "day-chronicle": "dc",
   raffle: "rf",
   "raffle-register": "rr",
   "raffle-cancel": "rc",
@@ -202,9 +235,25 @@ const AUCTION_ACTION = {
   name: "nm",
   "name-username": "nn",
   "name-ask-alias": "na",
+  invoices: "iv",
 } as const;
 
 type AuctionActionKind = keyof typeof AUCTION_ACTION;
+
+// Способ получения одной буквой: у способа одно написание, как у токена.
+const FULFILLMENT_CODE: Record<FulfillmentMethod, string> = {
+  pickup: "p",
+  delivery: "d",
+  digital: "g",
+};
+
+function fulfillmentOf(
+  code: string | undefined,
+): FulfillmentMethod | undefined {
+  return (Object.keys(FULFILLMENT_CODE) as FulfillmentMethod[]).find(
+    (method) => FULFILLMENT_CODE[method] === code,
+  );
+}
 
 const AUCTION_QUESTION = {
   rq: "raffle-question",
@@ -314,18 +363,24 @@ function commandOf(code: string | undefined): AuctionCommand | undefined {
   return undefined;
 }
 
-// Отложенная команда одним аргументом: код команды и сумма — `bxlc`.
+// Отложенная команда одним аргументом: код команды и сумма — `bxlc`. Ставка
+// финала (PER-713) — свой код `f`: та же ставка, но без подтверждения.
+const FINAL_BID_CODE = "f";
+
 function pendingArgument(pending: PendingCommand): string {
-  return `${COMMAND_CODE[pending.command]}${amountArgument(pending.amount)}`;
+  const code =
+    pending.final === true ? FINAL_BID_CODE : COMMAND_CODE[pending.command];
+  return `${code}${amountArgument(pending.amount)}`;
 }
 
 function pendingOf(raw: string | undefined): PendingCommand | undefined {
   if (raw === undefined) return undefined;
-  const command = commandOf(raw.slice(0, 1));
+  const code = raw.slice(0, 1);
   const amount = amountOf(raw.slice(1));
-  return command === undefined || amount === undefined
-    ? undefined
-    : { command, amount };
+  if (amount === undefined) return undefined;
+  if (code === FINAL_BID_CODE) return { command: "bid", amount, final: true };
+  const command = commandOf(code);
+  return command === undefined ? undefined : { command, amount };
 }
 
 const QUESTION_CODE: Record<AuctionQuestion, string> = {
@@ -364,6 +419,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       return `${prefix}:rt:${uuidToToken(intent.auctionId)}`;
     case "feed":
       return `${prefix}:feed:${uuidToToken(intent.auctionId)}:${pageArgument(intent.page)}`;
+    case "section":
+      return `${prefix}:sec:${uuidToToken(intent.auctionId)}:${sectionArgument(intent.sectionId)}:${pageArgument(intent.page)}`;
     case "lot":
       return [
         `${prefix}:lot`,
@@ -373,6 +430,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
           ? []
           : [versionArgument(intent.atLeastVersion)]),
       ].join(":");
+    case "set":
+      return `${prefix}:st:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
     case "history":
       return `${prefix}:hist:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}:${pageArgument(intent.historyPage)}`;
     case "confirm":
@@ -417,6 +476,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
           ? []
           : [uuidToToken(intent.auctionId)]),
       ].join(":");
+    case "prediction-results":
+    case "day-chronicle":
     case "raffle":
     case "raffle-register":
     case "raffle-cancel":
@@ -426,7 +487,12 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
     case "name":
     case "name-username":
     case "name-ask-alias":
+    case "invoices":
       return `${prefix}:${AUCTION_ACTION[intent.kind]}:${uuidToToken(intent.auctionId)}`;
+    case "invoice":
+      return `${prefix}:ia:${uuidToToken(intent.lotId)}:${uuidToToken(intent.invoiceId)}`;
+    case "fulfillment":
+      return `${prefix}:im:${uuidToToken(intent.lotId)}:${uuidToToken(intent.invoiceId)}:${FULFILLMENT_CODE[intent.method]}`;
     case "raffle-question":
       return `${prefix}:rq:${uuidToToken(intent.auctionId)}:${addresseeArgument(intent.addressee)}`;
     case "prediction":
@@ -479,6 +545,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (command !== undefined) return command;
   if (action === "fav") return favoritesAction(args);
   if (action === "rt") return rootAction(args);
+  if (action === "sec") return sectionAction(args);
+  if (action === "ia" || action === "im") return invoiceAction(action, args);
   const prediction = predictionAction(action, args);
   if (prediction !== undefined) return prediction;
   const byAuction = auctionAction(action, args);
@@ -513,6 +581,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
     }
     case "fo":
       return { ok: true, intent: { kind: "follow", lotId: id, page } };
+    case "st":
+      return { ok: true, intent: { kind: "set", lotId: id, page } };
     case "uf":
       return { ok: true, intent: { kind: "unfollow", lotId: id, page } };
     case "xe":
@@ -649,6 +719,63 @@ function auctionAction(
   return addressee === undefined || question === undefined
     ? refuse("malformed")
     : accept({ kind: question, auctionId, addressee });
+}
+
+// Номер раздела ленты (PER-719) — положительное целое без ведущих нулей до
+// семи цифр: его выбирает пульт минутой создания раздела, и в 64 байта он
+// помещается с запасом.
+const SECTION = /^[1-9]\d{0,6}$/;
+
+function sectionArgument(sectionId: number): string {
+  if (!Number.isInteger(sectionId) || sectionId < 1 || sectionId > 9_999_999) {
+    throw new RangeError(`feed section out of range: ${sectionId}`);
+  }
+  return String(sectionId);
+}
+
+// Раздел ленты: токен аукциона, номер раздела и страница.
+function sectionAction(args: readonly string[]): ParsedAuctionCallback {
+  const [token, rawSection, rawPage, ...rest] = args;
+  const auctionId = token === undefined ? undefined : tokenToUuid(token);
+  const page = pageOf(rawPage);
+  if (
+    auctionId === undefined ||
+    rawSection === undefined ||
+    !SECTION.test(rawSection) ||
+    page === undefined ||
+    rest.length !== 0
+  ) {
+    return refuse("malformed");
+  }
+  return accept({
+    kind: "section",
+    auctionId,
+    sectionId: Number(rawSection),
+    page,
+  });
+}
+
+// Счёт победителя: токены лота и счёта и, у выбора способа, его буква.
+function invoiceAction(
+  action: "ia" | "im",
+  args: readonly string[],
+): ParsedAuctionCallback {
+  const [lotToken, invoiceToken, rawMethod, ...rest] = args;
+  const lotId = lotToken === undefined ? undefined : tokenToUuid(lotToken);
+  const invoiceId =
+    invoiceToken === undefined ? undefined : tokenToUuid(invoiceToken);
+  if (lotId === undefined || invoiceId === undefined || rest.length !== 0) {
+    return refuse("malformed");
+  }
+  if (action === "ia") {
+    return rawMethod === undefined
+      ? accept({ kind: "invoice", lotId, invoiceId })
+      : refuse("malformed");
+  }
+  const method = fulfillmentOf(rawMethod);
+  return method === undefined
+    ? refuse("malformed")
+    : accept({ kind: "fulfillment", lotId, invoiceId, method });
 }
 
 // Корень аукциона: ровно один токен аукциона.

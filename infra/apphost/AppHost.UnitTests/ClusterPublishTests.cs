@@ -31,11 +31,11 @@ public class ClusterPublishTests
     }
 
     /// <summary>
-    /// Кроме сервисов в модели один compute-ресурс — Job топологии JetStream,
-    /// которым владеет публикация NATS (PER-311).
+    /// Кроме сервисов в модели — Job топологии JetStream, которым владеет
+    /// публикация NATS (PER-311), и туннель публичного входа (ADR-071).
     /// </summary>
     [Fact]
-    public async Task Publish_Workloads_AreTheHubWithAuctionAndTopologyJob()
+    public async Task Publish_Workloads_AreTheHubWithAuctionTopologyJobAndTunnel()
     {
         var builder = await PublishModelAsync();
 
@@ -43,7 +43,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.Auction, R.AuctionBot, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications, R.SupportBot]);
+            .ShouldBe([R.Achievements, R.Auction, R.AuctionBot, R.Cloudflared, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications, R.SupportBot]);
     }
 
     /// <summary>
@@ -76,6 +76,7 @@ public class ClusterPublishTests
     [InlineData(R.Identity, "apps/identity/Containerfile")]
     [InlineData(R.HubBot, "apps/hub-bot/Containerfile")]
     [InlineData(R.Auction, "apps/auction/Containerfile")]
+    [InlineData(R.Achievements, "apps/achievements/Containerfile")]
     public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
     {
         var builder = await PublishModelAsync();
@@ -122,7 +123,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IResourceWithConnectionString>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.AuctionDb, R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
+            .ShouldBe([R.AchievementsDb, R.AuctionDb, R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
     }
 
     /// <summary>
@@ -137,6 +138,7 @@ public class ClusterPublishTests
     [InlineData(R.Notifications)]
     [InlineData(R.HubBot)]
     [InlineData(R.Auction)]
+    [InlineData(R.Achievements)]
     public async Task Publish_OtlpServices_ExportToTheCollectorOfTheirEnvironment(string name)
     {
         var builder = await PublishModelAsync();
@@ -179,6 +181,44 @@ public class ClusterPublishTests
         (await parameter.GetValueAsync(TestContext.Current.CancellationToken)).ShouldBe("false");
     }
 
+    /// <summary>
+    /// Итог розыгрыша в чарте — жеребьёвка по маяку (ADR-066, дополнение
+    /// 2026-10-24): values среды без ключа оставляют прежнее поведение, а ручной
+    /// итог включают своим значением. Снимок графа значения не показывает,
+    /// поэтому его держит этот тест.
+    /// </summary>
+    [Fact]
+    public async Task Publish_RaffleDraw_IsAutomaticUnlessValuesSayOtherwise()
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = await PublishEnvironmentAsync(builder, R.Auction);
+
+        var parameter = (ParameterResource)environment["AUCTION_RAFFLE_DRAW"];
+        parameter.Name.ShouldBe("auction-raffle-draw");
+        parameter.Secret.ShouldBeFalse();
+        (await parameter.GetValueAsync(TestContext.Current.CancellationToken)).ShouldBe("automatic");
+    }
+
+    /// <summary>
+    /// Очередь сообщества в чарте открыта (дополнение ADR-060 от 2026-10-25,
+    /// PER-739): values среды без ключа оставляют прежнее поведение, а вход
+    /// только по белому списку включают значением <c>closed</c>. Снимок графа
+    /// значения не показывает, поэтому его держит этот тест.
+    /// </summary>
+    [Fact]
+    public async Task Publish_CommunityQueue_IsOpenUnlessValuesSayOtherwise()
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = await PublishEnvironmentAsync(builder, R.Identity);
+
+        var parameter = (ParameterResource)environment["IDENTITY_COMMUNITY_QUEUE"];
+        parameter.Name.ShouldBe("identity-community-queue");
+        parameter.Secret.ShouldBeFalse();
+        (await parameter.GetValueAsync(TestContext.Current.CancellationToken)).ShouldBe("open");
+    }
+
     private static async Task<Dictionary<string, object>> PublishEnvironmentAsync(
         IDistributedApplicationTestingBuilder builder,
         string name)
@@ -208,10 +248,14 @@ public class ClusterPublishTests
     /// <c>hub-auction</c>. Расхождение составов — решение, которое должно быть
     /// видно правкой этого теста, а не тихо приехать в прод вместе с изменением
     /// локального профиля. Stage поднимает хаб с аукционом и три бота
-    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет.
+    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет. Расхождений
+    /// два: туннель публичного входа — локально экран открывается по адресу,
+    /// который публикует Aspire (ADR-071), — и Achievements, который чарт везёт
+    /// выключенным до решения о выкатке (ADR-077, дополнение 2026-10-26), а
+    /// локально поднимает свой профиль.
     /// </summary>
     [Fact]
-    public void PublishProfile_MatchesHubAuctionComposition()
+    public void PublishProfile_IsHubAuctionCompositionWithTunnelAndAchievements()
     {
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -225,7 +269,7 @@ public class ClusterPublishTests
             .Build());
 
         cluster.Name.ShouldBe("cluster");
-        cluster.Services.Order().ShouldBe(local.Services.Order());
+        cluster.Services.Order().ShouldBe(local.Services.Append(R.Cloudflared).Append(R.Achievements).Order());
         cluster.Infrastructure.Order().ShouldBe(local.Infrastructure.Order());
     }
 }

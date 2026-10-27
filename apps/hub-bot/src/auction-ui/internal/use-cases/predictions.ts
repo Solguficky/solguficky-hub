@@ -65,13 +65,15 @@ async function roundView(
   return found;
 }
 
-async function opensAt(
+// Раунд каталога закрывается общим дедлайном онлайн-торгов (ADR-067,
+// дополнение 2026-10-24), и экран называет этот момент.
+async function closesAt(
   context: PredictionContext,
   auctionId: string,
 ): Promise<string | undefined> {
   return (
     await context.auction.getAuction({ viewer: context.viewer, auctionId })
-  )?.opensAt;
+  )?.closesAt;
 }
 
 async function predictionLotDetails(
@@ -135,10 +137,10 @@ export async function openPrediction(
       | "unanswered";
   },
 ): Promise<AuctionScreenBody> {
-  const [round, openAt] = await Promise.all([
+  const [round, closeAt] = await Promise.all([
     roundView(context, input.auctionId, input.round),
     input.round === "catalog"
-      ? opensAt(context, input.auctionId)
+      ? closesAt(context, input.auctionId)
       : Promise.resolve(undefined),
   ]);
   // Отказ Auction является авторитетным даже если чтение состояния отстаёт.
@@ -176,7 +178,7 @@ export async function openPrediction(
         ...(lotDetails.staleNominations.length === 0
           ? {}
           : { staleNominations: lotDetails.staleNominations }),
-        ...(openAt === undefined ? {} : { opensAt: openAt }),
+        ...(closeAt === undefined ? {} : { closesAt: closeAt }),
         ...(input.notice === undefined ? {} : { notice: input.notice }),
       },
     ],
@@ -212,6 +214,9 @@ export async function editPrediction(
   if (current.status !== "open") {
     return openPrediction(context, input);
   }
+  if (!(await nameChosen(context, input.auctionId, current))) {
+    return predictionNameChoice(context, input);
+  }
   const answer = current.answers.find(
     (each) => each.nomination === input.nomination,
   );
@@ -232,6 +237,28 @@ export async function editPrediction(
       ? { currentValue: answer.answer.value }
       : {}),
   });
+}
+
+// Имя спрашивается до ответа (PER-703), как перед ставкой (PER-595): кнопки
+// выбора имени несут номинацию, а не значение, и ответ, отклонённый отказом
+// `display-name-not-chosen`, после выбора имени пришлось бы вводить заново.
+// Свои ответы в раунде значат, что имя уже выбрано, — Auction за ним не зовут.
+// Отказ чтения имени вопрос не прячет: страховкой остаётся отказ отправки.
+async function nameChosen(
+  context: PredictionContext,
+  auctionId: string,
+  round: PredictionRoundView,
+): Promise<boolean> {
+  if (round.answers.length > 0) return true;
+  try {
+    const own = await context.auction.getOwnDisplayName({
+      viewer: context.viewer,
+      auctionId,
+    });
+    return own !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 async function candidateLots(

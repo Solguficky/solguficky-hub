@@ -106,17 +106,48 @@ function shownLineup(
   );
 }
 
+/**
+ * Сколько процесс помнит прочитанный лот состава (PER-704). Анонс уходит
+ * каждому, кто вёл лот аукциона, — сотне человек за раз при старте финала, —
+ * и без памяти каждый получатель читал бы те же лоты заново. Рассылка одного
+ * факта укладывается в эти секунды, а название, изменённое после неё,
+ * следующий анонс прочитает заново.
+ */
+export const LINEUP_LOT_TTL_MS = 60_000;
+
+type RememberedLot = { readAt: number; info: LotInfo };
+
 // Сборка анонса. Весть о торгах: без права `place-bids` она не уходит, как
-// вести о лотах. Недоступный Auction роняет только названия — строка состава
-// остаётся с ценой; лот, который Auction окончательно не отдал, остаётся
-// строкой без названия и без кнопки, а отказ пишется в лог.
+// вести о лотах, и право спрашивается у каждого получателя. Недоступный
+// Auction роняет только названия — строка состава остаётся с ценой; лот,
+// который Auction окончательно не отдал, остаётся строкой без названия и без
+// кнопки, а отказ пишется в лог.
+//
+// Лоты состава одни на всех получателей, поэтому рендер читает каждый лот
+// один раз на рассылку: прочитанный лот живёт в памяти `LINEUP_LOT_TTL_MS`.
+// Доставка идёт по одному факту, поэтому помнится только прочитанное, а не
+// само чтение: отказ и лот без названия — карточка ещё не в read model — не
+// запоминаются, и следующий получатель читает лот сам, своим `request_id`.
+// Название одно у всех, кто видит лот, а видят лот финала все, кому весть и
+// адресована.
 export function createFinalNoticeRender({
   reads,
   onTitleMissing,
-}: Omit<LotNoticeRenderOptions, "frequencyButton" | "timeZone">): (
+  now = Date.now,
+}: Omit<LotNoticeRenderOptions, "frequencyButton" | "timeZone"> & {
+  // Часы памяти о лотах; подменяет тест.
+  now?: () => number;
+}): (
   notice: FinalNotice,
   context: RenderContext,
 ) => Promise<RenderResult<LotNoticeView>> {
+  const lotsById = new Map<string, RememberedLot>();
+  // Часы, ушедшие назад, тоже считаются истечением: иначе запись прожила бы
+  // дольше своего срока.
+  const fresh = (lot: RememberedLot, at: number) => {
+    const age = at - lot.readAt;
+    return age >= 0 && age < LINEUP_LOT_TTL_MS;
+  };
   return async (notice, context) => {
     const lots = new Map<string, LotInfo>();
     const refused = new Set<string>();
@@ -130,15 +161,28 @@ export function createFinalNoticeRender({
     if (stop !== undefined) return stop;
     if (notice.kind === "final-lineup") {
       const { recipientId, requestId } = context;
+      const at = now();
+      for (const [lotId, lot] of lotsById) {
+        if (!fresh(lot, at)) lotsById.delete(lotId);
+      }
       const lotIds = shownLineup(notice).map((lot) => lot.lotId);
+      const toRead = lotIds.filter((lotId) => {
+        const known = lotsById.get(lotId);
+        if (known === undefined) return true;
+        lots.set(lotId, known.info);
+        return false;
+      });
       const settled = await Promise.allSettled(
-        lotIds.map((lotId) => reads.lotInfo(recipientId, lotId, requestId)),
+        toRead.map((lotId) => reads.lotInfo(recipientId, lotId, requestId)),
       );
       settled.forEach((result, index) => {
-        const lotId = lotIds[index];
+        const lotId = toRead[index];
         if (lotId === undefined) return;
         if (result.status === "fulfilled") {
           lots.set(lotId, result.value);
+          if (result.value.title !== "") {
+            lotsById.set(lotId, { readAt: at, info: result.value });
+          }
           return;
         }
         if (isPermanentFailure(result.reason)) refused.add(lotId);

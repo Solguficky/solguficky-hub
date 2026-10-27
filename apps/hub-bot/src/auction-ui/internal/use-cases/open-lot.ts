@@ -151,6 +151,21 @@ function lotBody(input: {
   // листания — «предыдущий, этот же, следующий» — над возвратом (решение
   // владельца по отзыву тестовой группы 19 октября 2026 года, PER-669).
   const lookRow = [...history, ...followButtons(lot, input.page, following)];
+  // Лоты сета — содержимое карточки (ADR-073, п. 7): свой ряд между взглядом
+  // на лот и листанием.
+  const setRow: AuctionButton[] =
+    lot.lotSet === undefined
+      ? []
+      : [
+          {
+            action: "lot.set",
+            callbackData: encodeAuctionCallback({
+              kind: "set",
+              lotId: lot.lotId,
+              page: input.page,
+            }),
+          },
+        ];
   return {
     blocks: [
       {
@@ -167,15 +182,22 @@ function lotBody(input: {
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
       ...(lookRow.length === 0 ? [] : [lookRow]),
+      ...(setRow.length === 0 ? [] : [setRow]),
       ...pagerRows(input.neighbors, refresh),
       [
         {
           action: "lot.back",
-          callbackData: encodeAuctionCallback({
-            kind: "feed",
-            auctionId: lot.auctionId,
-            page: input.page,
-          }),
+          // Лот раздела возвращает в свой раздел (PER-719).
+          callbackData: encodeAuctionCallback(
+            input.neighbors.sectionId === undefined
+              ? { kind: "feed", auctionId: lot.auctionId, page: input.page }
+              : {
+                  kind: "section",
+                  auctionId: lot.auctionId,
+                  sectionId: input.neighbors.sectionId,
+                  page: input.page,
+                },
+          ),
         },
       ],
     ],
@@ -219,6 +241,9 @@ function lotBlock(
     ...(nextWindow === undefined ? {} : { nextWindow }),
     status: lot.status,
     ...(participantName === undefined ? {} : { participantName }),
+    // Сет, в который входит лот (ADR-073, п. 7): карточка называет его и
+    // ведёт к его экрану.
+    ...(lot.lotSet === undefined ? {} : { set: lot.lotSet }),
   };
 }
 

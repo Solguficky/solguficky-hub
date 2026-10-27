@@ -13,7 +13,9 @@ public enum AuctionOutcome
     Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
     AuctionCancelled, AuctionEnded,
-    FinalLotNext,
+    FinalLotNext, LeadRestored, LotSetCollected,
+    Announcement, AnnouncementWithdrawn,
+    InvoiceReplicated, InvoiceStale,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -245,6 +247,72 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
     }
 
     /// <summary>
+    /// Снятие участника с лота (ADR-072, PER-672): реплика лота после снятия и
+    /// отметка новому лидеру — той же транзакцией, что ключ события, а поверх
+    /// них сообщение «ведение вернулось». Его получает только новый лидер, и
+    /// только когда лидерство сменилось: снятие того, кто лот не вёл, и снятие
+    /// единственного участника повода не дают, а снятому не пишется ничего.
+    /// Настройка перебитий сообщение не гасит: ставки получатель не делал.
+    /// </summary>
+    public async Task<AuctionApplication> Apply(AuctionRemoval removal, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, removal.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        // Снятие лота кончившегося аукциона ни реплики, ни сообщения не пишет.
+        await AuctionEndStore.LockShared(work, removal.Snapshot.AuctionId, cancellationToken);
+        if (await AuctionEndStore.Read(work, removal.Snapshot.AuctionId, cancellationToken) is not null)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AuctionEnded, new Dictionary<string, int>());
+        }
+
+        await LotReplicaStore.Apply(work, removal.Snapshot, now, cancellationToken);
+
+        // Снятие меняет лидера и цену лота, а строки открытого окна перебитий
+        // несут их на момент последней ставки: без этой правки сводка сказала бы
+        // «лот за тобой» тому, кто лот уже не ведёт, и назвала бы старую цену.
+        await OutbidStore.FollowLot(work, removal.Snapshot.LotId, removal.Snapshot.Leader, removal.EventId,
+            removal.Snapshot.Version, removal.Price, cancellationToken);
+
+        // Удержание лота помнит лидера и цену на момент удержания: снятие
+        // участника меняет и их, а состав финала и весть «твой лот следующий»
+        // читают их оттуда — снятому они достаться не должны.
+        if (removal.Snapshot.Status == LotStatus.Held)
+        {
+            await FinalStore.UpdateHold(work, removal.Snapshot.LotId, removal.Snapshot.Leader, removal.Price,
+                cancellationToken);
+        }
+
+        var created = new Dictionary<string, int>();
+        if (removal.Snapshot.Leader is { } leader)
+        {
+            // Отметка — как у лидера ставки: лот, который человек ведёт, он видит
+            // в избранном. Снятую отметку вставка не возвращает, как и у ставки.
+            await FavoriteStore.AutoFollow(work, leader, removal.Snapshot.LotId, now, cancellationToken);
+        }
+
+        var restored = removal.RestoredRecipient;
+        if (restored is not null)
+        {
+            var notAfter = now + options.Value.StaleAfter;
+            var notification = AuctionFacts.LeadRestored(Guid.CreateVersion7(now), removal, now, notAfter);
+            created[AuctionFacts.LeadRestoredType] = await NotificationStore.AddAddressed(work, notification,
+                AuctionFacts.LeadRestoredType, AuctionFacts.CauseKind, removal.EventId.ToString(), now, notAfter,
+                cancellationToken,
+                await NotificationStore.DeliverySurface(work, restored.Value, cancellationToken));
+        }
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(
+            restored is null ? AuctionOutcome.LotReplicated : AuctionOutcome.LeadRestored, created);
+    }
+
+    /// <summary>
     /// Анонс финала (PER-477): по факту на человека из круга аукциона и
     /// лидеров лотов состава. У заморозки лидер лота состава получает тот же
     /// факт со своими лотами, а не второй. Удержание каждого лота состава
@@ -428,6 +496,9 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             : [];
         await FavoriteStore.Forget(work, lotIds, cancellationToken);
         await AuctionEndStore.CancelReminders(work, lotIds, cancellationToken);
+        // Окна лотов кончились вместе с аукционом: задание начала окна не
+        // сработает после его конца, а сработавшее остаётся историей.
+        await StepWindowTaskStore.CancelForAuction(work, closed.AuctionId, cancellationToken);
         // Удалённый до торгов круга анонса не имеет: ставок и удержаний у него не
         // было, а круг по тому же auction_id — уже нового рождения, чья ставка
         // могла обогнать запоздавшее удаление.
@@ -457,6 +528,44 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.AuctionCancelled,
             new Dictionary<string, int> { [AuctionFacts.AuctionCancelledType] = created });
+    }
+
+    /// <summary>
+    /// Видимость аукциона и открытие торгов (PER-646): публикация и открытие
+    /// дают весть держателям права ставок, снятие — снимает неотправленную весть
+    /// о публикации, потому что человек пошёл бы к аукциону, которого не видит.
+    /// Настройка уведомлений аукциона читается той же транзакцией, что ключ
+    /// события. Повтор отсекает ключ события, а после его чистки — уникальность
+    /// (тип, повод, получатель).
+    /// </summary>
+    public async Task<AuctionApplication> Apply(AuctionAnnouncement announcement, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, announcement.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        if (announcement.Occasion == AnnouncementOccasion.Hidden)
+        {
+            var withdrawn = await NotificationStore.WithdrawOnAuctionHidden(work, announcement.MeetupId, now,
+                cancellationToken);
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AnnouncementWithdrawn,
+                new Dictionary<string, int> { [AuctionFacts.PublishedType] = withdrawn });
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var created = await NotificationStore.AddAuctionAnnouncement(work, announcement, now, notAfter,
+            cancellationToken);
+        var type = announcement.Occasion == AnnouncementOccasion.TradingOpened
+            ? AuctionFacts.TradingOpenedType
+            : AuctionFacts.PublishedType;
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.Announcement,
+            new Dictionary<string, int> { [type] = created.Created });
     }
 
     /// <summary>
@@ -491,6 +600,30 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
     }
 
     /// <summary>
+    /// Собранный сет даёт ровно один адресный факт собравшему. Настройки и
+    /// категории его не фильтруют; повтор держат ключ события и ключ причины.
+    /// </summary>
+    public async Task<AuctionApplication> Apply(CollectedLotSet set, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, set.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var notification = AuctionFacts.LotSetCollected(Guid.CreateVersion7(now), set, now, notAfter);
+        var created = await NotificationStore.AddAddressed(work, notification, AuctionFacts.LotSetCollectedType,
+            AuctionFacts.AuctionCauseKind, set.EventId.ToString(), now, notAfter, cancellationToken,
+            await NotificationStore.DeliverySurface(work, set.CollectorId, cancellationToken));
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.LotSetCollected,
+            new Dictionary<string, int> { [AuctionFacts.LotSetCollectedType] = created });
+    }
+
+    /// <summary>
     /// Итоги прогнозов (PER-567): по факту на каждого, кто сделал прогноз, —
     /// адресаты берутся из самого факта, и не ответивший ни на одну номинацию
     /// в нём не назван. Ручная отметка подсчитанных итогов не несёт и адресатов
@@ -521,6 +654,37 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.PredictionResultsAnnounced,
             new Dictionary<string, int> { [AuctionFacts.PredictionResultsType] = created });
+    }
+
+    /// <summary>
+    /// Факт счёта: реплика счёта и ключ события одной транзакцией. Поводов
+    /// факт не даёт: из реплики живут задания напоминания о неоплаченном счёте
+    /// (PER-330), а адресный факт пишет грин в момент срабатывания задания.
+    /// </summary>
+    /// <remarks>
+    /// Порядок доставки не обещан, и факты счёта идут разными subject'ами:
+    /// <c>invoice_paid</c> может прийти раньше <c>invoice_issued</c>. Реплика
+    /// держит версию и не откатывается поздним фактом, поэтому задания,
+    /// заведённые после оплаты, не воскресают.
+    /// </remarks>
+    public async Task<AuctionApplication> Apply(AuctionInvoice invoice, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, invoice.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        // Поздний факт счёта не откатывает реплику: версия растёт, и снимок
+        // оплаченного счёта переживает позднее выставление. Такой факт
+        // рапортуется отдельно — снимок не записан.
+        var recorded = await InvoiceReplicaStore.Apply(work, invoice.Snapshot, now, cancellationToken);
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(
+            recorded ? AuctionOutcome.InvoiceReplicated : AuctionOutcome.InvoiceStale,
+            new Dictionary<string, int>());
     }
 
     /// <summary>Люди, чьи окна сводки наступили, для прохода.</summary>

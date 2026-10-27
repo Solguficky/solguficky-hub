@@ -3,6 +3,7 @@ import { createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
+  type Http2SessionOptions,
 } from "@connectrpc/connect-node";
 import {
   AuctionService,
@@ -32,8 +33,15 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../core/auction/commands.js";
+import { dayChronicleOf } from "../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
+import {
+  fulfillmentOutcomeOn,
+  myInvoicesOf,
+  wireFulfillment,
+} from "../../core/auction/invoices.js";
+import { predictionResultsOf } from "../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
   predictionOutcomeOf,
@@ -47,6 +55,7 @@ import {
 } from "../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../core/auction/snapshot.js";
 import {
+  AUCTION_KEEPALIVE,
   type AuctionWatchSource,
   watchSourceOf,
 } from "../../core/auction/watch.js";
@@ -109,11 +118,16 @@ export type AuctionRpc = Pick<
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "getMyPredictions"
+  | "getPredictionResults"
+  | "getAuctionDayChronicle"
   | "submitPrediction"
   | "getLotImage"
+  | "getLotPhoto"
   | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
+  | "listMyInvoices"
+  | "chooseFulfillment"
 >;
 // Notifications боту аукциона нужен ради настроек уведомлений аукциона
 // (PER-515, PER-539),
@@ -364,6 +378,32 @@ export function createPorts(
             ? undefined
             : auctionSummaryViewOf(snapshot);
         },
+        // Счета победителя (PER-322): чтение бросает отказ, выбор способа —
+        // исход с `not-found` и `unanswered`, как команды участника.
+        async listMyInvoices(request) {
+          return myInvoicesOf(
+            await auction.listMyInvoices(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              callOptions(timeoutMs),
+            ),
+          );
+        },
+        chooseFulfillment(request) {
+          return fulfillmentOutcomeOn(() =>
+            auction.chooseFulfillment(
+              {
+                viewer: wireViewer(request.viewer),
+                invoiceId: request.invoiceId,
+                method: wireFulfillment(request.method),
+                opId: request.opId,
+              },
+              callOptions(timeoutMs),
+            ),
+          );
+        },
         // Розыгрыш среди участников (ADR-066): команды — как у ставки.
         async getRaffle(request) {
           try {
@@ -417,6 +457,26 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return myPredictionsOf(response);
+        },
+        async getPredictionResults(request) {
+          const response = await auction.getPredictionResults(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return predictionResultsOf(response);
+        },
+        async getDayChronicle(request) {
+          const response = await auction.getAuctionDayChronicle(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return dayChronicleOf(response);
         },
         submitPrediction(request) {
           return unansweredOn(async () =>
@@ -473,6 +533,21 @@ export function createPorts(
         async getLotImage(request) {
           const image = await auction.getLotImage(
             { viewer: wireViewer(request.viewer), lotId: request.lotId },
+            callOptions(imageTimeoutMs),
+          );
+          return {
+            content: image.content,
+            mediaType: image.mediaType,
+            version: image.version,
+          };
+        },
+        async getLotPhoto(request) {
+          const image = await auction.getLotPhoto(
+            {
+              viewer: wireViewer(request.viewer),
+              lotId: request.lotId,
+              photoId: request.photoId,
+            },
             callOptions(imageTimeoutMs),
           );
           return {
@@ -589,9 +664,14 @@ export function createClients(options: {
   onFavoritesRefused?: (cause: unknown, requestId: string) => void;
   onProxyExplainerRefused?: (cause: unknown, requestId: string) => void;
   onRaffleRefused?: (cause: unknown, requestId: string) => void;
+  // Keepalive соединения с Auction; тесты сжимают его до долей секунды.
+  auctionKeepalive?: Http2SessionOptions;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
-  const auctionSession = new Http2SessionManager(options.auctionUrl);
+  const auctionSession = new Http2SessionManager(
+    options.auctionUrl,
+    options.auctionKeepalive ?? AUCTION_KEEPALIVE,
+  );
   const notificationsSession =
     options.notificationsUrl === undefined
       ? undefined
@@ -680,6 +760,8 @@ function outcomeName(outcome: WireOutcome): AccessRequestOutcome {
       return "declined";
     case WireOutcome.BLOCKED:
       return "blocked";
+    case WireOutcome.INVITATION_ONLY:
+      return "invitation-only";
     default:
       return "unspecified";
   }

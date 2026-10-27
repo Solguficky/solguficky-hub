@@ -8,7 +8,10 @@ import type {
   CloseQuote,
   ConsoleSort,
   FormField,
+  InvoiceMark,
+  LaunchDraft,
   LineupPick,
+  LotSetRef,
   LotStepMode,
   LotTextField,
   WindowRef,
@@ -19,6 +22,7 @@ import type {
   MeetupCategory,
   NotificationCategory,
 } from "../notifications/port.js";
+import { decodeLaunchDraft, encodeLaunchDraft } from "./launch-draft.js";
 import { type ManageGroup, manageGroupOf } from "./screens/menu.js";
 
 const CallbackSchema = z.string().max(64);
@@ -89,11 +93,32 @@ const PositionSchema = z
   .transform(Number);
 // Окно «Счастливых часов» в кнопке пульта (PER-504): номер в конфигурации с
 // нуля — двух цифр хватает с запасом, — и отпечаток его сроков и шага.
+// Номер раздела ленты (PER-719) в кнопке; `0` — общий список. Предел тот же,
+// что у кнопки раздела в ленте участника: семь цифр — номер растёт минутой
+// создания раздела.
+const SectionSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,6})$/)
+  .transform(Number);
+
 const WindowIndexSchema = z
   .string()
   .regex(/^(0|[1-9]\d?)$/)
   .transform(Number);
 const WindowPrintSchema = z.string().regex(/^[0-9a-z]{5}$/);
+// Место фото лота на экране «Фото лота» (PER-721): с единицы, не больше
+// десяти — предела фото у лота.
+const PhotoIndexSchema = z
+  .string()
+  .regex(/^(?:[1-9]|10)$/)
+  .transform(Number);
+// Номер лота запускаемого окна в кнопке пульта (PER-615): номер в
+// отсортированном реестре с нуля — знак base36, шестидесяти четырёх лотов
+// хватает с запасом.
+const LaunchLotSchema = z
+  .string()
+  .regex(/^(0|[1-9a-z]{1,2})$/)
+  .transform((text) => Number.parseInt(text, 36));
 // Порядок состава финала в кнопке (PER-619): номер лота в наборе удержанных —
 // знак base36, не больше двадцати четырёх; `-` — ещё ничего не выбрано.
 const emptyLineupOrder = "-";
@@ -105,6 +130,11 @@ const LineupOrderSchema = z
       ? []
       : [...raw].map((each) => Number.parseInt(each, 36)),
   );
+// Номер билета розыгрыша в кнопке (PER-727): с единицы, без ведущих нулей.
+const TicketSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,8}$/)
+  .transform(Number);
 const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
 export const defaultConsoleSort: ConsoleSort = {
   metric: "bids",
@@ -334,8 +364,31 @@ type PlainAction =
   | { kind: "lot-new"; auction: string }
   | { kind: "lot-form"; lot: string }
   // `chain` — кнопка цепочки нового лота (PER-618): «Ввести заново» под её
-  // вопросом продолжает цепочку, а не правку одного ряда.
-  | { kind: "lot-ask"; lot: string; field: LotFormField; chain?: true }
+  // вопросом продолжает цепочку, а не правку одного ряда. `set` — правка всех
+  // лотов сета (PER-716).
+  | {
+      kind: "lot-ask";
+      lot: string;
+      field: LotFormField;
+      chain?: true;
+      set?: true;
+    }
+  // Поле лота в сете (PER-716): спрашивает, править только этот лот или все
+  // лоты сета.
+  | { kind: "lot-scope"; lot: string; field: LotFormField }
+  // «Повторить для оставшихся» (PER-716): поле разносится по сету заново.
+  | {
+      kind: "lot-set-retry";
+      lot: string;
+      field: LotFormField;
+      // Отпечаток версии фото у повтора фото сета (PER-721).
+      print?: string;
+    }
+  // «Копировать» (PER-716): вопрос, сколько всего лотов.
+  | { kind: "lot-copy"; lot: string }
+  // «Удалить лот» и «Да» его подтверждения (PER-716).
+  | { kind: "lot-remove"; lot: string }
+  | { kind: "lot-remove-confirm"; lot: string }
   // Выбор способа шага (PER-491): цена и режим едут в кнопке, чтобы рестарт
   // не терял цену.
   | {
@@ -344,9 +397,21 @@ type PlainAction =
       price: number;
       mode: LotStepMode;
       chain?: true;
+      set?: true;
     }
+  // «Оставить шаг» на выборе способа шага (PER-714): новая цена едет в кнопке,
+  // шаг юзкейс берёт у лота.
+  | { kind: "lot-keep-step"; lot: string; price: number; set?: true }
   // «Пропустить» под вопросом о фото в цепочке нового лота (PER-618).
   | { kind: "lot-skip"; lot: string }
+  // Экран «Фото лота» (PER-721). `fromQuestion` — прежняя «Убрать фото» под
+  // вопросом о фото (PER-715): вопрос уходит, как от «Отмены».
+  | { kind: "lot-photos"; lot: string; fromQuestion?: true }
+  // «Убрать фото N» на экране фото и «Да» его подтверждения (PER-715,
+  // PER-721): номер — место фото в списке на экране, а «Да» несёт отпечаток
+  // самого фото: снимается то, что подтвердили.
+  | { kind: "lot-photo-remove"; lot: string; index: number }
+  | { kind: "lot-photo-remove-confirm"; lot: string; print: string }
   // «Глазами участника» на экране правки (PER-512): карточка лота без кнопок.
   | { kind: "lot-view"; lot: string }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
@@ -359,7 +424,15 @@ type PlainAction =
   // Приз розыгрыша (PER-649): вопрос о призе и его снятие.
   | { kind: "console-raffle-prize"; auction: string }
   | { kind: "console-raffle-prize-remove"; auction: string }
+  // Срок оплаты счёта (PER-722): вопрос о числе дней.
+  | { kind: "console-payment-term"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
+  // Ориентировочное время финала (PER-663): вопрос о моменте и снятие
+  // анонса.
+  | { kind: "console-final-time"; auction: string }
+  | { kind: "console-final-time-remove"; auction: string }
+  // Видимость до торгов (PER-673): кнопка несёт целевое состояние.
+  | { kind: "console-visibility"; auction: string; published: boolean }
   | { kind: "console-open"; auction: string }
   // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
   // и повторное нажатие несёт тот же.
@@ -367,6 +440,8 @@ type PlainAction =
   // «Удалить аукцион»: подтверждение, затем «Да» с ключом удаления.
   | { kind: "console-discard"; auction: string }
   | { kind: "console-discard-confirm"; auction: string; op: string }
+  | { kind: "console-cancel"; auction: string }
+  | { kind: "console-cancel-confirm"; auction: string; op: string }
   | {
       kind: "console-mark";
       auction: string;
@@ -381,6 +456,39 @@ type PlainAction =
   | { kind: "console-windows"; auction: string }
   // Сводка дня торгов (PER-492): текст за сутки со ссылками на лоты.
   | { kind: "console-day-summary"; auction: string }
+  // Счета аукциона (PER-321): сводка со страницей, счёт, подтверждение отметки
+  // и «Да». Отметка — `p` оплата, `h` выдача; ключ рождается на нажатие «Да».
+  | { kind: "console-invoices"; auction: string; page: number }
+  | { kind: "console-invoice"; auction: string; invoice: string }
+  | {
+      kind: "console-invoice-mark";
+      auction: string;
+      invoice: string;
+      mark: InvoiceMark;
+    }
+  | {
+      kind: "console-invoice-mark-confirm";
+      auction: string;
+      invoice: string;
+      mark: InvoiceMark;
+    }
+  // Текст «Как оплатить и получить» на «Счетах» (PER-322): вопрос и снятие.
+  | { kind: "console-payment-text"; auction: string }
+  | { kind: "console-payment-text-remove"; auction: string }
+  // Итог розыгрыша вручную (PER-727): список билетов со страницей, вопрос о
+  // номере, подтверждение по номеру и «Да»; ключ рождается на нажатие «Да».
+  | { kind: "console-raffle-winner"; auction: string; page: number }
+  | { kind: "console-raffle-winner-ask"; auction: string }
+  | { kind: "console-raffle-winner-pick"; auction: string; ticket: number }
+  | { kind: "console-raffle-winner-confirm"; auction: string; ticket: number }
+  // Смена приза идущего розыгрыша (PER-737): вопрос о тексте и «Да» с
+  // отпечатком нового приза; сам текст «Да» берёт из экрана подтверждения.
+  | { kind: "console-raffle-prize-change"; auction: string }
+  | {
+      kind: "console-raffle-prize-change-confirm";
+      auction: string;
+      print: string;
+    }
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -391,6 +499,72 @@ type PlainAction =
       selected: boolean;
     }
   | { kind: "console-window-remove"; auction: string; window: WindowRef }
+  // Сеты лотов (PER-509): список, вопрос о названии нового сета, сет на
+  // странице лотов, лот в сете и вне его, подтверждение удаления и «Да». Сет
+  // кнопка называет номером и отпечатком, как окно.
+  | { kind: "console-sets"; auction: string }
+  | { kind: "console-set-ask"; auction: string }
+  | { kind: "console-set"; auction: string; set: LotSetRef; page: number }
+  | {
+      kind: "console-set-lot";
+      auction: string;
+      set: LotSetRef;
+      lot: string;
+      selected: boolean;
+    }
+  | { kind: "console-set-delete"; auction: string; set: LotSetRef }
+  | { kind: "console-set-delete-confirm"; auction: string; set: LotSetRef }
+  // Порядок и разделы ленты (PER-719): экран разделов, список места — номер
+  // раздела или `0`, общий список, — лот в раскладке, лот выше и ниже, лот
+  // в другое место, вопрос о названии нового или переименуемого раздела,
+  // раздел выше и ниже, подтверждение удаления раздела и «Да». Лот кнопка
+  // называет токеном, раздел — номером, который выбрал пульт.
+  | { kind: "console-layout"; auction: string }
+  | {
+      kind: "console-layout-list";
+      auction: string;
+      place: number;
+      page: number;
+    }
+  | { kind: "console-layout-lot"; auction: string; lot: string }
+  | {
+      kind: "console-layout-lot-move";
+      auction: string;
+      lot: string;
+      direction: "up" | "down";
+    }
+  | {
+      kind: "console-layout-lot-place";
+      auction: string;
+      lot: string;
+      place: number;
+    }
+  | { kind: "console-section-ask"; auction: string; section?: number }
+  | {
+      kind: "console-section-move";
+      auction: string;
+      section: number;
+      direction: "up" | "down";
+    }
+  | { kind: "console-section-delete"; auction: string; section: number }
+  | { kind: "console-section-delete-confirm"; auction: string; section: number }
+  // Запуск окна сниженного шага по ходу торгов (PER-615): начать запуск,
+  // переключить лот запускаемого окна, запустить и листать лоты. Черновик
+  // едет в кнопке — состояния у пульта нет.
+  | { kind: "console-window-launch"; auction: string }
+  | {
+      kind: "console-window-launch-lot";
+      auction: string;
+      draft: LaunchDraft;
+      lot: number;
+    }
+  | { kind: "console-window-launch-go"; auction: string; draft: LaunchDraft }
+  | {
+      kind: "console-window-launch-page";
+      auction: string;
+      draft: LaunchDraft;
+      page: number;
+    }
   // Состав финала (PER-619): начать выбор порядка, выбрать следующий лот
   // или страницу и «Да» подтверждения с полным порядком.
   | { kind: "console-lineup"; auction: string; pick?: LineupPick; page: number }
@@ -428,6 +602,19 @@ type PlainAction =
       minorUnits: number;
     }
   | { kind: "console-floor-leader"; auction: string }
+  // Снятие участника с лота (PER-659): кого снять, подтверждение и «Да».
+  // Кнопки называют лот, а не аукцион, как у «Ставок зала»: лот, человек и
+  // номер лота рядом с аукционом в 64 байта не помещаются. «Да» несёт номер
+  // лота, на котором решён предпросмотр, а ключ команды рождается на
+  // нажатие.
+  | { kind: "console-removal"; lot: string; page: number }
+  | { kind: "console-removal-pick"; lot: string; person: string }
+  | {
+      kind: "console-removal-confirm";
+      lot: string;
+      person: string;
+      version: number;
+    }
   // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
   | { kind: "manage-confirm-publish"; token: string; version: number }
@@ -505,11 +692,13 @@ type PlainAction =
   | { kind: "notify-global" }
   // Настройки уведомлений аукциона (PER-552, PER-539, PER-645): экран, режим
   // частоты, выключатели анонса финала и «перебили» в живом финале —
-  // целевыми значениями.
-  | { kind: "notify-outbid" }
-  | { kind: "notify-set-outbid"; frequency: OutbidFrequency }
-  | { kind: "notify-set-final"; enabled: boolean }
-  | { kind: "notify-set-live"; enabled: boolean }
+  // целевыми значениями. `detached` — экран открыт из вести и возврата в
+  // дерево настроек не несёт (№73 прогона 14 октября 2026 года): хвост `:n`.
+  | { kind: "notify-outbid"; detached?: true }
+  | { kind: "notify-set-outbid"; frequency: OutbidFrequency; detached?: true }
+  | { kind: "notify-set-final"; enabled: boolean; detached?: true }
+  | { kind: "notify-set-live"; enabled: boolean; detached?: true }
+  | { kind: "notify-set-news"; enabled: boolean; detached?: true }
   | {
       kind: "notify-set-global";
       category: NotificationCategory;
@@ -584,28 +773,57 @@ export type QuestionStep =
   | { kind: "lot-new"; auction: string; key: string }
   // `chain` — вопрос цепочки нового лота (PER-618): цена, шаг и фото по
   // порядку после названия; «Отмена» и у них ведёт в форму лота.
-  | { kind: "lot-text"; lot: string; field: LotTextField }
-  | { kind: "lot-price"; lot: string; chain?: true }
+  // `set` — вопрос правки всех лотов сета (PER-716): свои коды `st`, `sd`,
+  // `sp`, `ss`/`sy`, `si`.
+  | { kind: "lot-text"; lot: string; field: LotTextField; set?: true }
+  | { kind: "lot-price"; lot: string; chain?: true; set?: true }
   | {
       kind: "lot-step";
       lot: string;
       price: number;
       mode: LotStepMode;
       chain?: true;
+      set?: true;
     }
-  | { kind: "lot-image"; lot: string; chain?: true }
+  | { kind: "lot-image"; lot: string; chain?: true; set?: true }
+  // Сколько всего лотов дают копии (PER-716).
+  | { kind: "lot-copies"; lot: string }
   // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
   // ответ читает у Auction заново.
   | { kind: "console-week"; auction: string }
   // Момент розыгрыша (PER-593): аукцион, а сроки и текущий момент ответ
   // читает у Auction заново.
   | { kind: "console-raffle"; auction: string }
+  // Ориентировочное время финала (PER-663): аукцион, а текущее время ответ
+  // читает у Auction заново.
+  | { kind: "console-final-time"; auction: string }
+  // Текст «Как оплатить и получить» (PER-322): аукцион; ответ заменяет текст
+  // целиком, и читать ему нечего.
+  | { kind: "console-payment-text"; auction: string }
+  // Номер выигравшего билета (PER-727): аукцион, а пул ответ читает у Auction
+  // заново.
+  | { kind: "console-raffle-winner"; auction: string }
+  // Новый приз идущего розыгрыша (PER-737): аукцион, а текущий приз ответ
+  // читает у Auction заново.
+  | { kind: "console-raffle-prize-change"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
+  // Срок оплаты счёта (PER-722): аукцион, а остальную конфигурацию ответ
+  // читает у Auction заново.
+  | { kind: "console-payment-term"; auction: string }
   // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
   // ответ читает у Auction заново.
   | { kind: "console-window"; auction: string }
+  // Запуск окна по ходу торгов (PER-615): аукцион, а сроки недели и окна
+  // ответ читает у Auction заново.
+  | { kind: "console-launch"; auction: string }
+  // Название нового сета лотов (PER-509): аукцион, а сеты ответ читает у
+  // Auction заново.
+  | { kind: "console-set"; auction: string }
+  // Название раздела ленты (PER-719): нового либо, с `section`, нового
+  // названия раздела.
+  | { kind: "console-section"; auction: string; section?: number }
   // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
   | { kind: "final-ask"; auction: string; position: number }
   // «Другой человек…» «Ставок зала» (PER-565): аукцион, а людей и цену ответ
@@ -644,14 +862,49 @@ export function lotPreviewData(lot: string): string {
 
 /**
  * Данные кнопки ряда на экране правки лота. `chain` — вопрос цепочки нового
- * лота (PER-618): так его задаёт «Ввести заново» под цепочкой.
+ * лота (PER-618): так его задаёт «Ввести заново» под цепочкой. `"set"` —
+ * вопрос правки всех лотов сета (PER-716).
  */
 export function lotAskData(
   lot: string,
   field: LotFormField,
-  chain?: boolean,
+  scope?: boolean | "set",
 ): string {
-  return `v1:lot:ask:${lot}:${field}${chain === true ? chainMark : ""}`;
+  return `v1:lot:ask:${lot}:${field}${scopeMark(scope)}`;
+}
+
+/** Поле лота в сете: выбор «Только этот лот» или «Все лоты сета» (PER-716). */
+export function lotScopeData(lot: string, field: LotFormField): string {
+  return `v1:lot:sc:${lot}:${field}`;
+}
+
+/**
+ * «Повторить для оставшихся» под исходом правки сета (PER-716). У фото
+ * (PER-721) хвост — отпечаток версии разнесённого фото.
+ */
+export function lotSetRetryData(
+  lot: string,
+  field: LotFormField,
+  print?: string,
+): string {
+  return print === undefined
+    ? `v1:lot:sr:${lot}:${field}`
+    : `v1:lot:sr:${lot}:${field}:${print}`;
+}
+
+/** «Копировать» на экране правки лота (PER-716). */
+export function lotCopyData(lot: string): string {
+  return `v1:lot:cp:${lot}`;
+}
+
+/** «Удалить лот» на экране правки лота (PER-716). */
+export function lotRemoveData(lot: string): string {
+  return `v1:lot:dl:${lot}`;
+}
+
+/** «Да, удалить лот» под подтверждением (PER-716). */
+export function lotRemoveConfirmData(lot: string): string {
+  return `v1:lot:dy:${lot}`;
 }
 
 /** «Пропустить» под вопросом о фото в цепочке нового лота (PER-618). */
@@ -659,8 +912,29 @@ export function lotSkipData(lot: string): string {
   return `v1:lot:skip:${lot}`;
 }
 
+/** Экран «Фото лота» (PER-721). */
+export function lotPhotosData(lot: string): string {
+  return `v1:lot:ph:${lot}`;
+}
+
+/** «Убрать фото N» на экране фото лота (PER-721); номер — с единицы. */
+export function lotPhotoRemoveData(lot: string, index: number): string {
+  return `v1:lot:rm:${lot}:${index}`;
+}
+
+/** «Да, убрать фото» под подтверждением (PER-715): отпечаток фото. */
+export function lotPhotoRemoveConfirmData(lot: string, print: string): string {
+  return `v1:lot:ry:${lot}:${print}`;
+}
+
 // Хвост кнопки цепочки нового лота (PER-618).
 const chainMark = ":c";
+// Хвост кнопки правки всех лотов сета (PER-716).
+const setMark = ":s";
+
+function scopeMark(scope: boolean | "set" | undefined): string {
+  return scope === "set" ? setMark : scope === true ? chainMark : "";
+}
 
 /**
  * Данные кнопки выбора способа шага (PER-491). Цена едет в кнопке: вопрос о
@@ -670,9 +944,22 @@ export function lotStepModeData(
   lot: string,
   price: number,
   mode: LotStepMode,
-  chain?: boolean,
+  scope?: boolean | "set",
 ): string {
-  return `v1:lot:sm:${lot}:${price}:${mode}${chain === true ? chainMark : ""}`;
+  return `v1:lot:sm:${lot}:${price}:${mode}${scopeMark(scope)}`;
+}
+
+/**
+ * «Оставить шаг» (PER-714): новая цена с прежним шагом лота одним нажатием.
+ * Цена едет в кнопке, как у выбора способа; цепочки у кнопки нет — у нового
+ * лота прежнего шага нет.
+ */
+export function lotKeepStepData(
+  lot: string,
+  price: number,
+  set?: boolean,
+): string {
+  return `v1:lot:sk:${lot}:${price}${set === true ? setMark : ""}`;
 }
 
 // Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самые длинные —
@@ -716,9 +1003,81 @@ export function consoleRafflePrizeRemoveData(auction: string): string {
   return `v1:ac:rz:${auction}`;
 }
 
+/** «Срок оплаты»: вопрос о сроке оплаты счёта в днях (PER-722). */
+export function consolePaymentTermData(auction: string): string {
+  return `v1:ac:pt:${auction}`;
+}
+
+/** «Время финала»: вопрос об ориентировочном времени финала (PER-663). */
+export function consoleFinalTimeData(auction: string): string {
+  return `v1:ac:ft:${auction}`;
+}
+
+/** «Убрать время финала»: анонс трансляции снимается без подтверждения. */
+export function consoleFinalTimeRemoveData(auction: string): string {
+  return `v1:ac:fx:${auction}`;
+}
+
+/** «Текст оплаты»: вопрос о тексте «Как оплатить и получить» (PER-322). */
+export function consolePaymentTextData(auction: string): string {
+  return `v1:ac:it:${auction}`;
+}
+
+/** «Убрать текст оплаты»: текст снимается без подтверждения. */
+export function consolePaymentTextRemoveData(auction: string): string {
+  return `v1:ac:ix:${auction}`;
+}
+
+/** «Итог розыгрыша» (PER-727): список билетов; первая страница — без номера. */
+export function consoleRaffleWinnerData(auction: string, page = 0): string {
+  return page === 0 ? `v1:ac:rw:${auction}` : `v1:ac:rw:${auction}:${page}`;
+}
+
+/** «Ввести победителя»: вопрос о номере выигравшего билета. */
+export function consoleRaffleWinnerAskData(auction: string): string {
+  return `v1:ac:ra:${auction}`;
+}
+
+/** Подтверждение победителя по номеру билета: «Повторить» после сбоя «Да». */
+export function consoleRaffleWinnerPickData(
+  auction: string,
+  ticket: number,
+): string {
+  return `v1:ac:rc:${auction}:${ticket}`;
+}
+
+/** «Да» итога: аукцион и номер, до 42 байт; ключ рождается на нажатие. */
+export function consoleRaffleWinnerConfirmData(
+  auction: string,
+  ticket: number,
+): string {
+  return `v1:ac:ry:${auction}:${ticket}`;
+}
+
+/** «Изменить приз» идущего розыгрыша (PER-737): вопрос о новом тексте. */
+export function consoleRafflePrizeChangeData(auction: string): string {
+  return `v1:ac:rn:${auction}`;
+}
+
+/** «Да» смены приза: аукцион и отпечаток нового текста; ключ — на нажатие. */
+export function consoleRafflePrizeChangeConfirmData(
+  auction: string,
+  print: string,
+): string {
+  return `v1:ac:rv:${auction}:${print}`;
+}
+
 /** Переключатель финала с целевым состоянием. */
 export function consoleFinalData(auction: string, final: boolean): string {
   return `v1:ac:f:${auction}:${final ? "1" : "0"}`;
+}
+
+/** «Опубликовать» и «Снять с публикации» с целевым состоянием (PER-673). */
+export function consoleVisibilityData(
+  auction: string,
+  published: boolean,
+): string {
+  return `v1:ac:p:${auction}:${published ? "1" : "0"}`;
 }
 
 /** «Открыть онлайн-неделю»: подтверждение, а не команда. */
@@ -739,6 +1098,16 @@ export function consoleDiscardData(auction: string): string {
 /** «Да» подтверждения удаления: аукцион и ключ команды. */
 export function consoleDiscardConfirmData(auction: string, op: string): string {
   return `v1:ac:z:${auction}:${op}`;
+}
+
+/** «Отменить аукцион»: подтверждение, а не команда. */
+export function consoleCancelData(auction: string): string {
+  return `v1:ac:u:${auction}`;
+}
+
+/** «Да» подтверждения отмены: аукцион и ключ команды. */
+export function consoleCancelConfirmData(auction: string, op: string): string {
+  return `v1:ac:uy:${auction}:${op}`;
 }
 
 /** Отметка лота для финала (`s`) или её снятие (`d`). */
@@ -764,6 +1133,42 @@ export function consoleWindowsData(auction: string): string {
 /** «Сводка дня»: текст за сутки со ссылками на лоты в боте аукциона (PER-492). */
 export function consoleDaySummaryData(auction: string): string {
   return `v1:ac:ds:${auction}`;
+}
+
+/** «Счета» (PER-321): сводка счетов аукциона; первая страница — без номера. */
+export function consoleInvoicesData(auction: string, page = 0): string {
+  return page === 0 ? `v1:ac:iv:${auction}` : `v1:ac:iv:${auction}:${page}`;
+}
+
+/** Счёт: аукцион и счёт токенами, 54 байта. */
+export function consoleInvoiceData(auction: string, invoice: string): string {
+  return `v1:ac:ic:${auction}:${invoice}`;
+}
+
+const invoiceMarkCode: Record<InvoiceMark, string> = {
+  paid: "p",
+  "handed-over": "h",
+};
+const InvoiceMarkSchema = z
+  .enum(["p", "h"])
+  .transform((code): InvoiceMark => (code === "p" ? "paid" : "handed-over"));
+
+/** Отметка оплаты или выдачи — к подтверждению. */
+export function consoleInvoiceMarkData(
+  auction: string,
+  invoice: string,
+  mark: InvoiceMark,
+): string {
+  return `v1:ac:ip:${auction}:${invoice}:${invoiceMarkCode[mark]}`;
+}
+
+/** «Да» отметки: 56 байт; ключ команды рождается на нажатие. */
+export function consoleInvoiceMarkConfirmData(
+  auction: string,
+  invoice: string,
+  mark: InvoiceMark,
+): string {
+  return `v1:ac:iy:${auction}:${invoice}:${invoiceMarkCode[mark]}`;
 }
 
 /** Окно на странице лотов `page`; первая страница — без номера. */
@@ -800,6 +1205,150 @@ export function consoleWindowRemoveData(
   window: WindowRef,
 ): string {
   return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
+}
+
+/** «🛠 Сеты» корня аукциона: сеты лотов (PER-509). */
+export function consoleSetsData(auction: string): string {
+  return `v1:ac:t:${auction}`;
+}
+
+/** «Новый сет»: вопрос о названии. */
+export function consoleSetAskData(auction: string): string {
+  return `v1:ac:ta:${auction}`;
+}
+
+/** Сет на странице лотов `page`; первая страница — без номера. */
+export function consoleSetData(
+  auction: string,
+  set: LotSetRef,
+  page = 0,
+): string {
+  const base = `v1:ac:tw:${auction}:${set.index}:${set.print}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/**
+ * Лот в сете (`ts`) и вне его (`td`): целевое состояние, а не переворот. Как у
+ * лота окна, 63 байта при двузначном номере сета.
+ */
+export function consoleSetLotData(mark: {
+  auction: string;
+  set: LotSetRef;
+  lot: string;
+  selected: boolean;
+}): string {
+  return `v1:ac:${mark.selected ? "ts" : "td"}:${mark.auction}:${mark.set.index}:${mark.set.print}:${mark.lot}`;
+}
+
+/** «Удалить сет»: подтверждение, а не команда. */
+export function consoleSetDeleteData(auction: string, set: LotSetRef): string {
+  return `v1:ac:tx:${auction}:${set.index}:${set.print}`;
+}
+
+/** «Да» удаления сета: ключ команды рождается на нажатие. */
+export function consoleSetDeleteConfirmData(
+  auction: string,
+  set: LotSetRef,
+): string {
+  return `v1:ac:ty:${auction}:${set.index}:${set.print}`;
+}
+
+/** «Порядок» пульта: разделы ленты и общий список (PER-719). */
+export function consoleLayoutData(auction: string): string {
+  return `v1:ac:m:${auction}`;
+}
+
+/** Список раздела `place` или общий список (`0`) на странице `page`. */
+export function consoleLayoutListData(
+  auction: string,
+  place: number,
+  page = 0,
+): string {
+  const base = `v1:ac:ml:${auction}:${place}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/** Лот в раскладке; `mu` и `md` — тот же лот выше и ниже. */
+export function consoleLayoutLotData(
+  auction: string,
+  lot: string,
+  move?: "up" | "down",
+): string {
+  const code = move === undefined ? "mo" : move === "up" ? "mu" : "md";
+  return `v1:ac:${code}:${auction}:${lot}`;
+}
+
+/** Лот в раздел `place` или в общий список (`0`): 58 байт при трёх цифрах. */
+export function consoleLayoutPlaceData(
+  auction: string,
+  lot: string,
+  place: number,
+): string {
+  return `v1:ac:mv:${auction}:${lot}:${place}`;
+}
+
+/** «Новый раздел» и, с номером, «Переименовать»: вопрос о названии. */
+export function consoleSectionAskData(
+  auction: string,
+  section?: number,
+): string {
+  return section === undefined
+    ? `v1:ac:mq:${auction}`
+    : `v1:ac:mr:${auction}:${section}`;
+}
+
+/** Раздел выше (`mh`) и ниже (`mj`). */
+export function consoleSectionMoveData(
+  auction: string,
+  section: number,
+  direction: "up" | "down",
+): string {
+  return `v1:ac:${direction === "up" ? "mh" : "mj"}:${auction}:${section}`;
+}
+
+/** «Удалить раздел»: подтверждение (`mx`) и «Да» (`my`). */
+export function consoleSectionDeleteData(
+  auction: string,
+  section: number,
+  confirmed = false,
+): string {
+  return `v1:ac:${confirmed ? "my" : "mx"}:${auction}:${section}`;
+}
+
+/** «Запустить окно»: вопрос о начале, конце и шаге (PER-615). */
+export function consoleWindowLaunchData(auction: string): string {
+  return `v1:ac:hl:${auction}`;
+}
+
+/**
+ * Запуск окна по ходу торгов (PER-615): черновик едет в кнопке — состояния у
+ * пульта нет, а лот в кнопку не помещается. Номер лота — в отсортированном
+ * реестре, набор — маской по нему.
+ */
+export function consoleWindowLaunchGoData(
+  auction: string,
+  draft: LaunchDraft,
+): string {
+  return `v1:ac:hm:${auction}:${encodeLaunchDraft(draft)}`;
+}
+
+/** Лот запускаемого окна: номер лота в отсортированном реестре, набор — в маске. */
+export function consoleWindowLaunchLotData(
+  auction: string,
+  draft: LaunchDraft,
+  lot: number,
+): string {
+  return `v1:ac:ht:${auction}:${encodeLaunchDraft(draft)}:${lot.toString(36)}`;
+}
+
+/** Страница лотов запускаемого окна. */
+export function consoleWindowLaunchPageData(
+  auction: string,
+  draft: LaunchDraft,
+  page = 0,
+): string {
+  const base = `v1:ac:hp:${auction}:${encodeLaunchDraft(draft)}`;
+  return page === 0 ? base : `${base}:${page}`;
 }
 
 /** «Объявить состав финала» и «Заново»: выбор порядка с первого лота. */
@@ -890,6 +1439,33 @@ export function floorLeaderData(auction: string): string {
   return `v1:ac:bl:${auction}`;
 }
 
+/** Снятие участника (PER-659): кого снять с лота. */
+export function removalData(lot: string, page = 0): string {
+  return page === 0 ? `v1:ac:e:${lot}` : `v1:ac:e:${lot}:${page}`;
+}
+
+/** Человек — к предпросмотру и подтверждению. */
+export function removalPickData(lot: string, person: string): string {
+  return `v1:ac:ep:${lot}:${person}`;
+}
+
+/**
+ * «Да» снятия: номер лота предпросмотра по основанию 36. Восемь знаков — до
+ * двух триллионов событий лота, и строка занимает до 64 байт.
+ */
+export function removalConfirmData(
+  lot: string,
+  person: string,
+  version: number,
+): string {
+  return `v1:ac:ey:${lot}:${person}:${version.toString(36)}`;
+}
+
+const LotVersionSchema = z
+  .string()
+  .regex(/^[1-9a-z][0-9a-z]{0,7}$/)
+  .transform((raw) => Number.parseInt(raw, 36));
+
 /**
  * Кнопка человека зала и «Да» подтверждения: лот, человек и цена в минорных
  * единицах по основанию 36. Семь знаков — до восьмисот миллиардов рублей, и
@@ -941,37 +1517,55 @@ export function questionData(step: QuestionStep, askedBy: number): string {
   return `${stepData(step)}:${askedBy}`;
 }
 
+// Первая буква кода вопроса формы лота: `l` — правка одного лота, `c` —
+// цепочка нового лота (PER-618), `s` — правка всех лотов сета (PER-716).
+function lotLead(step: { chain?: true; set?: true }): string {
+  return step.chain === true ? "c" : step.set === true ? "s" : "l";
+}
+
 function stepData(step: QuestionStep): string {
   switch (step.kind) {
     case "lot-new":
       return `v1:q:ln:${step.auction}:${step.key}`;
     case "lot-text":
-      return `v1:q:${step.field === "title" ? "lt" : "ld"}:${step.lot}`;
-    // Цепочка нового лота (PER-618) — свои коды: `cp`, `cs`/`cy`, `ci`.
+      return `v1:q:${step.set === true ? "s" : "l"}${step.field === "title" ? "t" : "d"}:${step.lot}`;
+    // Цепочка нового лота (PER-618) — свои коды: `cp`, `cs`/`cy`, `ci`; правка
+    // всех лотов сета (PER-716) — `sp`, `ss`/`sy`, `si`.
     case "lot-price":
-      return `v1:q:${step.chain === true ? "cp" : "lp"}:${step.lot}`;
-    case "lot-step": {
+      return `v1:q:${lotLead(step)}p:${step.lot}`;
+    case "lot-step":
       // `ls` — один шаг, `ly` — пороги: способ восстанавливается из кнопки.
-      const code =
-        step.chain === true
-          ? step.mode === "single"
-            ? "cs"
-            : "cy"
-          : step.mode === "single"
-            ? "ls"
-            : "ly";
-      return `v1:q:${code}:${step.lot}:${step.price}`;
-    }
+      return `v1:q:${lotLead(step)}${step.mode === "single" ? "s" : "y"}:${step.lot}:${step.price}`;
     case "lot-image":
-      return `v1:q:${step.chain === true ? "ci" : "li"}:${step.lot}`;
+      return `v1:q:${lotLead(step)}i:${step.lot}`;
+    case "lot-copies":
+      return `v1:q:lc:${step.lot}`;
     case "console-week":
       return `v1:q:aw:${step.auction}`;
     case "console-raffle":
       return `v1:q:ar:${step.auction}`;
     case "console-raffle-prize":
       return `v1:q:ap:${step.auction}`;
+    case "console-payment-term":
+      return `v1:q:pt:${step.auction}`;
+    case "console-final-time":
+      return `v1:q:ft:${step.auction}`;
+    case "console-payment-text":
+      return `v1:q:ai:${step.auction}`;
+    case "console-raffle-winner":
+      return `v1:q:rw:${step.auction}`;
+    case "console-raffle-prize-change":
+      return `v1:q:rn:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
+    case "console-launch":
+      return `v1:q:al:${step.auction}`;
+    case "console-set":
+      return `v1:q:as:${step.auction}`;
+    case "console-section":
+      return step.section === undefined
+        ? `v1:q:aq:${step.auction}`
+        : `v1:q:ae:${step.auction}:${step.section}`;
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
     case "floor-search":
@@ -1367,9 +1961,15 @@ export function parseCallback(raw: unknown): CallbackAction {
 }
 
 // Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>`,
-// `v1:lot:view:<лот>`, `v1:lot:ask:<лот>:<поле>[:c]`,
-// `v1:lot:sm:<лот>:<цена>:<способ>[:c]` и `v1:lot:skip:<лот>`; `:c` — кнопка
-// цепочки нового лота (PER-618).
+// `v1:lot:view:<лот>`, `v1:lot:ask:<лот>:<поле>[:c|:s]`,
+// `v1:lot:sm:<лот>:<цена>:<способ>[:c|:s]`, `v1:lot:sk:<лот>:<цена>[:s]`,
+// `v1:lot:skip:<лот>`, `v1:lot:ph:<лот>` (экран «Фото лота», PER-721),
+// `v1:lot:rm:<лот>:<номер>` и `v1:lot:ry:<лот>:<отпечаток фото>` («Убрать
+// фото N» и его «Да», PER-715, PER-721) и прежняя `v1:lot:rm:<лот>`, которая
+// открывает экран фото; `:c` — кнопка цепочки нового лота (PER-618). Копии,
+// сет и удаление (PER-716): `v1:lot:cp:<лот>`, `v1:lot:sc:<лот>:<поле>`,
+// `v1:lot:sr:<лот>:<поле>`, `v1:lot:dl:<лот>` и `v1:lot:dy:<лот>`; `:s` —
+// правка всех лотов сета.
 function parseLot(parts: readonly string[]): CallbackAction {
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return { kind: "malformed" };
@@ -1385,23 +1985,81 @@ function parseLot(parts: readonly string[]): CallbackAction {
   if (parts.length === 4 && parts[2] === "skip") {
     return { kind: "lot-skip", lot: token.data };
   }
+  if (parts.length === 4 && parts[2] === "cp") {
+    return { kind: "lot-copy", lot: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "dl") {
+    return { kind: "lot-remove", lot: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "dy") {
+    return { kind: "lot-remove-confirm", lot: token.data };
+  }
+  if (parts.length === 6 && parts[2] === "sr" && parts[4] === "image") {
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    return print.success
+      ? {
+          kind: "lot-set-retry",
+          lot: token.data,
+          field: "image",
+          print: print.data,
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 5 && (parts[2] === "sc" || parts[2] === "sr")) {
+    const field = LotFormFieldSchema.safeParse(parts[4]);
+    if (!field.success) return { kind: "malformed" };
+    return {
+      kind: parts[2] === "sc" ? "lot-scope" : "lot-set-retry",
+      lot: token.data,
+      field: field.data,
+    };
+  }
+  if ((parts.length === 5 || parts.length === 6) && parts[2] === "sk") {
+    const price = RublesSchema.safeParse(parts[4]);
+    const set =
+      parts.length === 5
+        ? {}
+        : parts[5] === "s"
+          ? { set: true as const }
+          : undefined;
+    return price.success && set !== undefined
+      ? { kind: "lot-keep-step", lot: token.data, price: price.data, ...set }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "ph") {
+    return { kind: "lot-photos", lot: token.data };
+  }
+  // «Убрать фото» под вопросом о фото до PER-721: открывает экран фото.
+  if (parts.length === 4 && parts[2] === "rm") {
+    return { kind: "lot-photos", lot: token.data, fromQuestion: true };
+  }
+  if (parts.length === 5 && parts[2] === "rm") {
+    const index = PhotoIndexSchema.safeParse(parts[4]);
+    return index.success
+      ? { kind: "lot-photo-remove", lot: token.data, index: index.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 5 && parts[2] === "ry") {
+    const print = WindowPrintSchema.safeParse(parts[4]);
+    return print.success
+      ? { kind: "lot-photo-remove-confirm", lot: token.data, print: print.data }
+      : { kind: "malformed" };
+  }
   // Хвост цепочки — только `c` и только у цены и фото: у названия и описания
-  // цепочки нет.
+  // цепочки нет. Хвост `s` — правка всех лотов сета (PER-716), у любого поля.
   const chain = (at: number) =>
     parts.length === at + 1 && parts[at] === "c"
       ? { chain: true as const }
-      : parts.length === at
-        ? {}
-        : undefined;
+      : parts.length === at + 1 && parts[at] === "s"
+        ? { set: true as const }
+        : parts.length === at
+          ? {}
+          : undefined;
   if (parts[2] === "ask") {
     const field = LotFormFieldSchema.safeParse(parts[4]);
     const tail = chain(5);
     if (!field.success || tail === undefined) return { kind: "malformed" };
-    if (
-      tail.chain === true &&
-      field.data !== "price" &&
-      field.data !== "image"
-    ) {
+    if ("chain" in tail && field.data !== "price" && field.data !== "image") {
       return { kind: "malformed" };
     }
     return { kind: "lot-ask", lot: token.data, field: field.data, ...tail };
@@ -1434,8 +2092,16 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // (PER-504): `v1:ac:h:<аукцион>`, `v1:ac:ha:<аукцион>`,
 // `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
 // `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
-// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Розыгрыш (PER-593):
-// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. «Ставки зала» (PER-565):
+// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Сеты лотов (PER-509):
+// `v1:ac:t:<аукцион>`, `v1:ac:ta:<аукцион>`,
+// `v1:ac:tw:<аукцион>:<сет>:<отпечаток>[:<страница>]`,
+// `v1:ac:<ts|td>:<аукцион>:<сет>:<отпечаток>:<лот>` и
+// `v1:ac:<tx|ty>:<аукцион>:<сет>:<отпечаток>`. Розыгрыш (PER-593):
+// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`, итог вручную (PER-727):
+// `v1:ac:rw:<аукцион>[:<страница>]`, `v1:ac:ra:<аукцион>` и
+// `v1:ac:<rc|ry>:<аукцион>:<билет>`, смена приза (PER-737): `v1:ac:rn:<аукцион>`
+// и `v1:ac:rv:<аукцион>:<отпечаток>`. Видимость (PER-673):
+// `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
@@ -1483,6 +2149,121 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-day-summary", auction: auction.data }
         : { kind: "malformed" };
+    case "iv": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-invoices", auction: auction.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    case "ic": {
+      const invoice = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && invoice.success
+        ? {
+            kind: "console-invoice",
+            auction: auction.data,
+            invoice: invoice.data,
+          }
+        : { kind: "malformed" };
+    }
+    // Итог розыгрыша вручную (PER-727): список `rw` со страницей, вопрос `ra`,
+    // подтверждение `rc` и «Да» `ry` с номером билета.
+    case "rw": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? {
+            kind: "console-raffle-winner",
+            auction: auction.data,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "ra":
+      return parts.length === 4
+        ? { kind: "console-raffle-winner-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "rc":
+    case "ry": {
+      const ticket = TicketSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !ticket.success) return { kind: "malformed" };
+      return {
+        kind:
+          parts[2] === "rc"
+            ? "console-raffle-winner-pick"
+            : "console-raffle-winner-confirm",
+        auction: auction.data,
+        ticket: ticket.data,
+      };
+    }
+    // Смена приза идущего розыгрыша (PER-737): вопрос `rn` и «Да» `rv` с
+    // отпечатком текста.
+    case "rn":
+      return parts.length === 4
+        ? { kind: "console-raffle-prize-change", auction: auction.data }
+        : { kind: "malformed" };
+    case "rv": {
+      const print = WindowPrintSchema.safeParse(parts[4]);
+      return parts.length === 5 && print.success
+        ? {
+            kind: "console-raffle-prize-change-confirm",
+            auction: auction.data,
+            print: print.data,
+          }
+        : { kind: "malformed" };
+    }
+    // Текст «Как оплатить и получить» (PER-322): вопрос `it` и снятие `ix`.
+    case "it":
+      return parts.length === 4
+        ? { kind: "console-payment-text", auction: auction.data }
+        : { kind: "malformed" };
+    case "ix":
+      return parts.length === 4
+        ? { kind: "console-payment-text-remove", auction: auction.data }
+        : { kind: "malformed" };
+    case "ip":
+    case "iy": {
+      const invoice = TokenSchema.safeParse(parts[4]);
+      const mark = InvoiceMarkSchema.safeParse(parts[5]);
+      if (parts.length !== 6 || !invoice.success || !mark.success) {
+        return { kind: "malformed" };
+      }
+      const target = {
+        auction: auction.data,
+        invoice: invoice.data,
+        mark: mark.data,
+      };
+      return parts[2] === "ip"
+        ? { kind: "console-invoice-mark", ...target }
+        : { kind: "console-invoice-mark-confirm", ...target };
+    }
+    // Третья часть здесь — лот, а не аукцион: токен у них одной формы.
+    case "e": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-removal", lot: auction.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    case "ep": {
+      const person = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && person.success
+        ? {
+            kind: "console-removal-pick",
+            lot: auction.data,
+            person: person.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "ey": {
+      const person = TokenSchema.safeParse(parts[4]);
+      const version = LotVersionSchema.safeParse(parts[5]);
+      return parts.length === 6 && person.success && version.success
+        ? {
+            kind: "console-removal-confirm",
+            lot: auction.data,
+            person: person.data,
+            version: version.data,
+          }
+        : { kind: "malformed" };
+    }
     case "h":
       return parts.length === 4
         ? { kind: "console-windows", auction: auction.data }
@@ -1521,6 +2302,177 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 6 && window !== undefined
         ? { kind: "console-window-remove", auction: auction.data, window }
         : { kind: "malformed" };
+    // Сеты лотов (PER-509): номер и отпечаток сета стоят там же, где у окна.
+    case "t":
+      return parts.length === 4
+        ? { kind: "console-sets", auction: auction.data }
+        : { kind: "malformed" };
+    case "ta":
+      return parts.length === 4
+        ? { kind: "console-set-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "tw": {
+      const page = PageSchema.safeParse(parts[6] ?? "0");
+      return (parts.length === 6 || parts.length === 7) &&
+        window !== undefined &&
+        page.success
+        ? {
+            kind: "console-set",
+            auction: auction.data,
+            set: window,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "ts":
+    case "td": {
+      const lot = TokenSchema.safeParse(parts[6]);
+      return parts.length === 7 && window !== undefined && lot.success
+        ? {
+            kind: "console-set-lot",
+            auction: auction.data,
+            set: window,
+            lot: lot.data,
+            selected: parts[2] === "ts",
+          }
+        : { kind: "malformed" };
+    }
+    case "tx":
+    case "ty":
+      return parts.length === 6 && window !== undefined
+        ? {
+            kind:
+              parts[2] === "tx"
+                ? "console-set-delete"
+                : "console-set-delete-confirm",
+            auction: auction.data,
+            set: window,
+          }
+        : { kind: "malformed" };
+    case "hl":
+      return parts.length === 4
+        ? { kind: "console-window-launch", auction: auction.data }
+        : { kind: "malformed" };
+    // Порядок и разделы ленты (PER-719).
+    case "m":
+      return parts.length === 4
+        ? { kind: "console-layout", auction: auction.data }
+        : { kind: "malformed" };
+    case "ml": {
+      const place = SectionSchema.safeParse(parts[4]);
+      const page = PageSchema.safeParse(parts[5] ?? "0");
+      return (parts.length === 5 || parts.length === 6) &&
+        place.success &&
+        page.success
+        ? {
+            kind: "console-layout-list",
+            auction: auction.data,
+            place: place.data,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "mo":
+    case "mu":
+    case "md": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !lot.success) return { kind: "malformed" };
+      return parts[2] === "mo"
+        ? { kind: "console-layout-lot", auction: auction.data, lot: lot.data }
+        : {
+            kind: "console-layout-lot-move",
+            auction: auction.data,
+            lot: lot.data,
+            direction: parts[2] === "mu" ? "up" : "down",
+          };
+    }
+    case "mv": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      const place = SectionSchema.safeParse(parts[5]);
+      return parts.length === 6 && lot.success && place.success
+        ? {
+            kind: "console-layout-lot-place",
+            auction: auction.data,
+            lot: lot.data,
+            place: place.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "mq":
+      return parts.length === 4
+        ? { kind: "console-section-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "mr":
+    case "mh":
+    case "mj":
+    case "mx":
+    case "my": {
+      const section = SectionSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !section.success || section.data === 0) {
+        return { kind: "malformed" };
+      }
+      switch (parts[2]) {
+        case "mr":
+          return {
+            kind: "console-section-ask",
+            auction: auction.data,
+            section: section.data,
+          };
+        case "mh":
+        case "mj":
+          return {
+            kind: "console-section-move",
+            auction: auction.data,
+            section: section.data,
+            direction: parts[2] === "mh" ? "up" : "down",
+          };
+        case "mx":
+          return {
+            kind: "console-section-delete",
+            auction: auction.data,
+            section: section.data,
+          };
+        default:
+          return {
+            kind: "console-section-delete-confirm",
+            auction: auction.data,
+            section: section.data,
+          };
+      }
+    }
+    case "hm": {
+      const draft = decodeLaunchDraft(parts[4] ?? "");
+      return parts.length === 5 && draft !== undefined
+        ? { kind: "console-window-launch-go", auction: auction.data, draft }
+        : { kind: "malformed" };
+    }
+    case "ht": {
+      const draft = decodeLaunchDraft(parts[4] ?? "");
+      const lot = LaunchLotSchema.safeParse(parts[5]);
+      return parts.length === 6 && draft !== undefined && lot.success
+        ? {
+            kind: "console-window-launch-lot",
+            auction: auction.data,
+            draft,
+            lot: lot.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "hp": {
+      const draft = decodeLaunchDraft(parts[4] ?? "");
+      // Страница без номера — первая: как у других экранов пульта.
+      const page = PageSchema.safeParse(parts[5] ?? "0");
+      return (parts.length === 5 || parts.length === 6) &&
+        draft !== undefined &&
+        page.success
+        ? {
+            kind: "console-window-launch-page",
+            auction: auction.data,
+            draft,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
     case "v": {
       if (parts.length > 6) return { kind: "malformed" };
       const page = PageSchema.safeParse(parts[4] ?? "0");
@@ -1551,6 +2503,21 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-raffle-prize-remove", auction: auction.data }
         : { kind: "malformed" };
+    // Срок оплаты счёта (PER-722): вопрос о числе дней `pt`.
+    case "pt":
+      return parts.length === 4
+        ? { kind: "console-payment-term", auction: auction.data }
+        : { kind: "malformed" };
+    // Ориентировочное время финала (PER-663): вопрос о моменте `ft` и его
+    // снятие `fx`.
+    case "ft":
+      return parts.length === 4
+        ? { kind: "console-final-time", auction: auction.data }
+        : { kind: "malformed" };
+    case "fx":
+      return parts.length === 4
+        ? { kind: "console-final-time-remove", auction: auction.data }
+        : { kind: "malformed" };
     case "f": {
       const final = TargetStateSchema.safeParse(parts[4]);
       return parts.length === 5 && final.success
@@ -1558,6 +2525,16 @@ function parseConsole(parts: readonly string[]): CallbackAction {
             kind: "console-final",
             auction: auction.data,
             final: final.data === "1",
+          }
+        : { kind: "malformed" };
+    }
+    case "p": {
+      const published = TargetStateSchema.safeParse(parts[4]);
+      return parts.length === 5 && published.success
+        ? {
+            kind: "console-visibility",
+            auction: auction.data,
+            published: published.data === "1",
           }
         : { kind: "malformed" };
     }
@@ -1580,6 +2557,20 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 5 && op.success
         ? {
             kind: "console-discard-confirm",
+            auction: auction.data,
+            op: op.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "u":
+      return parts.length === 4
+        ? { kind: "console-cancel", auction: auction.data }
+        : { kind: "malformed" };
+    case "uy": {
+      const op = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && op.success
+        ? {
+            kind: "console-cancel-confirm",
             auction: auction.data,
             op: op.data,
           }
@@ -1705,24 +2696,55 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-text", lot: token.data, field: "title" };
       case "ld":
         return { kind: "lot-text", lot: token.data, field: "description" };
+      case "st":
+        return { kind: "lot-text", lot: token.data, field: "title", set: true };
+      case "sd":
+        return {
+          kind: "lot-text",
+          lot: token.data,
+          field: "description",
+          set: true,
+        };
       case "lp":
         return { kind: "lot-price", lot: token.data };
       case "cp":
         return { kind: "lot-price", lot: token.data, chain: true };
+      case "sp":
+        return { kind: "lot-price", lot: token.data, set: true };
       case "li":
         return { kind: "lot-image", lot: token.data };
       case "ci":
         return { kind: "lot-image", lot: token.data, chain: true };
+      case "si":
+        return { kind: "lot-image", lot: token.data, set: true };
+      case "lc":
+        return { kind: "lot-copies", lot: token.data };
       case "aw":
         return { kind: "console-week", auction: token.data };
       case "ar":
         return { kind: "console-raffle", auction: token.data };
       case "ap":
         return { kind: "console-raffle-prize", auction: token.data };
+      case "pt":
+        return { kind: "console-payment-term", auction: token.data };
+      case "ft":
+        return { kind: "console-final-time", auction: token.data };
+      case "ai":
+        return { kind: "console-payment-text", auction: token.data };
+      case "rw":
+        return { kind: "console-raffle-winner", auction: token.data };
+      case "rn":
+        return { kind: "console-raffle-prize-change", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":
         return { kind: "floor-search", auction: token.data };
+      case "al":
+        return { kind: "console-launch", auction: token.data };
+      case "as":
+        return { kind: "console-set", auction: token.data };
+      case "aq":
+        return { kind: "console-section", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":
@@ -1742,22 +2764,25 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       ? { kind: "lot-new", auction: token.data, key: key.data }
       : undefined;
   }
-  if (
-    parts[2] === "ls" ||
-    parts[2] === "ly" ||
-    parts[2] === "cs" ||
-    parts[2] === "cy"
-  ) {
+  const stepCode = /^([lcs])([sy])$/.exec(parts[2] ?? "");
+  if (stepCode !== null) {
     const price = RublesSchema.safeParse(parts[4]);
-    const chain = parts[2] === "cs" || parts[2] === "cy";
+    const lead = stepCode[1];
     return price.success
       ? {
           kind: "lot-step",
           lot: token.data,
           price: price.data,
-          mode: parts[2] === "ls" || parts[2] === "cs" ? "single" : "tiered",
-          ...(chain ? { chain: true as const } : {}),
+          mode: stepCode[2] === "s" ? "single" : "tiered",
+          ...(lead === "c" ? { chain: true as const } : {}),
+          ...(lead === "s" ? { set: true as const } : {}),
         }
+      : undefined;
+  }
+  if (parts[2] === "ae") {
+    const section = SectionSchema.safeParse(parts[4]);
+    return section.success && section.data > 0
+      ? { kind: "console-section", auction: token.data, section: section.data }
       : undefined;
   }
   if (parts[2] === "fa") {
@@ -2107,7 +3132,31 @@ function parseReleaseNotes(parts: readonly string[]): CallbackAction {
     : { kind: "malformed" };
 }
 
+// Хвост `:n` у настроек аукциона — экран открыт из вести (№73): разбор тот
+// же, что без хвоста, и признак едет дальше.
+const detachedTail = "n";
+const detachedSettings: ReadonlySet<string | undefined> = new Set([
+  "outbid",
+  "final",
+  "live",
+  "news",
+]);
+
 function parseNotify(parts: readonly string[]): CallbackAction {
+  if (
+    parts.length > 3 &&
+    parts.at(-1) === detachedTail &&
+    detachedSettings.has(parts[2])
+  ) {
+    const inner = parseNotify(parts.slice(0, -1));
+    return inner.kind === "notify-outbid" ||
+      inner.kind === "notify-set-outbid" ||
+      inner.kind === "notify-set-final" ||
+      inner.kind === "notify-set-live" ||
+      inner.kind === "notify-set-news"
+      ? { ...inner, detached: true }
+      : { kind: "malformed" };
+  }
   if (parts.length === 3 && parts[2] === "outbid") {
     return { kind: "notify-outbid" };
   }
@@ -2127,6 +3176,12 @@ function parseNotify(parts: readonly string[]): CallbackAction {
     const state = TargetStateSchema.safeParse(parts[3]);
     return state.success
       ? { kind: "notify-set-live", enabled: state.data === "1" }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "news") {
+    const state = TargetStateSchema.safeParse(parts[3]);
+    return state.success
+      ? { kind: "notify-set-news", enabled: state.data === "1" }
       : { kind: "malformed" };
   }
   if (parts.length === 5 && parts[2] === "gset") {

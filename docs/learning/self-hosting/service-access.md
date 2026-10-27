@@ -76,7 +76,7 @@ cat /proc/1/environ            (под ops)   → отказ
 |---|---|
 | Клиент на control node через `ssh -L` (прежний рецепт README ops) | секрет копируется с хоста на control node при каждой выдаче; `grpcurl` нужен на control node |
 | Подкоманда хоста, которая печатает токен для `bin/stage` | то же копирование, только автоматическое; классификатор режима агента остановил её как выдачу учётных данных, и вариант отвергнут |
-| Разовый под с `grpcurl` в namespace | образ из реестра, место в квоте `test`, Pod Security `restricted` и отдельная политика поверх `default-deny` к Identity; токен уходит в спецификацию пода через API |
+| Разовый под с `grpcurl` в namespace | образ из реестра, место в квоте `stage`, Pod Security `restricted` и отдельная политика поверх `default-deny` к Identity; токен уходит в спецификацию пода через API |
 | Опубликовать порт Identity наружу | открывает служебный метод сети; [ADR-056](../../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) держит сеть среды закрытой |
 | `grpcurl` на хосте через `port-forward` (выбрано) | одна задача ansible и бинарь на хосте; вызов идёт с машины, где лежат секрет и kubeconfig |
 

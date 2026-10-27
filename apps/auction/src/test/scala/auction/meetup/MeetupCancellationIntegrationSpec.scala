@@ -11,8 +11,12 @@ import auction.lot.LotFixtures.scheduleLot
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.telemetry.MeetupFactsMetrics
+import auction.telemetry.NatsClientLog
 import auction.testkit.NatsFixture
 import auction.testkit.PostgresFixture
+import ch.qos.logback.classic.Logger as LogbackLogger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import io.opentelemetry.api.OpenTelemetry
 import meetups.v1.meetups_events.MeetupCancelled
 import meetups.v1.meetups_events.MeetupEvent
@@ -25,14 +29,17 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
+import org.slf4j.LoggerFactory
 
 import java.time.Clock
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
+import scala.annotation.tailrec
 import scala.concurrent.Future
 import scala.concurrent.Promise
 import scala.concurrent.duration.*
+import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
 /**
@@ -155,6 +162,23 @@ final class MeetupCancellationIntegrationSpec
       }
     }
 
+  /**
+   * Логгер событий клиента jnats. Пока backend SLF4J инициализируется другим потоком, фабрика отдаёт
+   * `SubstituteLogger`, поэтому логгер logback ждётся, а не приводится сразу (как в `BoundaryLoggingSpec`).
+   */
+  private def natsClientLogger(): LogbackLogger = {
+    @tailrec
+    def resolve(attemptsLeft: Int): LogbackLogger =
+      LoggerFactory.getLogger(classOf[NatsClientLog]) match {
+        case logback: LogbackLogger => logback
+        case _ if attemptsLeft > 0 =>
+          Thread.sleep(50)
+          resolve(attemptsLeft - 1)
+        case other => fail(s"slf4j did not settle on logback: ${other.getClass.getName}")
+      }
+    resolve(attemptsLeft = 40)
+  }
+
   "the meetup facts consumer" should {
 
     "discards a scheduled auction, cancels a trading one and leaves a meetup without an auction untouched" in {
@@ -204,6 +228,51 @@ final class MeetupCancellationIntegrationSpec
           Thread.sleep(500)
           journalRows(database, auction) shouldBe rows
           auctionState(node, auction) shouldBe AuctionState.Initial
+        }
+      }
+    }
+
+    // PER-697: каждая пустая выборка оставляла подписку с таймером idle heartbeat, и через три периода heartbeat
+    // клиент писал `heartbeatAlarm` — на stage раз в выборку, с `lastStreamSequence: 0`. Без закрытия выборки тест
+    // ловил тревоги; что события клиента вообще доходят до logback, держит `MeetupCancellationConsumerSpec`.
+    "raises no heartbeat alarm while the durable is idle or the auction answers slowly" in {
+      freshMeetupsStream()
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      onDatabase(database) { node =>
+        val meetup = MeetupId(newId())
+        val (auction, _) = scheduled(node, meetup)
+        val client = natsClientLogger()
+        val appender = new ListAppender[ILoggingEvent]()
+        appender.start()
+        client.addAppender(appender)
+        given scala.concurrent.ExecutionContext = scala.concurrent.ExecutionContext.global
+        // Ответ аукциона дольше порога тревоги: выборка, закрытая только после обработки, подняла бы её здесь.
+        val consumer = new MeetupCancellationConsumer(
+          natsUrl,
+          settings(Some(natsUrl)),
+          inheritance =>
+            Future(scala.concurrent.blocking(Thread.sleep(2000))).flatMap { _ =>
+              node.sharding
+                .entityRefFor(AuctionEntity.TypeKey, inheritance.auctionId.value.toString)
+                .ask(AuctionEntity.InheritCancellation(inheritance.command, _))
+            },
+          reason => fail(reason)
+        ).start()
+        try {
+          // Выборка `fetchWait` в одну секунду: heartbeat — полсекунды, тревога — через полторы. Четыре секунды
+          // тишины — несколько пустых выборок, каждая из которых прежде давала тревогу.
+          Thread.sleep(4000)
+          publish(cancellation(meetup))
+          // Применённая отмена показывает, что потребитель всё это время выбирал, а не молчал.
+          eventually(auctionState(node, auction) shouldBe AuctionState.Initial)
+          val alarms =
+            appender.list.asScala.toList.filter(_.getArgumentArray.exists(_.toString.contains("heartbeatAlarm")))
+          alarms shouldBe empty
+        } finally {
+          consumer.close()
+          client.detachAppender(appender)
+          appender.stop()
         }
       }
     }

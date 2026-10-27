@@ -46,6 +46,21 @@ describe("auction callback_data", () => {
     });
   });
 
+  // Экран сета (ADR-073, п. 7): открывается с карточки лота сета, поэтому
+  // несёт его и страницу ленты.
+  it("encodes the set of a lot and parses it back", () => {
+    const raw = encodeAuctionCallback({
+      kind: "set",
+      lotId: LOT_ID,
+      page: 3,
+    });
+    expect(raw).toBe(`v1:auc:st:${LOT_TOKEN}:3`);
+    expect(parseAuctionCallback(raw)).toEqual({
+      ok: true,
+      intent: { kind: "set", lotId: LOT_ID, page: 3 },
+    });
+  });
+
   it("fits the largest version with the largest page into 64 bytes", () => {
     const raw = encodeAuctionCallback({
       kind: "lot",
@@ -82,6 +97,41 @@ describe("auction callback_data", () => {
       ok: true,
       intent: { kind: "feed", auctionId: AUCTION_ID, page: 0 },
     });
+  });
+
+  // Раздел ленты (PER-719): аукцион, номер раздела и страница.
+  it("encodes a section of the feed and parses it back", () => {
+    const raw = encodeAuctionCallback({
+      kind: "section",
+      auctionId: AUCTION_ID,
+      sectionId: 12,
+      page: 1,
+    });
+    expect(raw).toBe(`v1:auc:sec:${AUCTION_TOKEN}:12:1`);
+    expect(parseAuctionCallback(raw)).toEqual({
+      ok: true,
+      intent: {
+        kind: "section",
+        auctionId: AUCTION_ID,
+        sectionId: 12,
+        page: 1,
+      },
+    });
+  });
+
+  it("refuses a section of the feed without a valid number or with an extra argument", () => {
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:0:0`)).toBe("malformed");
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:01:0`)).toBe("malformed");
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:1`)).toBe("malformed");
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:1:0:0`)).toBe("malformed");
+    expect(() =>
+      encodeAuctionCallback({
+        kind: "section",
+        auctionId: AUCTION_ID,
+        sectionId: 0,
+        page: 0,
+      }),
+    ).toThrow(RangeError);
   });
 
   // Кнопка PER-305 без страницы ведёт на ту же карточку, а не в «устарело».
@@ -167,6 +217,7 @@ describe("auction callback_data", () => {
 
   it("encodes the raffle actions and parses them back", () => {
     const cases = [
+      [{ kind: "prediction-results" as const, auctionId: AUCTION_ID }, "pi"],
       [{ kind: "raffle" as const, auctionId: AUCTION_ID }, "rf"],
       [{ kind: "raffle-register" as const, auctionId: AUCTION_ID }, "rr"],
       [{ kind: "raffle-cancel" as const, auctionId: AUCTION_ID }, "rc"],

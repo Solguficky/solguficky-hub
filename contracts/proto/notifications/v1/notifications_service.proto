@@ -183,6 +183,11 @@ message SetAuctionNotificationPreferencesRequest {
 
   // Target state, never a toggle of the current value.
   optional bool live_final_outbids = 4;
+
+  // Target state, never a toggle of the current value. Whether the news of an
+  // auction reach the person: that it was published and that its trading opened.
+  // It governs nothing else - no purchases, no outbids, no final.
+  optional bool auction_announcements = 5;
 }
 
 // Server-produced state, total: a setting the person never touched carries the
@@ -201,6 +206,10 @@ message AuctionNotificationPreferences {
   // the live final reach the person, each one on its own. The outbid frequency
   // does not apply there: false withholds them, true sends every one.
   bool live_final_outbids = 4;
+
+  // Whether auction_published and auction_trading_opened reach the person. The
+  // product default is true.
+  bool auction_announcements = 5;
 }
 
 // A fixed list rather than a number of minutes: only these intervals exist.

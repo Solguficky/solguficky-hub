@@ -330,7 +330,8 @@ final class AuctionEntitySpec
       shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
-      predictions: AuctionPredictions = AuctionPredictions.none
+      predictions: AuctionPredictions = AuctionPredictions.none,
+      setOutcomes: AuctionSetOutcomes = AuctionSetOutcomes.none
   ): Kit =
     EventSourcedBehaviorTestKit(
       kit.system,
@@ -344,7 +345,8 @@ final class AuctionEntitySpec
         shard,
         raffle,
         slot,
-        predictions
+        predictions,
+        setOutcomes = setOutcomes
       ),
       serialization
     )
@@ -585,36 +587,42 @@ final class AuctionEntitySpec
 
   "auction entity" should {
 
-    "opens the catalog round after scheduling and sends no lot an opening until the predictions confirm its closing" in {
+    "opens the catalog round after scheduling, opens lots without waiting for it and closes it at the common deadline" in {
       val predictions = Predictions()
       val closed = Promise[org.apache.pekko.Done]()
       predictions.closing = _ => closed.future
       entity = entityOf(lots, predictions = predictions)
       val opening = scheduledWith(lot)
       eventually(predictions.count("open Catalog") shouldBe 1)
+      time.instant0 = closesAt.minusSeconds(60)
       start(opening).reply.isRight shouldBe true
-      eventually(predictions.count("close Catalog") shouldBe 1)
-      eventually(lots.asked should contain(lot))
-      Thread.sleep(200)
-      lots.opens shouldBe empty
-      closed.success(org.apache.pekko.Done)
       eventually(roster.active shouldBe Set(lot))
       lots.opens.map(_._1) shouldBe Vector(lot)
+      predictions.count("close Catalog") shouldBe 0
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(predictions.count("close Catalog") should be >= 1)
+      entity.getState().auction.state.started.isDefined shouldBe true
+      entity.getState().auction.state should not be a[AuctionState.Prebidding]
+      closed.success(org.apache.pekko.Done)
     }
 
-    "asks to close the catalog round again on the tick and after a restart and opens no lot until it answers" in {
+    "asks to close the catalog round after the common deadline again on the tick and after a restart" in {
       val predictions = Predictions()
       predictions.closing = _ => Promise[org.apache.pekko.Done]().future
       entity = entityOf(lots, recheckEvery = 50.millis, predictions = predictions)
       val opening = scheduledWith(lot)
+      time.instant0 = closesAt.minusSeconds(60)
       start(opening).reply.isRight shouldBe true
-      eventually(predictions.count("close Catalog") should be >= 2)
-      entity.restart()
-      Thread.sleep(200)
-      lots.opens shouldBe empty
-      predictions.closing = _ => Future.successful(org.apache.pekko.Done)
       eventually(roster.active shouldBe Set(lot))
-      lots.opens.map(_._1) shouldBe Vector(lot)
+      Thread.sleep(200)
+      predictions.count("close Catalog") shouldBe 0
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(predictions.count("close Catalog") should be >= 2)
+      val asked = predictions.count("close Catalog")
+      entity.restart()
+      eventually(predictions.count("close Catalog") should be > asked)
     }
 
     "erases the predictions before the discard is written and answers nothing while they are silent" in {
@@ -1747,6 +1755,111 @@ final class AuctionEntitySpec
       start(opening)
       eventually(roster.active shouldBe Set(lot))
       shard.expectNoMessage(300.millis)
+    }
+  }
+
+  /**
+   * Исходы лотов сета, какими их видит read model: тест задаёт их сам и меняет между тиками. Каждый вопрос записывается
+   * лотами, о которых спросили.
+   */
+  private final class SetOutcomes extends AuctionSetOutcomes {
+    @volatile var known: Map[LotId, LotOutcome] = Map.empty
+    val asked = new java.util.concurrent.ConcurrentLinkedQueue[Set[LotId]]()
+
+    def outcomes(lots: Set[LotId]): Future[Map[LotId, LotOutcome]] = {
+      asked.add(lots)
+      Future.successful(known.view.filterKeys(lots).toMap)
+    }
+  }
+
+  private val collection = LotSetId(uuid(40))
+
+  private def saveSet(opN: Int, chosen: LotId*) =
+    entity.runCommand[Either[SaveLotSetRejected, AuctionAnswer]](
+      AuctionEntity.SaveSet(
+        SaveLotSet(collection, LotSetName("Сет").toOption.get, chosen.toList, op(opN)),
+        administrator,
+        _
+      )
+    )
+
+  private def settlements: Int =
+    entity.getState().auction.seen.values.count(_.event.isInstanceOf[AuctionEvent.LotSetSettled])
+
+  "lot set of the auction entity" should {
+
+    "records the collector once the read model shows every lot of the set sold to one participant" in {
+      val outcomes = SetOutcomes()
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled()), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      start(opening + 1).reply.isRight shouldBe true
+
+      // Один лот продан, второй ещё торгуется: итога нет, сколько бы тиков ни прошло.
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)))
+      eventually(outcomes.asked.size should be >= 2)
+      settlements shouldBe 0
+
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)), third -> LotOutcome.Sold(participant(2)))
+      eventually(
+        entity.getState().auction.sets(collection).settlement shouldBe Some(LotSetSettlement.Collected(participant(2)))
+      )
+
+      // Сет с итогом больше не спрашивается, и рестарт итога не повторяет.
+      val asked = outcomes.asked.size
+      entity.restart()
+      Thread.sleep(300)
+      outcomes.asked.size shouldBe asked
+      settlements shouldBe 1
+    }
+
+    "records an uncollected set when a lot of the set went unsold" in {
+      val outcomes = SetOutcomes()
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled()), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      start(opening + 1).reply.isRight shouldBe true
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)), third -> LotOutcome.Unsold)
+      eventually(
+        entity.getState().auction.sets(collection).settlement shouldBe Some(LotSetSettlement.NotCollected)
+      )
+      settlements shouldBe 1
+    }
+
+    "leaves a set uncollected when the auction ended with a lot of the set that never opened" in {
+      val outcomes = SetOutcomes()
+      // `third` без условий торгов: открытие он отклоняет, и аукцион кончается без него.
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.drafted), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      // Ставка — до окна анти-снайпа: лот закрывается с общим дедлайном, без продления.
+      time.instant0 = closesAt.minusSeconds(600)
+      start(opening + 1).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      lots.bid(lot, LotFixtures.placeBid(who = 2, amount = 110, opN = 90), time.instant())
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(timeout(Span(5, Seconds)))(entity.getState().auction.state shouldBe a[AuctionState.Finished])
+
+      // Read model знает только проданный лот: неоткрытый аукцион уточняет у самого лота.
+      outcomes.known = Map(lot -> LotOutcome.Sold(participant(2)))
+      eventually(
+        entity.getState().auction.sets(collection).settlement shouldBe Some(LotSetSettlement.NotCollected)
+      )
+      settlements shouldBe 1
+    }
+
+    "does not read outcomes before prebidding started" in {
+      val outcomes = SetOutcomes()
+      lots = Lots(Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled()), () => time.instant())
+      entity = entityOf(lots, recheckEvery = 50.millis, setOutcomes = outcomes)
+      val opening = scheduledWith(lot, third)
+      saveSet(opening, lot, third).reply.isRight shouldBe true
+      Thread.sleep(300)
+      outcomes.asked shouldBe empty
     }
   }
 }

@@ -86,6 +86,16 @@ enum AuctionState {
       case Final(_, _, _, activated, completed) => activated.lastOption.filterNot(completed.contains)
       case _ => None
     }
+
+  /**
+   * Впереди ли ещё финал: ориентировочное время выставляется и меняется до его старта, а торги оно не открывает и не
+   * закрывает (ADR-040, дополнение 2026-10-19). `Initial` — аукциона нет, и время выставлять не чему.
+   */
+  def finalTimeAhead: Boolean =
+    this match {
+      case Draft | Scheduled(_) | Prebidding(_, _) | Settling(_, _) | Break(_, _) | LineupFrozen(_, _, _) => true
+      case Initial | Final(_, _, _, _, _) | Finished(_, _) | Cancelled(_, _, _) => false
+    }
 }
 
 /** Команды аукциона. Каждая несёт `op_id`; инициатор едет в конверте, а не в команде. */
@@ -118,6 +128,19 @@ final case class ChangeVisibility(published: Boolean, opId: OpId)
  * обрывается. Лоты и розыгрыш снимает не сама команда, а протокол после неё ([[LotRoster]]).
  */
 final case class CancelAuction(opId: OpId)
+
+/**
+ * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов. Администратор выставляет
+ * и меняет его до старта финала, а торги оно не открывает и не закрывает. `at` пусто — время снимается.
+ */
+final case class SetFinalTime(at: Option[Instant], opId: OpId)
+
+/**
+ * Как оплатить и получить лоты (PER-322): свободный текст администратора для победителей. Не условие торгов, поэтому
+ * живёт вне конфигурации и меняется в любом состоянии аукциона — счета переживают и конец, и отмену. `text` пусто —
+ * текст снимается.
+ */
+final case class SetPaymentInstructions(text: Option[PaymentInstructions], opId: OpId)
 
 /**
  * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, без входа сверх `op_id` и без отказов.
@@ -239,7 +262,10 @@ object LotTerms {
  * завершённый — в `FinalLotCompleted`. `AuctionFinished` — конец аукциона с финалом; у аукциона без финала его не
  * бывает, тот кончается `PrebiddingEnded(finished = true)`. Рождение несёт `hidden`: новый аукцион скрыт от участников,
  * а строка, записанная до признака видимости, читается видимой (ADR-047, дополнение 2026-10-20). `AuctionPublished` и
- * `AuctionHidden` payload не несут.
+ * `AuctionHidden` payload не несут. Сет лотов (ADR-073) пишется рядом с реестром: `LotSetDefined` несёт определение
+ * целиком, `LotSetDeleted` — только идентификатор, `LotSetSettled` — итог сета, один раз. `LotLayoutSet` — порядок и
+ * разделы ленты целиком (PER-719): снимок, а не правка, поэтому повтор и гонка двух администраторов оставляют одну
+ * раскладку, а не смесь двух.
  */
 enum AuctionEvent {
   case AuctionDrafted(meetup: MeetupId, hidden: Boolean = true)
@@ -259,6 +285,14 @@ enum AuctionEvent {
   case FinalLotCompleted(lot: LotId)
   case AuctionFinished
   case StepWindowLaunched(window: StepWindowConfig)
+  case FinalTimeSet(at: Instant)
+  case FinalTimeCleared
+  case PaymentInstructionsSet(text: PaymentInstructions)
+  case PaymentInstructionsCleared
+  case LotSetDefined(set: LotSetId, name: LotSetName, lots: List[LotId])
+  case LotSetDeleted(set: LotSetId)
+  case LotSetSettled(set: LotSetId, settlement: LotSetSettlement)
+  case LotLayoutSet(layout: LotLayout)
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -308,6 +342,22 @@ enum CancelAuctionRejected {
   case AuctionNotFound
   case AuctionNotStarted
   case AuctionAlreadyFinished
+}
+
+/**
+ * Отказы `SetFinalTime`: аукциона нет, финал уже идёт, аукцион закончился или отменён — в этих состояниях время
+ * выставлять поздно (ADR-040, дополнение 2026-10-19).
+ */
+enum FinalTimeRejected {
+  case AuctionNotFound
+  case FinalAlreadyStarted
+  case AuctionAlreadyFinished
+  case AuctionAlreadyCancelled
+}
+
+/** Отказ `SetPaymentInstructions`: аукциона нет. Состояние не отказывает — счета переживают и конец, и отмену. */
+enum PaymentInstructionsRejected {
+  case AuctionNotFound
 }
 
 /** Отказы `StartPrebidding`: аукциона нет либо он не в `Scheduled` — не запланирован или уже открыт. */
@@ -500,7 +550,13 @@ enum Inspection {
  * (И-20). `seen` — то же окно, что у лота: `seen(op_id) ⟺ в журнале есть событие с этим op_id`, и пишет его только
  * [[Auction.apply]]. `launched` — окна сниженного шага, запущенные по ходу торгов, в порядке записи (ADR-047,
  * дополнение 2026-10-12): объявленные лежат в конфигурации, и пересечения запуск проверяет по обоим спискам. `hidden` —
- * аукцион скрыт от участников (ADR-047, дополнение 2026-10-20); бывает только в `Draft` и `Scheduled`.
+ * аукцион скрыт от участников (ADR-047, дополнение 2026-10-20); бывает только в `Draft` и `Scheduled`. `finalAt` —
+ * ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов; без неё аукцион
+ * показывает «скоро». `sets` — коллекционные сеты (ADR-073): меняются там же, где реестр, лоты сета — всегда лоты
+ * реестра, и лот не больше чем в одном сете; после старта торгов меняется только итог сета. `paymentInstructions` —
+ * текст администратора «как оплатить и получить» (PER-322): не условие торгов, меняется в любом состоянии. `layout` —
+ * порядок и разделы ленты (PER-719): показ, а не условие торгов, меняется до старта финала; лоты раскладки — всегда
+ * лоты реестра.
  */
 final case class Auction(
     state: AuctionState,
@@ -508,7 +564,11 @@ final case class Auction(
     lots: Set[LotId],
     seen: Map[OpId, AuctionEnvelope],
     launched: List[LaunchedWindow] = Nil,
-    hidden: Boolean = false
+    hidden: Boolean = false,
+    finalAt: Option[Instant] = None,
+    sets: Map[LotSetId, LotSet] = Map.empty,
+    paymentInstructions: Option[PaymentInstructions] = None,
+    layout: LotLayout = LotLayout.empty
 )
 
 object Auction {
@@ -539,7 +599,7 @@ object Auction {
   def meetupCancellationOf(eventId: UUID): OpId = OpId(nameBased(MeetupCancellationNamespace, eventId.toString))
 
   /** UUIDv5 (RFC 9562): SHA-1 от пространства имён и имени в UTF-8, с битами версии и варианта. */
-  private[aggregate] def nameBased(namespace: UUID, name: String): UUID = {
+  private[auction] def nameBased(namespace: UUID, name: String): UUID = {
     val digest = MessageDigest.getInstance("SHA-1")
     digest.update(bytes(namespace))
     digest.update(name.getBytes(StandardCharsets.UTF_8))
@@ -634,6 +694,77 @@ object Auction {
     }
 
   /**
+   * Определение сета (ADR-073, пп. 1–2): в тех же состояниях, что реестр, после старта торгов — `LotsFrozen`. Лоты сета
+   * — лоты реестра, и лот не больше чем в одном сете: отказ называет первый лот, на котором споткнулся. Сет из меньше
+   * чем двух лотов принимается — он неполный. Тот же сет пишет событие и без изменений, как `LotAdded`: ответ без
+   * события повтором не защищён.
+   */
+  def decide(auction: Auction, command: SaveLotSet): Either[SaveLotSetRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(SaveLotSetRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
+            val lots = command.lots.distinct
+            val owner = auction.sets.iterator.flatMap((id, set) => set.lots.map(_ -> id)).toMap
+            lots.iterator
+              .flatMap { lot =>
+                if (!auction.lots.contains(lot)) Some(SaveLotSetRejected.LotNotInAuction(lot))
+                else owner.get(lot).filter(_ != command.set).map(SaveLotSetRejected.LotInAnotherSet(lot, _))
+              }
+              .nextOption() match {
+              case Some(rejected) => Left(rejected)
+              case None => Right(AuctionDecision.Accepted(AuctionEvent.LotSetDefined(command.set, command.name, lots)))
+            }
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(SaveLotSetRejected.LotsFrozen)
+        }
+    }
+
+  /** Удаление сета — в тех же состояниях, что его определение. Сета нет — `LotSetNotFound`. */
+  def decide(auction: Auction, command: DeleteLotSet): Either[DeleteLotSetRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(DeleteLotSetRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
+            if (auction.sets.contains(command.set))
+              Right(AuctionDecision.Accepted(AuctionEvent.LotSetDeleted(command.set)))
+            else Left(DeleteLotSetRejected.LotSetNotFound)
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(DeleteLotSetRejected.LotsFrozen)
+        }
+    }
+
+  /**
+   * Итог сета (ADR-073, п. 4): только после старта торгов, только у полного сета без итога и только когда каждый его
+   * лот пришёл к конечному исходу — онлайн, в перерыве или в финале, в том числе снятый отменой аукциона. Итог пишется
+   * один раз и дальше не меняется.
+   */
+  def decide(auction: Auction, command: SettleLotSet): Either[SettleLotSetRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.sets.get(command.set) match {
+          case _ if auction.state.started.isEmpty => Left(SettleLotSetRejected.NotStarted)
+          case Some(set) if set.complete =>
+            if (set.settlement.isDefined) Left(SettleLotSetRejected.AlreadySettled)
+            else
+              LotSets
+                .verdict(set, command.outcomes)
+                .toRight(SettleLotSetRejected.NotTerminal)
+                .map(settlement => AuctionDecision.Accepted(AuctionEvent.LotSetSettled(command.set, settlement)))
+          case Some(_) | None => Left(SettleLotSetRejected.LotSetNotFound)
+        }
+    }
+
+  /**
    * Планирование. Состояние проверяется раньше конфигурации: после старта торгов ответ — `AuctionAlreadyStarted`, какой
    * бы ни была конфигурация. В `Scheduled` команда пишет событие всегда и заменяет конфигурацию целиком (RFC-011).
    */
@@ -711,6 +842,73 @@ object Auction {
               AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
               AuctionState.Cancelled(_, _, _) =>
             Left(VisibilityRejected.AuctionAlreadyStarted)
+        }
+    }
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов, поэтому время
+   * выставляется и меняется до старта финала, а торги оно не открывает и не закрывает. Снятие времени — та же команда
+   * без момента. Повтор `op_id` отвечает исходным событием, как у остальных команд.
+   */
+  def decide(auction: Auction, command: SetFinalTime): Either[FinalTimeRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(FinalTimeRejected.AuctionNotFound)
+          case AuctionState.Final(_, _, _, _, _) => Left(FinalTimeRejected.FinalAlreadyStarted)
+          case AuctionState.Finished(_, _) => Left(FinalTimeRejected.AuctionAlreadyFinished)
+          case AuctionState.Cancelled(_, _, _) => Left(FinalTimeRejected.AuctionAlreadyCancelled)
+          case _ =>
+            val event = command.at match {
+              case Some(at) => AuctionEvent.FinalTimeSet(at)
+              case None => AuctionEvent.FinalTimeCleared
+            }
+            Right(AuctionDecision.Accepted(event))
+        }
+    }
+
+  /**
+   * Текст «как оплатить и получить» (PER-322): выставить, изменить или снять в любом состоянии рождённого аукциона. Тот
+   * же текст пишет событие ещё раз, как `LotAdded`: ответ без события повтором не защищён.
+   */
+  def decide(
+      auction: Auction,
+      command: SetPaymentInstructions
+  ): Either[PaymentInstructionsRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(PaymentInstructionsRejected.AuctionNotFound)
+          case _ =>
+            val event = command.text match {
+              case Some(text) => AuctionEvent.PaymentInstructionsSet(text)
+              case None => AuctionEvent.PaymentInstructionsCleared
+            }
+            Right(AuctionDecision.Accepted(event))
+        }
+    }
+
+  /**
+   * Порядок и разделы ленты (PER-719): показ, а не условие торгов, поэтому раскладка меняется в любом состоянии, пока
+   * финал впереди, как ориентировочное время финала; в живом финале лента идёт порядком зала (PER-639). Лоты раскладки
+   * — лоты реестра. Та же раскладка пишет событие ещё раз, как текст оплаты: ответ без события повтором не защищён.
+   */
+  def decide(auction: Auction, command: SetLotLayout): Either[LotLayoutRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(LotLayoutRejected.AuctionNotFound)
+          case AuctionState.Final(_, _, _, _, _) => Left(LotLayoutRejected.FinalAlreadyStarted)
+          case AuctionState.Finished(_, _) => Left(LotLayoutRejected.AuctionAlreadyFinished)
+          case AuctionState.Cancelled(_, _, _) => Left(LotLayoutRejected.AuctionAlreadyCancelled)
+          case _ =>
+            command.layout.members.find(lot => !auction.lots.contains(lot)) match {
+              case Some(lot) => Left(LotLayoutRejected.LotNotInAuction(lot))
+              case None => Right(AuctionDecision.Accepted(AuctionEvent.LotLayoutSet(command.layout)))
+            }
         }
     }
 
@@ -1137,8 +1335,20 @@ object Auction {
         auction.copy(hidden = true)
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotAdded(lot)) =>
         auction.copy(lots = auction.lots + lot)
+      // Лот, убранный из реестра, уходит и из своего сета (ADR-073, п. 3), и из раскладки ленты (PER-719): `LotAdded`
+      // того же лота его туда не вернёт.
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotRemoved(lot)) =>
-        auction.copy(lots = auction.lots - lot)
+        auction.copy(
+          lots = auction.lots - lot,
+          sets = auction.sets.view.mapValues(set => set.copy(lots = set.lots.filterNot(_ == lot))).toMap,
+          layout = auction.layout.without(lot)
+        )
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotSetDefined(set, name, lots)) =>
+        auction.copy(sets = auction.sets.updated(set, LotSet(name, lots)))
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotSetDeleted(set)) =>
+        auction.copy(sets = auction.sets - set)
+      case (current, AuctionEvent.LotSetSettled(set, settlement)) if current.started.isDefined =>
+        auction.copy(sets = auction.sets.updatedWith(set)(_.map(_.copy(settlement = Some(settlement)))))
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionScheduled(config)) =>
         auction.copy(state = AuctionState.Scheduled(config))
       // Открытие торгов публикует скрытый аукцион само (ADR-047, дополнение 2026-10-20): торги скрытыми не идут.
@@ -1167,6 +1377,17 @@ object Auction {
         auction.copy(state = AuctionState.Finished(config, startedBy))
       case (AuctionState.Prebidding(_, _), AuctionEvent.StepWindowLaunched(window)) =>
         auction.copy(launched = auction.launched :+ LaunchedWindow(envelope.opId, window))
+      // Ориентировочное время финала — подпись, а не условие торгов: состояние от него не меняется (ADR-040,
+      // дополнение 2026-10-19).
+      case (state, AuctionEvent.FinalTimeSet(at)) if state.finalTimeAhead => auction.copy(finalAt = Some(at))
+      case (state, AuctionEvent.FinalTimeCleared) if state.finalTimeAhead => auction.copy(finalAt = None)
+      // Текст оплаты — не условие торгов: состояние от него не меняется, а живёт он в любом рождённом аукционе.
+      case (state, AuctionEvent.PaymentInstructionsSet(text)) if state != AuctionState.Initial =>
+        auction.copy(paymentInstructions = Some(text))
+      case (state, AuctionEvent.PaymentInstructionsCleared) if state != AuctionState.Initial =>
+        auction.copy(paymentInstructions = None)
+      // Раскладка ленты — показ, а не условие торгов: состояние от неё не меняется (PER-719).
+      case (state, AuctionEvent.LotLayoutSet(layout)) if state.finalTimeAhead => auction.copy(layout = layout)
       case (current, AuctionEvent.AuctionCancelled) =>
         current match {
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |

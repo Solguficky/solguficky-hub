@@ -1,10 +1,19 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it, vi } from "vitest";
 import {
+  LotSaleSchema,
+  MoneySchema,
+} from "../../../gen/auction/v1/auction_pb.js";
+import {
+  LotCardSchema,
+  LotSnapshotSchema,
+} from "../../../gen/auction/v1/auction_service_pb.js";
+import {
   AuctionFinalLotNextSchema,
   LotActivityDigestSchema,
   LotActivityKind,
   LotDeadlineCloseSchema,
+  LotLeadRestoredSchema,
   LotReminderSchema,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import {
@@ -15,6 +24,7 @@ import {
   type LotInfo,
   type LotNotice,
   logMissingTitle,
+  lotInfoOf,
   lotNoticeOf,
   renderLotNotice,
 } from "./lot-notice.js";
@@ -113,11 +123,63 @@ describe("lotNoticeOf", () => {
     });
     expect(lotNoticeOf({ case: "auctionFinalLotNext", value })).toBeUndefined();
   });
+
+  // Ведение лота вернулось: снятие участника оставило лот новому лидеру
+  // (ADR-072, п. 5). Сообщение несёт лот и текущую цену.
+  it("carries the restored lead with its price", () => {
+    const value = create(LotLeadRestoredSchema, {
+      lotId: lotOf(6),
+      currentPrice: create(MoneySchema, {
+        minorUnits: 95_000n,
+        currency: "RUB",
+      }),
+    });
+    expect(lotNoticeOf({ case: "lotLeadRestored", value })).toEqual({
+      kind: "lot-lead-restored",
+      lotId: lotOf(6),
+      currentPrice: rub(950),
+    });
+  });
+
+  // Лот без идентификатора открыть нечем — это дефект издателя.
+  it("finds a restored lead without a lot id malformed", () => {
+    const value = create(LotLeadRestoredSchema, {
+      lotId: "",
+      currentPrice: create(MoneySchema, {
+        minorUnits: 95_000n,
+        currency: "RUB",
+      }),
+    });
+    expect(lotNoticeOf({ case: "lotLeadRestored", value })).toBeUndefined();
+  });
+});
+
+describe("lotInfoOf", () => {
+  // Проданный лот несёт цену продажи и победителя: по ним сводка говорит
+  // «продан за» или «твой лот» (№102 прогона 14 октября 2026 года).
+  it("carries the sale of a sold lot", () => {
+    const winnerId = lotOf(7);
+    const snapshot = create(LotSnapshotSchema, {
+      card: create(LotCardSchema, { title: "Футболка" }),
+      status: {
+        case: "sold",
+        value: create(LotSaleSchema, {
+          winnerId,
+          price: create(MoneySchema, { minorUnits: 210_000n, currency: "RUB" }),
+        }),
+      },
+    });
+    expect(lotInfoOf(snapshot)).toEqual({
+      title: "Футболка",
+      sold: { price: rub(2100), winnerId },
+    });
+  });
 });
 
 describe("renderLotNotice", () => {
   // Лидерство в строке — на момент закрытия окна; «лот за тобой» верно и для
-  // лидера, и для купившего: проданный в окне лот приходит с ценой продажи.
+  // лидера, и для купившего, пока снимок Auction не сказал о продаже.
+  // Название — жирным, без кавычек (№71 прогона 14 октября 2026 года).
   it("names who holds each lot when the window closed", () => {
     const lotId = lotOf(1);
     const lots = new Map([[lotId, lot("Кружка")]]);
@@ -130,16 +192,146 @@ describe("renderLotNotice", () => {
         { lots, frequencyButton: false, timeZone },
       ).text.split("\n")[2] ?? "";
     expect(line("outbid", false)).toBe(
-      `• «Кружка» — перебили, цена 950${nbsp}₽`,
+      `• Лот «<b>Кружка</b>» — перебили, цена 950${nbsp}₽`,
     );
     expect(line("outbid", true)).toBe(
-      `• «Кружка» — перебивали, но лот за тобой: 950${nbsp}₽`,
+      `• Лот «<b>Кружка</b>» — перебивали, но лот за тобой: 950${nbsp}₽`,
     );
     expect(line("proxy-raised", true)).toBe(
-      `• «Кружка» — автоставка подняла цену до 950${nbsp}₽, лот за тобой`,
+      `• Лот «<b>Кружка</b>» — автоставка подняла цену до 950${nbsp}₽, лот за тобой`,
     );
     expect(line("proxy-raised", false)).toBe(
-      `• «Кружка» — автоставка отвечала, но тебя перебили: 950${nbsp}₽`,
+      `• Лот «<b>Кружка</b>» — перебили, цена 950${nbsp}₽, автоставка отвечала`,
+    );
+  });
+
+  // Перебитие и ответ автоставки одного лота — одна строка с итоговой ценой и
+  // пометкой об автоставке (№79 прогона 14 октября 2026 года).
+  it("folds the lines of one lot into one", () => {
+    const lotId = lotOf(1);
+    const view = renderLotNotice(
+      digest([
+        {
+          lotId,
+          kind: "proxy-raised",
+          currentPrice: rub(900),
+          recipientLeads: false,
+        },
+        {
+          lotId,
+          kind: "outbid",
+          currentPrice: rub(900),
+          recipientLeads: false,
+        },
+      ]),
+      {
+        lots: new Map([[lotId, lot("Кружка")]]),
+        frequencyButton: false,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      [
+        "Сводка по твоим ставкам:",
+        "",
+        `• Лот «<b>Кружка</b>» — перебили, цена 900${nbsp}₽, автоставка отвечала`,
+      ].join("\n"),
+    );
+    expect(view.format).toBe("HTML");
+  });
+
+  // Лот, который продан к моменту сводки, — «продан за», а не «перебили»:
+  // Auction знает о продаже раньше, чем окно частоты (№102 прогона
+  // 14 октября 2026 года). Купленный получателем — «твой лот».
+  it("names a lot sold by the time of the digest", () => {
+    const lotId = lotOf(1);
+    const me = lotOf(99);
+    const line = (winnerId: string) =>
+      renderLotNotice(
+        digest([
+          {
+            lotId,
+            kind: "outbid",
+            currentPrice: rub(2100),
+            recipientLeads: false,
+          },
+        ]),
+        {
+          lots: new Map([
+            [lotId, lot("Футболка", { sold: { price: rub(2100), winnerId } })],
+          ]),
+          frequencyButton: false,
+          timeZone,
+          recipientId: me,
+        },
+      ).text.split("\n")[2];
+    expect(line(lotOf(7))).toBe(
+      `• Лот «<b>Футболка</b>» — продан за 2${nbsp}100${nbsp}₽`,
+    );
+    expect(line(me)).toBe(
+      `• Лот «<b>Футболка</b>» — ✅ твой лот за 2${nbsp}100${nbsp}₽`,
+    );
+  });
+
+  // Название — чужой текст: разметку из него Telegram не читает.
+  it("escapes the title of the lot", () => {
+    const lotId = lotOf(1);
+    const view = renderLotNotice(
+      { kind: "lot-outbid", lotId, currentPrice: rub(950) },
+      {
+        lots: new Map([[lotId, lot("<i>Кружка</i> & ложка")]]),
+        frequencyButton: false,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      `Твою ставку перебили: лот «<b>&lt;i&gt;Кружка&lt;/i&gt; &amp; ложка</b>», цена 950${nbsp}₽.`,
+    );
+    expect(view.format).toBe("HTML");
+  });
+
+  // Перебитие лота, который успели продать, называет цену продажи: торга уже
+  // нет, и дедлайна тоже (№102).
+  it("names the sale of an outbid lot already sold", () => {
+    const lotId = lotOf(1);
+    const view = renderLotNotice(
+      { kind: "lot-outbid", lotId, currentPrice: rub(2000) },
+      {
+        lots: new Map([
+          [
+            lotId,
+            lot("Футболка", { sold: { price: rub(2100), winnerId: lotOf(7) } }),
+          ],
+        ]),
+        frequencyButton: false,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      `Твою ставку перебили: лот «<b>Футболка</b>» продан за 2${nbsp}100${nbsp}₽.`,
+    );
+  });
+
+  // Лот купил сам получатель — вернул ведение, а весть доставлена поздно:
+  // «продан» читался бы как проигрыш.
+  it("tells the recipient who bought the outbid lot that it is theirs", () => {
+    const lotId = lotOf(1);
+    const view = renderLotNotice(
+      { kind: "lot-outbid", lotId, currentPrice: rub(2000) },
+      {
+        lots: new Map([
+          [
+            lotId,
+            lot("Футболка", { sold: { price: rub(2100), winnerId: lotOf(7) } }),
+          ],
+        ]),
+        recipientId: lotOf(7),
+        frequencyButton: false,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      `Твою ставку перебивали, но лот «<b>Футболка</b>» твой за 2${nbsp}100${nbsp}₽.`,
     );
   });
 
@@ -181,7 +373,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      `Твою ставку на «Кружка» перебили. Текущая цена — 950${nbsp}₽. Торг до 22:45.`,
+      `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽. Торг до 22:45.`,
     );
   });
 
@@ -215,6 +407,82 @@ describe("renderLotNotice", () => {
     expect(view.text).toContain("Торг до 22:45.");
   });
 
+  // Ведение лота вернулось: сообщение называет цену и кнопку лота, а кнопки
+  // частоты под ним нет — получатель ставку не делал, частота перебитий его не
+  // касается (ADR-072, п. 5).
+  it("names the lot whose lead came back and offers only its button", () => {
+    const lotId = lotOf(6);
+    const view = renderLotNotice(
+      { kind: "lot-lead-restored", lotId, currentPrice: rub(950) },
+      {
+        lots: new Map([[lotId, lot("Кружка", { deadline })]]),
+        frequencyButton: true,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      `Теперь лот «<b>Кружка</b>» ведёшь ты. Текущая цена — 950${nbsp}₽. Торг до 22:45.`,
+    );
+    expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
+  });
+
+  // Лот назван словом «лот» и названием в кавычках, чтобы название не
+  // склонялось; свои кавычки названия остаются, как в анонсе финала, а
+  // возврат ведения не говорит «снова» (PER-708).
+  it("names the lot with the word and the title in quotes", () => {
+    const lotId = lotOf(7);
+    const lots = new Map([[lotId, lot("Футболка «Солегуфики» XL")]]);
+    const render = (notice: LotNotice) =>
+      renderLotNotice(notice, { lots, frequencyButton: false, timeZone }).text;
+    const name = "лот «<b>Футболка «Солегуфики» XL</b>»";
+    expect(
+      render({ kind: "lot-proxy-raised", lotId, currentPrice: rub(950) }),
+    ).toBe(
+      `Твоя автоставка на ${name} подняла цену до 950${nbsp}₽: лидируешь ты.`,
+    );
+    expect(render({ kind: "lot-outbid", lotId, currentPrice: rub(950) })).toBe(
+      `Твою ставку перебили: ${name}, цена 950${nbsp}₽.`,
+    );
+    expect(
+      render({ kind: "lot-lead-restored", lotId, currentPrice: rub(950) }),
+    ).toBe(`Теперь ${name} ведёшь ты. Текущая цена — 950${nbsp}₽.`);
+    expect(
+      render({
+        kind: "lot-activity-digest",
+        lines: [
+          {
+            lotId,
+            kind: "outbid",
+            currentPrice: rub(950),
+            recipientLeads: false,
+          },
+        ],
+      }).split("\n")[2],
+    ).toBe(
+      `• Лот «<b>Футболка «Солегуфики» XL</b>» — перебили, цена 950${nbsp}₽`,
+    );
+  });
+
+  // Без названия во фразе остаётся слово «лот».
+  it("keeps the word when the title is unknown", () => {
+    const lotId = lotOf(8);
+    const render = (notice: LotNotice) =>
+      renderLotNotice(notice, {
+        lots: new Map(),
+        frequencyButton: false,
+        timeZone,
+      }).text;
+    expect(
+      render({ kind: "lot-lead-restored", lotId, currentPrice: rub(950) }),
+    ).toBe(`Теперь лот ведёшь ты. Текущая цена — 950${nbsp}₽.`);
+    expect(
+      render({ kind: "lot-proxy-raised", lotId, currentPrice: rub(950) }),
+    ).toBe(`Твоя автоставка на лот подняла цену до 950${nbsp}₽: лидируешь ты.`);
+    expect(render({ kind: "lot-final-next", lotId, estimatedMinutes: 0 })).toBe(
+      "Твой лот следующий.",
+    );
+  });
+
   // Напоминание о дедлайне выключается снятием отметки (ADR-063, п.5), а не
   // частотой перебитий: кнопка частоты под ним не ставится.
   it("names the followed lot and offers only its button", () => {
@@ -228,7 +496,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      "Скоро дедлайн у избранного лота «Кружка» — до 22:45. Успей сделать ставку.",
+      "Скоро дедлайн у избранного лота «<b>Кружка</b>» — до 22:45. Успей сделать ставку.",
     );
     expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
@@ -246,7 +514,7 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      "Дедлайн избранного лота «Кружка» — до 22:45. Успей сделать ставку.",
+      "Дедлайн избранного лота «<b>Кружка</b>» — до 22:45. Успей сделать ставку.",
     );
     expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
@@ -263,14 +531,15 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toBe(
-      "Твой лот следующий: «Кружка». Примерно через 7 минут.",
+      "Твой лот «<b>Кружка</b>» следующий. Примерно через 7 минут.",
     );
     expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
 
   // Сводка за час может набрать много лотов: текст и клавиатура держатся в
   // пределах Telegram, а лоты сверх предела называются числом. Предел — по
-  // лотам: вторая строка показанного лота в «ещё» не уходит.
+  // лотам: вторая строка показанного лота сворачивается в его строку, а не
+  // уходит в «ещё».
   it("caps a long digest by lots within the Telegram limits", () => {
     const lines = Array.from({ length: 40 }, (_, index) => ({
       lotId: lotOf(index),
@@ -290,7 +559,7 @@ describe("renderLotNotice", () => {
     expect(view.text.length).toBeLessThanOrEqual(4096);
     expect(
       view.text.split("\n").filter((row) => row.startsWith("•")),
-    ).toHaveLength(DIGEST_LOT_LIMIT + 1);
+    ).toHaveLength(DIGEST_LOT_LIMIT);
     expect(view.text.endsWith(`…и ещё лотов: ${40 - DIGEST_LOT_LIMIT}.`)).toBe(
       true,
     );
@@ -378,7 +647,7 @@ describe("createLotNoticeRender", () => {
       ),
     ).resolves.toMatchObject({
       kind: "ready",
-      message: { text: expect.stringContaining("на лот перебили") },
+      message: { text: expect.stringContaining("Твою ставку перебили, цена") },
     });
   });
 });

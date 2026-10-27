@@ -1,5 +1,7 @@
 package auction.grpc
 
+import auction.lot.ParticipantId
+import auction.naming.DisplayName
 import auction.projection.AuctionWatchView
 import auction.v1.auction_service as wire
 
@@ -12,10 +14,15 @@ import java.time.Instant
  */
 object WatchMapping {
 
-  def watch(view: AuctionWatchView, at: Instant): wire.AuctionWatch =
+  /** `names` — имена собравших сеты лотов сообщения (ADR-073, п. 7), как у `GetLot`. */
+  def watch(
+      view: AuctionWatchView,
+      at: Instant,
+      names: Map[ParticipantId, DisplayName] = Map.empty
+  ): wire.AuctionWatch =
     wire.AuctionWatch(
       auction = Some(ResponseMapping.auctionSnapshot(view.auction)),
-      activeLot = view.activeLot.map(SnapshotMapping.unviewed(_, at)),
-      lineup = view.lineup.map(SnapshotMapping.unviewed(_, at))
+      activeLot = view.activeLot.map(SnapshotMapping.unviewed(_, at, names)),
+      lineup = view.lineup.map(SnapshotMapping.unviewed(_, at, names))
     )
 }
