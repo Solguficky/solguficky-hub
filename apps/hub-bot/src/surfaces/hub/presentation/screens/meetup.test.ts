@@ -424,7 +424,7 @@ describe("cardScreen", () => {
           final: true,
         }),
       ).toContain(
-        "📍 Где: Циферблат\n\n🔨 Аукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
+        "📍 Где: Циферблат\n\n🏷️ Аукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
       );
     });
 
@@ -432,13 +432,13 @@ describe("cardScreen", () => {
     it("names an auction hidden from participants", () => {
       expect(
         withAuction({ auctionId, stage: "draft", final: false, hidden: true }),
-      ).toContain("\n\n🔨 Аукцион: готовится, скрыт от участников\n\n");
+      ).toContain("\n\n🏷️ Аукцион: готовится, скрыт от участников\n\n");
     });
 
     it("names a finished auction by its stage", () => {
       expect(
         withAuction({ auctionId, stage: "finished", final: false }),
-      ).toContain("\n\n🔨 Аукцион: завершён\n\n");
+      ).toContain("\n\n🏷️ Аукцион: завершён\n\n");
     });
 
     it("leaves the line out without an auction", () => {

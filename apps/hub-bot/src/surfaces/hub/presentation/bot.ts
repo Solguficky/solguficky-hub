@@ -10704,9 +10704,9 @@ async function sendAnnouncementPreview(
     text: preview.text,
     button: preview.button,
     lot: preview.lot,
-    // Фото, которого автор не увидел, получатели тоже не получат.
+    // Фото или пост, которых автор не увидел, получатели тоже не получат.
     photo: sent.withPhoto ? preview.photo?.index : undefined,
-    post: preview.post,
+    post: sent.withPost ? preview.post : undefined,
     recipientCount: preview.recipientCount,
   });
   await ctx.reply(confirm.text, {
