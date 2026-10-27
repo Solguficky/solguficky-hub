@@ -48,6 +48,28 @@ public sealed class StubAuthority : IBroadcastAuthority
     }
 }
 
+/// <summary>
+/// Auction, подставленный на вопрос «кто вовлечён» (PER-778). Отвечает заданным
+/// чтением и считает вопросы: объявление «всем» спрашивать его не должно.
+/// </summary>
+/// <remarks>
+/// Сведение настоящего ответа Auction проверяет unit-набор на
+/// <see cref="AuctionEngagement" />; здесь предмет — получатели и отказы.
+/// </remarks>
+public sealed class StubEngagement : IAuctionEngagement
+{
+    public EngagementRead Answer { get; set; } =
+        new EngagementRead.Known(true, new HashSet<Guid>(), true, new HashSet<Guid>());
+
+    public ConcurrentQueue<Guid> Asked { get; } = new();
+
+    public Task<EngagementRead> Read(Guid auctionId, Forwarded forwarded)
+    {
+        Asked.Enqueue(auctionId);
+        return Task.FromResult(Answer);
+    }
+}
+
 /// <summary>Строка адресного факта в том виде, в каком её прочтёт релей.</summary>
 public sealed class FactRow
 {
@@ -79,12 +101,18 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
     private readonly SiloUnderTest silo;
     private readonly GrpcChannel channel;
 
-    private BroadcastsUnderTest(IsolatedDatabase db, SiloUnderTest silo, GrpcChannel channel, StubAuthority? owners)
+    private BroadcastsUnderTest(
+        IsolatedDatabase db,
+        SiloUnderTest silo,
+        GrpcChannel channel,
+        StubAuthority? owners,
+        StubEngagement? auction)
     {
         Db = db;
         this.silo = silo;
         this.channel = channel;
         Owners = owners ?? new StubAuthority();
+        Auction = auction ?? new StubEngagement();
         Client = new NotificationsService.NotificationsServiceClient(SiloUnderTest.AsBot(channel));
     }
 
@@ -104,16 +132,25 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
     /// <summary>Подставленные владельцы. У стенда без подстановки не участвуют.</summary>
     public StubAuthority Owners { get; }
 
-    /// <summary>Стенд с подставленными владельцами права.</summary>
-    public static Task<BroadcastsUnderTest> Start() => Launch(new StubAuthority());
+    /// <summary>Подставленный Auction. У стенда без подстановки не участвует.</summary>
+    public StubEngagement Auction { get; }
+
+    /// <summary>Стенд с подставленными владельцами права и Auction.</summary>
+    public static Task<BroadcastsUnderTest> Start() => Launch(new StubAuthority(), new StubEngagement());
 
     /// <summary>
     /// Стенд с composition root как есть: адреса Meetups и Identity не заданы,
     /// и сервис обязан отказать, а не разослать без проверки.
     /// </summary>
-    public static Task<BroadcastsUnderTest> StartWithoutOwners() => Launch(owners: null);
+    public static Task<BroadcastsUnderTest> StartWithoutOwners() => Launch(owners: null, auction: null);
 
-    private static async Task<BroadcastsUnderTest> Launch(StubAuthority? owners)
+    /// <summary>
+    /// Стенд с подставленными владельцами права, но без адреса Auction, как в
+    /// профиле без него: объявление «всем» работает, фильтр отказывает.
+    /// </summary>
+    public static Task<BroadcastsUnderTest> StartWithoutAuction() => Launch(new StubAuthority(), auction: null);
+
+    private static async Task<BroadcastsUnderTest> Launch(StubAuthority? owners, StubEngagement? auction)
     {
         var database = new IsolatedDatabase();
         SiloUnderTest? silo = null;
@@ -125,9 +162,16 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
                 ? await SiloUnderTest.Start(database.ConnectionString)
                 : await SiloUnderTest.StartWith(
                     database.ConnectionString,
-                    services => services.AddSingleton<IBroadcastAuthority>(owners));
+                    services =>
+                    {
+                        services.AddSingleton<IBroadcastAuthority>(owners);
+                        if (auction is not null)
+                        {
+                            services.AddSingleton<IAuctionEngagement>(auction);
+                        }
+                    });
 
-            return new BroadcastsUnderTest(database, silo, GrpcChannel.ForAddress(silo.Address), owners);
+            return new BroadcastsUnderTest(database, silo, GrpcChannel.ForAddress(silo.Address), owners, auction);
         }
         catch
         {

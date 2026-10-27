@@ -1,5 +1,6 @@
 using Auction.V1;
 using Notifications.Auction;
+using LotStepWindow = Notifications.Auction.LotStepWindow;
 using Notifications.Reminders;
 using Shouldly;
 using Xunit;

@@ -1,5 +1,7 @@
 using Auction.V1;
 using Notifications.Auction;
+// Своя запись, а не одноимённое сообщение auction_service.proto (PER-778).
+using LotStepWindow = Notifications.Auction.LotStepWindow;
 
 namespace Notifications.Reminders;
 

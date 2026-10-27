@@ -1358,10 +1358,12 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// Автор адресатом не исключается: он держатель права ставок, как все, и
     /// видит то же, что получили остальные.
     /// </remarks>
+    /// <param name="excluded">Кого фильтр аудитории (PER-778) убрал из держателей права ставок.</param>
     internal static async Task<FactCount> AddAuctionNotice(
         UnitOfWork work,
         AcceptedBroadcast broadcast,
         Guid meetupId,
+        IReadOnlySet<Guid> excluded,
         DateTimeOffset now,
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
@@ -1370,7 +1372,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             ?? throw new ArgumentException("an auction notice carries its button", nameof(broadcast));
         var titles = await work.Query<string>(VisibleMeetupTitleSql, new { MeetupId = meetupId }, cancellationToken);
         var title = titles.Count == 0 ? "" : titles[0];
-        var audience = await AuctionNoticeAudience(work, cancellationToken);
+        var audience = await AuctionNoticeAudience(work, excluded, cancellationToken);
 
         return await Insert(
             work,
@@ -1384,16 +1386,28 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             cancellationToken);
     }
 
-    internal static async Task<int> CountAuctionNoticeRecipients(UnitOfWork work, CancellationToken cancellationToken) =>
-        EnabledOf(await AuctionNoticeAudience(work, cancellationToken)).Length;
-
-    private static Task<IReadOnlyList<AudienceRow>> AuctionNoticeAudience(
+    internal static async Task<int> CountAuctionNoticeRecipients(
         UnitOfWork work,
+        IReadOnlySet<Guid> excluded,
         CancellationToken cancellationToken) =>
-        work.Query<AudienceRow>(
+        EnabledOf(await AuctionNoticeAudience(work, excluded, cancellationToken)).Length;
+
+    // Исключённые фильтром аудитории (PER-778) — не «подавленные» настройкой:
+    // они не адресаты этого объявления и в счёт подавленных не входят. Список
+    // приходит от Auction на время команды и в SQL не уходит: держателей права
+    // ставок сотни, и отсев в памяти дешевле параметра-массива.
+    private static async Task<IReadOnlyList<AudienceRow>> AuctionNoticeAudience(
+        UnitOfWork work,
+        IReadOnlySet<Guid> excluded,
+        CancellationToken cancellationToken)
+    {
+        var holders = await work.Query<AudienceRow>(
             AuctionAnnouncementAudienceSql,
             new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
             cancellationToken);
+
+        return excluded.Count == 0 ? holders : holders.Where(row => !excluded.Contains(row.IdentityId)).ToList();
+    }
 
     internal static async Task<int> CountOrganizerRecipients(
         UnitOfWork work,

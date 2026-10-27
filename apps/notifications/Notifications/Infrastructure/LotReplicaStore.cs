@@ -3,6 +3,9 @@ using System.Text.Json;
 using Auction.V1;
 using Dapper;
 using Notifications.Auction;
+// Своя запись, а не одноимённое сообщение auction_service.proto (PER-778).
+using LotStepWindow = Notifications.Auction.LotStepWindow;
+using LotSnapshot = Notifications.Auction.LotSnapshot;
 using Notifications.Reminders;
 using Npgsql;
 

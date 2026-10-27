@@ -1,4 +1,5 @@
 using Grpc.Core;
+using Notifications.Broadcasts;
 using Notifications.Infrastructure;
 using Notifications.Transport;
 using Notifications.V1;
@@ -289,6 +290,31 @@ public class RequestValidationTests
     public void AuctionNotice_WithoutButton_IsAcceptedWithoutButton()
     {
         RequestValidation.AuctionNotice(null, null).ShouldBe(new AuctionNoticeContent(null, null));
+    }
+
+    [Fact]
+    public void AuctionNotice_UnspecifiedAudience_ReadsAsAll()
+    {
+        RequestValidation.AuctionNotice(null, null, AuctionNoticeAudience.Unspecified).Audience.ShouldBe(NoticeAudience.All);
+        RequestValidation.AuctionNotice(null, null, AuctionNoticeAudience.All).Audience.ShouldBe(NoticeAudience.All);
+    }
+
+    [Theory]
+    [InlineData(AuctionNoticeAudience.NotInRaffle, NoticeAudience.NotInRaffle)]
+    [InlineData(AuctionNoticeAudience.WithoutPredictions, NoticeAudience.WithoutPredictions)]
+    [InlineData(AuctionNoticeAudience.NotInRaffleOrWithoutPredictions, NoticeAudience.NotInRaffleOrWithoutPredictions)]
+    public void AuctionNotice_NarrowingAudience_IsCarried(AuctionNoticeAudience contract, NoticeAudience expected)
+    {
+        RequestValidation.AuctionNotice(null, null, contract).Audience.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void AuctionNotice_UnknownAudience_IsRejected()
+    {
+        Code(() => RequestValidation.AuctionNotice(null, null, (AuctionNoticeAudience)99))
+            .ShouldBe(StatusCode.InvalidArgument);
+        Code(() => RequestValidation.NoticeAudience((AuctionNoticeAudience)99))
+            .ShouldBe(StatusCode.InvalidArgument);
     }
 
     [Fact]
