@@ -202,6 +202,8 @@ public class NotificationRelayTests
         await Execute(db, Insert, new
         {
             Id = id,
+            Type = NotificationFacts.MeetupChangedType,
+            CauseKind = NotificationFacts.MeetupEventCause,
             Payload = payload,
             CreatedAt = createdAt,
             DispatchedAt = (DateTime?)null,
