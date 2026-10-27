@@ -10108,7 +10108,12 @@ async function handlePromoVideoAnswer(
     use_case: useCase,
     identity_id: person.identityId,
   });
-  if (ctx.message?.video === undefined) {
+  // Видео без звуковой дорожки Telegram присылает анимацией (PER-801): пост
+  // в чат медиа уходит тем же `copyMessage`.
+  if (
+    ctx.message?.video === undefined &&
+    ctx.message?.animation === undefined
+  ) {
     // Тот же вопрос заново, а прежний закрывается.
     await askQuestion(
       ctx,

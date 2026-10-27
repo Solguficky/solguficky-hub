@@ -105,6 +105,7 @@ import {
   removeLabel,
   screenText,
   toAuctionRoot,
+  toCard,
   toggleLabel,
   withAccount,
   withNav,
@@ -440,6 +441,24 @@ function visibilityLine(console: AuctionConsoleView): string {
     : "Виден участникам.";
 }
 
+// Скрытая сходка закрывает открытие недели (PER-801): пульт говорит это до
+// «Открыть онлайн-неделю», а не отказом после «Да».
+function meetupHiddenLines(console: AuctionConsoleView): string[] {
+  return console.meetupHidden === true
+    ? ["Сходка скрыта — неделя не откроется, пока её не опубликуют."]
+    : [];
+}
+
+// Вход к скрытой сходке, где её публикуют (PER-801): цель словом, как
+// «Идущий аукцион» исхода занятого слота.
+const meetupHiddenLabel = "Сходка";
+
+function meetupHiddenData(console: AuctionConsoleView): string | undefined {
+  return console.meetupHidden === true && console.meetupId !== undefined
+    ? toCard(uuidToToken(console.meetupId)).data
+    : undefined;
+}
+
 // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
 // торгов. Пульт называет его, пока финал впереди, — иначе анонс уже не
 // меняется, и называть его незачем.
@@ -482,6 +501,7 @@ function statusLines(view: ConsoleScreenView): string[] {
     case "draft":
       return [
         visibilityLine(view.console),
+        ...meetupHiddenLines(view.console),
         "Сроки недели не заданы.",
         ...finalTimeLines(view.console, view),
       ];
@@ -489,11 +509,13 @@ function statusLines(view: ConsoleScreenView): string[] {
       return week === undefined
         ? [
             visibilityLine(view.console),
+            ...meetupHiddenLines(view.console),
             "Сроки недели не заданы.",
             ...finalTimeLines(view.console, view),
           ]
         : [
             visibilityLine(view.console),
+            ...meetupHiddenLines(view.console),
             weekLine(week, view),
             finalLine(week),
             ...finalTimeLines(view.console, view),
@@ -991,7 +1013,15 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
         );
       }
     }
-    nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
+    // У скрытой сходки неделя не откроется (PER-801): на месте открытия —
+    // вход к сходке, а не «Да», которое Auction отказал бы. Своим рядом
+    // пульт с призом вышел бы за потолок рядов.
+    const meetup = meetupHiddenData(console);
+    if (meetup === undefined) {
+      nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
+    } else {
+      nextRow(keyboard).text(meetupHiddenLabel, meetup);
+    }
   } else if (console.status === "prebidding") {
     // После открытия окна только видны: править их уже нельзя. Ряд есть и
     // без окон: в нём запускается окно по ходу торгов (PER-615).
@@ -1002,6 +1032,11 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
   if (editable) {
+    // У запланированного вход к сходке стоит рядом с открытием недели.
+    const meetup = scheduled ? undefined : meetupHiddenData(console);
+    if (meetup !== undefined) {
+      nextRow(keyboard).text(meetupHiddenLabel, meetup);
+    }
     nextRow(keyboard).text(
       removeLabel("Удалить аукцион"),
       consoleDiscardData(auction),
