@@ -17,6 +17,12 @@ public enum AuthorityVerdict
     /// <summary>Право сейчас не подтвердить: владелец недоступен или не ответил в срок.</summary>
     Unavailable,
 
+    /// <summary>
+    /// Право есть, но ресурс в состоянии, где рассылка закрыта: объявление
+    /// аукциона отменённой сходки (PER-764).
+    /// </summary>
+    Closed,
+
     /// <summary>Проверка сломана: владелец ответил тем, чего честный вызов не получает.</summary>
     Failed,
 }
@@ -108,16 +114,21 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
 
     // Объявление аукциона принимает то же отношение, что команды аукциона у
     // Auction, — «ведущий аукциона», держатель run_auctions (ADR-070, PER-652).
-    // Состояние сходки из ответа не читается: объявление ворот Auction не
-    // наследует, а об отменённой сходке ведущий вправе сказать, как организатор.
+    // Из ворот состояния Auction объявление берёт одни — отменённую сходку:
+    // кнопка вела бы к аукциону, команды которого Auction уже закрыл. Скрытый
+    // и удалённый аукцион Notifications на команде не знает (PER-780).
     public Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded) =>
-        AskMeetups(authorId, meetupId, MeetupRelation.AuctionRunner, forwarded);
+        AskMeetups(authorId, meetupId, MeetupRelation.AuctionRunner, forwarded, standing =>
+            standing.Lifecycle == MeetupLifecycle.Cancelled
+                ? new AuthorityAnswer(AuthorityVerdict.Closed, "meetups: meetup cancelled")
+                : AuthorityAnswer.Granted);
 
     private async Task<AuthorityAnswer> AskMeetups(
         Guid authorId,
         Guid meetupId,
         MeetupRelation relation,
-        Forwarded forwarded)
+        Forwarded forwarded,
+        Func<MeetupAuthority, AuthorityAnswer>? gate = null)
     {
         if (meetups is null)
         {
@@ -133,8 +144,8 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
 
         try
         {
-            await meetups(request, Headers(forwarded), Due(forwarded), forwarded.Cancellation);
-            return AuthorityAnswer.Granted;
+            var standing = await meetups(request, Headers(forwarded), Due(forwarded), forwarded.Cancellation);
+            return gate?.Invoke(standing) ?? AuthorityAnswer.Granted;
         }
         catch (RpcException declined)
         {

@@ -407,6 +407,7 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
                 StatusCode.Unavailable,
                 "the owner of the resource is unavailable and the right is not confirmed"),
             (AuthorityVerdict.Failed, _) => throw Refused(StatusCode.Internal, "the right check failed"),
+            (AuthorityVerdict.Closed, _) => throw Refused(StatusCode.FailedPrecondition, "the meetup is cancelled"),
 
             (_, BroadcastOutcome.Accepted accepted) => Accepted(broadcastId, accepted.AcceptedAt, created: true),
             (_, BroadcastOutcome.Repeated repeated) => Accepted(broadcastId, repeated.AcceptedAt, created: false),
@@ -431,6 +432,7 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
                 StatusCode.Unavailable,
                 "the owner of the resource is unavailable and the right is not confirmed"),
             (AuthorityVerdict.Failed, _) => throw Refused(StatusCode.Internal, "the right check failed"),
+            (AuthorityVerdict.Closed, _) => throw Refused(StatusCode.FailedPrecondition, "the meetup is cancelled"),
             (_, AudienceRead.MeetupNotReplicated) => throw Refused(
                 StatusCode.Unavailable,
                 "the meetup is not replicated yet"),

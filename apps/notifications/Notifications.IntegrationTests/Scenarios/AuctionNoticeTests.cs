@@ -18,6 +18,7 @@ namespace Notifications.IntegrationTests.Scenarios;
 public class AuctionNoticeTests
 {
     private static readonly AuthorityAnswer Denied = new(AuthorityVerdict.Denied, "stub");
+    private static readonly AuthorityAnswer Closed = new(AuthorityVerdict.Closed, "stub");
 
     private static string NewId() => Guid.CreateVersion7().ToString();
 
@@ -237,18 +238,56 @@ public class AuctionNoticeTests
         (await env.Facts(id)).ShouldHaveSingleItem().Parsed().AuctionNotice.MeetupTitle.ShouldBeEmpty();
     }
 
+    /// <summary>
+    /// Кнопка необязательна: без неё объявление уходит одним текстом, а тот же
+    /// ключ с кнопкой — уже другое содержимое и конфликт.
+    /// </summary>
     [Fact]
-    public async Task When_ButtonMissing_Expect_InvalidArgumentWithoutAskingMeetups()
+    public async Task When_ButtonMissing_Expect_FactsWithoutButtonAndConflictWithButton()
     {
         await using var env = await BroadcastsUnderTest.Start();
+        var meetupId = await Meetup(env.Db);
         var author = await Person(env.Db, AdminHolding);
-        var request = Notice(author, NewId(), NewId());
+        await Person(env.Db, MemberHolding);
+        var id = NewId();
+        var request = Notice(author, meetupId, id);
         request.Button = null;
 
-        var refused = await Should.ThrowAsync<RpcException>(() =>
-            env.Client.BroadcastAuctionNoticeAsync(request, Plain).ResponseAsync);
+        var accepted = await env.Client.BroadcastAuctionNoticeAsync(request, Plain);
+        var withButton = await Should.ThrowAsync<RpcException>(() =>
+            env.Client.BroadcastAuctionNoticeAsync(Notice(author, meetupId, id), Plain).ResponseAsync);
+        var repeated = await env.Client.BroadcastAuctionNoticeAsync(request, Plain);
 
-        refused.StatusCode.ShouldBe(StatusCode.InvalidArgument);
-        env.Owners.Asked.ShouldBeEmpty();
+        accepted.Created.ShouldBeTrue();
+        repeated.Created.ShouldBeFalse();
+        withButton.StatusCode.ShouldBe(StatusCode.AlreadyExists);
+        var facts = await env.Facts(id);
+        facts.ShouldNotBeEmpty();
+        facts.ShouldAllBe(fact => fact.Parsed().AuctionNotice.Button == null);
+    }
+
+    /// <summary>
+    /// Отменённая сходка закрывает объявление её аукциона: ведущему —
+    /// FAILED_PRECONDITION, ключ не принят, предпросмотр не называет числа.
+    /// </summary>
+    [Fact]
+    public async Task When_MeetupCancelled_Expect_FailedPreconditionAndNothingAccepted()
+    {
+        await using var env = await BroadcastsUnderTest.Start();
+        env.Owners.Meetups = Closed;
+        var meetupId = await Meetup(env.Db);
+        var author = await Person(env.Db, AdminHolding);
+        await Person(env.Db, MemberHolding);
+        var id = NewId();
+
+        var refused = await Should.ThrowAsync<RpcException>(() =>
+            env.Client.BroadcastAuctionNoticeAsync(Notice(author, meetupId, id), Plain).ResponseAsync);
+        var previewRefused = await Should.ThrowAsync<RpcException>(() =>
+            env.Client.PreviewAuctionNoticeAsync(Preview(author, meetupId), Plain).ResponseAsync);
+
+        refused.StatusCode.ShouldBe(StatusCode.FailedPrecondition);
+        previewRefused.StatusCode.ShouldBe(StatusCode.FailedPrecondition);
+        (await env.Facts(id)).ShouldBeEmpty();
+        (await env.Accepted()).ShouldBe(0);
     }
 }

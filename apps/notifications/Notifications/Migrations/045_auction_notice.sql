@@ -24,10 +24,11 @@ ALTER TABLE broadcast DROP CONSTRAINT IF EXISTS broadcast_meetup_by_kind;
 ALTER TABLE broadcast ADD CONSTRAINT broadcast_meetup_by_kind
     CHECK ((kind IN ('organizer_message', 'auction_notice')) = (meetup_id IS NOT NULL));
 
--- Кнопка есть ровно у объявления аукциона, лот кнопки — ровно у вида «лот».
+-- Кнопка бывает только у объявления аукциона, и у него она необязательна;
+-- лот кнопки — ровно у вида «лот».
 ALTER TABLE broadcast DROP CONSTRAINT IF EXISTS broadcast_button_by_kind;
 ALTER TABLE broadcast ADD CONSTRAINT broadcast_button_by_kind
-    CHECK ((kind = 'auction_notice') = (button_view IS NOT NULL));
+    CHECK (button_view IS NULL OR kind = 'auction_notice');
 
 ALTER TABLE broadcast DROP CONSTRAINT IF EXISTS broadcast_button_view_known;
 ALTER TABLE broadcast ADD CONSTRAINT broadcast_button_view_known

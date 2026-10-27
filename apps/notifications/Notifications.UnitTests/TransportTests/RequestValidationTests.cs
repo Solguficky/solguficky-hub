@@ -257,8 +257,7 @@ public class RequestValidationTests
     {
         var notice = RequestValidation.AuctionNotice(new AuctionNoticeButton { View = AuctionNoticeView.Raffle }, null);
 
-        notice.Button.View.ShouldBe("raffle");
-        notice.Button.LotId.ShouldBeNull();
+        notice.Button.ShouldBe(new NoticeButton("raffle", null));
         notice.Photo.ShouldBeNull();
     }
 
@@ -269,8 +268,7 @@ public class RequestValidationTests
             new AuctionNoticeButton { View = AuctionNoticeView.Lot, LotId = CanonicalUuidV7 },
             new AuctionNoticePhoto { LotPhoto = new AuctionNoticeLotPhoto { LotId = CanonicalUuidV7, PhotoId = OtherUuidV7 } });
 
-        notice.Button.View.ShouldBe("lot");
-        notice.Button.LotId.ShouldBe(Guid.Parse(CanonicalUuidV7));
+        notice.Button.ShouldBe(new NoticeButton("lot", Guid.Parse(CanonicalUuidV7)));
         notice.Photo.ShouldBe(new NoticePhoto.LotPhoto(Guid.Parse(CanonicalUuidV7), Guid.Parse(OtherUuidV7)));
     }
 
@@ -288,9 +286,9 @@ public class RequestValidationTests
     }
 
     [Fact]
-    public void AuctionNotice_WithoutButton_IsRejected()
+    public void AuctionNotice_WithoutButton_IsAcceptedWithoutButton()
     {
-        Code(() => RequestValidation.AuctionNotice(null, null)).ShouldBe(StatusCode.InvalidArgument);
+        RequestValidation.AuctionNotice(null, null).ShouldBe(new AuctionNoticeContent(null, null));
     }
 
     [Fact]
