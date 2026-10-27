@@ -28,6 +28,8 @@
       "messageId": 4321
     },
     "happyHourPeriodCreated": null,
-    "happyHourPeriodDeleted": null
+    "happyHourPeriodDeleted": null,
+    "happyHourLotTermsSet": null,
+    "happyHourLotTermsCleared": null
   }
 }

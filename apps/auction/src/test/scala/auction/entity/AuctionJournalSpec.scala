@@ -254,6 +254,45 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 7)) shouldBe after
     }
 
+    "keeps the stored form of the terms of lots in periods and of a snapshot that holds them equal to golden files" in {
+      def at(time: String) = java.time.Instant.parse(time)
+      val kept = HappyHourPeriod(HappyHourPeriod.idOf(op(5)), at("2026-10-05T12:00:00Z"), at("2026-10-05T14:00:00Z"))
+      val dropped = HappyHourPeriod(HappyHourPeriod.idOf(op(6)), at("2026-10-06T12:00:00Z"), at("2026-10-06T13:00:00Z"))
+      val keptTerms = HappyHourTerms(Some(money(50)), Some(money(600)))
+      val droppedTerms = HappyHourTerms(None, Some(money(500)))
+      keepsGolden("happy-hour-lot-terms-set", stored(AuctionEvent.HappyHourLotTermsSet(kept.id, lot, keptTerms), 7))
+      keepsGolden("happy-hour-lot-terms-cleared", stored(AuctionEvent.HappyHourLotTermsCleared(kept.id, lot), 8))
+      val after = Auction.replay(
+        prebidding,
+        List(
+          AuctionEnvelope(5, op(5), AuctionEvent.HappyHourPeriodCreated(kept)),
+          AuctionEnvelope(6, op(6), AuctionEvent.HappyHourPeriodCreated(dropped)),
+          AuctionEnvelope(7, op(7), AuctionEvent.HappyHourLotTermsSet(kept.id, lot, keptTerms)),
+          AuctionEnvelope(8, op(8), AuctionEvent.HappyHourLotTermsSet(dropped.id, lot, droppedTerms)),
+          AuctionEnvelope(9, op(9), AuctionEvent.HappyHourPeriodDeleted(dropped.id))
+        )
+      )
+      after.periodTerms shouldBe List(
+        PeriodLotTerms(kept.id, lot, Some(keptTerms), op(7)),
+        PeriodLotTerms(dropped.id, lot, None, op(9))
+      )
+      keepsGolden("auction-snapshot-happy-hour-terms", AuctionJournal.storeAuction(after, sequence = 9))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 9)) shouldBe after
+    }
+
+    // Снимок, записанный до условий лотов в периодах (PER-786): аукцион без них.
+    "reads a snapshot written before the terms of lots in periods as an auction without them" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).periodTerms shouldBe empty
+    }
+
+    "refuses terms of a lot in a period that set neither a step nor a starting price" in {
+      val terms = HappyHourTerms(None, Some(money(1)))
+      val body = stored(AuctionEvent.HappyHourLotTermsSet(HappyHourPeriod.idOf(op(5)), lot, terms), 7).event
+      val section = body.happyHourLotTermsSet.map(_.copy(terms = StoredHappyHourTerms(None, None)))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(body.copy(happyHourLotTermsSet = section))
+    }
+
     // Снимок, записанный до периодов «Счастливых часов»: аукцион без периодов.
     "reads a snapshot written before the happy hour periods as an auction without one" in {
       val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))

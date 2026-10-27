@@ -118,7 +118,9 @@
         "askAdvanced": null,
         "lotWithdrawn": null,
         "stepWindowAdded": null,
-        "participantRemoved": null
+        "participantRemoved": null,
+        "periodWindowSet": null,
+        "periodWindowCleared": null
       }
     },
     {
@@ -178,7 +180,9 @@
         "askAdvanced": null,
         "lotWithdrawn": null,
         "stepWindowAdded": null,
-        "participantRemoved": null
+        "participantRemoved": null,
+        "periodWindowSet": null,
+        "periodWindowCleared": null
       }
     },
     {
@@ -240,7 +244,9 @@
         "askAdvanced": null,
         "lotWithdrawn": null,
         "stepWindowAdded": null,
-        "participantRemoved": null
+        "participantRemoved": null,
+        "periodWindowSet": null,
+        "periodWindowCleared": null
       }
     },
     {
@@ -272,7 +278,9 @@
         "askAdvanced": null,
         "lotWithdrawn": null,
         "stepWindowAdded": null,
-        "participantRemoved": null
+        "participantRemoved": null,
+        "periodWindowSet": null,
+        "periodWindowCleared": null
       }
     },
     {
@@ -299,7 +307,9 @@
         "askAdvanced": null,
         "lotWithdrawn": null,
         "stepWindowAdded": null,
-        "participantRemoved": null
+        "participantRemoved": null,
+        "periodWindowSet": null,
+        "periodWindowCleared": null
       }
     }
   ]

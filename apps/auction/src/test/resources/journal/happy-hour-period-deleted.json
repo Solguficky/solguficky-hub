@@ -28,6 +28,8 @@
     "happyHourPeriodCreated": null,
     "happyHourPeriodDeleted": {
       "periodId": "6c89abdd-491a-5388-917e-649b7912f6d3"
-    }
+    },
+    "happyHourLotTermsSet": null,
+    "happyHourLotTermsCleared": null
   }
 }

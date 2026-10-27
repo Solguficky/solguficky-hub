@@ -2,12 +2,13 @@ import {
   auctionChronicleButtonLabel,
   dayChronicleButtonLabel,
 } from "../src/auction-day-chronicle.js";
+import { predictionButtonLabel } from "../src/auction-prediction.js";
+import { predictionResultsButtonLabel } from "../src/auction-prediction-results.js";
 import { raffleButtonLabel } from "../src/auction-raffle.js";
 import {
   followLabel,
   lotNextLabel,
   lotPrevLabel,
-  lotsLabel,
   unfollowLabel,
 } from "../src/auction-standing.js";
 import {
@@ -81,12 +82,14 @@ const lotCardPairs = [
   `${refreshLabel}|${lotNextLabel}`,
 ];
 
-// Корень аукциона у обоих ботов (решение владельца по прогону 14.10, №66;
-// пересматривает «Розыгрыш своим рядом» PER-669): лоты и розыгрыш — одним
-// рядом. «Хроники дня» и «Статистика» (PER-770) — торги аукциона за сутки и
-// за всё время, одна группа.
+// Корень аукциона у обоих ботов (решение владельца по прогону stage 27.10,
+// PER-798; пересматривает №66 прогона 14.10): «Лоты» — своим рядом, а
+// бесплатные поводы — розыгрыш и прогнозы или, без прогнозов, их итоги —
+// одним рядом. «Хроники дня» и «Статистика» (PER-770) — торги аукциона за
+// сутки и за всё время, одна группа.
 const auctionRootPairs = [
-  `${lotsLabel}|${raffleButtonLabel}`,
+  `${raffleButtonLabel}|${predictionButtonLabel}`,
+  `${raffleButtonLabel}|${predictionResultsButtonLabel}`,
   `${dayChronicleButtonLabel}|${auctionChronicleButtonLabel}`,
 ];
 
