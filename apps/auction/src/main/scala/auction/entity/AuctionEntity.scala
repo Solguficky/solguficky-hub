@@ -247,6 +247,13 @@ object AuctionEntity {
       replyTo: ActorRef[Either[FinalTimeRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Порядок и разделы ленты (PER-719): раскладка целиком. Ответ — после записи. */
+  final case class Arrange(
+      command: SetLotLayout,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[LotLayoutRejected, AuctionAnswer]]
+  ) extends Command
+
   /** Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. Ответ — после записи. */
   final case class Instruct(
       command: SetPaymentInstructions,
@@ -1348,6 +1355,16 @@ object AuctionEntity {
                 state.auction,
                 Auction.decide(state.auction, announce),
                 announce.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
+            case Arrange(arrange, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, arrange),
+                arrange.opId,
                 initiator,
                 replyTo,
                 clock,

@@ -2,6 +2,7 @@ import type {
   AuctionPort,
   AuctionSummaryView,
   LotImagePort,
+  LotLayoutView,
   LotPhotoView,
   LotView,
   Money,
@@ -412,6 +413,21 @@ export type DeleteLotSetResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// Порядок и разделы ленты (PER-719): раскладка целиком одной командой. Отказ
+// лота называет первый лот запроса вне реестра — сначала в разделах.
+export type LotLayoutResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  // Живой финал начался: лента идёт порядком зала (PER-639).
+  | { kind: "final-already-started" }
+  | { kind: "auction-already-finished" }
+  | { kind: "auction-already-cancelled" }
+  | { kind: "lot-not-in-auction"; lotId: string }
+  | AuctionFailure;
+
 export type FinalistRefusal =
   | "not-in-prebidding"
   | "lot-not-in-auction"
@@ -711,6 +727,25 @@ export type AssignRaffleWinnerResult =
   | { kind: "already-drawn"; winningTicket: number }
   | AuctionFailure;
 
+// Смена приза идущего розыгрыша (PER-737; ADR-066, дополнение 2026-10-25):
+// принятая — розыгрыш с новым призом, повтор того же ключа или тот же приз —
+// тоже принятая. Пустой и длинный текст — отказы `prize-blank` и
+// `prize-too-long`, как у приза конфигурации; `already-drawn` — итог уже есть
+// и приз за победителем, `without-result` — итога не будет. `auction-not-found`
+// — аукциона нет, кнопка устарела.
+export type ChangeRafflePrizeResult =
+  | { kind: "ok"; raffle: RaffleView }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | { kind: "raffle-not-found" }
+  | { kind: "prize-blank" }
+  | { kind: "prize-too-long" }
+  | { kind: "already-drawn"; winningTicket: number }
+  | { kind: "without-result" }
+  | AuctionFailure;
+
 // Аукционы сообщества от запланированного до финала (`ListAuctions` ACTIVE):
 // по ним пульт узнаёт, у кого идут торги, до подтверждения открытия недели.
 export type ActiveAuctionsResult =
@@ -809,6 +844,14 @@ export type AuctionConsoles = {
     set: { auctionId: string; lotSetId: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<DeleteLotSetResult>;
+  // Порядок и разделы ленты (PER-719): раскладка заменяется целиком, поэтому
+  // команда несёт её всю. Повтор того же `opId` с той же раскладкой Auction
+  // принимает.
+  setLotLayout(
+    person: Person,
+    command: { auctionId: string; layout: LotLayoutView; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<LotLayoutResult>;
   selectForFinal(
     person: Person,
     mark: FinalistMark,
@@ -866,6 +909,13 @@ export type AuctionConsoles = {
     command: { auctionId: string; ticket: number; opId: string },
     meta?: RpcMetadata,
   ): Promise<AssignRaffleWinnerResult>;
+  // Смена приза идущего розыгрыша (PER-737): текст целиком, ключ рождает
+  // край на нажатие «Да». Конфигурацию аукциона команда не трогает.
+  changeRafflePrize(
+    person: Person,
+    command: { auctionId: string; prize: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<ChangeRafflePrizeResult>;
   // Активные аукционы сообщества: слот торгов один (PER-603), и пульт
   // предупреждает об идущих торгах до подтверждения открытия (PER-618).
   activeAuctions(

@@ -13,6 +13,7 @@
     "poolFixed": null,
     "raffleDrawn": null,
     "raffleCancelled": null,
-    "winnerAssigned": null
+    "winnerAssigned": null,
+    "prizeChanged": null
   }
 }

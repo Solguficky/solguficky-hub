@@ -16,7 +16,7 @@ public sealed class InvoiceNotificationGrain(
     TimeProvider clock,
     ILogger<InvoiceNotificationGrain> logger) : Grain, IInvoiceNotificationGrain, IRemindable
 {
-    /// <summary>Имя reminder'а. Одно на грин: заданий у счёта два, а грин один.</summary>
+    /// <summary>Имя reminder'а. Одно на грин: заданий у счёта до трёх, а грин один.</summary>
     private const string ReminderName = "invoice-reminder";
 
     /// <summary>
@@ -27,9 +27,10 @@ public sealed class InvoiceNotificationGrain(
     private static readonly TimeSpan ReminderRetryPeriod = TimeSpan.FromHours(1);
 
     /// <summary>
-    /// Моменты напоминания о счёте: после победы и перед сроком оплаты.
+    /// Моменты напоминания о счёте: за 24 часа, за 12 часов и за час до срока
+    /// оплаты.
     /// </summary>
-    private static readonly InvoiceReminderKind[] Kinds = [InvoiceReminderKind.AfterWin, InvoiceReminderKind.BeforeDue];
+    private static readonly InvoiceReminderKind[] Kinds = InvoiceReminderKinds.Scheduled;
 
     private InvoiceReminderOptions Options => options.Value;
 
@@ -84,8 +85,8 @@ public sealed class InvoiceNotificationGrain(
                 result.Facts.Suppressed);
         }
 
-        // Reminder живёт, пока жив хоть один момент: после срабатывания первого
-        // второй ещё ждёт своего.
+        // Reminder живёт, пока жив хоть один момент: после срабатывания одного
+        // следующие ещё ждут своего.
         await Settle(invoiceId, token);
 
         return result.Outcome == InvoiceFireOutcome.Sent;
@@ -136,9 +137,9 @@ public sealed class InvoiceNotificationGrain(
                 kind, invoiceId, decision.DueAt);
         }
 
-        // Решения по обоим видам применяются одной транзакцией: два задания —
-        // два момента одного напоминания, и падение между их записями оставило
-        // бы счёт без второго момента навсегда.
+        // Решения по всем видам применяются одной транзакцией: задания —
+        // моменты одного напоминания, и падение между их записями оставило бы
+        // счёт без части моментов навсегда.
         await tasks.Apply(invoiceId, creates, cancel, Reason(replica, settled, overdue), Now(), token);
 
         await Settle(invoiceId, token);
@@ -201,11 +202,14 @@ public sealed class InvoiceNotificationGrain(
     /// Момент выставления знает только факт выставления счёта. Пока он не
     /// пришёл, напоминать не о чем, и задание не заводится.
     ///
-    /// Напоминание приходит только пока срок оплаты не прошёл: момент позже
-    /// срока — шум, и релей снял бы такой факт по сроку годности, оставив
-    /// задание сработавшим. Срок оплаты Auction считает от продажи, а счёт
-    /// выставляется позже продажи, поэтому при коротком сроке напоминание могло
-    /// бы оказаться позже него.
+    /// Момент не позже выставления с допуском пропускается: он совпал бы с
+    /// вестью о покупке (PER-726). Срок оплаты не меньше суток, поэтому
+    /// моменты за 12 часов и за час остаются у каждого счёта.
+    ///
+    /// Уже прошедший момент тоже пропускается: задание заводится при
+    /// выставлении, и прошедший момент бывает только у вида, которого не было,
+    /// — например, пропущенного пересчётом миграции 044. Повтор факта
+    /// выставления не должен разослать такое напоминание с опозданием.
     /// </remarks>
     private DateTimeOffset? Moment(InvoiceReminderKind kind, InvoiceReplica replica)
     {
@@ -214,10 +218,9 @@ public sealed class InvoiceNotificationGrain(
             return null;
         }
 
-        var moment = InvoiceReminderMoments.For(kind, issuedAt, replica.PaymentDueAt, Options.FirstLead,
-            Options.DueLead, Options.MinGap);
+        var moment = InvoiceReminderMoments.For(kind, issuedAt, replica.PaymentDueAt, Options.IssueGap);
 
-        return moment is { } value ? ReminderPlan.ToStoredPrecision(value) : null;
+        return moment is { } value && value > Now() ? ReminderPlan.ToStoredPrecision(value) : null;
     }
 
     /// <summary>
