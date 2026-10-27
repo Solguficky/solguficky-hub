@@ -581,7 +581,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       finalBids: FinalBids = FinalBids.empty,
       invoices: InvoiceGateway = InvoiceGateway.none,
       invoiceViews: InvoiceViews = InvoiceViews.none,
-      prizePhotos: RafflePrizePhotos = RafflePrizePhotos.absent
+      prizePhotos: RafflePrizePhotos = RafflePrizePhotos.absent,
+      raffleByHand: Boolean = false
   ) =
     AuctionGrpcService(
       lots,
@@ -604,6 +605,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       finalBids = finalBids,
       invoices = invoices,
       invoiceViews = invoiceViews,
+      raffleByHand = raffleByHand,
       prizePhotos = prizePhotos
     )
 
@@ -2004,6 +2006,18 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       read.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, None))
       read.reveal shouldBe None
       read.toProtoString should not include raffleSeed.hex
+    }
+
+    // Режим итога до фиксации пула ещё не записан: открытый розыгрыш называет настройку сервиса (PER-799).
+    "names the draw setting of the service while registration is open" in {
+      val open = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty))
+      def read(byHand: Boolean) =
+        service(Unreachable, raffles = open, raffleByHand = byHand)
+          .getRaffle(wire.GetRaffleRequest(Some(viewer), raffleAuction))
+          .futureValue
+          .getRaffle
+      read(byHand = true).drawnByHand shouldBe true
+      read(byHand = false).drawnByHand shouldBe false
     }
 
     "refuses a viewer without the right to bid and a participant without a chosen name before the raffle" in {
