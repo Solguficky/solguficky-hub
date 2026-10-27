@@ -209,6 +209,16 @@ message Notification {
     // The cause is the broadcast command: a repeated command produces no
     // second fact for the same person.
     AuctionNotice auction_notice = 39;
+
+    // A window of reduced bid step started on lots of an auction, told to
+    // every holder of the auction right who does not follow a lot of the
+    // window: a follower receives step_window_started for the same start and
+    // never this one. One fact per recipient and window start, delivered by
+    // the bot of their circle; blocked recipients get nothing. The auction
+    // announcement switch of the auction notification preferences turns it
+    // off, as it does auction_published. A window that already ended, a lot
+    // that left trading and an ended auction produce no fact.
+    StepWindowAnnounced step_window_announced = 40;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -429,6 +439,26 @@ message StepWindowStarted {
   // the step and the end of its own window: two windows that share a start may
   // differ in both.
   repeated StepWindowLot lots = 3;
+}
+
+// A window of reduced bid step started on lots of an auction. The fact names
+// no lots: the recipient follows none of them, and the channel leads to the
+// lot feed of the auction. The step is not carried either: lots of one window
+// start may differ in step.
+message StepWindowAnnounced {
+  // Canonical lowercase UUID with hyphens: the auction the window belongs to.
+  string auction_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string starts_at = 2;
+
+  // RFC 3339 instant in UTC: the first instant after the window. Lots of one
+  // window start may end at different moments; this is the latest of them.
+  string until = 3;
+
+  // Never zero. How many lots in trading have a window that starts at
+  // starts_at and still runs when the fact was written.
+  uint32 lot_count = 4;
 }
 
 // One lot of a StepWindowStarted fact: the window of reduced step the lot
