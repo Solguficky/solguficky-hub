@@ -54,6 +54,7 @@ import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
 import auction.persistence.SlickPredictionStore
+import auction.persistence.SlickRafflePrizePhotos
 import auction.persistence.SlickRaffleTickets
 import auction.persistence.SlickResultsStore
 import auction.prediction.PredictionEntity
@@ -569,7 +570,8 @@ object AuctionNode {
       finalBids = SlickFinalBids(system),
       invoices = invoices,
       invoiceViews = SlickInvoiceViews(system),
-      raffleByHand = raffleByHand
+      raffleByHand = raffleByHand,
+      prizePhotos = SlickRafflePrizePhotos(system)
     )
     GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
   }

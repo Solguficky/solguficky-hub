@@ -179,17 +179,22 @@ import auction.raffle.CancelRegistration
 import auction.raffle.ChangePrize
 import auction.raffle.ChangePrizeRejected
 import auction.raffle.Draw
+import auction.raffle.PrizePhoto
+import auction.raffle.PrizePhotoBytes
 import auction.raffle.Raffle
 import auction.raffle.RaffleDecision
 import auction.raffle.RaffleEnvelope
 import auction.raffle.RaffleEvent
 import auction.raffle.RaffleGateway
+import auction.raffle.RafflePrizePhotos
 import auction.raffle.RaffleState
 import auction.raffle.RaffleTerms
 import auction.raffle.Randomness
 import auction.raffle.Register
 import auction.raffle.RegistrationRejected
+import auction.raffle.RemovePrizePhoto
 import auction.raffle.Seed
+import auction.raffle.SetPrizePhoto
 import auction.watch.AuctionChanges
 import auction.watch.ChangeRegistry
 import org.scalatest.BeforeAndAfterAll
@@ -548,7 +553,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       notes: OperationNotes = OperationNotes.discarded,
       finalBids: FinalBids = FinalBids.empty,
       invoices: InvoiceGateway = InvoiceGateway.none,
-      invoiceViews: InvoiceViews = InvoiceViews.none
+      invoiceViews: InvoiceViews = InvoiceViews.none,
+      prizePhotos: RafflePrizePhotos = RafflePrizePhotos.absent
   ) =
     AuctionGrpcService(
       lots,
@@ -570,7 +576,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       notes = notes,
       finalBids = finalBids,
       invoices = invoices,
-      invoiceViews = invoiceViews
+      invoiceViews = invoiceViews,
+      prizePhotos = prizePhotos
     )
 
   /**
@@ -719,15 +726,21 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       reached :+= command
       Future.successful(assignRefusal.toLeft(raffle))
     }
-    // Смену приза решает настоящее ядро: ответ показывает, что граница отдала розыгрыш после команды.
-    def changePrize(auction: AuctionId, command: ChangePrize) = {
+    // Смену приза и его фото решает настоящее ядро: ответ показывает, что граница отдала розыгрыш после команды.
+    private def decided(command: Any, opId: OpId, decision: Either[ChangePrizeRejected, RaffleDecision]) = {
       reached :+= command
-      Future.successful(Raffle.decide(raffle, command).map {
+      Future.successful(decision.map {
         case RaffleDecision.Accepted(event) =>
-          Raffle.apply(raffle, RaffleEnvelope(raffle.seen.size.toLong + 1, command.opId, event))
+          Raffle.apply(raffle, RaffleEnvelope(raffle.seen.size.toLong + 1, opId, event))
         case RaffleDecision.Repeated(_) | RaffleDecision.Unchanged => raffle
       })
     }
+    def changePrize(auction: AuctionId, command: ChangePrize) =
+      decided(command, command.opId, Raffle.decide(raffle, command))
+    def setPrizePhoto(auction: AuctionId, command: SetPrizePhoto) =
+      decided(command, command.opId, Raffle.decide(raffle, command))
+    def removePrizePhoto(auction: AuctionId, command: RemovePrizePhoto) =
+      decided(command, command.opId, Raffle.decide(raffle, command))
     def get(auction: AuctionId) = Future.successful(raffle)
   }
 
@@ -765,8 +778,39 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def cancel(auction: AuctionId, command: CancelRegistration) = fail("the raffle was reached")
     def assign(auction: AuctionId, command: AssignWinner) = fail("the raffle was reached")
     def changePrize(auction: AuctionId, command: ChangePrize) = fail("the raffle was reached")
+    def setPrizePhoto(auction: AuctionId, command: SetPrizePhoto) = fail("the raffle was reached")
+    def removePrizePhoto(auction: AuctionId, command: RemovePrizePhoto) = fail("the raffle was reached")
     def get(auction: AuctionId) = fail("the raffle was read")
   }
+
+  /** Байты фото приза в памяти: строка на id фото, как `raffle_prize_photo`, и учёт уборок. */
+  private final class PrizePhotos extends RafflePrizePhotos {
+    var rows: Map[UUID, (PrizePhotoBytes, Instant)] = Map.empty
+    var discarded: Vector[(Option[UUID], Instant)] = Vector.empty
+    def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes, at: Instant) =
+      rows.get(photoId) match {
+        case Some((existing, _)) => Future.successful(existing.version == photo.version)
+        case None =>
+          rows += photoId -> (photo, at)
+          Future.successful(true)
+      }
+    def read(auction: AuctionId, photoId: UUID) = Future.successful(rows.get(photoId).map(_._1))
+    def discard(auction: AuctionId, keep: Option[UUID], before: Instant) = {
+      discarded :+= (keep -> before)
+      rows = rows.filter((id, row) => keep.contains(id) || !row._2.isBefore(before))
+      Future.unit
+    }
+  }
+
+  private val jpeg = Array[Byte](0xff.toByte, 0xd8.toByte, 0xff.toByte, 7)
+  private val prizePhotoId = "01890a5d-ac98-7c2b-9f3a-0d1b2c3d4e08"
+  private def prizePhotoRequest(bytes: Array[Byte] = jpeg, photoId: String = prizePhotoId) =
+    wire.SetRafflePrizePhotoRequest(
+      Some(viewer),
+      raffleAuction,
+      photoId,
+      Some(wire.LotImageUpload(ByteString.copyFrom(bytes)))
+    )
 
   /** Аукцион сходки, запланированный с `lot` в реестре: раунд каталога может быть открыт. */
   private def scheduledWithLot: AuctionCommands = withLotAfter()
@@ -1602,6 +1646,145 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val cancelled = Raffle(RaffleState.Cancelled(raffleTerms, Vector(ViewerId), Instant.EPOCH), Map.empty)
       changing(cancelled).reason.isWithoutResult shouldBe true
       changing(Raffle.initial).reason.isRaffleNotFound shouldBe true
+    }
+
+    "sets the prize photo after the meetup confirms the administrator, keeps its bytes and reads them back" in {
+      // Держатель run_auctions видит и скрытый аукцион: чтение байтов не спрашивает read model аукционов.
+      val organizer = viewer.withRights(
+        Seq(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS, AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
+      )
+      val photos = PrizePhotos()
+      val raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty))
+      val grpc =
+        service(
+          Unreachable,
+          auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+          raffles = raffles,
+          prizePhotos = photos
+        )
+      val accepted = grpc.setRafflePrizePhoto(prizePhotoRequest()).futureValue.getAccepted
+      val stored = photos.rows(UUID.fromString(prizePhotoId))._1
+      stored.mediaType shouldBe "image/jpeg"
+      accepted.prizePhoto shouldBe Some(wire.RafflePrizePhoto(prizePhotoId, stored.version))
+      raffles.reached shouldBe Vector(
+        SetPrizePhoto(PrizePhoto(UUID.fromString(prizePhotoId), stored.version), OpId(UUID.fromString(prizePhotoId)))
+      )
+      photos.discarded.map(_._1) shouldBe Vector(Some(UUID.fromString(prizePhotoId)))
+
+      val withPhoto = Raffle(
+        RaffleState.Open(
+          raffleTerms.copy(photo = Some(PrizePhoto(UUID.fromString(prizePhotoId), stored.version))),
+          Vector(ViewerId)
+        ),
+        Map.empty
+      )
+      val read = service(
+        Unreachable,
+        raffles = Raffles(withPhoto),
+        prizePhotos = photos
+      ).getRafflePrizePhoto(wire.GetRafflePrizePhotoRequest(Some(organizer), raffleAuction)).futureValue
+      read.content.toByteArray shouldBe jpeg
+      read.version shouldBe stored.version
+      statusOf(
+        service(
+          Unreachable,
+          raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector.empty), Map.empty))
+        ).getRafflePrizePhoto(wire.GetRafflePrizePhotoRequest(Some(organizer), raffleAuction))
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "refuses an oversized and an unrecognised prize photo before the meetup, the raffle and the store" in {
+      def setting(bytes: Array[Byte]) =
+        service(Unreachable, raffles = UntouchableRaffles)
+          .setRafflePrizePhoto(prizePhotoRequest(bytes))
+          .futureValue
+          .getRefused
+          .reason
+      setting(Array.fill(1024 * 1024 + 1)(0xff.toByte)).imageTooLarge.map(_.maxBytes) shouldBe Some(1024L * 1024)
+      setting(Array[Byte](1, 2, 3)).isUnsupportedImage shouldBe true
+    }
+
+    "answers a repeat of its photo id before the meetup is asked and refuses a stranger before the store" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val photos = PrizePhotos()
+      val first = service(
+        Unreachable,
+        auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+        raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty)),
+        prizePhotos = photos
+      ).setRafflePrizePhoto(prizePhotoRequest()).futureValue.getAccepted
+      val photo = PrizePhoto(UUID.fromString(prizePhotoId), first.getPrizePhoto.version)
+      val key = OpId(photo.photoId)
+      val set = Raffle(
+        RaffleState.Open(raffleTerms.copy(photo = Some(photo)), Vector(ViewerId)),
+        Map(key -> RaffleEnvelope(3, key, RaffleEvent.PrizePhotoSet(photo)))
+      )
+      val again = Raffles(set)
+      val grpc =
+        service(
+          Unreachable,
+          auctions = AuctionCommands(consoleOf(), Unreachable, stranger),
+          raffles = again,
+          prizePhotos = photos
+        )
+      grpc.setRafflePrizePhoto(prizePhotoRequest()).futureValue.getAccepted.prizePhoto shouldBe first.prizePhoto
+      grpc
+        .setRafflePrizePhoto(prizePhotoRequest(jpeg :+ 8.toByte))
+        .futureValue
+        .getRefused
+        .reason
+        .isPhotoConflict shouldBe true
+      again.reached shouldBe empty
+      photos.rows.keySet shouldBe Set(photo.photoId)
+
+      val untouched = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty))
+      val other = "01890a5d-ac98-7c2b-9f3a-0d1b2c3d4e09"
+      service(
+        Unreachable,
+        auctions = AuctionCommands(consoleOf(), Unreachable, stranger),
+        raffles = untouched,
+        prizePhotos = photos
+      ).setRafflePrizePhoto(prizePhotoRequest(photoId = other))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      untouched.reached shouldBe empty
+      photos.rows.keySet shouldBe Set(photo.photoId)
+    }
+
+    "refuses to change the prize photo after the result without storing its bytes, and removes it before" in {
+      val photos = PrizePhotos()
+      val assigned = Raffle(RaffleState.Assigned(raffleTerms, Vector(ViewerId), 1, Instant.EPOCH), Map.empty)
+      def grpc(raffle: Raffle) =
+        service(
+          Unreachable,
+          auctions = AuctionCommands(consoleOf(), Unreachable, granted),
+          raffles = Raffles(raffle),
+          prizePhotos = photos
+        )
+      grpc(assigned)
+        .setRafflePrizePhoto(prizePhotoRequest())
+        .futureValue
+        .getRefused
+        .getAlreadyDrawn
+        .winningTicket shouldBe 1
+      photos.rows shouldBe empty
+      grpc(assigned)
+        .removeRafflePrizePhoto(wire.RemoveRafflePrizePhotoRequest(Some(viewer), raffleAuction, raffleOp))
+        .futureValue
+        .getRefused
+        .getAlreadyDrawn
+        .winningTicket shouldBe 1
+
+      val photo = PrizePhoto(UUID.fromString(prizePhotoId), "v1")
+      val withPhoto = Raffle(RaffleState.Open(raffleTerms.copy(photo = Some(photo)), Vector(ViewerId)), Map.empty)
+      grpc(withPhoto)
+        .removeRafflePrizePhoto(wire.RemoveRafflePrizePhotoRequest(Some(viewer), raffleAuction, raffleOp))
+        .futureValue
+        .getAccepted
+        .prizePhoto shouldBe None
+      photos.discarded.map(_._1) shouldBe Vector(None)
     }
 
     "shows the candidates of a pool that waits for the winner by hand without the seed" in {

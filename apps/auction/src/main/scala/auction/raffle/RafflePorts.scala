@@ -5,6 +5,7 @@ import auction.lot.ParticipantId
 
 import java.time.Clock
 import java.time.Instant
+import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
@@ -48,6 +49,43 @@ trait RaffleTickets {
 
   /** Назначает стирание имён снимка на момент `at`; назначенное раньше не сдвигается. */
   def expireAt(auction: AuctionId, at: Instant): Future[Unit]
+}
+
+/** Байты фото приза, проверенные границей тем же правилом, что фото лота: тип — IANA, версия — SHA-256 байтов. */
+final case class PrizePhotoBytes(content: IArray[Byte], mediaType: String, version: String)
+
+/**
+ * Байты фото приза (PER-772): строка состояния рядом с журналом, как фото лота, а не журнал — байты в журнал не
+ * пишутся. Какое фото у приза сейчас, решает журнал розыгрыша; строка только держит байты под id фото.
+ */
+trait RafflePrizePhotos {
+
+  /**
+   * Записывает байты под id фото с моментом записи `at`. `false` — под этим id уже лежат другие байты; те же байты —
+   * `true` без второй строки.
+   */
+  def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes, at: Instant): Future[Boolean]
+
+  def read(auction: AuctionId, photoId: UUID): Future[Option[PrizePhotoBytes]]
+
+  /**
+   * Удаляет байты фото аукциона, записанные раньше `before`, кроме `keep`: так принятая замена или снятие убирает
+   * прежние байты, а байты параллельной команды, записанные позже, остаются.
+   */
+  def discard(auction: AuctionId, keep: Option[UUID], before: Instant): Future[Unit]
+}
+
+object RafflePrizePhotos {
+
+  /** Без хранилища фото приза нет: запись отвечает сбоем, чтение — пусто. */
+  val absent: RafflePrizePhotos = new RafflePrizePhotos {
+    def store(auction: AuctionId, photoId: UUID, photo: PrizePhotoBytes, at: Instant): Future[Boolean] =
+      Future.failed(new IllegalStateException("raffle prize photos are not configured"))
+
+    def read(auction: AuctionId, photoId: UUID): Future[Option[PrizePhotoBytes]] = Future.successful(None)
+
+    def discard(auction: AuctionId, keep: Option[UUID], before: Instant): Future[Unit] = Future.unit
+  }
 }
 
 /**

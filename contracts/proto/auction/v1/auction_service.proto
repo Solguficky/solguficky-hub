@@ -77,6 +77,9 @@ service AuctionService {
   rpc GetRaffle(GetRaffleRequest) returns (GetRaffleResponse);
   rpc AssignRaffleWinner(AssignRaffleWinnerRequest) returns (AssignRaffleWinnerResponse);
   rpc ChangeRafflePrize(ChangeRafflePrizeRequest) returns (ChangeRafflePrizeResponse);
+  rpc SetRafflePrizePhoto(SetRafflePrizePhotoRequest) returns (SetRafflePrizePhotoResponse);
+  rpc RemoveRafflePrizePhoto(RemoveRafflePrizePhotoRequest) returns (RemoveRafflePrizePhotoResponse);
+  rpc GetRafflePrizePhoto(GetRafflePrizePhotoRequest) returns (LotImage);
   rpc SubmitPrediction(SubmitPredictionRequest) returns (SubmitPredictionResponse);
   rpc GetMyPredictions(GetMyPredictionsRequest) returns (GetMyPredictionsResponse);
   rpc GetPredictionResults(GetPredictionResultsRequest) returns (GetPredictionResultsResponse);
@@ -846,7 +849,8 @@ message GetLotImageRequest {
 }
 
 // The image of a lot as it is stored now: the cover for GetLotImage, the named
-// photo for GetLotPhoto.
+// photo for GetLotPhoto. GetRafflePrizePhoto returns the photo of a raffle prize
+// in the same form.
 message LotImage {
   // The encoded image file as Telegram returned it on upload.
   bytes content = 1;
@@ -2604,6 +2608,22 @@ message Raffle {
   // winning_ticket but no randomness and no value: there is nothing to
   // recompute.
   bool drawn_by_hand = 12;
+
+  // The photo of the prize, without its bytes: they are read with
+  // GetRafflePrizePhoto. Unset when the prize has no photo and when the raffle
+  // is not held.
+  RafflePrizePhoto prize_photo = 13;
+}
+
+// Names the photo of a raffle prize without carrying it.
+message RafflePrizePhoto {
+  // Canonical lowercase UUIDv7 with hyphens: the photo_id of
+  // SetRafflePrizePhoto.
+  string photo_id = 1;
+
+  // Opaque, compared only for equality, as LotImageRef.version: equal bytes give
+  // an equal version.
+  string version = 2;
 }
 
 enum RaffleStatus {
@@ -2771,6 +2791,80 @@ message ChangeRafflePrizeRefusal {
 }
 
 message RaffleWithoutResult {}
+
+// Sets the photo of the raffle prize; a photo the prize already has is replaced.
+message SetRafflePrizePhotoRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens. It is the key of
+  // a replay: the same id with the same bytes is accepted without a second
+  // photo, with other bytes it is refused with photo_conflict.
+  string photo_id = 3;
+
+  // The same limits as a photo of a lot.
+  LotImageUpload photo = 4;
+}
+
+message SetRafflePrizePhotoResponse {
+  // Exactly one is set. accepted is the raffle after the command.
+  oneof outcome {
+    Raffle accepted = 1;
+    RafflePrizePhotoRefusal refused = 2;
+  }
+}
+
+// Takes the photo of the raffle prize back.
+message RemoveRafflePrizePhotoRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message RemoveRafflePrizePhotoResponse {
+  // Exactly one is set. accepted is the raffle after the command.
+  oneof outcome {
+    Raffle accepted = 1;
+    RafflePrizePhotoRefusal refused = 2;
+  }
+}
+
+message RafflePrizePhotoRefusal {
+  // Exactly one is set. RemoveRafflePrizePhoto never refuses with
+  // image_too_large, unsupported_image and photo_conflict.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    RaffleNotFound raffle_not_found = 4;
+    // The winner is already assigned or drawn.
+    RaffleAlreadyDrawn already_drawn = 5;
+    // The raffle will have no result: it is not held, its pool has no ticket
+    // or it is cancelled.
+    RaffleWithoutResult without_result = 6;
+    ImageTooLarge image_too_large = 7;
+    UnsupportedImage unsupported_image = 8;
+    PhotoConflict photo_conflict = 9;
+  }
+}
+
+message GetRafflePrizePhotoRequest {
+  // The viewer must hold place_bids, as for GetRaffle.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
 
 message SubmitPredictionRequest {
   // The participant who predicts: there is no separate participant field. The

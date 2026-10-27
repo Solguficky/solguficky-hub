@@ -13,8 +13,10 @@ import auction.invoice.InvoiceAction
 import auction.invoice.InvoiceGateway
 import auction.invoice.InvoiceViews
 import auction.access.Viewer
+import auction.catalog.CatalogRefusal
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotId
+import auction.catalog.LotImage as CatalogImage
 import auction.entity.Initiator
 import auction.entity.LotGateway
 import auction.lot.AuctionId
@@ -42,15 +44,22 @@ import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
 import auction.raffle.ChangePrize
 import auction.raffle.ChangePrizeRejected
+import auction.raffle.PrizePhoto
+import auction.raffle.PrizePhotoBytes
 import auction.raffle.Raffle
 import auction.raffle.RaffleGateway
+import auction.raffle.RafflePrizePhotos
 import auction.raffle.RaffleState
 import auction.raffle.RaffleView
 import auction.raffle.Register
+import auction.raffle.RemovePrizePhoto
+import auction.raffle.SetPrizePhoto
 import auction.results.ResultsGateway
 import auction.results.ResultsView
 import auction.v1.auction_service as wire
+import auction.v1.auction_service.RafflePrizePhotoRefusal.Reason as PhotoReason
 import auction.watch.AuctionChanges
+import com.google.protobuf.ByteString
 import io.grpc.Status
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.NotUsed
@@ -100,7 +109,8 @@ final class AuctionGrpcService(
     finalBids: FinalBids = FinalBids.empty,
     invoices: InvoiceGateway = InvoiceGateway.none,
     invoiceViews: InvoiceViews = InvoiceViews.none,
-    raffleByHand: Boolean = false
+    raffleByHand: Boolean = false,
+    prizePhotos: RafflePrizePhotos = RafflePrizePhotos.absent
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -135,7 +145,9 @@ final class AuctionGrpcService(
       notes,
       finalBids,
       invoices,
-      invoiceViews
+      invoiceViews,
+      raffleByHand,
+      prizePhotos
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -1188,6 +1200,142 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Фото приза розыгрыша (PER-772) путём смены приза: форма, затем байты тем же правилом, что фото лота (предел и
+   * сигнатура), затем повтор своего id фото раньше права, затем право вести аукцион у Meetups с воротами отменённой
+   * сходки, затем решение розыгрыша по прочитанному — отказ не пишет байтов, — запись байтов под id фото и команда
+   * розыгрыша, которая решает заново. Принятое фото убирает байты, записанные раньше него; сбой уборки ответа не
+   * меняет: лишняя строка не видна ни одному чтению.
+   */
+  def setRafflePrizePhoto(in: wire.SetRafflePrizePhotoRequest): Future[wire.SetRafflePrizePhotoResponse] =
+    RequestMapping.setRafflePrizePhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        CatalogImage(command.photo) match {
+          case Left(CatalogRefusal.ImageTooLarge(maxBytes)) =>
+            Future.successful(
+              RaffleMapping.prizePhotoRefused(PhotoReason.ImageTooLarge(wire.ImageTooLarge(maxBytes.toLong)))
+            )
+          case Left(_) =>
+            Future.successful(RaffleMapping.prizePhotoRefused(PhotoReason.UnsupportedImage(wire.UnsupportedImage())))
+          case Right(image) =>
+            val auction = command.auctionId
+            val set = SetPrizePhoto(PrizePhoto(command.photoId, image.version.value), OpId(command.photoId))
+            def answer(outcome: Either[ChangePrizeRejected, Raffle]) =
+              viewed(auction, command.acting.participant, outcome)
+                .flatMap(viewedOutcome => RaffleMapping.setPrizePhoto(viewedOutcome).fold(refuse, Future.successful))
+            def store(): Future[wire.SetRafflePrizePhotoResponse] = {
+              val at = clock.instant()
+              val bytes = PrizePhotoBytes(image.content, image.mediaType.value, image.version.value)
+              prizePhotos.store(auction, command.photoId, bytes, at).flatMap {
+                case false => answer(Left(ChangePrizeRejected.OpIdTaken))
+                case true =>
+                  raffles.setPrizePhoto(auction, set).recoverWith(awaited).flatMap { outcome =>
+                    val tidied =
+                      if (outcome.isRight) discardPrizePhotos(auction, Some(command.photoId), at) else Future.unit
+                    tidied.flatMap(_ => answer(outcome))
+                  }
+              }
+            }
+            raffles.get(auction).recoverWith(awaited).flatMap { raffle =>
+              Raffle.decide(raffle, set) match {
+                case Left(rejected) if raffle.seen.contains(set.opId) => answer(Left(rejected))
+                case Right(_) if raffle.seen.contains(set.opId) => answer(Right(raffle))
+                case decision =>
+                  val query = ConsoleQuery(auction, command.acting)
+                  def denied(denial: Denial) =
+                    ResponseMapping.prizePhotoDenied(denial).map(RaffleMapping.prizePhotoRefused)
+                  administered(query, denied, MeetupGate.NotCancelled) { _ =>
+                    decision match {
+                      case Left(rejected) => answer(Left(rejected))
+                      case Right(_) => store()
+                    }
+                  }
+              }
+            }
+        }
+    }
+
+  /** Снятие фото приза (PER-772) путём смены приза; принятое снятие убирает байты, записанные до команды. */
+  def removeRafflePrizePhoto(in: wire.RemoveRafflePrizePhotoRequest): Future[wire.RemoveRafflePrizePhotoResponse] =
+    RequestMapping.removeRafflePrizePhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        val auction = command.auctionId
+        val remove = RemovePrizePhoto(command.opId)
+        def answer(outcome: Either[ChangePrizeRejected, Raffle]) =
+          viewed(auction, command.acting.participant, outcome)
+            .flatMap(viewedOutcome => RaffleMapping.removePrizePhoto(viewedOutcome).fold(refuse, Future.successful))
+        raffles.get(auction).recoverWith(awaited).flatMap { raffle =>
+          raffle.seen.get(command.opId) match {
+            case Some(_) =>
+              Raffle.decide(raffle, remove) match {
+                case Left(rejected) => answer(Left(rejected))
+                case Right(_) => answer(Right(raffle))
+              }
+            case None =>
+              val query = ConsoleQuery(auction, command.acting)
+              def denied(denial: Denial) =
+                ResponseMapping
+                  .prizePhotoDenied(denial)
+                  .map(reason =>
+                    wire.RemoveRafflePrizePhotoResponse().withRefused(wire.RafflePrizePhotoRefusal(reason))
+                  )
+              administered(query, denied, MeetupGate.NotCancelled) { _ =>
+                val at = clock.instant()
+                raffles.removePrizePhoto(auction, remove).recoverWith(awaited).flatMap { outcome =>
+                  val tidied = if (outcome.isRight) discardPrizePhotos(auction, None, at) else Future.unit
+                  tidied.flatMap(_ => answer(outcome))
+                }
+              }
+          }
+        }
+    }
+
+  /**
+   * Байты фото приза (PER-772): право и видимость — как у `GetRaffle`, фото — то, что у приза сейчас по журналу
+   * розыгрыша. Розыгрыша, фото или его байтов нет — `NOT_FOUND`.
+   */
+  def getRafflePrizePhoto(in: wire.GetRafflePrizePhotoRequest): Future[wire.LotImage] =
+    RequestMapping.getRafflePrizePhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        concealed(query.auctionId.value, query.acting.viewer)
+          .flatMap {
+            case true => Future.successful(None)
+            case false =>
+              raffles.get(query.auctionId).recoverWith(awaited).flatMap { raffle =>
+                Raffle.prizePhoto(raffle.state) match {
+                  case Some(photo) => prizePhotos.read(query.auctionId, photo.photoId)
+                  case None => Future.successful(None)
+                }
+              }
+          }
+          .flatMap {
+            case Some(photo) =>
+              Future.successful(
+                wire.LotImage(
+                  ByteString.copyFrom(IArray.genericWrapArray(photo.content).toArray),
+                  photo.mediaType,
+                  photo.version
+                )
+              )
+            case None => refuse(Status.NOT_FOUND.withDescription("raffle prize photo not found"))
+          }
+    }
+
+  /** Уборка прежних байтов фото приза — не часть ответа: сбой пишется предупреждением, и ответ тот же. */
+  private def discardPrizePhotos(auction: AuctionId, keep: Option[UUID], before: java.time.Instant): Future[Unit] =
+    Future.delegate(prizePhotos.discard(auction, keep, before)).recover { case NonFatal(cause) =>
+      AuctionGrpcService.logger.warn(
+        "raffle prize photos not discarded",
+        StructuredArguments.keyValue("auction_id", auction.value.toString),
+        StructuredArguments.keyValue("error", cause.getClass.getName)
+      )
+    }
+
+  /**
    * Прогноз раунда (ADR-067, пп. 2–5): форма, право `place_bids` на каждой отправке, аукцион и лоты раунда, имя в
    * аукционе — тем же правилом, что перед ставкой, но без заморозки, — затем игра. Лоты сверяются, только пока раунд
    * может быть открыт: в остальное время отказ раунда даёт сама игра, и чужой лот его не подменяет.
@@ -1624,6 +1772,8 @@ object AuctionGrpcService {
     def cancel(auction: AuctionId, command: CancelRegistration) = none
     def assign(auction: AuctionId, command: AssignWinner) = none
     def changePrize(auction: AuctionId, command: ChangePrize) = none
+    def setPrizePhoto(auction: AuctionId, command: SetPrizePhoto) = none
+    def removePrizePhoto(auction: AuctionId, command: RemovePrizePhoto) = none
     def get(auction: AuctionId) = none
   }
 
