@@ -1,7 +1,6 @@
 import { encodeAuctionCallback } from "../../callback-data.js";
 import type {
   AuctionPort,
-  AuctionStageView,
   FavoritesPort,
   PredictionRoundView,
   Viewer,
@@ -144,27 +143,16 @@ export async function openRoot(input: {
       // — от открытия торгов до закрытия последнего лота по дедлайну. Читает её
       // только держатель `place_bids`: держатель одного `run_auctions`, которого
       // хаб пускает в корень, получил бы отказ Auction, и кнопки у него нет.
-      // Статистика аукциона (PER-770) — тем же рядом, с открытия торгов и до
-      // конца аукциона, и тому же праву.
+      // «Статистики» всего аукциона (PER-770) в корне нет ни у кого: она —
+      // вход в пульт хаба (PER-800, решение владельца по прогону 27.10).
       ...(input.viewer.rights.includes("place-bids") &&
-      tradingStages.has(auction.stage)
+      (auction.stage === "prebidding" || auction.stage === "settling")
         ? [
             [
-              ...(auction.stage === "prebidding" || auction.stage === "settling"
-                ? [
-                    {
-                      action: "root.day-chronicle" as const,
-                      callbackData: encodeAuctionCallback({
-                        kind: "day-chronicle",
-                        auctionId: input.auctionId,
-                      }),
-                    },
-                  ]
-                : []),
               {
-                action: "root.auction-chronicle" as const,
+                action: "root.day-chronicle" as const,
                 callbackData: encodeAuctionCallback({
-                  kind: "auction-chronicle",
+                  kind: "day-chronicle",
                   auctionId: input.auctionId,
                 }),
               },
@@ -205,16 +193,6 @@ export async function openRoot(input: {
     ],
   };
 }
-
-// Стадии с открытия онлайн-торгов до конца аукциона: торги идут или прошли.
-const tradingStages: ReadonlySet<AuctionStageView> = new Set([
-  "prebidding",
-  "settling",
-  "on-break",
-  "lineup-frozen",
-  "in-final",
-  "finished",
-]);
 
 // Вход показывается, пока можно отправлять прогноз, и остаётся после закрытия,
 // если участнику есть что перечитать.

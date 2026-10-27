@@ -1,8 +1,5 @@
 import { InlineKeyboard } from "grammy";
-import {
-  auctionChronicleButtonLabel,
-  dayChronicleButtonLabel,
-} from "../../../../auction-day-chronicle.js";
+import { dayChronicleButtonLabel } from "../../../../auction-day-chronicle.js";
 import {
   finalBidLabel,
   finalBidLine,
@@ -544,9 +541,6 @@ function rootScreen(
   const dayChronicle = buttons.find(
     (button) => button.action === "root.day-chronicle",
   );
-  const auctionChronicle = buttons.find(
-    (button) => button.action === "root.auction-chronicle",
-  );
   const raffle = buttons.find((button) => button.action === "root.raffle");
   const favorites = buttons.find(
     (button) => button.action === "root.favorites",
@@ -572,13 +566,9 @@ function rootScreen(
     keyboard.text(predictionResultsButtonLabel, predictionResults.callbackData);
   }
   nextRow(keyboard);
-  // «Хроники дня» (PER-725), пока идёт онлайн-неделя, и «Статистика»
-  // (PER-770) с открытия торгов — одним рядом.
+  // «Хроники дня» (PER-725) — своим рядом, пока идёт онлайн-неделя.
   if (dayChronicle !== undefined) {
     keyboard.text(dayChronicleButtonLabel, dayChronicle.callbackData);
-  }
-  if (auctionChronicle !== undefined) {
-    keyboard.text(auctionChronicleButtonLabel, auctionChronicle.callbackData);
   }
   nextRow(keyboard);
   // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
@@ -735,7 +725,6 @@ function feedLabel(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
-    case "root.auction-chronicle":
     case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":
@@ -984,7 +973,6 @@ function lotLabel(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
-    case "root.auction-chronicle":
     case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":
@@ -1131,7 +1119,6 @@ function setLotLabelOf(
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
-    case "root.auction-chronicle":
     case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":
@@ -1369,7 +1356,6 @@ function historyLabel(button: AuctionButton): string {
     case "prediction-results.back":
     case "root.day-chronicle":
     case "day-chronicle.back":
-    case "root.auction-chronicle":
     case "auction-chronicle.back":
     case "root.promo":
     case "promo.back":

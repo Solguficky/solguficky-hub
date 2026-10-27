@@ -144,5 +144,6 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
   for (const [refusal, answer] of refusals) {
     if (text === refusal) return answer;
   }
+  if (text.includes("Этот экран устарел.")) return "outdated";
   return text.includes("сейчас недоступен") ? "unavailable" : "admitted";
 });

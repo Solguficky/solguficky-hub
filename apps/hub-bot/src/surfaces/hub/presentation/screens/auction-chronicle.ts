@@ -5,11 +5,13 @@ import {
 } from "../../../../auction-day-chronicle.js";
 import type { AuctionBlock } from "../../../../auction-ui/index.js";
 import { money } from "../../../../core/format.js";
-import { screenText, toAuctionRoot, withNav } from "./kit.js";
+import { uuidToToken } from "../meetup-deep-link.js";
+import { consoleDaySummaryData } from "../parse-callback.js";
+import { screenText, withNav } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
-// Статистика аукциона (PER-770): все торги из корня аукциона, тексты общие с
-// ботом аукциона и с хрониками дня.
+// Статистика аукциона (PER-770): все торги, тексты общие с хрониками дня. Вход
+// — «Сводка дня» пульта (PER-800), и возврат туда же.
 export function auctionChronicleScreen(
   block: Extract<AuctionBlock, { kind: "auction-chronicle" }>,
 ): ShownScreen {
@@ -19,7 +21,10 @@ export function auctionChronicleScreen(
       auctionChronicleTitle,
       ...auctionChronicleParagraphs(block, { money }),
     ),
-    keyboard: withNav(new InlineKeyboard(), toAuctionRoot(block.auctionId)),
+    keyboard: withNav(new InlineKeyboard(), {
+      name: "Сводка дня",
+      data: consoleDaySummaryData(uuidToToken(block.auctionId)),
+    }),
     format: "HTML",
   };
 }
