@@ -9,10 +9,10 @@ import type {
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
+  consoleRaffleScreenData,
   consoleRaffleWinnerAskData,
   consoleRaffleWinnerConfirmData,
   consoleRaffleWinnerData,
-  consoleViewData,
 } from "../parse-callback.js";
 import {
   confirmKeyboard,
@@ -45,8 +45,12 @@ const retryLabel = "Ввести заново";
  */
 export const raffleWinnerPageSize = 80;
 
-function toConsole(auctionId: string): Parent {
-  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
+// Вход — с «Розыгрыша» пульта (PER-802), и возврат — туда же.
+function toRaffle(auctionId: string): Parent {
+  return {
+    name: "Розыгрыш",
+    data: consoleRaffleScreenData(uuidToToken(auctionId)),
+  };
 }
 
 /** Строка билета: номер и имя в аукционе; имени нет — один номер. */
@@ -107,7 +111,7 @@ export function raffleWinnerScreen(view: {
         ? undefined
         : `<pre>${items.map((ticket) => escapeHtml(ticketLine(ticket))).join("\n")}</pre>`,
     ),
-    keyboard: withNav(keyboard, toConsole(view.auctionId)),
+    keyboard: withNav(keyboard, toRaffle(view.auctionId)),
     format: "HTML",
   };
 }
@@ -203,7 +207,7 @@ export function raffleWinnerOutcomeScreen(
         ? winnerSubject(view.ticket)
         : undefined,
     ),
-    keyboard: withNav(keyboard, toConsole(view.auctionId)),
+    keyboard: withNav(keyboard, toRaffle(view.auctionId)),
     format: "HTML",
   };
 }

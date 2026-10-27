@@ -571,6 +571,11 @@ export type ConsoleSort = {
   direction: ConsoleSortDirection;
 };
 
+// Экраны под пультом (PER-802): «Розыгрыш» — момент, приз, фото и итог,
+// «Финал» — отбор лотов и время финала, «Ещё» — снятие с публикации,
+// удаление и отмена. Без раздела — сам пульт.
+export type ConsoleSection = "raffle" | "final" | "more";
+
 // Замороженный состав финала (PER-337): лоты в порядке выхода и лот, который
 // ведущий торгует сейчас. Активного лота нет между лотами и до первого.
 export type FinalLineup = {
@@ -654,6 +659,10 @@ export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   // Meetups только до открытия недели; нет — сходка видна, неизвестна или
   // чтение отказало.
   meetupHidden?: true;
+  // Сходка аукциона опубликована (PER-802): строка «✓» чек-листа подготовки.
+  // Читается тем же чтением, что `meetupHidden`; нет обоих — сходка
+  // неизвестна, и строка говорит об этом.
+  meetupPublished?: true;
 };
 
 // Аукцион, у которого идут торги сообщества (PER-603, PER-618): слот один, и
@@ -1360,7 +1369,7 @@ export type RafflePrizeChangeRequest =
       opId: string;
     });
 
-// Промо-видео аукциона (PER-774): экран видео из корня аукциона и одна
+// Промо-видео аукциона (PER-774): экран видео из пульта (PER-802) и одна
 // команда — задать, заменить или, без `postId`, убрать. Пост в чате медиа
 // публикует край до команды: это вызов Telegram. Ключ рождается на ответ с
 // видео и на «Да» снятия.
@@ -1884,7 +1893,7 @@ export type ExecuteResult =
       kind: "raffle-prize-photo-outcome";
       auctionId: string;
     } & RafflePrizePhotoOutcome)
-  // Промо-видео (PER-774): экран из корня аукциона и исход команды.
+  // Промо-видео (PER-774): экран из пульта (PER-802) и исход команды.
   | { kind: "promo-video"; auctionId: string; video: boolean }
   | { kind: "promo-video-outcome"; auctionId: string; note: PromoVideoNote }
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.

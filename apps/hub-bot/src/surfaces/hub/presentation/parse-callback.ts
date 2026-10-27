@@ -11,6 +11,7 @@ import type {
 } from "../application/auction-announcements.js";
 import type {
   CloseQuote,
+  ConsoleSection,
   ConsoleSort,
   FormField,
   InvoiceMark,
@@ -421,7 +422,15 @@ type PlainAction =
   | { kind: "lot-view"; lot: string }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
   // финала — ещё лот и страницу пульта, на которую вернуться.
-  | { kind: "console-view"; auction: string; page: number; sort: ConsoleSort }
+  // Разделы под пультом (PER-802) — та же кнопка вида с разделом: «Финал»
+  // листается и сортируется, как пульт.
+  | {
+      kind: "console-view";
+      auction: string;
+      page: number;
+      sort: ConsoleSort;
+      section?: ConsoleSection;
+    }
   | { kind: "console-week"; auction: string }
   // Розыгрыш (PER-593): вопрос о моменте и снятие момента.
   | { kind: "console-raffle"; auction: string }
@@ -1080,6 +1089,31 @@ export function consoleViewData(
   return `v1:ac:v:${auction}:${page}:${consoleSortToken(sort)}`;
 }
 
+/** Экран «Розыгрыш» под пультом (PER-802): момент, приз, фото и итог. */
+export function consoleRaffleScreenData(auction: string): string {
+  return `v1:ac:rs:${auction}`;
+}
+
+/**
+ * Экран «Финал» под пультом (PER-802): отбор лотов и время финала. Страница и
+ * сортировка — как у пульта, первая страница по умолчанию — без них.
+ */
+export function consoleFinalScreenData(
+  auction: string,
+  page = 0,
+  sort: ConsoleSort = defaultConsoleSort,
+): string {
+  if (sort.metric === "bids" && sort.direction === "descending") {
+    return page === 0 ? `v1:ac:fl:${auction}` : `v1:ac:fl:${auction}:${page}`;
+  }
+  return `v1:ac:fl:${auction}:${page}:${consoleSortToken(sort)}`;
+}
+
+/** Экран «Ещё» под пультом (PER-802): снятие с публикации, удаление, отмена. */
+export function consoleMoreData(auction: string): string {
+  return `v1:ac:es:${auction}`;
+}
+
 /** «Сроки недели»: вопрос о начале и конце онлайн-недели. */
 export function consoleWeekData(auction: string): string {
   return `v1:ac:w:${auction}`;
@@ -1161,7 +1195,7 @@ export function consoleRafflePrizeChangeData(auction: string): string {
   return `v1:ac:rn:${auction}`;
 }
 
-/** Экран промо-видео аукциона (PER-774) из корня аукциона. */
+/** Экран промо-видео аукциона (PER-774) из пульта (PER-802). */
 export function consolePromoVideoData(auction: string): string {
   return `v1:ac:vo:${auction}`;
 }
@@ -1287,7 +1321,7 @@ function mediaOf(
     : { photo, photoPrint: photoPrint.data };
 }
 
-/** «🛠 Объявление» корня аукциона (PER-765): своё объявление или шаблон. */
+/** «Объявление» пульта (PER-765, PER-802): своё объявление или шаблон. */
 export function consoleAnnouncementData(auction: string): string {
   return `v1:ac:na:${auction}`;
 }
@@ -1668,7 +1702,7 @@ export function consoleWindowRemoveData(
   return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
 }
 
-/** «🛠 Сеты» корня аукциона: сеты лотов (PER-509). */
+/** «Сеты» пульта: сеты лотов (PER-509, PER-802). */
 export function consoleSetsData(auction: string): string {
   return `v1:ac:t:${auction}`;
 }
@@ -2984,6 +3018,32 @@ function parseConsole(parts: readonly string[]): CallbackAction {
             auction: auction.data,
             draft,
             page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "rs":
+    case "es":
+      return parts.length === 4
+        ? {
+            kind: "console-view",
+            auction: auction.data,
+            page: 0,
+            sort: defaultConsoleSort,
+            section: parts[2] === "rs" ? "raffle" : "more",
+          }
+        : { kind: "malformed" };
+    case "fl": {
+      if (parts.length > 6) return { kind: "malformed" };
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      const sort =
+        parts.length === 6 ? parseConsoleSort(parts[5]) : defaultConsoleSort;
+      return page.success && sort !== undefined
+        ? {
+            kind: "console-view",
+            auction: auction.data,
+            page: page.data,
+            sort,
+            section: "final",
           }
         : { kind: "malformed" };
     }

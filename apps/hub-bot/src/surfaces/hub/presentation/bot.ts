@@ -105,6 +105,7 @@ import {
 import type {
   AuctionWeek,
   BroadcastAudience,
+  ConsoleSection,
   ConsoleSort,
   ExecuteRequest,
   ExecuteResult,
@@ -242,6 +243,7 @@ import {
   consoleRafflePrizeData,
   consoleRafflePrizePhotoAskData,
   consoleRafflePrizePhotoData,
+  consoleRaffleScreenData,
   consoleRaffleWinnerAskData,
   consoleRaffleWinnerData,
   consoleRaffleWinnerPickData,
@@ -1940,6 +1942,14 @@ async function handleMessage(
         person: identity.person,
         questions,
         replyId,
+        // Момент и приз розыгрыша спрашивает «Розыгрыш» пульта (PER-802):
+        // исход ответа возвращает туда.
+        ...(pending.kind === "console-raffle" ||
+        pending.kind === "console-raffle-prize"
+          ? { section: "raffle" as const }
+          : pending.kind === "console-final-time"
+            ? { section: "final" as const }
+            : {}),
       });
       if (
         result.kind !== "auction-week-ask" &&
@@ -8196,15 +8206,22 @@ async function handleConsoleCallback(
     auctionId,
     ...rpcCall(ctx, useCase),
   };
-  const render = (result: ExecuteResult, page = 0, sort = defaultConsoleSort) =>
+  const render = (
+    result: ExecuteResult,
+    page = 0,
+    sort = defaultConsoleSort,
+    section?: ConsoleSection,
+  ) =>
     renderConsoleResult(ctx, runtime, result, {
       person,
       questions,
       page,
       sort,
+      ...(section === undefined ? {} : { section }),
       retry: ctx.callbackQuery?.data,
     });
   switch (action.kind) {
+    // Экран под пультом (PER-802) — то же чтение пульта с разделом.
     case "console-view":
       return render(
         await runtime.dispatcher.execute({
@@ -8213,6 +8230,7 @@ async function handleConsoleCallback(
         }),
         action.page,
         action.sort,
+        action.section,
       );
     case "console-week":
       // Можно ли ещё менять сроки, решает юзкейс: вопрос либо пульт с причиной.
@@ -8231,6 +8249,9 @@ async function handleConsoleCallback(
           ...call,
           intent: "ask-auction-raffle",
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     case "console-raffle-remove":
       return render(
@@ -8239,6 +8260,9 @@ async function handleConsoleCallback(
           intent: "remove-auction-raffle",
           opId: createUuidV7(),
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     // Приз розыгрыша (PER-649): живёт рядом с моментом, поэтому и вопрос, и
     // снятие решает юзкейс по прочитанной конфигурации.
@@ -8248,6 +8272,9 @@ async function handleConsoleCallback(
           ...call,
           intent: "ask-auction-raffle-prize",
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     case "console-raffle-prize-remove":
       return render(
@@ -8256,6 +8283,9 @@ async function handleConsoleCallback(
           intent: "remove-auction-raffle-prize",
           opId: createUuidV7(),
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     // Срок оплаты счёта (PER-722): вопрос решает юзкейс по прочитанной
     // конфигурации — без сроков недели вопроса нет.
@@ -8285,6 +8315,8 @@ async function handleConsoleCallback(
           intent: "ask-auction-final-time",
         }),
       );
+    // С открытия недели время финала живёт на «Финале» пульта (PER-802):
+    // исход возвращает туда, а до открытия — в пульт.
     case "console-final-time-remove":
       return render(
         await runtime.dispatcher.execute({
@@ -8292,6 +8324,9 @@ async function handleConsoleCallback(
           intent: "remove-auction-final-time",
           opId: createUuidV7(),
         }),
+        0,
+        defaultConsoleSort,
+        "final",
       );
     case "console-visibility":
       return render(
@@ -8356,6 +8391,8 @@ async function handleConsoleCallback(
           opId: tokenToUuid(action.op),
         }),
       );
+    // Отметка финала живёт на экране «Финал» (PER-802): туда и исход, и
+    // старая кнопка отметки из прежнего пульта.
     case "console-mark":
       return render(
         await runtime.dispatcher.execute({
@@ -8367,6 +8404,7 @@ async function handleConsoleCallback(
         }),
         action.page,
         action.sort,
+        "final",
       );
     // Состав финала (PER-619). Выбранный порядок едет в кнопках, ключ
     // объявления рождается на нажатие «Да»: повтор после принятого
@@ -8707,6 +8745,7 @@ async function renderConsoleResult(
     questions: Map<string, PendingInput>;
     page?: number;
     sort?: ConsoleSort;
+    section?: ConsoleSection;
     retry?: string | undefined;
     replyId?: number;
   },
@@ -8740,6 +8779,8 @@ async function renderConsoleResult(
         ...(holder === undefined ? {} : { holder }),
         page: context.page ?? 0,
         sort: context.sort ?? defaultConsoleSort,
+        ...(context.section === undefined ? {} : { section: context.section }),
+        ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
         timeZone,
         today: communityToday(ctx),
       };
@@ -9979,7 +10020,7 @@ async function handleRafflePrizeChangeCallback(
   });
 }
 
-// Промо-видео аукциона (PER-774): экран из корня аукциона, вопрос о видео,
+// Промо-видео аукциона (PER-774): экран из пульта (PER-802), вопрос о видео,
 // подтверждение снятия и «Да». Своего состояния нет: аукцион едет в кнопке, а
 // ключ снятия рождается на нажатие «Да».
 async function handlePromoVideoCallback(
@@ -11879,6 +11920,8 @@ async function readLiveConsole(
           console: result.console,
           page: entry.view.page,
           sort: entry.view.sort,
+          // «Промо-видео» пульта ведущего (PER-802) живёт и в живой правке.
+          ...(entry.view.media === true ? { media: true } : {}),
           timeZone: runtime.communityTimeZone ?? "UTC",
           today: (runtime.today ?? utcToday)(),
         },
@@ -13334,16 +13377,24 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "lot-image":
     case "lot-copies":
       return { kind: "lot-form", lot: step.lot };
-    case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-raffle-prize-change":
+      // Вопросы о розыгрыше, о призе и о новом призе идущего розыгрыша заданы
+      // с «Розыгрыша» пульта (PER-802).
+      return {
+        kind: "console-view",
+        auction: step.auction,
+        page: 0,
+        sort: defaultConsoleSort,
+        section: "raffle",
+      };
+    case "console-week":
     case "console-payment-term":
     case "console-final-time":
-    case "console-raffle-prize-change":
     case "final-ask":
-      // Вопросы о сроках, о розыгрыше, о призе, о сроке оплаты, о времени
-      // финала, о новом призе идущего розыгрыша и о цене заданы с пульта
-      // аукциона.
+      // Вопросы о сроках, о сроке оплаты, о времени финала и о цене заданы с
+      // пульта аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -13627,12 +13678,13 @@ function answerParent(step: QuestionStep): Parent {
     case "lot-image":
     case "lot-copies":
       return toLot(tokenToUuid(step.lot));
-    case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-raffle-prize-change":
+      return { name: "Розыгрыш", data: consoleRaffleScreenData(step.auction) };
+    case "console-week":
     case "console-payment-term":
     case "console-final-time":
-    case "console-raffle-prize-change":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
     case "console-window":
