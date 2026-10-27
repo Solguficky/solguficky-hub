@@ -14,7 +14,7 @@ public enum AuctionOutcome
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
     AuctionCancelled, AuctionEnded,
     FinalLotNext, LeadRestored, LotSetCollected,
-    Announcement, AnnouncementWithdrawn,
+    Announcement, AnnouncementWithdrawn, StandingRecorded,
     InvoiceReplicated, InvoiceStale,
 }
 
@@ -567,9 +567,18 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         // читает положение под разделяемой, и объявление в полёте скрытие либо
         // дождётся и снимет, либо команда увидит скрытие и откажет.
         await AuctionEndStore.LockExclusive(work, announcement.AuctionId, cancellationToken);
+        var hidden = announcement.Occasion == AnnouncementOccasion.Hidden
+            || (announcement.Occasion == AnnouncementOccasion.Drafted && announcement.Hidden);
         var current = await AuctionStandingStore.Apply(work, announcement.AuctionId, announcement.MeetupId,
-            announcement.Occasion == AnnouncementOccasion.Hidden ? AuctionStanding.Hidden : AuctionStanding.Visible,
-            announcement.Version, now, cancellationToken);
+            hidden ? AuctionStanding.Hidden : AuctionStanding.Visible, announcement.Version, now, cancellationToken);
+
+        // Рождение только записывает положение: вести у него нет, а снимать
+        // нечего — у рождённого заново аукциона объявления сняло удаление.
+        if (announcement.Occasion == AnnouncementOccasion.Drafted)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.StandingRecorded, new Dictionary<string, int>());
+        }
 
         if (announcement.Occasion == AnnouncementOccasion.Hidden)
         {
@@ -577,17 +586,14 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
                 cancellationToken);
             // Устаревшее скрытие — пришедшее после новой публикации — объявлений,
             // принятых по опубликованному аукциону, не снимает.
-            var notices = current
-                ? await NotificationStore.WithdrawAuctionNotices(work, announcement.MeetupId,
-                    NotificationFacts.WithdrawnOnAuctionHidden, now, cancellationToken)
-                : 0;
+            if (current)
+            {
+                await NotificationStore.WithdrawAuctionNotices(work, announcement.MeetupId,
+                    NotificationFacts.WithdrawnOnAuctionHidden, now, cancellationToken);
+            }
             await work.Commit(cancellationToken);
             return new AuctionApplication(AuctionOutcome.AnnouncementWithdrawn,
-                new Dictionary<string, int>
-                {
-                    [AuctionFacts.PublishedType] = withdrawn,
-                    [NotificationFacts.AuctionNoticeType] = notices,
-                });
+                new Dictionary<string, int> { [AuctionFacts.PublishedType] = withdrawn });
         }
 
         var notAfter = now + options.Value.StaleAfter;

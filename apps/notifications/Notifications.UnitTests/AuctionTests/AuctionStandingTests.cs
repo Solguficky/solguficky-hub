@@ -1,5 +1,6 @@
 using Notifications.Auction;
 using Notifications.Infrastructure;
+using Notifications.TestKit;
 using Shouldly;
 using Xunit;
 
@@ -30,4 +31,30 @@ public class AuctionStandingTests
     [InlineData(AuctionEnd.Discarded, AuctionStanding.Discarded)]
     public void Of_End_GivesStanding(AuctionEnd end, AuctionStanding standing) =>
         AuctionStandingStore.Of(end).ShouldBe(standing);
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Decode_AuctionDrafted_CarriesHiddenFromSnapshot(bool hidden)
+    {
+        var auction = EventFactory.AuctionOfMeetup();
+        var fact = EventFactory.AuctionDrafted(auction, EventFactory.NewId(), hidden, version: 3);
+
+        var decoded = AuctionMapping.Decode("events.auction.auction_drafted", EventFactory.Bytes(fact))
+            .ShouldBeOfType<AuctionDecoded.Announcement>();
+
+        decoded.Value.Occasion.ShouldBe(AnnouncementOccasion.Drafted);
+        decoded.Value.Hidden.ShouldBe(hidden);
+        decoded.Value.Version.ShouldBe(3);
+    }
+
+    [Fact]
+    public void Decode_AuctionDraftedNotDraft_IsPoison()
+    {
+        var fact = EventFactory.AuctionDrafted(EventFactory.AuctionOfMeetup(), EventFactory.NewId());
+        fact.State.Scheduled = new global::Auction.V1.AuctionState.Types.Scheduled();
+
+        AuctionMapping.Decode("events.auction.auction_drafted", EventFactory.Bytes(fact))
+            .ShouldBeOfType<AuctionDecoded.Poison>();
+    }
 }

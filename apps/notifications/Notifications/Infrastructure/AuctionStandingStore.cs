@@ -60,8 +60,8 @@ public static class AuctionStandingStore
 
     /// <summary>
     /// Закрыт ли аукцион для объявления. Прошедший — нет: кнопка «Итоги» ведёт
-    /// к нему и после конца. Неизвестный — тоже нет: черновик закрывает пульт,
-    /// а аукцион, опубликованный до PER-780, строки не имеет.
+    /// к нему и после конца. Неизвестный — тоже нет: строки не имеет только
+    /// аукцион, рождённый до PER-780, и отказ закрыл бы объявление идущему.
     /// </summary>
     public static bool ClosedForNotice(AuctionStanding? standing) =>
         standing is AuctionStanding.Hidden or AuctionStanding.Cancelled or AuctionStanding.Discarded;

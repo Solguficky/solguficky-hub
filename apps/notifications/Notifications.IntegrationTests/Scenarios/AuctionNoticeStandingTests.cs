@@ -24,6 +24,7 @@ public class AuctionNoticeStandingTests
     private const string CancelledSubject = "events.auction.auction_cancelled";
     private const string DiscardedSubject = "events.auction.auction_discarded";
     private const string FinishedSubject = "events.auction.auction_finished";
+    private const string DraftedSubject = "events.auction.auction_drafted";
 
     private static CallOptions Plain => new(cancellationToken: TestContext.Current.CancellationToken);
 
@@ -173,5 +174,28 @@ public class AuctionNoticeStandingTests
 
         afterRebirth.Created.ShouldBeTrue();
         afterFinish.Created.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Аукцион рождается скрытым (PER-609): до публикации команда отказывает, а
+    /// публикация открывает объявление.
+    /// </summary>
+    [Fact]
+    public async Task When_AuctionDraftedHidden_Expect_RefusedUntilPublished()
+    {
+        await using var env = await BroadcastsUnderTest.Start();
+        var meetupId = await Meetup(env.Db);
+        var author = await Person(env.Db, AdminHolding);
+        var auction = AuctionOf(meetupId);
+        await env.ApplyAuctionFact(DraftedSubject, EventFactory.AuctionDrafted(auction, meetupId));
+
+        var refused = await Should.ThrowAsync<RpcException>(() =>
+            env.Client.BroadcastAuctionNoticeAsync(Notice(author, meetupId, EventFactory.NewId()), Plain).ResponseAsync);
+        await env.ApplyAuctionFact(PublishedSubject, EventFactory.AuctionPublished(auction, meetupId));
+        var accepted = await env.Client.BroadcastAuctionNoticeAsync(
+            Notice(author, meetupId, EventFactory.NewId()), Plain);
+
+        refused.StatusCode.ShouldBe(StatusCode.FailedPrecondition);
+        accepted.Created.ShouldBeTrue();
     }
 }
