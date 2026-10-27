@@ -263,7 +263,9 @@ object LotTerms {
  * бывает, тот кончается `PrebiddingEnded(finished = true)`. Рождение несёт `hidden`: новый аукцион скрыт от участников,
  * а строка, записанная до признака видимости, читается видимой (ADR-047, дополнение 2026-10-20). `AuctionPublished` и
  * `AuctionHidden` payload не несут. Сет лотов (ADR-073) пишется рядом с реестром: `LotSetDefined` несёт определение
- * целиком, `LotSetDeleted` — только идентификатор, `LotSetSettled` — итог сета, один раз.
+ * целиком, `LotSetDeleted` — только идентификатор, `LotSetSettled` — итог сета, один раз. `LotLayoutSet` — порядок и
+ * разделы ленты целиком (PER-719): снимок, а не правка, поэтому повтор и гонка двух администраторов оставляют одну
+ * раскладку, а не смесь двух.
  */
 enum AuctionEvent {
   case AuctionDrafted(meetup: MeetupId, hidden: Boolean = true)
@@ -290,6 +292,7 @@ enum AuctionEvent {
   case LotSetDefined(set: LotSetId, name: LotSetName, lots: List[LotId])
   case LotSetDeleted(set: LotSetId)
   case LotSetSettled(set: LotSetId, settlement: LotSetSettlement)
+  case LotLayoutSet(layout: LotLayout)
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -551,7 +554,9 @@ enum Inspection {
  * ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов; без неё аукцион
  * показывает «скоро». `sets` — коллекционные сеты (ADR-073): меняются там же, где реестр, лоты сета — всегда лоты
  * реестра, и лот не больше чем в одном сете; после старта торгов меняется только итог сета. `paymentInstructions` —
- * текст администратора «как оплатить и получить» (PER-322): не условие торгов, меняется в любом состоянии.
+ * текст администратора «как оплатить и получить» (PER-322): не условие торгов, меняется в любом состоянии. `layout` —
+ * порядок и разделы ленты (PER-719): показ, а не условие торгов, меняется до старта финала; лоты раскладки — всегда
+ * лоты реестра.
  */
 final case class Auction(
     state: AuctionState,
@@ -562,7 +567,8 @@ final case class Auction(
     hidden: Boolean = false,
     finalAt: Option[Instant] = None,
     sets: Map[LotSetId, LotSet] = Map.empty,
-    paymentInstructions: Option[PaymentInstructions] = None
+    paymentInstructions: Option[PaymentInstructions] = None,
+    layout: LotLayout = LotLayout.empty
 )
 
 object Auction {
@@ -881,6 +887,28 @@ object Auction {
               case None => AuctionEvent.PaymentInstructionsCleared
             }
             Right(AuctionDecision.Accepted(event))
+        }
+    }
+
+  /**
+   * Порядок и разделы ленты (PER-719): показ, а не условие торгов, поэтому раскладка меняется в любом состоянии, пока
+   * финал впереди, как ориентировочное время финала; в живом финале лента идёт порядком зала (PER-639). Лоты раскладки
+   * — лоты реестра. Та же раскладка пишет событие ещё раз, как текст оплаты: ответ без события повтором не защищён.
+   */
+  def decide(auction: Auction, command: SetLotLayout): Either[LotLayoutRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(LotLayoutRejected.AuctionNotFound)
+          case AuctionState.Final(_, _, _, _, _) => Left(LotLayoutRejected.FinalAlreadyStarted)
+          case AuctionState.Finished(_, _) => Left(LotLayoutRejected.AuctionAlreadyFinished)
+          case AuctionState.Cancelled(_, _, _) => Left(LotLayoutRejected.AuctionAlreadyCancelled)
+          case _ =>
+            command.layout.members.find(lot => !auction.lots.contains(lot)) match {
+              case Some(lot) => Left(LotLayoutRejected.LotNotInAuction(lot))
+              case None => Right(AuctionDecision.Accepted(AuctionEvent.LotLayoutSet(command.layout)))
+            }
         }
     }
 
@@ -1307,11 +1335,13 @@ object Auction {
         auction.copy(hidden = true)
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotAdded(lot)) =>
         auction.copy(lots = auction.lots + lot)
-      // Лот, убранный из реестра, уходит и из своего сета (ADR-073, п. 3): `LotAdded` того же лота в сет его не вернёт.
+      // Лот, убранный из реестра, уходит и из своего сета (ADR-073, п. 3), и из раскладки ленты (PER-719): `LotAdded`
+      // того же лота его туда не вернёт.
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotRemoved(lot)) =>
         auction.copy(
           lots = auction.lots - lot,
-          sets = auction.sets.view.mapValues(set => set.copy(lots = set.lots.filterNot(_ == lot))).toMap
+          sets = auction.sets.view.mapValues(set => set.copy(lots = set.lots.filterNot(_ == lot))).toMap,
+          layout = auction.layout.without(lot)
         )
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotSetDefined(set, name, lots)) =>
         auction.copy(sets = auction.sets.updated(set, LotSet(name, lots)))
@@ -1356,6 +1386,8 @@ object Auction {
         auction.copy(paymentInstructions = Some(text))
       case (state, AuctionEvent.PaymentInstructionsCleared) if state != AuctionState.Initial =>
         auction.copy(paymentInstructions = None)
+      // Раскладка ленты — показ, а не условие торгов: состояние от неё не меняется (PER-719).
+      case (state, AuctionEvent.LotLayoutSet(layout)) if state.finalTimeAhead => auction.copy(layout = layout)
       case (current, AuctionEvent.AuctionCancelled) =>
         current match {
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |

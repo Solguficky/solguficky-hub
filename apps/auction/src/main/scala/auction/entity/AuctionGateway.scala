@@ -79,6 +79,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[FinalTimeRejected, AuctionAnswer]]
 
+  /** Порядок и разделы ленты (PER-719): раскладка целиком. */
+  def setLotLayout(
+      auctionId: AuctionId,
+      command: SetLotLayout,
+      initiator: Initiator
+  ): Future[Either[LotLayoutRejected, AuctionAnswer]]
+
   /** Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. */
   def setPaymentInstructions(
       auctionId: AuctionId,
@@ -251,6 +258,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[FinalTimeRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Announce(command, initiator, _))
+
+      def setLotLayout(
+          auctionId: AuctionId,
+          command: SetLotLayout,
+          initiator: Initiator
+      ): Future[Either[LotLayoutRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Arrange(command, initiator, _))
 
       def setPaymentInstructions(
           auctionId: AuctionId,

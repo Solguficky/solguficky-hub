@@ -63,6 +63,13 @@ internal static class IdentitySetup
     /// </summary>
     public static IResourceBuilder<ContainerResource> Publish(ServiceGraphContext context)
     {
+        // Принимает ли очередь сообщества заявки (дополнение ADR-060 от
+        // 2026-10-25, PER-739) — свойство среды. В чарте значение «открыта»:
+        // забытый ключ в values оставляет прежнее поведение, а `closed` values
+        // среды кладут своим значением, и в хаб пускает только белый список.
+        // Иное значение роняет старт Identity с именем переменной.
+        var communityQueue = context.Builder.AddParameter("identity-community-queue", "open", publishValueAsDefault: true);
+
         var identity = context.Builder
             .AddDockerfile(
                 AppHostNames.Resources.Identity,
@@ -70,7 +77,10 @@ internal static class IdentitySetup
                 "apps/identity/Containerfile")
             .WithEndpoint(targetPort: ContainerGrpcPort, scheme: "http", name: AppHostNames.Endpoints.Grpc);
 
-        return Wire(context, identity).ExportsTelemetryToCollector().AsClusterWorkload(Cluster);
+        return Wire(context, identity)
+            .WithEnvironment("IDENTITY_COMMUNITY_QUEUE", communityQueue)
+            .ExportsTelemetryToCollector()
+            .AsClusterWorkload(Cluster);
     }
 
     private static IResourceBuilder<T> Wire<T>(ServiceGraphContext context, IResourceBuilder<T> identity)

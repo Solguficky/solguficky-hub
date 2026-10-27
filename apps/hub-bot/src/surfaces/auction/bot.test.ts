@@ -3160,6 +3160,77 @@ const openRaffle: RaffleView = {
   tickets: [],
 };
 
+// Программа недели (PER-724): абзац корня аукциона по сводке и розыгрышу.
+describe("week programme in the auction root", () => {
+  const inHours = (hours: number) =>
+    new Date(Date.now() + hours * 3_600_000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
+  function programmePorts(
+    getRaffle: () => Promise<RaffleView | undefined>,
+  ): PortsFactory {
+    return (requestId, deadlineAt) => {
+      const ports = publicPorts(requestId, deadlineAt);
+      return {
+        ...ports,
+        auction: {
+          ...ports.auction,
+          getAuction: async () => ({
+            auctionId,
+            stage: "prebidding" as const,
+            opensAt: inHours(-48),
+            closesAt: inHours(96),
+            final: true,
+            finalAt: inHours(100),
+            stepWindows: [
+              { from: inHours(-1), until: inHours(1), lotIds: ["a", "b", "c"] },
+            ],
+          }),
+          getRaffle,
+        },
+      };
+    };
+  }
+
+  it("shows the happy hours, the raffle, the deadline and the final", async () => {
+    const { bot, calls } = makeBot(
+      programmePorts(async () => ({ ...openRaffle, closesAt: inHours(50) })),
+    );
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    const root = lastScreen(calls);
+    expect(root.text).toContain("<b>Программа недели</b>");
+    expect(root.text).toMatch(
+      /Счастливые часы: сейчас, до (?:.+, )?\d\d:\d\d — 3 лота/,
+    );
+    expect(root.text).toContain("Розыгрыш: ");
+    expect(root.text).toContain("Онлайн-торги до ");
+    expect(root.text).toContain("Финал: ориентировочно ");
+  });
+
+  // Отказ чтения розыгрыша убирает его строку и кнопку, а не корень.
+  it("keeps the root without the raffle line when the raffle read fails", async () => {
+    const { bot, calls } = makeBot(
+      programmePorts(async () => {
+        throw new Error("auction unavailable");
+      }),
+    );
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    const root = lastScreen(calls);
+    expect(root.text).toContain("<b>Программа недели</b>");
+    expect(root.text).not.toContain("Розыгрыш");
+    expect(root.text).toContain("Финал: ориентировочно ");
+    expect(root.keyboard.flat().map((button) => button.text)).not.toContain(
+      "Розыгрыш",
+    );
+  });
+});
+
 describe("raffle among the participants", () => {
   // Вход — «Розыгрыш» в корне аукциона, как в хабе (PER-644).
   it("registers from the auction root, shows the commitment and then the result", async () => {

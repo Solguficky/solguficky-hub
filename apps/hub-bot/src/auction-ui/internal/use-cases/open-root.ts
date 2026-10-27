@@ -7,9 +7,10 @@ import type {
 } from "../../ports.js";
 import type { AuctionScreenBody } from "../../screen.js";
 import { hasInvoices } from "./invoices.js";
-import { hasRaffle } from "./open-feed.js";
+import { readRaffle } from "./open-feed.js";
 
-// Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
+// Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия, сроки и
+// программа недели (PER-724) — окна и финал из сводки, розыгрыш из `getRaffle`,
 // вход в лоты, в прогнозы, пока участнику есть что отправить или перечитать
 // (PER-489), в хроники дня онлайн-недели (PER-725), в розыгрыш, пока Auction
 // его отдаёт, и, у процесса с Notifications, в избранное. Корень один у двух
@@ -30,7 +31,7 @@ export async function openRoot(input: {
   viewer: Viewer;
   auctionId: string;
 }): Promise<AuctionScreenBody> {
-  const raffleRead = hasRaffle(input);
+  const raffleRead = readRaffle(input);
   const predictionRead = predictionEntryRound(input).catch(() => undefined);
   const invoicesRead = hasInvoices(input);
   const auction = await input.auction.getAuction({
@@ -49,7 +50,18 @@ export async function openRoot(input: {
     };
   }
   return {
-    blocks: [{ kind: "root", auctionId: input.auctionId, auction }],
+    blocks: [
+      {
+        kind: "root",
+        auctionId: input.auctionId,
+        auction,
+        // Программа недели (PER-724): момент розыгрыша — пока регистрация
+        // открыта; прошедшие моменты отсекает оболочка по своим часам.
+        ...(raffle?.status === "open"
+          ? { raffleClosesAt: raffle.closesAt }
+          : {}),
+      },
+    ],
     keyboard: [
       // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
       // №66; пересматривает «Розыгрыш своим рядом» PER-669).
@@ -62,7 +74,7 @@ export async function openRoot(input: {
             page: 0,
           }),
         },
-        ...(raffle
+        ...(raffle !== undefined
           ? [
               {
                 action: "root.raffle" as const,

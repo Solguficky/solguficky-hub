@@ -15,6 +15,10 @@ import {
   consoleFinalData,
   consoleFinalTimeData,
   consoleFinalTimeRemoveData,
+  consoleLayoutData,
+  consoleLayoutListData,
+  consoleLayoutLotData,
+  consoleLayoutPlaceData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -23,6 +27,9 @@ import {
   consoleOpenData,
   consoleRaffleData,
   consoleRaffleRemoveData,
+  consoleSectionAskData,
+  consoleSectionDeleteData,
+  consoleSectionMoveData,
   consoleSetAskData,
   consoleSetData,
   consoleSetDeleteConfirmData,
@@ -1445,6 +1452,91 @@ describe("auction console callbacks", () => {
       kind: "malformed",
     });
     expect(parseCallback(`v1:ac:tw:${auction}:01:z0a9q`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
+  it("parses every button of the lot layout within the byte budget", () => {
+    // Худший случай: трёхзначный номер раздела и четырёхзначная страница.
+    const cases = [
+      [consoleLayoutData(auction), { kind: "console-layout", auction }],
+      [
+        consoleLayoutListData(auction, 0),
+        { kind: "console-layout-list", auction, place: 0, page: 0 },
+      ],
+      [
+        consoleLayoutListData(auction, 999, 9999),
+        { kind: "console-layout-list", auction, place: 999, page: 9999 },
+      ],
+      [
+        consoleLayoutLotData(auction, lot),
+        { kind: "console-layout-lot", auction, lot },
+      ],
+      [
+        consoleLayoutLotData(auction, lot, "up"),
+        { kind: "console-layout-lot-move", auction, lot, direction: "up" },
+      ],
+      [
+        consoleLayoutLotData(auction, lot, "down"),
+        { kind: "console-layout-lot-move", auction, lot, direction: "down" },
+      ],
+      [
+        consoleLayoutPlaceData(auction, lot, 999),
+        { kind: "console-layout-lot-place", auction, lot, place: 999 },
+      ],
+      [
+        consoleSectionAskData(auction),
+        { kind: "console-section-ask", auction },
+      ],
+      [
+        consoleSectionAskData(auction, 999),
+        { kind: "console-section-ask", auction, section: 999 },
+      ],
+      [
+        consoleSectionMoveData(auction, 2, "up"),
+        { kind: "console-section-move", auction, section: 2, direction: "up" },
+      ],
+      [
+        consoleSectionMoveData(auction, 2, "down"),
+        {
+          kind: "console-section-move",
+          auction,
+          section: 2,
+          direction: "down",
+        },
+      ],
+      [
+        consoleSectionDeleteData(auction, 2),
+        { kind: "console-section-delete", auction, section: 2 },
+      ],
+      [
+        consoleSectionDeleteData(auction, 2, true),
+        { kind: "console-section-delete-confirm", auction, section: 2 },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    for (const step of [
+      { kind: "console-section", auction },
+      { kind: "console-section", auction, section: 999 },
+    ] as const) {
+      expect(parseCallback(questionData(step, 42))).toEqual({
+        kind: "question",
+        step,
+        askedBy: 42,
+      });
+    }
+    // Раздел без номера, ноль у раздела и номер с ведущим нулём — не кнопка.
+    expect(parseCallback(`v1:ac:mr:${auction}:0`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:ac:ml:${auction}:01`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:ac:mv:${auction}:${lot}`)).toEqual({
       kind: "malformed",
     });
   });

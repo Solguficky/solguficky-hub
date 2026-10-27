@@ -93,6 +93,14 @@ const PositionSchema = z
   .transform(Number);
 // Окно «Счастливых часов» в кнопке пульта (PER-504): номер в конфигурации с
 // нуля — двух цифр хватает с запасом, — и отпечаток его сроков и шага.
+// Номер раздела ленты (PER-719) в кнопке; `0` — общий список. Предел тот же,
+// что у кнопки раздела в ленте участника: семь цифр — номер растёт минутой
+// создания раздела.
+const SectionSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,6})$/)
+  .transform(Number);
+
 const WindowIndexSchema = z
   .string()
   .regex(/^(0|[1-9]\d?)$/)
@@ -473,6 +481,14 @@ type PlainAction =
   | { kind: "console-raffle-winner-ask"; auction: string }
   | { kind: "console-raffle-winner-pick"; auction: string; ticket: number }
   | { kind: "console-raffle-winner-confirm"; auction: string; ticket: number }
+  // Смена приза идущего розыгрыша (PER-737): вопрос о тексте и «Да» с
+  // отпечатком нового приза; сам текст «Да» берёт из экрана подтверждения.
+  | { kind: "console-raffle-prize-change"; auction: string }
+  | {
+      kind: "console-raffle-prize-change-confirm";
+      auction: string;
+      print: string;
+    }
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -498,6 +514,40 @@ type PlainAction =
     }
   | { kind: "console-set-delete"; auction: string; set: LotSetRef }
   | { kind: "console-set-delete-confirm"; auction: string; set: LotSetRef }
+  // Порядок и разделы ленты (PER-719): экран разделов, список места — номер
+  // раздела или `0`, общий список, — лот в раскладке, лот выше и ниже, лот
+  // в другое место, вопрос о названии нового или переименуемого раздела,
+  // раздел выше и ниже, подтверждение удаления раздела и «Да». Лот кнопка
+  // называет токеном, раздел — номером, который выбрал пульт.
+  | { kind: "console-layout"; auction: string }
+  | {
+      kind: "console-layout-list";
+      auction: string;
+      place: number;
+      page: number;
+    }
+  | { kind: "console-layout-lot"; auction: string; lot: string }
+  | {
+      kind: "console-layout-lot-move";
+      auction: string;
+      lot: string;
+      direction: "up" | "down";
+    }
+  | {
+      kind: "console-layout-lot-place";
+      auction: string;
+      lot: string;
+      place: number;
+    }
+  | { kind: "console-section-ask"; auction: string; section?: number }
+  | {
+      kind: "console-section-move";
+      auction: string;
+      section: number;
+      direction: "up" | "down";
+    }
+  | { kind: "console-section-delete"; auction: string; section: number }
+  | { kind: "console-section-delete-confirm"; auction: string; section: number }
   // Запуск окна сниженного шага по ходу торгов (PER-615): начать запуск,
   // переключить лот запускаемого окна, запустить и листать лоты. Черновик
   // едет в кнопке — состояния у пульта нет.
@@ -753,6 +803,9 @@ export type QuestionStep =
   // Номер выигравшего билета (PER-727): аукцион, а пул ответ читает у Auction
   // заново.
   | { kind: "console-raffle-winner"; auction: string }
+  // Новый приз идущего розыгрыша (PER-737): аукцион, а текущий приз ответ
+  // читает у Auction заново.
+  | { kind: "console-raffle-prize-change"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
@@ -768,6 +821,9 @@ export type QuestionStep =
   // Название нового сета лотов (PER-509): аукцион, а сеты ответ читает у
   // Auction заново.
   | { kind: "console-set"; auction: string }
+  // Название раздела ленты (PER-719): нового либо, с `section`, нового
+  // названия раздела.
+  | { kind: "console-section"; auction: string; section?: number }
   // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
   | { kind: "final-ask"; auction: string; position: number }
   // «Другой человек…» «Ставок зала» (PER-565): аукцион, а людей и цену ответ
@@ -998,6 +1054,19 @@ export function consoleRaffleWinnerConfirmData(
   return `v1:ac:ry:${auction}:${ticket}`;
 }
 
+/** «Изменить приз» идущего розыгрыша (PER-737): вопрос о новом тексте. */
+export function consoleRafflePrizeChangeData(auction: string): string {
+  return `v1:ac:rn:${auction}`;
+}
+
+/** «Да» смены приза: аукцион и отпечаток нового текста; ключ — на нажатие. */
+export function consoleRafflePrizeChangeConfirmData(
+  auction: string,
+  print: string,
+): string {
+  return `v1:ac:rv:${auction}:${print}`;
+}
+
 /** Переключатель финала с целевым состоянием. */
 export function consoleFinalData(auction: string, final: boolean): string {
   return `v1:ac:f:${auction}:${final ? "1" : "0"}`;
@@ -1182,6 +1251,68 @@ export function consoleSetDeleteConfirmData(
   set: LotSetRef,
 ): string {
   return `v1:ac:ty:${auction}:${set.index}:${set.print}`;
+}
+
+/** «Порядок» пульта: разделы ленты и общий список (PER-719). */
+export function consoleLayoutData(auction: string): string {
+  return `v1:ac:m:${auction}`;
+}
+
+/** Список раздела `place` или общий список (`0`) на странице `page`. */
+export function consoleLayoutListData(
+  auction: string,
+  place: number,
+  page = 0,
+): string {
+  const base = `v1:ac:ml:${auction}:${place}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/** Лот в раскладке; `mu` и `md` — тот же лот выше и ниже. */
+export function consoleLayoutLotData(
+  auction: string,
+  lot: string,
+  move?: "up" | "down",
+): string {
+  const code = move === undefined ? "mo" : move === "up" ? "mu" : "md";
+  return `v1:ac:${code}:${auction}:${lot}`;
+}
+
+/** Лот в раздел `place` или в общий список (`0`): 58 байт при трёх цифрах. */
+export function consoleLayoutPlaceData(
+  auction: string,
+  lot: string,
+  place: number,
+): string {
+  return `v1:ac:mv:${auction}:${lot}:${place}`;
+}
+
+/** «Новый раздел» и, с номером, «Переименовать»: вопрос о названии. */
+export function consoleSectionAskData(
+  auction: string,
+  section?: number,
+): string {
+  return section === undefined
+    ? `v1:ac:mq:${auction}`
+    : `v1:ac:mr:${auction}:${section}`;
+}
+
+/** Раздел выше (`mh`) и ниже (`mj`). */
+export function consoleSectionMoveData(
+  auction: string,
+  section: number,
+  direction: "up" | "down",
+): string {
+  return `v1:ac:${direction === "up" ? "mh" : "mj"}:${auction}:${section}`;
+}
+
+/** «Удалить раздел»: подтверждение (`mx`) и «Да» (`my`). */
+export function consoleSectionDeleteData(
+  auction: string,
+  section: number,
+  confirmed = false,
+): string {
+  return `v1:ac:${confirmed ? "my" : "mx"}:${auction}:${section}`;
 }
 
 /** «Запустить окно»: вопрос о начале, конце и шаге (PER-615). */
@@ -1423,12 +1554,18 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ai:${step.auction}`;
     case "console-raffle-winner":
       return `v1:q:rw:${step.auction}`;
+    case "console-raffle-prize-change":
+      return `v1:q:rn:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
       return `v1:q:al:${step.auction}`;
     case "console-set":
       return `v1:q:as:${step.auction}`;
+    case "console-section":
+      return step.section === undefined
+        ? `v1:q:aq:${step.auction}`
+        : `v1:q:ae:${step.auction}:${step.section}`;
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
     case "floor-search":
@@ -1962,7 +2099,8 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:<tx|ty>:<аукцион>:<сет>:<отпечаток>`. Розыгрыш (PER-593):
 // `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`, итог вручную (PER-727):
 // `v1:ac:rw:<аукцион>[:<страница>]`, `v1:ac:ra:<аукцион>` и
-// `v1:ac:<rc|ry>:<аукцион>:<билет>`. Видимость (PER-673):
+// `v1:ac:<rc|ry>:<аукцион>:<билет>`, смена приза (PER-737): `v1:ac:rn:<аукцион>`
+// и `v1:ac:rv:<аукцион>:<отпечаток>`. Видимость (PER-673):
 // `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
@@ -2055,6 +2193,22 @@ function parseConsole(parts: readonly string[]): CallbackAction {
         auction: auction.data,
         ticket: ticket.data,
       };
+    }
+    // Смена приза идущего розыгрыша (PER-737): вопрос `rn` и «Да» `rv` с
+    // отпечатком текста.
+    case "rn":
+      return parts.length === 4
+        ? { kind: "console-raffle-prize-change", auction: auction.data }
+        : { kind: "malformed" };
+    case "rv": {
+      const print = WindowPrintSchema.safeParse(parts[4]);
+      return parts.length === 5 && print.success
+        ? {
+            kind: "console-raffle-prize-change-confirm",
+            auction: auction.data,
+            print: print.data,
+          }
+        : { kind: "malformed" };
     }
     // Текст «Как оплатить и получить» (PER-322): вопрос `it` и снятие `ix`.
     case "it":
@@ -2199,6 +2353,93 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-window-launch", auction: auction.data }
         : { kind: "malformed" };
+    // Порядок и разделы ленты (PER-719).
+    case "m":
+      return parts.length === 4
+        ? { kind: "console-layout", auction: auction.data }
+        : { kind: "malformed" };
+    case "ml": {
+      const place = SectionSchema.safeParse(parts[4]);
+      const page = PageSchema.safeParse(parts[5] ?? "0");
+      return (parts.length === 5 || parts.length === 6) &&
+        place.success &&
+        page.success
+        ? {
+            kind: "console-layout-list",
+            auction: auction.data,
+            place: place.data,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "mo":
+    case "mu":
+    case "md": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !lot.success) return { kind: "malformed" };
+      return parts[2] === "mo"
+        ? { kind: "console-layout-lot", auction: auction.data, lot: lot.data }
+        : {
+            kind: "console-layout-lot-move",
+            auction: auction.data,
+            lot: lot.data,
+            direction: parts[2] === "mu" ? "up" : "down",
+          };
+    }
+    case "mv": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      const place = SectionSchema.safeParse(parts[5]);
+      return parts.length === 6 && lot.success && place.success
+        ? {
+            kind: "console-layout-lot-place",
+            auction: auction.data,
+            lot: lot.data,
+            place: place.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "mq":
+      return parts.length === 4
+        ? { kind: "console-section-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "mr":
+    case "mh":
+    case "mj":
+    case "mx":
+    case "my": {
+      const section = SectionSchema.safeParse(parts[4]);
+      if (parts.length !== 5 || !section.success || section.data === 0) {
+        return { kind: "malformed" };
+      }
+      switch (parts[2]) {
+        case "mr":
+          return {
+            kind: "console-section-ask",
+            auction: auction.data,
+            section: section.data,
+          };
+        case "mh":
+        case "mj":
+          return {
+            kind: "console-section-move",
+            auction: auction.data,
+            section: section.data,
+            direction: parts[2] === "mh" ? "up" : "down",
+          };
+        case "mx":
+          return {
+            kind: "console-section-delete",
+            auction: auction.data,
+            section: section.data,
+          };
+        default:
+          return {
+            kind: "console-section-delete-confirm",
+            auction: auction.data,
+            section: section.data,
+          };
+      }
+    }
     case "hm": {
       const draft = decodeLaunchDraft(parts[4] ?? "");
       return parts.length === 5 && draft !== undefined
@@ -2492,6 +2733,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-payment-text", auction: token.data };
       case "rw":
         return { kind: "console-raffle-winner", auction: token.data };
+      case "rn":
+        return { kind: "console-raffle-prize-change", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":
@@ -2500,6 +2743,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-launch", auction: token.data };
       case "as":
         return { kind: "console-set", auction: token.data };
+      case "aq":
+        return { kind: "console-section", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":
@@ -2532,6 +2777,12 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
           ...(lead === "c" ? { chain: true as const } : {}),
           ...(lead === "s" ? { set: true as const } : {}),
         }
+      : undefined;
+  }
+  if (parts[2] === "ae") {
+    const section = SectionSchema.safeParse(parts[4]);
+    return section.success && section.data > 0
+      ? { kind: "console-section", auction: token.data, section: section.data }
       : undefined;
   }
   if (parts[2] === "fa") {

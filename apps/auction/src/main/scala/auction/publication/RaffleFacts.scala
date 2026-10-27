@@ -15,9 +15,10 @@ import java.util.UUID
  * Отображение строки журнала розыгрыша в публичный факт на шине (integration.md, «Auction NATS», PER-620), та же форма,
  * что [[AuctionFacts]]: конверт — `event_id`, аукцион розыгрыша, номер события в журнале розыгрыша и время решения,
  * тело — снимок розыгрыша сразу после события. Публикуется только жеребьёвка: регистрации, их отмена и фиксация пула —
- * не поводы. Ручной итог администратора (дополнение ADR-066 от 2026-10-24) — тот же повод `raffle_drawn`: участникам
- * итог приходит тем же путём. Номер выигравшего билета жеребьёвки по маяку журнал не хранит, и факт берёт его из
- * [[Raffle.winningTicket]], как экран итога (`RaffleView`), поэтому сообщение и экран не расходятся.
+ * не поводы, как и смена приза (PER-737): её участникам не объявляют, а факт итога несёт приз на момент итога. Ручной
+ * итог администратора (дополнение ADR-066 от 2026-10-24) — тот же повод `raffle_drawn`: участникам итог приходит тем же
+ * путём. Номер выигравшего билета жеребьёвки по маяку журнал не хранит, и факт берёт его из [[Raffle.winningTicket]],
+ * как экран итога (`RaffleView`), поэтому сообщение и экран не расходятся.
  */
 object RaffleFacts {
 
@@ -66,7 +67,8 @@ object RaffleFacts {
       case RaffleEvent.RaffleDrawn(_, _) | RaffleEvent.WinnerAssigned(_, _) =>
         Some("raffle_drawn" -> bus.RaffleEvent.Occasion.RaffleDrawn(bus.RaffleDrawn()))
       case RaffleEvent.RaffleOpened(_, _, _, _) | RaffleEvent.RaffleNotHeld(_) | RaffleEvent.Registered(_) |
-          RaffleEvent.RegistrationCancelled(_) | RaffleEvent.PoolFixed(_, _) | RaffleEvent.RaffleCancelled(_) =>
+          RaffleEvent.RegistrationCancelled(_) | RaffleEvent.PoolFixed(_, _) | RaffleEvent.RaffleCancelled(_) |
+          RaffleEvent.PrizeChanged(_) =>
         None
     }
 }

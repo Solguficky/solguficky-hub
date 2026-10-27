@@ -2,6 +2,7 @@ package auction.grpc
 
 import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
+import auction.aggregate.AuctionConfig
 import auction.aggregate.AuctionState
 import auction.aggregate.MeetupGate
 import auction.aggregate.PaymentInstructions
@@ -39,6 +40,8 @@ import auction.projection.LotViews
 import auction.raffle.AssignRejected
 import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
+import auction.raffle.ChangePrize
+import auction.raffle.ChangePrizeRejected
 import auction.raffle.Raffle
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleState
@@ -724,6 +727,20 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Порядок и разделы ленты (PER-719): право у Meetups, состояние решает аукцион. Раскладка заменяется целиком одной
+   * командой.
+   */
+  def setLotLayout(in: wire.SetLotLayoutRequest): Future[wire.SetLotLayoutResponse] =
+    RequestMapping.setLotLayout(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .setLotLayout(command.auctionId, command.layout, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setLotLayout(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Текст «как оплатить и получить» (PER-322): право у Meetups без ворот по сходке, затем аукцион. Текст выставляется,
    * меняется и снимается одной командой.
    */
@@ -1118,6 +1135,39 @@ final class AuctionGrpcService(
               val query = ConsoleQuery(command.auctionId, command.acting)
               administered(query, ResponseMapping.assignWinnerDenied, MeetupGate.NotCancelled) { _ =>
                 raffles.assign(command.auctionId, assign).recoverWith(awaited).flatMap(answer)
+              }
+          }
+        }
+    }
+
+  /**
+   * Смена приза розыгрыша (ADR-066, дополнение 2026-10-25, PER-737) путём ручного итога: форма, затем текст теми же
+   * правилами, что приз конфигурации (`RafflePrizeBlank`, `RafflePrizeTooLong`), затем повтор своего `op_id` раньше
+   * права, затем право вести аукцион у Meetups с воротами отменённой сходки, затем розыгрыш. Конфигурацию аукциона
+   * команда не трогает: приз меняется только в розыгрыше, который скопировал его при открытии.
+   */
+  def changeRafflePrize(in: wire.ChangeRafflePrizeRequest): Future[wire.ChangeRafflePrizeResponse] =
+    RequestMapping.changeRafflePrize(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) if command.prize.isBlank => Future.successful(RaffleMapping.prizeBlank)
+      case Right(command) if command.prize.length > AuctionConfig.MaxRafflePrize =>
+        Future.successful(RaffleMapping.prizeTooLong)
+      case Right(command) =>
+        val change = ChangePrize(command.prize, command.opId)
+        def answer(outcome: Either[ChangePrizeRejected, Raffle]) =
+          viewed(command.auctionId, command.acting.participant, outcome)
+            .flatMap(viewedOutcome => RaffleMapping.changePrize(viewedOutcome).fold(refuse, Future.successful))
+        raffles.get(command.auctionId).recoverWith(awaited).flatMap { raffle =>
+          raffle.seen.get(command.opId) match {
+            case Some(_) =>
+              Raffle.decide(raffle, change) match {
+                case Left(rejected) => answer(Left(rejected))
+                case Right(_) => answer(Right(raffle))
+              }
+            case None =>
+              val query = ConsoleQuery(command.auctionId, command.acting)
+              administered(query, ResponseMapping.changePrizeDenied, MeetupGate.NotCancelled) { _ =>
+                raffles.changePrize(command.auctionId, change).recoverWith(awaited).flatMap(answer)
               }
           }
         }
@@ -1559,6 +1609,7 @@ object AuctionGrpcService {
     def register(auction: AuctionId, command: Register) = none
     def cancel(auction: AuctionId, command: CancelRegistration) = none
     def assign(auction: AuctionId, command: AssignWinner) = none
+    def changePrize(auction: AuctionId, command: ChangePrize) = none
     def get(auction: AuctionId) = none
   }
 

@@ -223,8 +223,10 @@ describe("createPorts", () => {
     [AccessRequestOutcome.PENDING, "pending"],
     [AccessRequestOutcome.DECLINED, "declined"],
     [AccessRequestOutcome.BLOCKED, "blocked"],
+    [AccessRequestOutcome.INVITATION_ONLY, "invitation-only"],
     [AccessRequestOutcome.UNSPECIFIED, "unspecified"],
-    // Число, которого словарь ещё не знает, — отказ, а не допуск.
+    // Число, которого словарь ещё не знает, — отказ, а не допуск. Так бот,
+    // собранный до INVITATION_ONLY (PER-739), читает и шестёрку.
     [99 as AccessRequestOutcome, "unspecified"],
   ])("reads the outcome %s as %s", async (wire, outcome) => {
     const { identity, ports } = rpcs();

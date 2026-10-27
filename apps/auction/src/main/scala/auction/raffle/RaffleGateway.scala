@@ -20,6 +20,8 @@ trait RaffleGateway {
 
   def assign(auction: AuctionId, command: AssignWinner): Future[Either[AssignRejected, Raffle]]
 
+  def changePrize(auction: AuctionId, command: ChangePrize): Future[Either[ChangePrizeRejected, Raffle]]
+
   def get(auction: AuctionId): Future[Raffle]
 }
 
@@ -39,6 +41,9 @@ object RaffleGateway {
 
       def assign(auction: AuctionId, command: AssignWinner): Future[Either[AssignRejected, Raffle]] =
         entity(auction).ask(RaffleEntity.Assign(command, _))
+
+      def changePrize(auction: AuctionId, command: ChangePrize): Future[Either[ChangePrizeRejected, Raffle]] =
+        entity(auction).ask(RaffleEntity.SetPrize(command, _))
 
       def get(auction: AuctionId): Future[Raffle] = entity(auction).ask(RaffleEntity.Get(_))
     }

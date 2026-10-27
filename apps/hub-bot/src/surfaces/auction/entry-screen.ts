@@ -24,6 +24,7 @@ import {
   predictionResultsParagraphs,
   predictionResultsTitle,
 } from "../../auction-prediction-results.js";
+import { programmeParagraph } from "../../auction-programme.js";
 import {
   cancelRegistrationLabel,
   raffleBackName,
@@ -54,6 +55,8 @@ import {
   extensionLine,
   favoritesEmptyText,
   favoritesSummary,
+  feedSectionLabel,
+  feedSectionTitle,
   feedSummary,
   finalFeedLabel,
   followLabel,
@@ -918,8 +921,15 @@ function renderBody(
     keyboard,
     format: "html",
     text: screenText(
-      paged("Лоты", feed),
-      ...(feed.lots.length === 0
+      paged(
+        feed.section === undefined
+          ? "Лоты"
+          : feedSectionTitle(feed.section.name),
+        feed,
+      ),
+      // Пустой общий список при заполненных разделах — не пустой аукцион
+      // (PER-719): сводка своих лотов остаётся.
+      ...(feed.lots.length === 0 && (feed.sections?.length ?? 0) === 0
         ? ["Лотов пока нет."]
         : feedSummary(feed, mineOptions)),
     ),
@@ -1007,6 +1017,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "name-answer-refused":
         return "answer-refused";
       case "feed":
+        // Раздел ленты (PER-719) — свой экран с возвратом к списку разделов.
+        if (block.section !== undefined) screen = "feed-section";
         break;
       default: {
         const _exhaustive: never = block;
@@ -1058,6 +1070,13 @@ function rootText(block: RootBlock, options: RenderOptions): string {
         ? ["После них — финал в зале."]
         : []),
     ].join("\n"),
+    // Программа недели (PER-724) — абзацем под сроками, текст общий с хабом.
+    programmeParagraph(block, {
+      moment: (instant) =>
+        readableMoment(instant, options.timeZone, options.now),
+      timeZone: options.timeZone,
+      now: options.now ?? new Date(),
+    }),
   );
 }
 
@@ -1914,6 +1933,13 @@ function renderButton(
       if (item === undefined) return text(untitled);
       return text(setLotLabel(item, setOptions));
     }
+    // Раздел ленты (PER-719): название и число лотов.
+    case "feed.open-section": {
+      const section = blocks
+        .find((block): block is FeedBlock => block.kind === "feed")
+        ?.sections?.find((each) => each.sectionId === button.sectionId);
+      return text(section === undefined ? untitled : feedSectionLabel(section));
+    }
     case "feed.prev":
       return text("←");
     case "feed.next":
@@ -1957,8 +1983,16 @@ function renderButton(
       return text("←");
     case "favorites.next":
       return text("→");
-    case "favorites.back":
+    // С раздела ленты возврат — к списку разделов (PER-719).
     case "feed.back":
+      return text(
+        blocks.some(
+          (block) => block.kind === "feed" && block.section !== undefined,
+        )
+          ? "‹ Лоты"
+          : `‹ ${rootTitle}`,
+      );
+    case "favorites.back":
     case "raffle.back":
       return text(`‹ ${rootTitle}`);
     // Без ставок первая ставка — не «по шагу» (PER-631, №82).

@@ -3,6 +3,7 @@ import type {
   AuctionStageView,
   AuctionSummaryView,
   FinalLineupView,
+  LotLayoutView,
 } from "../../auction-ui/index.js";
 
 // Снимок аукциона для его корня (PER-605) в словаре пакета. Перевод общий у
@@ -26,7 +27,92 @@ export function auctionSummaryViewOf(
     final: (snapshot.config?.finalBlocks ?? 0) > 0,
     ...withLineup(snapshot.status),
     ...(snapshot.hidden ? { hidden: true as const } : {}),
+    ...withLayout(snapshot.lotLayout),
+    ...withProgramme(snapshot),
   };
+}
+
+// Раскладка в сводке — подсказка ленте (PER-719), как состав финала: кривая
+// раскладка сводку не роняет, и лента идёт в порядке создания.
+function withLayout(layout: AuctionSnapshot["lotLayout"]) {
+  let view: LotLayoutView | undefined;
+  try {
+    view = lotLayoutOf(layout);
+  } catch {
+    view = undefined;
+  }
+  return view === undefined ? {} : { layout: view };
+}
+
+/**
+ * Порядок и разделы ленты из снимка (PER-719) или `undefined`, если
+ * администратор лоты не упорядочивал. Неканонический идентификатор, номер
+ * раздела ноль, повтор номера или лота и пустое название — дефект соседа:
+ * перевод бросает, и пульт показывает «недоступно», а не выдуманный порядок.
+ */
+export function lotLayoutOf(
+  layout: AuctionSnapshot["lotLayout"],
+): LotLayoutView | undefined {
+  if (layout === undefined) return undefined;
+  if (layout.lotIds.length === 0 && layout.sections.length === 0) {
+    return undefined;
+  }
+  const seenLots = new Set<string>();
+  const seenSections = new Set<number>();
+  const lotsOf = (ids: readonly string[]): string[] =>
+    ids.map((id) => {
+      if (!CANONICAL_UUID.test(id)) {
+        throw new Error("lot layout names a lot id that is not canonical");
+      }
+      if (seenLots.has(id)) throw new Error("lot layout names a lot twice");
+      seenLots.add(id);
+      return id;
+    });
+  const sections = layout.sections.map((section) => {
+    if (section.sectionId === 0 || seenSections.has(section.sectionId)) {
+      throw new Error("lot layout section id is zero or repeated");
+    }
+    seenSections.add(section.sectionId);
+    if (section.name.trim() === "") {
+      throw new Error("lot layout section name is blank");
+    }
+    return {
+      sectionId: section.sectionId,
+      name: section.name,
+      lotIds: lotsOf(section.lotIds),
+    };
+  });
+  return { lotIds: lotsOf(layout.lotIds), sections };
+}
+
+// Программа недели (PER-724) — подсказка корню, как состав — ленте: кривой
+// момент окна или финала выпадает из программы, а не роняет сводку.
+function withProgramme(snapshot: AuctionSnapshot) {
+  const finalAt = lenientInstant(snapshot.finalAt);
+  const stepWindows = [
+    ...(snapshot.config?.stepWindows ?? []),
+    ...snapshot.launchedStepWindows,
+  ]
+    .flatMap((window) => {
+      const from = lenientInstant(window.from);
+      const until = lenientInstant(window.until);
+      return from === undefined || until === undefined
+        ? []
+        : [{ from, until, lotIds: [...window.lotIds] }];
+    })
+    .sort((left, right) => Date.parse(left.from) - Date.parse(right.from));
+  return {
+    ...(finalAt === undefined ? {} : { finalAt }),
+    ...(stepWindows.length === 0 ? {} : { stepWindows }),
+  };
+}
+
+function lenientInstant(value: string | undefined): string | undefined {
+  try {
+    return instantOf(value, "programme moment");
+  } catch {
+    return undefined;
+  }
 }
 
 // Состав в сводке — подсказка ленте (PER-639), а сводку читают ещё список

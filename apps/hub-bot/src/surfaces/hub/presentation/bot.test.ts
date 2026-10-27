@@ -25,6 +25,7 @@ import {
   blockedHubAccessText,
   declinedHubAccessText,
   hubWelcome,
+  invitationOnlyHub,
   pendingHubAccessText,
 } from "../application/hub-access.js";
 import { rejectedValueText } from "../application/meetup-form.js";
@@ -148,6 +149,13 @@ function forwardedReplyUpdate(replyMessageId: number): Update {
       } as never,
     },
   };
+}
+
+// Пересылка так, как её шлёт клиент: ответом на вопрос она прийти не может.
+function forwardedUpdate(): Update {
+  const update = forwardedReplyUpdate(0);
+  const { reply_to_message: _reply, ...message } = update.message ?? {};
+  return { ...update, message } as Update;
 }
 
 // Клавиатура вопроса: режим ответа и «Отмена» с его шагом.
@@ -823,7 +831,9 @@ describe("presentation adapter", () => {
     expect(rejection?.method).toBe("sendMessage");
     // Прежний вопрос снимается после того, как ушёл новый.
     expect(calls.at(-1)?.method).toBe("editMessageReplyMarkup");
-    expect(JSON.stringify(rejection?.payload)).toContain("нельзя дать ссылку");
+    expect(JSON.stringify(rejection?.payload)).toContain(
+      "Текст сам по себе не материал",
+    );
     expect(JSON.stringify(rejection?.payload)).not.toContain("force_reply");
     expect(JSON.stringify(rejection?.payload)).toContain(
       '"text":"Ввести заново","callback_data":"v1:mm:add:AZLzpLXGfY6fChssPU5fYA"',
@@ -834,6 +844,52 @@ describe("presentation adapter", () => {
 
     await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
     await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
+
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
+      "Как назвать материал",
+    );
+  });
+
+  // Клиент Telegram не умеет переслать сообщение ответом на вопрос: пересылка
+  // без ответа идёт ответом на открытый вопрос об источнике.
+  it("takes a forward without reply as the material source", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(forwardedUpdate());
+
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
+      "Как назвать материал",
+    );
+  });
+
+  // Подпись к пересылке клиент шлёт отдельным сообщением перед ней: набранный
+  // текст без ответа вопрос не снимает, и пересылка следом его находит.
+  it("keeps the source question open for a typed text without reply", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(messageUpdate("вот афиша"));
+    expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).not.toContain(
+      "Текст сам по себе не материал",
+    );
+    await bot.handleUpdate(forwardedUpdate());
 
     expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
       "Как назвать материал",
@@ -1484,6 +1540,38 @@ describe("presentation adapter", () => {
       use_case: "find_meetup",
     });
     expect(records[0]?.fields.error).toBe("hub_access_declined");
+    expect(records[0]?.fields.identity_id).toBe(resolvedId);
+  });
+
+  // Закрытая очередь сообщества (дополнение ADR-060 от 2026-10-25): заявки
+  // нет, кадр «только по приглашению» с той же кнопкой и тем же кодом канала —
+  // ник, добавленный в список позже, она пропустит.
+  it("answers a closed community queue with the invitation-only frame", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(
+      entering(answered("invitation-only", ["place-bids"])),
+      { execute },
+    );
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:apply:tg_ads"));
+    const shown = calls.find((call) => call.method === "editMessageText");
+    expect(screen(shown).text).toBe(
+      screenText(
+        invitationOnlyHub.title,
+        ...invitationOnlyHub.paragraphs.map(escapeHtml),
+      ),
+    );
+    expect(buttonLabels(shown)).toEqual(["Подать заявку"]);
+    expect(JSON.stringify(shown?.payload)).toContain('"v1:apply:tg_ads"');
+    expect(execute).not.toHaveBeenCalled();
+    expectBoundary(records[0], {
+      level: "warn",
+      result: "error",
+      error_category: "authorization",
+      operation: "callback_query",
+      use_case: "find_meetup",
+    });
+    expect(records[0]?.fields.error).toBe("hub_access_invitation_only");
     expect(records[0]?.fields.identity_id).toBe(resolvedId);
   });
 

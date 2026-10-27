@@ -15,8 +15,8 @@ import { bold, type LotNoticeReads } from "./lot-notice.js";
 // победителя, и о долге знать нужно и тому, у кого право сняли после продажи.
 
 export type InvoiceNotice = {
-  // Первое напоминание — через ~12 часов после выставления, второе — за сутки
-  // до срока (integration.md, «Счёт на шине»).
+  // `invoice-reminder` — за сутки до срока, `invoice-due-reminder` — за 12
+  // часов и за час (PER-726; integration.md, «Счёт на шине»).
   kind: "invoice-reminder" | "invoice-due-reminder";
   invoiceId: string;
   lotId: string;
@@ -80,7 +80,8 @@ const toInvoiceLabel = "К счёту";
 // Предел названия — тот же, что у вестей о лоте.
 const TITLE_LIMIT = 200;
 
-// Срок — дата и время по часам сообщества: до него сутки и больше.
+// Срок — дата и время по часам сообщества. Текст называет срок, а не остаток
+// времени, поэтому одна фраза верна и за сутки, и за час до него.
 function dueMoment(instant: string, timeZone: string): string {
   return new Intl.DateTimeFormat("ru-RU", {
     timeZone,
