@@ -34,7 +34,7 @@ RFC не нужен для локального bugfix или очевидной
 
 | RFC | Предложение | Статус |
 |---|---|---|
-| [RFC-001](RFC-001-meetup-modules-topology.md) | Модули сходки: модель композиции, размещение и транспорт | In Review: решения владельца 2026-10-22 оформляются ADR по листьям [PER-391](https://linear.app/anticnvm/issue/per-391); решения 1, 2, 3, 8 — [ADR-076](../decisions/ADR-076-module-owns-meetup-binding.md) |
+| [RFC-001](RFC-001-meetup-modules-topology.md) | Модули сходки: модель композиции, размещение и транспорт | In Review: решения владельца 2026-10-22 оформляются ADR по листьям [PER-391](https://linear.app/anticnvm/issue/per-391); решения 1, 2, 3, 8 — [ADR-079](../decisions/ADR-079-module-owns-meetup-binding.md) |
 | [RFC-002](RFC-002-meetup-publication-visibility-materials.md) | Модель сходки: публикация, видимость и материалы | Accepted |
 | [RFC-003](RFC-003-bot-presentation-rich-blocks.md) | Представление бота: плоский текст или блоки Rich Messages | Accepted, [ADR-034](../decisions/ADR-034-telegram-bot-rich-presentation.md); открыты контракт модуля и экран настроек |
 | [RFC-004](RFC-004-meetups-domain-events-persistence.md) | Дизайн Meetups: домен, события и persistence | Accepted, [ADR-024](../decisions/ADR-024-meetups-state-storage-with-domain-event-log.md); открыт словарь домена |
