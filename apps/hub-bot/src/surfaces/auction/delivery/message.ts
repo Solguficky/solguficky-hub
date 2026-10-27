@@ -269,7 +269,11 @@ export function createRenderMessage(
     // Вести о новом аукционе и об открытии торгов (PER-646) права не
     // спрашивают: адресата выбрал издатель по праву ставок
     // (auction-announcement-notice.ts).
-    if (content.kind === "new-auction" || content.kind === "trading-opened") {
+    if (
+      content.kind === "new-auction" ||
+      content.kind === "trading-opened" ||
+      content.kind === "step-window-announced"
+    ) {
       return {
         kind: "ready",
         message: renderNotification(content, new Map(), false, timeZone),
@@ -329,7 +333,11 @@ export function renderNotification(
   if (isStepWindowNotice(content)) {
     return traceMessage(renderStepWindowNotice(content, { lots, timeZone }));
   }
-  if (content.kind === "new-auction" || content.kind === "trading-opened") {
+  if (
+    content.kind === "new-auction" ||
+    content.kind === "trading-opened" ||
+    content.kind === "step-window-announced"
+  ) {
     return announcementMessage(content, timeZone);
   }
   if (isFinalNotice(content)) {

@@ -7,10 +7,12 @@ import {
 import {
   AuctionPublishedSchema,
   AuctionTradingOpenedSchema,
+  StepWindowAnnouncedSchema,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import {
   newAuctionNoticeOf,
   renderAuctionAnnouncement,
+  stepWindowAnnouncedNoticeOf,
   tradingOpenedNoticeOf,
 } from "./auction-announcement-notice.js";
 
@@ -168,6 +170,61 @@ describe("renderAuctionAnnouncement", () => {
       ).text,
     ).toBe(
       "Аукцион сходки «Пятничная» открыт: сроки объявлю, когда их назначат.",
+    );
+  });
+});
+
+const window = (lotCount: number, until = "2026-10-21T19:00:00Z") =>
+  create(StepWindowAnnouncedSchema, {
+    auctionId,
+    startsAt: "2026-10-21T17:00:00Z",
+    until,
+    lotCount,
+  });
+
+describe("stepWindowAnnouncedNoticeOf", () => {
+  it("carries the auction, the end and the lot count", () => {
+    expect(stepWindowAnnouncedNoticeOf(window(3))).toEqual({
+      kind: "step-window-announced",
+      auctionId,
+      until: "2026-10-21T19:00:00Z",
+      lotCount: 3,
+    });
+  });
+
+  // «Шаг ниже на 0 лотах» и весть без срока были бы неправдой.
+  it("answers undefined on no lots, a broken end or a broken auction id", () => {
+    expect(stepWindowAnnouncedNoticeOf(window(0))).toBeUndefined();
+    expect(stepWindowAnnouncedNoticeOf(window(3, "вечером"))).toBeUndefined();
+    expect(
+      stepWindowAnnouncedNoticeOf({ ...window(3), auctionId: "auction" }),
+    ).toBeUndefined();
+  });
+});
+
+describe("renderAuctionAnnouncement of a step window", () => {
+  const render = (lotCount: number) => {
+    const notice = stepWindowAnnouncedNoticeOf(window(lotCount));
+    if (notice === undefined) throw new Error("notice expected");
+    return renderAuctionAnnouncement(notice, "Europe/Moscow");
+  };
+
+  it("names the end by the community clock and leads to the lots", () => {
+    expect(render(3)).toEqual({
+      text: "Счастливые часы до 22:00: шаг ниже на 3 лотах.",
+      button: { auctionId, text: "🏷️ Лоты" },
+    });
+  });
+
+  it("agrees the lot word with the count", () => {
+    expect(render(1).text).toBe(
+      "Счастливые часы до 22:00: шаг ниже на 1 лоте.",
+    );
+    expect(render(11).text).toBe(
+      "Счастливые часы до 22:00: шаг ниже на 11 лотах.",
+    );
+    expect(render(21).text).toBe(
+      "Счастливые часы до 22:00: шаг ниже на 21 лоте.",
     );
   });
 });
