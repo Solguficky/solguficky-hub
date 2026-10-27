@@ -39,6 +39,9 @@ final case class StoredRaffleCancelled(at: Instant)
 /** Смена приза администратором (PER-737): новый текст целиком. */
 final case class StoredPrizeChanged(prize: String)
 
+/** Фото приза (PER-772): id фото и версия байтов; сами байты — строка `raffle_prize_photo`. */
+final case class StoredPrizePhoto(photoId: UUID, version: String)
+
 final case class StoredRaffleEventBody(
     kind: String,
     raffleOpened: Option[StoredRaffleOpened],
@@ -49,7 +52,8 @@ final case class StoredRaffleEventBody(
     raffleDrawn: Option[StoredRaffleDrawn],
     raffleCancelled: Option[StoredRaffleCancelled] = None,
     winnerAssigned: Option[StoredWinnerAssigned] = None,
-    prizeChanged: Option[StoredPrizeChanged] = None
+    prizeChanged: Option[StoredPrizeChanged] = None,
+    prizePhotoSet: Option[StoredPrizePhoto] = None
 )
 
 object StoredRaffleEventBody {
@@ -62,8 +66,17 @@ final case class StoredRaffleEvent(eventId: UUID, opId: UUID, occurredAt: Instan
 
 final case class StoredRaffleSeen(sequence: Long, opId: UUID, event: StoredRaffleEventBody)
 
-/** `prize` добавлен в конец (PER-649): снимок прежней формы читается розыгрышем без приза. */
-final case class StoredRaffleTerms(closesAt: Instant, seed: String, round: Long, prize: Option[String] = None)
+/**
+ * `prize` добавлен в конец (PER-649), `photo` — за ним (PER-772): снимок прежней формы читается розыгрышем без приза и
+ * без фото.
+ */
+final case class StoredRaffleTerms(
+    closesAt: Instant,
+    seed: String,
+    round: Long,
+    prize: Option[String] = None,
+    photo: Option[StoredPrizePhoto] = None
+)
 
 /**
  * Snapshot розыгрыша. `closesAt` заполнен только у непроведённого, `terms` — с открытия, `participants` — регистрации
@@ -117,34 +130,112 @@ object RaffleJournal {
         StoredRaffleEventBody.of("RaffleCancelled").copy(raffleCancelled = Some(StoredRaffleCancelled(at)))
       case RaffleEvent.PrizeChanged(prize) =>
         StoredRaffleEventBody.of("PrizeChanged").copy(prizeChanged = Some(StoredPrizeChanged(prize)))
+      case RaffleEvent.PrizePhotoSet(photo) =>
+        StoredRaffleEventBody
+          .of("PrizePhotoSet")
+          .copy(prizePhotoSet = Some(StoredPrizePhoto(photo.photoId, photo.version)))
+      case RaffleEvent.PrizePhotoRemoved => StoredRaffleEventBody.of("PrizePhotoRemoved")
     }
 
   /** Ровно одна секция, и та, что названа `kind`. Иначе строка испорчена. */
   def restoreEvent(stored: StoredRaffleEventBody): RaffleEvent =
     stored match {
-      case StoredRaffleEventBody("RaffleOpened", Some(opened), None, None, None, None, None, None, None, None) =>
+      case StoredRaffleEventBody("RaffleOpened", Some(opened), None, None, None, None, None, None, None, None, None) =>
         RaffleEvent.RaffleOpened(opened.closesAt, seed(opened.seed), opened.round, opened.prize)
-      case StoredRaffleEventBody("RaffleNotHeld", None, Some(notHeld), None, None, None, None, None, None, None) =>
+      case StoredRaffleEventBody(
+            "RaffleNotHeld",
+            None,
+            Some(notHeld),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
         RaffleEvent.RaffleNotHeld(notHeld.closesAt)
-      case StoredRaffleEventBody("Registered", None, None, Some(registered), None, None, None, None, None, None) =>
+      case StoredRaffleEventBody(
+            "Registered",
+            None,
+            None,
+            Some(registered),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
         RaffleEvent.Registered(ParticipantId(registered.participantId))
-      case StoredRaffleEventBody("RegistrationCancelled", None, None, None, Some(left), None, None, None, None, None) =>
+      case StoredRaffleEventBody(
+            "RegistrationCancelled",
+            None,
+            None,
+            None,
+            Some(left),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
         RaffleEvent.RegistrationCancelled(ParticipantId(left.participantId))
-      case StoredRaffleEventBody("PoolFixed", None, None, None, None, Some(fixed), None, None, None, None) =>
+      case StoredRaffleEventBody("PoolFixed", None, None, None, None, Some(fixed), None, None, None, None, None) =>
         RaffleEvent.PoolFixed(fixed.tickets.map(ParticipantId(_)).toVector, fixed.byHand.contains(true))
-      case StoredRaffleEventBody("RaffleDrawn", None, None, None, None, None, Some(drawn), None, None, None) =>
+      case StoredRaffleEventBody("RaffleDrawn", None, None, None, None, None, Some(drawn), None, None, None, None) =>
         RaffleEvent.RaffleDrawn(randomness(drawn.randomness), drawn.at)
-      case StoredRaffleEventBody("RaffleCancelled", None, None, None, None, None, None, Some(cancelled), None, None) =>
+      case StoredRaffleEventBody(
+            "RaffleCancelled",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(cancelled),
+            None,
+            None,
+            None
+          ) =>
         RaffleEvent.RaffleCancelled(cancelled.at)
-      case StoredRaffleEventBody("WinnerAssigned", None, None, None, None, None, None, None, Some(assigned), None) =>
+      case StoredRaffleEventBody(
+            "WinnerAssigned",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(assigned),
+            None,
+            None
+          ) =>
         RaffleEvent.WinnerAssigned(assigned.ticket, assigned.at)
-      case StoredRaffleEventBody("PrizeChanged", None, None, None, None, None, None, None, None, Some(changed)) =>
+      case StoredRaffleEventBody("PrizeChanged", None, None, None, None, None, None, None, None, Some(changed), None) =>
         RaffleEvent.PrizeChanged(changed.prize)
+      case StoredRaffleEventBody("PrizePhotoSet", None, None, None, None, None, None, None, None, None, Some(photo)) =>
+        RaffleEvent.PrizePhotoSet(PrizePhoto(photo.photoId, photo.version))
+      case StoredRaffleEventBody("PrizePhotoRemoved", None, None, None, None, None, None, None, None, None, None) =>
+        RaffleEvent.PrizePhotoRemoved
       case other => corrupted(s"raffle event of kind ${other.kind} with sections that do not match it")
     }
 
   def storeRaffle(raffle: Raffle, sequence: Long): StoredRaffle = {
-    def terms(value: RaffleTerms) = Some(StoredRaffleTerms(value.closesAt, value.seed.hex, value.round, value.prize))
+    def terms(value: RaffleTerms) =
+      Some(
+        StoredRaffleTerms(
+          value.closesAt,
+          value.seed.hex,
+          value.round,
+          value.prize,
+          value.photo.map(photo => StoredPrizePhoto(photo.photoId, photo.version))
+        )
+      )
     def ids(participants: Vector[ParticipantId]) = participants.toList.map(_.value)
     val seen = raffle.seen.values.toList
       .sortBy(_.sequence)
@@ -179,7 +270,14 @@ object RaffleJournal {
   /** Snapshot восстанавливается с инвариантами: у каждого состояния ровно те секции, которые оно несёт. */
   def restoreRaffle(stored: StoredRaffle): Raffle = {
     def participants = stored.participants.map(ParticipantId(_)).toVector
-    def terms(value: StoredRaffleTerms) = RaffleTerms(value.closesAt, seed(value.seed), value.round, value.prize)
+    def terms(value: StoredRaffleTerms) =
+      RaffleTerms(
+        value.closesAt,
+        seed(value.seed),
+        value.round,
+        value.prize,
+        value.photo.map(photo => PrizePhoto(photo.photoId, photo.version))
+      )
     val state = (stored.state, stored.closesAt, stored.terms, stored.drawn, stored.cancelledAt, stored.assigned) match {
       case ("Initial", None, None, None, None, None) if stored.participants.isEmpty => RaffleState.Initial
       case ("NotHeld", Some(closesAt), None, None, None, None) if stored.participants.isEmpty =>

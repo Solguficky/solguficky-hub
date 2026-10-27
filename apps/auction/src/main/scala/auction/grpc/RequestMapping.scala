@@ -53,6 +53,7 @@ import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.ChangeRafflePrizeRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
+import auction.v1.auction_service.GetRafflePrizePhotoRequest
 import auction.v1.auction_service.GetRaffleRequest
 import auction.v1.auction_service.HideAuctionRequest
 import auction.v1.auction_service.RegisterForRaffleRequest
@@ -61,6 +62,8 @@ import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
 import auction.v1.auction_service.PreviewParticipantRemovalRequest
 import auction.v1.auction_service.RemoveLotPhotoRequest
+import auction.v1.auction_service.RemoveRafflePrizePhotoRequest
+import auction.v1.auction_service.SetRafflePrizePhotoRequest
 import auction.v1.auction_service.RemoveParticipantRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
@@ -239,6 +242,9 @@ final case class RafflePrizeCommand(auctionId: AuctionId, prize: String, opId: O
 
 /** Чтение розыгрыша аукциона смотрящим. */
 final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
+
+/** Фото приза розыгрыша (PER-772): id фото — ключ повтора, байты ещё не проверены, как у фото лота. */
+final case class RafflePrizePhotoCommand(auctionId: AuctionId, photoId: UUID, photo: IArray[Byte], acting: Acting)
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
@@ -796,6 +802,23 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       op <- uuidV7("op_id", request.opId)
     } yield RafflePrizeCommand(auction, request.prize.trim, OpId(op), acting)
+
+  def setRafflePrizePhoto(request: SetRafflePrizePhotoRequest): Either[FormError, RafflePrizePhotoCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      photoId <- uuidV7("photo_id", request.photoId)
+      upload <- request.photo.toRight(FormError("photo"))
+    } yield RafflePrizePhotoCommand(auction, photoId, bytes(upload), acting)
+
+  def removeRafflePrizePhoto(request: RemoveRafflePrizePhotoRequest): Either[FormError, RaffleCommand] =
+    raffleCommand(request.viewer, request.auctionId, request.opId)
+
+  def getRafflePrizePhoto(request: GetRafflePrizePhotoRequest): Either[FormError, RaffleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield RaffleQuery(auction, acting)
 
   /** Розыгрыш есть только у аукциона сходки: его открывает журнал аукциона, а у тестового аукциона журнала нет. */
   private def raffleCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =
