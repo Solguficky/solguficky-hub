@@ -193,6 +193,13 @@ final class HappyHourTermsSpec extends AnyWordSpec with Matchers {
       cleared.periodTerms shouldBe List(PeriodLotTerms(period, first, None, op(30)))
     }
 
+    "answer a repeated op_id of a removal with the original even once the period has started" in {
+      val once = written(withPeriods(), set())
+      val cleared = applied(once, op(30), Auction.decide(once, clear(), now))
+
+      Auction.decide(cleared, clear(), hours(31)) shouldBe Right(AuctionDecision.Repeated(cleared.seen(op(30))))
+    }
+
     "change nothing when the lot has no terms in the period" in {
       Auction.decide(withPeriods(), clear(), now) shouldBe Right(AuctionDecision.Unchanged)
     }

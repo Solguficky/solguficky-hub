@@ -538,9 +538,7 @@ object LotJournal {
           LotEvent.PeriodWindowSet(window)
         }
       case ("PeriodWindowCleared", 1) =>
-        stored.periodWindowCleared.fold(mismatch)(cleared =>
-          LotEvent.PeriodWindowCleared(WindowPeriod(cleared.period))
-        )
+        stored.periodWindowCleared.fold(mismatch)(cleared => LotEvent.PeriodWindowCleared(WindowPeriod(cleared.period)))
       case ("ParticipantRemoved", 1) =>
         stored.participantRemoved.fold(mismatch) { removed =>
           if (removed.leader.isDefined != removed.leadingBidId.isDefined)
