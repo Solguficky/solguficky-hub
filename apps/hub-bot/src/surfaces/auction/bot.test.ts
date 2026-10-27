@@ -794,20 +794,13 @@ describe("auction bot", () => {
               }),
             },
           ],
-          // Онлайн-неделя: вход в «Хроники дня» (PER-725) и рядом
-          // «Статистика» (PER-770).
+          // Онлайн-неделя: вход в «Хроники дня» (PER-725) своим рядом;
+          // «Статистики» в боте аукциона нет никому (PER-800).
           [
             {
               text: "Хроники дня",
               callback_data: encodeAuctionCallback({
                 kind: "day-chronicle",
-                auctionId,
-              }),
-            },
-            {
-              text: "Статистика",
-              callback_data: encodeAuctionCallback({
-                kind: "auction-chronicle",
                 auctionId,
               }),
             },

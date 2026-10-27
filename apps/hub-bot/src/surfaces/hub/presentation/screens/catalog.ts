@@ -312,13 +312,13 @@ export const screenCatalog = {
     parent: "auction-root",
     backName: "Хроники дня",
   },
-  // Статистика аукциона (PER-770) — тело общего аукционного дерева: вход из
-  // корня аукциона с открытия торгов и возврат туда же.
+  // Статистика аукциона (PER-770) — тело общего аукционного дерева: вход со
+  // «Сводки дня» пульта (PER-800) и возврат туда же.
   "auction-chronicle": {
     class: "screen",
     nav: "tree",
     title: "Статистика аукциона",
-    parent: "auction-root",
+    parent: "day-summary",
     backName: "Статистика",
   },
   predictions: {
@@ -477,6 +477,7 @@ export const screenCatalog = {
     nav: "tree",
     title: "Сводка дня",
     parent: "auction-console",
+    backName: "Сводка дня",
   },
   // Счета проданных лотов (PER-321): итог собранного и ожидаемого, строка на
   // счёт и кнопка на счёт. Открываются с пульта, как только лоты продаются.

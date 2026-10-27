@@ -516,6 +516,14 @@ export const AUCTION: ContractAuction = {
   },
   names: NAMES,
   predictions: OPEN_PREDICTION_ROUNDS,
+  // Статистика аукциона (PER-800): её читает матрица доступа — держатель
+  // `run_auctions` хаба открывает её с «Сводки дня» пульта.
+  auctionChronicle: {
+    bidCount: 0,
+    participantCount: 0,
+    tradedLotCount: 0,
+    lots: [],
+  },
 };
 
 const HELD_LOT: LotView = {
@@ -3513,21 +3521,9 @@ const chronicleCallback = () =>
     auctionId: CONTRACT_AUCTION_ID,
   });
 
-// Статистика аукциона (PER-770) — тем же рядом, с открытия торгов.
-const statisticsCallback = () =>
-  encodeAuctionCallback({
-    kind: "auction-chronicle",
-    auctionId: CONTRACT_AUCTION_ID,
-  });
-
-const rootStatisticsButton = {
-  action: "root.auction-chronicle" as const,
-  callbackData: statisticsCallback(),
-};
-
+// «Статистики» (PER-770) в корне нет: она — вход пульта хаба (PER-800).
 const rootChronicleRow = [
   { action: "root.day-chronicle" as const, callbackData: chronicleCallback() },
-  rootStatisticsButton,
 ];
 
 const rootLotsRow = [
@@ -5161,8 +5157,6 @@ const PREDICTION_RESULTS_CASES: readonly AuctionContractCase[] = [
             callbackData: resultsCallback(),
           },
         ],
-        // Статистика (PER-770) остаётся и после торгов, без хроник дня.
-        [rootStatisticsButton],
       ],
     },
   },
@@ -5389,163 +5383,6 @@ const DAY_CHRONICLE_CASES: readonly AuctionContractCase[] = [
     },
     auctionCalls: [chronicleReadCall()],
     body: chronicleBody({ kind: "nominated" }),
-  },
-];
-
-// Статистика аукциона (PER-770): счётчики всех торгов, рекорд роста, который
-// выбрал Auction, и номинации `dayNominations` без «тёмной лошадки». Названия
-// читаются только у названных лотов, каждое один раз; людей в теле нет.
-const statisticsReadCall = (): PortCall => ({
-  port: "auction",
-  method: "getAuctionChronicle",
-  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
-});
-
-const statisticsBody = (
-  chronicle: Extract<
-    AuctionScreenBody["blocks"][number],
-    { kind: "auction-chronicle" }
-  >["chronicle"],
-): AuctionScreenBody => ({
-  blocks: [
-    { kind: "auction-chronicle", auctionId: CONTRACT_AUCTION_ID, chronicle },
-  ],
-  keyboard: [
-    [
-      {
-        action: "auction-chronicle.back",
-        callbackData: callback({
-          kind: "root",
-          auctionId: CONTRACT_AUCTION_ID,
-        }),
-      },
-    ],
-  ],
-});
-
-const AUCTION_CHRONICLE_CASES: readonly AuctionContractCase[] = [
-  {
-    intent: "auction chronicle: counters and nominations",
-    callbackData: statisticsCallback(),
-    auction: {
-      ...AUCTION,
-      auctionChronicle: {
-        bidCount: 14,
-        participantCount: 5,
-        tradedLotCount: 2,
-        growthRecord: {
-          lotId: SOLD_LOT.lotId,
-          growth: { minorUnits: 50_000, currency: "RUB" },
-        },
-        lots: [
-          // Спорнее всех и дуэль: пять смен лидера, четыре подряд вдвоём.
-          {
-            lotId: CONTRACT_LOT.lotId,
-            bidCount: 9,
-            leaderChanges: 5,
-            longestDuel: 4,
-          },
-          // Рекорд роста — тот, что выбрал Auction.
-          {
-            lotId: SOLD_LOT.lotId,
-            bidCount: 5,
-            leaderChanges: 1,
-            longestDuel: 1,
-          },
-          // Без ставок лот не номинируется и не читается.
-          {
-            lotId: SCHEDULED_LOT.lotId,
-            bidCount: 0,
-            leaderChanges: 0,
-            longestDuel: 0,
-          },
-        ],
-      },
-    },
-    auctionCalls: [
-      statisticsReadCall(),
-      findLotCall(SOLD_LOT.lotId),
-      findLotCall(CONTRACT_LOT.lotId),
-    ],
-    body: statisticsBody({
-      kind: "counted",
-      bidCount: 14,
-      participantCount: 5,
-      tradedLotCount: 2,
-      lotCount: 3,
-      growthRecord: {
-        title: "Плакат",
-        growth: { minorUnits: 50_000, currency: "RUB" },
-      },
-      contested: { title: "Кружка с совой", leaderChanges: 5 },
-      duel: { title: "Кружка с совой", longestDuel: 4 },
-    }),
-  },
-  {
-    intent: "auction chronicle: no bids",
-    callbackData: statisticsCallback(),
-    auction: {
-      ...AUCTION,
-      auctionChronicle: {
-        bidCount: 0,
-        participantCount: 0,
-        tradedLotCount: 0,
-        lots: [
-          {
-            lotId: CONTRACT_LOT.lotId,
-            bidCount: 0,
-            leaderChanges: 0,
-            longestDuel: 0,
-          },
-        ],
-      },
-    },
-    auctionCalls: [statisticsReadCall()],
-    body: statisticsBody({ kind: "no-bids" }),
-  },
-  {
-    intent: "auction chronicle: no lots",
-    callbackData: statisticsCallback(),
-    auction: {
-      ...AUCTION,
-      auctionChronicle: {
-        bidCount: 0,
-        participantCount: 0,
-        tradedLotCount: 0,
-        lots: [],
-      },
-    },
-    auctionCalls: [statisticsReadCall()],
-    body: statisticsBody({ kind: "no-lots" }),
-  },
-  // Ставки были, а ни роста, ни смены лидера: остаются одни счётчики.
-  {
-    intent: "auction chronicle: bids without a nominee",
-    callbackData: statisticsCallback(),
-    auction: {
-      ...AUCTION,
-      auctionChronicle: {
-        bidCount: 1,
-        participantCount: 1,
-        tradedLotCount: 1,
-        lots: [
-          {
-            lotId: CONTRACT_LOT.lotId,
-            bidCount: 1,
-            leaderChanges: 0,
-            longestDuel: 0,
-          },
-        ],
-      },
-    },
-    auctionCalls: [statisticsReadCall()],
-    body: statisticsBody({
-      kind: "counted",
-      bidCount: 1,
-      participantCount: 1,
-      tradedLotCount: 1,
-      lotCount: 1,
-    }),
   },
 ];
 
@@ -5913,7 +5750,6 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...PROMO_CASES,
   ...PREDICTION_RESULTS_CASES,
   ...DAY_CHRONICLE_CASES,
-  ...AUCTION_CHRONICLE_CASES,
   {
     intent: "feed",
     callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
