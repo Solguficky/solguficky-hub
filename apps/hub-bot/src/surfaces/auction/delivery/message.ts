@@ -9,6 +9,7 @@ import {
   type NotificationSender,
   type RenderMessage,
 } from "../../../core/delivery/index.js";
+import type { MediaChat } from "../../../core/media-chat.js";
 import {
   type AuctionAnnouncementNotice,
   renderAuctionAnnouncement,
@@ -41,6 +42,16 @@ import {
   renderLotSetNotice,
 } from "../../../core/notifications/lot-set-notice.js";
 import {
+  type AnnouncementPhoto,
+  type AnnouncementPhotos,
+  type AnnouncementPost,
+  announcementButtonData,
+  noAnnouncementPhotos,
+  type OrganizerAnnouncement,
+  renderOrganizerAnnouncement,
+  sendOrganizerAnnouncement,
+} from "../../../core/notifications/organizer-announcement.js";
+import {
   type PredictionResultsNotice,
   renderPredictionResultsNotice,
 } from "../../../core/notifications/prediction-results-notice.js";
@@ -69,6 +80,11 @@ export type NotificationMessage = {
   text: string;
   rows?: readonly (readonly TraceButton[])[];
   format?: "HTML";
+  // Фото лота объявления аукциона (PER-765) и получатель, чьими правами
+  // отправитель читает его байты у Auction.
+  photo?: { photo: AnnouncementPhoto; viewerId: string };
+  // Своё фото или видео объявления (PER-776): пост чата медиа ботов.
+  post?: AnnouncementPost;
 };
 
 // Кнопка под следом (дизайн-код, «Доставка»): карточка лота приходит новым
@@ -156,7 +172,10 @@ export function parseTraceCallback(data: string): string | undefined {
       parsed.intent.kind === "invoice" ||
       parsed.intent.kind === "prediction-results" ||
       parsed.intent.kind === "feed" ||
-      parsed.intent.kind === "root")
+      parsed.intent.kind === "root" ||
+      // Кнопки объявления аукциона (PER-765): прогнозы и хроники дня.
+      parsed.intent.kind === "prediction" ||
+      parsed.intent.kind === "day-chronicle")
     ? inner
     : undefined;
 }
@@ -226,6 +245,21 @@ export function createRenderMessage(
     if (content.kind === "lot-set-collected") {
       return { kind: "ready", message: renderNotification(content) };
     }
+    // Объявление аукциона (PER-765) права не спрашивает: адресата выбрал
+    // издатель по праву ставок. Фото читается правами получателя.
+    if (content.kind === "organizer-announcement") {
+      const message = renderNotification(content);
+      return {
+        kind: "ready",
+        message:
+          content.photo === undefined
+            ? message
+            : {
+                ...message,
+                photo: { photo: content.photo, viewerId: context.recipientId },
+              },
+      };
+    }
     // Отмена аукциона (PER-606) права не спрашивает: торги уже оборвались, а
     // покупателю нужно знать, что купленное осталось за ним
     // (auction-cancelled-notice.ts).
@@ -286,6 +320,9 @@ export function renderNotification(
     return invoiceMessage(renderInvoiceNotice(content, { timeZone }));
   }
   if (content.kind === "lot-set-collected") return lotSetMessage(content);
+  if (content.kind === "organizer-announcement") {
+    return organizerMessage(content);
+  }
   if (content.kind === "auction-cancelled") return cancelledMessage(content);
   // Начало окна «Счастливых часов» (PER-616) — ряд на каждый лот окна, след
   // лота этой поверхности.
@@ -425,6 +462,28 @@ function lotSetMessage(notice: LotSetNotice): NotificationMessage {
   };
 }
 
+// Объявление аукциона (PER-765): текст организатора простым текстом и кнопка
+// следа на экран дерева; фото добавляет рендер с получателем.
+function organizerMessage(notice: OrganizerAnnouncement): NotificationMessage {
+  const view = renderOrganizerAnnouncement(notice);
+  return {
+    text: view.text,
+    ...(view.post === undefined ? {} : { post: view.post }),
+    ...(view.button === undefined
+      ? {}
+      : {
+          rows: [
+            [
+              {
+                text: view.button.text,
+                callback_data: `${tracePrefix}${announcementButtonData(view.button)}`,
+              },
+            ],
+          ],
+        }),
+  };
+}
+
 // Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст
 // то же сообщение второй раз, пока первая отправка ещё висит. Умолчание grammY
 // рассчитано на long polling, поэтому у доставки свой клиент со своим
@@ -438,7 +497,10 @@ export function createNotificationApi(
   return new Api(token, { environment, timeoutSeconds: sendTimeoutSeconds });
 }
 
-export type SendMessageApi = Pick<Api, "sendMessage">;
+export type SendMessageApi = Pick<
+  Api,
+  "sendMessage" | "sendPhoto" | "copyMessage"
+>;
 
 // Клавиатура следа. Её же собирает тест каталога экранов, а не свою копию. У
 // вести о смене круга (PER-537) кнопок нет вовсе — тогда и клавиатуры не шлём.
@@ -449,11 +511,39 @@ export function notificationMarkup(message: NotificationMessage) {
 
 export function createNotificationSender(
   api: SendMessageApi,
+  // Фото объявления аукциона (PER-765); нет — объявление уходит текстом.
+  photos?: AnnouncementPhotos,
+  // Чат медиа ботов: своё фото или видео объявления (PER-776).
+  media?: MediaChat,
 ): NotificationSender<NotificationMessage> {
   return {
     async send({ telegramUserId, message }) {
       const markup = notificationMarkup(message);
       try {
+        if (
+          (message.photo !== undefined && photos !== undefined) ||
+          (message.post !== undefined && media !== undefined)
+        ) {
+          await sendOrganizerAnnouncement(
+            api,
+            Number(telegramUserId),
+            {
+              text: message.text,
+              ...(message.photo === undefined
+                ? {}
+                : { photo: message.photo.photo }),
+              ...(message.post === undefined ? {} : { post: message.post }),
+            },
+            {
+              photos: photos ?? noAnnouncementPhotos,
+              media,
+              viewerId: message.photo?.viewerId ?? "",
+              markup,
+              mark: screenMark("notification"),
+            },
+          );
+          return { kind: "sent" };
+        }
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
         // 52 битах, поэтому переход из bigint в number точен. Метка каталога —
         // чтобы линтер test kit видел и эту отправку: она идёт мимо адаптера

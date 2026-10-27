@@ -67,6 +67,7 @@ import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
+  consoleAnnouncementData,
   consoleSetsData,
   consoleViewData,
   floorData,
@@ -196,7 +197,10 @@ export type AuctionView = {
 // нет, и тело у двух ботов остаётся одним.
 // Знак управления — 🛠 (PER-669): экраны аукциона видит и участник.
 const editLotLabel = adminLabel("Изменить лот");
+
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
+import { announcementLabel } from "./auction-announcement.js";
+
 const consoleLabel = adminLabel("Пульт");
 // «Ставки зала» помощника (PER-565) — рядом с пультом, пока идёт финал.
 export const floorLabel = adminLabel("Ставки зала");
@@ -546,6 +550,16 @@ function rootScreen(
       nextRow(keyboard);
     }
     keyboard.text(lotSetsLabel, consoleSetsData(token));
+    // Объявление аукциона (PER-765) — своим рядом под пультом, пока
+    // участники видят аукцион и он не кончился: в пульте места нет, он в
+    // потолке рядов.
+    if (
+      (auction.stage === "scheduled" && auction.hidden !== true) ||
+      auction.stage === "prebidding" ||
+      auction.stage === "on-break"
+    ) {
+      nextRow(keyboard).text(announcementLabel, consoleAnnouncementData(token));
+    }
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);

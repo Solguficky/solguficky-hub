@@ -60,7 +60,13 @@ import {
 } from "../../../core/entry.js";
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
 import type { LogFields, Logger } from "../../../core/logging.js";
+import type { MediaChat } from "../../../core/media-chat.js";
 import { createChatCommandsSync } from "../../../core/menu-commands.js";
+import {
+  createAnnouncementPhotos,
+  logMissingAnnouncementPhoto,
+  sendOrganizerAnnouncement,
+} from "../../../core/notifications/organizer-announcement.js";
 import {
   type AuctionNotificationChange,
   auctionNotificationsToast,
@@ -68,12 +74,17 @@ import {
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
 import { createUuidV7, uuidV7Of } from "../../../core/uuid-v7.js";
+import type {
+  AnnouncementTemplate,
+  ButtonChoice,
+} from "../application/auction-announcements.js";
 import { acceptsLots } from "../application/auction-console.js";
 import {
   broadcastBodyLimit,
   checkBroadcastBody,
 } from "../application/broadcasts.js";
 import type { Dispatcher } from "../application/dispatcher.js";
+import { fingerprint } from "../application/fingerprint.js";
 import {
   decideHubAccess,
   type HubAccess,
@@ -157,6 +168,11 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 import {
+  parseAnnouncementMedia,
+  parsePreviewText,
+  parseStepText,
+} from "./announcement-input.js";
+import {
   type AuctionParents,
   createAuctionParents,
 } from "./auction-parents.js";
@@ -196,13 +212,18 @@ import {
   uuidToToken,
 } from "./meetup-deep-link.js";
 import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
-import { telegramTextLimit } from "./notification-message.js";
+import {
+  renderNotification as renderOutgoingNotification,
+  telegramTextLimit,
+} from "./notification-message.js";
 import {
   applyData,
   auctionFaqData,
   type CallbackAction,
   type CardCursor,
   type CommunityPlace,
+  consoleAnnouncementAskData,
+  consoleAnnouncementData,
   consoleAskData,
   consoleFinalTimeData,
   consoleInvoiceMarkData,
@@ -268,6 +289,19 @@ import {
   declineConfirmScreen,
 } from "./screens/application.js";
 import { type AuctionView, auctionScreen } from "./screens/auction.js";
+import {
+  announcementAskErrorText,
+  announcementButtonScreen,
+  announcementConfirmScreen,
+  announcementLotsScreen,
+  announcementMediaQuestionText,
+  announcementMenuScreen,
+  announcementOutcomeScreen,
+  announcementPhotoScreen,
+  announcementQuestionText,
+  announcementStaleScreen,
+  announcementWindowsScreen,
+} from "./screens/auction-announcement.js";
 import {
   auctionDiscardedText,
   type ConsoleScreenView,
@@ -532,6 +566,9 @@ export type BotRuntime = {
   // Данные сборки образа (PER-736): строку версии «Помощь» показывает
   // мейнтейнеру. Нет — версия называется локальной сборкой.
   build?: BuildInfo;
+  // Чат медиа ботов (PER-776): своё фото или видео объявления аукциона. Нет
+  // или выключен — шаг фото своего медиа не предлагает.
+  mediaChat?: MediaChat;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -853,6 +890,29 @@ type PendingConsoleRafflePrizeChange = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о тексте объявления аукциона (PER-765). Шаг — аукцион, шаблон и
+// номер окна или лота — лежит в кнопке вопроса, а черновик ответ читает
+// заново, и после рестарта тоже.
+type PendingConsoleAnnouncement = {
+  kind: "console-announcement";
+  auctionId: string;
+  template: AnnouncementTemplate;
+  ref?: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о своём фото или видео объявления (PER-776). Шаг — кнопка, отпечаток
+// текста и лот шаблона — лежит в кнопке вопроса, а текст — хвостом самого
+// вопроса, поэтому ответ после рестарта принимается так же.
+type PendingConsoleAnnouncementMedia = {
+  kind: "console-announcement-media";
+  auctionId: string;
+  button: ButtonChoice;
+  print: string;
+  lot?: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
@@ -924,6 +984,8 @@ type HubPendingInput =
   | PendingConsolePaymentText
   | PendingConsoleRaffleWinner
   | PendingConsoleRafflePrizeChange
+  | PendingConsoleAnnouncement
+  | PendingConsoleAnnouncementMedia
   | PendingConsoleWindow
   | PendingConsoleLaunch
   | PendingConsoleSet
@@ -966,6 +1028,10 @@ const consoleQuestionIntents = {
   "console-raffle-prize-change": {
     intent: "pick-raffle-prize-change",
     foreign: "foreign raffle prize change answer ignored",
+  },
+  "console-announcement": {
+    intent: "answer-announcement",
+    foreign: "foreign announcement answer ignored",
   },
   "console-window": {
     intent: "add-step-window",
@@ -1664,6 +1730,25 @@ async function handleMessage(
       outcome = adminOutcome(result, identity.person.identityId);
       return;
     }
+    // Своё фото или видео объявления (PER-776): ответ любого вида — не фото и
+    // не видео задаёт вопрос заново.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "console-announcement-media" &&
+      ctx.message !== undefined
+    ) {
+      useCase = "manage_auction";
+      outcome = await handleAnnouncementMedia(
+        ctx,
+        runtime,
+        questions,
+        photos.albums,
+        pending,
+        replyId,
+        answered,
+      );
+      return;
+    }
     if (
       replyId !== undefined &&
       pending !== undefined &&
@@ -1743,10 +1828,19 @@ async function handleMessage(
                   ? {}
                   : { sectionId: pending.sectionId }),
               }
-            : {
-                ...answer,
-                intent: consoleQuestionIntents[pending.kind].intent,
-              },
+            : pending.kind === "console-announcement"
+              ? // Объявление аукциона (PER-765): шаблон и номер окна или лота
+                // едут в шаге вопроса; команды ответ не шлёт.
+                {
+                  ...answer,
+                  intent: "answer-announcement",
+                  template: pending.template,
+                  ...(pending.ref === undefined ? {} : { ref: pending.ref }),
+                }
+              : {
+                  ...answer,
+                  intent: consoleQuestionIntents[pending.kind].intent,
+                },
       );
       // Текст оплаты (PER-322) отвечает сводкой счетов, номер победителя
       // (PER-727) — подтверждением итога, а новый приз (PER-737) —
@@ -1757,7 +1851,9 @@ async function handleMessage(
           ? renderRaffleWinnerResult
           : pending.kind === "console-raffle-prize-change"
             ? renderRafflePrizeChangeResult
-            : renderConsoleResult)(ctx, runtime, result, {
+            : pending.kind === "console-announcement"
+              ? renderAnnouncementResult
+              : renderConsoleResult)(ctx, runtime, result, {
         person: identity.person,
         questions,
         replyId,
@@ -1771,6 +1867,7 @@ async function handleMessage(
         result.kind !== "payment-text-ask" &&
         result.kind !== "raffle-winner-ask" &&
         result.kind !== "raffle-prize-change-ask" &&
+        result.kind !== "announcement-ask" &&
         result.kind !== "step-window-ask" &&
         result.kind !== "step-window-launch-ask" &&
         result.kind !== "lot-set-ask" &&
@@ -2224,6 +2321,7 @@ async function handleMessage(
         pending.kind === "console-payment-text" ||
         pending.kind === "console-raffle-winner" ||
         pending.kind === "console-raffle-prize-change" ||
+        pending.kind === "console-announcement" ||
         pending.kind === "console-window" ||
         pending.kind === "console-launch" ||
         pending.kind === "console-set" ||
@@ -2248,6 +2346,7 @@ async function handleMessage(
                 pending.kind === "console-payment-text" ||
                 pending.kind === "console-raffle-winner" ||
                 pending.kind === "console-raffle-prize-change" ||
+                pending.kind === "console-announcement" ||
                 pending.kind === "console-window" ||
                 pending.kind === "console-launch" ||
                 pending.kind === "console-set" ||
@@ -2753,6 +2852,30 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleInvoicesCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Объявление аукциона (PER-765): ряд пульта видит только держатель
+    // права вести аукцион, подделанная кнопка получает отказ до Auction и
+    // Notifications.
+    if (
+      action.kind === "console-announcement" ||
+      action.kind === "console-announcement-windows" ||
+      action.kind === "console-announcement-lots" ||
+      action.kind === "console-announcement-ask" ||
+      action.kind === "console-announcement-button" ||
+      action.kind === "console-announcement-photo" ||
+      action.kind === "console-announcement-media" ||
+      action.kind === "console-announcement-send"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleAnnouncementCallback(
+            ctx,
+            runtime,
+            questions,
+            person,
+            action,
+          )
         : await refuseConsole(ctx, person);
       return;
     }
@@ -9811,6 +9934,493 @@ function askRafflePrizeChange(
   );
 }
 
+// Объявление аукциона (PER-765). Сюда доходит только держатель права вести
+// аукцион; право на приём решает Notifications у Meetups. Своего состояния
+// нет: шаблон, лот и фото едут в кнопках номерами, текст — хвостом кадра шага
+// и в предпросмотре, а ключ объявления рождается на «Отправить» из
+// предпросмотра, на который отвечает подтверждение: второе нажатие того же
+// «Отправить» несёт тот же ключ, и второй рассылки не будет.
+async function handleAnnouncementCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-announcement"
+        | "console-announcement-windows"
+        | "console-announcement-lots"
+        | "console-announcement-ask"
+        | "console-announcement-button"
+        | "console-announcement-photo"
+        | "console-announcement-media"
+        | "console-announcement-send";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const auctionId = tokenToUuid(action.auction);
+  const call = { identity: person, ...rpcCall(ctx, useCase), auctionId };
+  const context = { person, questions, retry: ctx.callbackQuery?.data };
+  const stale = async (): Promise<BoundaryOutcome> => {
+    await showScreen(ctx, announcementStaleScreen(auctionId));
+    return {
+      level: "warn",
+      message: "announcement step malformed",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category: "invariant",
+      error: "announcement text failed validation",
+    };
+  };
+  switch (action.kind) {
+    case "console-announcement":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "open-announcement",
+        }),
+        context,
+      );
+    case "console-announcement-windows":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "list-announcement-windows",
+        }),
+        context,
+      );
+    case "console-announcement-lots":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "list-announcement-lots",
+        }),
+        { ...context, page: action.page },
+      );
+    case "console-announcement-ask":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-announcement",
+          template: action.template,
+          ...(action.ref === undefined ? {} : { ref: action.ref }),
+        }),
+        context,
+      );
+    case "console-announcement-button":
+    case "console-announcement-photo": {
+      const text = parseStepText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (text === undefined) return stale();
+      const result = await runtime.dispatcher.execute(
+        action.kind === "console-announcement-button"
+          ? {
+              ...call,
+              intent: "pick-announcement-button",
+              button: action.button,
+              ...(action.lot === undefined ? {} : { lot: action.lot }),
+            }
+          : {
+              ...call,
+              intent: "preview-announcement",
+              button: action.button,
+              ...(action.lot === undefined ? {} : { lot: action.lot }),
+              ...(action.photo === undefined ? {} : { photo: action.photo }),
+            },
+      );
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text,
+      });
+    }
+    // «Своё фото или видео» (PER-776): вопрос о медиа несёт текст хвостом.
+    case "console-announcement-media": {
+      const text = parseStepText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (text === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "ask-announcement-media",
+        button: action.button,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text,
+      });
+    }
+    case "console-announcement-send": {
+      const preview = parsePreviewText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (preview === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "send-announcement",
+        announcementId: uuidV7Of(
+          `auction-announcement:${ctx.chat?.id ?? 0}:${preview.messageId}`,
+          preview.sentAt,
+        ),
+        text: preview.text,
+        button: action.button,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+        ...(action.photo === undefined ? {} : { photo: action.photo }),
+        ...(action.post === undefined ? {} : { post: action.post }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, context);
+    }
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответ на вопрос о своём медиа объявления (PER-776). Бот копирует сообщение
+// человека в чат медиа ботов и ведёт к предпросмотру с номером поста: так
+// медиа одинаково покажут оба бота, а в команду уходит только номер. Текст
+// объявления ответ читает из хвоста вопроса, на который отвечает.
+async function handleAnnouncementMedia(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  albums: SeenAlbums,
+  pending: PendingConsoleAnnouncementMedia,
+  replyId: number,
+  answered: (result?: ExecuteResult) => Promise<void>,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  if (ctx.from?.id !== pending.telegramUserId) {
+    return {
+      level: "info",
+      message: "foreign announcement media answer ignored",
+      result: "ok",
+      use_case: useCase,
+    };
+  }
+  const identity = await resolvePerson(ctx, runtime, useCase);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    false,
+  );
+  if (denied !== undefined) return denied;
+  const { person } = identity;
+  if (!canRunAuctions(person)) {
+    await answered();
+    return refuseConsole(ctx, person);
+  }
+  const { auctionId } = pending;
+  const context = { person, questions, replyId };
+  const text = parseStepText(
+    ctx.message?.reply_to_message,
+    ctx.me.id,
+    pending.print,
+  );
+  if (text === undefined) {
+    await answered();
+    await showScreen(ctx, announcementStaleScreen(auctionId));
+    return {
+      level: "warn",
+      message: "announcement step malformed",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category: "invariant",
+      error: "announcement text failed validation",
+    };
+  }
+  const step = {
+    button: pending.button,
+    ...(pending.lot === undefined ? {} : { lot: pending.lot }),
+  };
+  if (!parseAnnouncementMedia(ctx.message)) {
+    // Тот же шаг заново: вопрос несёт текст, а прежний вопрос закрывается.
+    await askQuestion(
+      ctx,
+      questions,
+      bodyOf(pending),
+      announcementMediaQuestionText(text, true),
+      replyId,
+      undefined,
+      "HTML",
+    );
+    return {
+      level: "info",
+      message: "announcement media asked again",
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  // Альбом приходит сообщением на каждый снимок, а объявление несёт одно
+  // медиа: берётся первый снимок, остальные пропускает проверка альбомов в
+  // начале `handleMessage`, и второго поста в канале нет.
+  const album = ctx.message?.media_group_id;
+  if (album !== undefined) albums.remember(album);
+  const media = runtime.mediaChat;
+  const published =
+    media === undefined || !media.enabled
+      ? undefined
+      : await media.publish(
+          ctx.api,
+          ctx.chat?.id ?? 0,
+          ctx.message?.message_id ?? 0,
+        );
+  if (published?.kind !== "published") {
+    await answered();
+    const note = published === undefined ? "media-off" : "media-failed";
+    await showScreen(
+      ctx,
+      announcementOutcomeScreen({
+        kind: "announcement-outcome",
+        auctionId,
+        note,
+      }),
+    );
+    // Отказ Telegram чат медиа уже записал на warn: граница пишет исход.
+    return {
+      level: "info",
+      message: `announcement: ${note}`,
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    ...rpcCall(ctx, useCase),
+    auctionId,
+    intent: "preview-announcement",
+    ...step,
+    post: published.postId,
+  });
+  await answered(result);
+  return renderAnnouncementResult(ctx, runtime, result, { ...context, text });
+}
+
+// Экраны объявления (PER-765); остальное — исходы пульта: отказы и сбои
+// рисуются, как у его команд.
+async function renderAnnouncementResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+    text?: string;
+    page?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  const moments = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: (runtime.today ?? utcToday)(),
+  };
+  switch (result.kind) {
+    case "announcement-menu":
+      await showScreen(ctx, announcementMenuScreen(result));
+      return handled("announcement menu sent");
+    case "announcement-windows":
+      await showScreen(ctx, announcementWindowsScreen(result, moments));
+      return handled("announcement windows sent");
+    case "announcement-lots":
+      await showScreen(ctx, announcementLotsScreen(result, context.page ?? 0));
+      return handled("announcement lots sent");
+    case "announcement-ask": {
+      const pending: PendingBody = {
+        kind: "console-announcement",
+        auctionId: result.auctionId,
+        template: result.template,
+        ...(result.ref === undefined ? {} : { ref: result.ref }),
+        telegramUserId: ctx.from?.id ?? 0,
+      };
+      if (result.error !== undefined) {
+        await refuseAnswer(
+          ctx,
+          context.questions,
+          pending,
+          announcementAskErrorText[result.error],
+          context.replyId,
+        );
+        return handled("announcement asked again");
+      }
+      await askQuestion(
+        ctx,
+        context.questions,
+        pending,
+        announcementQuestionText(result.draft, moments),
+        context.replyId,
+        undefined,
+        "HTML",
+      );
+      return handled("announcement requested");
+    }
+    case "announcement-button-ask":
+      await showScreen(ctx, announcementButtonScreen(result));
+      return handled("announcement button asked");
+    case "announcement-photo-ask":
+      if (context.text === undefined) break;
+      await showScreen(
+        ctx,
+        announcementPhotoScreen({ ...result, text: context.text }),
+      );
+      return handled("announcement photo asked");
+    case "announcement-media-ask":
+      if (context.text === undefined) break;
+      await askQuestion(
+        ctx,
+        context.questions,
+        {
+          kind: "console-announcement-media",
+          auctionId: result.auctionId,
+          button: result.button,
+          print: fingerprint(context.text),
+          ...(result.lot === undefined ? {} : { lot: result.lot.index }),
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        announcementMediaQuestionText(context.text),
+        context.replyId,
+        undefined,
+        "HTML",
+      );
+      return handled("announcement media requested");
+    case "announcement-preview":
+      if (context.text === undefined) break;
+      await sendAnnouncementPreview(ctx, runtime, context.person, {
+        ...result,
+        text: context.text,
+      });
+      return handled("announcement preview sent");
+    case "announcement-sent":
+    case "announcement-outcome":
+      await showScreen(ctx, announcementOutcomeScreen(result));
+      return handled(
+        result.kind === "announcement-sent"
+          ? result.repeated
+            ? "announcement repeated"
+            : "announcement accepted"
+          : `announcement: ${result.note}`,
+      );
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+  return unexpectedOutcome(
+    `announcement step without text: ${result.kind}`,
+    context.person.identityId,
+    "manage_auction",
+  );
+}
+
+// Предпросмотр — ровно то сообщение, которое получит участник: тот же рендер
+// вести и та же отправка с фото лота, что у доставки хаба. Фото читается
+// правами автора; не прочиталось — предпросмотр, как и рассылка, уходит
+// текстом. Подтверждение отвечает на предпросмотр: «Отправить» читает текст
+// оттуда.
+async function sendAnnouncementPreview(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  preview: Extract<ExecuteResult, { kind: "announcement-preview" }> & {
+    text: string;
+  },
+): Promise<void> {
+  const button =
+    preview.button === "none"
+      ? undefined
+      : preview.button === "lot"
+        ? preview.lot === undefined
+          ? undefined
+          : { kind: "lot" as const, lotId: preview.lot.lotId }
+        : { kind: preview.button };
+  const notice = {
+    kind: "organizer-announcement" as const,
+    auctionId: preview.auctionId,
+    text: preview.text,
+    ...(button === undefined ? {} : { button }),
+    ...(preview.photo === undefined
+      ? {}
+      : {
+          photo: { lotId: preview.photo.lotId, photoId: preview.photo.photoId },
+        }),
+    ...(preview.post === undefined ? {} : { post: preview.post }),
+  };
+  const message = renderOutgoingNotification(notice);
+  const photos = createAnnouncementPhotos(async (photo) => {
+    const screens = runtime.auction;
+    if (screens === undefined) throw new Error("auction not configured");
+    return screens
+      .screenPorts(rpcCall(ctx, "manage_auction"))
+      .image.getLotPhoto({ viewer: viewerOf(person), ...photo });
+  }, logMissingAnnouncementPhoto(runtime.logger));
+  if (ctx.callbackQuery !== undefined && ctx.pressedGone !== true) {
+    await clearCallbackKeyboard(ctx);
+  }
+  const chatId = ctx.chat?.id ?? 0;
+  const previewId = await sendOrganizerAnnouncement(
+    ctx.api,
+    chatId,
+    {
+      text: message.text,
+      ...(notice.photo === undefined ? {} : { photo: notice.photo }),
+      ...(notice.post === undefined ? {} : { post: notice.post }),
+    },
+    {
+      photos,
+      media: runtime.mediaChat,
+      viewerId: person.identityId,
+      markup: message.keyboard,
+      mark: screenMark("notification"),
+    },
+  );
+  const confirm = announcementConfirmScreen({
+    auctionId: preview.auctionId,
+    text: preview.text,
+    button: preview.button,
+    lot: preview.lot,
+    photo: preview.photo?.index,
+    post: preview.post,
+    recipientCount: preview.recipientCount,
+  });
+  await ctx.reply(confirm.text, {
+    reply_parameters: { message_id: previewId },
+    parse_mode: "HTML",
+    ...screenMark(confirm.id),
+    reply_markup: confirm.keyboard,
+  });
+}
+
 // «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
 // права вести аукцион; право на чтение и ставку решает Auction. Своего
 // состояния нет: лот, человек и цена едут в кнопке, а ключ ставки рождается
@@ -11535,6 +12145,21 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle-prize-change",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-announcement":
+      return {
+        kind: "console-announcement",
+        auction: uuidToToken(pending.auctionId),
+        template: pending.template,
+        ...(pending.ref === undefined ? {} : { ref: pending.ref }),
+      };
+    case "console-announcement-media":
+      return {
+        kind: "console-announcement-media",
+        auction: uuidToToken(pending.auctionId),
+        button: pending.button,
+        print: pending.print,
+        ...(pending.lot === undefined ? {} : { lot: pending.lot }),
+      };
     default: {
       const _exhaustive: never = pending;
       return _exhaustive;
@@ -11806,6 +12431,25 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-announcement":
+      return {
+        kind: "console-announcement",
+        auctionId: tokenToUuid(step.auction),
+        template: step.template,
+        ...(step.ref === undefined ? {} : { ref: step.ref }),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-announcement-media":
+      return {
+        kind: "console-announcement-media",
+        auctionId: tokenToUuid(step.auction),
+        button: step.button,
+        print: step.print,
+        ...(step.lot === undefined ? {} : { lot: step.lot }),
+        telegramUserId,
+        expiresAt,
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -11908,6 +12552,10 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-raffle-winner":
       // Вопрос о номере победителя задан с «Итога розыгрыша».
       return { kind: "console-raffle-winner", auction: step.auction, page: 0 };
+    case "console-announcement":
+    case "console-announcement-media":
+      // Вопросы объявления заданы с меню «Объявления» и его шагов.
+      return { kind: "console-announcement", auction: step.auction };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -11953,6 +12601,8 @@ async function askQuestion(
   // Кнопка над «Отменой», которая тоже уводит от вопроса: «Пропустить» фото
   // нового лота (PER-618).
   above?: { text: string; data: string },
+  // Вопрос с разметкой: черновик объявления блоком `<code>` (PER-765).
+  format?: "HTML",
 ): Promise<void> {
   if (ctx.callbackQuery !== undefined && ctx.pressedGone !== true) {
     await clearCallbackKeyboard(ctx);
@@ -11965,6 +12615,7 @@ async function askQuestion(
   );
   const prompt = await ctx.reply(text, {
     ...screenMark("question"),
+    ...(format === undefined ? {} : { parse_mode: format }),
     reply_markup: {
       force_reply: true,
       inline_keyboard: keyboard.inline_keyboard,
@@ -12092,6 +12743,12 @@ function reopenData(step: QuestionStep): string {
       return consoleRaffleWinnerAskData(step.auction);
     case "console-raffle-prize-change":
       return consoleRafflePrizeChangeData(step.auction);
+    case "console-announcement":
+      return consoleAnnouncementAskData(step.auction, step.template, step.ref);
+    // Текст объявления в кнопку не помещается: «Ввести заново» начинает
+    // объявление с меню (PER-776).
+    case "console-announcement-media":
+      return consoleAnnouncementData(step.auction);
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -12173,6 +12830,12 @@ function answerParent(step: QuestionStep): Parent {
       return {
         name: raffleWinnerLabel,
         data: consoleRaffleWinnerData(step.auction),
+      };
+    case "console-announcement":
+    case "console-announcement-media":
+      return {
+        name: "Объявление",
+        data: consoleAnnouncementData(step.auction),
       };
     default: {
       const _exhaustive: never = step;
@@ -12474,6 +13137,14 @@ function callbackUseCase(
     | "console-raffle-winner-confirm"
     | "console-raffle-prize-change"
     | "console-raffle-prize-change-confirm"
+    | "console-announcement"
+    | "console-announcement-windows"
+    | "console-announcement-lots"
+    | "console-announcement-ask"
+    | "console-announcement-button"
+    | "console-announcement-photo"
+    | "console-announcement-media"
+    | "console-announcement-send"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
@@ -12690,6 +13361,14 @@ function callbackUseCase(
     case "console-raffle-winner-confirm":
     case "console-raffle-prize-change":
     case "console-raffle-prize-change-confirm":
+    case "console-announcement":
+    case "console-announcement-windows":
+    case "console-announcement-lots":
+    case "console-announcement-ask":
+    case "console-announcement-button":
+    case "console-announcement-photo":
+    case "console-announcement-media":
+    case "console-announcement-send":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":
