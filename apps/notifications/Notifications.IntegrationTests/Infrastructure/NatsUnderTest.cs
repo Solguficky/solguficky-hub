@@ -2,6 +2,7 @@ using Google.Protobuf;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using NATS.Client.JetStream.Models;
+using Notifications.Auction;
 using Notifications.Facts;
 using Notifications.Replica;
 using Notifications.Messaging;
@@ -56,13 +57,20 @@ public sealed class NatsUnderTest : IAsyncDisposable
     /// Окно хранения стримов; по умолчанию — то же, что у топологии AppHost.
     /// Другое значение проверяет, что сервис сверяет с ним срок жизни ключей.
     /// </param>
+    /// <param name="auctionStreamMaxAge">
+    /// Окно одного <c>AUCTION_EVENTS</c> поверх <paramref name="streamMaxAge" />:
+    /// так проверяется, что срок ключей сверяется с каждым стримом по своему.
+    /// </param>
     /// <param name="factsMaxMessageSize">
     /// Предел размера сообщения стрима адресных фактов; по умолчанию его нет.
     /// Заданный превращает крупный факт в отказ «всегда»: шина отвечает на
     /// публикацию ошибкой о самом сообщении.
     /// </param>
     public static async Task<NatsUnderTest> Start(
-        bool withDurables = true, TimeSpan? streamMaxAge = null, int? factsMaxMessageSize = null)
+        bool withDurables = true,
+        TimeSpan? streamMaxAge = null,
+        int? factsMaxMessageSize = null,
+        TimeSpan? auctionStreamMaxAge = null)
     {
         var container = new NatsBuilder("nats:2.10-alpine").Build();
         await container.StartAsync();
@@ -76,7 +84,8 @@ public sealed class NatsUnderTest : IAsyncDisposable
             {
                 Retention = StreamConfigRetention.Limits,
                 Storage = StreamConfigStorage.File,
-                MaxAge = streamMaxAge ?? ReplicaFeeds.StreamMaxAge,
+                MaxAge = (feed.Stream == AuctionFeed.Feed.Stream ? auctionStreamMaxAge : null)
+                    ?? streamMaxAge ?? TopologyMaxAge(feed),
                 DuplicateWindow = TimeSpan.FromMinutes(2),
             });
 
@@ -107,6 +116,11 @@ public sealed class NatsUnderTest : IAsyncDisposable
     }
 
     public const string FactsStream = "NOTIFICATIONS_EVENTS";
+
+    // Окна топологии AppHost: у AUCTION_EVENTS своё (PER-758). Одно окно на
+    // все стримы спрятало бы отказ старта, который уронил прод (PER-761).
+    private static TimeSpan TopologyMaxAge(EventFeed feed) =>
+        feed.Stream == AuctionFeed.Feed.Stream ? ConsumerOptions.AuctionStreamMaxAge : ConsumerOptions.StreamMaxAge;
 
     /// <summary>
     /// Все адресные факты, опубликованные в шину к этому моменту, вместе с

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { programmeParagraph } from "./auction-programme.js";
+import {
+  type AuctionWeekFacts,
+  auctionStatusLine,
+  programmeParagraph,
+} from "./auction-programme.js";
 import type { AuctionBlock, AuctionSummaryView } from "./auction-ui/index.js";
 
 type RootBlock = Extract<AuctionBlock, { kind: "root" }>;
@@ -190,5 +194,145 @@ describe("week programme in the auction root", () => {
     expect(
       programmeParagraph({ kind: "root", auctionId }, options),
     ).toBeUndefined();
+  });
+});
+
+// Четверг, 29 октября 2026 года, 19:00 по Москве: четвёртый день недели с
+// понедельника 26.10 00:00 до понедельника 02.11 00:00.
+const statusNow = new Date("2026-10-29T16:00:00Z");
+const statusOptions = { timeZone: "Europe/Moscow", now: statusNow };
+
+const statusWeek: AuctionWeekFacts = {
+  stage: "prebidding",
+  opensAt: "2026-10-25T21:00:00Z",
+  closesAt: "2026-11-01T21:00:00Z",
+};
+
+const line = (facts: Partial<AuctionWeekFacts>) =>
+  auctionStatusLine({ ...statusWeek, ...facts }, statusOptions);
+
+describe("auctionStatusLine", () => {
+  it("names the day of the week, the running window and the raffle", () => {
+    expect(
+      line({
+        stepWindows: [window("2026-10-29T15:00:00Z", "2026-10-29T19:00:00Z")],
+        raffleClosesAt: "2026-10-30T18:00:00Z",
+      }),
+    ).toBe(
+      "день 4 из 7 · 🔥 Счастливые часы до 22:00 · розыгрыш: регистрация до 30.10",
+    );
+  });
+
+  it("names the nearest window later today or on its own day", () => {
+    expect(
+      line({
+        stepWindows: [
+          window("2026-10-31T15:00:00Z", "2026-10-31T19:00:00Z"),
+          window("2026-10-29T17:00:00Z", "2026-10-29T19:00:00Z"),
+        ],
+      }),
+    ).toBe("день 4 из 7 · 🔥 Счастливые часы сегодня с 20:00");
+    expect(
+      line({
+        stepWindows: [window("2026-10-31T15:00:00Z", "2026-10-31T19:00:00Z")],
+      }),
+    ).toBe("день 4 из 7 · 🔥 Счастливые часы 31.10 с 18:00");
+  });
+
+  it("dates the end of a running window that ends after midnight", () => {
+    expect(
+      line({
+        stepWindows: [window("2026-10-29T15:00:00Z", "2026-10-29T23:00:00Z")],
+      }),
+    ).toBe("день 4 из 7 · 🔥 Счастливые часы до 30.10 02:00");
+  });
+
+  it("drops the windows that are over and keeps the day alone", () => {
+    expect(
+      line({
+        stepWindows: [window("2026-10-27T15:00:00Z", "2026-10-27T19:00:00Z")],
+      }),
+    ).toBe("день 4 из 7");
+    expect(line({})).toBe("день 4 из 7");
+  });
+
+  it("drops the raffle once its registration is closed", () => {
+    expect(line({ raffleClosesAt: "2026-10-29T15:00:00Z" })).toBe(
+      "день 4 из 7",
+    );
+  });
+
+  it("names the closing hour of a raffle that closes today", () => {
+    expect(line({ raffleClosesAt: "2026-10-29T18:00:00Z" })).toBe(
+      "день 4 из 7 · розыгрыш: регистрация до 21:00",
+    );
+  });
+
+  // До торгов дня недели нет, а регистрация ещё не открыта: остаётся только
+  // ближайшее окно, если оно объявлено.
+  it("keeps only the nearest window before the trading", () => {
+    const before = {
+      stage: "scheduled" as const,
+      opensAt: "2026-11-01T21:00:00Z",
+      closesAt: "2026-11-08T21:00:00Z",
+      raffleClosesAt: "2026-11-06T18:00:00Z",
+    };
+    expect(line(before)).toBeUndefined();
+    expect(
+      line({
+        ...before,
+        stepWindows: [window("2026-11-03T15:00:00Z", "2026-11-03T19:00:00Z")],
+      }),
+    ).toBe("🔥 Счастливые часы 03.11 с 18:00");
+  });
+
+  it("says nothing from the settling of the online week to the end", () => {
+    for (const stage of [
+      "settling",
+      "on-break",
+      "lineup-frozen",
+      "in-final",
+      "finished",
+      "cancelled",
+    ] as const) {
+      expect(
+        line({
+          stage,
+          stepWindows: [window("2026-10-29T15:00:00Z", "2026-10-29T19:00:00Z")],
+          raffleClosesAt: "2026-10-30T18:00:00Z",
+        }),
+        stage,
+      ).toBeUndefined();
+    }
+  });
+
+  // Сутки идут от открытия торгов: неделя не с полуночи — тоже семь дней.
+  it("counts the days of a week that opens in the evening", () => {
+    const evening = {
+      opensAt: "2026-10-26T15:00:00Z",
+      closesAt: "2026-11-02T15:00:00Z",
+    };
+    expect(line(evening)).toBe("день 4 из 7");
+    expect(
+      auctionStatusLine(
+        { ...statusWeek, ...evening },
+        { ...statusOptions, now: new Date("2026-10-26T14:00:00Z") },
+      ),
+    ).toBeUndefined();
+  });
+
+  it("counts the first and the last day of the week", () => {
+    expect(
+      auctionStatusLine(statusWeek, {
+        ...statusOptions,
+        now: new Date("2026-10-25T21:00:00Z"),
+      }),
+    ).toBe("день 1 из 7");
+    expect(
+      auctionStatusLine(statusWeek, {
+        ...statusOptions,
+        now: new Date("2026-11-01T20:59:00Z"),
+      }),
+    ).toBe("день 7 из 7");
   });
 });
