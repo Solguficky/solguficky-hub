@@ -166,6 +166,9 @@ function fake(answers: {
     setPaymentInstructions: async () => {
       throw new Error("not used");
     },
+    setPromoVideo: async () => {
+      throw new Error("not used");
+    },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
     setFinalTime: async (_person, command) => {

@@ -123,6 +123,7 @@ function adapter(rpc: {
   markInvoicePaid?: Call;
   markInvoiceHandedOver?: Call;
   setPaymentInstructions?: Call;
+  setPromoVideo?: Call;
   listMyInvoices?: Call;
   chooseFulfillment?: Call;
   removeLot?: Call;
@@ -189,6 +190,7 @@ function adapter(rpc: {
     markInvoicePaid: (rpc.markInvoicePaid ?? notUsed) as never,
     markInvoiceHandedOver: (rpc.markInvoiceHandedOver ?? notUsed) as never,
     setPaymentInstructions: (rpc.setPaymentInstructions ?? notUsed) as never,
+    setPromoVideo: (rpc.setPromoVideo ?? notUsed) as never,
     listMyInvoices: (rpc.listMyInvoices ?? notUsed) as never,
     chooseFulfillment: (rpc.chooseFulfillment ?? notUsed) as never,
   });
@@ -2907,6 +2909,67 @@ describe("auction invoices adapter", () => {
         setPaymentInstructions: () =>
           Promise.reject(new ConnectError("meetups", Code.Unavailable)),
       }).setPaymentInstructions(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  it("sets and takes back the promo video and reads every refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      setPromoVideo: async (request: unknown) => {
+        sent.push(request);
+        return { outcome: { case: "accepted", value: {} } };
+      },
+    });
+    await expect(
+      accepted.setPromoVideo(admin, { auctionId, opId, postId: 42 }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      accepted.setPromoVideo(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        auctionId,
+        opId,
+        video: expect.objectContaining({ messageId: 42n }),
+      }),
+      expect.not.objectContaining({ video: expect.anything() }),
+    ]);
+
+    const reasons = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+    ] as const;
+    for (const [reason, kind] of reasons) {
+      await expect(
+        adapter({
+          setPromoVideo: async () => ({
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+        }).setPromoVideo(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+
+    await expect(
+      adapter({
+        setPromoVideo: async () => ({ outcome: { case: undefined } }),
+      }).setPromoVideo(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      adapter({
+        setPromoVideo: () =>
+          Promise.reject(new ConnectError("no", Code.NotFound)),
+      }).setPromoVideo(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
+    await expect(
+      adapter({
+        setPromoVideo: () =>
+          Promise.reject(new ConnectError("meetups", Code.Unavailable)),
+      }).setPromoVideo(admin, { auctionId, opId, postId: 7 }),
     ).resolves.toMatchObject({ kind: "unavailable" });
   });
 

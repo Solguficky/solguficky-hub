@@ -7,6 +7,7 @@ import {
   InputFile,
 } from "grammy";
 import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
+import { promoUnavailableText } from "../../../auction-promo.js";
 import {
   type ApplicationQueue,
   type AuctionBlock,
@@ -232,6 +233,8 @@ import {
   consoleLayoutListData,
   consolePaymentTermData,
   consolePaymentTextData,
+  consolePromoVideoAskData,
+  consolePromoVideoData,
   consoleRaffleData,
   consoleRafflePrizeChangeData,
   consoleRafflePrizeData,
@@ -349,6 +352,12 @@ import {
   paymentTextAskErrorText,
   paymentTextPrompt,
 } from "./screens/auction-invoices.js";
+import {
+  promoVideoOutcomeScreen,
+  promoVideoQuestionText,
+  promoVideoRemoveScreen,
+  promoVideoScreen,
+} from "./screens/auction-promo.js";
 import {
   rafflePrizeChangeConfirmScreen,
   rafflePrizeChangeOutcomeScreen,
@@ -891,6 +900,14 @@ type PendingConsoleRafflePrizeChange = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о промо-видео аукциона (PER-774). Шаг — аукцион — лежит в кнопке
+// вопроса, и ответ видео после рестарта принимается так же.
+type PendingConsolePromoVideo = {
+  kind: "console-promo-video";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о тексте объявления аукциона (PER-765). Шаг — аукцион, шаблон и
 // номер окна или лота — лежит в кнопке вопроса, а черновик ответ читает
 // заново, и после рестарта тоже.
@@ -985,6 +1002,7 @@ type HubPendingInput =
   | PendingConsolePaymentText
   | PendingConsoleRaffleWinner
   | PendingConsoleRafflePrizeChange
+  | PendingConsolePromoVideo
   | PendingConsoleAnnouncement
   | PendingConsoleAnnouncementMedia
   | PendingConsoleWindow
@@ -1729,6 +1747,25 @@ async function handleMessage(
           : "Канал с этим кодом уже есть, подпись прежняя.",
       );
       outcome = adminOutcome(result, identity.person.identityId);
+      return;
+    }
+    // Промо-видео (PER-774): ответ любого вида — не видео задаёт вопрос
+    // заново.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "console-promo-video" &&
+      ctx.message !== undefined
+    ) {
+      useCase = "manage_auction";
+      outcome = await handlePromoVideoAnswer(
+        ctx,
+        runtime,
+        questions,
+        photos.albums,
+        pending,
+        replyId,
+        answered,
+      );
       return;
     }
     // Своё фото или видео объявления (PER-776): ответ любого вида — не фото и
@@ -2871,6 +2908,25 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleAnnouncementCallback(
+            ctx,
+            runtime,
+            questions,
+            person,
+            action,
+          )
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Промо-видео (PER-774): вход корня видит только держатель права вести
+    // аукцион, подделанная кнопка получает отказ до Auction.
+    if (
+      action.kind === "console-promo-video" ||
+      action.kind === "console-promo-video-ask" ||
+      action.kind === "console-promo-video-remove" ||
+      action.kind === "console-promo-video-remove-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handlePromoVideoCallback(
             ctx,
             runtime,
             questions,
@@ -9856,6 +9912,212 @@ async function handleRafflePrizeChangeCallback(
   });
 }
 
+// Промо-видео аукциона (PER-774): экран из корня аукциона, вопрос о видео,
+// подтверждение снятия и «Да». Своего состояния нет: аукцион едет в кнопке, а
+// ключ снятия рождается на нажатие «Да».
+async function handlePromoVideoCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-promo-video"
+        | "console-promo-video-ask"
+        | "console-promo-video-remove"
+        | "console-promo-video-remove-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const auctionId = tokenToUuid(action.auction);
+  const call = { identity: person, ...rpcCall(ctx, useCase), auctionId };
+  const context = { person, questions, retry: ctx.callbackQuery?.data };
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  switch (action.kind) {
+    case "console-promo-video":
+      return renderPromoVideoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-promo-video",
+        }),
+        context,
+      );
+    // Без чата медиа видео сохранить некуда: подделанная кнопка вопроса не
+    // задаёт.
+    case "console-promo-video-ask":
+      if (runtime.mediaChat?.enabled !== true) {
+        await showScreen(
+          ctx,
+          promoVideoOutcomeScreen({ auctionId, note: "media-off" }),
+        );
+        return handled("promo video: media-off");
+      }
+      await askQuestion(
+        ctx,
+        questions,
+        {
+          kind: "console-promo-video",
+          auctionId,
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        promoVideoQuestionText(),
+      );
+      return handled("promo video requested");
+    case "console-promo-video-remove":
+      await showScreen(ctx, promoVideoRemoveScreen(auctionId));
+      return handled("promo video removal confirmation sent");
+    case "console-promo-video-remove-confirm":
+      return renderPromoVideoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-promo-video",
+          opId: createUuidV7(),
+        }),
+        context,
+      );
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответ на вопрос о промо-видео (PER-774). Бот копирует видео человека в чат
+// медиа ботов, а Auction получает номер поста: так видео одинаково покажут
+// оба бота. Прежний пост остаётся в канале — его не удаляет никто.
+async function handlePromoVideoAnswer(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  albums: SeenAlbums,
+  pending: PendingConsolePromoVideo,
+  replyId: number,
+  answered: (result?: ExecuteResult) => Promise<void>,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  if (ctx.from?.id !== pending.telegramUserId) {
+    return {
+      level: "info",
+      message: "foreign promo video answer ignored",
+      result: "ok",
+      use_case: useCase,
+    };
+  }
+  const identity = await resolvePerson(ctx, runtime, useCase);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    false,
+  );
+  if (denied !== undefined) return denied;
+  const { person } = identity;
+  if (!canRunAuctions(person)) {
+    await answered();
+    return refuseConsole(ctx, person);
+  }
+  const { auctionId } = pending;
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  if (ctx.message?.video === undefined) {
+    // Тот же вопрос заново, а прежний закрывается.
+    await askQuestion(
+      ctx,
+      questions,
+      {
+        kind: "console-promo-video",
+        auctionId,
+        telegramUserId: ctx.from?.id ?? 0,
+      },
+      promoVideoQuestionText(true),
+      replyId,
+    );
+    return handled("promo video asked again");
+  }
+  // Видео у аукциона одно: из альбома берётся первое, остальные пропускает
+  // проверка альбомов в начале `handleMessage`.
+  const album = ctx.message.media_group_id;
+  if (album !== undefined) albums.remember(album);
+  const media = runtime.mediaChat;
+  const published =
+    media === undefined || !media.enabled
+      ? undefined
+      : await media.publish(ctx.api, ctx.chat?.id ?? 0, ctx.message.message_id);
+  if (published?.kind !== "published") {
+    await answered();
+    const note = published === undefined ? "media-off" : "media-failed";
+    await showScreen(ctx, promoVideoOutcomeScreen({ auctionId, note }));
+    // Отказ Telegram чат медиа уже записал на warn: граница пишет исход.
+    return handled(`promo video: ${note}`);
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    ...rpcCall(ctx, useCase),
+    auctionId,
+    intent: "set-promo-video",
+    opId: createUuidV7(),
+    postId: published.postId,
+  });
+  await answered(result);
+  return renderPromoVideoResult(ctx, runtime, result, {
+    person,
+    questions,
+    replyId,
+  });
+}
+
+// Экраны промо-видео (PER-774); остальное — исходы пульта: отказы и сбои
+// рисуются, как у его команд.
+async function renderPromoVideoResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  switch (result.kind) {
+    case "promo-video":
+      await showScreen(ctx, promoVideoScreen(result));
+      return handled("promo video sent");
+    case "promo-video-outcome":
+      await showScreen(ctx, promoVideoOutcomeScreen(result));
+      return handled(`promo video: ${result.note}`);
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
 // Экраны смены приза (PER-737); остальное — исходы пульта: отказы и сбои
 // рисуются, как у его команд.
 async function renderRafflePrizeChangeResult(
@@ -10747,6 +11009,11 @@ async function handleAuctionCallback(
           : {
               proxyExplainer: runtime.proxyExplainer(rpcCall(ctx, useCase)),
             }),
+        // Промо-видео (PER-774): корень ставит «🎬 Промо» только тогда, когда
+        // пост есть чем показать.
+        ...(runtime.mediaChat?.enabled === true
+          ? { media: true as const }
+          : {}),
       },
       identity: resolved,
       user: {
@@ -10853,6 +11120,7 @@ async function handleAuctionCallback(
     // Пульт и входы в форму лота видит держатель права вести аукцион — того
     // же, что «Включить аукцион» (ADR-070, RFC-016).
     canManage,
+    ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
     ...(canAddLots === undefined ? {} : { canAddLots }),
     ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
@@ -10869,6 +11137,35 @@ async function handleAuctionCallback(
     return {
       level: "info",
       message: "auction question asked",
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  // Промо-видео (PER-774): копия поста новым сообщением, а экран, с которого
+  // нажали, остаётся. Поста нет или Telegram его не отдал — ответ на нажатие
+  // «видео недоступно», и корень цел.
+  if (shown.promo !== undefined) {
+    const postId = shown.promo.postId;
+    const media = runtime.mediaChat;
+    const sent =
+      postId === undefined || media === undefined
+        ? undefined
+        : await media.show(ctx.api, ctx.chat?.id ?? 0, postId, {
+            caption: shown.screen.text,
+            format: "HTML",
+            markup: shown.screen.keyboard,
+            mark: screenMark(shown.screen.id),
+          });
+    if (sent?.kind !== "shown") {
+      await ctx.waiting?.answer(promoUnavailableText);
+    }
+    return {
+      level: "info",
+      message:
+        sent?.kind === "shown"
+          ? "auction promo video sent"
+          : "auction promo video unavailable",
       result: "ok",
       use_case: useCase,
       identity_id: person.identityId,
@@ -12179,6 +12476,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle-prize-change",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-promo-video":
+      return {
+        kind: "console-promo-video",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-announcement":
       return {
         kind: "console-announcement",
@@ -12465,6 +12767,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-promo-video":
+      return {
+        kind: "console-promo-video",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "console-announcement":
       return {
         kind: "console-announcement",
@@ -12590,6 +12899,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-announcement-media":
       // Вопросы объявления заданы с меню «Объявления» и его шагов.
       return { kind: "console-announcement", auction: step.auction };
+    case "console-promo-video":
+      // Вопрос о видео задан с экрана «Промо-видео».
+      return { kind: "console-promo-video", auction: step.auction };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -12777,6 +13089,8 @@ function reopenData(step: QuestionStep): string {
       return consoleRaffleWinnerAskData(step.auction);
     case "console-raffle-prize-change":
       return consoleRafflePrizeChangeData(step.auction);
+    case "console-promo-video":
+      return consolePromoVideoAskData(step.auction);
     case "console-announcement":
       return consoleAnnouncementAskData(step.auction, step.template, step.ref);
     // Текст объявления в кнопку не помещается: «Ввести заново» начинает
@@ -12870,6 +13184,11 @@ function answerParent(step: QuestionStep): Parent {
       return {
         name: "Объявление",
         data: consoleAnnouncementData(step.auction),
+      };
+    case "console-promo-video":
+      return {
+        name: "Промо-видео",
+        data: consolePromoVideoData(step.auction),
       };
     default: {
       const _exhaustive: never = step;
@@ -13171,6 +13490,10 @@ function callbackUseCase(
     | "console-raffle-winner-confirm"
     | "console-raffle-prize-change"
     | "console-raffle-prize-change-confirm"
+    | "console-promo-video"
+    | "console-promo-video-ask"
+    | "console-promo-video-remove"
+    | "console-promo-video-remove-confirm"
     | "console-announcement"
     | "console-announcement-windows"
     | "console-announcement-lots"
@@ -13395,6 +13718,10 @@ function callbackUseCase(
     case "console-raffle-winner-confirm":
     case "console-raffle-prize-change":
     case "console-raffle-prize-change-confirm":
+    case "console-promo-video":
+    case "console-promo-video-ask":
+    case "console-promo-video-remove":
+    case "console-promo-video-remove-confirm":
     case "console-announcement":
     case "console-announcement-windows":
     case "console-announcement-lots":

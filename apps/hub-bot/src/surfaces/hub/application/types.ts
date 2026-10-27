@@ -383,6 +383,7 @@ export type ExecuteRequest =
   | AuctionInvoicesRequest
   | RaffleWinnerRequest
   | RafflePrizeChangeRequest
+  | PromoVideoRequest
   | AuctionAnnouncementRequest;
 
 type LotFormCall = {
@@ -603,6 +604,9 @@ export type AuctionConsoleSnapshot = {
   // Порядок и разделы ленты (PER-719), как их выставил администратор. Нет —
   // лоты не упорядочены, и лента идёт в порядке создания.
   layout?: LotLayoutView;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов. Нет —
+  // видео нет.
+  promoVideo?: number;
   // Сколько участников зарегистрировалось в розыгрыше сейчас (PER-734):
   // отменённая регистрация не считается. Есть, только пока розыгрыш держит
   // регистрации; нет — розыгрыша нет, пул зафиксирован или Auction числа не
@@ -1347,6 +1351,23 @@ export type RafflePrizeChangeRequest =
       opId: string;
     });
 
+// Промо-видео аукциона (PER-774): экран видео из корня аукциона и одна
+// команда — задать, заменить или, без `postId`, убрать. Пост в чате медиа
+// публикует край до команды: это вызов Telegram. Ключ рождается на ответ с
+// видео и на «Да» снятия.
+export type PromoVideoRequest =
+  | (AuctionConsoleCall & { intent: "view-promo-video" })
+  | (AuctionConsoleCall & {
+      intent: "set-promo-video";
+      opId: string;
+      postId?: number;
+    });
+
+// Исход промо-видео — свой экран. `set` и `removed` — Auction принял команду;
+// `media-off` — чат медиа выключен, `media-failed` — пост в нём не
+// опубликовался: команды не было.
+export type PromoVideoNote = "set" | "removed" | "media-off" | "media-failed";
+
 // Исход смены приза — свой экран. `changed` несёт приз из ответа Auction,
 // `already-drawn` — итог уже есть, `without-result` — итога не будет,
 // `no-raffle` — розыгрыша у аукциона нет.
@@ -1808,6 +1829,9 @@ export type ExecuteResult =
       kind: "raffle-prize-change-outcome";
       auctionId: string;
     } & RafflePrizeChangeOutcome)
+  // Промо-видео (PER-774): экран из корня аукциона и исход команды.
+  | { kind: "promo-video"; auctionId: string; video: boolean }
+  | { kind: "promo-video-outcome"; auctionId: string; note: PromoVideoNote }
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
   | { kind: "payment-text-ask"; auctionId: string; error?: PaymentTextAskError }
   | { kind: "auction-invoice"; invoice: InvoiceRow }

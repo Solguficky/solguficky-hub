@@ -27,6 +27,7 @@ import type {
 } from "../../core/auction/watch.js";
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createLogger, type Logger } from "../../core/logging.js";
+import { createMediaChat, type MediaChat } from "../../core/media-chat.js";
 import type {
   AuctionNotificationChange,
   AuctionNotificationSettings,
@@ -104,6 +105,8 @@ function makeBot(
     live?: Parameters<typeof createBot>[0]["live"];
     // Отказ с кодом, а не 400: `429` и `403` у правки вне update.
     refuseWith?: Record<string, { code: number; description: string }>;
+    // Чат медиа ботов (PER-774): промо-видео аукциона.
+    media?: MediaChat;
   } = {},
 ) {
   const bot = createBot({
@@ -121,6 +124,7 @@ function makeBot(
       ? {}
       : { supportBotUsername: options.supportBotUsername }),
     ...(options.live === undefined ? {} : { live: options.live }),
+    ...(options.media === undefined ? {} : { media: options.media }),
     botInfo,
   });
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -3791,5 +3795,145 @@ describe("final lot card", () => {
     );
     // Карточка после отказа остаётся живой.
     expect(stream.listeners.size).toBe(1);
+  });
+});
+
+// Промо-видео (PER-774): «🎬 Промо» в корне аукциона, пока у аукциона есть видео
+// и у бота чат медиа; нажатие присылает копию поста новым сообщением, а
+// удалённый пост — ответ на нажатие «видео недоступно», и корень цел.
+describe("promo video in the auction root", () => {
+  const mediaChannelId = -1001234567890;
+  const media = createMediaChat({
+    channelId: mediaChannelId,
+    logger: { warn: () => {} },
+  });
+  const promoPorts =
+    (withMedia: boolean): PortsFactory =>
+    (requestId, deadlineAt) => {
+      const ports = publicPorts(requestId, deadlineAt);
+      return {
+        ...ports,
+        ...(withMedia ? { media: true as const } : {}),
+        auction: {
+          ...ports.auction,
+          getAuction: async () => ({
+            auctionId,
+            stage: "prebidding" as const,
+            final: false,
+            promoVideo: 77,
+          }),
+        },
+      };
+    };
+  const toasts = (calls: Array<{ method: string; payload: unknown }>) =>
+    calls
+      .filter((call) => call.method === "answerCallbackQuery")
+      .map((call) => (call.payload as { text?: string }).text)
+      .filter((text) => text !== undefined);
+
+  it("sends the post with a way back and keeps the root", async () => {
+    const { bot, calls } = makeBot(promoPorts(true), { media });
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    const root = lastScreen(calls);
+    const promo = root.keyboard
+      .flat()
+      .find((button) => button.text === "🎬 Промо");
+    expect(promo?.callback_data).toBe(
+      encodeAuctionCallback({ kind: "promo", auctionId }),
+    );
+
+    const before = calls.length;
+    await bot.handleUpdate(press(promo?.callback_data ?? ""));
+    const sent = calls.slice(before);
+    expect(
+      sent.filter((call) => call.method !== "answerCallbackQuery"),
+    ).toEqual([
+      {
+        method: "copyMessage",
+        payload: expect.objectContaining({
+          chat_id: privateChat.id,
+          from_chat_id: mediaChannelId,
+          message_id: 77,
+          caption: "<b>Промо-видео</b>",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "‹ Аукцион",
+                  callback_data: encodeAuctionCallback({
+                    kind: "root",
+                    auctionId,
+                  }),
+                },
+              ],
+            ],
+          },
+        }),
+      },
+    ]);
+    expect(toasts(calls)).toEqual([]);
+  });
+
+  it("opens the root as a new message under the video", async () => {
+    const { bot, calls } = makeBot(promoPorts(true), { media });
+    const update = press(encodeAuctionCallback({ kind: "root", auctionId }));
+    (
+      update.callback_query as unknown as { message: Record<string, unknown> }
+    ).message = {
+      message_id: 7,
+      date: 0,
+      chat: privateChat,
+      video: {
+        file_id: "v",
+        file_unique_id: "u",
+        width: 1,
+        height: 1,
+        duration: 3,
+      },
+      caption: "Промо-видео",
+    };
+    await bot.handleUpdate(update);
+    const methods = calls.map((call) => call.method);
+    expect(methods).not.toContain("editMessageText");
+    expect(methods).toContain("sendMessage");
+    expect(methods).toContain("editMessageReplyMarkup");
+  });
+
+  it("answers that the video is unavailable when the post is gone", async () => {
+    const { bot, calls } = makeBot(promoPorts(true), {
+      media,
+      refuse: { copyMessage: "Bad Request: message to copy not found" },
+    });
+    const before = calls.length;
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "promo", auctionId })),
+    );
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(
+      calls
+        .slice(before)
+        .map((call) => call.method)
+        .filter((method) => method !== "answerCallbackQuery"),
+    ).toEqual(["copyMessage"]);
+  });
+
+  it("has no button without the media chat and answers a forged one", async () => {
+    const { bot, calls } = makeBot(promoPorts(false));
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    expect(
+      lastScreen(calls)
+        .keyboard.flat()
+        .map((button) => button.text),
+    ).not.toContain("🎬 Промо");
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "promo", auctionId })),
+    );
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(calls.map((call) => call.method)).not.toContain("copyMessage");
   });
 });

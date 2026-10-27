@@ -704,6 +704,16 @@ export type PaymentInstructionsResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// Промо-видео аукциона (PER-774, PER-781): задать, заменить и снять одной
+// командой. Ворота — сходка не отменена, как у команд пульта.
+export type PromoVideoResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 // Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
 // розыгрыша нет.
 export type ConsoleRaffleResult =
@@ -988,6 +998,13 @@ export type AuctionConsoles = {
     command: { auctionId: string; opId: string; text?: string },
     meta?: RpcMetadata,
   ): Promise<PaymentInstructionsResult>;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов; без
+  // `postId` — снять. Повтор того же `opId` Auction принимает.
+  setPromoVideo(
+    person: Person,
+    command: { auctionId: string; opId: string; postId?: number },
+    meta?: RpcMetadata,
+  ): Promise<PromoVideoResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

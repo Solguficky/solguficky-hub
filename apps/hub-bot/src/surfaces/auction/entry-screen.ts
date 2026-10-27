@@ -28,6 +28,7 @@ import {
   auctionStatusLine,
   programmeParagraph,
 } from "../../auction-programme.js";
+import { promoButtonLabel, promoCaption } from "../../auction-promo.js";
 import {
   cancelRegistrationLabel,
   raffleBackName,
@@ -227,6 +228,10 @@ export type RenderedScreen = {
   // Вопрос: адаптер шлёт его новым сообщением с `force_reply` (дизайн-код,
   // «Вопросы»).
   asks?: true;
+  // Промо-видео (PER-774): адаптер присылает копию поста чата медиа ботов с
+  // текстом подписью новым сообщением, а без `postId` отвечает на нажатие
+  // «видео недоступно» и ничего не шлёт.
+  promo?: { postId?: number };
 };
 
 export type RenderOptions = {
@@ -999,6 +1004,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "prediction-results";
       case "day-chronicle":
         return "day-chronicle";
+      case "promo":
+        return "promo";
       case "raffle":
         return "raffle";
       case "raffle-registered":
@@ -1109,9 +1116,17 @@ type FavoritesBlock = Extract<AuctionBlock, { kind: "favorites" }>;
 function renderLeaf(
   blocks: readonly AuctionBlock[],
   options: RenderOptions,
-): Pick<RenderedScreen, "text" | "format" | "asks"> | undefined {
+): Pick<RenderedScreen, "text" | "format" | "asks" | "promo"> | undefined {
   for (const block of blocks) {
     switch (block.kind) {
+      // Промо-видео (PER-774): текст — подпись копии поста, слова общие с
+      // хабом.
+      case "promo":
+        return {
+          format: "html",
+          text: screenText(promoCaption),
+          promo: block.postId === undefined ? {} : { postId: block.postId },
+        };
       case "confirm":
         return { format: "html", text: confirmText(block) };
       case "accepted":
@@ -1970,6 +1985,10 @@ function renderButton(
     case "root.day-chronicle":
       return text(dayChronicleButtonLabel);
     case "day-chronicle.back":
+      return text("‹ Аукцион");
+    case "root.promo":
+      return text(promoButtonLabel);
+    case "promo.back":
       return text("‹ Аукцион");
     case "lot.refresh":
       return text(refreshLabel);

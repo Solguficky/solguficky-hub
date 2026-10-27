@@ -114,6 +114,7 @@ import {
   type LotStepPolicyInput,
   type MeetupAuctions,
   type PaymentInstructionsResult,
+  type PromoVideoResult,
   type RemovalPreviewResult,
   type RemoveLotResult,
   type RemoveParticipantResult,
@@ -191,6 +192,7 @@ type AuctionRpc = Pick<
   | "markInvoicePaid"
   | "markInvoiceHandedOver"
   | "setPaymentInstructions"
+  | "setPromoVideo"
 >;
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
@@ -1194,6 +1196,26 @@ export function createAuctionAdapter(
           options(meta),
         );
         return paymentInstructionsResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Промо-видео (PER-774): без `postId` — снятие, и Auction отвечает тем
+    // же приёмом.
+    async setPromoVideo(person, command, meta) {
+      try {
+        const response = await rpc.setPromoVideo(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            opId: command.opId,
+            ...(command.postId === undefined
+              ? {}
+              : { video: { messageId: BigInt(command.postId) } }),
+          },
+          options(meta),
+        );
+        return promoVideoResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -2856,6 +2878,38 @@ function paymentInstructionsResult(
       }
     case undefined:
       return defect("payment instructions response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы промо-видео (PER-774): именованный отказ Auction — значение ответа,
+// а не сбой вызова.
+function promoVideoResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setPromoVideo"]>>["outcome"],
+): PromoVideoResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case undefined:
+          return defect("promo video refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("promo video response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

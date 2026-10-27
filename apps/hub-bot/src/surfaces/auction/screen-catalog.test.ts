@@ -1375,6 +1375,28 @@ const shown: readonly {
       body: dayChronicleBody({ kind: "no-bids" }),
     },
   },
+  // Промо-видео (PER-774): подпись копии поста и «‹ Аукцион».
+  {
+    screen: {
+      kind: "auction" as const,
+      body: {
+        blocks: [
+          { kind: "promo", auctionId: predictionResultsAuctionId, postId: 42 },
+        ],
+        keyboard: [
+          [
+            {
+              action: "promo.back",
+              callbackData: encodeAuctionCallback({
+                kind: "root",
+                auctionId: predictionResultsAuctionId,
+              }),
+            },
+          ],
+        ],
+      },
+    },
+  },
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleProofBody(raffle) },
   })),

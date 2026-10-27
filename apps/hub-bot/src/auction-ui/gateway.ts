@@ -150,6 +150,9 @@ export async function handleAuctionUpdate(
     ...(surface.ports.proxyExplainer === undefined
       ? {}
       : { proxyExplainer: surface.ports.proxyExplainer }),
+    ...(surface.ports.media === undefined
+      ? {}
+      : { media: surface.ports.media }),
     viewer: identity.viewer,
     user,
     intent: parsed.intent,
