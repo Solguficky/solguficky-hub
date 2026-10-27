@@ -3417,6 +3417,61 @@ describe("raffle among the participants", () => {
     ).toEqual(["‹ Аукцион"]);
   });
 
+  // Фото приза (PER-773): первым блоком rich-сообщения над заголовком, как
+  // фото лота, `file_id` — в тот же кэш; фото не прочиталось — тот же экран
+  // без фото, а не сбой.
+  it("shows the prize photo above the raffle and the raffle without it when unreadable", async () => {
+    const service = raffleService({
+      ...openRaffle,
+      prize: "Кружка",
+      prizePhoto: { photoId: "prize-1", version: "prize-v1" },
+    });
+    const withPhoto =
+      (
+        getRafflePrizePhoto: NonNullable<LotImagePort["getRafflePrizePhoto"]>,
+      ): PortsFactory =>
+      (requestId, deadlineAt) => {
+        const ports = withRaffle(publicPorts, service)(requestId, deadlineAt);
+        return { ...ports, image: { ...ports.image, getRafflePrizePhoto } };
+      };
+    const raffleData = encodeAuctionCallback({ kind: "raffle", auctionId });
+    const getRafflePrizePhoto = vi.fn(async () => ({
+      content: new Uint8Array([9]),
+      mediaType: "image/jpeg",
+      version: "prize-v1",
+    }));
+    const { bot, calls } = makeBot(withPhoto(getRafflePrizePhoto), {
+      photos: createPhotoCache(),
+    });
+    await bot.handleUpdate(press(raffleData));
+    await bot.handleUpdate(press(raffleData));
+
+    expect(getRafflePrizePhoto).toHaveBeenCalledTimes(1);
+    const edits = calls.filter((call) => call.method === "editMessageText");
+    const first = edits[0]?.payload as { rich_message: { html: string } };
+    expect(first.rich_message.html).toMatch(
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>Розыгрыш среди участников<\/h1>/,
+    );
+    expect(first.rich_message.html).toContain("<p>Приз: Кружка</p>");
+    expect(edits[1]?.payload).toMatchObject({
+      rich_message: { media: [{ id: "lot", media: { media: "large" } }] },
+    });
+
+    const failing = makeBot(
+      withPhoto(async () => {
+        throw new Error("no prize photo");
+      }),
+    );
+    await failing.bot.handleUpdate(press(raffleData));
+    const screen = lastScreen(failing.calls);
+    expect(screen.text).toMatch(/^<h1>Розыгрыш среди участников<\/h1>/);
+    expect(screen.keyboard.flat().map((b) => b.text)).toEqual([
+      "Зарегистрироваться",
+      "Как проверить честность",
+      "‹ Аукцион",
+    ]);
+  });
+
   // Отменённый вместе с аукционом розыгрыш (PER-698): «Розыгрыш» корня ведёт
   // в экран отмены с возвратом в корень, а не в кадр сбоя. Статус приходит
   // переводом ответа Auction, как у настоящего клиента.

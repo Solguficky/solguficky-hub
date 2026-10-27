@@ -53,6 +53,7 @@ import { invoicesButtonLabel } from "../../../../auction-winner-invoices.js";
 import {
   type LotPhotoKey,
   lotPhotoKeys,
+  rafflePrizePhotoKeys,
   richPhotoBlock,
 } from "../../../../core/auction/lot-photos.js";
 import { money, truncate } from "../../../../core/format.js";
@@ -276,8 +277,18 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
         return { screen: predictionResultsScreen(block) };
       case "day-chronicle":
         return { screen: dayChronicleScreen(block) };
-      case "raffle":
-        return { screen: raffleScreen(block, view.body.keyboard, view) };
+      // Фото приза (PER-773) — как фото лота: ключи отдаются адаптеру, а
+      // готовые фото приходят обратно полем `photos`.
+      case "raffle": {
+        const images =
+          view.presentation === "rich"
+            ? rafflePrizePhotoKeys(block.raffle)
+            : [];
+        return {
+          screen: raffleScreen(block, view.body.keyboard, view),
+          ...(images.length > 0 ? { images } : {}),
+        };
+      }
       case "raffle-registered":
         return {
           screen: raffleRegisteredScreen(block, view.body.keyboard, view),

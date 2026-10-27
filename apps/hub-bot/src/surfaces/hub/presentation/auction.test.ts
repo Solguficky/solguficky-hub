@@ -182,6 +182,8 @@ function fakeAuction(
     // чтения розыгрыша.
     summary?: Partial<AuctionSummaryView>;
     raffleFails?: true;
+    // Фото приза (PER-773): байты, которые отдаёт `GetRafflePrizePhoto`.
+    prizePhoto?: () => Promise<{ content: Uint8Array; version: string }>;
   } = {},
 ) {
   const invoices: { current: MyInvoicesView } = {
@@ -206,6 +208,10 @@ function fakeAuction(
       content: new Uint8Array([7]),
       version: `photo-${request.photoId}`,
     }),
+  );
+  const getRafflePrizePhoto = vi.fn(
+    (_request: { auctionId: string }) =>
+      options.prizePhoto?.() ?? Promise.reject(new Error("no prize photo")),
   );
   const listAuctionLots = vi.fn(async () => ({
     lots: [shownLot],
@@ -356,6 +362,10 @@ function fakeAuction(
             ...(await getLotPhoto(request)),
             mediaType: "image/jpeg",
           }),
+          getRafflePrizePhoto: async (request) => ({
+            ...(await getRafflePrizePhoto(request)),
+            mediaType: "image/jpeg",
+          }),
         },
       };
     },
@@ -367,6 +377,7 @@ function fakeAuction(
     lookups,
     getLotImage,
     getLotPhoto,
+    getRafflePrizePhoto,
     listAuctionLots,
     getLot,
     getAuction,
@@ -2035,6 +2046,97 @@ describe("raffle screens in the hub", () => {
       ["Как проверить честность"],
       ["‹ Аукцион"],
     ]);
+  });
+
+  // Фото приза (PER-773): первым блоком rich-сообщения, над заголовком, как
+  // фото лота, и `file_id` из ответа — в тот же кэш.
+  it("shows the prize photo above the raffle and reuses its file_id", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: {
+        ...base,
+        prize: "Кружка",
+        prizePhoto: { photoId: "prize-1", version: "prize-v1" },
+      },
+      prizePhoto: async () => ({
+        content: new Uint8Array([9]),
+        version: "prize-v1",
+      }),
+    });
+    const photos = createLotPhotos();
+    const { bot, calls } = harness("member", auction, {
+      lotPhotos: photos,
+      respond: (method) =>
+        method === "editMessageText"
+          ? {
+              message_id: 9,
+              date: 0,
+              chat: { id: 42, type: "private", first_name: "tester" },
+              rich_message: {
+                blocks: [
+                  {
+                    type: "photo",
+                    photo: [
+                      {
+                        file_id: "prize-file",
+                        file_unique_id: "p",
+                        width: 800,
+                        height: 800,
+                      },
+                    ],
+                  },
+                ],
+              },
+            }
+          : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(raffleData));
+
+    const screen = lastScreen(calls);
+    expect(screen.rich_message?.html).toMatch(
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>Розыгрыш среди участников<\/h1>/,
+    );
+    expect(screen.rich_message?.html).toContain("<p>Приз: Кружка</p>");
+    expect(screen.rich_message?.media?.[0]?.media.media).toBeInstanceOf(
+      InputFile,
+    );
+    expect(auction.getRafflePrizePhoto).toHaveBeenCalledWith({
+      auctionId,
+      viewer: expect.anything(),
+    });
+    expect(labels(screen)).toEqual([
+      ["Зарегистрироваться"],
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+
+    await bot.handleUpdate(press(raffleData));
+    expect(auction.getRafflePrizePhoto).toHaveBeenCalledTimes(1);
+    expect(lastScreen(calls).rich_message?.media?.[0]?.media.media).toBe(
+      "prize-file",
+    );
+  });
+
+  it("shows the raffle without a photo when Auction does not give it", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: {
+        ...base,
+        prize: "Кружка",
+        prizePhoto: { photoId: "prize-1", version: "prize-v1" },
+      },
+      prizePhoto: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(raffleData));
+
+    const screen = lastScreen(calls);
+    expect(screen.rich_message?.html).toMatch(
+      /^<h1>Розыгрыш среди участников<\/h1>/,
+    );
+    expect(screen.rich_message?.media).toBeUndefined();
   });
 
   // До жеребьёвки строки нет (PER-641).

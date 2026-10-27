@@ -114,6 +114,7 @@ import {
   type LotStepPolicyInput,
   type MeetupAuctions,
   type PaymentInstructionsResult,
+  type RafflePrizePhotoResult,
   type RemovalPreviewResult,
   type RemoveLotResult,
   type RemoveParticipantResult,
@@ -152,6 +153,8 @@ type AuctionRpc = Pick<
   | "getRaffle"
   | "assignRaffleWinner"
   | "changeRafflePrize"
+  | "setRafflePrizePhoto"
+  | "removeRafflePrizePhoto"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "listMyInvoices"
@@ -162,6 +165,7 @@ type AuctionRpc = Pick<
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
+  | "getRafflePrizePhoto"
   | "addLotPhoto"
   | "removeLotPhoto"
   | "getAuctionConsole"
@@ -444,6 +448,35 @@ export function createAuctionAdapter(
           options(meta),
         );
         return changeRafflePrizeResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Фото приза (PER-773): повтор того же `photo_id` Auction примет без
+    // второй смены, ключ снятия рождается на нажатие «Да».
+    async setRafflePrizePhoto(person, command, meta) {
+      try {
+        const response = await rpc.setRafflePrizePhoto(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            photoId: command.photoId,
+            photo: { content: command.image },
+          },
+          options(meta),
+        );
+        return rafflePrizePhotoResult(response.outcome, true);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async removeRafflePrizePhoto(person, command, meta) {
+      try {
+        const response = await rpc.removeRafflePrizePhoto(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return rafflePrizePhotoResult(response.outcome, false);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1480,6 +1513,21 @@ export function createAuctionAdapter(
                 viewer: wireViewer(request.viewer),
                 lotId: request.lotId,
                 photoId: request.photoId,
+              },
+              options(meta),
+            );
+            return {
+              content: image.content,
+              mediaType: image.mediaType,
+              version: image.version,
+            };
+          },
+          // Фото приза розыгрыша (PER-773) — та же форма.
+          async getRafflePrizePhoto(request) {
+            const image = await rpc.getRafflePrizePhoto(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
               },
               options(meta),
             );
@@ -2948,6 +2996,66 @@ function changeRafflePrizeResult(
     }
     case undefined:
       return defect("raffle prize response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+type RafflePrizePhotoOutcome =
+  | Awaited<ReturnType<AuctionRpc["setRafflePrizePhoto"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["removeRafflePrizePhoto"]>>["outcome"];
+
+// Ответы фото приза (PER-773). Отказ изображения бывает только у постановки:
+// у снятия он — дефект соседа, как у фото лота.
+function rafflePrizePhotoResult(
+  outcome: RafflePrizePhotoOutcome,
+  setting: boolean,
+): RafflePrizePhotoResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "alreadyDrawn":
+          return { kind: "already-drawn" };
+        case "withoutResult":
+          return { kind: "without-result" };
+        case "imageTooLarge":
+          return setting
+            ? {
+                kind: "image-too-large",
+                maxBytes: Number(reason.value.maxBytes),
+              }
+            : defect("raffle prize photo removal refused an image");
+        case "unsupportedImage":
+          return setting
+            ? { kind: "unsupported-image" }
+            : defect("raffle prize photo removal refused an image");
+        case "photoConflict":
+          return setting
+            ? { kind: "photo-conflict" }
+            : defect("raffle prize photo removal answered a photo conflict");
+        case undefined:
+          return defect("raffle prize photo refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle prize photo response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

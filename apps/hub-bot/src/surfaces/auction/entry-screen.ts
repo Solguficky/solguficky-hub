@@ -39,6 +39,7 @@ import {
   raffleProofTitle,
   raffleRegisteredParagraphs,
   raffleRegisteredTitle,
+  raffleRichText,
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
@@ -110,6 +111,7 @@ import {
 import {
   type LotPhotoKey,
   lotPhotoKeys,
+  rafflePrizePhotoKeys,
 } from "../../core/auction/lot-photos.js";
 import type { Presentation } from "../../core/config.js";
 import {
@@ -1109,7 +1111,7 @@ type FavoritesBlock = Extract<AuctionBlock, { kind: "favorites" }>;
 function renderLeaf(
   blocks: readonly AuctionBlock[],
   options: RenderOptions,
-): Pick<RenderedScreen, "text" | "format" | "asks"> | undefined {
+): Pick<RenderedScreen, "text" | "format" | "asks" | "photos"> | undefined {
   for (const block of blocks) {
     switch (block.kind) {
       case "confirm":
@@ -1199,17 +1201,25 @@ function renderLeaf(
             ...dayChronicleParagraphs(block, { money }),
           ),
         };
-      case "raffle":
-        return {
-          format: "html",
-          text: screenText(
-            raffleTitle,
-            ...raffleParagraphs(block.raffle, {
-              moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
-            }),
-          ),
-        };
+      case "raffle": {
+        const paragraphs = raffleParagraphs(block.raffle, {
+          moment: (instant) =>
+            readableMoment(instant, options.timeZone, options.now),
+        });
+        // Приз с фото (PER-773) — rich-сообщение, фото над заголовком ставит
+        // адаптер, как у карточки лота; в `plain` фото нет.
+        const photos =
+          (options.presentation ?? "rich") === "rich"
+            ? rafflePrizePhotoKeys(block.raffle)
+            : [];
+        return photos.length === 0
+          ? { format: "html", text: screenText(raffleTitle, ...paragraphs) }
+          : {
+              format: "rich",
+              text: raffleRichText(raffleTitle, paragraphs),
+              photos,
+            };
+      }
       case "raffle-registered":
         return {
           format: "html",

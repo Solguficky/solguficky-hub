@@ -9,6 +9,7 @@ import {
   raffleProofTitle,
   raffleRegisteredParagraphs,
   raffleRegisteredTitle,
+  raffleRichText,
   raffleTitle,
   registerLabel,
 } from "../../../../auction-raffle.js";
@@ -16,6 +17,7 @@ import type {
   AuctionBlock,
   AuctionButton,
 } from "../../../../auction-ui/index.js";
+import { richPhotoBlock } from "../../../../core/auction/lot-photos.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { nameChoiceScreen } from "./auction-bid.js";
 import {
@@ -26,7 +28,7 @@ import {
   toAuctionRoot,
   withNav,
 } from "./kit.js";
-import type { ShownScreen } from "./show.js";
+import type { ScreenPhoto, ShownScreen } from "./show.js";
 
 // Розыгрыш среди участников в оболочке хаба (ADR-066): экран открывает
 // «Розыгрыш» в корне аукциона сходки, возврат — в корень (PER-644). Тексты экрана
@@ -49,7 +51,12 @@ const toRaffle = (keyboard: Keyboard) => ({
 export function raffleScreen(
   block: Extract<AuctionBlock, { kind: "raffle" }>,
   keyboard: Keyboard,
-  view: { timeZone: string; today: CommunityDay },
+  view: {
+    timeZone: string;
+    today: CommunityDay;
+    presentation?: "rich" | "plain";
+    photos?: readonly ScreenPhoto[] | undefined;
+  },
 ): ShownScreen {
   const rows = new InlineKeyboard();
   for (const button of keyboard.flat()) {
@@ -63,21 +70,29 @@ export function raffleScreen(
       nextRow(rows).text(raffleProofLabel, button.callbackData);
     }
   }
+  const paragraphs = raffleParagraphs(block.raffle, {
+    moment: (instant) =>
+      readableMoment(communityLocalTime(instant, view.timeZone), view.today),
+  });
+  // Розыгрыш открыт из корня аукциона, и тело ведёт назад туда же
+  // (PER-605, PER-644).
+  const nav = withNav(rows, toAuctionRoot(block.auctionId));
+  // Приз с фото (PER-773) — rich-сообщение с фото первым блоком, как
+  // карточка лота; фото не прочиталось — тот же rich-экран без него.
+  if (view.presentation === "rich" && block.raffle?.prizePhoto !== undefined) {
+    const photos = view.photos ?? [];
+    return {
+      id: "raffle",
+      text: `${richPhotoBlock(photos.map((photo) => photo.id))}${raffleRichText(raffleTitle, paragraphs)}`,
+      keyboard: nav,
+      format: "rich",
+      ...(photos.length === 0 ? {} : { media: photos }),
+    };
+  }
   return {
     id: "raffle",
-    text: screenText(
-      raffleTitle,
-      ...raffleParagraphs(block.raffle, {
-        moment: (instant) =>
-          readableMoment(
-            communityLocalTime(instant, view.timeZone),
-            view.today,
-          ),
-      }),
-    ),
-    // Розыгрыш открыт из корня аукциона, и тело ведёт назад туда же
-    // (PER-605, PER-644).
-    keyboard: withNav(rows, toAuctionRoot(block.auctionId)),
+    text: screenText(raffleTitle, ...paragraphs),
+    keyboard: nav,
     format: "HTML",
   };
 }

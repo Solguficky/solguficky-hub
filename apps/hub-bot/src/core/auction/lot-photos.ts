@@ -3,6 +3,7 @@ import type {
   LotCardView,
   LotImage,
   LotImagePort,
+  RaffleView,
   Viewer,
 } from "../../auction-ui/index.js";
 
@@ -16,7 +17,14 @@ import type {
  * версия — те же байты. `photoId` нет — фото читается обложкой через
  * `GetLotImage`: так показывает карточку Auction до списка фото.
  */
-export type LotPhotoKey = { lotId: string; version: string; photoId?: string };
+export type LotPhotoKey = {
+  lotId: string;
+  version: string;
+  photoId?: string;
+  // Фото приза розыгрыша этого аукциона (PER-773): байты читает
+  // `GetRafflePrizePhoto`, а `lotId` — только место записи в кэше.
+  rafflePrizeOf?: string;
+};
 
 /**
  * Больше фото у лота не бывает (Auction держит тот же предел), и карусель
@@ -42,12 +50,36 @@ export function lotPhotoKeys(
     : [{ lotId, version: card.image.version }];
 }
 
-/** Байты одного фото: по идентификатору либо обложкой. */
+/**
+ * Фото приза над текстом экрана розыгрыша (PER-773): та же загрузка и тот же
+ * кэш `file_id`, что у фото лота. Запись кэша — под префиксом аукциона, чтобы
+ * не встретиться с лотом.
+ */
+export function rafflePrizePhotoKeys(
+  raffle: RaffleView | undefined,
+): LotPhotoKey[] {
+  const photo = raffle?.prizePhoto;
+  if (raffle === undefined || photo === undefined) return [];
+  return [
+    {
+      lotId: `raffle-prize:${raffle.auctionId}`,
+      version: photo.version,
+      rafflePrizeOf: raffle.auctionId,
+    },
+  ];
+}
+
+/** Байты одного фото: по идентификатору, обложкой либо фото приза. */
 export function loadLotPhoto(
   port: LotImagePort,
   viewer: Viewer,
   key: LotPhotoKey,
 ): Promise<LotImage> {
+  if (key.rafflePrizeOf !== undefined) {
+    return port.getRafflePrizePhoto === undefined
+      ? Promise.reject(new Error("raffle prize photo port not configured"))
+      : port.getRafflePrizePhoto({ viewer, auctionId: key.rafflePrizeOf });
+  }
   return key.photoId === undefined
     ? port.getLotImage({ viewer, lotId: key.lotId })
     : port.getLotPhoto({ viewer, lotId: key.lotId, photoId: key.photoId });
