@@ -439,6 +439,24 @@ export const screenCatalog = {
     title: "Какие лоты изменить?",
     parent: "lot-form",
   },
+  // «Счастливые часы» лота (PER-787): периоды аукциона с условиями лота и
+  // условия в периоде. Родитель — карточка лота: вход стоит на ней.
+  "lot-happy-hours": {
+    class: "screen",
+    nav: "tree",
+    title: "Счастливые часы",
+    parent: "lot",
+    backName: "Счастливые часы",
+    subject: true,
+  },
+  // Заголовок — «Период N», линтер сверяет его по началу.
+  "lot-happy-hour": {
+    class: "screen",
+    nav: "tree",
+    title: "Период",
+    parent: "lot-happy-hours",
+    subject: true,
+  },
   // Удаление лота (PER-716): вернуть лот бот не умеет, поэтому «Да» красное.
   "lot-remove-confirm": {
     class: "screen",
@@ -645,6 +663,30 @@ export const screenCatalog = {
     nav: "tree",
     title: "Окно",
     parent: "step-windows",
+  },
+  // Периоды «Счастливых часов» (PER-787): список с «Создать период», период с
+  // условиями лотов и удаление до начала. Условия лота в периоде задаются с
+  // карточки лота, а здесь только видны.
+  "happy-hour-periods": {
+    class: "screen",
+    nav: "tree",
+    title: "Периоды",
+    parent: "step-windows",
+    backName: "Периоды",
+  },
+  // Заголовок — «Период N», линтер сверяет его по началу.
+  "happy-hour-period": {
+    class: "screen",
+    nav: "tree",
+    title: "Период",
+    parent: "happy-hour-periods",
+  },
+  // Условия лотов в удалённом периоде вернуть нельзя: «Да» красное.
+  "happy-hour-period-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Удалить период",
+    irreversible: true,
   },
   // Запуск окна по ходу торгов (PER-615): сроки и шаг запускаемого окна, лоты
   // реестра переключателями и ряд запуска.

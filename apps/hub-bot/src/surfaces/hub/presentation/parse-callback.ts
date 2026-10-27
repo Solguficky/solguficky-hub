@@ -14,6 +14,7 @@ import type {
   ConsoleSection,
   ConsoleSort,
   FormField,
+  HappyHourField,
   InvoiceMark,
   LaunchDraft,
   LineupPick,
@@ -395,6 +396,19 @@ type PlainAction =
   // «Удалить лот» и «Да» его подтверждения (PER-716).
   | { kind: "lot-remove"; lot: string }
   | { kind: "lot-remove-confirm"; lot: string }
+  // «Счастливые часы» лота (PER-787): периоды аукциона с условиями лота,
+  // условия в периоде, вопрос о стартовой (`t`) или шаге (`s`) и снятие.
+  // Период кнопка называет номером и отпечатком, как окно; аукцион лота
+  // читается из снимка лота.
+  | { kind: "lot-happy-hours"; lot: string }
+  | { kind: "lot-happy-hour"; lot: string; period: WindowRef }
+  | {
+      kind: "lot-happy-hour-ask";
+      lot: string;
+      period: WindowRef;
+      field: HappyHourField;
+    }
+  | { kind: "lot-happy-hour-clear"; lot: string; period: WindowRef }
   // Выбор способа шага (PER-491): цена и режим едут в кнопке, чтобы рестарт
   // не терял цену.
   | {
@@ -530,6 +544,17 @@ type PlainAction =
       selected: boolean;
     }
   | { kind: "console-window-remove"; auction: string; window: WindowRef }
+  // Периоды «Счастливых часов» (PER-787): список, вопрос о сроках нового,
+  // период, подтверждение удаления и «Да» с ключом, рождённым на нажатие.
+  | { kind: "console-periods"; auction: string }
+  | { kind: "console-period-ask"; auction: string }
+  | { kind: "console-period"; auction: string; period: WindowRef }
+  | { kind: "console-period-remove"; auction: string; period: WindowRef }
+  | {
+      kind: "console-period-remove-confirm";
+      auction: string;
+      period: WindowRef;
+    }
   // Сеты лотов (PER-509): список, вопрос о названии нового сета, сет на
   // странице лотов, лот в сете и вне его, подтверждение удаления и «Да». Сет
   // кнопка называет номером и отпечатком, как окно.
@@ -838,6 +863,17 @@ export type QuestionStep =
     }
   // Видео промо аукциона (PER-774): аукцион; ответ — видео, а не текст.
   | { kind: "console-promo-video"; auction: string }
+  // Сроки нового периода «Счастливых часов» (PER-787): аукцион, а сроки
+  // недели ответ читает у Auction заново.
+  | { kind: "console-period"; auction: string }
+  // Стартовая или шаг лота в периоде (PER-787): лот, период номером и
+  // отпечатком и что спрошено; прежние условия ответ читает заново.
+  | {
+      kind: "happy-hour-lot";
+      lot: string;
+      period: WindowRef;
+      field: HappyHourField;
+    }
   // Текст объявления аукциона (PER-765): аукцион, шаблон и номер окна или лота
   // шаблона; черновик ответ читает у Auction заново.
   | {
@@ -1702,6 +1738,74 @@ export function consoleWindowRemoveData(
   return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
 }
 
+// Что спрошено о лоте в периоде «Счастливых часов» (PER-787): стартовая или
+// шаг.
+const happyHourFieldCodes: Readonly<Record<HappyHourField, string>> = {
+  start: "t",
+  step: "s",
+};
+
+function happyHourFieldOf(
+  code: string | undefined,
+): HappyHourField | undefined {
+  return code === "t" ? "start" : code === "s" ? "step" : undefined;
+}
+
+/** «Периоды» экрана «Счастливые часы» (PER-787). */
+export function consolePeriodsData(auction: string): string {
+  return `v1:ac:hh:${auction}`;
+}
+
+/** «Создать период»: вопрос о сроках периода. */
+export function consolePeriodAskData(auction: string): string {
+  return `v1:ac:hq:${auction}`;
+}
+
+/** Период: номер в списке и отпечаток его идентификатора. */
+export function consolePeriodData(auction: string, period: WindowRef): string {
+  return `v1:ac:hv:${auction}:${period.index}:${period.print}`;
+}
+
+/** «🗑 Удалить период» — подтверждение. */
+export function consolePeriodRemoveData(
+  auction: string,
+  period: WindowRef,
+): string {
+  return `v1:ac:hr:${auction}:${period.index}:${period.print}`;
+}
+
+/** «Да, удалить» подтверждения: ключ команды рождается на нажатие. */
+export function consolePeriodRemoveConfirmData(
+  auction: string,
+  period: WindowRef,
+): string {
+  return `v1:ac:hy:${auction}:${period.index}:${period.print}`;
+}
+
+/** «🛠 Счастливые часы» карточки лота: периоды с условиями лота. */
+export function lotHappyHoursData(lot: string): string {
+  return `v1:lot:hh:${lot}`;
+}
+
+/** Условия лота в периоде. */
+export function lotHappyHourData(lot: string, period: WindowRef): string {
+  return `v1:lot:hv:${lot}:${period.index}:${period.print}`;
+}
+
+/** «Стартовая цена» и «Шаг» — вопрос о значении. */
+export function lotHappyHourAskData(
+  lot: string,
+  period: WindowRef,
+  field: HappyHourField,
+): string {
+  return `v1:lot:hk:${lot}:${period.index}:${period.print}:${happyHourFieldCodes[field]}`;
+}
+
+/** «🗑 Снять условия» без подтверждения: условия задаются заново ответом. */
+export function lotHappyHourClearData(lot: string, period: WindowRef): string {
+  return `v1:lot:hc:${lot}:${period.index}:${period.print}`;
+}
+
 /** «Сеты» пульта: сеты лотов (PER-509, PER-802). */
 export function consoleSetsData(auction: string): string {
   return `v1:ac:t:${auction}`;
@@ -2035,6 +2139,10 @@ function stepData(step: QuestionStep): string {
       return `v1:q:${lotLead(step)}i:${step.lot}`;
     case "lot-copies":
       return `v1:q:lc:${step.lot}`;
+    case "console-period":
+      return `v1:q:hh:${step.auction}`;
+    case "happy-hour-lot":
+      return `v1:q:hk:${step.lot}:${step.period.index}:${step.period.print}:${happyHourFieldCodes[step.field]}`;
     case "console-week":
       return `v1:q:aw:${step.auction}`;
     case "console-raffle":
@@ -2497,6 +2605,26 @@ function parseLot(parts: readonly string[]): CallbackAction {
   if (parts.length === 4 && parts[2] === "dy") {
     return { kind: "lot-remove-confirm", lot: token.data };
   }
+  // «Счастливые часы» лота (PER-787).
+  if (parts.length === 4 && parts[2] === "hh") {
+    return { kind: "lot-happy-hours", lot: token.data };
+  }
+  if (parts[2] === "hv" || parts[2] === "hk" || parts[2] === "hc") {
+    const index = WindowIndexSchema.safeParse(parts[4]);
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    if (!index.success || !print.success) return { kind: "malformed" };
+    const period = { index: index.data, print: print.data };
+    if (parts[2] === "hk") {
+      const field = happyHourFieldOf(parts[6]);
+      return parts.length === 7 && field !== undefined
+        ? { kind: "lot-happy-hour-ask", lot: token.data, period, field }
+        : { kind: "malformed" };
+    }
+    if (parts.length !== 6) return { kind: "malformed" };
+    return parts[2] === "hv"
+      ? { kind: "lot-happy-hour", lot: token.data, period }
+      : { kind: "lot-happy-hour-clear", lot: token.data, period };
+  }
   if (parts.length === 6 && parts[2] === "sr" && parts[4] === "image") {
     const print = WindowPrintSchema.safeParse(parts[5]);
     return print.success
@@ -2849,6 +2977,31 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "hx":
       return parts.length === 6 && window !== undefined
         ? { kind: "console-window-remove", auction: auction.data, window }
+        : { kind: "malformed" };
+    // Периоды «Счастливых часов» (PER-787): номер и отпечаток периода стоят
+    // там же, где у окна.
+    case "hh":
+      return parts.length === 4
+        ? { kind: "console-periods", auction: auction.data }
+        : { kind: "malformed" };
+    case "hq":
+      return parts.length === 4
+        ? { kind: "console-period-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "hv":
+    case "hr":
+    case "hy":
+      return parts.length === 6 && window !== undefined
+        ? {
+            kind:
+              parts[2] === "hv"
+                ? "console-period"
+                : parts[2] === "hr"
+                  ? "console-period-remove"
+                  : "console-period-remove-confirm",
+            auction: auction.data,
+            period: window,
+          }
         : { kind: "malformed" };
     // Сеты лотов (PER-509): номер и отпечаток сета стоят там же, где у окна.
     case "t":
@@ -3293,6 +3446,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-image", lot: token.data, set: true };
       case "lc":
         return { kind: "lot-copies", lot: token.data };
+      case "hh":
+        return { kind: "console-period", auction: token.data };
       case "aw":
         return { kind: "console-week", auction: token.data };
       case "ar":
@@ -3334,6 +3489,24 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       default:
         return undefined;
     }
+  }
+  // Стартовая или шаг лота в периоде (PER-787): лот, номер и отпечаток
+  // периода и что спрошено.
+  if (parts[2] === "hk") {
+    const index = WindowIndexSchema.safeParse(parts[4]);
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    const field = happyHourFieldOf(parts[6]);
+    return parts.length === 7 &&
+      index.success &&
+      print.success &&
+      field !== undefined
+      ? {
+          kind: "happy-hour-lot",
+          lot: token.data,
+          period: { index: index.data, print: print.data },
+          field,
+        }
+      : undefined;
   }
   // Своё медиа объявления (PER-776): кнопка, отпечаток текста и лот — семь
   // частей, восьмая — аудитория (PER-779); вопрос до неё значит «всем».

@@ -31,6 +31,11 @@ import {
   consoleMoreData,
   consoleNextLotData,
   consoleOpenData,
+  consolePeriodAskData,
+  consolePeriodData,
+  consolePeriodRemoveConfirmData,
+  consolePeriodRemoveData,
+  consolePeriodsData,
   consoleRaffleData,
   consoleRaffleRemoveData,
   consoleRaffleScreenData,
@@ -59,6 +64,10 @@ import {
   lotAskData,
   lotCopyData,
   lotFormData,
+  lotHappyHourAskData,
+  lotHappyHourClearData,
+  lotHappyHourData,
+  lotHappyHoursData,
   lotKeepStepData,
   lotNewData,
   lotPhotoRemoveConfirmData,
@@ -2072,6 +2081,67 @@ describe("auction announcement audience callbacks", () => {
       `v1:ac:nb:${auction}:a:a1b2c:-:r:r`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+
+  // «Счастливые часы» периодами (PER-787): кнопки и шаги вопросов в 64 байта,
+  // самые длинные — с наибольшим номером периода и id спрашиваемого.
+  it("round-trips the happy hour period buttons and questions within 64 bytes", () => {
+    const auction = uuidToToken("01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c");
+    const lot = uuidToToken("01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d");
+    const period = { index: 9, print: "z0a9q" };
+    const actions: readonly (readonly [string, CallbackAction])[] = [
+      [consolePeriodsData(auction), { kind: "console-periods", auction }],
+      [consolePeriodAskData(auction), { kind: "console-period-ask", auction }],
+      [
+        consolePeriodData(auction, period),
+        { kind: "console-period", auction, period },
+      ],
+      [
+        consolePeriodRemoveData(auction, period),
+        { kind: "console-period-remove", auction, period },
+      ],
+      [
+        consolePeriodRemoveConfirmData(auction, period),
+        { kind: "console-period-remove-confirm", auction, period },
+      ],
+      [lotHappyHoursData(lot), { kind: "lot-happy-hours", lot }],
+      [lotHappyHourData(lot, period), { kind: "lot-happy-hour", lot, period }],
+      [
+        lotHappyHourAskData(lot, period, "start"),
+        { kind: "lot-happy-hour-ask", lot, period, field: "start" },
+      ],
+      [
+        lotHappyHourAskData(lot, period, "step"),
+        { kind: "lot-happy-hour-ask", lot, period, field: "step" },
+      ],
+      [
+        lotHappyHourClearData(lot, period),
+        { kind: "lot-happy-hour-clear", lot, period },
+      ],
+    ];
+    for (const [data, action] of actions) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    const askedBy = 9007199254740991;
+    const steps: readonly QuestionStep[] = [
+      { kind: "console-period", auction },
+      { kind: "happy-hour-lot", lot, period, field: "start" },
+      { kind: "happy-hour-lot", lot, period, field: "step" },
+    ];
+    for (const step of steps) {
+      const asked = questionData(step, askedBy);
+      expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+      expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+    }
+    for (const broken of [
+      `v1:lot:hk:${lot}:9:z0a9q:x`,
+      `v1:lot:hv:${lot}:99a:z0a9q`,
+      `v1:ac:hv:${auction}:1`,
+      `v1:ac:hh:${auction}:1`,
+    ]) {
+      expect(parseCallback(broken)).toEqual({ kind: "malformed" });
     }
   });
 });

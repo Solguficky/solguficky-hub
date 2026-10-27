@@ -90,6 +90,7 @@ function fake(answers: {
             status: "finished",
             hidden: false,
             launchedWindows: [],
+            happyHourPeriods: [],
             lotSets: [],
             lots: [
               {

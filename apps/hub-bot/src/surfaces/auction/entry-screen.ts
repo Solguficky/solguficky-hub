@@ -13,6 +13,10 @@ import {
   showsStep,
 } from "../../auction-final.js";
 import {
+  activeHappyHourLine,
+  happyHourTerms,
+} from "../../auction-happy-hours.js";
+import {
   predictionButtonLabel,
   predictionNameChoiceText,
   predictionNumberQuestionText,
@@ -1866,15 +1870,23 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
 }
 
 // Шаг лота до торгов и в торгах (дизайн-код, «Карточка лота»). В окне
-// «Счастливых часов» — шаг окна до его конца и обычный шаг рядом, иначе строка
+// «Счастливых часов» — его условия до конца, стартовая окна, шаг или оба
+// (PER-787), и обычный шаг рядом, иначе строка
 // «Шаг», когда шаг один на все цены, или «Шаг по порогам». Будущее окно —
 // отдельной строкой: когда и какой шаг; окна Auction отдаёт только в торгах.
 function stepLines(block: LotBlock, options: RenderOptions): string[] {
   const at = (instant: string) =>
     readableMoment(instant, options.timeZone, options.now);
   const active = block.activeWindow;
-  const current =
+  const activeTerms =
     active === undefined
+      ? undefined
+      : happyHourTerms(active, regularStart(block), money);
+  const current =
+    // Окно только со стартовой шаг не меняет: строка шага остаётся.
+    active === undefined ||
+    activeTerms === undefined ||
+    active.step === undefined
       ? block.tiers === undefined
         ? block.fixedStep === undefined
           ? []
@@ -1886,13 +1898,25 @@ function stepLines(block: LotBlock, options: RenderOptions): string[] {
             ),
           ]
       : [
-          `Счастливые часы: шаг ${money(active.step)} до ${at(active.until)}`,
+          activeHappyHourLine(at(active.until), activeTerms),
           ...(block.baseStep === undefined
             ? []
             : [`Обычный шаг: ${money(block.baseStep)}`]),
         ];
+  const startOnly =
+    active !== undefined &&
+    activeTerms !== undefined &&
+    active.step === undefined
+      ? [activeHappyHourLine(at(active.until), activeTerms)]
+      : [];
   const next = block.nextWindow;
-  if (next === undefined) return current;
+  const nextTerms =
+    next === undefined
+      ? undefined
+      : happyHourTerms(next, regularStart(block), money);
+  if (next === undefined || nextTerms === undefined) {
+    return [...startOnly, ...current];
+  }
   // Окно внутри одного дня называет день один раз: «с 12 июня, сб, 18:00 до
   // 21:00».
   const until =
@@ -1901,9 +1925,18 @@ function stepLines(block: LotBlock, options: RenderOptions): string[] {
       ? clockOf(next.until, options.timeZone)
       : at(next.until);
   return [
+    ...startOnly,
     ...current,
-    `Счастливые часы: с ${at(next.from)} до ${until}, шаг ${money(next.step)}`,
+    `Счастливые часы: с ${at(next.from)} до ${until}, ${nextTerms}`,
   ];
+}
+
+// Обычная стартовая — текущая цена лота в торгах без ставок: с ней стартовая
+// окна идёт парой (PER-787).
+function regularStart(block: LotBlock): Money | undefined {
+  return block.status.kind === "trading" && block.status.leaderId === undefined
+    ? block.status.currentPrice
+    : undefined;
 }
 
 function clockOf(instant: string, timeZone: string): string {

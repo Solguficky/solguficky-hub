@@ -1105,9 +1105,46 @@ describe("happy hours", () => {
     });
     // «Шаг: 50 ₽» не повторяется: обычный шаг назван своей строкой.
     expect(text).toContain(
-      "Следующая ставка: от 1 210 ₽\nСчастливые часы: шаг 10 ₽ до 10 октября, сб, 21:00\nОбычный шаг: 50 ₽\n",
+      "Следующая ставка: от 1 210 ₽\nСчастливые часы до 10 октября, сб, 21:00: шаг 10 ₽\nОбычный шаг: 50 ₽\n",
     );
     expect(text).not.toContain("\nШаг:");
+  });
+
+  // Период со стартовой ценой (PER-787): у лота без ставок стартовая окна
+  // парой с обычной; будущее окно обещает её только лоту без ставок.
+  it("shows the window start next to the regular start of a lot without bids", () => {
+    const text = facts({
+      nextPrice: rub(800),
+      fixedStep: rub(50),
+      baseStep: rub(50),
+      activeWindow: {
+        from: "2026-10-10T15:00:00Z",
+        until: "2026-10-10T18:00:00Z",
+        start: rub(800),
+        step: rub(10),
+      },
+    });
+    expect(text).toContain(
+      "Следующая ставка: от 800 ₽\nСчастливые часы до 10 октября, сб, 21:00: от 800 ₽ вместо 1 200 ₽, шаг 10 ₽\nОбычный шаг: 50 ₽\n",
+    );
+  });
+
+  it("does not promise the start of a future window to a lot with bids", () => {
+    const text = plain(
+      visible(
+        lotScreen({
+          status: { ...trading, leaderId: "someone" },
+          fixedStep: rub(50),
+          baseStep: rub(50),
+          nextWindow: {
+            from: "2026-10-11T12:00:00Z",
+            until: "2026-10-11T15:00:00Z",
+            start: rub(800),
+          },
+        }).text,
+      ),
+    );
+    expect(text).not.toContain("Счастливые часы");
   });
 
   it("shows the regular step once the snapshot has no window", () => {

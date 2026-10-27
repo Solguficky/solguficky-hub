@@ -391,6 +391,7 @@ function fakeAuction(
           status,
           hidden: false,
           launchedWindows: [],
+          happyHourPeriods: [],
           lots: [...registry].flatMap((lotId) => {
             const lot = lots.get(lotId);
             return lot === undefined
@@ -686,6 +687,33 @@ describe("entries into the lot form", () => {
     expect(labels(card)).toContainEqual(["🛠 Изменить лот"]);
     expect(dataOf(card, "🛠 Изменить лот")).toBe(
       `v1:lot:form:${uuidToToken(existingLot)}`,
+    );
+  });
+
+  // «Счастливые часы» лота (PER-787): только у лота в онлайн-торгах, своим
+  // рядом под правкой; запланированный лот входа не несёт.
+  it("shows the happy hours of a lot trading online under its edit row", async () => {
+    const online: LotView = {
+      ...scheduled,
+      status: { kind: "trading", currentPrice: rub(50_000), phase: "online" },
+    };
+    const auction = fakeAuction({ lots: [online] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(lotData(existingLot)));
+    const rows = labels(last(calls));
+    const edit = rows.findIndex((row) => row[0] === "🛠 Изменить лот");
+    expect(rows[edit + 1]).toEqual(["🛠 Счастливые часы"]);
+    expect(dataOf(last(calls), "🛠 Счастливые часы")).toBe(
+      `v1:lot:hh:${uuidToToken(existingLot)}`,
+    );
+
+    const before = fakeAuction({ lots: [scheduled] });
+    const planned = harness("admin", before);
+    await planned.bot.init();
+    await planned.bot.handleUpdate(press(lotData(existingLot)));
+    expect(JSON.stringify(shown(planned.calls))).not.toContain(
+      "🛠 Счастливые часы",
     );
   });
 

@@ -119,6 +119,10 @@ function adapter(rpc: {
   listAuctionNames?: Call;
   placeBid?: Call;
   launchStepWindow?: Call;
+  createHappyHourPeriod?: Call;
+  deleteHappyHourPeriod?: Call;
+  setHappyHourLotTerms?: Call;
+  clearHappyHourLotTerms?: Call;
   previewParticipantRemoval?: Call;
   removeParticipant?: Call;
   listAuctionInvoices?: Call;
@@ -176,6 +180,10 @@ function adapter(rpc: {
     getAuctionDaySummary: (rpc.getAuctionDaySummary ?? notUsed) as never,
     scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
     launchStepWindow: (rpc.launchStepWindow ?? notUsed) as never,
+    createHappyHourPeriod: (rpc.createHappyHourPeriod ?? notUsed) as never,
+    deleteHappyHourPeriod: (rpc.deleteHappyHourPeriod ?? notUsed) as never,
+    setHappyHourLotTerms: (rpc.setHappyHourLotTerms ?? notUsed) as never,
+    clearHappyHourLotTerms: (rpc.clearHappyHourLotTerms ?? notUsed) as never,
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
     discardAuction: (rpc.discardAuction ?? notUsed) as never,
     cancelAuction: (rpc.cancelAuction ?? notUsed) as never,
@@ -1043,6 +1051,7 @@ describe("auction console adapter", () => {
           windows: [],
         },
         launchedWindows: [],
+        happyHourPeriods: [],
         lots: [
           {
             lot: expect.objectContaining({

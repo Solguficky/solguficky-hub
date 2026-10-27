@@ -67,6 +67,7 @@ import {
   consoleNextLotData,
   consoleOpenData,
   consolePaymentTermData,
+  consolePeriodsData,
   consolePromoVideoData,
   consoleRaffleData,
   consoleRafflePrizeChangeData,
@@ -101,6 +102,7 @@ import { rafflePrizeChangeLabel } from "./auction-raffle-prize-change.js";
 import { rafflePrizePhotoLabel } from "./auction-raffle-prize-photo.js";
 import { raffleWinnerLabel } from "./auction-raffle-winner.js";
 import { auctionCancelConsequence } from "./auction-stage.js";
+import { periodsLabel } from "./happy-hours.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -2101,6 +2103,11 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
   });
   if (editable && windows.length < windowLimit) {
     nextRow(keyboard).text("Добавить окно", consoleWindowAskData(auction));
+  }
+  // Периоды «Счастливых часов» (PER-787): создаются и настраиваются во время
+  // онлайн-торгов.
+  if (console.status === "prebidding") {
+    nextRow(keyboard).text(periodsLabel, consolePeriodsData(auction));
   }
   // Запуск окна по ходу торгов (PER-615): действие есть, пока идут онлайн-торги.
   if (view.launch === true) {

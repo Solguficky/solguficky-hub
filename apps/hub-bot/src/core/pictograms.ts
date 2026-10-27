@@ -101,6 +101,8 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
     "Сеты",
     "Объявление",
     "Промо-видео",
+    // «Счастливые часы» лота на его карточке (PER-787).
+    "Счастливые часы",
     "Добавить лот",
     "Управление",
   ],

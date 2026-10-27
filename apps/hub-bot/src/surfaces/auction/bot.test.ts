@@ -2924,7 +2924,7 @@ describe("happy hours", () => {
     const { bot, calls } = makeBot(portsWith(overrides));
     await bot.handleUpdate(lotPress());
     expect(shown(calls)).toContain("По шагу (1 210 ₽)");
-    expect(shown(calls)).toContain("Счастливые часы: шаг 10 ₽ до");
+    expect(shown(calls)).toContain("Счастливые часы до");
     // Окно кончилось: тот же процесс читает новый снимок по «Обновить».
     overrides.lot = {
       nextPrice: rub(1250),

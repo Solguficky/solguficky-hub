@@ -385,6 +385,7 @@ export type ExecuteRequest =
   | RafflePrizeChangeRequest
   | RafflePrizePhotoRequest
   | PromoVideoRequest
+  | HappyHoursRequest
   | AuctionAnnouncementRequest;
 
 type LotFormCall = {
@@ -530,6 +531,24 @@ export type StepWindow = {
   lotIds: readonly string[];
 };
 
+// Период «Счастливых часов» (PER-785, PER-787; ADR-047, дополнение
+// 2026-10-27): полуинтервал `[from, until)` онлайн-недели и условия лотов в
+// нём. Сам период торгов не меняет; до начала его удаляют, с начала он
+// заморожен. Условия — в порядке `lotId`, как их записал аукцион.
+export type HappyHourPeriod = {
+  periodId: string;
+  from: string;
+  until: string;
+  lotTerms: readonly HappyHourLotTerms[];
+};
+
+// Условия лота в периоде: шаг, стартовая цена или оба — хотя бы одно есть.
+export type HappyHourLotTerms = {
+  lotId: string;
+  step?: LotAmount;
+  start?: LotAmount;
+};
+
 // Лот на пульте: снимок, число ставок, отметка «в финал» и просрочка — торги
 // идут дольше дедлайна, а лот не закрыт (решает Auction).
 export type ConsoleLotSnapshot = {
@@ -604,6 +623,9 @@ export type AuctionConsoleSnapshot = {
   // запуска: их нет в конфигурации, а конфигурация после открытия недели
   // заморожена. Пульт показывает их рядом с объявленными.
   launchedWindows: readonly StepWindow[];
+  // Периоды «Счастливых часов» (PER-787) по возрастанию начала, прошедшие
+  // тоже; удалённых нет.
+  happyHourPeriods: readonly HappyHourPeriod[];
   lots: readonly ConsoleLotSnapshot[];
   // Сеты лотов аукциона (ADR-073, PER-509) в порядке идентификатора — все, и
   // неполные: снимок лота сет меньше чем из двух лотов не показывает, а
@@ -1369,6 +1391,111 @@ export type RafflePrizeChangeRequest =
       opId: string;
     });
 
+// «Счастливые часы» периодами (PER-787; ADR-047, дополнение 2026-10-27):
+// периоды пульта — список, создание ответом о сроках, удаление до начала, — и
+// условия лота в периоде с его карточки — стартовая и шаг ответом, снятие.
+// Период кнопка называет номером в списке и отпечатком его идентификатора;
+// аукцион лота юзкейс читает из снимка лота. `opId` рождает край: у ответа —
+// из сообщения, у кнопки — на нажатие.
+export type HappyHourField = "start" | "step";
+
+export type HappyHoursRequest =
+  | (AuctionConsoleCall & { intent: "view-happy-hour-periods" })
+  | (AuctionConsoleCall & { intent: "ask-happy-hour-period" })
+  | (AuctionConsoleCall & {
+      intent: "create-happy-hour-period";
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "view-happy-hour-period";
+      period: WindowRef;
+    })
+  | (AuctionConsoleCall & {
+      intent: "prepare-happy-hour-period-delete";
+      period: WindowRef;
+    })
+  | (AuctionConsoleCall & {
+      intent: "delete-happy-hour-period";
+      period: WindowRef;
+      opId: string;
+    })
+  | (LotFormCall & { intent: "view-lot-happy-hours"; lotId: string })
+  | (LotFormCall & {
+      intent: "view-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+    })
+  | (LotFormCall & {
+      intent: "ask-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+      field: HappyHourField;
+    })
+  | (LotFormCall & {
+      intent: "set-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+      field: HappyHourField;
+      value: string;
+      opId: string;
+    })
+  | (LotFormCall & {
+      intent: "clear-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+      opId: string;
+    });
+
+// Ошибка ответа о сроках периода: разбор края или отказ Auction.
+export type PeriodAskError =
+  | "period-format"
+  | "period-moment"
+  | "period-order"
+  | "period-in-past"
+  | "period-outside-week";
+
+// Ошибка ответа о стартовой или шаге лота в периоде.
+export type HappyHourAmountError =
+  | "amount-format"
+  | "amount-range"
+  | "start-not-lower"
+  | "step-not-lower"
+  | "amount-invalid";
+
+// Исход команды над периодами и условиями лота — свой экран. `period` —
+// номер периода для человека, с единицы.
+export type HappyHourNote =
+  | { kind: "created"; from: string; until: string }
+  | { kind: "removed"; period: number }
+  | { kind: "saved"; period: number; terms: HappyHourLotTerms }
+  | { kind: "cleared"; period: number }
+  // Периоды изменились с тех пор, как экран показан: кнопка устарела.
+  | { kind: "changed" }
+  // Периодов уже столько, сколько держит экран.
+  | { kind: "limit" }
+  // Период начался: с начала он заморожен.
+  | { kind: "started"; period: number }
+  // Онлайн-торги не идут: периоды задаются только в них.
+  | { kind: "closed" }
+  // Лот не торгуется онлайн: открытие не подтверждено, лот закрыт или в финале.
+  | { kind: "lot-not-open" }
+  // Период встречает другое окно того же лота.
+  | { kind: "overlap"; from: string; until: string };
+
+// Лот на экранах «Счастливых часов»: название, обычные стартовая и шаг и
+// есть ли ставки — после первой ставки стартовая периода уже не действует.
+export type HappyHourLot = {
+  lotId: string;
+  auctionId: string;
+  title?: string;
+  // Обычная стартовая — текущая цена лота без ставок; есть только у него.
+  regularStart?: LotAmount;
+  // Обычный шаг при текущей цене или шаг, когда он один на все цены.
+  regularStep?: LotAmount;
+  hasBids: boolean;
+};
+
 // Промо-видео аукциона (PER-774): экран видео из пульта (PER-802) и одна
 // команда — задать, заменить или, без `postId`, убрать. Пост в чате медиа
 // публикует край до команды: это вызов Telegram. Ключ рождается на ответ с
@@ -1894,6 +2021,66 @@ export type ExecuteResult =
       auctionId: string;
     } & RafflePrizePhotoOutcome)
   // Промо-видео (PER-774): экран из пульта (PER-802) и исход команды.
+  // «Счастливые часы» периодами (PER-787). `now` — часы бота: начался ли
+  // период, экран решает по ним.
+  | {
+      kind: "happy-hour-periods";
+      auctionId: string;
+      periods: readonly HappyHourPeriod[];
+      lots: number;
+      now: string;
+    }
+  | {
+      kind: "happy-hour-period";
+      auctionId: string;
+      index: number;
+      period: HappyHourPeriod;
+      titles: Readonly<Record<string, string>>;
+      now: string;
+    }
+  | {
+      kind: "happy-hour-period-remove-confirm";
+      auctionId: string;
+      index: number;
+      period: HappyHourPeriod;
+    }
+  | {
+      kind: "happy-hour-period-ask";
+      auctionId: string;
+      week?: AuctionWeek;
+      error?: PeriodAskError;
+    }
+  | { kind: "happy-hour-outcome"; auctionId: string; note: HappyHourNote }
+  | {
+      kind: "lot-happy-hours";
+      lot: HappyHourLot;
+      periods: readonly HappyHourPeriod[];
+      now: string;
+    }
+  | {
+      kind: "lot-happy-hour";
+      lot: HappyHourLot;
+      index: number;
+      period: HappyHourPeriod;
+      now: string;
+    }
+  | {
+      kind: "lot-happy-hour-ask";
+      lot: HappyHourLot;
+      index: number;
+      period: HappyHourPeriod;
+      field: HappyHourField;
+      error?: HappyHourAmountError;
+      // Обычное значение из отказа Auction, когда оно свежее прочитанного.
+      regular?: LotAmount;
+    }
+  // `back` — период, в который ведёт возврат; нет — к периодам лота.
+  | {
+      kind: "lot-happy-hour-outcome";
+      lot: HappyHourLot;
+      back?: { index: number; period: HappyHourPeriod };
+      note: HappyHourNote;
+    }
   | { kind: "promo-video"; auctionId: string; video: boolean }
   | { kind: "promo-video-outcome"; auctionId: string; note: PromoVideoNote }
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
