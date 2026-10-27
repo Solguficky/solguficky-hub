@@ -593,6 +593,13 @@ export const screenCatalog = {
     title: "Фото объявления",
     parent: "announcement",
   },
+  // Шаг «Кому» объявления (PER-779): аудитория перед предпросмотром.
+  "announcement-audience": {
+    class: "screen",
+    nav: "tree",
+    title: "Кому",
+    parent: "announcement",
+  },
   "announcement-confirm": {
     class: "screen",
     nav: "confirm",

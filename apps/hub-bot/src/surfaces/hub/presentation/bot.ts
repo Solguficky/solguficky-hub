@@ -76,6 +76,7 @@ import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
 import { createUuidV7, uuidV7Of } from "../../../core/uuid-v7.js";
 import type {
+  AnnouncementAudience,
   AnnouncementTemplate,
   ButtonChoice,
 } from "../application/auction-announcements.js";
@@ -297,6 +298,7 @@ import {
 import { type AuctionView, auctionScreen } from "./screens/auction.js";
 import {
   announcementAskErrorText,
+  announcementAudienceScreen,
   announcementButtonScreen,
   announcementConfirmScreen,
   announcementLotsScreen,
@@ -938,6 +940,8 @@ type PendingConsoleAnnouncementMedia = {
   auctionId: string;
   button: ButtonChoice;
   print: string;
+  // Предвыбор шаблона для шага «Кому» (PER-779).
+  audience: AnnouncementAudience;
   lot?: number;
   telegramUserId: number;
   expiresAt: number;
@@ -2943,7 +2947,9 @@ async function handleCallback(
       action.kind === "console-announcement-button" ||
       action.kind === "console-announcement-photo" ||
       action.kind === "console-announcement-media" ||
-      action.kind === "console-announcement-send"
+      action.kind === "console-announcement-send" ||
+      action.kind === "console-announcement-audience" ||
+      action.kind === "console-announcement-recipients"
     ) {
       outcome = canRunAuctions(person)
         ? await handleAnnouncementCallback(
@@ -10278,7 +10284,9 @@ async function handleAnnouncementCallback(
         | "console-announcement-button"
         | "console-announcement-photo"
         | "console-announcement-media"
-        | "console-announcement-send";
+        | "console-announcement-send"
+        | "console-announcement-audience"
+        | "console-announcement-recipients";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -10370,13 +10378,15 @@ async function handleAnnouncementCallback(
               intent: "pick-announcement-button",
               meetupId,
               button: action.button,
+              audience: action.audience,
               ...(action.lot === undefined ? {} : { lot: action.lot }),
             }
           : {
               ...call,
-              intent: "preview-announcement",
+              intent: "ask-announcement-audience",
               meetupId,
               button: action.button,
+              audience: action.audience,
               ...(action.lot === undefined ? {} : { lot: action.lot }),
               ...(action.photo === undefined ? {} : { photo: action.photo }),
             },
@@ -10398,11 +10408,60 @@ async function handleAnnouncementCallback(
         ...call,
         intent: "ask-announcement-media",
         button: action.button,
+        audience: action.audience,
         ...(action.lot === undefined ? {} : { lot: action.lot }),
       });
       return renderAnnouncementResult(ctx, runtime, result, {
         ...context,
         text,
+      });
+    }
+    // Аудитория шага «Кому» (PER-779) ведёт к предпросмотру; текст — хвост
+    // кадра шага.
+    case "console-announcement-recipients": {
+      const text = parseStepText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (text === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "preview-announcement",
+        meetupId,
+        button: action.button,
+        audience: action.audience,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+        ...(action.photo === undefined ? {} : { photo: action.photo }),
+        ...(action.post === undefined ? {} : { post: action.post }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text,
+      });
+    }
+    // «Нет» подтверждения — обратно в «Кому» с той же аудиторией; текст
+    // читается из предпросмотра, на который подтверждение отвечает.
+    case "console-announcement-audience": {
+      const preview = parsePreviewText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (preview === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "ask-announcement-audience",
+        meetupId,
+        button: action.button,
+        audience: action.audience,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+        ...(action.photo === undefined ? {} : { photo: action.photo }),
+        ...(action.post === undefined ? {} : { post: action.post }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text: preview.text,
       });
     }
     case "console-announcement-send": {
@@ -10422,6 +10481,7 @@ async function handleAnnouncementCallback(
         ),
         text: preview.text,
         button: action.button,
+        audience: action.audience,
         ...(action.lot === undefined ? {} : { lot: action.lot }),
         ...(action.photo === undefined ? {} : { photo: action.photo }),
         ...(action.post === undefined ? {} : { post: action.post }),
@@ -10508,6 +10568,7 @@ async function handleAnnouncementMedia(
   }
   const step = {
     button: pending.button,
+    audience: pending.audience,
     ...(pending.lot === undefined ? {} : { lot: pending.lot }),
   };
   if (!parseAnnouncementMedia(ctx.message)) {
@@ -10567,7 +10628,7 @@ async function handleAnnouncementMedia(
     identity: person,
     ...rpcCall(ctx, useCase),
     auctionId,
-    intent: "preview-announcement",
+    intent: "ask-announcement-audience",
     meetupId,
     ...step,
     post: published.postId,
@@ -10661,6 +10722,7 @@ async function renderAnnouncementResult(
           auctionId: result.auctionId,
           button: result.button,
           print: fingerprint(context.text),
+          audience: result.audience,
           ...(result.lot === undefined ? {} : { lot: result.lot.index }),
           telegramUserId: ctx.from?.id ?? 0,
         },
@@ -10670,6 +10732,13 @@ async function renderAnnouncementResult(
         "HTML",
       );
       return handled("announcement media requested");
+    case "announcement-audience-ask":
+      if (context.text === undefined) break;
+      await showScreen(
+        ctx,
+        announcementAudienceScreen({ ...result, text: context.text }),
+      );
+      return handled("announcement audience asked");
     case "announcement-preview":
       if (context.text === undefined) break;
       await sendAnnouncementPreview(ctx, runtime, context.person, {
@@ -10766,6 +10835,8 @@ async function sendAnnouncementPreview(
     // Фото или пост, которых автор не увидел, получатели тоже не получат.
     photo: sent.withPhoto ? preview.photo?.index : undefined,
     post: sent.withPost ? preview.post : undefined,
+    audience: preview.audience,
+    audiences: preview.audiences,
     recipientCount: preview.recipientCount,
   });
   await ctx.reply(confirm.text, {
@@ -12825,6 +12896,7 @@ function stepOf(pending: PendingBody): QuestionStep {
         auction: uuidToToken(pending.auctionId),
         button: pending.button,
         print: pending.print,
+        audience: pending.audience,
         ...(pending.lot === undefined ? {} : { lot: pending.lot }),
       };
     default: {
@@ -13127,6 +13199,7 @@ function pendingOf(
         auctionId: tokenToUuid(step.auction),
         button: step.button,
         print: step.print,
+        audience: step.audience,
         ...(step.lot === undefined ? {} : { lot: step.lot }),
         telegramUserId,
         expiresAt,
@@ -13854,6 +13927,8 @@ function callbackUseCase(
     | "console-announcement-photo"
     | "console-announcement-media"
     | "console-announcement-send"
+    | "console-announcement-audience"
+    | "console-announcement-recipients"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
@@ -14086,6 +14161,8 @@ function callbackUseCase(
     case "console-announcement-photo":
     case "console-announcement-media":
     case "console-announcement-send":
+    case "console-announcement-audience":
+    case "console-announcement-recipients":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":
