@@ -15,7 +15,7 @@ public sealed record BroadcastResult(AuthorityAnswer Authority, BroadcastOutcome
 public sealed record BroadcastPreview(AuthorityAnswer Authority, AudienceRead? Audience);
 
 /// <summary>
-/// Две ручные рассылки одним механизмом (ADR-028 §7): разные авторизация и
+/// Три ручные рассылки одним механизмом (ADR-028 §7): разные авторизация и
 /// аудитория, общий приём ключа и разворот в адресные факты. Транспорт сюда не
 /// заходит — статусы gRPC выбирает граница.
 /// </summary>
@@ -67,6 +67,27 @@ public sealed class BroadcastOperations(
             forwarded);
     }
 
+    /// <summary>
+    /// Объявление аукциона сходки держателям права ставок (PER-764). Право —
+    /// вести аукцион этой сходки, у Meetups.
+    /// </summary>
+    public async Task<BroadcastResult> ToAuctionParticipants(
+        Guid broadcastId,
+        Guid authorId,
+        Guid meetupId,
+        string body,
+        AuctionNoticeContent notice,
+        Forwarded forwarded)
+    {
+        var answer = await authority.AuctionNotice(authorId, meetupId, forwarded);
+
+        return await Accept(
+            answer,
+            new AcceptedBroadcast(
+                broadcastId, NotificationFacts.AuctionNoticeType, authorId, meetupId, body, forwarded.RequestId, notice),
+            forwarded);
+    }
+
     public async Task<BroadcastPreview> PreviewMeetup(Guid authorId, Guid meetupId, Forwarded forwarded)
     {
         var answer = await authority.MeetupBroadcast(authorId, meetupId, forwarded);
@@ -103,6 +124,23 @@ public sealed class BroadcastOperations(
         var read = await store.ReadCommunityAudience(authorId, forwarded.Cancellation);
         var count = read is AudienceRead.Counted counted ? counted.RecipientCount : (int?)null;
         WritePreview(forwarded, "counted", NotificationFacts.CommunityAnnouncementType, authorId, null, answer, count);
+
+        return new BroadcastPreview(answer, read);
+    }
+
+    public async Task<BroadcastPreview> PreviewAuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded)
+    {
+        var answer = await authority.AuctionNotice(authorId, meetupId, forwarded);
+
+        if (answer.Verdict != AuthorityVerdict.Granted)
+        {
+            WritePreview(forwarded, "declined", NotificationFacts.AuctionNoticeType, authorId, meetupId, answer, null);
+            return new BroadcastPreview(answer, null);
+        }
+
+        var read = await store.ReadAuctionNoticeAudience(forwarded.Cancellation);
+        var count = read is AudienceRead.Counted counted ? counted.RecipientCount : (int?)null;
+        WritePreview(forwarded, "counted", NotificationFacts.AuctionNoticeType, authorId, meetupId, answer, count);
 
         return new BroadcastPreview(answer, read);
     }

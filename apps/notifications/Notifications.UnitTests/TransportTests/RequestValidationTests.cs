@@ -1,4 +1,5 @@
 using Grpc.Core;
+using Notifications.Infrastructure;
 using Notifications.Transport;
 using Notifications.V1;
 using Shouldly;
@@ -247,6 +248,86 @@ public class RequestValidationTests
     public void SummaryPageToken_Foreign_IsRejected()
     {
         Code(() => RequestValidation.SummaryPageToken("page-2")).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    private const string OtherUuidV7 = "01932b3c-4d5e-7f80-8123-456789abcde0";
+
+    [Fact]
+    public void AuctionNotice_ViewWithoutLotAndNoPhoto_IsAccepted()
+    {
+        var notice = RequestValidation.AuctionNotice(new AuctionNoticeButton { View = AuctionNoticeView.Raffle }, null);
+
+        notice.Button.ShouldBe(new NoticeButton("raffle", null));
+        notice.Photo.ShouldBeNull();
+    }
+
+    [Fact]
+    public void AuctionNotice_LotViewAndLotPhoto_CarriesBothReferences()
+    {
+        var notice = RequestValidation.AuctionNotice(
+            new AuctionNoticeButton { View = AuctionNoticeView.Lot, LotId = CanonicalUuidV7 },
+            new AuctionNoticePhoto { LotPhoto = new AuctionNoticeLotPhoto { LotId = CanonicalUuidV7, PhotoId = OtherUuidV7 } });
+
+        notice.Button.ShouldBe(new NoticeButton("lot", Guid.Parse(CanonicalUuidV7)));
+        notice.Photo.ShouldBe(new NoticePhoto.LotPhoto(Guid.Parse(CanonicalUuidV7), Guid.Parse(OtherUuidV7)));
+    }
+
+    [Fact]
+    public void AuctionNotice_ChannelPost_IsAcceptedWhenPositive()
+    {
+        var button = new AuctionNoticeButton { View = AuctionNoticeView.Auction };
+
+        RequestValidation.AuctionNotice(
+                button, new AuctionNoticePhoto { ChannelPost = new AuctionNoticeChannelPost { MessageId = 7 } })
+            .Photo.ShouldBe(new NoticePhoto.ChannelPost(7));
+        Code(() => RequestValidation.AuctionNotice(
+                button, new AuctionNoticePhoto { ChannelPost = new AuctionNoticeChannelPost { MessageId = 0 } }))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void AuctionNotice_WithoutButton_IsAcceptedWithoutButton()
+    {
+        RequestValidation.AuctionNotice(null, null).ShouldBe(new AuctionNoticeContent(null, null));
+    }
+
+    [Fact]
+    public void AuctionNotice_UnspecifiedOrUnknownView_IsRejected()
+    {
+        Code(() => RequestValidation.AuctionNotice(new AuctionNoticeButton(), null))
+            .ShouldBe(StatusCode.InvalidArgument);
+        Code(() => RequestValidation.AuctionNotice(new AuctionNoticeButton { View = (AuctionNoticeView)99 }, null))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void AuctionNotice_LotViewWithoutLot_IsRejected()
+    {
+        Code(() => RequestValidation.AuctionNotice(new AuctionNoticeButton { View = AuctionNoticeView.Lot }, null))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void AuctionNotice_LotOnAnotherView_IsRejected()
+    {
+        // Лот у вида «лоты» был бы молча потерян: граница отказывает, а не
+        // выбирает за автора.
+        Code(() => RequestValidation.AuctionNotice(
+                new AuctionNoticeButton { View = AuctionNoticeView.Lots, LotId = CanonicalUuidV7 }, null))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void AuctionNotice_PhotoWithoutSourceOrWithBrokenId_IsRejected()
+    {
+        var button = new AuctionNoticeButton { View = AuctionNoticeView.Auction };
+
+        Code(() => RequestValidation.AuctionNotice(button, new AuctionNoticePhoto()))
+            .ShouldBe(StatusCode.InvalidArgument);
+        Code(() => RequestValidation.AuctionNotice(
+                button,
+                new AuctionNoticePhoto { LotPhoto = new AuctionNoticeLotPhoto { LotId = CanonicalUuidV7 } }))
+            .ShouldBe(StatusCode.InvalidArgument);
     }
 
     /// <summary>

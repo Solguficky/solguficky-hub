@@ -1,4 +1,5 @@
 using Notifications.Facts;
+using Notifications.Infrastructure;
 using Notifications.Replica;
 using Notifications.TestKit;
 using Notifications.V1;
@@ -241,6 +242,74 @@ public class NotificationFactsTests
         notification.TypeCase.ShouldBe(Notification.TypeOneofCase.CommunityAnnouncement);
         notification.CommunityAnnouncement.SenderId.ShouldBe(senderId.ToString());
         notification.CommunityAnnouncement.Body.ShouldBe("Общий сбор");
+        notification.HasRequestId.ShouldBeFalse();
+    }
+
+    /// <summary>
+    /// Объявление аукциона: повод — команда, аукцион выведен из сходки правилом
+    /// Auction, кнопка и фото — ссылками, как их принял сервис.
+    /// </summary>
+    [Fact]
+    public void AuctionNotice_AcceptedBroadcast_DerivesAuctionAndCarriesButtonAndPhoto()
+    {
+        var broadcastId = Guid.CreateVersion7();
+        var senderId = Guid.CreateVersion7();
+        var meetupId = Guid.Parse("0190a0e0-0000-7000-8000-000000000001");
+        var lotId = Guid.CreateVersion7();
+        var photoId = Guid.CreateVersion7();
+        var content = new AuctionNoticeContent(new NoticeButton("lot", lotId), new NoticePhoto.LotPhoto(lotId, photoId));
+
+        var notification = NotificationFacts.AuctionNotice(
+            NotificationId, RecipientId, broadcastId, senderId, meetupId, "Пятничная", "Последний час!", content,
+            "req-1", Now, NotAfter);
+
+        notification.Cause.CommandRequestId.ShouldBe(broadcastId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.AuctionNotice);
+        notification.AuctionNotice.AuctionId.ShouldBe("daef05c7-cd68-5048-b03d-cb4860e8dc73");
+        notification.AuctionNotice.MeetupId.ShouldBe(meetupId.ToString());
+        notification.AuctionNotice.MeetupTitle.ShouldBe("Пятничная");
+        notification.AuctionNotice.SenderId.ShouldBe(senderId.ToString());
+        notification.AuctionNotice.Body.ShouldBe("Последний час!");
+        notification.AuctionNotice.Button.View.ShouldBe(AuctionNoticeView.Lot);
+        notification.AuctionNotice.Button.LotId.ShouldBe(lotId.ToString());
+        notification.AuctionNotice.Photo.LotPhoto.LotId.ShouldBe(lotId.ToString());
+        notification.AuctionNotice.Photo.LotPhoto.PhotoId.ShouldBe(photoId.ToString());
+        notification.RequestId.ShouldBe("req-1");
+    }
+
+    [Fact]
+    public void AuctionNotice_ChannelPost_CarriesMessageIdOnly()
+    {
+        var notification = NotificationFacts.AuctionNotice(
+            NotificationId, RecipientId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "",
+            "Розыгрыш!", new AuctionNoticeContent(new NoticeButton("raffle", null), new NoticePhoto.ChannelPost(42)),
+            requestId: null, Now, NotAfter);
+
+        notification.AuctionNotice.Photo.SourceCase.ShouldBe(AuctionNoticePhoto.SourceOneofCase.ChannelPost);
+        notification.AuctionNotice.Photo.ChannelPost.MessageId.ShouldBe(42);
+    }
+
+    [Fact]
+    public void AuctionNotice_WithoutButton_LeavesButtonAbsent()
+    {
+        var notification = NotificationFacts.AuctionNotice(
+            NotificationId, RecipientId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "",
+            "Спасибо всем!", new AuctionNoticeContent(null, null), requestId: null, Now, NotAfter);
+
+        notification.AuctionNotice.Button.ShouldBeNull();
+        notification.AuctionNotice.Body.ShouldBe("Спасибо всем!");
+    }
+
+    [Fact]
+    public void AuctionNotice_WithoutPhoto_LeavesPhotoAbsentAndLotEmpty()
+    {
+        var notification = NotificationFacts.AuctionNotice(
+            NotificationId, RecipientId, Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), "",
+            "Торги открыты", new AuctionNoticeContent(new NoticeButton("lots", null), null), requestId: null, Now, NotAfter);
+
+        notification.AuctionNotice.Button.View.ShouldBe(AuctionNoticeView.Lots);
+        notification.AuctionNotice.Button.LotId.ShouldBeEmpty();
+        notification.AuctionNotice.Photo.ShouldBeNull();
         notification.HasRequestId.ShouldBeFalse();
     }
 

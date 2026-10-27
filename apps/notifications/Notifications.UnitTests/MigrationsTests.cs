@@ -87,6 +87,7 @@ public class MigrationsTests
             "invoice_reminder",
             "lot_set_collected",
             "invoice_reminder_due_leads",
+            "auction_notice",
         ]);
 
         var main = names.IndexOf("orleans_main");

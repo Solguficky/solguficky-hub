@@ -261,6 +261,13 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         SELECT title FROM meetup_replica WHERE meetup_id = @MeetupId;
         """;
 
+    // Название для объявления аукциона (PER-764) — только у видимой сходки:
+    // право вести аукцион видимости черновика не даёт, а объявление уходит и
+    // гостям, поэтому название скрытой сходки оно не разносит.
+    private const string VisibleMeetupTitleSql = """
+        SELECT title FROM meetup_replica WHERE meetup_id = @MeetupId AND visibility = 'visible';
+        """;
+
     // Аукцион сняли с публикации, пока весть о нём ждала релея (PER-646): человек
     // пошёл бы к аукциону, которого не видит. Аукцион у сходки один, поэтому
     // признак — пара «сходка и повод». Без SKIP LOCKED по той же причине, что
@@ -1228,6 +1235,54 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             notAfter,
             cancellationToken);
     }
+
+    /// <summary>
+    /// Разворачивает объявление аукциона (PER-764) на держателей права
+    /// <c>place_bids</c> тем же запросом, что весть о новом аукционе (PER-646):
+    /// кроме заблокированных и выключивших вести о новом аукционе и торгах, с
+    /// кругом доставки каждого. Пишет факты в транзакции
+    /// <paramref name="work" /> — той же, что приняла ключ рассылки.
+    /// </summary>
+    /// <remarks>
+    /// Автор адресатом не исключается: он держатель права ставок, как все, и
+    /// видит то же, что получили остальные.
+    /// </remarks>
+    internal static async Task<FactCount> AddAuctionNotice(
+        UnitOfWork work,
+        AcceptedBroadcast broadcast,
+        Guid meetupId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var notice = broadcast.Notice
+            ?? throw new ArgumentException("an auction notice carries its button", nameof(broadcast));
+        var titles = await work.Query<string>(VisibleMeetupTitleSql, new { MeetupId = meetupId }, cancellationToken);
+        var title = titles.Count == 0 ? "" : titles[0];
+        var audience = await AuctionNoticeAudience(work, cancellationToken);
+
+        return await Insert(
+            work,
+            FactCause.Of(broadcast, NotificationFacts.AuctionNoticeType, meetupId),
+            audience,
+            (id, recipient) => NotificationFacts.AuctionNotice(
+                id, recipient, broadcast.Id, broadcast.AuthorId, meetupId, title, broadcast.Body, notice,
+                broadcast.RequestId, now, notAfter),
+            now,
+            notAfter,
+            cancellationToken);
+    }
+
+    internal static async Task<int> CountAuctionNoticeRecipients(UnitOfWork work, CancellationToken cancellationToken) =>
+        EnabledOf(await AuctionNoticeAudience(work, cancellationToken)).Length;
+
+    private static Task<IReadOnlyList<AudienceRow>> AuctionNoticeAudience(
+        UnitOfWork work,
+        CancellationToken cancellationToken) =>
+        work.Query<AudienceRow>(
+            AuctionAnnouncementAudienceSql,
+            new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
+            cancellationToken);
 
     internal static async Task<int> CountOrganizerRecipients(
         UnitOfWork work,

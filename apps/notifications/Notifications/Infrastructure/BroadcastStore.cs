@@ -8,13 +8,38 @@ namespace Notifications.Infrastructure;
 /// <param name="Kind">Тип фактов рассылки — он же её вид в таблице <c>broadcast</c>.</param>
 /// <param name="MeetupId">Сходка рассылки по сходке; у объявления сообществу пусто.</param>
 /// <param name="RequestId"><c>x-request-id</c> команды, если вызывающий его прислал.</param>
+/// <param name="Notice">Кнопка и фото объявления аукциона; у остальных рассылок пусто.</param>
 public sealed record AcceptedBroadcast(
     Guid Id,
     string Kind,
     Guid AuthorId,
     Guid? MeetupId,
     string Body,
-    string? RequestId);
+    string? RequestId,
+    AuctionNoticeContent? Notice = null);
+
+/// <summary>Кнопка объявления аукциона: вид экрана словом хранения и лот у вида «лот».</summary>
+public sealed record NoticeButton(string View, Guid? LotId);
+
+/// <summary>Картинка объявления аукциона — ссылка, байтов сервис не хранит.</summary>
+public abstract record NoticePhoto
+{
+    private NoticePhoto()
+    {
+    }
+
+    /// <summary>Фото лота, как его хранит Auction.</summary>
+    public sealed record LotPhoto(Guid LotId, Guid PhotoId) : NoticePhoto;
+
+    /// <summary>Пост чата медиа ботов; сам чат — конфигурация ботов.</summary>
+    public sealed record ChannelPost(long MessageId) : NoticePhoto;
+}
+
+/// <summary>
+/// Чем объявление аукциона богаче тела (PER-764): необязательные кнопка и
+/// картинка. Без кнопки объявление уходит одним текстом.
+/// </summary>
+public sealed record AuctionNoticeContent(NoticeButton? Button, NoticePhoto? Photo);
 
 /// <summary>Чем кончился приём рассылки.</summary>
 public abstract record BroadcastOutcome
@@ -65,14 +90,18 @@ public abstract record AudienceRead
 public sealed class BroadcastStore(NpgsqlDataSource source)
 {
     private const string InsertSql = """
-        INSERT INTO broadcast (broadcast_id, kind, author_id, meetup_id, body, accepted_at)
-        VALUES (@Id, @Kind, @AuthorId, @MeetupId, @Body, @Now)
+        INSERT INTO broadcast (broadcast_id, kind, author_id, meetup_id, body, accepted_at,
+                               button_view, button_lot_id, photo_lot_id, photo_id, photo_message_id)
+        VALUES (@Id, @Kind, @AuthorId, @MeetupId, @Body, @Now,
+                @ButtonView, @ButtonLotId, @PhotoLotId, @PhotoId, @PhotoMessageId)
         ON CONFLICT (broadcast_id) DO NOTHING
         RETURNING accepted_at;
         """;
 
     private const string ExistingSql = """
-        SELECT kind AS Kind, author_id AS AuthorId, meetup_id AS MeetupId, body AS Body, accepted_at AS AcceptedAt
+        SELECT kind AS Kind, author_id AS AuthorId, meetup_id AS MeetupId, body AS Body, accepted_at AS AcceptedAt,
+               button_view AS ButtonView, button_lot_id AS ButtonLotId, photo_lot_id AS PhotoLotId, photo_id AS PhotoId,
+               photo_message_id AS PhotoMessageId
         FROM broadcast
         WHERE broadcast_id = @Id;
         """;
@@ -100,6 +129,11 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
                 broadcast.MeetupId,
                 broadcast.Body,
                 Now = now.UtcDateTime,
+                ButtonView = broadcast.Notice?.Button?.View,
+                ButtonLotId = broadcast.Notice?.Button?.LotId,
+                PhotoLotId = (broadcast.Notice?.Photo as NoticePhoto.LotPhoto)?.LotId,
+                PhotoId = (broadcast.Notice?.Photo as NoticePhoto.LotPhoto)?.PhotoId,
+                PhotoMessageId = (broadcast.Notice?.Photo as NoticePhoto.ChannelPost)?.MessageId,
             },
             cancellationToken);
 
@@ -115,7 +149,20 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
 
         FactCount facts;
 
-        if (broadcast.MeetupId is { } meetupId)
+        if (broadcast.Notice is not null && broadcast.MeetupId is { } auctionMeetupId)
+        {
+            // Реплика сходки здесь не обязательна: она даёт объявлению только
+            // название, и без неё весть уходит без названия, как весть о новом
+            // аукционе (PER-646). Право уже подтвердил Meetups.
+            facts = await NotificationStore.AddAuctionNotice(
+                work,
+                broadcast,
+                auctionMeetupId,
+                acceptedAt,
+                notAfter,
+                cancellationToken);
+        }
+        else if (broadcast.MeetupId is { } meetupId)
         {
             // Реплика читается в той же транзакции: карточка описывает сходку
             // на момент приёма. Отставшая реплика — не отказ по праву, а
@@ -178,6 +225,15 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
         return new AudienceRead.Counted(count);
     }
 
+    /// <summary>Число держателей права ставок, которым уйдёт объявление аукциона.</summary>
+    public async Task<AudienceRead> ReadAuctionNoticeAudience(CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        var count = await NotificationStore.CountAuctionNoticeRecipients(work, cancellationToken);
+
+        return new AudienceRead.Counted(count);
+    }
+
     private static async Task<BroadcastOutcome> Existing(
         UnitOfWork work,
         AcceptedBroadcast broadcast,
@@ -194,7 +250,8 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
         var same = held.Kind == broadcast.Kind
             && held.AuthorId == broadcast.AuthorId
             && held.MeetupId == broadcast.MeetupId
-            && string.Equals(held.Body, broadcast.Body, StringComparison.Ordinal);
+            && string.Equals(held.Body, broadcast.Body, StringComparison.Ordinal)
+            && held.Notice == broadcast.Notice;
 
         return same
             ? new BroadcastOutcome.Repeated(Utc(held.AcceptedAt))
@@ -217,5 +274,32 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
         public string Body { get; init; } = "";
 
         public DateTime AcceptedAt { get; init; }
+
+        public string? ButtonView { get; init; }
+
+        public Guid? ButtonLotId { get; init; }
+
+        public Guid? PhotoLotId { get; init; }
+
+        public Guid? PhotoId { get; init; }
+
+        public long? PhotoMessageId { get; init; }
+
+        // Содержимое объявления узнаётся по виду рассылки, а не по кнопке:
+        // кнопка у объявления необязательна.
+        public AuctionNoticeContent? Notice =>
+            Kind == NotificationFacts.AuctionNoticeType
+                ? new AuctionNoticeContent(
+                    ButtonView is { } view ? new NoticeButton(view, ButtonLotId) : null,
+                    Photo)
+                : null;
+
+        private NoticePhoto? Photo =>
+            (PhotoLotId, PhotoId, PhotoMessageId) switch
+            {
+                ({ } lot, { } photo, _) => new NoticePhoto.LotPhoto(lot, photo),
+                (_, _, { } message) => new NoticePhoto.ChannelPost(message),
+                _ => null,
+            };
     }
 }

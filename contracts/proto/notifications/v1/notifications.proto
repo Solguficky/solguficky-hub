@@ -201,6 +201,14 @@ message Notification {
 
     // The recipient collected the set: every lot in it was sold to them.
     LotSetCollected lot_set_collected = 38;
+
+    // A manual announcement of an auction from a person who runs it. Sent to
+    // every holder of the auction right except the blocked, delivered by the
+    // bot of their circle; the auction announcement switch of the auction
+    // notification preferences turns it off, as it does auction_published.
+    // The cause is the broadcast command: a repeated command produces no
+    // second fact for the same person.
+    AuctionNotice auction_notice = 39;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -534,6 +542,103 @@ message AuctionTradingOpened {
 
   // The online phase of the auction that just started.
   auction.v1.OnlinePhase online_phase = 4;
+}
+
+// A manual announcement of an auction, as the recipient sees it. The text is
+// the author's own; the envelope, the button caption and the photo are drawn by
+// the channel from the data below, without calling other services for the text.
+message AuctionNotice {
+  // Canonical lowercase UUIDv5 with hyphens: the auction of the meetup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The title of the meetup as the replica knew it when the fact was written.
+  // Empty when the replica knows the meetup by its id alone.
+  string meetup_title = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the
+  // author. A human-readable name is not carried, as in CommunityAnnouncement.
+  string sender_id = 4;
+
+  // Text written by the author, verbatim.
+  string body = 5;
+
+  // Where the single button of the message leads. Unset means a message
+  // without a button.
+  AuctionNoticeButton button = 6;
+
+  // The picture of the message. Unset means a message without a picture.
+  AuctionNoticePhoto photo = 7;
+}
+
+// The button of an auction announcement: a screen of the auction tree of the
+// recipient's bot. Its caption is the channel's business.
+message AuctionNoticeButton {
+  AuctionNoticeView view = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Set exactly when view is
+  // AUCTION_NOTICE_VIEW_LOT, and empty otherwise. Notifications does not check
+  // that the lot belongs to the auction: the channel opens the lot as any
+  // other, and Auction answers for a lot that is not there.
+  string lot_id = 2;
+}
+
+// The screen of the auction tree that the button opens.
+enum AuctionNoticeView {
+  AUCTION_NOTICE_VIEW_UNSPECIFIED = 0;
+
+  // The root of the auction.
+  AUCTION_NOTICE_VIEW_AUCTION = 1;
+
+  // The feed of the lots.
+  AUCTION_NOTICE_VIEW_LOTS = 2;
+
+  // The card of one lot, named by lot_id.
+  AUCTION_NOTICE_VIEW_LOT = 3;
+
+  // The raffle among the participants.
+  AUCTION_NOTICE_VIEW_RAFFLE = 4;
+
+  // The predictions of the auction.
+  AUCTION_NOTICE_VIEW_PREDICTIONS = 5;
+
+  // The chronicle of the trading day.
+  AUCTION_NOTICE_VIEW_CHRONICLE = 6;
+}
+
+// The picture of an auction announcement. Exactly one source is set. The
+// picture travels as a reference, never as bytes: the channel fetches it.
+message AuctionNoticePhoto {
+  oneof source {
+    // A photo of a lot as Auction stores it.
+    AuctionNoticeLotPhoto lot_photo = 1;
+
+    // A post of the bots' media chat, copied by the channel.
+    AuctionNoticeChannelPost channel_post = 2;
+  }
+}
+
+// A post of the media chat of the bots, which the channel copies into the
+// message. The chat itself is the bots' configuration, not the contract: only
+// the post is named here. Notifications does not check that the post exists:
+// the channel sends the message without the picture when the copy fails.
+message AuctionNoticeChannelPost {
+  // Telegram message id of the post in the media chat. Positive.
+  int64 message_id = 1;
+}
+
+// A photo of a lot, fetched by the channel with auction.v1 GetLotPhoto.
+// Notifications does not check that the photo exists or that the lot belongs
+// to the auction: the channel sends the message without the picture when
+// Auction does not give it.
+message AuctionNoticeLotPhoto {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens, as auction.v1 LotPhotoRef.photo_id.
+  string photo_id = 2;
 }
 
 // The prediction results of an auction as the recipient sees them: the outcome
