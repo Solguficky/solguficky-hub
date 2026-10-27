@@ -2,6 +2,9 @@ package auction.grpc
 
 import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
+import auction.aggregate.CreateHappyHourPeriod
+import auction.aggregate.DeleteHappyHourPeriod
+import auction.aggregate.HappyHourPeriodId
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
 import auction.aggregate.LotLayout
@@ -84,6 +87,8 @@ import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.LaunchStepWindowRequest
+import auction.v1.auction_service.CreateHappyHourPeriodRequest
+import auction.v1.auction_service.DeleteHappyHourPeriodRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
 import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
@@ -167,6 +172,10 @@ final case class LotSetDeleteCommand(auctionId: AuctionId, set: LotSetId, opId: 
 
 /** Запуск окна сниженного шага аукциону сходки. Окно здесь ещё не проверено: его случаи — решение домена. */
 final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchStepWindow, acting: Acting)
+
+final case class HappyHourCreateCommand(auctionId: AuctionId, command: CreateHappyHourPeriod, acting: Acting)
+
+final case class HappyHourDeleteCommand(auctionId: AuctionId, command: DeleteHappyHourPeriod, acting: Acting)
 
 /** Снятие участника с лота аукциона сходки и его предпросмотр. */
 final case class RemovalCommand(auctionId: AuctionId, command: RemoveLotParticipant, acting: Acting)
@@ -561,6 +570,32 @@ object RequestMapping {
         .map(_.reverse)
       opId <- uuidV7("op_id", request.opId)
     } yield StepWindowLaunchCommand(auction, LaunchStepWindow(from, until, step, lots, OpId(opId)), acting)
+
+  /**
+   * Создание периода «Счастливых часов»: форма — два момента и `op_id`. Конец не позже начала и период вне онлайн-этапа
+   * — отказы домена, а не форма запроса.
+   */
+  def createHappyHourPeriod(request: CreateHappyHourPeriodRequest): Either[FormError, HappyHourCreateCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      from <- instant("from", request.from)
+      until <- instant("until", request.until)
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourCreateCommand(auction, CreateHappyHourPeriod(from, until, OpId(opId)), acting)
+
+  /** Удаление периода «Счастливых часов»: идентификатор периода — UUIDv5, его выводит сервис. */
+  def deleteHappyHourPeriod(request: DeleteHappyHourPeriodRequest): Either[FormError, HappyHourDeleteCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      period <- canonicalUuidV5(request.periodId).toRight(FormError("period_id"))
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourDeleteCommand(
+      auction,
+      DeleteHappyHourPeriod(HappyHourPeriodId(period), OpId(opId)),
+      acting
+    )
 
   def advanceAsk(request: AdvanceAskRequest): Either[FormError, AskCommand] =
     for {

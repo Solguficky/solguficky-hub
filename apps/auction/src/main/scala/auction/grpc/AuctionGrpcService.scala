@@ -884,6 +884,31 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Создание периода «Счастливых часов» (ADR-047, дополнение 2026-10-27): право у Meetups с воротами «сходка не
+   * отменена», фазу и время решает аукцион по своим часам.
+   */
+  def createHappyHourPeriod(in: wire.CreateHappyHourPeriodRequest): Future[wire.CreateHappyHourPeriodResponse] =
+    RequestMapping.createHappyHourPeriod(in) match {
+      case Left(error) => invalid(error)
+      case Right(create) =>
+        auctions
+          .createHappyHourPeriod(create.auctionId, create.command, create.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.createHappyHourPeriod(outcome).fold(refuse, Future.successful))
+    }
+
+  /** Удаление периода «Счастливых часов» до его начала тем же путём, что создание. */
+  def deleteHappyHourPeriod(in: wire.DeleteHappyHourPeriodRequest): Future[wire.DeleteHappyHourPeriodResponse] =
+    RequestMapping.deleteHappyHourPeriod(in) match {
+      case Left(error) => invalid(error)
+      case Right(delete) =>
+        auctions
+          .deleteHappyHourPeriod(delete.auctionId, delete.command, delete.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.deleteHappyHourPeriod(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12): право у Meetups, фазу, время, реестр и пересечения
    * решает аукцион. Ответ — после записи `StepWindowLaunched`: лотам окно уходит после него.
    */

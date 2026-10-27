@@ -95,6 +95,8 @@ service AuctionService {
   rpc SetLotLayout(SetLotLayoutRequest) returns (SetLotLayoutResponse);
   rpc SetPromoVideo(SetPromoVideoRequest) returns (SetPromoVideoResponse);
   rpc ListAuctionEngagement(ListAuctionEngagementRequest) returns (ListAuctionEngagementResponse);
+  rpc CreateHappyHourPeriod(CreateHappyHourPeriodRequest) returns (CreateHappyHourPeriodResponse);
+  rpc DeleteHappyHourPeriod(DeleteHappyHourPeriodRequest) returns (DeleteHappyHourPeriodResponse);
 }
 
 message Viewer {
@@ -525,9 +527,10 @@ message LotSnapshot {
   Money base_step = 16;
 
   // The window of reduced step in force at the instant of the answer, with the
-  // step in force. Unset when none is: outside every window of the lot, when the
-  // window does not lower the step at the current price, in the live final, and
-  // when the lot is not trading.
+  // step in force and, while the lot has no bid, the starting price in force.
+  // Unset when none is: outside every window of the lot, when the window neither
+  // lowers the step at the current price nor the price of the first bid, in the
+  // live final, and when the lot is not trading.
   LotStepWindow active_window = 17;
 
   // The nearest window of the lot that has not started yet at the instant of the
@@ -572,7 +575,15 @@ message LotStepWindow {
   // RFC 3339 instant in UTC: the first instant after the window.
   string until = 2;
 
+  // The bid step inside the window. Unset when the window does not change the
+  // step: a window sets a step, a starting price or both.
   Money step = 3;
+
+  // The price of the first bid inside the window while the lot has no bid, below
+  // its regular starting price. Unset when the window does not change it, and in
+  // active_window once the lot has a bid: after the first bid the starting price
+  // of the window affects nothing.
+  Money start = 4;
 }
 
 message ListLotHistoryRequest {
@@ -2212,6 +2223,10 @@ message AuctionConsole {
   // names it: AuctionSnapshot and the reads of a participant do not lead from an
   // auction to its meetup.
   string meetup_id = 7;
+
+  // The happy hour periods of the auction that are not deleted, by ascending
+  // from, past ones included. Empty is a real value: the auction has no period.
+  repeated HappyHourPeriod happy_hour_periods = 8;
 }
 
 // The predictions of every round of the auction counted together.
@@ -3482,3 +3497,117 @@ enum RaffleRegistration {
   // held or was cancelled, or the auction has no raffle.
   RAFFLE_REGISTRATION_CLOSED = 3;
 }
+
+// A happy hour period of an auction: the half-open interval [from, until) inside
+// the online phase. The period alone changes no trading: the terms of each lot in
+// it are set separately. Until it starts the period may be deleted; from its
+// start it is frozen.
+message HappyHourPeriod {
+  // Canonical lowercase UUIDv5 with hyphens, derived from the op_id of the
+  // command that created the period.
+  string period_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the period.
+  string from = 2;
+
+  // RFC 3339 instant in UTC: the first instant after the period.
+  string until = 3;
+}
+
+// Creates a happy hour period while the auction is in its online phase.
+message CreateHappyHourPeriodRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // RFC 3339 instant in UTC: the first instant of the period. Required.
+  string from = 3;
+
+  // RFC 3339 instant in UTC: the first instant after the period. Required.
+  string until = 4;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 5;
+}
+
+message CreateHappyHourPeriodResponse {
+  // Exactly one is set.
+  oneof outcome {
+    // The period as the auction recorded it. A repeated op_id answers with the
+    // same period.
+    HappyHourPeriod accepted = 1;
+    CreateHappyHourPeriodRefusal refused = 2;
+  }
+}
+
+message CreateHappyHourPeriodRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    HappyHourPeriodInPast period_in_past = 5;
+    HappyHourPeriodEmpty period_empty = 6;
+    HappyHourPeriodOutsideOnlinePhase period_outside_online_phase = 7;
+  }
+}
+
+// from is earlier than the instant the server decided the command: a period does
+// not apply in the past.
+message HappyHourPeriodInPast {}
+
+// until is not later than from.
+message HappyHourPeriodEmpty {}
+
+// The period does not lie within [opens_at, closes_at] of the online phase, or
+// the online phase has no closes_at.
+message HappyHourPeriodOutsideOnlinePhase {}
+
+// Deletes a happy hour period that has not started.
+message DeleteHappyHourPeriodRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv5 with hyphens: see HappyHourPeriod.
+  string period_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message DeleteHappyHourPeriodResponse {
+  // Exactly one is set.
+  oneof outcome {
+    HappyHourPeriodDeleted accepted = 1;
+    DeleteHappyHourPeriodRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionConsole.happy_hour_periods no longer lists the period.
+message HappyHourPeriodDeleted {}
+
+message DeleteHappyHourPeriodRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    HappyHourPeriodNotFound period_not_found = 5;
+    HappyHourPeriodStarted period_started = 6;
+  }
+}
+
+// The auction has no such period: it never had one, or the period is deleted.
+message HappyHourPeriodNotFound {}
+
+// The period has started: from its start the period is frozen.
+message HappyHourPeriodStarted {}

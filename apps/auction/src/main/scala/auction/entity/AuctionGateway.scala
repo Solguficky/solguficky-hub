@@ -100,6 +100,20 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[PromoVideoRejected, AuctionAnswer]]
 
+  /** Создание периода «Счастливых часов» (ADR-047, дополнение 2026-10-27). Ответ — после записи. */
+  def createHappyHourPeriod(
+      auctionId: AuctionId,
+      command: CreateHappyHourPeriod,
+      initiator: Initiator
+  ): Future[Either[CreateHappyHourPeriodRejected, AuctionAnswer]]
+
+  /** Удаление периода «Счастливых часов» до его начала. Ответ — после записи. */
+  def deleteHappyHourPeriod(
+      auctionId: AuctionId,
+      command: DeleteHappyHourPeriod,
+      initiator: Initiator
+  ): Future[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]]
+
   /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
   def cancel(
       auctionId: AuctionId,
@@ -286,6 +300,20 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[PromoVideoRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Promote(command, initiator, _))
+
+      def createHappyHourPeriod(
+          auctionId: AuctionId,
+          command: CreateHappyHourPeriod,
+          initiator: Initiator
+      ): Future[Either[CreateHappyHourPeriodRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.CreatePeriod(command, initiator, _))
+
+      def deleteHappyHourPeriod(
+          auctionId: AuctionId,
+          command: DeleteHappyHourPeriod,
+          initiator: Initiator
+      ): Future[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.DeletePeriod(command, initiator, _))
 
       def cancel(
           auctionId: AuctionId,
