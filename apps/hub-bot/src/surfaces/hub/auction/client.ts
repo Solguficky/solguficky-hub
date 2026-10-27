@@ -1254,6 +1254,16 @@ export function createAuctionAdapter(
         );
         return promoVideoResult(response.outcome);
       } catch (cause) {
+        // Ключ прикрепления выведен из сообщения ответа (PER-793): тот же
+        // ключ с другим постом — повтор доставки после рестарта, когда пост
+        // опубликован заново. Видео уже прикреплено первым постом.
+        if (
+          command.postId !== undefined &&
+          cause instanceof ConnectError &&
+          cause.code === Code.AlreadyExists
+        ) {
+          return { kind: "ok" };
+        }
         return auctionMissing(cause) ?? toFailure(cause);
       }
     },

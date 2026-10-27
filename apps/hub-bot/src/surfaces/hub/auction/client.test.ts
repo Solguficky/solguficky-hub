@@ -3085,6 +3085,20 @@ describe("auction invoices adapter", () => {
           Promise.reject(new ConnectError("meetups", Code.Unavailable)),
       }).setPromoVideo(admin, { auctionId, opId, postId: 7 }),
     ).resolves.toMatchObject({ kind: "unavailable" });
+
+    // Тот же ключ прикрепления с другим постом — повтор ответа после рестарта
+    // (PER-793): видео уже прикреплено. У снятия ключ рождается на нажатие,
+    // и занятый ключ остаётся отказом.
+    const taken = adapter({
+      setPromoVideo: () =>
+        Promise.reject(new ConnectError("op id taken", Code.AlreadyExists)),
+    });
+    await expect(
+      taken.setPromoVideo(admin, { auctionId, opId, postId: 8 }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      taken.setPromoVideo(admin, { auctionId, opId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
   });
 
   it("reads a missing invoice and an unanswered mark without a repeat", async () => {

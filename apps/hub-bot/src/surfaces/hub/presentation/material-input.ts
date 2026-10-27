@@ -62,14 +62,19 @@ export function isTypedText(raw: unknown): boolean {
 // и прочее отбрасываются.
 const linkBody =
   "t\\.me\\/(?:c\\/([1-9]\\d*)|([A-Za-z][A-Za-z0-9_]{3,31}))(?:\\/([1-9]\\d*))?\\/([1-9]\\d*)";
+// Регистр не важен: клавиатура телефона пишет первую букву заглавной.
 const MessageLinkPattern = new RegExp(
   `^(?:https?:\\/\\/)?${linkBody}\\/?(?:\\?(\\S*))?$`,
+  "i",
 );
+// Знак препинания после ссылки, набранной руками, частью ссылки не считается.
+const TrailingPunctuation = /[.,!;:)]+$/;
 // Та же ссылка внутри фразы: материалом фраза не становится — набранный текст
 // без ответа бывает подписью к пересылке, — но отказ называет, что ссылку
 // нужно прислать одну.
 const LinkInPhrasePattern = new RegExp(
   `(?:^|[^\\w./])(?:https?:\\/\\/)?${linkBody}(?!\\w)`,
+  "i",
 );
 const CommentIdPattern = /^[1-9]\d*$/;
 
@@ -80,7 +85,9 @@ const CommentIdPattern = /^[1-9]\d*$/;
 function parseMessageLink(raw: unknown): string | undefined {
   const parsed = TypedTextSchema.safeParse(raw);
   if (!parsed.success) return undefined;
-  const match = MessageLinkPattern.exec(parsed.data.text.trim());
+  const match = MessageLinkPattern.exec(
+    parsed.data.text.trim().replace(TrailingPunctuation, ""),
+  );
   if (match === null) return undefined;
   const [, chatId, username, topicId, messageId, query] = match;
   const chat = chatId === undefined ? username : `c/${chatId}`;

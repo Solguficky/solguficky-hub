@@ -70,6 +70,9 @@ describe("material input", () => {
     // Набранная руками (PER-793): без схемы и с `http://` — та же ссылка.
     ["t.me/solguficky/77", "https://t.me/solguficky/77"],
     ["http://t.me/c/1234567890/77", "https://t.me/c/1234567890/77"],
+    ["T.me/solguficky/77", "https://t.me/solguficky/77"],
+    ["Https://t.me/C/1234567890/77", "https://t.me/c/1234567890/77"],
+    ["t.me/solguficky/77.", "https://t.me/solguficky/77"],
   ])("takes a typed message link %s", (text, url) => {
     expect(parseMaterialInput({ text })).toEqual({ kind: "message-link", url });
   });
