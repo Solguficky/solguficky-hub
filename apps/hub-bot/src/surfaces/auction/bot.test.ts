@@ -3292,6 +3292,49 @@ describe("week programme in the auction root", () => {
 });
 
 describe("raffle among the participants", () => {
+  // «🏷️ Лоты» — своим рядом, «Розыгрыш» и «Прогнозы» — парой под ним, как в
+  // хабе (решение владельца по прогону stage 27.10, PER-798).
+  it("puts the raffle and the predictions in one row under the lots", async () => {
+    const withPredictions =
+      (factory: PortsFactory): PortsFactory =>
+      (requestId, deadlineAt) => {
+        const ports = factory(requestId, deadlineAt);
+        return {
+          ...ports,
+          auction: {
+            ...ports.auction,
+            getMyPredictions: async () => [
+              {
+                round: "catalog" as const,
+                status: "open" as const,
+                answers: [],
+              },
+            ],
+          },
+        };
+      };
+    const rootRows = async (ports: PortsFactory) => {
+      const { bot, calls } = makeBot(ports);
+      await bot.handleUpdate(
+        press(encodeAuctionCallback({ kind: "root", auctionId })),
+      );
+      return lastScreen(calls)
+        .keyboard.slice(0, 2)
+        .map((row) => row.map((button) => button.text));
+    };
+    const raffle = withRaffle(publicPorts, raffleService(openRaffle));
+
+    expect(await rootRows(withPredictions(raffle))).toEqual([
+      ["🏷️ Лоты"],
+      ["Розыгрыш", "Прогнозы"],
+    ]);
+    expect(await rootRows(withPredictions(publicPorts))).toEqual([
+      ["🏷️ Лоты"],
+      ["Прогнозы"],
+    ]);
+    expect(await rootRows(raffle)).toEqual([["🏷️ Лоты"], ["Розыгрыш"]]);
+  });
+
   // Вход — «Розыгрыш» в корне аукциона, как в хабе (PER-644).
   it("registers from the auction root, shows the commitment and then the result", async () => {
     const service = raffleService(openRaffle);

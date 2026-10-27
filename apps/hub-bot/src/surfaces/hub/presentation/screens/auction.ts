@@ -545,21 +545,22 @@ function rootScreen(
   );
   const invoices = buttons.find((button) => button.action === "root.invoices");
   const promo = buttons.find((button) => button.action === "root.promo");
-  // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
-  // №66; пересматривает «Розыгрыш своим рядом» PER-669).
-  if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData);
+  // «🏷️ Лоты» — своим рядом, «Розыгрыш» и «Прогнозы» — парой под ним
+  // (решение владельца по прогону stage 27.10, PER-798; пересматривает №66
+  // прогона 14.10): без «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему
+  // пары не нашлось, — своим рядом.
+  if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData).row();
   if (raffle !== undefined) {
     keyboard.text(raffleButtonLabel, raffle.callbackData);
   }
-  nextRow(keyboard);
   if (predictions !== undefined) {
-    keyboard.text(predictionButtonLabel, predictions.callbackData).row();
+    keyboard.text(predictionButtonLabel, predictions.callbackData);
+    nextRow(keyboard);
   }
   if (predictionResults !== undefined) {
-    keyboard
-      .text(predictionResultsButtonLabel, predictionResults.callbackData)
-      .row();
+    keyboard.text(predictionResultsButtonLabel, predictionResults.callbackData);
   }
+  nextRow(keyboard);
   // «Хроники дня» (PER-725), пока идёт онлайн-неделя, и «Статистика»
   // (PER-770) с открытия торгов — одним рядом.
   if (dayChronicle !== undefined) {
