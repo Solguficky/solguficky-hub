@@ -91,6 +91,7 @@ service AuctionService {
   rpc ListAuctionInvoices(ListAuctionInvoicesRequest) returns (ListAuctionInvoicesResponse);
   rpc SetPaymentInstructions(SetPaymentInstructionsRequest) returns (SetPaymentInstructionsResponse);
   rpc GetAuctionDayChronicle(GetAuctionDayChronicleRequest) returns (GetAuctionDayChronicleResponse);
+  rpc GetAuctionChronicle(GetAuctionChronicleRequest) returns (GetAuctionChronicleResponse);
   rpc SetLotLayout(SetLotLayoutRequest) returns (SetLotLayoutResponse);
   rpc SetPromoVideo(SetPromoVideoRequest) returns (SetPromoVideoResponse);
 }
@@ -3331,6 +3332,57 @@ message DayChronicleLot {
   // Current price minus starting price over the life of the lot, as
   // LotStatistics.price_growth, with the same unset cases.
   Money price_growth = 3;
+}
+
+message GetAuctionChronicleRequest {
+  // The viewer must hold place_bids; without it the call is PERMISSION_DENIED.
+  // An auction hidden from the viewer is NOT_FOUND, as in GetAuction.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
+
+// The trading of the whole auction as a participant reads it: the inputs of
+// GetAuctionDayChronicle without the window of a day. Every accepted bid from
+// the opening of the trading to the instant the service answered counts, so the
+// counters equal the sum of the day chronicles over the same days. Aggregates
+// only: no participant ids, display names, Telegram usernames or proxy limits.
+message GetAuctionChronicleResponse {
+  // RFC 3339 instant in UTC: the instant the service answered. A bid at or after
+  // it is not counted.
+  string until = 1;
+
+  // Accepted bids of every lot of the registry, manual and proxy alike, as the
+  // sum of DayLotStatistics.bid_count over lots. Bids of a removed participant do
+  // not count. 0 is a real value.
+  int64 bid_count = 2;
+
+  // Distinct people who placed a bid or set a proxy limit on any lot of the
+  // auction, the participants of GetAuctionLotStatistics counted once per
+  // auction. A removed participant does not count. 0 is a real value.
+  int64 participant_count = 3;
+
+  // Lots of the registry with at least one accepted bid. 0 is a real value.
+  int64 traded_lot_count = 4;
+
+  // The lot with the greatest positive DayLotStatistics.growth. Unset when no
+  // lot grew. A tie goes to the least lot_id.
+  AuctionGrowthRecord growth_record = 5;
+
+  // Every lot of the registry, without pagination or a meaningful order. The
+  // aggregates of DayLotStatistics over the whole trading: growth is the
+  // highest price minus the starting price, and the leader changes and duels
+  // are those of the life of the lot. The caller ranks the complete list.
+  repeated DayLotStatistics lots = 6;
+}
+
+message AuctionGrowthRecord {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // DayLotStatistics.growth of that lot, positive.
+  Money growth = 2;
 }
 
 // The promo video of an auction: a post in the media chat of the bots (PER-775).

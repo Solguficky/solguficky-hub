@@ -1481,6 +1481,34 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Хроники всего аукциона участника (PER-769): агрегаты лотов того же чтения, что у хроник дня, но без окна суток — от
+   * начала времён до часов сервиса, поэтому в них входит каждая ставка от открытия торгов и счётчики равны сумме хроник
+   * по дням. Право и скрытый аукцион — как у хроник дня. Участники — разные люди по всему реестру, а не сумма по лотам:
+   * читаются после агрегатов, и человек, пришедший между чтениями, только добавится к числу.
+   */
+  def getAuctionChronicle(in: wire.GetAuctionChronicleRequest): Future[wire.GetAuctionChronicleResponse] =
+    RequestMapping.getAuctionChronicle(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        val auctionId = query.auctionId.value
+        concealed(auctionId, query.acting.viewer).flatMap {
+          case true => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case false =>
+            auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+              case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+              case Some(_) =>
+                val until = clock.instant()
+                for {
+                  lots <- views.dayStatistics(auctionId, Instant.EPOCH, until)
+                  participants <- views.participantCount(auctionId)
+                } yield DaySummaryMapping.auctionChronicle(until, lots, participants)
+            }
+        }
+    }
+
+  /**
    * Ручная отметка итогов (ADR-067, п. 8): только администратор сходки аукциона, право у Meetups — тем же путём, что у
    * пульта. Подсчёт этим подавляется; повтор на посчитанном или уже отмеченном принят без второго факта.
    */

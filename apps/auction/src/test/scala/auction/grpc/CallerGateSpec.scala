@@ -38,6 +38,14 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
         GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
     }
 
+    // PER-769: хроники всего аукциона — чтение участника, как хроники дня.
+    "admits both bots on the chronicle of the whole auction" in {
+      CallerGate.decide(table, Some("GetAuctionChronicle"), Some("Bearer hub")) shouldBe
+        GateDecision.Admitted(Caller.HubBot)
+      CallerGate.decide(table, Some("GetAuctionChronicle"), Some("Bearer auction")) shouldBe
+        GateDecision.Admitted(Caller.AuctionBot)
+    }
+
     "admits only the auction bot on the FAQ methods" in {
       List("GetFaqAcknowledgement", "AcknowledgeFaq").foreach { method =>
         CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)

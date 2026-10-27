@@ -173,4 +173,10 @@ trait LotViews {
    * приходит с нулём ставок и без цены, а не пропускается — «ставок не было» читается потребителем по всем лотам.
    */
   def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]]
+
+  /**
+   * Число разных людей среди участников лотов реестра аукциона сходки (PER-769): строки `lot_participant` без снятых,
+   * каждый человек один раз на аукцион, сколько бы лотов он ни вёл.
+   */
+  def participantCount(auctionId: UUID): Future[Long]
 }

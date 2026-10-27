@@ -71,6 +71,7 @@ import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
+import auction.v1.auction_service.GetAuctionChronicleRequest
 import auction.v1.auction_service.GetAuctionDayChronicleRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
@@ -588,6 +589,13 @@ object RequestMapping {
 
   /** Хроники дня участника: аукцион сходки; право `place_bids` граница проверит до чтения, окно — сервис. */
   def getAuctionDayChronicle(request: GetAuctionDayChronicleRequest): Either[FormError, DayChronicleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield DayChronicleQuery(auction, acting)
+
+  /** Хроники всего аукциона (PER-769): те же входы, что у хроник дня, — окна нет и у сервиса. */
+  def getAuctionChronicle(request: GetAuctionChronicleRequest): Either[FormError, DayChronicleQuery] =
     for {
       acting <- acting(request.viewer)
       auction <- meetupAuction(request.auctionId)

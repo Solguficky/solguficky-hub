@@ -45,6 +45,30 @@ object DaySummaryMapping {
     )
   }
 
+  /**
+   * Хроники всего аукциона (PER-769): лоты — агрегаты окна от начала времён, итоги аукциона — их суммы, число разных
+   * участников и рекорд роста. Рекорд — наибольший положительный рост; ничья — первый в порядке чтения, по возрастанию
+   * `lot_id`: `maxBy` оставляет первый из равных.
+   */
+  def auctionChronicle(
+      until: Instant,
+      lots: List[DayLotStatisticsView],
+      participants: Long
+  ): wire.GetAuctionChronicleResponse = {
+    val record = lots
+      .flatMap(view => view.growth.filter(_.minorUnits > 0).map(view.lotId -> _))
+      .maxByOption((_, growth) => growth.minorUnits)
+    wire.GetAuctionChronicleResponse(
+      until = LotValues.instant(until),
+      bidCount = lots.map(_.bidCount).sum,
+      participantCount = participants,
+      tradedLotCount = lots.count(_.bidCount > 0).toLong,
+      growthRecord =
+        record.map((lotId, growth) => wire.AuctionGrowthRecord(lotId.toString, Some(LotValues.money(growth)))),
+      lots = lots.map(lot)
+    )
+  }
+
   def lot(view: DayLotStatisticsView): wire.DayLotStatistics =
     wire.DayLotStatistics(
       lotId = view.lotId.toString,

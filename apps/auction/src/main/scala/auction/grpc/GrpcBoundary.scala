@@ -257,6 +257,7 @@ object GrpcBoundary {
     def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest): Future[wire.GetAuctionDaySummaryResponse] = refuse
     def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest): Future[wire.GetAuctionDayChronicleResponse] =
       refuse
+    def getAuctionChronicle(in: wire.GetAuctionChronicleRequest): Future[wire.GetAuctionChronicleResponse] = refuse
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
     def getAuction(in: wire.GetAuctionRequest): Future[wire.GetAuctionResponse] = refuse
     def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
