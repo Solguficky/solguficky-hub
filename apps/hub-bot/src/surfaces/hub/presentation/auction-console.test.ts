@@ -4972,9 +4972,11 @@ describe("happy hours", () => {
       );
       await bot.init();
       await bot.handleUpdate(press(consoleData));
+      header = plain(last(calls));
       await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
       return plain(last(calls));
     };
+    let header = "";
     const withPeriod = await open([
       {
         periodId: "0198f2a4-7c1e-5d3a-9b21-4f8e12ab3401",
@@ -4985,6 +4987,8 @@ describe("happy hours", () => {
     ]);
     expect(withPeriod).toContain("Периоды: 1 период.");
     expect(withPeriod).not.toContain("Окон");
+    // Шапка пульта называет периоды рядом с окнами.
+    expect(header).toContain("Счастливые часы: 1 период.");
 
     expect(await open([])).toContain("Окон и периодов нет.");
   });

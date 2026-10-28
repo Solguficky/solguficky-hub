@@ -340,10 +340,19 @@ function finalLine(week: AuctionWeek): string {
 // Окна видны в снимке пульта строкой (PER-504); сами окна — на своём экране.
 // Окна видны в снимке пульта строкой (PER-504); запущенные по ходу торгов
 // (PER-615) считаются с объявленными — пульт показывает их рядом.
+// Периоды (PER-787) — тоже «Счастливые часы»: строка называет их рядом с окнами
+// (PER-804).
 function windowsLines(console: AuctionConsoleView): string[] {
   const count =
     (console.week?.windows.length ?? 0) + console.launchedWindows.length;
-  return count === 0 ? [] : [`Счастливые часы: ${windowsLabel(count)}.`];
+  const periods = console.happyHourPeriods.length;
+  const parts = [
+    ...(count === 0 ? [] : [windowsLabel(count)]),
+    ...(periods === 0
+      ? []
+      : [counted(periods, ["период", "периода", "периодов"])]),
+  ];
+  return parts.length === 0 ? [] : [`Счастливые часы: ${parts.join(", ")}.`];
 }
 
 // Розыгрыш (PER-593) виден строкой всегда: без момента у участников нет
