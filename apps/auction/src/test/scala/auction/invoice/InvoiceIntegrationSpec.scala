@@ -69,7 +69,7 @@ final class InvoiceIntegrationSpec
 
   private def withNode[A](
       database: DatabaseSettings,
-      wrap: InvoiceGateway => InvoiceGateway = identity,
+      wrap: InvoiceGateway => InvoiceGateway = gateway => gateway,
       clock: Clock = Clock.systemUTC()
   )(use: Node => A): A = {
     val config = ConfigFactory
