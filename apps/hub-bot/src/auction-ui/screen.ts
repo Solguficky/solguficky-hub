@@ -81,6 +81,13 @@ export type HistoryItem =
       leaderName?: string;
     };
 
+// Раздел в ленте: название и число лотов для подписи кнопки.
+export type FeedSectionItem = {
+  sectionId: number;
+  name: string;
+  lotCount: number;
+};
+
 export type AuctionBlock =
   | {
       // Корень аукциона (PER-605): стадия и сроки, вход в лоты и розыгрыш.
@@ -88,6 +95,10 @@ export type AuctionBlock =
       kind: "root";
       auctionId: string;
       auction?: AuctionSummaryView;
+      // Момент закрытия регистрации в розыгрыше (PER-724) — строка программы
+      // недели. Нет — регистрация не открыта, розыгрыша нет или его чтение
+      // отказало.
+      raffleClosesAt?: string;
     }
   | {
       kind: "feed";
@@ -106,9 +117,16 @@ export type AuctionBlock =
       beforeTrading?: true;
       // Идёт живой финал (PER-639): лот, который ведущий торгует сейчас, — нет
       // его между лотами. Кнопки тогда стоят в порядке зала: активный лот,
-      // оставшиеся лоты состава по порядку выхода, затем остальные по цене.
+      // оставшиеся лоты состава по порядку выхода, затем остальные по цене:
+      // раскладку администратора (PER-719) финал не читает.
       // Нет поля — финал не идёт или стадию прочитать не удалось.
       final?: { active?: FeedItem };
+      // Разделы ленты (PER-719) в порядке администратора: кнопки над лотами,
+      // а лоты блока — общий список вне разделов. Нет — разделов нет, это
+      // экран раздела или идёт финал.
+      sections?: readonly FeedSectionItem[];
+      // Экран раздела: лоты блока — лоты раздела. Нет — это лента.
+      section?: { sectionId: number; name: string };
     }
   | {
       kind: "lot";
@@ -296,6 +314,15 @@ export type AuctionBlock =
           };
     }
   | {
+      // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов, который
+      // оболочка присылает новым сообщением. Поста нет — видео убрали, аукцион
+      // не отдан или чат медиа выключен: оболочка отвечает «видео недоступно»,
+      // а экран, с которого нажали, остаётся.
+      kind: "promo";
+      auctionId: string;
+      postId?: number;
+    }
+  | {
       // Хроники дня (PER-725): номинации последних суток глазами участника.
       // Лот назван только названием карточки — нет его, оболочка подставит
       // «лот без названия»; людей и служебных чисел пульта в блоке нет.
@@ -312,6 +339,26 @@ export type AuctionBlock =
               priceGrowth: Money;
               bidsBefore: number;
             };
+            duel?: { title?: string; longestDuel: number };
+          };
+    }
+  | {
+      // Статистика аукциона (PER-770): счётчики всех торгов и номинации за
+      // весь аукцион. Лот назван только названием карточки, людей — только
+      // числом: ни имён, ни ников в блоке нет.
+      kind: "auction-chronicle";
+      auctionId: string;
+      chronicle:
+        | { kind: "no-lots" }
+        | { kind: "no-bids" }
+        | {
+            kind: "counted";
+            bidCount: number;
+            participantCount: number;
+            tradedLotCount: number;
+            lotCount: number;
+            growthRecord?: { title?: string; growth: Money };
+            contested?: { title?: string; leaderChanges: number };
             duel?: { title?: string; longestDuel: number };
           };
     }
@@ -530,6 +577,8 @@ export type InvoiceItem = WinnerInvoiceView & { title?: string };
 // текстом у кнопки нет; лот кнопки ленты рендерер находит в блоке по `lotId`.
 export type AuctionButton =
   | { action: "feed.open-lot"; lotId: string; callbackData: string }
+  // Раздел ленты (PER-719): подпись — название раздела из блока.
+  | { action: "feed.open-section"; sectionId: number; callbackData: string }
   | { action: "favorites.open-lot"; lotId: string; callbackData: string }
   | { action: "prediction.select-lot"; lotId: string; callbackData: string }
   // Лот сета на его экране: открывает карточку лота (ADR-073, п. 7).
@@ -555,6 +604,9 @@ export type AuctionButton =
         | "root.day-chronicle"
         | "root.raffle"
         | "root.favorites"
+        // Промо-видео (PER-774): вход из корня и возврат в корень из-под видео.
+        | "root.promo"
+        | "promo.back"
         // Счета победителя (PER-322): вход из корня, возврат из списка в
         // корень и со счёта — в список.
         | "root.invoices"
@@ -611,6 +663,7 @@ export type AuctionButton =
         | "raffle.return"
         | "prediction-results.back"
         | "day-chronicle.back"
+        | "auction-chronicle.back"
         // Имя из настроек: возврат на экран имени с исхода.
         | "name.return";
       callbackData: string;

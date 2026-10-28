@@ -74,7 +74,9 @@ final class GrpcBoundarySpec
 
   private val table = CallerTable
     .fromConfig(
-      ConfigFactory.parseString("""auction.grpc.callers { hub-bot = "hub", auction-bot = "auction" }"""),
+      ConfigFactory.parseString(
+        """auction.grpc.callers { hub-bot = "hub", auction-bot = "auction", notifications = "notifications" }"""
+      ),
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)
@@ -114,6 +116,7 @@ final class GrpcBoundarySpec
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest) = unused
     def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest) = unused
     def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest) = unused
+    def getAuctionChronicle(in: wire.GetAuctionChronicleRequest) = unused
     def createLotCard(in: wire.CreateLotCardRequest) = unused
     def editLotCard(in: wire.EditLotCardRequest) = unused
     def listAuctionLots(in: wire.ListAuctionLotsRequest) = unused
@@ -148,6 +151,9 @@ final class GrpcBoundarySpec
     def getRaffle(in: wire.GetRaffleRequest) = unused
     def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest) = unused
     def changeRafflePrize(in: wire.ChangeRafflePrizeRequest) = unused
+    def setRafflePrizePhoto(in: wire.SetRafflePrizePhotoRequest) = unused
+    def removeRafflePrizePhoto(in: wire.RemoveRafflePrizePhotoRequest) = unused
+    def getRafflePrizePhoto(in: wire.GetRafflePrizePhotoRequest) = unused
     def submitPrediction(in: wire.SubmitPredictionRequest) = unused
     def getMyPredictions(in: wire.GetMyPredictionsRequest) = unused
     def getPredictionResults(in: wire.GetPredictionResultsRequest) = unused
@@ -158,6 +164,13 @@ final class GrpcBoundarySpec
     def listMyInvoices(in: wire.ListMyInvoicesRequest) = unused
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest) = unused
     def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest) = unused
+    def setLotLayout(in: wire.SetLotLayoutRequest) = unused
+    def setPromoVideo(in: wire.SetPromoVideoRequest) = unused
+    def createHappyHourPeriod(in: wire.CreateHappyHourPeriodRequest) = unused
+    def deleteHappyHourPeriod(in: wire.DeleteHappyHourPeriodRequest) = unused
+    def setHappyHourLotTerms(in: wire.SetHappyHourLotTermsRequest) = unused
+    def clearHappyHourLotTerms(in: wire.ClearHappyHourLotTermsRequest) = unused
+    def listAuctionEngagement(in: wire.ListAuctionEngagementRequest) = unused
   }
 
   private lazy val binding =

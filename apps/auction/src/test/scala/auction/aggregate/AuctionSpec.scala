@@ -892,6 +892,159 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
     }
   }
 
+  // PER-781: промо-видео — показ, а не условие торгов, живёт в любом рождённом аукционе.
+  "promo video" should {
+    val video = PromoVideo.parse(4321).get
+    val other = PromoVideo.parse(4322).get
+
+    "sets, replaces and clears the video" in {
+      val set = Auction.decide(scheduled, SetPromoVideo(Some(video), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoSet(video)))
+      val withVideo = applied(scheduled, set.toOption.get, 10, 10)
+      withVideo.promoVideo shouldBe Some(video)
+      withVideo.state shouldBe scheduled.state
+
+      val replaced = Auction.decide(withVideo, SetPromoVideo(Some(other), op(11)))
+      replaced shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoSet(other)))
+      val withOther = applied(withVideo, replaced.toOption.get, 11, 11)
+      withOther.promoVideo shouldBe Some(other)
+
+      val cleared = Auction.decide(withOther, SetPromoVideo(None, op(12)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoCleared))
+      applied(withOther, cleared.toOption.get, 12, 12).promoVideo shouldBe None
+    }
+
+    "sets the video in every state of a born auction" in {
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      List(scheduled, started, inFinal, finished, cancelled).foreach { auction =>
+        val decided = Auction.decide(auction, SetPromoVideo(Some(video), op(10)))
+        decided shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PromoVideoSet(video)))
+        applied(auction, decided.toOption.get, 10, 10).promoVideo shouldBe Some(video)
+      }
+    }
+
+    "refuses the video of an auction that does not exist" in {
+      Auction.decide(Auction.initial, SetPromoVideo(Some(video), op(10))) shouldBe
+        Left(PromoVideoRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope instead of a second event" in {
+      val set = applied(scheduled, Auction.decide(scheduled, SetPromoVideo(Some(video), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetPromoVideo(Some(video), op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.PromoVideoSet(video))))
+    }
+
+    "refuses a message id that is not positive" in {
+      PromoVideo.parse(0) shouldBe None
+      PromoVideo.parse(-1) shouldBe None
+    }
+  }
+
+  // PER-719: порядок и разделы ленты — показ, а не условие торгов; меняются, пока финал впереди.
+  "lot layout" should {
+
+    val other = LotId(new UUID(5L, 2L))
+
+    def section(id: Int, name: String, lots: LotId*): LotSection =
+      LotSection(LotSectionId(id).get, LotSectionName(name).get, lots.toList)
+
+    def layout(lots: List[LotId], sections: LotSection*): LotLayout = LotLayout.of(lots, sections.toList).toOption.get
+
+    def withLots(auction: Auction): Auction =
+      Auction.apply(holding(auction), AuctionEnvelope(11, op(11), AuctionEvent.LotAdded(other)))
+
+    val arranged = layout(List(other), section(1, "Книги", lot))
+
+    "sets the layout before the trading and replaces it as a whole" in {
+      val auction = withLots(scheduled)
+      val set = Auction.decide(auction, SetLotLayout(arranged, op(20)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.LotLayoutSet(arranged)))
+      val withLayout = applied(auction, set.toOption.get, 20, 20)
+      withLayout.layout shouldBe arranged
+      withLayout.state shouldBe auction.state
+
+      val flat = layout(List(lot, other))
+      val replaced = applied(withLayout, Auction.decide(withLayout, SetLotLayout(flat, op(21))).toOption.get, 21, 21)
+      replaced.layout shouldBe flat
+      replaced.layout.sections shouldBe Nil
+    }
+
+    "sets the layout during the online trading, in the break and with the lineup frozen" in {
+      val trading = Auction.apply(withLots(scheduled), AuctionEnvelope(12, op(12), AuctionEvent.PrebiddingStarted))
+      val break = trading.copy(state = AuctionState.Break(config(), op(12)))
+      val frozen = trading.copy(state = AuctionState.LineupFrozen(config(), op(12), List(lot)))
+      List(trading, break, frozen).foreach { auction =>
+        val decided = Auction.decide(auction, SetLotLayout(arranged, op(20)))
+        decided shouldBe Right(AuctionDecision.Accepted(AuctionEvent.LotLayoutSet(arranged)))
+        applied(auction, decided.toOption.get, 20, 20).layout shouldBe arranged
+      }
+    }
+
+    "refuses the layout once the final has started and once the auction is over" in {
+      val trading = Auction.apply(withLots(scheduled), AuctionEnvelope(12, op(12), AuctionEvent.PrebiddingStarted))
+      val inFinal = trading.copy(state = AuctionState.Final(config(), op(12), List(lot), Nil, Nil))
+      Auction.decide(inFinal, SetLotLayout(arranged, op(20))) shouldBe Left(LotLayoutRejected.FinalAlreadyStarted)
+      val finished = trading.copy(state = AuctionState.Finished(config(), op(12)))
+      Auction.decide(finished, SetLotLayout(arranged, op(20))) shouldBe Left(LotLayoutRejected.AuctionAlreadyFinished)
+      val cancelled = trading.copy(state = AuctionState.Cancelled(config(), op(12), op(13)))
+      Auction.decide(cancelled, SetLotLayout(arranged, op(20))) shouldBe
+        Left(LotLayoutRejected.AuctionAlreadyCancelled)
+      Auction.decide(Auction.initial, SetLotLayout(arranged, op(20))) shouldBe Left(LotLayoutRejected.AuctionNotFound)
+    }
+
+    "refuses a lot outside the registry, naming the first one with the sections first" in {
+      val stranger = LotId(new UUID(5L, 3L))
+      val auction = holding(scheduled)
+      Auction.decide(auction, SetLotLayout(layout(List(stranger), section(1, "Книги", lot, other)), op(20))) shouldBe
+        Left(LotLayoutRejected.LotNotInAuction(other))
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val auction = withLots(scheduled)
+      val set = applied(auction, Auction.decide(auction, SetLotLayout(arranged, op(20))).toOption.get, 20, 20)
+      Auction.decide(set, SetLotLayout(LotLayout.empty, op(20))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(20, op(20), AuctionEvent.LotLayoutSet(arranged))))
+    }
+
+    "drops a lot removed from the registry from its place and keeps its section" in {
+      val auction = withLots(scheduled).copy(layout = arranged)
+      val removed = Auction.apply(auction, AuctionEnvelope(20, op(20), AuctionEvent.LotRemoved(lot)))
+      removed.layout shouldBe layout(List(other), section(1, "Книги"))
+    }
+
+    "forgets the layout when the auction is discarded before the trading" in {
+      val auction = withLots(scheduled).copy(layout = arranged)
+      Auction.apply(auction, AuctionEnvelope(20, op(20), AuctionEvent.AuctionDiscarded)).layout shouldBe LotLayout.empty
+    }
+  }
+
+  "lot layout form" should {
+
+    val other = LotId(new UUID(5L, 2L))
+
+    "refuses a lot named twice, in a section and outside the sections alike" in {
+      val books = LotSection(LotSectionId(1).get, LotSectionName("Книги").get, List(lot))
+      LotLayout.of(List(lot), List(books)) shouldBe Left(LotLayoutInvalid.LotRepeated(lot))
+      LotLayout.of(List(other, other), Nil) shouldBe Left(LotLayoutInvalid.LotRepeated(other))
+    }
+
+    "refuses a section number named twice" in {
+      val first = LotSection(LotSectionId(2).get, LotSectionName("Книги").get, List(lot))
+      val second = LotSection(LotSectionId(2).get, LotSectionName("Посуда").get, List(other))
+      LotLayout.of(Nil, List(first, second)) shouldBe Left(LotLayoutInvalid.SectionRepeated(LotSectionId(2).get))
+    }
+
+    "accepts only a positive section number and a name that is not blank" in {
+      LotSectionId(0) shouldBe None
+      LotSectionId(-1) shouldBe None
+      LotSectionId(1).map(_.value) shouldBe Some(1)
+      LotSectionName(" \u00a0 ") shouldBe None
+      LotSectionName("Книги").map(_.value) shouldBe Some("Книги")
+    }
+  }
+
   "payment instructions text" should {
 
     "keeps line breaks and strips the edges" in {

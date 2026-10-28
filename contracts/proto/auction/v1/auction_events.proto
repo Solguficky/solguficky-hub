@@ -74,6 +74,7 @@ message LotEvent {
     LotResumed lot_resumed = 14;
     StepWindowAdded step_window_added = 17;
     ParticipantRemoved participant_removed = 18;
+    StepWindowChanged step_window_changed = 19;
   }
 }
 
@@ -132,9 +133,10 @@ message LotState {
 }
 
 // A window of reduced bid step of one lot as the lot recorded it: the half-open
-// interval [from, until) with the step in force in it. It is not the window of
-// LotSnapshot: that one answers at an instant, while this one is the recorded
-// window itself.
+// interval [from, until) with the step and the starting price in force in it. It
+// is not the window of LotSnapshot: that one answers at an instant, while this
+// one is the recorded window itself. A window sets a step, a starting price or
+// both.
 message StepWindow {
   // RFC 3339 instant in UTC: the first instant of the window.
   string from = 1;
@@ -142,7 +144,19 @@ message StepWindow {
   // RFC 3339 instant in UTC: the first instant after the window.
   string until = 2;
 
+  // The bid step inside the window. Unset when the window does not change it.
   Money step = 3;
+
+  // The price of the first bid inside the window while the lot has no bid. Unset
+  // when the window does not change it.
+  Money start = 4;
+
+  // Canonical lowercase UUIDv5 with hyphens: the happy hour period whose terms
+  // for this lot the window is (auction.v1.HappyHourPeriod.period_id). Empty on
+  // a window announced in the configuration or launched during the online
+  // phase. A window of a period may be replaced or removed until the period
+  // starts; then step_window_changed comes.
+  string happy_hour_period_id = 5;
 }
 
 // The lot came into existence: its auction recorded it in the registry and the lot
@@ -231,6 +245,13 @@ message LotResumed {}
 // is not carried. A window announced in the configuration comes with lot_opened
 // instead and never with this occasion.
 message StepWindowAdded {}
+
+// The terms of the lot in a happy hour period were set, replaced or removed
+// before the period started. The windows are state.step_windows as they are now:
+// the window of the period is among them with happy_hour_period_id, or is gone
+// when the terms were removed. Which window changed and what it was before is
+// not carried.
+message StepWindowChanged {}
 
 // A participant was removed from the lot by the administrator of the meetup. The
 // state is the lot after the removal: the leader and the price it goes on with,

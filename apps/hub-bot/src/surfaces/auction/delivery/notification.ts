@@ -16,6 +16,7 @@ import {
 import {
   type AuctionAnnouncementNotice,
   newAuctionNoticeOf,
+  stepWindowAnnouncedNoticeOf,
   tradingOpenedNoticeOf,
 } from "../../../core/notifications/auction-announcement-notice.js";
 import {
@@ -38,6 +39,10 @@ import {
   type LotSetNotice,
   lotSetNoticeOf,
 } from "../../../core/notifications/lot-set-notice.js";
+import {
+  type OrganizerAnnouncement,
+  organizerAnnouncementOf,
+} from "../../../core/notifications/organizer-announcement.js";
 import {
   type PredictionResultsNotice,
   predictionResultsNoticeOf,
@@ -67,6 +72,8 @@ export type AuctionNotificationContent =
   | InvoiceNotice
   // Собранный сет (PER-687) — тот же, что у бота хаба.
   | LotSetNotice
+  // Объявление аукциона (PER-765) — то же, что у бота хаба.
+  | OrganizerAnnouncement
   | PredictionResultsNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота хаба.
   | AuctionCancelledNotice
@@ -131,6 +138,9 @@ function toContent(
       return invoiceNoticeOf("invoice-due-reminder", type.value);
     case "lotSetCollected":
       return lotSetNoticeOf(type.value);
+    // Объявление аукциона (PER-765): текст, кнопка и фото лота ссылкой.
+    case "auctionNotice":
+      return organizerAnnouncementOf(type.value);
     // Итоги прогнозов (PER-568): весть — фраза и кнопка. Списки номинаций
     // факт несёт, разбор их не читает: они остаются на экране.
     case "predictionResults":
@@ -145,6 +155,10 @@ function toContent(
       return newAuctionNoticeOf(type.value);
     case "auctionTradingOpened":
       return tradingOpenedNoticeOf(type.value);
+    // Общая весть о начале «Счастливых часов» (PER-766): та же семья, что
+    // вести о новом аукционе, — тот же выключатель и кнопка в ленту.
+    case "stepWindowAnnounced":
+      return stepWindowAnnouncedNoticeOf(type.value);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {

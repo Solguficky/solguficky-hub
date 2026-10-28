@@ -9,7 +9,12 @@ import {
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
+import { createMediaChat } from "../../core/media-chat.js";
 import { logMissingTitle } from "../../core/notifications/lot-notice.js";
+import {
+  createAnnouncementPhotos,
+  logMissingAnnouncementPhoto,
+} from "../../core/notifications/organizer-announcement.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createBot } from "./bot.js";
@@ -93,12 +98,26 @@ export const auctionSurface: SurfaceDefinition = ({
         "unexpected",
       ),
   });
+  // Чат медиа ботов (PER-775): своё фото или видео объявления (PER-776) и
+  // промо-видео аукциона (PER-774). Без `BOT_MEDIA_CHANNEL_ID` его нет.
+  const mediaChat =
+    config.mediaChannelId === undefined
+      ? undefined
+      : createMediaChat({ channelId: config.mediaChannelId, logger });
   const bot = createBot({
     token: config.token,
     environment: config.environment,
     tracing,
     presentation: config.presentation,
-    ports: clients.ports,
+    // Корень аукциона ставит «🎬 Промо», только когда пост есть чем показать.
+    ports:
+      mediaChat === undefined
+        ? clients.ports
+        : (requestId, deadlineAt) => ({
+            ...clients.ports(requestId, deadlineAt),
+            media: true as const,
+          }),
+    ...(mediaChat === undefined ? {} : { media: mediaChat }),
     faq: auction.faq,
     logger,
     ...(auction.supportBotUsername === undefined
@@ -115,8 +134,22 @@ export const auctionSurface: SurfaceDefinition = ({
       },
     },
   });
+  // Фото лота объявления аукциона (PER-765) — правами получателя: адресата
+  // выбрал издатель по праву ставок, а без него Auction фото не отдаёт.
+  const announcementPhotos = createAnnouncementPhotos(
+    (photo, identityId) =>
+      clients.ports(createUuidV7()).image.getLotPhoto({
+        viewer: { identityId, rights: ["place-bids"] },
+        ...photo,
+      }),
+    logMissingAnnouncementPhoto(logger),
+  );
+  // Своё фото или видео объявления (PER-776) — пост чата медиа ботов; без
+  // `BOT_MEDIA_CHANNEL_ID` объявление с постом уходит текстом.
   const sender = createNotificationSender(
     createNotificationApi(config.token, config.environment),
+    announcementPhotos,
+    mediaChat,
   );
   return {
     ok: true,

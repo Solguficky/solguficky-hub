@@ -77,6 +77,9 @@ service AuctionService {
   rpc GetRaffle(GetRaffleRequest) returns (GetRaffleResponse);
   rpc AssignRaffleWinner(AssignRaffleWinnerRequest) returns (AssignRaffleWinnerResponse);
   rpc ChangeRafflePrize(ChangeRafflePrizeRequest) returns (ChangeRafflePrizeResponse);
+  rpc SetRafflePrizePhoto(SetRafflePrizePhotoRequest) returns (SetRafflePrizePhotoResponse);
+  rpc RemoveRafflePrizePhoto(RemoveRafflePrizePhotoRequest) returns (RemoveRafflePrizePhotoResponse);
+  rpc GetRafflePrizePhoto(GetRafflePrizePhotoRequest) returns (LotImage);
   rpc SubmitPrediction(SubmitPredictionRequest) returns (SubmitPredictionResponse);
   rpc GetMyPredictions(GetMyPredictionsRequest) returns (GetMyPredictionsResponse);
   rpc GetPredictionResults(GetPredictionResultsRequest) returns (GetPredictionResultsResponse);
@@ -88,6 +91,14 @@ service AuctionService {
   rpc ListAuctionInvoices(ListAuctionInvoicesRequest) returns (ListAuctionInvoicesResponse);
   rpc SetPaymentInstructions(SetPaymentInstructionsRequest) returns (SetPaymentInstructionsResponse);
   rpc GetAuctionDayChronicle(GetAuctionDayChronicleRequest) returns (GetAuctionDayChronicleResponse);
+  rpc GetAuctionChronicle(GetAuctionChronicleRequest) returns (GetAuctionChronicleResponse);
+  rpc SetLotLayout(SetLotLayoutRequest) returns (SetLotLayoutResponse);
+  rpc SetPromoVideo(SetPromoVideoRequest) returns (SetPromoVideoResponse);
+  rpc ListAuctionEngagement(ListAuctionEngagementRequest) returns (ListAuctionEngagementResponse);
+  rpc CreateHappyHourPeriod(CreateHappyHourPeriodRequest) returns (CreateHappyHourPeriodResponse);
+  rpc DeleteHappyHourPeriod(DeleteHappyHourPeriodRequest) returns (DeleteHappyHourPeriodResponse);
+  rpc SetHappyHourLotTerms(SetHappyHourLotTermsRequest) returns (SetHappyHourLotTermsResponse);
+  rpc ClearHappyHourLotTerms(ClearHappyHourLotTermsRequest) returns (ClearHappyHourLotTermsResponse);
 }
 
 message Viewer {
@@ -518,9 +529,10 @@ message LotSnapshot {
   Money base_step = 16;
 
   // The window of reduced step in force at the instant of the answer, with the
-  // step in force. Unset when none is: outside every window of the lot, when the
-  // window does not lower the step at the current price, in the live final, and
-  // when the lot is not trading.
+  // step in force and, while the lot has no bid, the starting price in force.
+  // Unset when none is: outside every window of the lot, when the window neither
+  // lowers the step at the current price nor the price of the first bid, in the
+  // live final, and when the lot is not trading.
   LotStepWindow active_window = 17;
 
   // The nearest window of the lot that has not started yet at the instant of the
@@ -565,7 +577,15 @@ message LotStepWindow {
   // RFC 3339 instant in UTC: the first instant after the window.
   string until = 2;
 
+  // The bid step inside the window. Unset when the window does not change the
+  // step: a window sets a step, a starting price or both.
   Money step = 3;
+
+  // The price of the first bid inside the window while the lot has no bid, below
+  // its regular starting price. Unset when the window does not change it, and in
+  // active_window once the lot has a bid: after the first bid the starting price
+  // of the window affects nothing.
+  Money start = 4;
 }
 
 message ListLotHistoryRequest {
@@ -844,7 +864,8 @@ message GetLotImageRequest {
 }
 
 // The image of a lot as it is stored now: the cover for GetLotImage, the named
-// photo for GetLotPhoto.
+// photo for GetLotPhoto. GetRafflePrizePhoto returns the photo of a raffle prize
+// in the same form.
 message LotImage {
   // The encoded image file as Telegram returned it on upload.
   bytes content = 1;
@@ -1501,6 +1522,87 @@ message FinalTimeRefusal {
 // The live final has started: the announcement is over.
 message FinalAlreadyStarted {}
 
+// The order of the lots in the feed and its sections (PER-719). A lot is in at
+// most one place: in one section or in the lots outside every section.
+message LotLayout {
+  // Canonical lowercase UUIDv7 with hyphens each: the lots outside every
+  // section, in the order of the administrator. The feed shows them after the
+  // sections, as one more list.
+  repeated string lot_ids = 1;
+
+  // The sections in the order of the administrator. Empty is a real value: the
+  // feed is one flat list.
+  repeated LotSection sections = 2;
+}
+
+// A section of the feed: its own screen with its own lots.
+message LotSection {
+  // Chosen by the caller, positive and unique within the layout: the same id
+  // names the same section from one SetLotLayout to the next, so a button may
+  // carry it.
+  uint32 section_id = 1;
+
+  // The name of the section as the administrator typed it. Never empty.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots of the section in
+  // the order of the administrator. Empty is a real value: a section not yet
+  // filled.
+  repeated string lot_ids = 3;
+}
+
+// The order and sections of the feed, replaced as a whole (PER-719): the
+// request carries the complete layout, and the layout it names is the one the
+// feed shows from then on. A display, not a trading condition: it is accepted
+// until the live final starts.
+message SetLotLayoutRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // The complete layout. Unset is the empty layout: no section, no arranged
+  // lot, the order of creation. A lot named twice, a section_id of 0, a
+  // section_id named twice and a name that is empty or only spaces are
+  // INVALID_ARGUMENT: the caller checks the name it asks for.
+  LotLayout layout = 4;
+}
+
+message SetLotLayoutResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotLayoutAccepted accepted = 1;
+    SetLotLayoutRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionSnapshot.lot_layout tells the layout.
+message LotLayoutAccepted {}
+
+message SetLotLayoutRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    FinalAlreadyStarted final_already_started = 4;
+    AuctionAlreadyFinished auction_already_finished = 5;
+    AuctionAlreadyCancelled auction_already_cancelled = 6;
+    LotLayoutLotNotInAuction lot_not_in_auction = 7;
+  }
+}
+
+// A lot of the request is not in the registry of the auction.
+message LotLayoutLotNotInAuction {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot in the order of
+  // the request, sections first.
+  string lot_id = 1;
+}
+
 // The auction was cancelled: its final will not start.
 message AuctionAlreadyCancelled {}
 
@@ -2117,6 +2219,16 @@ message AuctionConsole {
   // participant and no answer is named. Absent when the auction has no game
   // yet and when the game could not be read.
   ConsolePredictions predictions = 6;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction, the one
+  // whose administrator was checked for this read. Never empty. Only the console
+  // names it: AuctionSnapshot and the reads of a participant do not lead from an
+  // auction to its meetup.
+  string meetup_id = 7;
+
+  // The happy hour periods of the auction that are not deleted, by ascending
+  // from, past ones included. Empty is a real value: the auction has no period.
+  repeated HappyHourPeriod happy_hour_periods = 8;
 }
 
 // The predictions of every round of the auction counted together.
@@ -2361,6 +2473,32 @@ message AuctionSnapshot {
   // not set it.
   optional string final_at = 6;
 
+  // How the feed shows the lots of the registry, as the administrator arranged
+  // them with SetLotLayout (PER-719). It is a display, not a trading condition:
+  // it opens and closes nothing, and the live final shows the order of its
+  // lineup instead. Unset when the administrator has not arranged the lots:
+  // the feed then shows them in the order of creation, which is the order of
+  // their UUIDv7 ids. Every lot it names is in lot_ids; a lot of lot_ids it
+  // does not name follows the arranged ones in the order of creation.
+  LotLayout lot_layout = 7;
+
+  // The windows of reduced bid step launched during the online phase, in the
+  // order they were launched; the windows of the configuration are in
+  // config.step_windows. Together they are the programme of the week a
+  // participant reads (PER-724). Empty is a real value: no window was launched.
+  repeated AuctionStepWindow launched_step_windows = 8;
+
+  // The promo video of the auction, as the administrator set it with
+  // SetPromoVideo (PER-781). Unset when there is none.
+  AuctionPromoVideo promo_video = 9;
+
+  // The happy hour periods of the auction that are not deleted, by ascending
+  // from, past ones included: the same list as AuctionConsole.happy_hour_periods.
+  // With the windows they are the programme of the week a participant reads
+  // (PER-804). Empty is a real value: the auction has no period. Number 19 is
+  // not used: auction.v1.AuctionState carries the discarded status under it.
+  repeated HappyHourPeriod happy_hour_periods = 20;
+
   // Where the auction is. Exactly one is set.
   oneof status {
     AuctionState.Draft draft = 10;
@@ -2502,6 +2640,22 @@ message Raffle {
   // winning_ticket but no randomness and no value: there is nothing to
   // recompute.
   bool drawn_by_hand = 12;
+
+  // The photo of the prize, without its bytes: they are read with
+  // GetRafflePrizePhoto. Unset when the prize has no photo and when the raffle
+  // is not held.
+  RafflePrizePhoto prize_photo = 13;
+}
+
+// Names the photo of a raffle prize without carrying it.
+message RafflePrizePhoto {
+  // Canonical lowercase UUIDv7 with hyphens: the photo_id of
+  // SetRafflePrizePhoto.
+  string photo_id = 1;
+
+  // Opaque, compared only for equality, as LotImageRef.version: equal bytes give
+  // an equal version.
+  string version = 2;
 }
 
 enum RaffleStatus {
@@ -2669,6 +2823,69 @@ message ChangeRafflePrizeRefusal {
 }
 
 message RaffleWithoutResult {}
+
+// Sets the photo of the raffle prize.
+message SetRafflePrizePhotoRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens: the key of a
+  // replay.
+  string photo_id = 3;
+
+  LotImageUpload photo = 4;
+}
+
+message SetRafflePrizePhotoResponse {
+  // Exactly one is set. accepted is the raffle after the command.
+  oneof outcome {
+    Raffle accepted = 1;
+    RafflePrizePhotoRefusal refused = 2;
+  }
+}
+
+// Takes the photo of the raffle prize back.
+message RemoveRafflePrizePhotoRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message RemoveRafflePrizePhotoResponse {
+  // Exactly one is set. accepted is the raffle after the command.
+  oneof outcome {
+    Raffle accepted = 1;
+    RafflePrizePhotoRefusal refused = 2;
+  }
+}
+
+message RafflePrizePhotoRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    RaffleNotFound raffle_not_found = 4;
+    RaffleAlreadyDrawn already_drawn = 5;
+    RaffleWithoutResult without_result = 6;
+    ImageTooLarge image_too_large = 7;
+    UnsupportedImage unsupported_image = 8;
+    PhotoConflict photo_conflict = 9;
+  }
+}
+
+message GetRafflePrizePhotoRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
 
 message SubmitPredictionRequest {
   // The participant who predicts: there is no separate participant field. The
@@ -3146,4 +3363,423 @@ message DayChronicleLot {
   // Current price minus starting price over the life of the lot, as
   // LotStatistics.price_growth, with the same unset cases.
   Money price_growth = 3;
+}
+
+message GetAuctionChronicleRequest {
+  // The viewer must hold place_bids; without it the call is PERMISSION_DENIED.
+  // An auction hidden from the viewer is NOT_FOUND, as in GetAuction.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
+
+// The trading of the whole auction as a participant reads it: the inputs of
+// GetAuctionDayChronicle without the window of a day. Every accepted bid from
+// the opening of the trading to the instant the service answered counts, so the
+// counters equal the sum of the day chronicles over the same days. Aggregates
+// only: no participant ids, display names, Telegram usernames or proxy limits.
+message GetAuctionChronicleResponse {
+  // RFC 3339 instant in UTC: the instant the service answered. A bid at or after
+  // it is not counted.
+  string until = 1;
+
+  // Accepted bids of every lot of the registry, manual and proxy alike, as the
+  // sum of DayLotStatistics.bid_count over lots. Bids of a removed participant do
+  // not count. 0 is a real value.
+  int64 bid_count = 2;
+
+  // Distinct people who placed a bid or set a proxy limit on any lot of the
+  // auction, the participants of GetAuctionLotStatistics counted once per
+  // auction. A removed participant does not count. 0 is a real value.
+  int64 participant_count = 3;
+
+  // Lots of the registry with at least one accepted bid. 0 is a real value.
+  int64 traded_lot_count = 4;
+
+  // The lot with the greatest positive DayLotStatistics.growth. Unset when no
+  // lot grew. A tie goes to the least lot_id.
+  AuctionGrowthRecord growth_record = 5;
+
+  // Every lot of the registry, without pagination or a meaningful order. The
+  // aggregates of DayLotStatistics over the whole trading: growth is the
+  // highest price minus the starting price, and the leader changes and duels
+  // are those of the life of the lot. The caller ranks the complete list.
+  repeated DayLotStatistics lots = 6;
+}
+
+message AuctionGrowthRecord {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // DayLotStatistics.growth of that lot, positive.
+  Money growth = 2;
+}
+
+// The promo video of an auction: a post in the media chat of the bots (PER-775).
+// Only the number of the post: the chat is not here.
+message AuctionPromoVideo {
+  // The message_id of the post in the media chat of the bots, positive.
+  int64 message_id = 1;
+}
+
+// Sets, replaces or takes back the promo video of an auction.
+message SetPromoVideoRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // The video to show. Unset takes the video back. Set with a message_id that
+  // is not positive is INVALID_ARGUMENT.
+  AuctionPromoVideo video = 4;
+}
+
+message SetPromoVideoResponse {
+  // Exactly one is set.
+  oneof outcome {
+    PromoVideoAccepted accepted = 1;
+    PromoVideoRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionSnapshot.promo_video tells the video.
+message PromoVideoAccepted {}
+
+message PromoVideoRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+  }
+}
+
+// Who of the auction is in its raffle and who has a prediction in the round open
+// now, for Notifications to narrow the audience of an auction announcement
+// (PER-768, PER-777). It is a read between services: no viewer, no screen and no
+// bot reads it, and only Notifications is admitted. Read at the moment of the
+// call, from the raffle and the prediction rows themselves: a registration, its
+// cancellation, a prediction and its clearing show at once, and an erased
+// subject is absent. An auction without a journal is NOT_FOUND.
+message ListAuctionEngagementRequest {
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 1;
+}
+
+message ListAuctionEngagementResponse {
+  // Where registration in the raffle of the auction is. UNSPECIFIED is not a
+  // value.
+  RaffleRegistration raffle_registration = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the identities registered in the
+  // raffle, in registration order. Set only with RAFFLE_REGISTRATION_OPEN:
+  // once registration closes the audience of the raffle is no longer asked.
+  repeated string raffle_registrants = 2;
+
+  // The round of the predictions game that accepts predictions now: the final
+  // once it opens, otherwise the catalog. Unset when no round is open.
+  optional PredictionRound open_prediction_round = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the identities with a non-empty
+  // prediction in open_prediction_round, in no particular order. Empty when no
+  // round is open; a cleared prediction is not one.
+  repeated string forecasters = 4;
+}
+
+enum RaffleRegistration {
+  RAFFLE_REGISTRATION_UNSPECIFIED = 0;
+
+  // Registration has not opened yet and still may: the auction is a draft, or
+  // its raffle opens with prebidding that has not started.
+  RAFFLE_REGISTRATION_NOT_OPEN = 1;
+
+  // Registration is open: closes_at of the raffle has not passed.
+  RAFFLE_REGISTRATION_OPEN = 2;
+
+  // Registration will not open again: closes_at has passed, the raffle was not
+  // held or was cancelled, or the auction has no raffle.
+  RAFFLE_REGISTRATION_CLOSED = 3;
+}
+
+// A happy hour period of an auction: the half-open interval [from, until) inside
+// the online phase. The period alone changes no trading: the terms of each lot in
+// it are set separately. Until it starts the period may be deleted; from its
+// start it is frozen.
+message HappyHourPeriod {
+  // Canonical lowercase UUIDv5 with hyphens, derived from the op_id of the
+  // command that created the period.
+  string period_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the period.
+  string from = 2;
+
+  // RFC 3339 instant in UTC: the first instant after the period.
+  string until = 3;
+
+  // The terms of the lots in the period, in the order of lot_id. A lot without
+  // terms here trades in the period as usual. Empty is a real value: no lot has
+  // terms in the period yet. The terms are what the auction recorded; a lot
+  // receives them after the answer, and a lot that refused them because it left
+  // trading or the period started still shows them here.
+  repeated HappyHourLotTerms lot_terms = 4;
+}
+
+// The terms of one lot in a happy hour period: a step, a starting price or both.
+message HappyHourLotTerms {
+  // Canonical lowercase UUIDv7 with hyphens: a lot of the registry.
+  string lot_id = 1;
+
+  // The bid step inside the period, in the currency of the lot. Unset when the
+  // terms do not change the step.
+  Money step = 2;
+
+  // The price of the first bid inside the period while the lot has no bid, in
+  // the currency of the lot. Unset when the terms do not change it.
+  Money start = 3;
+}
+
+// Creates a happy hour period while the auction is in its online phase.
+message CreateHappyHourPeriodRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // RFC 3339 instant in UTC: the first instant of the period. Required.
+  string from = 3;
+
+  // RFC 3339 instant in UTC: the first instant after the period. Required.
+  string until = 4;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 5;
+}
+
+message CreateHappyHourPeriodResponse {
+  // Exactly one is set.
+  oneof outcome {
+    // The period as the auction recorded it. A repeated op_id answers with the
+    // same period.
+    HappyHourPeriod accepted = 1;
+    CreateHappyHourPeriodRefusal refused = 2;
+  }
+}
+
+message CreateHappyHourPeriodRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    HappyHourPeriodInPast period_in_past = 5;
+    HappyHourPeriodEmpty period_empty = 6;
+    HappyHourPeriodOutsideOnlinePhase period_outside_online_phase = 7;
+  }
+}
+
+// from is earlier than the instant the server decided the command: a period does
+// not apply in the past.
+message HappyHourPeriodInPast {}
+
+// until is not later than from.
+message HappyHourPeriodEmpty {}
+
+// The period does not lie within [opens_at, closes_at] of the online phase, or
+// the online phase has no closes_at.
+message HappyHourPeriodOutsideOnlinePhase {}
+
+// Deletes a happy hour period that has not started.
+message DeleteHappyHourPeriodRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv5 with hyphens: see HappyHourPeriod.
+  string period_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message DeleteHappyHourPeriodResponse {
+  // Exactly one is set.
+  oneof outcome {
+    HappyHourPeriodDeleted accepted = 1;
+    DeleteHappyHourPeriodRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionConsole.happy_hour_periods no longer lists the period.
+message HappyHourPeriodDeleted {}
+
+message DeleteHappyHourPeriodRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    HappyHourPeriodNotFound period_not_found = 5;
+    HappyHourPeriodStarted period_started = 6;
+  }
+}
+
+// The auction has no such period: it never had one, or the period is deleted.
+message HappyHourPeriodNotFound {}
+
+// The period has started: from its start the period is frozen.
+message HappyHourPeriodStarted {}
+
+// Sets or replaces the terms of a lot in a happy hour period that has not
+// started. The lot receives them after the answer: the answer does not wait for
+// it.
+message SetHappyHourLotTermsRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv5 with hyphens: see HappyHourPeriod.
+  string period_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot of the registry of the
+  // auction.
+  string lot_id = 4;
+
+  // The bid step inside the period, in the currency of the lot. Unset leaves
+  // the step as usual. At least one of step and start is set.
+  Money step = 5;
+
+  // The price of the first bid inside the period while the lot has no bid, in
+  // the currency of the lot. Unset leaves the starting price as usual.
+  Money start = 6;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 7;
+}
+
+message SetHappyHourLotTermsResponse {
+  // Exactly one is set.
+  oneof outcome {
+    // The terms as the auction recorded them. A repeated op_id answers with the
+    // same terms.
+    HappyHourLotTerms accepted = 1;
+    SetHappyHourLotTermsRefusal refused = 2;
+  }
+}
+
+message SetHappyHourLotTermsRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    HappyHourPeriodNotFound period_not_found = 5;
+    HappyHourPeriodStarted period_started = 6;
+    HappyHourLotTermsEmpty terms_empty = 7;
+    HappyHourLotNotInAuction lot_not_in_auction = 8;
+    HappyHourLotNotOpen lot_not_open = 9;
+    HappyHourLotTermsAmountInvalid amount_invalid = 10;
+    HappyHourStepNotLower step_not_lower = 11;
+    HappyHourStartNotLower start_not_lower = 12;
+    HappyHourLotWindowsOverlap windows_overlap = 13;
+  }
+}
+
+// Neither step nor start is set.
+message HappyHourLotTermsEmpty {}
+
+// The lot is not in the registry of the auction.
+message HappyHourLotNotInAuction {}
+
+// The auction does not know the lot to be trading in the online phase: its
+// opening is not confirmed yet, or the lot is closed, withdrawn, held or in the
+// live final.
+message HappyHourLotNotOpen {}
+
+// An amount is not positive or not in the currency of the lot.
+message HappyHourLotTermsAmountInvalid {}
+
+// The step is not lower than the regular step of the lot at its current price.
+message HappyHourStepNotLower {
+  // The regular step of the lot at its current price when the command was
+  // decided.
+  Money regular_step = 1;
+}
+
+// The starting price is not lower than the regular starting price of the lot.
+message HappyHourStartNotLower {
+  // The regular starting price of the lot.
+  Money regular_start = 1;
+}
+
+// The period meets another window of the same lot: a window of the
+// configuration, a launched one or the terms of the lot in another period.
+message HappyHourLotWindowsOverlap {
+  // RFC 3339 instant in UTC: the first instant of the window the period meets.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window the period
+  // meets.
+  string until = 2;
+}
+
+// Removes the terms of a lot in a happy hour period that has not started. A lot
+// without terms in the period is answered as accepted, with nothing recorded.
+message ClearHappyHourLotTermsRequest {
+  // The holder of run_auctions for the meetup of the auction, checked with the
+  // meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv5 with hyphens: see HappyHourPeriod.
+  string period_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot of the registry of the
+  // auction.
+  string lot_id = 4;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 5;
+}
+
+message ClearHappyHourLotTermsResponse {
+  // Exactly one is set.
+  oneof outcome {
+    HappyHourLotTermsCleared accepted = 1;
+    ClearHappyHourLotTermsRefusal refused = 2;
+  }
+}
+
+// Carries nothing: HappyHourPeriod.lot_terms no longer lists the lot.
+message HappyHourLotTermsCleared {}
+
+message ClearHappyHourLotTermsRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    HappyHourPeriodNotFound period_not_found = 5;
+    HappyHourPeriodStarted period_started = 6;
+    HappyHourLotNotInAuction lot_not_in_auction = 7;
+  }
 }

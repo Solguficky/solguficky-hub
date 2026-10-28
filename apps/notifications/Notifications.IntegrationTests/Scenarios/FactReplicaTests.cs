@@ -314,10 +314,69 @@ public class FactReplicaTests
         await Execute(db, insert, new { EventId = Guid.NewGuid(), At = now.AddDays(-5).UtcDateTime });
         await Execute(db, insert, new { EventId = Guid.NewGuid(), At = now.AddDays(-1).UtcDateTime });
 
-        var removed = await silo.Service<Notifications.Messaging.ConsumedEventStore>().Prune(now.AddDays(-3), TestContext.Current.CancellationToken);
+        var removed = await silo.Service<Notifications.Messaging.ConsumedEventStore>().Prune(
+            new Dictionary<string, DateTimeOffset> { ["meetups"] = now.AddDays(-3) }, TestContext.Current.CancellationToken);
 
         removed.ShouldBe(1);
         (await ConsumedKeys(db)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Срок ключа — срок его стрима (PER-761): ключ аукциона десятидневной
+    /// давности стрим ещё способен повторить, ключ сходки — уже нет.
+    /// </summary>
+    [Fact]
+    public async Task When_KeysOlderThanEightDays_Expect_MeetupsKeyPrunedAndAuctionKeyKept()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var silo = await SiloUnderTest.Start(
+            db.ConnectionString, $"--{Notifications.Messaging.ConsumerOptions.SectionName}:PrunePeriod=00:00:00.200");
+
+        var tenDaysAgo = DateTimeOffset.UtcNow.AddDays(-10).UtcDateTime;
+        const string insert = "INSERT INTO consumed_event (source, event_id, consumed_at) VALUES (@Source, @EventId, @At);";
+        await Execute(db, insert, new { Source = "meetups", EventId = Guid.NewGuid(), At = tenDaysAgo });
+        await Execute(db, insert, new { Source = "auction", EventId = Guid.NewGuid(), At = tenDaysAgo });
+
+        await Eventually(
+            () => Scalar<long>(db, "SELECT count(*) FROM consumed_event WHERE source = 'meetups';"), count => count == 0);
+        (await Scalar<long>(db, "SELECT count(*) FROM consumed_event WHERE source = 'auction';")).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Топология держит факты аукциона девяносто дней (PER-758), и сервис без
+    /// единой переменной среды привязывает к ним всех потребителей.
+    /// </summary>
+    [Fact]
+    public async Task When_AuctionStreamKeepsNinetyDays_Expect_AllConsumersBoundWithDefaults()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start(auctionStreamMaxAge: TimeSpan.FromDays(90));
+
+        // StartOnBus возвращается только после привязки каждого потребителя.
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+
+        foreach (var feed in NotificationsHost.EventFeeds)
+        {
+            silo.Service<Notifications.Messaging.ConsumerBindings>().FailedAttempts(feed).ShouldBe(0);
+        }
+    }
+
+    [Fact]
+    public async Task When_AuctionStreamKeepsMessagesLongerThanItsKeys_Expect_ServiceStops()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start(auctionStreamMaxAge: TimeSpan.FromDays(120));
+        await using var silo = await SiloUnderTest.LaunchOnBus(db.ConnectionString, nats.Url);
+
+        var stopping = new TaskCompletionSource();
+        silo.Service<IHostApplicationLifetime>().ApplicationStopping.Register(() => stopping.TrySetResult());
+
+        // Окна Meetups и Identity штатные: остановку даёт ровно стрим аукциона,
+        // чей ключ живёт девяносто один день.
+        await stopping.Task.WaitAsync(Patience, TestContext.Current.CancellationToken);
     }
 
     private static async Task<T> Eventually<T>(Func<Task<T>> probe, Func<T, bool> done)

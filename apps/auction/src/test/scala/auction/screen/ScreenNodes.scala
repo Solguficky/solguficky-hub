@@ -58,7 +58,9 @@ trait ScreenNodes { self: Suite & Matchers & ScalaFutures & Eventually & Postgre
 
   private val callers = CallerTable
     .fromConfig(
-      ConfigFactory.parseString("""auction.grpc.callers { hub-bot = "hub", auction-bot = "auction" }"""),
+      ConfigFactory.parseString(
+        """auction.grpc.callers { hub-bot = "hub", auction-bot = "auction", notifications = "notifications" }"""
+      ),
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)

@@ -13,8 +13,10 @@ import auction.invoice.InvoiceAction
 import auction.invoice.InvoiceGateway
 import auction.invoice.InvoiceViews
 import auction.access.Viewer
+import auction.catalog.CatalogRefusal
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotId
+import auction.catalog.LotImage as CatalogImage
 import auction.entity.Initiator
 import auction.entity.LotGateway
 import auction.lot.AuctionId
@@ -42,15 +44,22 @@ import auction.raffle.AssignWinner
 import auction.raffle.CancelRegistration
 import auction.raffle.ChangePrize
 import auction.raffle.ChangePrizeRejected
+import auction.raffle.PrizePhoto
+import auction.raffle.PrizePhotoBytes
 import auction.raffle.Raffle
 import auction.raffle.RaffleGateway
+import auction.raffle.RafflePrizePhotos
 import auction.raffle.RaffleState
 import auction.raffle.RaffleView
 import auction.raffle.Register
+import auction.raffle.RemovePrizePhoto
+import auction.raffle.SetPrizePhoto
 import auction.results.ResultsGateway
 import auction.results.ResultsView
 import auction.v1.auction_service as wire
+import auction.v1.auction_service.RafflePrizePhotoRefusal.Reason as PhotoReason
 import auction.watch.AuctionChanges
+import com.google.protobuf.ByteString
 import io.grpc.Status
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.NotUsed
@@ -100,7 +109,8 @@ final class AuctionGrpcService(
     finalBids: FinalBids = FinalBids.empty,
     invoices: InvoiceGateway = InvoiceGateway.none,
     invoiceViews: InvoiceViews = InvoiceViews.none,
-    raffleByHand: Boolean = false
+    raffleByHand: Boolean = false,
+    prizePhotos: RafflePrizePhotos = RafflePrizePhotos.absent
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -135,7 +145,9 @@ final class AuctionGrpcService(
       notes,
       finalBids,
       invoices,
-      invoiceViews
+      invoiceViews,
+      raffleByHand,
+      prizePhotos
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -727,6 +739,20 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Порядок и разделы ленты (PER-719): право у Meetups, состояние решает аукцион. Раскладка заменяется целиком одной
+   * командой.
+   */
+  def setLotLayout(in: wire.SetLotLayoutRequest): Future[wire.SetLotLayoutResponse] =
+    RequestMapping.setLotLayout(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .setLotLayout(command.auctionId, command.layout, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setLotLayout(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Текст «как оплатить и получить» (PER-322): право у Meetups без ворот по сходке, затем аукцион. Текст выставляется,
    * меняется и снимается одной командой.
    */
@@ -738,6 +764,20 @@ final class AuctionGrpcService(
           .setPaymentInstructions(command.auctionId, command.text, command.opId, command.acting.participant)
           .recoverWith(awaited)
           .flatMap(outcome => ResponseMapping.setPaymentInstructions(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Промо-видео аукциона (PER-781): право у Meetups с воротами «сходка не отменена», затем аукцион. Видео выставляется,
+   * заменяется и снимается одной командой.
+   */
+  def setPromoVideo(in: wire.SetPromoVideoRequest): Future[wire.SetPromoVideoResponse] =
+    RequestMapping.setPromoVideo(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .setPromoVideo(command.auctionId, command.video, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setPromoVideo(outcome).fold(refuse, Future.successful))
     }
 
   /**
@@ -841,6 +881,57 @@ final class AuctionGrpcService(
           .removeParticipant(removal.auctionId, removal.command, removal.acting.participant)
           .recoverWith(awaited)
           .flatMap(outcome => ResponseMapping.removeParticipant(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Создание периода «Счастливых часов» (ADR-047, дополнение 2026-10-27): право у Meetups с воротами «сходка не
+   * отменена», фазу и время решает аукцион по своим часам.
+   */
+  def createHappyHourPeriod(in: wire.CreateHappyHourPeriodRequest): Future[wire.CreateHappyHourPeriodResponse] =
+    RequestMapping.createHappyHourPeriod(in) match {
+      case Left(error) => invalid(error)
+      case Right(create) =>
+        auctions
+          .createHappyHourPeriod(create.auctionId, create.command, create.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.createHappyHourPeriod(outcome).fold(refuse, Future.successful))
+    }
+
+  /** Удаление периода «Счастливых часов» до его начала тем же путём, что создание. */
+  def deleteHappyHourPeriod(in: wire.DeleteHappyHourPeriodRequest): Future[wire.DeleteHappyHourPeriodResponse] =
+    RequestMapping.deleteHappyHourPeriod(in) match {
+      case Left(error) => invalid(error)
+      case Right(delete) =>
+        auctions
+          .deleteHappyHourPeriod(delete.auctionId, delete.command, delete.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.deleteHappyHourPeriod(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Условия лота в периоде «Счастливых часов» (PER-786): право у Meetups с воротами «сходка не отменена», обычные
+   * условия — у лота, период, реестр, суммы и пересечения решает аукцион по своим часам. Ответ — после записи: лоту
+   * условия уходят после неё.
+   */
+  def setHappyHourLotTerms(in: wire.SetHappyHourLotTermsRequest): Future[wire.SetHappyHourLotTermsResponse] =
+    RequestMapping.setHappyHourLotTerms(in) match {
+      case Left(error) => invalid(error)
+      case Right(set) =>
+        auctions
+          .setHappyHourLotTerms(set.auctionId, set.command, set.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setHappyHourLotTerms(outcome).fold(refuse, Future.successful))
+    }
+
+  /** Снятие условий лота в периоде тем же путём; снимать нечего — ответ успехом. */
+  def clearHappyHourLotTerms(in: wire.ClearHappyHourLotTermsRequest): Future[wire.ClearHappyHourLotTermsResponse] =
+    RequestMapping.clearHappyHourLotTerms(in) match {
+      case Left(error) => invalid(error)
+      case Right(clear) =>
+        auctions
+          .clearHappyHourLotTerms(clear.auctionId, clear.command, clear.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.clearHappyHourLotTerms(outcome).fold(refuse, Future.successful))
     }
 
   /**
@@ -1160,6 +1251,159 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Фото приза розыгрыша (PER-772) путём смены приза: форма, затем байты тем же правилом, что фото лота (предел и
+   * сигнатура), затем повтор своего id фото раньше права, затем право вести аукцион у Meetups с воротами отменённой
+   * сходки, затем решение розыгрыша по прочитанному — отказ не пишет байтов, — запись байтов под id фото и команда
+   * розыгрыша, которая решает заново. Уборка — [[tidyPrizePhotos]]: отвергнутая команда убирает свои байты, принятая —
+   * байты фото, которое было у приза при чтении и перестало им быть.
+   */
+  def setRafflePrizePhoto(in: wire.SetRafflePrizePhotoRequest): Future[wire.SetRafflePrizePhotoResponse] =
+    RequestMapping.setRafflePrizePhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        CatalogImage(command.photo) match {
+          case Left(CatalogRefusal.ImageTooLarge(maxBytes)) =>
+            Future.successful(
+              RaffleMapping.prizePhotoRefused(PhotoReason.ImageTooLarge(wire.ImageTooLarge(maxBytes.toLong)))
+            )
+          case Left(_) =>
+            Future.successful(RaffleMapping.prizePhotoRefused(PhotoReason.UnsupportedImage(wire.UnsupportedImage())))
+          case Right(image) =>
+            val auction = command.auctionId
+            val set = SetPrizePhoto(PrizePhoto(command.photoId, image.version.value), OpId(command.photoId))
+            def answer(outcome: Either[ChangePrizeRejected, Raffle]) =
+              viewed(auction, command.acting.participant, outcome)
+                .flatMap(viewedOutcome => RaffleMapping.setPrizePhoto(viewedOutcome).fold(refuse, Future.successful))
+            def store(read: Raffle): Future[wire.SetRafflePrizePhotoResponse] = {
+              val bytes = PrizePhotoBytes(image.content, image.mediaType.value, image.version.value)
+              prizePhotos.store(auction, command.photoId, bytes).flatMap {
+                case false => answer(Left(ChangePrizeRejected.OpIdTaken))
+                case true =>
+                  raffles.setPrizePhoto(auction, set).recoverWith(awaited).flatMap { outcome =>
+                    tidyPrizePhotos(auction, read, outcome, Some(command.photoId)).flatMap(_ => answer(outcome))
+                  }
+              }
+            }
+            raffles.get(auction).recoverWith(awaited).flatMap { raffle =>
+              Raffle.decide(raffle, set) match {
+                case Left(rejected) if raffle.seen.contains(set.opId) => answer(Left(rejected))
+                case Right(_) if raffle.seen.contains(set.opId) => answer(Right(raffle))
+                case decision =>
+                  val query = ConsoleQuery(auction, command.acting)
+                  def denied(denial: Denial) =
+                    ResponseMapping.prizePhotoDenied(denial).map(RaffleMapping.prizePhotoRefused)
+                  administered(query, denied, MeetupGate.NotCancelled) { _ =>
+                    decision match {
+                      case Left(rejected) => answer(Left(rejected))
+                      case Right(_) => store(raffle)
+                    }
+                  }
+              }
+            }
+        }
+    }
+
+  /** Снятие фото приза (PER-772) путём смены приза; уборка байтов — [[tidyPrizePhotos]]. */
+  def removeRafflePrizePhoto(in: wire.RemoveRafflePrizePhotoRequest): Future[wire.RemoveRafflePrizePhotoResponse] =
+    RequestMapping.removeRafflePrizePhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        val auction = command.auctionId
+        val remove = RemovePrizePhoto(command.opId)
+        def answer(outcome: Either[ChangePrizeRejected, Raffle]) =
+          viewed(auction, command.acting.participant, outcome)
+            .flatMap(viewedOutcome => RaffleMapping.removePrizePhoto(viewedOutcome).fold(refuse, Future.successful))
+        raffles.get(auction).recoverWith(awaited).flatMap { raffle =>
+          raffle.seen.get(command.opId) match {
+            case Some(_) =>
+              Raffle.decide(raffle, remove) match {
+                case Left(rejected) => answer(Left(rejected))
+                case Right(_) => answer(Right(raffle))
+              }
+            case None =>
+              val query = ConsoleQuery(auction, command.acting)
+              def denied(denial: Denial) =
+                ResponseMapping
+                  .prizePhotoDenied(denial)
+                  .map(reason =>
+                    wire.RemoveRafflePrizePhotoResponse().withRefused(wire.RafflePrizePhotoRefusal(reason))
+                  )
+              administered(query, denied, MeetupGate.NotCancelled) { _ =>
+                raffles.removePrizePhoto(auction, remove).recoverWith(awaited).flatMap { outcome =>
+                  tidyPrizePhotos(auction, raffle, outcome, None).flatMap(_ => answer(outcome))
+                }
+              }
+          }
+        }
+    }
+
+  /**
+   * Байты фото приза (PER-772): право и видимость — как у `GetRaffle`, фото — то, что у приза сейчас по журналу
+   * розыгрыша. Розыгрыша, фото или его байтов нет — `NOT_FOUND`.
+   */
+  def getRafflePrizePhoto(in: wire.GetRafflePrizePhotoRequest): Future[wire.LotImage] =
+    RequestMapping.getRafflePrizePhoto(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        concealed(query.auctionId.value, query.acting.viewer)
+          .flatMap {
+            case true => Future.successful(None)
+            case false =>
+              raffles.get(query.auctionId).recoverWith(awaited).flatMap { raffle =>
+                Raffle.prizePhoto(raffle.state) match {
+                  case Some(photo) => prizePhotos.read(query.auctionId, photo.photoId)
+                  case None => Future.successful(None)
+                }
+              }
+          }
+          .flatMap {
+            case Some(photo) =>
+              Future.successful(
+                wire.LotImage(
+                  ByteString.copyFrom(IArray.genericWrapArray(photo.content).toArray),
+                  photo.mediaType,
+                  photo.version
+                )
+              )
+            case None => refuse(Status.NOT_FOUND.withDescription("raffle prize photo not found"))
+          }
+    }
+
+  /**
+   * Уборка байтов фото приза по решению розыгрыша, а не по времени записи: какое фото текущее, решает порядок команд у
+   * entity. Убирается только то, что текущим уже не станет. Фото, которое было у приза при чтении `read` и которого нет
+   * после команды, вернуть нельзя: его id лежит в окне `seen`, и повтор события не даёт. Байты отвергнутой команды
+   * `stored` — тоже: отказ значит, что её id не текущий. Уборка не часть ответа: сбой пишется предупреждением, а лишняя
+   * строка не видна ни одному чтению.
+   */
+  private def tidyPrizePhotos(
+      auction: AuctionId,
+      read: Raffle,
+      outcome: Either[ChangePrizeRejected, Raffle],
+      stored: Option[UUID]
+  ): Future[Unit] = {
+    val stale = outcome match {
+      case Right(after) =>
+        Raffle
+          .prizePhoto(read.state)
+          .map(_.photoId)
+          .filterNot(id => Raffle.prizePhoto(after.state).exists(_.photoId == id))
+      case Left(_) => stored
+    }
+    stale.fold(Future.unit) { photoId =>
+      Future.delegate(prizePhotos.delete(auction, photoId)).recover { case NonFatal(cause) =>
+        AuctionGrpcService.logger.warn(
+          "raffle prize photo not deleted",
+          StructuredArguments.keyValue("auction_id", auction.value.toString),
+          StructuredArguments.keyValue("error", cause.getClass.getName)
+        )
+      }
+    }
+  }
+
+  /**
    * Прогноз раунда (ADR-067, пп. 2–5): форма, право `place_bids` на каждой отправке, аукцион и лоты раунда, имя в
    * аукционе — тем же правилом, что перед ставкой, но без заморозки, — затем игра. Лоты сверяются, только пока раунд
    * может быть открыт: в остальное время отказ раунда даёт сама игра, и чужой лот его не подменяет.
@@ -1210,6 +1454,31 @@ final class AuctionGrpcService(
                       }
                 }
             }
+        }
+    }
+
+  /**
+   * Участники розыгрыша и прогнозов аукциона для аудитории объявления (PER-777, решение PER-768). Вызывающий — только
+   * Notifications (`MethodAccess`), смотрящего нет: право администратора проверил он. Аукцион — у entity, розыгрыш — из
+   * entity, а не из read model, и прогнозы — из строк после ответа игры: регистрация, её отмена, прогноз и его очистка
+   * видны сразу, а стёртого субъекта в строках нет. Скрытый аукцион не прячется: экранов у чтения нет.
+   */
+  def listAuctionEngagement(in: wire.ListAuctionEngagementRequest): Future[wire.ListAuctionEngagementResponse] =
+    RequestMapping.listAuctionEngagement(in) match {
+      case Left(error) => invalid(error)
+      case Right(auctionId) =>
+        auctions.current(auctionId).recoverWith(awaited).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case Some(auction) =>
+            val raffle = raffles.get(auctionId).recoverWith(awaited)
+            val forecasters = predictions.forecasters(auctionId).recoverWith(awaited)
+            for {
+              found <- raffle
+              open <- forecasters
+            } yield EngagementMapping.response(
+              EngagementMapping.registration(auction.state, found.state, clock.instant()),
+              open
+            )
         }
     }
 
@@ -1283,6 +1552,34 @@ final class AuctionGrpcService(
                   day <- views.dayStatistics(auctionId, from, until)
                   lifetime <- views.statistics(auctionId)
                 } yield DaySummaryMapping.chronicle(from, until, day, lifetime)
+            }
+        }
+    }
+
+  /**
+   * Хроники всего аукциона участника (PER-769): агрегаты лотов того же чтения, что у хроник дня, но без окна суток — от
+   * начала времён до часов сервиса, поэтому в них входит каждая ставка от открытия торгов и счётчики равны сумме хроник
+   * по дням. Право и скрытый аукцион — как у хроник дня. Участники — разные люди по всему реестру, а не сумма по лотам:
+   * читаются после агрегатов, и человек, пришедший между чтениями, только добавится к числу.
+   */
+  def getAuctionChronicle(in: wire.GetAuctionChronicleRequest): Future[wire.GetAuctionChronicleResponse] =
+    RequestMapping.getAuctionChronicle(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        val auctionId = query.auctionId.value
+        concealed(auctionId, query.acting.viewer).flatMap {
+          case true => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case false =>
+            auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+              case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+              case Some(_) =>
+                val until = clock.instant()
+                for {
+                  lots <- views.dayStatistics(auctionId, Instant.EPOCH, until)
+                  participants <- views.participantCount(auctionId)
+                } yield DaySummaryMapping.auctionChronicle(until, lots, participants)
             }
         }
     }
@@ -1596,6 +1893,8 @@ object AuctionGrpcService {
     def cancel(auction: AuctionId, command: CancelRegistration) = none
     def assign(auction: AuctionId, command: AssignWinner) = none
     def changePrize(auction: AuctionId, command: ChangePrize) = none
+    def setPrizePhoto(auction: AuctionId, command: SetPrizePhoto) = none
+    def removePrizePhoto(auction: AuctionId, command: RemovePrizePhoto) = none
     def get(auction: AuctionId) = none
   }
 
@@ -1613,6 +1912,7 @@ object AuctionGrpcService {
     def mine(auction: AuctionId, participant: ParticipantId) = none
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) = none
     def tally(auction: AuctionId) = none
+    def forecasters(auction: AuctionId) = none
   }
 
   /** Узел без итогов: тесты границы, которым подсчёт не нужен. */

@@ -48,6 +48,14 @@ LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
 
+# Erlang/OTP и Elixir Achievements: версии — apps/achievements/.tool-versions,
+# его же читает erlef/setup-beam в CI, а суммы архивов builds.hex.pm, которые
+# ставит tools/env/install.sh, — здесь: OTP собран для Ubuntu 24.04, Elixir —
+# под этот мажор OTP. Меняется версия — сумма и FROM в
+# apps/achievements/Containerfile меняются тем же изменением.
+ERLANG_SHA256 := "9d1e254f31554bf26595a6a03164f8e38f48c74d5f60c00b589d581b8ad67781"
+ELIXIR_SHA256 := "ea7ff98bc1ed76c663a5d034c863c6fd37e65c9c855b6bbf6ccb2034d806673c"
+
 # Helm для проверки и публикации чарта прода (apphost-chart). Джобы apphost и
 # chart-publish в CI ставят его tools/apphost/install-helm.sh из релиза и
 # сверяют архив linux-amd64 с суммой. Aspire требует не ниже 4.2 для деплоя, а
@@ -187,8 +195,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, Achievements и его формат, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify achievements-build achievements-test achievements-format-check nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -210,17 +218,17 @@ verify-changed:
 # Все уровни тестов всех компонентов: L0, L1 и L2. Пропущенный тест роняет
 # прогон — у .NET флагом --fail-skips, у Identity разбором `go test -json`,
 # у vitest reporter'ом vitest.fail-on-skip.ts, у ScalaTest обёрткой
-# `Test / executeTests` в build.sbt.
+# `Test / executeTests` в build.sbt, у ExUnit — test_helper.exs Achievements.
 # Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
 # умолчания нет; браузерный сьют Auction при первом прогоне скачивает Chromium.
 # Линт, формат и контракты сюда не входят — их держит `verify`.
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
 # секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
-test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration auction-test-browser contour-test contour-bot-test
+test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration auction-test-browser achievements-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools nats-tester-tools
+tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools achievements-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -256,7 +264,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "154"
+APPHOST_TEST_THRESHOLD := "160"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -576,12 +584,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 935. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 1065. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "635"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "300"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "731"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "334"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает
@@ -678,7 +686,8 @@ auction-format:
 # оставляет блокировку сервера sbt.
 #
 # Локальный запуск вне Aspire; адреса — AUCTION_HTTP_* и AUCTION_GRPC_*, токены
-# вызывающих — AUCTION_CALLER_TOKEN_HUB_BOT и AUCTION_CALLER_TOKEN_AUCTION_BOT
+# вызывающих — AUCTION_CALLER_TOKEN_HUB_BOT, AUCTION_CALLER_TOKEN_AUCTION_BOT и
+# AUCTION_CALLER_TOKEN_NOTIFICATIONS
 auction-run:
     cd apps/auction && sbt -batch run
 
@@ -715,6 +724,62 @@ auction-image:
 # Формат, сборка и тесты Scala одной сессией sbt
 auction-verify:
     cd apps/auction && sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
+
+# --- Achievements (Elixir / OTP) -------------------------------------------
+#
+# Версии Erlang/OTP и Elixir — apps/achievements/.tool-versions, суммы архивов —
+# ERLANG_SHA256 и ELIXIR_SHA256 выше; библиотеки закреплены в mix.lock.
+# Сервис — скелет: база с миграциями Ecto, health по gRPC и релей outbox;
+# правил, определений и контракта в нём пока нет (ADR-077, дополнение
+# 2026-10-26).
+
+# Hex, rebar и зависимости по mix.lock. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
+achievements-tools:
+    cd apps/achievements && mix local.hex --force --if-missing && mix local.rebar --force --if-missing && mix deps.get
+
+# Сборка сервиса; предупреждение — ошибка сборки
+achievements-build:
+    cd apps/achievements && mix compile --warnings-as-errors
+
+# Уровень выбирает переменная, а не пропуск: test_helper.exs исключает тег
+# :integration и роняет прогон на пропуске и недоборе до порога своего уровня.
+#
+# Прогон ExUnit L0; Docker не нужен
+achievements-test:
+    cd apps/achievements && mix test --warnings-as-errors
+
+# L1: миграции, health по gRPC и релей outbox на PostgreSQL и NATS в Testcontainers; нужен Docker
+achievements-test-integration:
+    cd apps/achievements && ACHIEVEMENTS_INTEGRATION_TESTS=1 mix test --warnings-as-errors
+
+# Гейт форматирования по apps/achievements/.formatter.exs
+achievements-format-check:
+    cd apps/achievements && mix format --check-formatted
+
+# Форматирование Elixir
+achievements-format:
+    cd apps/achievements && mix format
+
+# Локальный запуск вне Aspire; база — ACHIEVEMENTS_DATABASE_URL, порт —
+# ACHIEVEMENTS_GRPC_PORT, шина для релея — ACHIEVEMENTS_NATS_URL
+achievements-run:
+    cd apps/achievements && mix run --no-halt
+
+# Production-образ в локальное хранилище движка как achievements:local и те же
+# проверки до публикации, что в CI: база по digest и общий поиск токена Bot API.
+# Сборка идёт внутри образа: Elixir на машине не нужен, нужен движок —
+# IMAGE_ENGINE, podman по умолчанию; docker находит список контекста
+# Containerfile.dockerignore сам. Публикацию в GHCR делает только CI
+# (.github/workflows/image-achievements.yml)
+achievements-image:
+    #!/usr/bin/env sh
+    set -eu
+    engine=${IMAGE_ENGINE:-podman}
+    ignore=
+    case "$engine" in *podman*) ignore="--ignorefile apps/achievements/Containerfile.dockerignore" ;; esac
+    sh tools/image/check-containerfile.sh apps/achievements/Containerfile
+    "$engine" build -f apps/achievements/Containerfile $ignore -t achievements:local .
+    sh tools/image/check-no-token.sh achievements:local
 
 # --- nats-tester (Python) --------------------------------------------------
 #

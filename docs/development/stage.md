@@ -1,6 +1,6 @@
 # Stage хаба на VPS
 
-Stage — хаб с аукционом и три бота в namespace `stage` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454), [PER-624](https://linear.app/anticnvm/issue/per-624)): семь сервисов чарта из AppHost, PostgreSQL на CloudNativePG и NATS JetStream. Раз в сутки ветка `stage` догоняет `develop`, и новые образы и чарт из неё stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06, 2026-10-07, 2026-10-18 и 2026-10-20. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
+Stage — хаб с аукционом и три бота в namespace `stage` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454), [PER-624](https://linear.app/anticnvm/issue/per-624)): семь сервисов чарта из AppHost и выключенный workload Achievements, PostgreSQL на CloudNativePG и NATS JetStream. Раз в сутки ветка `stage` догоняет `develop`, и новые образы и чарт из неё stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06, 2026-10-07, 2026-10-18 и 2026-10-20. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
 
 Описание stage живёт в приватном ops-репозитории `solguficky-ops`, а не здесь: values с digest образов, манифесты PostgreSQL и NATS, сетевые разрешения и скрипты выкладки. Публичный репозиторий топологию среды не раскрывает (ADR-055, «Обоснование»). Этот файл — устойчивые правила работы со stage; команды и раскладка файлов — README ops-репозитория.
 
@@ -14,7 +14,7 @@ Stage — хаб с аукционом и три бота в namespace `stage` k
 | PostgreSQL 16 — кластер CNPG `hub-pg`, роль и база на сервис, роль `ops_readonly` | ops, `envs/stage/postgres.yaml` | выкладка |
 | NATS 2.12 с JetStream на томе | ops, `envs/stage/nats.yaml` | выкладка |
 | streams, durables, KV | чарт, Job `jetstream-topology` | Helm-hook при каждой выкладке |
-| семь сервисов, из них три бота | чарт из AppHost, версия — ops `envs/stage/release.yaml`, digest'ы — `envs/stage/values.yaml` | выкладка |
+| семь сервисов, из них три бота, и выключенный Achievements | чарт из AppHost, версия — ops `envs/stage/release.yaml`, digest'ы — `envs/stage/values.yaml` | выкладка |
 
 Выкладка — одна и та же: её запускает таймер на хосте после нового коммита в ops-репозитории или человек командой `bin/stage deploy`.
 
@@ -34,6 +34,19 @@ Stage — хаб с аукционом и три бота в namespace `stage` k
 
 Сводка «Что нового» на stage включена тем, кто переключатель не трогал ([ADR-069](../decisions/ADR-069-release-notes-as-environment-data.md), п. 5): values stage ставят `config.notifications.notifications_release_notes_enabled_by_default: "true"`. В чарте значение `false`: среда без ключа шлёт сводку только тем, кто включил категорию сам, а остальным сводки видны лишь в «Что нового». Иное значение, кроме `true` и `false`, роняет старт Notifications.
 
+## Канал медиа ботов
+
+Своё фото объявления и промо-видео аукциона боты держат постами закрытого канала среды и показывают их `copyMessage` ([ADR-057](../decisions/ADR-057-auction-lot-catalog-as-state.md), дополнение 2026-10-27, временное до [PER-711](https://linear.app/anticnvm/issue/per-711)). Канал у каждой среды свой: у stage и прода разные боты. Id канала — не секрет, а values среды: `config.hub_bot.bot_media_channel_id` и `config.auction_bot.bot_media_channel_id`, одно значение под обоими ботами. Без значения оба бота стартуют, а медиа выключены: пульт не предлагает своё фото.
+
+Шаги владельца на среду:
+
+1. В Telegram создать канал, тип «Частный», без публичной ссылки, и не включать «Запрет копирования»: из канала с защищённым содержимым `copyMessage` отказывает. Название — по среде, например «Солегуфики — медиа stage».
+2. Добавить бота хаба и бота аукциона этой среды администраторами канала с правом «Публикация сообщений». Права удалять и редактировать чужие сообщения ботам не нужны. Без права публикации бот хаба не положит медиа, а бот без прав администратора не скопирует пост гостю.
+3. Узнать id канала: открыть канал в [Telegram Web](https://web.telegram.org/k/) — адрес кончается на `#-<число>`, — и id для Bot API — `-100` и это число без минуса, например `#-2345678901` даёт `-1002345678901`. В версии Telegram Web A адрес уже начинается с `-100`, и приписывать ничего не нужно. Значение вида `-100…` бот проверяет на старте, и id в другой форме роняет его.
+4. Положить id в values среды под оба ключа и выкатить.
+
+Посты канала не удалять: объявление, чей пост удалён, уходит без медиа. Посты не входят в дамп базы, и потерянный канал восстанавливается только повторной загрузкой медиа. Смена id канала обрывает все прежние ссылки на посты разом.
+
 ## Публичный вход
 
 Экран зала выходит в интернет через Cloudflare Tunnel, workload `cloudflared` чарта ([ADR-071](../decisions/ADR-071-public-entry-through-cloudflare-tunnel.md), [PER-661](https://linear.app/anticnvm/issue/per-661)). Устройство в чарте — [local-development.md](local-development.md#публикация-чарта-прода). Что нужно среде:
@@ -46,11 +59,18 @@ Stage — хаб с аукционом и три бота в namespace `stage` k
 
 Готовность пода туннеля связи с Cloudflare не означает: пробы смотрят только порт метрик, чтобы выкладка не ждала чужую сеть. Связь видна в логе пода (`Registered tunnel connection`). Проверка после включения: страница `/screen/<auction_id>` открывается по публичному адресу, `curl -i https://<хост>/health` отвечает 404 от самого туннеля, а снаружи хоста по-прежнему открыт только SSH.
 
+## Achievements
+
+Чарт везёт workload `achievements` ([ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md), дополнение 2026-10-26) выключенным: без ключа `enabled.achievements: true` в values среды он стоит с нулём реплик, а включение — решение владельца, не выкладки.
+
+- **Значения.** Digest образа `parameters.achievements.achievements_image` приходит в values джобой `ops` из `image-achievements.yml`, как у остальных сервисов. Строка подключения `achievements-db` — URI PostgreSQL в форме libpq с `sslmode`; пока workload выключен, ей можно оставаться пустой.
+- **Квота.** Под просит 50m и 96Mi, лимит 500m и 192Mi.
+
 ## Автовыкладка
 
 Мерж в `develop`, который меняет образ сервиса или чарт, доезжает до stage следующей ночью без ручных шагов (дополнения ADR-055 от 2026-10-07 и 2026-10-18):
 
-1. `stage-sync.yml` в 03:07 по Москве (`7 0 * * *` UTC) переносит ветку `stage` на `develop` fast-forward'ом. Push идёт deploy key'ем `STAGE_SYNC_KEY` из environment `stage-sync`, допущенного только для `main`: push под `GITHUB_TOKEN` не запустил бы публикации. Если в `stage` есть коммит, которого нет в `develop`, джоба красная, а ветка остаётся как была.
+1. `stage-sync.yml` в 03:07 по Москве (`7 0 * * *` UTC) переносит ветку `stage` на `develop` fast-forward'ом. Push идёт deploy key'ем `STAGE_SYNC_KEY` из environment `stage-sync`, допущенного только для `develop` — default branch, с которой GitHub запускает расписание: push под `GITHUB_TOKEN` не запустил бы публикации. Если в `stage` есть коммит, которого нет в `develop`, джоба красная, а ветка остаётся как была.
 2. CI публикует изменённые этим переносом образы и чарт в GHCR (`image-*.yml`, `chart-publish.yml` на push в `stage`, по своим фильтрам путей).
 3. Джоба `ops` того же workflow (`ops-bump.yml`) коммитит digest в `envs/stage/values.yaml` или версию чарта в `envs/stage/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для ветки `stage`.
 4. Таймер `solguficky-stage-autodeploy` на хосте раз в две минуты тянет клон ops-репозитория своим read-only deploy key и выкатывает новый коммит.
@@ -77,7 +97,7 @@ bin/stage resume                  # вернуть; следующий тик в
 - **Deploy keys включены в организации** (Settings → Member privileges → Deploy keys). Это политика всей организации, на репозиторий её не включить. Пока она выключена, GitHub отвечает на добавление ключа `Deploy keys are disabled for this repository`.
 - **Ключей два, у каждого своя роль.** Ключ хоста — только чтение, создаётся на хосте playbook'ом, в GitHub попадает только его публичная часть. Ключ CI — с правом записи, его закрытая часть живёт только в секрете `OPS_DEPLOY_KEY`.
 - **Environment `stage` этого репозитория ограничен веткой `stage`**, и в нём лежит `OPS_DEPLOY_KEY`. Секрет нужен до переноса, который меняет образы: публикации без секрета проходят, а их джобы `stage` падают с «нет секрета», и digest'ы до ops не доходят — их приходится публиковать заново.
-- **Синхронизации ветки нужны три вещи** (дополнение ADR-055 от 2026-10-18). Первая — deploy key этого репозитория с правом записи, закрытая часть которого лежит только в секрете `STAGE_SYNC_KEY` environment `stage-sync`, а environment допущен только для `main`. Вторая — ruleset ветки `stage`: запрет force push и удаления, обновление только с bypass для deploy key'ев. Третья — `stage-sync.yml` на `main`: cron и `workflow_dispatch` GitHub берёт только с default branch, поэтому до релиза в `main` ночного переноса нет.
+- **Синхронизации ветки нужны три вещи** (дополнения ADR-055 от 2026-10-18 и 2026-10-27). Первая — deploy key этого репозитория с правом записи, закрытая часть которого лежит только в секрете `STAGE_SYNC_KEY` environment `stage-sync`, а environment допущен только для `develop`. Вторая — ruleset ветки `stage`: запрет force push и удаления, обновление только с bypass для deploy key'ев. Третья — `stage-sync.yml` на default branch `develop` с условием джобы на `refs/heads/develop`: cron GitHub запускает только с default branch, а ручной запуск с другой ветки джоба пропускает.
 - **Токены всех ботов в файле секретов хоста до `--tags autodeploy`.** На работающем хосте таймер срабатывает сразу при включении и выкатывает `main` ops. Без токена любого из ботов выкладка откажет на проверке и отметит коммит; после того как токен вписан, нужен `bin/stage resume`.
 
 ### Выкатить заново из CI
@@ -86,7 +106,7 @@ bin/stage resume                  # вернуть; следующий тик в
 
 | Нужно | Как | Что произойдёт |
 |---|---|---|
-| довезти `develop` до stage, не дожидаясь ночи | `gh workflow run stage-sync.yml --ref main` | fast-forward `stage`, публикации изменённого, выкладка |
+| довезти `develop` до stage, не дожидаясь ночи | `gh workflow run stage-sync.yml --ref develop` | fast-forward `stage`, публикации изменённого, выкладка |
 | пересобрать образ сервиса и выкатить | `gh workflow run image-<сервис>.yml --ref stage` | публикация, коммит digest в ops, выкладка таймером за ≤2 минуты |
 | переопубликовать чарт и выкатить | `gh workflow run chart-publish.yml --ref stage` | новая версия `0.1.<N>` в `release.yaml`, выкладка |
 | выкатить то, что уже записано в ops | `bin/stage resume` | следующий тик выкатывает `main` ops без сборки |
@@ -194,7 +214,7 @@ bin/stage presets         # активные наборы: ник и набор
 Переход на круг, наборы и права с глаголом ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)) меняет контракты пяти сервисов без обратной совместимости, поэтому выкатывается один раз, целиком и в таком порядке. Сброс данных не нужен: миграции Identity 017 и Notifications 024 переносят состояние, а мейнтейнер stage получает наборы `maintainer` и `admin` и назначать себя заново ему не нужно.
 
 1. **До мержа — `bin/stage pause`.** Автовыкладка катит каждую публикацию мержа отдельным коммитом ops раз в две минуты. Без паузы новый образ одного сервиса встанет рядом со старыми соседями, а Identity применит миграцию раньше, чем остановлены боты.
-2. **Мерж и публикации.** Мержится pull request, а ветка `stage` догоняет `develop` ночью или по `gh workflow run stage-sync.yml --ref main`; CI публикует образы `identity`, `meetups`, `notifications`, `auction`, `hub-bot` и чарт. Дождаться, пока все джобы `stage` этих публикаций зелёные (`gh run list --branch stage`), и `git pull` в копии ops: в `envs/stage/values.yaml` новые digest'ы пяти образов, в `release.yaml` новая версия чарта.
+2. **Мерж и публикации.** Мержится pull request, а ветка `stage` догоняет `develop` ночью или по `gh workflow run stage-sync.yml --ref develop`; CI публикует образы `identity`, `meetups`, `notifications`, `auction`, `hub-bot` и чарт. Дождаться, пока все джобы `stage` этих публикаций зелёные (`gh run list --branch stage`), и `git pull` в копии ops: в `envs/stage/values.yaml` новые digest'ы пяти образов, в `release.yaml` новая версия чарта.
 3. **Остановить ботов** — `bin/stage stop hub-bot`, `bin/stage stop auction-bot`. Без них Identity не пишет новых событий, а Notifications дочитывает старые.
 4. **Проверки до выкладки** в `bin/stage db identity`:
    - `SELECT count(*) FROM identity_outbox WHERE published_at IS NULL;` — 0. Иначе подождать: релей старого Identity ещё работает. Миграция 017 помечает неопубликованные строки прежней формы опубликованными — в новой форме их не закодировать, и событие пропало бы.
@@ -222,8 +242,10 @@ bin/stage presets         # активные наборы: ник и набор
 |---|---|---|
 | джоба `stage` красная: `нет секрета OPS_DEPLOY_KEY` | секрета нет в environment `stage` или вызов не передал его по имени | положить секрет, затем `gh workflow run` нужной публикации на `stage` |
 | джоба `stage-sync` красная: fast-forward невозможен | в ветке `stage` есть коммит, которого нет в `develop` | разобрать коммит: нужный довезти в `develop` pull request'ом, затем вернуть `stage` на предка `develop` (ruleset пустит только владельца в обход) |
-| джоба `stage-sync` красная: `нет секрета STAGE_SYNC_KEY` | секрета нет в environment `stage-sync` или запуск не с `main` | положить секрет, запустить `stage-sync.yml` с `main` |
-| ночью `stage-sync` не запустился | `stage-sync.yml` ещё не на `main`, или GitHub выключил расписание после 60 дней без активности в репозитории | релиз в `main`; включить workflow в Actions |
+| джоба `stage-sync` красная: `нет секрета STAGE_SYNC_KEY` | секрета нет в environment `stage-sync` | положить секрет, запустить `stage-sync.yml` с `develop` |
+| джоба `stage-sync` отказана environment: ветка не допущена | в Deployment branches environment `stage-sync` нет `develop` | добавить `develop` в настройках environment |
+| ночной `stage-sync` — `skipped` | условие джобы не пускает default branch: schedule идёт с `develop` | условие `if` джобы должно называть `refs/heads/develop` |
+| ночью `stage-sync` не запустился | GitHub выключил расписание после 60 дней без активности в репозитории | включить workflow в Actions |
 | джоба `stage` красная: push отвергнут пять раз | гонка записей одного мержа не разошлась повторами | перезапустить эту публикацию; повторится — сигнал пересмотра в дополнении ADR-055 |
 | в `bin/stage autolog` `Permission denied (publickey)` | ключа хоста нет в Deploy keys ops-репозитория или deploy keys выключены в организации | добавить ключ (текст печатает `--tags autodeploy`) |
 | `autolog` молчит, новый коммит в ops лежит | автовыкладка на паузе или таймер не включён | `bin/stage status` (строка «на паузе»), `bin/stage resume`; `verify.yml --tags autodeploy` |

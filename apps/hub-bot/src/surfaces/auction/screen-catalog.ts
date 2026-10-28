@@ -136,6 +136,15 @@ export const screenCatalog = {
     parent: "root",
     backName: "Лоты",
   },
+  // Раздел ленты (PER-719): лоты раздела в порядке администратора, возврат —
+  // к списку разделов.
+  "feed-section": {
+    class: "screen",
+    nav: "tree",
+    title: "Лоты",
+    parent: "feed",
+    backName: "Лоты",
+  },
   // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
   // корня аукциона и возврат туда же (PER-644).
   "prediction-results": {
@@ -153,6 +162,16 @@ export const screenCatalog = {
     title: "Хроники дня",
     parent: "root",
     backName: "Хроники дня",
+  },
+  // Статистика аукциона (PER-770) — тело общего аукционного дерева. Входа в
+  // этом боте нет (PER-800): шлюз пускает её только ведущему в хабе, а запись
+  // остаётся, потому что тело у двух оболочек общее.
+  "auction-chronicle": {
+    class: "screen",
+    nav: "tree",
+    title: "Статистика аукциона",
+    parent: "root",
+    backName: "Статистика",
   },
   predictions: {
     class: "screen",
@@ -322,6 +341,9 @@ export const screenCatalog = {
   // Уведомление из шины — след: клавиатура принадлежит самому сообщению, а
   // метку несёт отправитель доставки (`delivery/message.ts`), не адаптер.
   notification: { class: "trace", nav: "free" },
+  // Промо-видео под «🎬 Промо» (PER-774): копия поста чата медиа ботов с
+  // подписью и одной кнопкой «‹ Аукцион».
+  promo: { class: "trace", nav: "tree", parent: "root" },
 } as const;
 
 export type ScreenId = keyof typeof screenCatalog;

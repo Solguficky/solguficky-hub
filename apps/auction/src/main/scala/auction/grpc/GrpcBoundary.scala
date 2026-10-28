@@ -236,6 +236,7 @@ object GrpcBoundary {
     def hideAuction(in: wire.HideAuctionRequest): Future[wire.HideAuctionResponse] = refuse
     def cancelAuction(in: wire.CancelAuctionRequest): Future[wire.CancelAuctionResponse] = refuse
     def setFinalTime(in: wire.SetFinalTimeRequest): Future[wire.SetFinalTimeResponse] = refuse
+    def setLotLayout(in: wire.SetLotLayoutRequest): Future[wire.SetLotLayoutResponse] = refuse
     def selectForFinal(in: wire.SelectForFinalRequest): Future[wire.SelectForFinalResponse] = refuse
     def deselectForFinal(in: wire.DeselectForFinalRequest): Future[wire.DeselectForFinalResponse] = refuse
     def previewParticipantRemoval(
@@ -256,6 +257,7 @@ object GrpcBoundary {
     def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest): Future[wire.GetAuctionDaySummaryResponse] = refuse
     def getAuctionDayChronicle(in: wire.GetAuctionDayChronicleRequest): Future[wire.GetAuctionDayChronicleResponse] =
       refuse
+    def getAuctionChronicle(in: wire.GetAuctionChronicleRequest): Future[wire.GetAuctionChronicleResponse] = refuse
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
     def getAuction(in: wire.GetAuctionRequest): Future[wire.GetAuctionResponse] = refuse
     def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
@@ -266,6 +268,10 @@ object GrpcBoundary {
     def getRaffle(in: wire.GetRaffleRequest): Future[wire.GetRaffleResponse] = refuse
     def assignRaffleWinner(in: wire.AssignRaffleWinnerRequest): Future[wire.AssignRaffleWinnerResponse] = refuse
     def changeRafflePrize(in: wire.ChangeRafflePrizeRequest): Future[wire.ChangeRafflePrizeResponse] = refuse
+    def setRafflePrizePhoto(in: wire.SetRafflePrizePhotoRequest): Future[wire.SetRafflePrizePhotoResponse] = refuse
+    def removeRafflePrizePhoto(in: wire.RemoveRafflePrizePhotoRequest): Future[wire.RemoveRafflePrizePhotoResponse] =
+      refuse
+    def getRafflePrizePhoto(in: wire.GetRafflePrizePhotoRequest): Future[wire.LotImage] = refuse
     def submitPrediction(in: wire.SubmitPredictionRequest): Future[wire.SubmitPredictionResponse] = refuse
     def getMyPredictions(in: wire.GetMyPredictionsRequest): Future[wire.GetMyPredictionsResponse] = refuse
     def getPredictionResults(in: wire.GetPredictionResultsRequest): Future[wire.GetPredictionResultsResponse] = refuse
@@ -280,5 +286,17 @@ object GrpcBoundary {
     def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest): Future[wire.ListAuctionInvoicesResponse] = refuse
     def setPaymentInstructions(in: wire.SetPaymentInstructionsRequest): Future[wire.SetPaymentInstructionsResponse] =
       refuse
+    def setPromoVideo(in: wire.SetPromoVideoRequest): Future[wire.SetPromoVideoResponse] = refuse
+    def createHappyHourPeriod(in: wire.CreateHappyHourPeriodRequest): Future[wire.CreateHappyHourPeriodResponse] =
+      refuse
+    def deleteHappyHourPeriod(in: wire.DeleteHappyHourPeriodRequest): Future[wire.DeleteHappyHourPeriodResponse] =
+      refuse
+    def setHappyHourLotTerms(in: wire.SetHappyHourLotTermsRequest): Future[wire.SetHappyHourLotTermsResponse] =
+      refuse
+    def clearHappyHourLotTerms(in: wire.ClearHappyHourLotTermsRequest): Future[wire.ClearHappyHourLotTermsResponse] =
+      refuse
+    def listAuctionEngagement(
+        in: wire.ListAuctionEngagementRequest
+    ): Future[wire.ListAuctionEngagementResponse] = refuse
   }
 }

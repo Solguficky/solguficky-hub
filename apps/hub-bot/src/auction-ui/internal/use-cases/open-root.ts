@@ -7,12 +7,15 @@ import type {
 } from "../../ports.js";
 import type { AuctionScreenBody } from "../../screen.js";
 import { hasInvoices } from "./invoices.js";
-import { hasRaffle } from "./open-feed.js";
+import { readRaffle } from "./open-feed.js";
 
-// Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
+// Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия, сроки и
+// программа недели (PER-724) — окна и финал из сводки, розыгрыш из `getRaffle`,
 // вход в лоты, в прогнозы, пока участнику есть что отправить или перечитать
 // (PER-489), в хроники дня онлайн-недели (PER-725), в розыгрыш, пока Auction
-// его отдаёт, и, у процесса с Notifications, в избранное. Корень один у двух
+// его отдаёт, в промо-видео парой с лотами, пока оно есть и чат медиа включён
+// (PER-774, PER-798), и,
+// у процесса с Notifications, в избранное. Корень один у двух
 // ботов (PER-644, решение владельца по прогону 14 октября 2026 года): лента,
 // прогнозы, хроники, розыгрыш и избранное возвращают в него. Остальные ряды —
 // правила, пульт и возврат — ставит оболочка поверхности.
@@ -27,10 +30,11 @@ import { hasRaffle } from "./open-feed.js";
 export async function openRoot(input: {
   auction: AuctionPort;
   favorites?: FavoritesPort;
+  media?: true;
   viewer: Viewer;
   auctionId: string;
 }): Promise<AuctionScreenBody> {
-  const raffleRead = hasRaffle(input);
+  const raffleRead = readRaffle(input);
   const predictionRead = predictionEntryRound(input).catch(() => undefined);
   const invoicesRead = hasInvoices(input);
   const auction = await input.auction.getAuction({
@@ -48,11 +52,71 @@ export async function openRoot(input: {
       keyboard: [],
     };
   }
+  const raffleButtons =
+    raffle !== undefined
+      ? [
+          {
+            action: "root.raffle" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: input.auctionId,
+            }),
+          },
+        ]
+      : [];
+  const predictionsButtons =
+    predictionRound !== undefined
+      ? [
+          {
+            action: "root.predictions" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "prediction",
+              auctionId: input.auctionId,
+              round: predictionRound,
+            }),
+          },
+        ]
+      : [];
+  const resultsButtons =
+    auction.stage === "finished"
+      ? [
+          {
+            action: "root.prediction-results" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "prediction-results",
+              auctionId: input.auctionId,
+            }),
+          },
+        ]
+      : [];
+  // «Розыгрыш» и «Прогнозы» — парой под «Лотами» (решение владельца по
+  // прогону stage 27.10, PER-798; пересматривает №66 прогона 14.10): без
+  // «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему пары не нашлось, —
+  // своим рядом.
+  const hasPredictions = predictionsButtons.length > 0;
+  const paired = hasPredictions ? predictionsButtons : resultsButtons;
+  const rest = hasPredictions ? resultsButtons : [];
+  const raffleAndPredictionRows = [[...raffleButtons, ...paired], rest].filter(
+    (row) => row.length > 0,
+  );
   return {
-    blocks: [{ kind: "root", auctionId: input.auctionId, auction }],
+    blocks: [
+      {
+        kind: "root",
+        auctionId: input.auctionId,
+        auction,
+        // Программа недели (PER-724): момент розыгрыша — пока регистрация
+        // открыта; прошедшие моменты отсекает оболочка по своим часам.
+        ...(raffle?.status === "open"
+          ? { raffleClosesAt: raffle.closesAt }
+          : {}),
+      },
+    ],
     keyboard: [
-      // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
-      // №66; пересматривает «Розыгрыш своим рядом» PER-669).
+      // «🏷️ Лоты» — главный вход, первым рядом парой с «🎬 Промо», пока
+      // администратор выставил видео, а показать пост есть чем — чатом медиа
+      // ботов (PER-774); без промо — своим рядом (решение владельца 27.10,
+      // PER-798).
       [
         {
           action: "root.lots",
@@ -62,51 +126,27 @@ export async function openRoot(input: {
             page: 0,
           }),
         },
-        ...(raffle
+        ...(input.media !== undefined && auction.promoVideo !== undefined
           ? [
               {
-                action: "root.raffle" as const,
+                action: "root.promo" as const,
                 callbackData: encodeAuctionCallback({
-                  kind: "raffle",
+                  kind: "promo",
                   auctionId: input.auctionId,
                 }),
               },
             ]
           : []),
       ],
-      ...(predictionRound === undefined
-        ? []
-        : [
-            [
-              {
-                action: "root.predictions" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "prediction",
-                  auctionId: input.auctionId,
-                  round: predictionRound,
-                }),
-              },
-            ],
-          ]),
-      ...(auction.stage === "finished"
-        ? [
-            [
-              {
-                action: "root.prediction-results" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "prediction-results",
-                  auctionId: input.auctionId,
-                }),
-              },
-            ],
-          ]
-        : []),
+      ...raffleAndPredictionRows,
       // Хроники дня (PER-725): сводка последних суток, пока идёт онлайн-неделя
       // — от открытия торгов до закрытия последнего лота по дедлайну. Читает её
       // только держатель `place_bids`: держатель одного `run_auctions`, которого
       // хаб пускает в корень, получил бы отказ Auction, и кнопки у него нет.
-      ...((auction.stage === "prebidding" || auction.stage === "settling") &&
-      input.viewer.rights.includes("place-bids")
+      // «Статистики» всего аукциона (PER-770) в корне нет ни у кого: она —
+      // вход в пульт хаба (PER-800, решение владельца по прогону 27.10).
+      ...(input.viewer.rights.includes("place-bids") &&
+      (auction.stage === "prebidding" || auction.stage === "settling")
         ? [
             [
               {

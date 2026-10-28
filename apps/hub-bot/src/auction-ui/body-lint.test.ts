@@ -36,6 +36,13 @@ const rules: BodyRules = {
       "lot.prev|lot.refresh",
       "lot.refresh|lot.next",
       "lot.prev|lot.next",
+      // Корень аукциона (PER-770): торги аукциона за сутки и за всё время.
+      "root.day-chronicle|root.auction-chronicle",
+      // «Лоты» и «Промо» — первым рядом, бесплатные поводы корня — парой под
+      // ними (PER-798).
+      "root.lots|root.promo",
+      "root.raffle|root.predictions",
+      "root.raffle|root.prediction-results",
     ].includes(row.map(({ action }) => action).join("|")),
   // Общий потолок двенадцать рядов. Оболочка бота аукциона сегодня ставит
   // под телом два ряда — FAQ и меню, — и пока исключение `rows` ленты в её
@@ -174,6 +181,9 @@ const surface: AuctionSurface = {
         throw new Error("not used");
       },
       getDayChronicle: async () => {
+        throw new Error("not used");
+      },
+      getAuctionChronicle: async () => {
         throw new Error("not used");
       },
       async submitPrediction() {

@@ -81,6 +81,7 @@ function view(
     hidden: false,
     lots: [],
     launchedWindows: [],
+    happyHourPeriods: [],
     lotSets: [],
     ...extra,
   };
@@ -160,7 +161,13 @@ function fake(answers: {
     deleteLotSet: async () => {
       throw new Error("not used");
     },
+    setLotLayout: async () => {
+      throw new Error("not used");
+    },
     setPaymentInstructions: async () => {
+      throw new Error("not used");
+    },
+    setPromoVideo: async () => {
       throw new Error("not used");
     },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
@@ -222,6 +229,12 @@ function fake(answers: {
     changeRafflePrize: async () => {
       throw new Error("raffle prize change not used by the console");
     },
+    setRafflePrizePhoto: async () => {
+      throw new Error("raffle prize photo not used by the console");
+    },
+    removeRafflePrizePhoto: async () => {
+      throw new Error("raffle prize photo not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };
@@ -230,6 +243,22 @@ function fake(answers: {
       reads.active += 1;
       return answers.active ?? { kind: "ok", auctions: [] };
     },
+    createHappyHourPeriod: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
+    deleteHappyHourPeriod: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
+    setHappyHourLotTerms: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
+    clearHappyHourLotTerms: async () => ({
+      kind: "unavailable",
+      cause: "unused",
+    }),
     launchStepWindow: async (_person, launch) => {
       launched.push(launch);
       return (

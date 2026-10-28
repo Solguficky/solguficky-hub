@@ -12,6 +12,7 @@ import type {
 import type {
   AccessRight,
   AuctionBotPorts,
+  AuctionChronicleView,
   AuctionSummaryView,
   BidRefusal,
   CommandOutcome,
@@ -155,6 +156,11 @@ export type PortCall =
     }
   | {
       port: "auction";
+      method: "getAuctionChronicle";
+      request: Parameters<AuctionMethods["getAuctionChronicle"]>[0];
+    }
+  | {
+      port: "auction";
       method: "submitPrediction";
       request: Parameters<AuctionMethods["submitPrediction"]>[0];
     }
@@ -237,6 +243,10 @@ export type ContractAuction = {
   predictionResults?: PredictionResultsView;
   // Хроники дня (PER-725). Нет — чтение не ожидается.
   dayChronicle?: DayChronicleView;
+  // Статистика аукциона (PER-770). Нет — чтение не ожидается.
+  auctionChronicle?: AuctionChronicleView;
+  // Чат медиа ботов включён (PER-774): порт `media` у приложения есть.
+  media?: true;
 };
 
 export type AuctionContractCase = {
@@ -506,6 +516,14 @@ export const AUCTION: ContractAuction = {
   },
   names: NAMES,
   predictions: OPEN_PREDICTION_ROUNDS,
+  // Статистика аукциона (PER-800): её читает матрица доступа — держатель
+  // `run_auctions` хаба открывает её с «Сводки дня» пульта.
+  auctionChronicle: {
+    bidCount: 0,
+    participantCount: 0,
+    tradedLotCount: 0,
+    lots: [],
+  },
 };
 
 const HELD_LOT: LotView = {
@@ -576,7 +594,7 @@ const PRE_TRADING_AUCTION: ContractAuction = {
   predictions: OPEN_PREDICTION_ROUNDS,
 };
 
-// По цене: стартовая 700; без цены — по `lotId`.
+// В порядке создания — порядке `lotId` (PER-719).
 const PRE_TRADING_ORDER = [
   TIERED_SCHEDULED_LOT,
   PRE_TRADING_WITHDRAWN,
@@ -663,15 +681,45 @@ const feedBackRow = (auctionId: string) => [
   },
 ];
 
-// По цене: стартовая 500, текущая 1200, продажа 3000; без цены — в конце по
-// `lotId`.
+// Администратор лоты не упорядочивал: порядок создания — порядок `lotId`
+// (PER-719), а цена лот не двигает.
 const FEED_ORDER = [
-  SCHEDULED_LOT,
   CONTRACT_LOT,
   SOLD_LOT,
   UNSOLD_LOT,
   WITHDRAWN_LOT,
+  SCHEDULED_LOT,
 ];
+
+// Порядок и разделы администратора (PER-719): раздел из двух лотов, снятый лот
+// первым в общем списке, остальные — за ним в порядке создания.
+const SECTIONED_AUCTION: ContractAuction = {
+  ...AUCTION,
+  summary: {
+    auctionId: CONTRACT_AUCTION_ID,
+    stage: "prebidding",
+    final: true,
+    layout: {
+      lotIds: [WITHDRAWN_LOT.lotId],
+      sections: [
+        {
+          sectionId: 2,
+          name: "Книги",
+          lotIds: [SCHEDULED_LOT.lotId, CONTRACT_LOT.lotId],
+        },
+      ],
+    },
+  },
+};
+
+const sectionCallback = (auctionId: string, sectionId: number) =>
+  encodeAuctionCallback({ kind: "section", auctionId, sectionId, page: 0 });
+
+const feedItemOfLot = (lot: LotView) => ({
+  lotId: lot.lotId,
+  ...(lot.card === undefined ? {} : { title: lot.card.title }),
+  status: lot.status,
+});
 
 const FEED_BODY: AuctionScreenBody = {
   blocks: [
@@ -2941,6 +2989,15 @@ const REGISTERED_RAFFLE: RaffleView = { ...OPEN_RAFFLE, registered: true };
 
 const CLOSING_RAFFLE: RaffleView = { ...REGISTERED_RAFFLE, status: "closing" };
 
+// Ручной итог по настройке сервиса (PER-799): до фиксации пула Auction
+// называет режим, и кнопки проверки нет ни в окне регистрации, ни после.
+const BY_HAND_RAFFLE: RaffleView = { ...OPEN_RAFFLE, drawnByHand: true };
+
+const BY_HAND_CLOSING_RAFFLE: RaffleView = {
+  ...CLOSING_RAFFLE,
+  drawnByHand: true,
+};
+
 const DRAWN_RAFFLE: RaffleView = {
   ...REGISTERED_RAFFLE,
   status: "drawn",
@@ -3024,11 +3081,13 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
             ],
           ];
   // «Как проверить честность» (PER-618) — пока у розыгрыша есть отпечаток;
-  // у отменённого seed не раскроется, и проверять нечего (PER-698).
+  // у отменённого seed не раскроется, и проверять нечего (PER-698), а ручной
+  // итог маяка не берёт (PER-727, PER-799).
   const proof =
     raffle === undefined ||
     raffle.status === "not-held" ||
-    raffle.status === "cancelled"
+    raffle.status === "cancelled" ||
+    raffle.drawnByHand === true
       ? []
       : [
           [
@@ -3159,6 +3218,20 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     auction: { ...AUCTION, raffle: OPEN_RAFFLE },
     auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
     body: raffleScreen(OPEN_RAFFLE),
+  },
+  {
+    intent: "raffle: open, winner by hand",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: BY_HAND_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(BY_HAND_RAFFLE),
+  },
+  {
+    intent: "raffle: closing, winner by hand",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: BY_HAND_CLOSING_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(BY_HAND_CLOSING_RAFFLE),
   },
   {
     intent: "raffle: registered",
@@ -3448,6 +3521,7 @@ const chronicleCallback = () =>
     auctionId: CONTRACT_AUCTION_ID,
   });
 
+// «Статистики» (PER-770) в корне нет: она — вход пульта хаба (PER-800).
 const rootChronicleRow = [
   { action: "root.day-chronicle" as const, callbackData: chronicleCallback() },
 ];
@@ -3458,6 +3532,14 @@ const rootLotsRow = [
     callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
   },
 ];
+
+const rootRaffleButton = {
+  action: "root.raffle" as const,
+  callbackData: encodeAuctionCallback({
+    kind: "raffle",
+    auctionId: CONTRACT_AUCTION_ID,
+  }),
+};
 
 const ROOT_CASES: readonly AuctionContractCase[] = [
   {
@@ -3471,21 +3553,16 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
           kind: "root",
           auctionId: CONTRACT_AUCTION_ID,
           auction: CONTRACT_SUMMARY,
+          // Программа недели (PER-724): открытая регистрация — строка
+          // розыгрыша.
+          raffleClosesAt: OPEN_RAFFLE.closesAt,
         },
       ],
-      // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).
+      // «Лоты» своим рядом, «Розыгрыш» и «Прогнозы» — парой под ним
+      // (PER-798).
       keyboard: [
-        [
-          ...rootLotsRow,
-          {
-            action: "root.raffle",
-            callbackData: encodeAuctionCallback({
-              kind: "raffle",
-              auctionId: CONTRACT_AUCTION_ID,
-            }),
-          },
-        ],
-        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootLotsRow,
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
         rootChronicleRow,
       ],
     },
@@ -3510,17 +3587,8 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [
-        [
-          ...rootLotsRow,
-          {
-            action: "root.raffle",
-            callbackData: encodeAuctionCallback({
-              kind: "raffle",
-              auctionId: CONTRACT_AUCTION_ID,
-            }),
-          },
-        ],
-        rootPredictionsRow(CONTRACT_AUCTION_ID),
+        rootLotsRow,
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
       ],
     },
   },
@@ -5567,9 +5635,119 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Промо-видео (PER-774): «🎬 Промо» в корне — только при видео и чате медиа;
+// нажатие читает аукцион заново и отдаёт номер поста. Без чата медиа Auction
+// не зовут, и подделанная кнопка получает тело без поста.
+const promoCallback = () =>
+  encodeAuctionCallback({ kind: "promo", auctionId: CONTRACT_AUCTION_ID });
+
+const PROMO_SUMMARY: AuctionSummaryView = {
+  ...CONTRACT_SUMMARY,
+  promoVideo: 42,
+};
+
+const promoBody = (postId?: number): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "promo",
+      auctionId: CONTRACT_AUCTION_ID,
+      ...(postId === undefined ? {} : { postId }),
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "promo.back",
+        callbackData: rootCallback(CONTRACT_AUCTION_ID),
+      },
+    ],
+  ],
+});
+
+const promoReadCall = (): PortCall => ({
+  port: "auction",
+  method: "getAuction",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+});
+
+const PROMO_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "root: promo video with the media chat",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: PROMO_SUMMARY,
+      raffle: OPEN_RAFFLE,
+      media: true,
+    },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: PROMO_SUMMARY,
+          raffleClosesAt: OPEN_RAFFLE.closesAt,
+        },
+      ],
+      keyboard: [
+        [
+          ...rootLotsRow,
+          { action: "root.promo", callbackData: promoCallback() },
+        ],
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
+        rootChronicleRow,
+      ],
+    },
+  },
+  {
+    intent: "root: promo video without the media chat",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, summary: PROMO_SUMMARY, raffle: OPEN_RAFFLE },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: PROMO_SUMMARY,
+          raffleClosesAt: OPEN_RAFFLE.closesAt,
+        },
+      ],
+      keyboard: [
+        rootLotsRow,
+        [rootRaffleButton, ...rootPredictionsRow(CONTRACT_AUCTION_ID)],
+        rootChronicleRow,
+      ],
+    },
+  },
+  {
+    intent: "promo: the post of the auction",
+    callbackData: promoCallback(),
+    auction: { ...AUCTION, summary: PROMO_SUMMARY, media: true },
+    auctionCalls: [promoReadCall()],
+    body: promoBody(42),
+  },
+  {
+    intent: "promo: the video was taken back",
+    callbackData: promoCallback(),
+    auction: { ...AUCTION, summary: CONTRACT_SUMMARY, media: true },
+    auctionCalls: [promoReadCall()],
+    body: promoBody(),
+  },
+  {
+    intent: "promo: without the media chat",
+    callbackData: promoCallback(),
+    auction: { ...AUCTION, summary: PROMO_SUMMARY },
+    auctionCalls: [],
+    body: promoBody(),
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...SET_CASES,
   ...ROOT_CASES,
+  ...PROMO_CASES,
   ...PREDICTION_RESULTS_CASES,
   ...DAY_CHRONICLE_CASES,
   {
@@ -5603,6 +5781,77 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [feedBackRow(EMPTY_AUCTION_ID)],
+    },
+  },
+  // Разделы администратора (PER-719): кнопками над лотами, под ними общий
+  // список — лот вне разделов, а за ним неупорядоченные в порядке создания.
+  {
+    intent: "feed: sections",
+    callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+    auction: SECTIONED_AUCTION,
+    auctionCalls: feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: CONTRACT_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: [WITHDRAWN_LOT, SOLD_LOT, UNSOLD_LOT].map(feedItemOfLot),
+          sections: [{ sectionId: 2, name: "Книги", lotCount: 2 }],
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "feed.open-section",
+            sectionId: 2,
+            callbackData: sectionCallback(CONTRACT_AUCTION_ID, 2),
+          },
+        ],
+        ...[WITHDRAWN_LOT, SOLD_LOT, UNSOLD_LOT].map((lot) => [
+          {
+            action: "feed.open-lot" as const,
+            lotId: lot.lotId,
+            callbackData: lotCallback(lot.lotId, 0),
+          },
+        ]),
+        feedBackRow(CONTRACT_AUCTION_ID),
+      ],
+    },
+  },
+  // Раздел — свои лоты в порядке администратора и возврат к разделам.
+  {
+    intent: "section",
+    callbackData: sectionCallback(CONTRACT_AUCTION_ID, 2),
+    auction: SECTIONED_AUCTION,
+    auctionCalls: feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: CONTRACT_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: [SCHEDULED_LOT, CONTRACT_LOT].map(feedItemOfLot),
+          section: { sectionId: 2, name: "Книги" },
+        },
+      ],
+      keyboard: [
+        ...[SCHEDULED_LOT, CONTRACT_LOT].map((lot) => [
+          {
+            action: "feed.open-lot" as const,
+            lotId: lot.lotId,
+            callbackData: lotCallback(lot.lotId, 0),
+          },
+        ]),
+        [
+          {
+            action: "feed.back" as const,
+            callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+          },
+        ],
+      ],
     },
   },
   // Ни один лот не торговался: сводка не о лидерстве, а о том, что торги не
@@ -6049,6 +6298,7 @@ export function spyPorts(
     return outcome;
   };
   return {
+    ...(snapshot.media === undefined ? {} : { media: snapshot.media }),
     identity: {
       async resolveIdentity(request) {
         calls.push({ port: "identity", method: "resolveIdentity", request });
@@ -6176,6 +6426,13 @@ export function spyPorts(
           throw new Error("the day chronicle is not expected");
         }
         return snapshot.dayChronicle;
+      },
+      async getAuctionChronicle(request) {
+        calls.push({ port: "auction", method: "getAuctionChronicle", request });
+        if (snapshot.auctionChronicle === undefined) {
+          throw new Error("the auction chronicle is not expected");
+        }
+        return snapshot.auctionChronicle;
       },
       async submitPrediction(request) {
         calls.push({ port: "auction", method: "submitPrediction", request });

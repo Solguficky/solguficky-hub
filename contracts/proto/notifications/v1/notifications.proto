@@ -162,7 +162,7 @@ message Notification {
 
     // A window of reduced bid step started on a lot the recipient follows. One
     // fact per recipient and window start, however many lots of the window the
-    // recipient follows: every such lot is named inside the fact with the step
+    // recipient follows: every such lot is named inside the fact with the terms
     // and the end of its own window, never in a second fact. A lot that left
     // trading, a window that already ended, a cancelled auction and a blocked
     // recipient produce no fact. No category governs it: unfollowing the lot is
@@ -201,6 +201,24 @@ message Notification {
 
     // The recipient collected the set: every lot in it was sold to them.
     LotSetCollected lot_set_collected = 38;
+
+    // A manual announcement of an auction from a person who runs it. Sent to
+    // every holder of the auction right except the blocked, delivered by the
+    // bot of their circle; the auction announcement switch of the auction
+    // notification preferences turns it off, as it does auction_published.
+    // The cause is the broadcast command: a repeated command produces no
+    // second fact for the same person.
+    AuctionNotice auction_notice = 39;
+
+    // A window of reduced bid step started on lots of an auction, told to
+    // every holder of the auction right who does not follow a lot of the
+    // window: a follower receives step_window_started for the same start and
+    // never this one. One fact per recipient and window start, delivered by
+    // the bot of their circle; blocked recipients get nothing. The auction
+    // announcement switch of the auction notification preferences turns it
+    // off, as it does auction_published. A window that already ended, a lot
+    // that left trading and an ended auction produce no fact.
+    StepWindowAnnounced step_window_announced = 40;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -418,13 +436,37 @@ message StepWindowStarted {
   string starts_at = 2;
 
   // Never empty. The followed lots whose window starts at starts_at, each with
-  // the step and the end of its own window: two windows that share a start may
+  // the terms and the end of its own window: two windows that share a start may
   // differ in both.
   repeated StepWindowLot lots = 3;
 }
 
+// A window of reduced bid step started on lots of an auction. The fact names
+// no lots: the recipient follows none of them, and the channel leads to the
+// lot feed of the auction. The terms are not carried either: lots of one window
+// start may differ in step and starting price.
+message StepWindowAnnounced {
+  // Canonical lowercase UUID with hyphens: the auction the window belongs to.
+  string auction_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string starts_at = 2;
+
+  // RFC 3339 instant in UTC: the first instant after the window. Lots of one
+  // window start may end at different moments; this is the latest of them.
+  string until = 3;
+
+  // Never zero. How many lots in trading have a window that starts at
+  // starts_at, still runs when the fact was written and gives the lot a lower
+  // step or, while it has no bid, a lower starting price.
+  uint32 lot_count = 4;
+}
+
 // One lot of a StepWindowStarted fact: the window of reduced step the lot
-// recorded, as the auction fact carried it.
+// recorded, as the auction fact carried it, and the terms it gives the lot when
+// the window starts. At least one of step and start is set: a window that gives
+// the lot nothing at its start (only a starting price, and the lot already has
+// a bid) does not name the lot.
 message StepWindowLot {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 1;
@@ -432,8 +474,18 @@ message StepWindowLot {
   // RFC 3339 instant in UTC: the first instant after the window.
   string until = 2;
 
-  // The step in force in the window, in the currency of the lot.
+  // The step in force in the window, in the currency of the lot. Unset when the
+  // window does not change the step.
   auction.v1.Money step = 3;
+
+  // The price of the first bid inside the window. Set only when the window sets
+  // a starting price and the lot had no bid when the window started: a lot with
+  // a bid is not promised a starting price.
+  auction.v1.Money start = 4;
+
+  // The price the first bid needs outside the window: the starting price of the
+  // lot. Set exactly when start is set.
+  auction.v1.Money regular_start = 5;
 }
 
 // The next lot of the live final belongs to the recipient. Nothing else is
@@ -534,6 +586,103 @@ message AuctionTradingOpened {
 
   // The online phase of the auction that just started.
   auction.v1.OnlinePhase online_phase = 4;
+}
+
+// A manual announcement of an auction, as the recipient sees it. The text is
+// the author's own; the envelope, the button caption and the photo are drawn by
+// the channel from the data below, without calling other services for the text.
+message AuctionNotice {
+  // Canonical lowercase UUIDv5 with hyphens: the auction of the meetup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The title of the meetup as the replica knew it when the fact was written.
+  // Empty when the replica knows the meetup by its id alone.
+  string meetup_title = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the
+  // author. A human-readable name is not carried, as in CommunityAnnouncement.
+  string sender_id = 4;
+
+  // Text written by the author, verbatim.
+  string body = 5;
+
+  // Where the single button of the message leads. Unset means a message
+  // without a button.
+  AuctionNoticeButton button = 6;
+
+  // The picture of the message. Unset means a message without a picture.
+  AuctionNoticePhoto photo = 7;
+}
+
+// The button of an auction announcement: a screen of the auction tree of the
+// recipient's bot. Its caption is the channel's business.
+message AuctionNoticeButton {
+  AuctionNoticeView view = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Set exactly when view is
+  // AUCTION_NOTICE_VIEW_LOT, and empty otherwise. Notifications does not check
+  // that the lot belongs to the auction: the channel opens the lot as any
+  // other, and Auction answers for a lot that is not there.
+  string lot_id = 2;
+}
+
+// The screen of the auction tree that the button opens.
+enum AuctionNoticeView {
+  AUCTION_NOTICE_VIEW_UNSPECIFIED = 0;
+
+  // The root of the auction.
+  AUCTION_NOTICE_VIEW_AUCTION = 1;
+
+  // The feed of the lots.
+  AUCTION_NOTICE_VIEW_LOTS = 2;
+
+  // The card of one lot, named by lot_id.
+  AUCTION_NOTICE_VIEW_LOT = 3;
+
+  // The raffle among the participants.
+  AUCTION_NOTICE_VIEW_RAFFLE = 4;
+
+  // The predictions of the auction.
+  AUCTION_NOTICE_VIEW_PREDICTIONS = 5;
+
+  // The chronicle of the trading day.
+  AUCTION_NOTICE_VIEW_CHRONICLE = 6;
+}
+
+// The picture of an auction announcement. Exactly one source is set. The
+// picture travels as a reference, never as bytes: the channel fetches it.
+message AuctionNoticePhoto {
+  oneof source {
+    // A photo of a lot as Auction stores it.
+    AuctionNoticeLotPhoto lot_photo = 1;
+
+    // A post of the bots' media chat, copied by the channel.
+    AuctionNoticeChannelPost channel_post = 2;
+  }
+}
+
+// A post of the media chat of the bots, which the channel copies into the
+// message. The chat itself is the bots' configuration, not the contract: only
+// the post is named here. Notifications does not check that the post exists:
+// the channel sends the message without the picture when the copy fails.
+message AuctionNoticeChannelPost {
+  // Telegram message id of the post in the media chat. Positive.
+  int64 message_id = 1;
+}
+
+// A photo of a lot, fetched by the channel with auction.v1 GetLotPhoto.
+// Notifications does not check that the photo exists or that the lot belongs
+// to the auction: the channel sends the message without the picture when
+// Auction does not give it.
+message AuctionNoticeLotPhoto {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens, as auction.v1 LotPhotoRef.photo_id.
+  string photo_id = 2;
 }
 
 // The prediction results of an auction as the recipient sees them: the outcome

@@ -43,7 +43,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.Auction, R.AuctionBot, R.Cloudflared, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications, R.SupportBot]);
+            .ShouldBe([R.Achievements, R.Auction, R.AuctionBot, R.Cloudflared, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications, R.SupportBot]);
     }
 
     /// <summary>
@@ -76,6 +76,7 @@ public class ClusterPublishTests
     [InlineData(R.Identity, "apps/identity/Containerfile")]
     [InlineData(R.HubBot, "apps/hub-bot/Containerfile")]
     [InlineData(R.Auction, "apps/auction/Containerfile")]
+    [InlineData(R.Achievements, "apps/achievements/Containerfile")]
     public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
     {
         var builder = await PublishModelAsync();
@@ -122,7 +123,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IResourceWithConnectionString>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.AuctionDb, R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
+            .ShouldBe([R.AchievementsDb, R.AuctionDb, R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
     }
 
     /// <summary>
@@ -137,6 +138,7 @@ public class ClusterPublishTests
     [InlineData(R.Notifications)]
     [InlineData(R.HubBot)]
     [InlineData(R.Auction)]
+    [InlineData(R.Achievements)]
     public async Task Publish_OtlpServices_ExportToTheCollectorOfTheirEnvironment(string name)
     {
         var builder = await PublishModelAsync();
@@ -246,12 +248,14 @@ public class ClusterPublishTests
     /// <c>hub-auction</c>. Расхождение составов — решение, которое должно быть
     /// видно правкой этого теста, а не тихо приехать в прод вместе с изменением
     /// локального профиля. Stage поднимает хаб с аукционом и три бота
-    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет. Единственное
-    /// расхождение — туннель публичного входа: локально экран открывается по
-    /// адресу, который публикует Aspire (ADR-071).
+    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет. Расхождений
+    /// два: туннель публичного входа — локально экран открывается по адресу,
+    /// который публикует Aspire (ADR-071), — и Achievements, который чарт везёт
+    /// выключенным до решения о выкатке (ADR-077, дополнение 2026-10-26), а
+    /// локально поднимает свой профиль.
     /// </summary>
     [Fact]
-    public void PublishProfile_IsHubAuctionCompositionWithTunnel()
+    public void PublishProfile_IsHubAuctionCompositionWithTunnelAndAchievements()
     {
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -265,7 +269,7 @@ public class ClusterPublishTests
             .Build());
 
         cluster.Name.ShouldBe("cluster");
-        cluster.Services.Order().ShouldBe(local.Services.Append(R.Cloudflared).Order());
+        cluster.Services.Order().ShouldBe(local.Services.Append(R.Cloudflared).Append(R.Achievements).Order());
         cluster.Infrastructure.Order().ShouldBe(local.Infrastructure.Order());
     }
 }

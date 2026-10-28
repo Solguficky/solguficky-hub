@@ -33,7 +33,10 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../core/auction/commands.js";
-import { dayChronicleOf } from "../../core/auction/day-chronicle.js";
+import {
+  auctionChronicleOf,
+  dayChronicleOf,
+} from "../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
 import {
@@ -120,9 +123,11 @@ export type AuctionRpc = Pick<
   | "getMyPredictions"
   | "getPredictionResults"
   | "getAuctionDayChronicle"
+  | "getAuctionChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
+  | "getRafflePrizePhoto"
   | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
@@ -478,6 +483,16 @@ export function createPorts(
           );
           return dayChronicleOf(response);
         },
+        async getAuctionChronicle(request) {
+          const response = await auction.getAuctionChronicle(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return auctionChronicleOf(response);
+        },
         submitPrediction(request) {
           return unansweredOn(async () =>
             predictionOutcomeOf(
@@ -547,6 +562,21 @@ export function createPorts(
               viewer: wireViewer(request.viewer),
               lotId: request.lotId,
               photoId: request.photoId,
+            },
+            callOptions(imageTimeoutMs),
+          );
+          return {
+            content: image.content,
+            mediaType: image.mediaType,
+            version: image.version,
+          };
+        },
+        // Фото приза розыгрыша (PER-773) — та же форма и тот же срок.
+        async getRafflePrizePhoto(request) {
+          const image = await auction.getRafflePrizePhoto(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
             },
             callOptions(imageTimeoutMs),
           );

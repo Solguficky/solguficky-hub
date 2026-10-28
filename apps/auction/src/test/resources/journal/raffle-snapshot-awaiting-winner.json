@@ -6,7 +6,8 @@
     "closesAt": "2026-10-28T18:00:00Z",
     "seed": "46fb9863b7178feb348aa621d658c5b41b848e398494830bac4837e0b0f539ae",
     "round": 33469032,
-    "prize": null
+    "prize": null,
+    "photo": null
   },
   "participants": [
     "0190f2a0-0000-7000-8000-000000000065"
@@ -31,7 +32,8 @@
         "raffleDrawn": null,
         "raffleCancelled": null,
         "winnerAssigned": null,
-        "prizeChanged": null
+        "prizeChanged": null,
+        "prizePhotoSet": null
       }
     },
     {
@@ -49,7 +51,8 @@
         "raffleDrawn": null,
         "raffleCancelled": null,
         "winnerAssigned": null,
-        "prizeChanged": null
+        "prizeChanged": null,
+        "prizePhotoSet": null
       }
     },
     {
@@ -70,7 +73,8 @@
         "raffleDrawn": null,
         "raffleCancelled": null,
         "winnerAssigned": null,
-        "prizeChanged": null
+        "prizeChanged": null,
+        "prizePhotoSet": null
       }
     }
   ],

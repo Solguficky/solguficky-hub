@@ -2,12 +2,22 @@ package auction.grpc
 
 import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
+import auction.aggregate.CreateHappyHourPeriod
+import auction.aggregate.ClearHappyHourLotTerms
+import auction.aggregate.DeleteHappyHourPeriod
+import auction.aggregate.SetHappyHourLotTerms
+import auction.aggregate.HappyHourPeriodId
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
+import auction.aggregate.LotLayout
+import auction.aggregate.LotSection
+import auction.aggregate.LotSectionId
+import auction.aggregate.LotSectionName
 import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
 import auction.aggregate.PaymentInstructions
+import auction.aggregate.PromoVideo
 import auction.aggregate.PreviewLotParticipantRemoval
 import auction.aggregate.RemoveLotParticipant
 import auction.aggregate.StepWindowConfig
@@ -48,6 +58,8 @@ import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.ChangeRafflePrizeRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
+import auction.v1.auction_service.ListAuctionEngagementRequest
+import auction.v1.auction_service.GetRafflePrizePhotoRequest
 import auction.v1.auction_service.GetRaffleRequest
 import auction.v1.auction_service.HideAuctionRequest
 import auction.v1.auction_service.RegisterForRaffleRequest
@@ -56,6 +68,8 @@ import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
 import auction.v1.auction_service.PreviewParticipantRemovalRequest
 import auction.v1.auction_service.RemoveLotPhotoRequest
+import auction.v1.auction_service.RemoveRafflePrizePhotoRequest
+import auction.v1.auction_service.SetRafflePrizePhotoRequest
 import auction.v1.auction_service.RemoveParticipantRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
@@ -63,6 +77,7 @@ import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
+import auction.v1.auction_service.GetAuctionChronicleRequest
 import auction.v1.auction_service.GetAuctionDayChronicleRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
@@ -74,6 +89,10 @@ import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.LaunchStepWindowRequest
+import auction.v1.auction_service.CreateHappyHourPeriodRequest
+import auction.v1.auction_service.DeleteHappyHourPeriodRequest
+import auction.v1.auction_service.SetHappyHourLotTermsRequest
+import auction.v1.auction_service.ClearHappyHourLotTermsRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
 import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
@@ -89,9 +108,12 @@ import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.SetFinalTimeRequest
 import auction.v1.auction_service.SetPaymentInstructionsRequest
+import auction.v1.auction_service.SetPromoVideoRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
+import auction.v1.auction_service.LotLayout as LotLayoutMessage
+import auction.v1.auction_service.SetLotLayoutRequest
 import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
@@ -155,6 +177,15 @@ final case class LotSetDeleteCommand(auctionId: AuctionId, set: LotSetId, opId: 
 /** Запуск окна сниженного шага аукциону сходки. Окно здесь ещё не проверено: его случаи — решение домена. */
 final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchStepWindow, acting: Acting)
 
+final case class HappyHourCreateCommand(auctionId: AuctionId, command: CreateHappyHourPeriod, acting: Acting)
+
+final case class HappyHourDeleteCommand(auctionId: AuctionId, command: DeleteHappyHourPeriod, acting: Acting)
+
+/** Условия лота в периоде «Счастливых часов» (PER-786). Суммы здесь ещё не сверены с лотом: это решение домена. */
+final case class HappyHourTermsCommand(auctionId: AuctionId, command: SetHappyHourLotTerms, acting: Acting)
+
+final case class HappyHourTermsClearCommand(auctionId: AuctionId, command: ClearHappyHourLotTerms, acting: Acting)
+
 /** Снятие участника с лота аукциона сходки и его предпросмотр. */
 final case class RemovalCommand(auctionId: AuctionId, command: RemoveLotParticipant, acting: Acting)
 
@@ -197,6 +228,12 @@ final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
  */
 final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opId: OpId, acting: Acting)
 
+/** Порядок и разделы ленты (PER-719): раскладка целиком, форма уже проверена. */
+final case class LotLayoutCommand(auctionId: AuctionId, layout: LotLayout, opId: OpId, acting: Acting)
+
+/** Промо-видео аукциона (PER-781): `video` пусто — видео снимается. */
+final case class PromoVideoCommand(auctionId: AuctionId, video: Option[PromoVideo], opId: OpId, acting: Acting)
+
 /** Текст «как оплатить и получить» (PER-322): `text` пусто — текст снимается. */
 final case class PaymentInstructionsCommand(
     auctionId: AuctionId,
@@ -225,6 +262,9 @@ final case class RafflePrizeCommand(auctionId: AuctionId, prize: String, opId: O
 
 /** Чтение розыгрыша аукциона смотрящим. */
 final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
+
+/** Фото приза розыгрыша (PER-772): id фото — ключ повтора, байты ещё не проверены, как у фото лота. */
+final case class RafflePrizePhotoCommand(auctionId: AuctionId, photoId: UUID, photo: IArray[Byte], acting: Acting)
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
@@ -540,6 +580,65 @@ object RequestMapping {
       opId <- uuidV7("op_id", request.opId)
     } yield StepWindowLaunchCommand(auction, LaunchStepWindow(from, until, step, lots, OpId(opId)), acting)
 
+  /**
+   * Создание периода «Счастливых часов»: форма — два момента и `op_id`. Конец не позже начала и период вне онлайн-этапа
+   * — отказы домена, а не форма запроса.
+   */
+  def createHappyHourPeriod(request: CreateHappyHourPeriodRequest): Either[FormError, HappyHourCreateCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      from <- instant("from", request.from)
+      until <- instant("until", request.until)
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourCreateCommand(auction, CreateHappyHourPeriod(from, until, OpId(opId)), acting)
+
+  /** Удаление периода «Счастливых часов»: идентификатор периода — UUIDv5, его выводит сервис. */
+  def deleteHappyHourPeriod(request: DeleteHappyHourPeriodRequest): Either[FormError, HappyHourDeleteCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      period <- canonicalUuidV5(request.periodId).toRight(FormError("period_id"))
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourDeleteCommand(
+      auction,
+      DeleteHappyHourPeriod(HappyHourPeriodId(period), OpId(opId)),
+      acting
+    )
+
+  /**
+   * Условия лота в периоде: форма — период, лот, суммы, какие заданы, и `op_id`. Ни одной суммы, сумма не положительна
+   * или не в валюте лота — отказы домена, а не форма запроса.
+   */
+  def setHappyHourLotTerms(request: SetHappyHourLotTermsRequest): Either[FormError, HappyHourTermsCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      period <- canonicalUuidV5(request.periodId).toRight(FormError("period_id"))
+      lot <- uuidV7("lot_id", request.lotId)
+      step <- optionalMoney("step", request.step)
+      start <- optionalMoney("start", request.start)
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourTermsCommand(
+      auction,
+      SetHappyHourLotTerms(HappyHourPeriodId(period), LotId(lot), step, start, OpId(opId)),
+      acting
+    )
+
+  /** Снятие условий лота в периоде: период, лот и `op_id`. */
+  def clearHappyHourLotTerms(request: ClearHappyHourLotTermsRequest): Either[FormError, HappyHourTermsClearCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      period <- canonicalUuidV5(request.periodId).toRight(FormError("period_id"))
+      lot <- uuidV7("lot_id", request.lotId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield HappyHourTermsClearCommand(
+      auction,
+      ClearHappyHourLotTerms(HappyHourPeriodId(period), LotId(lot), OpId(opId)),
+      acting
+    )
+
   def advanceAsk(request: AdvanceAskRequest): Either[FormError, AskCommand] =
     for {
       command <- registry(request.viewer, request.auctionId, request.lotId, request.opId)
@@ -568,6 +667,13 @@ object RequestMapping {
 
   /** Хроники дня участника: аукцион сходки; право `place_bids` граница проверит до чтения, окно — сервис. */
   def getAuctionDayChronicle(request: GetAuctionDayChronicleRequest): Either[FormError, DayChronicleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield DayChronicleQuery(auction, acting)
+
+  /** Хроники всего аукциона (PER-769): те же входы, что у хроник дня, — окна нет и у сервиса. */
+  def getAuctionChronicle(request: GetAuctionChronicleRequest): Either[FormError, DayChronicleQuery] =
     for {
       acting <- acting(request.viewer)
       auction <- meetupAuction(request.auctionId)
@@ -686,6 +792,52 @@ object RequestMapping {
       )
     } yield PaymentInstructionsCommand(auction, text, OpId(opId), acting)
 
+  /**
+   * Промо-видео аукциона (PER-781). Пустое поле — снятие видео; номер сообщения не больше нуля — не форма запроса, а
+   * `INVALID_ARGUMENT`: снятие называет отсутствие поля, а не ноль.
+   */
+  def setPromoVideo(request: SetPromoVideoRequest): Either[FormError, PromoVideoCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      video <- request.video.fold[Either[FormError, Option[PromoVideo]]](Right(None))(raw =>
+        PromoVideo.parse(raw.messageId).map(Some(_)).toRight(FormError("video.message_id"))
+      )
+    } yield PromoVideoCommand(auction, video, OpId(opId), acting)
+
+  /**
+   * Порядок и разделы ленты (PER-719). Пустое поле — пустая раскладка: порядок создания. Номер раздела вне диапазона,
+   * пустое название, повтор лота или номера — не форма запроса, а `INVALID_ARGUMENT`: название спрашивает вызывающий, и
+   * отказа значением у него нет.
+   */
+  def setLotLayout(request: SetLotLayoutRequest): Either[FormError, LotLayoutCommand] = {
+    val requested = request.layout.getOrElse(LotLayoutMessage())
+    def lotsOf(field: String, raw: Seq[String]): Either[FormError, List[LotId]] =
+      raw
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, id) =>
+          acc.flatMap(lots => uuidV7(field, id).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      lots <- lotsOf("layout.lot_ids", requested.lotIds)
+      sections <- requested.sections
+        .foldLeft[Either[FormError, List[LotSection]]](Right(Nil)) { (acc, section) =>
+          for {
+            done <- acc
+            id <- LotSectionId(section.sectionId).toRight(FormError("layout.sections.section_id"))
+            name <- LotSectionName(section.name).toRight(FormError("layout.sections.name"))
+            members <- lotsOf("layout.sections.lot_ids", section.lotIds)
+          } yield LotSection(id, name, members) :: done
+        }
+        .map(_.reverse)
+      layout <- LotLayout.of(lots, sections).left.map(_ => FormError("layout"))
+    } yield LotLayoutCommand(auction, layout, OpId(opId), acting)
+  }
+
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {
       acting <- acting(request.viewer)
@@ -736,6 +888,23 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       op <- uuidV7("op_id", request.opId)
     } yield RafflePrizeCommand(auction, request.prize.trim, OpId(op), acting)
+
+  def setRafflePrizePhoto(request: SetRafflePrizePhotoRequest): Either[FormError, RafflePrizePhotoCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      photoId <- uuidV7("photo_id", request.photoId)
+      upload <- request.photo.toRight(FormError("photo"))
+    } yield RafflePrizePhotoCommand(auction, photoId, bytes(upload), acting)
+
+  def removeRafflePrizePhoto(request: RemoveRafflePrizePhotoRequest): Either[FormError, RaffleCommand] =
+    raffleCommand(request.viewer, request.auctionId, request.opId)
+
+  def getRafflePrizePhoto(request: GetRafflePrizePhotoRequest): Either[FormError, RaffleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield RaffleQuery(auction, acting)
 
   /** Розыгрыш есть только у аукциона сходки: его открывает журнал аукциона, а у тестового аукциона журнала нет. */
   private def raffleCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =
@@ -834,6 +1003,10 @@ object RequestMapping {
     try Right(Instant.parse(value))
     catch { case _: DateTimeParseException => Left(FormError(field)) }
 
+  /** Аудитория объявления (PER-777): смотрящего нет — вызывающий процесс, право администратора проверил он. */
+  def listAuctionEngagement(request: ListAuctionEngagementRequest): Either[FormError, AuctionId] =
+    meetupAuction(request.auctionId)
+
   /** Аукцион сходки — только UUIDv5: у тестового аукциона из настройки бота журнала аукциона нет. */
   private def meetupAuction(value: String): Either[FormError, AuctionId] =
     canonicalUuidV5(value).map(AuctionId(_)).toRight(FormError("auction_id"))
@@ -931,6 +1104,10 @@ object RequestMapping {
 
   private[grpc] def canonicalUuidV5(value: String): Option[UUID] =
     Option.when(CanonicalUuidV5.matches(value))(UUID.fromString(value))
+
+  /** Необязательная сумма: без неё — `None`, с ней — та же проверка, что у обязательной. */
+  private def optionalMoney(field: String, value: Option[MoneyMessage]): Either[FormError, Option[Money]] =
+    value.fold[Either[FormError, Option[Money]]](Right(None))(message => money(field, Some(message)).map(Some(_)))
 
   private def money(field: String, value: Option[MoneyMessage]): Either[FormError, Money] =
     value match {

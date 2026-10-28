@@ -15,6 +15,7 @@ import type {
 } from "../auction/port.js";
 import { communityDay, communityInstant } from "../community-time.js";
 import type { ParticipantUsernameResolver } from "../identity/port.js";
+import type { Meetups } from "../meetups/port.js";
 import { fingerprint } from "./fingerprint.js";
 import { lotCurrency, parseRubles } from "./lot-form.js";
 import type {
@@ -676,6 +677,9 @@ export function createAuctionConsole(
   // Настоящий аккаунт названного человека (PER-648). Порт необязателен: без
   // Identity пульт показывает псевдоним, как раньше.
   usernames?: ParticipantUsernameResolver,
+  // Видимость сходки до открытия недели (PER-801). Порт необязателен: без
+  // Meetups пульт узнаёт о скрытой сходке только отказом «Да».
+  meetups?: Pick<Meetups, "get">,
 ) {
   type Read =
     | { kind: "ok"; console: AuctionConsoleView }
@@ -763,10 +767,11 @@ export function createAuctionConsole(
       });
     }
     const live = liveActive({ ...found.console, lots });
-    const [trading, raffle, leaders] = await Promise.all([
+    const [trading, raffle, leaders, meetup] = await Promise.all([
       tradingOf(request, live),
       raffleOf(request, live),
       leadersOf(request, live),
+      meetupHiddenOf(request, live),
     ]);
     const console = {
       ...live,
@@ -782,8 +787,42 @@ export function createAuctionConsole(
         ...console,
         ...(trading === undefined ? {} : { trading }),
         ...(raffle === undefined ? {} : { raffle }),
+        ...(meetup === "hidden" ? { meetupHidden: true as const } : {}),
+        ...(meetup === "published" ? { meetupPublished: true as const } : {}),
       },
     };
+  }
+
+  // Скрытая сходка закрывает открытие онлайн-недели (ADR-047, дополнение
+  // 2026-10-12), а Auction говорит это только отказом «Да». Пульт до открытия
+  // недели читает сходку у Meetups сам (PER-801); отказ чтения пульт не
+  // роняет — страховкой остаётся отказ команды.
+  async function meetupHiddenOf(
+    request: AuctionConsoleRequest,
+    console: AuctionConsoleView,
+  ): Promise<"hidden" | "published" | undefined> {
+    const { meetupId } = console;
+    if (
+      meetups === undefined ||
+      meetupId === undefined ||
+      (console.status !== "draft" && console.status !== "scheduled")
+    ) {
+      return undefined;
+    }
+    try {
+      const meetup = await meetups.get(
+        request.identity,
+        meetupId,
+        rpcMeta(request),
+      );
+      if (meetup.kind !== "ok") return undefined;
+      // Отменённую сходку не публикуют: её отказ пульт называет сам.
+      if (meetup.meetup.lifecycle === "cancelled") return undefined;
+      // Опубликованную сходку видит чек-лист подготовки (PER-802).
+      return meetup.meetup.visibility === "hidden" ? "hidden" : "published";
+    } catch {
+      return undefined;
+    }
   }
 
   // Имена лидеров для строк пульта (прогон 14.10, №76) — одним чтением на

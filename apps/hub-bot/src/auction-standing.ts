@@ -8,7 +8,7 @@ import type {
   Money,
   OwnDisplayName,
 } from "./auction-ui/index.js";
-import { money } from "./core/format.js";
+import { money, truncate } from "./core/format.js";
 import { localTime } from "./core/notifications/lot-notice.js";
 import { marked, pictogram } from "./core/pictograms.js";
 
@@ -420,4 +420,25 @@ function originLabel(origin: BidOriginView): string {
  */
 export function lotButtonTail(item: FeedItem, price: string): string {
   return item.standing === "leader" ? ` · ${price} · ты лидер` : ` · ${price}`;
+}
+
+/**
+ * Кнопка раздела ленты (PER-719) у обеих оболочек: название раздела в одну
+ * строку и число его лотов, как «Материалы (N)» на карточке сходки.
+ */
+export function feedSectionLabel(section: {
+  name: string;
+  lotCount: number;
+}): string {
+  const tail = ` (${section.lotCount})`;
+  const name = section.name.replace(/\s+/g, " ").trim();
+  return `${truncate(name, 64 - tail.length)}${tail}`;
+}
+
+/**
+ * Заголовок экрана раздела: «Лоты · Книги». Название обрезается, как в
+ * кнопке: длину его Auction не ограничивает, а Telegram — ограничивает.
+ */
+export function feedSectionTitle(name: string): string {
+  return `Лоты · ${truncate(name.replace(/\s+/g, " ").trim(), 64)}`;
 }

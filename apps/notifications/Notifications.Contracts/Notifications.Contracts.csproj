@@ -50,4 +50,12 @@
     <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
   </ItemGroup>
 
+  <!-- Аудитория объявления аукциона (PER-778): кто в розыгрыше и с прогнозом,
+       Notifications спрашивает у Auction (ListAuctionEngagement) в момент
+       команды и ничего не хранит. Клиент, а не сервер; остальные методы Auction
+       генерируются вместе с файлом, но сервисом не вызываются. -->
+  <ItemGroup>
+    <Protobuf Include="..\..\..\contracts\proto\auction\v1\auction_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
+  </ItemGroup>
+
 </Project>

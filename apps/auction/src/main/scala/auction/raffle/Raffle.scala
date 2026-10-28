@@ -4,6 +4,7 @@ import auction.lot.OpId
 import auction.lot.ParticipantId
 
 import java.time.Instant
+import java.util.UUID
 
 /*
  * Ядро розыгрыша среди участников (ADR-066): `decide` и `apply` чистыми функциями, без актора, журнала и часов. Код
@@ -13,12 +14,24 @@ import java.time.Instant
 
 /**
  * Условия, объявленные при открытии регистрации: момент закрытия, seed, раунд маяка и приз (ADR-066, дополнение
- * 2026-10-21; приза может не быть). После открытия не меняются, кроме приза: его меняет администратор, пока итога нет
- * (ADR-066, дополнение 2026-10-25).
+ * 2026-10-21; приза может не быть). После открытия не меняются, кроме приза и его фото: их меняет администратор, пока
+ * итога нет (ADR-066, дополнение 2026-10-25; фото — PER-772).
  */
-final case class RaffleTerms(closesAt: Instant, seed: Seed, round: Long, prize: Option[String] = None) {
+final case class RaffleTerms(
+    closesAt: Instant,
+    seed: Seed,
+    round: Long,
+    prize: Option[String] = None,
+    photo: Option[PrizePhoto] = None
+) {
   def commitment: String = seed.commitment
 }
+
+/**
+ * Фото приза без байтов (PER-772): id вызывающего и версия — SHA-256 байтов, как у фото лота. Байты лежат строкой рядом
+ * с журналом (порт [[RafflePrizePhotos]]), а какое фото у приза сейчас, решает журнал розыгрыша.
+ */
+final case class PrizePhoto(photoId: UUID, version: String)
 
 /**
  * Где розыгрыш.
@@ -60,6 +73,8 @@ enum RaffleEvent {
   case WinnerAssigned(ticket: Int, at: Instant)
   case RaffleCancelled(at: Instant)
   case PrizeChanged(prize: String)
+  case PrizePhotoSet(photo: PrizePhoto)
+  case PrizePhotoRemoved
 }
 
 final case class RaffleEnvelope(sequence: Long, opId: OpId, event: RaffleEvent)
@@ -87,6 +102,15 @@ final case class AssignWinner(ticket: Int, opId: OpId)
  * проверила теми же правилами, что приз конфигурации: одна непустая строка без пробелов по краям.
  */
 final case class ChangePrize(prize: String, opId: OpId)
+
+/**
+ * Фото приза от администратора, которого право уже проверила граница (PER-772). Ключ повтора — id фото: `opId` команды
+ * граница выводит из него, поэтому тот же id с другими байтами — `OpIdTaken`.
+ */
+final case class SetPrizePhoto(photo: PrizePhoto, opId: OpId)
+
+/** Снятие фото приза администратором (PER-772). */
+final case class RemovePrizePhoto(opId: OpId)
 
 /** Отмена розыгрыша по команде аукциона, отменённого после старта торгов; `op_id` выводит аукцион. */
 final case class CancelRaffle(opId: OpId)
@@ -134,8 +158,8 @@ enum AssignRejected {
 }
 
 /**
- * Отказы смены приза: розыгрыша нет, итог уже есть — приз за победителем, итога не будет — розыгрыш не проводится, пул
- * пуст или отменён, `op_id` занят другой командой.
+ * Отказы смены приза и его фото: розыгрыша нет, итог уже есть — приз за победителем, итога не будет — розыгрыш не
+ * проводится, пул пуст или отменён, `op_id` занят другой командой.
  */
 enum ChangePrizeRejected {
   case RaffleNotFound
@@ -267,19 +291,56 @@ object Raffle {
           case _ => Left(ChangePrizeRejected.OpIdTaken)
         }
       case None =>
-        def change(terms: RaffleTerms) =
-          if (terms.prize.contains(command.prize)) Right(RaffleDecision.Unchanged)
-          else Right(RaffleDecision.Accepted(RaffleEvent.PrizeChanged(command.prize)))
-        raffle.state match {
-          case RaffleState.Open(terms, _) => change(terms)
-          case RaffleState.Fixed(terms, tickets) if tickets.nonEmpty => change(terms)
-          case RaffleState.AwaitingWinner(terms, _) => change(terms)
-          case drawn @ (RaffleState.Drawn(_, _, _, _) | RaffleState.Assigned(_, _, _, _)) =>
-            Left(ChangePrizeRejected.AlreadyDrawn(winningTicket(drawn).getOrElse(0)))
-          case RaffleState.Initial => Left(ChangePrizeRejected.RaffleNotFound)
-          case RaffleState.NotHeld(_) | RaffleState.Fixed(_, _) | RaffleState.Cancelled(_, _, _) =>
-            Left(ChangePrizeRejected.WithoutResult)
+        beforeResult(raffle).map { terms =>
+          if (terms.prize.contains(command.prize)) RaffleDecision.Unchanged
+          else RaffleDecision.Accepted(RaffleEvent.PrizeChanged(command.prize))
         }
+    }
+
+  /**
+   * Фото приза (PER-772) — тем же правилом, что приз: пока итога нет. Фото, которое у приза уже есть, принято без
+   * события; другое заменяет его. Повтор id фото с той же версией получает исходный конверт.
+   */
+  def decide(raffle: Raffle, command: SetPrizePhoto): Either[ChangePrizeRejected, RaffleDecision] =
+    raffle.seen.get(command.opId) match {
+      case Some(original) =>
+        original.event match {
+          case RaffleEvent.PrizePhotoSet(photo) if photo == command.photo => Right(RaffleDecision.Repeated(original))
+          case _ => Left(ChangePrizeRejected.OpIdTaken)
+        }
+      case None =>
+        beforeResult(raffle).map { terms =>
+          if (terms.photo.contains(command.photo)) RaffleDecision.Unchanged
+          else RaffleDecision.Accepted(RaffleEvent.PrizePhotoSet(command.photo))
+        }
+    }
+
+  /** Снятие фото приза (PER-772): пока итога нет; приз без фото — без события. */
+  def decide(raffle: Raffle, command: RemovePrizePhoto): Either[ChangePrizeRejected, RaffleDecision] =
+    raffle.seen.get(command.opId) match {
+      case Some(original) =>
+        original.event match {
+          case RaffleEvent.PrizePhotoRemoved => Right(RaffleDecision.Repeated(original))
+          case _ => Left(ChangePrizeRejected.OpIdTaken)
+        }
+      case None =>
+        beforeResult(raffle).map { terms =>
+          if (terms.photo.isEmpty) RaffleDecision.Unchanged
+          else RaffleDecision.Accepted(RaffleEvent.PrizePhotoRemoved)
+        }
+    }
+
+  /** Условия розыгрыша, у которого итога ещё нет, но он будет: правило правки приза и его фото. */
+  private def beforeResult(raffle: Raffle): Either[ChangePrizeRejected, RaffleTerms] =
+    raffle.state match {
+      case RaffleState.Open(terms, _) => Right(terms)
+      case RaffleState.Fixed(terms, tickets) if tickets.nonEmpty => Right(terms)
+      case RaffleState.AwaitingWinner(terms, _) => Right(terms)
+      case drawn @ (RaffleState.Drawn(_, _, _, _) | RaffleState.Assigned(_, _, _, _)) =>
+        Left(ChangePrizeRejected.AlreadyDrawn(winningTicket(drawn).getOrElse(0)))
+      case RaffleState.Initial => Left(ChangePrizeRejected.RaffleNotFound)
+      case RaffleState.NotHeld(_) | RaffleState.Fixed(_, _) | RaffleState.Cancelled(_, _, _) =>
+        Left(ChangePrizeRejected.WithoutResult)
     }
 
   /**
@@ -331,6 +392,18 @@ object Raffle {
         None
     }
 
+  /** Фото приза, когда у розыгрыша есть условия: чтение байтов идёт по нему (PER-772). */
+  def prizePhoto(state: RaffleState): Option[PrizePhoto] =
+    state match {
+      case RaffleState.Open(terms, _) => terms.photo
+      case RaffleState.Fixed(terms, _) => terms.photo
+      case RaffleState.AwaitingWinner(terms, _) => terms.photo
+      case RaffleState.Drawn(terms, _, _, _) => terms.photo
+      case RaffleState.Assigned(terms, _, _, _) => terms.photo
+      case RaffleState.Cancelled(terms, _, _) => terms.photo
+      case RaffleState.Initial | RaffleState.NotHeld(_) => None
+    }
+
   /** Номер билета участника в зафиксированном пуле, с единицы. */
   def ticketOf(tickets: Vector[ParticipantId], participant: ParticipantId): Option[Int] =
     Option(tickets.indexOf(participant)).filter(_ >= 0).map(_ + 1)
@@ -360,17 +433,24 @@ object Raffle {
         RaffleState.Cancelled(terms, entries, at)
       case (RaffleState.Fixed(terms, tickets), RaffleEvent.RaffleCancelled(at)) =>
         RaffleState.Cancelled(terms, tickets, at)
-      case (RaffleState.Open(terms, entries), RaffleEvent.PrizeChanged(prize)) =>
-        RaffleState.Open(terms.copy(prize = Some(prize)), entries)
-      case (RaffleState.Fixed(terms, tickets), RaffleEvent.PrizeChanged(prize)) =>
-        RaffleState.Fixed(terms.copy(prize = Some(prize)), tickets)
-      case (RaffleState.AwaitingWinner(terms, tickets), RaffleEvent.PrizeChanged(prize)) =>
-        RaffleState.AwaitingWinner(terms.copy(prize = Some(prize)), tickets)
+      case (state, RaffleEvent.PrizeChanged(prize)) => amend(state, envelope.event)(_.copy(prize = Some(prize)))
+      case (state, RaffleEvent.PrizePhotoSet(photo)) => amend(state, envelope.event)(_.copy(photo = Some(photo)))
+      case (state, RaffleEvent.PrizePhotoRemoved) => amend(state, envelope.event)(_.copy(photo = None))
       case (state, event) =>
         throw new IllegalStateException(s"raffle event ${event.getClass.getSimpleName} does not apply to $state")
     }
     Raffle(state, raffle.seen.updated(envelope.opId, envelope))
   }
+
+  /** Правка условий розыгрыша без итога: приз и его фото меняются только в `Open`, `Fixed` и `AwaitingWinner`. */
+  private def amend(state: RaffleState, event: RaffleEvent)(change: RaffleTerms => RaffleTerms): RaffleState =
+    state match {
+      case RaffleState.Open(terms, entries) => RaffleState.Open(change(terms), entries)
+      case RaffleState.Fixed(terms, tickets) => RaffleState.Fixed(change(terms), tickets)
+      case RaffleState.AwaitingWinner(terms, tickets) => RaffleState.AwaitingWinner(change(terms), tickets)
+      case other =>
+        throw new IllegalStateException(s"raffle event ${event.getClass.getSimpleName} does not apply to $other")
+    }
 
   def replay(raffle: Raffle, envelopes: Iterable[RaffleEnvelope]): Raffle = envelopes.foldLeft(raffle)(apply)
 

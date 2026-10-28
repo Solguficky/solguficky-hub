@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { encodeAuctionCallback } from "../../callback-data.js";
-import type { AuctionPort, LotPage, LotView } from "../../ports.js";
-import { FEED_PAGE_SIZE, openFeed, sortForFeed } from "./open-feed.js";
+import type {
+  AuctionPort,
+  LotLayoutView,
+  LotPage,
+  LotView,
+} from "../../ports.js";
+import { arrangeFeed, FEED_PAGE_SIZE, openFeed } from "./open-feed.js";
 
 const AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 const VIEWER = {
@@ -62,6 +67,9 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     getDayChronicle: async () => {
       throw new Error("not used");
     },
+    getAuctionChronicle: async () => {
+      throw new Error("not used");
+    },
     submitPrediction: async () => {
       throw new Error("not used");
     },
@@ -89,7 +97,7 @@ describe("feed", () => {
   // 20 лотов дают три страницы по восемь: на средней обе кнопки листания.
   const twenty = Array.from({ length: 20 }, (_, i) => lot(i + 1, 100 + i));
 
-  it("pages the sorted feed and offers both directions in the middle", async () => {
+  it("pages the feed in the order of creation and offers both directions in the middle", async () => {
     const body = await openFeed({
       auction: oneServerPage([...twenty].reverse()),
       viewer: VIEWER,
@@ -184,19 +192,19 @@ describe("feed", () => {
     ).rejects.toThrow("server pages");
   });
 
-  it("puts lots without a price last and breaks ties by lot id", () => {
-    const sorted = sortForFeed([
-      lot(5),
-      lot(4, 10),
-      lot(3),
-      lot(2, 10),
-      lot(1, 5),
-    ]);
-    expect(sorted.map((l) => l.lotId.slice(-1))).toEqual([
+  // Без раскладки администратора — порядок создания (PER-719): цена лот
+  // больше не двигает.
+  it("orders the feed by creation, not by price", () => {
+    const { sections, rest } = arrangeFeed(
+      [lot(5), lot(4, 10), lot(3), lot(2, 10), lot(1, 5)],
+      undefined,
+    );
+    expect(sections).toEqual([]);
+    expect(rest.map((l) => l.lotId.slice(-1))).toEqual([
       "1",
       "2",
-      "4",
       "3",
+      "4",
       "5",
     ]);
   });
@@ -263,7 +271,8 @@ describe("feed before trading", () => {
 
 // Лента в живом финале (PER-639): стадия из `getAuction` даёт состав и лот,
 // который торгует ведущий. Кнопки — в порядке зала: активный лот, лоты
-// состава, которые ждут очереди, по порядку выхода, затем остальные по цене.
+// состава, которые ждут очереди, по порядку выхода, затем остальные по цене:
+// раскладку администратора финал не читает (PER-719).
 describe("feed in the live final", () => {
   const money = (rubles: number) => ({
     minorUnits: rubles * 100,
@@ -332,6 +341,34 @@ describe("feed in the live final", () => {
     expect(block.final?.active?.lotId).toBe(shirt.lotId);
   });
 
+  // Раскладка администратора (PER-719) финал не трогает: разделов нет, лоты
+  // вне состава — по цене, как до неё.
+  it("ignores the layout of the administrator in the final", async () => {
+    const withLayout: AuctionPort["getAuction"] = async () => {
+      const summary = await inFinal(shirt.lotId)({
+        viewer: VIEWER,
+        auctionId: AUCTION_ID,
+      });
+      if (summary === undefined) throw new Error("summary expected");
+      return {
+        ...summary,
+        layout: {
+          lotIds: [lot(5).lotId],
+          sections: [{ sectionId: 1, name: "Книги", lotIds: [mug.lotId] }],
+        },
+      };
+    };
+    const block = await blockOf(withLayout, [...lots, sold(5, 100)]);
+    expect(block.sections).toBeUndefined();
+    expect(block.lots.map((item) => item.lotId)).toEqual([
+      shirt.lotId,
+      lamp.lotId,
+      vase.lotId,
+      lot(5).lotId,
+      mug.lotId,
+    ]);
+  });
+
   it("marks the final without an active lot between lots", async () => {
     const block = await blockOf(inFinal(), [mug, lamp, vase, sold(1, 1500)]);
     expect(block.final).toEqual({});
@@ -343,8 +380,8 @@ describe("feed in the live final", () => {
     ]);
   });
 
-  // Вне финала и при отказе чтения стадии лента прежняя — по цене и без
-  // пометки.
+  // Вне финала и при отказе чтения стадии лента прежняя — в порядке
+  // создания и без пометки.
   it("keeps the feed as before outside the final", async () => {
     const block = await blockOf(async () => ({
       auctionId: AUCTION_ID,
@@ -353,9 +390,12 @@ describe("feed in the live final", () => {
       lineup: { order: [shirt.lotId, lamp.lotId, vase.lotId] },
     }));
     expect(block.final).toBeUndefined();
-    expect(block.lots.map((item) => item.lotId)).toEqual(
-      sortForFeed(lots).map((each) => each.lotId),
-    );
+    expect(block.lots.map((item) => item.lotId)).toEqual([
+      shirt.lotId,
+      vase.lotId,
+      lamp.lotId,
+      mug.lotId,
+    ]);
   });
 
   it("keeps the feed as before when the stage is unavailable", async () => {
@@ -363,8 +403,189 @@ describe("feed in the live final", () => {
       throw new Error("auction unavailable");
     });
     expect(block.final).toBeUndefined();
-    expect(block.lots.map((item) => item.lotId)).toEqual(
-      sortForFeed(lots).map((each) => each.lotId),
+    expect(block.lots.map((item) => item.lotId)).toEqual([
+      shirt.lotId,
+      vase.lotId,
+      lamp.lotId,
+      mug.lotId,
+    ]);
+  });
+});
+
+// Порядок и разделы администратора (PER-719): разделы — кнопками над лотами,
+// под ними общий список; лоты, которых он не упорядочил, — в конце в порядке
+// создания.
+describe("feed in the order of the administrator", () => {
+  const lots = Array.from({ length: 6 }, (_, i) => lot(i + 1, 100));
+  const id = (n: number) => lot(n).lotId;
+  const withLayout = (layout: LotLayoutView, feed: LotView[] = lots) => ({
+    ...oneServerPage(feed),
+    getAuction: async () => ({
+      auctionId: AUCTION_ID,
+      stage: "prebidding" as const,
+      final: false,
+      layout,
+    }),
+  });
+  const open = async (
+    layout: LotLayoutView,
+    extra: { sectionId?: number; feed?: LotView[] } = {},
+  ) =>
+    openFeed({
+      auction: withLayout(layout, extra.feed),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+      ...(extra.sectionId === undefined ? {} : { sectionId: extra.sectionId }),
+    });
+  const blockOf = (body: Awaited<ReturnType<typeof openFeed>>) => {
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    return block;
+  };
+  const sectionButton = (sectionId: number, page = 0) =>
+    encodeAuctionCallback({
+      kind: "section",
+      auctionId: AUCTION_ID,
+      sectionId,
+      page,
+    });
+
+  it("shows a flat feed in the order of the administrator and the unordered lots last by creation", async () => {
+    const body = await open({ lotIds: [id(5), id(2)], sections: [] });
+    const block = blockOf(body);
+    expect(block.sections).toBeUndefined();
+    expect(block.lots.map((item) => item.lotId)).toEqual([
+      id(5),
+      id(2),
+      id(1),
+      id(3),
+      id(4),
+      id(6),
+    ]);
+  });
+
+  it("starts the feed with the sections and lists the lots outside them after", async () => {
+    const body = await open({
+      lotIds: [id(6)],
+      sections: [
+        { sectionId: 3, name: "Книги", lotIds: [id(4), id(1)] },
+        // Раздел без лотов ленты участнику не виден.
+        { sectionId: 1, name: "Пустой", lotIds: [] },
+        { sectionId: 2, name: "Посуда", lotIds: [id(2)] },
+      ],
+    });
+    const block = blockOf(body);
+    expect(block.sections).toEqual([
+      { sectionId: 3, name: "Книги", lotCount: 2 },
+      { sectionId: 2, name: "Посуда", lotCount: 1 },
+    ]);
+    expect(block.lots.map((item) => item.lotId)).toEqual([id(6), id(3), id(5)]);
+    expect(body.keyboard.slice(0, 2)).toEqual([
+      [
+        {
+          action: "feed.open-section",
+          sectionId: 3,
+          callbackData: sectionButton(3),
+        },
+      ],
+      [
+        {
+          action: "feed.open-section",
+          sectionId: 2,
+          callbackData: sectionButton(2),
+        },
+      ],
+    ]);
+  });
+
+  it("opens a section with its lots in the order of the administrator and leads back to the feed", async () => {
+    const layout = {
+      lotIds: [],
+      sections: [{ sectionId: 3, name: "Книги", lotIds: [id(4), id(1)] }],
+    };
+    const body = await open(layout, { sectionId: 3 });
+    const block = blockOf(body);
+    expect(block.section).toEqual({ sectionId: 3, name: "Книги" });
+    expect(block.sections).toBeUndefined();
+    expect(block.lots.map((item) => item.lotId)).toEqual([id(4), id(1)]);
+    expect(body.keyboard.at(-1)).toEqual([
+      {
+        action: "feed.back",
+        callbackData: encodeAuctionCallback({
+          kind: "feed",
+          auctionId: AUCTION_ID,
+          page: 0,
+        }),
+      },
+    ]);
+  });
+
+  // Восемь разделов и девять лотов вне них: разделы стоят на первой странице
+  // вместо лотов, и экран не выходит за потолок рядов.
+  it("gives the section buttons the place of lots on the first page", async () => {
+    const many = Array.from({ length: 17 }, (_, i) => lot(i + 1, 100));
+    const sections = Array.from({ length: 8 }, (_, i) => ({
+      sectionId: i + 1,
+      name: `Раздел ${i + 1}`,
+      lotIds: [many[i]?.lotId ?? ""],
+    }));
+    const first = await open({ lotIds: [], sections }, { feed: many });
+    expect(first.keyboard).toHaveLength(FEED_PAGE_SIZE + 2);
+    expect(blockOf(first).lots).toEqual([]);
+    expect(blockOf(first).pageCount).toBe(3);
+    const second = await openFeed({
+      auction: withLayout({ lotIds: [], sections }, many),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 1,
+    });
+    expect(blockOf(second).sections).toBeUndefined();
+    expect(blockOf(second).lots.map((item) => item.lotId)).toEqual(
+      many.slice(8, 16).map((l) => l.lotId),
     );
+  });
+
+  it("pages a long section with buttons of the same section", async () => {
+    const many = Array.from({ length: FEED_PAGE_SIZE + 2 }, (_, i) =>
+      lot(i + 1, 100),
+    );
+    const body = await open(
+      {
+        lotIds: [],
+        sections: [
+          { sectionId: 7, name: "Всё", lotIds: many.map((l) => l.lotId) },
+        ],
+      },
+      { sectionId: 7, feed: many },
+    );
+    expect(body.keyboard.at(-2)).toEqual([
+      { action: "feed.next", callbackData: sectionButton(7, 1) },
+    ]);
+  });
+
+  // Кнопка устаревшего экрана: раздел удалили, пока сообщение висело.
+  it("opens the feed for a section that no longer exists", async () => {
+    const body = await open(
+      {
+        lotIds: [],
+        sections: [{ sectionId: 3, name: "Книги", lotIds: [id(4)] }],
+      },
+      { sectionId: 9 },
+    );
+    const block = blockOf(body);
+    expect(block.section).toBeUndefined();
+    expect(block.sections).toEqual([
+      { sectionId: 3, name: "Книги", lotCount: 1 },
+    ]);
+  });
+
+  it("drops a lot the layout names but the feed does not have", () => {
+    const { sections, rest } = arrangeFeed([lot(1), lot(2)], {
+      lotIds: [id(9), id(2)],
+      sections: [{ sectionId: 1, name: "Книги", lotIds: [id(8)] }],
+    });
+    expect(sections).toEqual([]);
+    expect(rest.map((l) => l.lotId)).toEqual([id(2), id(1)]);
   });
 });

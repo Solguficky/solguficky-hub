@@ -16,9 +16,9 @@ namespace Notifications.IntegrationTests.Scenarios;
 
 /// <summary>
 /// Сообщение о начале окна сниженного шага (PER-614, ADR-047, дополнение
-/// 2026-10-12) от факта Auction до адресного факта в стриме уведомлений: реплика
-/// держит окна, задание ждёт выдержку, срабатывание сверяет реплику и отмену
-/// аукциона.
+/// 2026-10-12, и общая весть — дополнение 2026-10-27) от факта Auction до
+/// адресного факта в стриме уведомлений: реплика держит окна, задание ждёт
+/// выдержку, срабатывание сверяет реплику и отмену аукциона.
 /// </summary>
 /// <remarks>
 /// Время двигается данными, как у остальных напоминаний: начало и конец окна
@@ -29,6 +29,7 @@ public class StepWindowStartTests
 {
     private const string OpenedSubject = "events.auction.lot_opened";
     private const string StepWindowSubject = "events.auction.step_window_added";
+    private const string ChangedSubject = AuctionFeed.StepWindowChangedSubject;
     private const string ExtendedSubject = "events.auction.deadline_extended";
     private const string UnsoldSubject = "events.auction.lot_unsold";
     private const string CancelledSubject = "events.auction.auction_cancelled";
@@ -184,6 +185,159 @@ public class StepWindowStartTests
     }
 
     /// <summary>
+    /// Условия лотов в периоде «Счастливых часов» меняются до начала (PER-786),
+    /// и весть собирается по итоговым окнам (PER-788): лот, чьи условия сняты,
+    /// в весть не попадает, а лот без ставок получает стартовую рядом с
+    /// обычной и без шага, которого окно не задало.
+    /// </summary>
+    [Fact]
+    public async Task When_PeriodTermsChangedBeforeStart_Expect_MessageByFinalTerms()
+    {
+        await using var env = await WindowScenario.Start(Quick);
+        var token = TestContext.Current.CancellationToken;
+        var follower = await Person(env.Db, MemberHolding);
+
+        // Начало впереди: правки условий успевают прийти до срабатывания.
+        var from = env.Clock.AddSeconds(8);
+        var until = env.Clock.AddMinutes(30);
+
+        await env.PublishLot(ChangedSubject,
+            env.StartOnly(env.Trading(env.FirstLot, "step_window_changed", 2, env.Window(from, until, step: 50)),
+                start: 8000));
+        await env.PublishLot(ChangedSubject,
+            env.Trading(env.SecondLot, "step_window_changed", 2, env.Window(from, until, step: 150)));
+        await env.Favorites().Follow(follower, Guid.Parse(env.FirstLot), token);
+        await env.Favorites().Follow(follower, Guid.Parse(env.SecondLot), token);
+
+        // Условия второго лота сняты до начала периода: окон у него не осталось.
+        await env.PublishLot(ChangedSubject, env.Trading(env.SecondLot, "step_window_changed", 3));
+
+        var facts = await Eventually(() => env.Facts(), facts => facts.Count == 1);
+        var lot = facts.ShouldHaveSingleItem().StepWindowStarted.Lots.ShouldHaveSingleItem();
+        lot.LotId.ShouldBe(env.FirstLot);
+        lot.Step.ShouldBeNull();
+        lot.Start.MinorUnits.ShouldBe(8000);
+        // Обычная стартовая — текущая цена лота без ставок из его снимка.
+        lot.RegularStart.MinorUnits.ShouldBe(10000);
+        env.Tasks().ShouldHaveSingleItem().State.ShouldBe("fired");
+    }
+
+    /// <summary>
+    /// Удалённый до начала период снимает окна своих лотов, и задание его
+    /// начала снимается — вести не будет; заданные заново условия того же
+    /// начала возвращают задание (PER-788).
+    /// </summary>
+    [Fact]
+    public async Task When_PeriodDeletedBeforeStart_Expect_TaskCancelledAndRevivedByNewTerms()
+    {
+        await using var env = await WindowScenario.Start(Quick);
+
+        var from = env.Clock.AddHours(1);
+        var until = from.AddMinutes(30);
+
+        await env.PublishLot(ChangedSubject,
+            env.Trading(env.FirstLot, "step_window_changed", 2, env.Window(from, until, step: 50)));
+        await Eventually(() => Task.FromResult(env.Scheduled()), count => count == 1);
+
+        await env.PublishLot(ChangedSubject, env.Trading(env.FirstLot, "step_window_changed", 3));
+        await Eventually(() => Task.FromResult(env.Scheduled()), count => count == 0);
+        env.Tasks().ShouldHaveSingleItem().State.ShouldBe("cancelled");
+
+        await env.PublishLot(ChangedSubject,
+            env.Trading(env.FirstLot, "step_window_changed", 4, env.Window(from, until, step: 50)));
+        await Eventually(() => Task.FromResult(env.Scheduled()), count => count == 1);
+        env.Tasks().ShouldHaveSingleItem().State.ShouldBe("scheduled");
+        (await env.Facts()).ShouldBeEmpty();
+    }
+
+    /// <summary>
+    /// Общая весть о начале окна (ADR-047, дополнение 2026-10-27) уходит
+    /// держателям права ставок без отметок — гостю ботом аукциона, участнику
+    /// ботом хаба — и называет число лотов окна и самый поздний конец.
+    /// Следящий получает только свою весть, а выключивший вести о новом
+    /// аукционе и торгах, заблокированный и человек без права ставок — ничего.
+    /// </summary>
+    [Fact]
+    public async Task When_WindowStarts_Expect_AnnouncementToHoldersExceptFollowerAndSwitchedOff()
+    {
+        await using var env = await WindowScenario.Start(Quick);
+        var token = TestContext.Current.CancellationToken;
+        var follower = await Person(env.Db, MemberHolding);
+        var member = await Person(env.Db, MemberHolding);
+        var guest = await Person(env.Db, GuestHolding);
+        var switchedOff = await Person(env.Db, MemberHolding);
+        await Person(env.Db, blocked: true, MemberHolding);
+        await Person(env.Db, new Holding("member", [], ["access_hub"]));
+        await AuctionFixtures.SetAuctionAnnouncements(env.Db, switchedOff.ToString(), enabled: false);
+
+        var from = env.Clock.AddMinutes(-1);
+        var latest = env.Clock.AddMinutes(40);
+
+        await env.PublishLot(OpenedSubject,
+            env.Trading(env.FirstLot, "lot_opened", 2, env.Window(from, env.Clock.AddMinutes(30), step: 50)));
+        await env.PublishLot(StepWindowSubject,
+            env.Trading(env.SecondLot, "step_window_added", 2, env.Window(from, latest, step: 150)));
+        await env.Favorites().Follow(follower, Guid.Parse(env.FirstLot), token);
+
+        var announced = await Eventually(() => env.Announced(), facts => facts.Count == 2);
+
+        announced.Select(fact => fact.Fact.RecipientId).ShouldBe(
+            [member.ToString(), guest.ToString()], ignoreOrder: true);
+        announced.Single(fact => fact.Fact.RecipientId == guest.ToString()).Subject
+            .ShouldBe("events.notifications.notification_created.auction");
+        announced.Single(fact => fact.Fact.RecipientId == member.ToString()).Subject
+            .ShouldBe("events.notifications.notification_created.hub");
+
+        var task = env.Tasks().ShouldHaveSingleItem();
+        foreach (var fact in announced.Select(published => published.Fact))
+        {
+            fact.StepWindowAnnounced.AuctionId.ShouldBe(env.AuctionId);
+            fact.StepWindowAnnounced.LotCount.ShouldBe(2u);
+            DateTimeOffset.Parse(fact.StepWindowAnnounced.StartsAt).ShouldBe(from, TimeSpan.FromMilliseconds(1));
+            DateTimeOffset.Parse(fact.StepWindowAnnounced.Until).ShouldBe(latest, TimeSpan.FromMilliseconds(1));
+            fact.Cause.ReminderTaskId.ShouldBe(task.TaskId.ToString());
+        }
+
+        // Следящий получил свою весть и только её.
+        (await env.Facts()).ShouldHaveSingleItem().RecipientId.ShouldBe(follower.ToString());
+    }
+
+    /// <summary>
+    /// Два окна одного дня — две общие вести человеку; поздний факт лота с
+    /// окном уже сработавшего начала третьей не даёт.
+    /// </summary>
+    [Fact]
+    public async Task When_TwoWindowsAndLateRepeat_Expect_OneAnnouncementPerWindow()
+    {
+        await using var env = await WindowScenario.Start(Quick);
+        var holder = await Person(env.Db, MemberHolding);
+
+        var first = env.Clock.AddMinutes(-2);
+        var second = env.Clock.AddMinutes(-1);
+        var until = env.Clock.AddMinutes(30);
+
+        await env.PublishLot(OpenedSubject,
+            env.Trading(env.FirstLot, "lot_opened", 2, env.Window(first, until, step: 50)));
+        await env.PublishLot(OpenedSubject,
+            env.Trading(env.SecondLot, "lot_opened", 2, env.Window(second, until, step: 50)));
+
+        var announced = await Eventually(() => env.Announced(), facts => facts.Count == 2);
+        announced.ShouldAllBe(fact => fact.Fact.RecipientId == holder.ToString());
+        announced.Select(fact => DateTimeOffset.Parse(fact.Fact.StepWindowAnnounced.StartsAt).ToUnixTimeSeconds())
+            .ShouldBe([first.ToUnixTimeSeconds(), second.ToUnixTimeSeconds()], ignoreOrder: true);
+
+        // Повтор старта: третий лот с окном уже сработавшего начала.
+        var lateLot = EventFactory.NewId();
+        await env.PublishLot(StepWindowSubject,
+            env.Trading(lateLot, "step_window_added", 2, env.Window(first, until, step: 50)));
+        await Eventually(() => env.ReplicaVersion(lateLot), version => version == 2);
+
+        (await env.Announced()).Count.ShouldBe(2);
+        env.Tasks().Count.ShouldBe(2);
+        env.Tasks().ShouldAllBe(task => task.State == "fired");
+    }
+
+    /// <summary>
     /// Рестарт не даёт второго сообщения: задание лежит строкой в базе, и новая
     /// активация грина видит его сработавшим, а не повторяет рассылку.
     /// </summary>
@@ -307,6 +461,18 @@ public class StepWindowStartTests
             params (string From, string Until, long Step)[] windows) =>
             EventFactory.Trading(lot, occasion, version, auction: AuctionId, windows: windows);
 
+        /// <summary>Окна факта без шага, но со стартовой ценой в копейках (PER-785).</summary>
+        public global::Auction.V1.LotEvent StartOnly(global::Auction.V1.LotEvent message, long start)
+        {
+            foreach (var window in message.State.StepWindows)
+            {
+                window.Step = null;
+                window.Start = new global::Auction.V1.Money { MinorUnits = start, Currency = "RUB" };
+            }
+
+            return message;
+        }
+
         /// <summary>Публикует факт лота и ждёт, пока потребитель его разберёт и позовёт грин.</summary>
         public async Task PublishLot(string subject, global::Auction.V1.LotEvent message)
         {
@@ -324,6 +490,12 @@ public class StepWindowStartTests
             (await nats.PublishedFacts())
                 .Select(fact => fact.Fact)
                 .Where(fact => fact.TypeCase == Notification.TypeOneofCase.StepWindowStarted)
+                .ToArray();
+
+        /// <summary>Общие вести о начале окна вместе с subject, по которому видно бот доставки.</summary>
+        public async Task<IReadOnlyList<PublishedNotification>> Announced() =>
+            (await nats.PublishedFacts())
+                .Where(fact => fact.Fact.TypeCase == Notification.TypeOneofCase.StepWindowAnnounced)
                 .ToArray();
 
         public IReadOnlyList<StepWindowTaskRow> Tasks() =>

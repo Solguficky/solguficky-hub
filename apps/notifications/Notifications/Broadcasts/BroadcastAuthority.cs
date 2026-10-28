@@ -17,6 +17,12 @@ public enum AuthorityVerdict
     /// <summary>Право сейчас не подтвердить: владелец недоступен или не ответил в срок.</summary>
     Unavailable,
 
+    /// <summary>
+    /// Право есть, но ресурс в состоянии, где рассылка закрыта: объявление
+    /// аукциона отменённой сходки (PER-764).
+    /// </summary>
+    Closed,
+
     /// <summary>Проверка сломана: владелец ответил тем, чего честный вызов не получает.</summary>
     Failed,
 }
@@ -46,6 +52,12 @@ public interface IBroadcastAuthority
 
     /// <summary>Право на объявление сообществу. Спрашивается у Identity.</summary>
     Task<AuthorityAnswer> CommunityAnnouncement(Guid authorId, Forwarded forwarded);
+
+    /// <summary>
+    /// Право вести аукцион сходки (<c>run_auctions</c>) для объявления аукциона.
+    /// Спрашивается у Meetups тем же вопросом, что задаёт Auction (PER-764).
+    /// </summary>
+    Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded);
 }
 
 /// <summary>Один вызов <c>CheckMeetupAuthority</c>.</summary>
@@ -94,27 +106,48 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
     /// </summary>
     public static readonly TimeSpan CallDeadline = TimeSpan.FromSeconds(2);
 
-    public async Task<AuthorityAnswer> MeetupBroadcast(Guid authorId, Guid meetupId, Forwarded forwarded)
+    // Отношения, которые принимает рассылка по сходке. В MVP словарь Meetups
+    // несёт одно — держатель права вести сходки; организаторов конкретной
+    // сходки нет (ADR-031), и выбирать пока не из чего.
+    public Task<AuthorityAnswer> MeetupBroadcast(Guid authorId, Guid meetupId, Forwarded forwarded) =>
+        AskMeetups(authorId, meetupId, MeetupRelation.CommunityAdministrator, forwarded);
+
+    // Объявление аукциона принимает то же отношение, что команды аукциона у
+    // Auction, — «ведущий аукциона», держатель run_auctions (ADR-070, PER-652).
+    // Из ворот состояния Auction объявление берёт одни — отменённую сходку:
+    // кнопка вела бы к аукциону, команды которого Auction уже закрыл. Скрытый,
+    // отменённый и удалённый аукцион команда узнаёт не здесь, а по своей
+    // реплике при приёме (BroadcastStore, PER-780): это положение аукциона, а не
+    // право.
+    public Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded) =>
+        AskMeetups(authorId, meetupId, MeetupRelation.AuctionRunner, forwarded, standing =>
+            standing.Lifecycle == MeetupLifecycle.Cancelled
+                ? new AuthorityAnswer(AuthorityVerdict.Closed, "meetups: meetup cancelled")
+                : AuthorityAnswer.Granted);
+
+    private async Task<AuthorityAnswer> AskMeetups(
+        Guid authorId,
+        Guid meetupId,
+        MeetupRelation relation,
+        Forwarded forwarded,
+        Func<MeetupAuthority, AuthorityAnswer>? gate = null)
     {
         if (meetups is null)
         {
             return new AuthorityAnswer(AuthorityVerdict.Unavailable, "meetups address is not configured");
         }
 
-        // Отношения, которые принимает рассылка по сходке. В MVP словарь Meetups
-        // несёт одно — держатель права вести сходки; организаторов конкретной
-        // сходки нет (ADR-031), и выбирать пока не из чего.
         var request = new CheckMeetupAuthorityRequest
         {
             Id = meetupId.ToString("D"),
             IdentityId = authorId.ToString("D"),
-            AcceptedRelations = { MeetupRelation.CommunityAdministrator },
+            AcceptedRelations = { relation },
         };
 
         try
         {
-            await meetups(request, Headers(forwarded), Due(forwarded), forwarded.Cancellation);
-            return AuthorityAnswer.Granted;
+            var standing = await meetups(request, Headers(forwarded), Due(forwarded), forwarded.Cancellation);
+            return gate?.Invoke(standing) ?? AuthorityAnswer.Granted;
         }
         catch (RpcException declined)
         {
@@ -188,29 +221,9 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
             ? new AuthorityAnswer(AuthorityVerdict.Unavailable, $"{owner} {status.StatusCode}")
             : new AuthorityAnswer(AuthorityVerdict.Failed, $"{owner} {status.StatusCode}");
 
-    private DateTime Due(Forwarded forwarded)
-    {
-        var own = clock.GetUtcNow().UtcDateTime + CallDeadline;
-        return own < forwarded.Deadline ? own : forwarded.Deadline;
-    }
+    private DateTime Due(Forwarded forwarded) => OwnerCall.Due(clock, CallDeadline, forwarded);
 
-    /// <summary>Свой токен и заголовки цепочки; пустые заголовки цепочки не отправляются.</summary>
-    private Metadata Headers(Forwarded forwarded)
-    {
-        var headers = new Metadata { { "authorization", $"Bearer {serviceToken}" } };
-
-        if (!string.IsNullOrEmpty(forwarded.RequestId))
-        {
-            headers.Add("x-request-id", forwarded.RequestId);
-        }
-
-        if (!string.IsNullOrEmpty(forwarded.UseCase))
-        {
-            headers.Add("x-use-case", forwarded.UseCase);
-        }
-
-        return headers;
-    }
+    private Metadata Headers(Forwarded forwarded) => OwnerCall.Headers(serviceToken, forwarded);
 
     /// <summary>
     /// Отправка в Meetups по адресу. Канал собран сразу, но соединение не
@@ -237,5 +250,34 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
 
         return (request, headers, deadline, cancellationToken) =>
             client.CheckAccessRightAsync(request, headers, deadline, cancellationToken).ResponseAsync;
+    }
+}
+
+/// <summary>Общее у синхронных вызовов владельцев: срок и заголовки.</summary>
+internal static class OwnerCall
+{
+    /// <summary>Свой срок или срок вызывающего — что раньше.</summary>
+    public static DateTime Due(TimeProvider clock, TimeSpan callDeadline, Forwarded forwarded)
+    {
+        var own = clock.GetUtcNow().UtcDateTime + callDeadline;
+        return own < forwarded.Deadline ? own : forwarded.Deadline;
+    }
+
+    /// <summary>Свой токен и заголовки цепочки; пустые заголовки цепочки не отправляются.</summary>
+    public static Metadata Headers(string serviceToken, Forwarded forwarded)
+    {
+        var headers = new Metadata { { "authorization", $"Bearer {serviceToken}" } };
+
+        if (!string.IsNullOrEmpty(forwarded.RequestId))
+        {
+            headers.Add("x-request-id", forwarded.RequestId);
+        }
+
+        if (!string.IsNullOrEmpty(forwarded.UseCase))
+        {
+            headers.Add("x-use-case", forwarded.UseCase);
+        }
+
+        return headers;
     }
 }

@@ -120,6 +120,15 @@ function surfaceFor(
         getDayChronicle: async () => {
           throw new Error("not used");
         },
+        async getAuctionChronicle() {
+          calls.auction += 1;
+          return {
+            bidCount: 0,
+            participantCount: 0,
+            tradedLotCount: 0,
+            lots: [],
+          };
+        },
         async submitPrediction() {
           throw new Error("not used");
         },
@@ -274,6 +283,43 @@ describe("handleAuctionUpdate gateway", () => {
     expect(result.error.reason).toBe("foreign");
     expect(calls.auction).toBe(0);
   });
+});
+
+// «Статистика» всего аукциона (PER-800) — вход пульта хаба: шлюз открывает её
+// только держателю `run_auctions` в хабе, а прочим отвечает устаревшей кнопкой
+// без чтения Auction.
+describe("auction chronicle gate", () => {
+  const STATISTICS = encodeAuctionCallback({
+    kind: "auction-chronicle",
+    auctionId: LOT.auctionId,
+  });
+  const HOST: AccessRight[] = [...MEMBER, "run-auctions"];
+
+  it("opens the statistics to the holder of run_auctions in the hub", async () => {
+    const { press, calls } = surfaceFor("hub", {
+      rights: HOST,
+      blocked: false,
+    });
+    const result = await press(STATISTICS);
+    expect(result.kind).toBe("screen");
+    expect(calls.auction).toBe(1);
+  });
+
+  it.each([
+    ["a hub member", "hub", MEMBER],
+    ["an admin in the auction bot", "auction", ADMIN],
+    ["a host in the auction bot", "auction", [...ADMIN, "run-auctions"]],
+  ] as const)(
+    "answers %s with an outdated button and no Auction call",
+    async (_name, kind, rights) => {
+      const { press, calls } = surfaceFor(kind, { rights, blocked: false });
+      const result = await press(STATISTICS);
+      expect(result.kind).toBe("unreadable");
+      if (result.kind !== "unreadable") return;
+      expect(result.error.reason).toBe("outdated");
+      expect(calls.auction).toBe(0);
+    },
+  );
 });
 
 describe("admission", () => {

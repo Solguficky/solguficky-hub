@@ -1,0 +1,21 @@
+{
+  "eventId": "0190f2a0-0000-7000-8000-000000000001",
+  "opId": "0190f2a0-0000-7000-8000-000000000002",
+  "occurredAt": "2026-10-01T09:00:00Z",
+  "event": {
+    "kind": "PrizePhotoSet",
+    "raffleOpened": null,
+    "raffleNotHeld": null,
+    "registered": null,
+    "registrationCancelled": null,
+    "poolFixed": null,
+    "raffleDrawn": null,
+    "raffleCancelled": null,
+    "winnerAssigned": null,
+    "prizeChanged": null,
+    "prizePhotoSet": {
+      "photoId": "0190f2a0-0000-7000-8000-000000000003",
+      "version": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+    }
+  }
+}

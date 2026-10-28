@@ -88,6 +88,73 @@ const goneRoot: AuctionScreenBody = {
   keyboard: [],
 };
 
+// Лента с разделами и раздел (PER-719): разделы кнопками над общим списком,
+// раздел — свои лоты и возврат к разделам.
+const sectionedFeed: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "feed",
+      auctionId: "auc-1",
+      page: 0,
+      pageCount: 1,
+      lots: [
+        {
+          lotId: "lot-1",
+          title: "Банка солёных грибов",
+          status: { kind: "trading", currentPrice: rub(500), phase: "online" },
+        },
+      ],
+      sections: [{ sectionId: 2, name: "Книги", lotCount: 3 }],
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "feed.open-section",
+        sectionId: 2,
+        callbackData: "v1:auc:sec:auc-1:2:0",
+      },
+    ],
+    [
+      {
+        action: "feed.open-lot",
+        lotId: "lot-1",
+        callbackData: "v1:auc:lot:lot-1:0",
+      },
+    ],
+    [{ action: "feed.back", callbackData: "v1:auc:rt:auc-1" }],
+  ],
+};
+
+const section: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "feed",
+      auctionId: "auc-1",
+      page: 0,
+      pageCount: 1,
+      lots: [
+        {
+          lotId: "lot-2",
+          title: "Книга рецептов",
+          status: { kind: "trading", currentPrice: rub(300), phase: "online" },
+        },
+      ],
+      section: { sectionId: 2, name: "Книги" },
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "feed.open-lot",
+        lotId: "lot-2",
+        callbackData: "v1:auc:lot:lot-2:0",
+      },
+    ],
+    [{ action: "feed.back", callbackData: "v1:auc:feed:auc-1:0" }],
+  ],
+};
+
 const emptyFeed: AuctionScreenBody = {
   blocks: [
     { kind: "feed", auctionId: "auc-1", page: 0, pageCount: 1, lots: [] },
@@ -815,6 +882,9 @@ const raffles: readonly (RaffleView | undefined)[] = [
   raffleOf("open"),
   raffleOf("open", { registered: true }),
   raffleOf("closing", { registered: true }),
+  // Ручной итог (PER-799): без обещания минут и без проверки по маяку.
+  raffleOf("open", { registered: true, drawnByHand: true }),
+  raffleOf("closing", { registered: true, drawnByHand: true }),
   raffleOf("awaiting-beacon", { registered: true, ...pool }),
   raffleOf("drawn", {
     registered: true,
@@ -855,7 +925,8 @@ const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
       : []),
     ...(raffle === undefined ||
     raffle.status === "not-held" ||
-    raffle.status === "cancelled"
+    raffle.status === "cancelled" ||
+    raffle.drawnByHand === true
       ? []
       : [[{ action: "raffle.proof" as const, callbackData: "v1:auc:rp:a" }]]),
     [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],
@@ -989,6 +1060,33 @@ const predictionResultsBody = (
     [
       {
         action: "prediction-results.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: predictionResultsAuctionId,
+        }),
+      },
+    ],
+  ],
+});
+
+// Статистика аукциона (PER-770): счётчики и номинации всех торгов.
+const auctionChronicleBody = (
+  chronicle: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "auction-chronicle" }
+  >["chronicle"],
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "auction-chronicle",
+      auctionId: predictionResultsAuctionId,
+      chronicle,
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "auction-chronicle.back",
         callbackData: encodeAuctionCallback({
           kind: "root",
           auctionId: predictionResultsAuctionId,
@@ -1194,6 +1292,8 @@ const shown: readonly {
   { screen: { kind: "past", list: middlePage } },
   { screen: { kind: "auction", body: feed } },
   { screen: { kind: "auction", body: emptyFeed } },
+  { screen: { kind: "auction", body: sectionedFeed } },
+  { screen: { kind: "auction", body: section } },
   { screen: { kind: "auction", body: predictionBody("catalog", "open") } },
   { screen: { kind: "auction", body: predictionBody("final", "not-open") } },
   {
@@ -1304,6 +1404,53 @@ const shown: readonly {
     screen: {
       kind: "auction" as const,
       body: dayChronicleBody({ kind: "no-bids" }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: auctionChronicleBody({
+        kind: "counted",
+        bidCount: 42,
+        participantCount: 12,
+        tradedLotCount: 8,
+        lotCount: 10,
+        growthRecord: {
+          title: "Плакат",
+          growth: { minorUnits: 500_000, currency: "RUB" },
+        },
+        contested: { title: "Кружка с совой", leaderChanges: 5 },
+        // Лот без названия: оболочка подставит «лот без названия».
+        duel: { longestDuel: 4 },
+      }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: auctionChronicleBody({ kind: "no-bids" }),
+    },
+  },
+  // Промо-видео (PER-774): подпись копии поста и «‹ Аукцион».
+  {
+    screen: {
+      kind: "auction" as const,
+      body: {
+        blocks: [
+          { kind: "promo", auctionId: predictionResultsAuctionId, postId: 42 },
+        ],
+        keyboard: [
+          [
+            {
+              action: "promo.back",
+              callbackData: encodeAuctionCallback({
+                kind: "root",
+                auctionId: predictionResultsAuctionId,
+              }),
+            },
+          ],
+        ],
+      },
     },
   },
   ...raffles.map((raffle) => ({

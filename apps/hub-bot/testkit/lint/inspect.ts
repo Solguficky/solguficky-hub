@@ -69,6 +69,8 @@ const carryingMethods: ReadonlySet<string> = new Set([
   "sendRichMessage",
   "sendDocument",
   "sendPhoto",
+  // Объявление со своим медиа — копия поста с подписью и кнопкой (PER-776).
+  "copyMessage",
   "editMessageText",
   "editMessageCaption",
   "editMessageMedia",

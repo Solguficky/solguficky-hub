@@ -33,7 +33,7 @@ internal static class NotificationsSetup
             // В этом поясе реплика хранит расписание, и в нём же момент начала
             // становится мгновением, от которого считается напоминание.
             .WithEnvironment("NOTIFICATIONS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
-            // Notifications вызывает Meetups и Identity и принимает обоих ботов
+            // Notifications вызывает Meetups, Identity и Auction и принимает обоих ботов
             // (ADR-056): бот аукциона — избранные лоты (ADR-063) и настройка
             // «перебили» (PER-515).
             .WithServiceToken(context)
@@ -60,6 +60,12 @@ internal static class NotificationsSetup
             // честно отвечают UNAVAILABLE — остальному сервису они не нужны.
             .BindEndpoint(context, AppHostNames.Resources.Meetups, AppHostNames.Endpoints.Grpc, "NOTIFICATIONS_MEETUPS_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "NOTIFICATIONS_IDENTITY_GRPC_URL")
+            // Аудиторию объявления аукциона Notifications сужает по слову Auction
+            // (ListAuctionEngagement, PER-778) тем же своим токеном, который
+            // Auction принимает как AUCTION_CALLER_TOKEN_NOTIFICATIONS. Профиль
+            // без auction адрес не задаёт: объявление «всем» работает, а фильтр
+            // честно отвечает UNAVAILABLE.
+            .BindEndpoint(context, AppHostNames.Resources.Auction, AppHostNames.Endpoints.Grpc, "NOTIFICATIONS_AUCTION_GRPC_URL")
             .BindEndpoint(
                 context,
                 AppHostNames.Resources.Loki,

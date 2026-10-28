@@ -8,18 +8,26 @@ import type {
 import type { ParticipantUsernameResolver } from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
+import {
+  type AuctionAnnouncements,
+  createAuctionAnnouncements,
+} from "./auction-announcements.js";
 import { createAuctionConsole } from "./auction-console.js";
 import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createFloorBids } from "./floor-bids.js";
+import { createHappyHours } from "./happy-hours.js";
 import { createLotForm } from "./lot-form.js";
+import { createLotLayout } from "./lot-layout.js";
 import { createLotSets } from "./lot-sets.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { createParticipantRemoval } from "./participant-removal.js";
+import { createPromoVideo } from "./promo-video.js";
 import { createRafflePrizeChange } from "./raffle-prize-change.js";
+import { createRafflePrizePhoto } from "./raffle-prize-photo.js";
 import { createRaffleWinner } from "./raffle-winner.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
@@ -45,6 +53,12 @@ export function createDispatcher(
     // Настоящий аккаунт победителя для пульта (PER-648): его отдаёт Identity
     // по праву ведущего.
     usernames?: ParticipantUsernameResolver;
+    // Приём объявления аукциона (PER-765) — Notifications; нет — пульт без
+    // «Объявления».
+    announcements?: AuctionAnnouncements;
+    // Чат медиа ботов включён (PER-776): шаг фото объявления предлагает своё
+    // фото или видео.
+    media?: boolean;
   },
   releaseNotes?: ReleaseNotes,
 ): Dispatcher {
@@ -60,6 +74,7 @@ export function createDispatcher(
           consoles.timeZone,
           consoles.now,
           consoles.usernames,
+          meetups,
         );
   // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
   // пускает право вести аукцион.
@@ -75,6 +90,10 @@ export function createDispatcher(
   // аукцион.
   const lotSets =
     consoles === undefined ? undefined : createLotSets(consoles.auctions);
+  // Порядок и разделы ленты (PER-719) — тот же порт: раскладку пускает право
+  // вести аукцион.
+  const lotLayout =
+    consoles === undefined ? undefined : createLotLayout(consoles.auctions);
   // Счета аукциона (PER-321) — тот же порт: сводку и отметки пускает право
   // вести аукцион.
   const auctionInvoices =
@@ -90,6 +109,34 @@ export function createDispatcher(
     consoles === undefined
       ? undefined
       : createRafflePrizeChange(consoles.auctions);
+  // Фото приза идущего розыгрыша (PER-773) — тот же порт и то же право.
+  const rafflePrizePhoto =
+    consoles === undefined
+      ? undefined
+      : createRafflePrizePhoto(consoles.auctions);
+  // «Счастливые часы» периодами (PER-787) — тот же порт и то же право; лот
+  // карточки читается портом формы лота, по нему пульт узнаёт аукцион.
+  const happyHours =
+    consoles === undefined || lots === undefined
+      ? undefined
+      : createHappyHours(
+          consoles.auctions,
+          lots,
+          consoles.timeZone,
+          consoles.now,
+        );
+  // Промо-видео (PER-774) — тот же порт и то же право.
+  const promoVideo =
+    consoles === undefined ? undefined : createPromoVideo(consoles.auctions);
+  // Объявление аукциона (PER-765): пульт читает тот же порт, а приём —
+  // Notifications.
+  const auctionAnnouncements =
+    consoles?.announcements === undefined
+      ? undefined
+      : createAuctionAnnouncements(consoles.auctions, consoles.announcements, {
+          media: consoles.media === true,
+          ...(consoles.now === undefined ? {} : { now: consoles.now }),
+        });
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -358,6 +405,19 @@ export function createDispatcher(
           return lotSets === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotSets(request);
+        case "view-lot-layout":
+        case "view-lot-layout-list":
+        case "view-lot-layout-lot":
+        case "move-lot-layout-lot":
+        case "place-lot-layout-lot":
+        case "ask-lot-section":
+        case "name-lot-section":
+        case "move-lot-section":
+        case "prepare-lot-section-delete":
+        case "delete-lot-section":
+          return lotLayout === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : lotLayout(request);
         case "view-auction-invoices":
         case "view-auction-invoice":
         case "prepare-invoice-mark":
@@ -382,6 +442,45 @@ export function createDispatcher(
           return rafflePrizeChange === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : rafflePrizeChange(request);
+        case "view-raffle-prize-photo":
+        case "ask-raffle-prize-photo":
+        case "set-raffle-prize-photo":
+        case "remove-raffle-prize-photo":
+          return rafflePrizePhoto === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : rafflePrizePhoto(request);
+        case "view-happy-hour-periods":
+        case "ask-happy-hour-period":
+        case "create-happy-hour-period":
+        case "view-happy-hour-period":
+        case "prepare-happy-hour-period-delete":
+        case "delete-happy-hour-period":
+        case "view-lot-happy-hours":
+        case "view-lot-happy-hour":
+        case "ask-lot-happy-hour":
+        case "set-lot-happy-hour":
+        case "clear-lot-happy-hour":
+          return happyHours === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : happyHours(request);
+        case "view-promo-video":
+        case "set-promo-video":
+          return promoVideo === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : promoVideo(request);
+        case "open-announcement":
+        case "list-announcement-windows":
+        case "list-announcement-lots":
+        case "ask-announcement":
+        case "answer-announcement":
+        case "pick-announcement-button":
+        case "ask-announcement-media":
+        case "ask-announcement-audience":
+        case "preview-announcement":
+        case "send-announcement":
+          return auctionAnnouncements === undefined
+            ? { kind: "rejected", reason: "notifications-not-configured" }
+            : auctionAnnouncements(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

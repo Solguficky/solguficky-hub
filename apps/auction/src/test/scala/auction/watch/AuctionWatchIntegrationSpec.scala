@@ -83,7 +83,9 @@ final class AuctionWatchIntegrationSpec
 
   private val callers = CallerTable
     .fromConfig(
-      ConfigFactory.parseString(s"""auction.grpc.callers { hub-bot = "$hubToken", auction-bot = "auction" }"""),
+      ConfigFactory.parseString(
+        s"""auction.grpc.callers { hub-bot = "$hubToken", auction-bot = "auction", notifications = "notifications" }"""
+      ),
       MethodAccess.declared
     )
     .fold(reason => fail(reason), table => table)
@@ -333,9 +335,13 @@ final class AuctionWatchIntegrationSpec
     val (auction, finalist) = liveFinal(node)
     val request = wire.WatchAuctionRequest(Some(watcher), auction.value.toString)
     val queue = node.watch(request)
+    // Активный лот называет проекция аукционов, а его торги — проекция лотов, и вторая может отстать: пока лот в read
+    // model удержан, `next_price` не выставлен, и ставка по нему была бы отказом. Ждём сообщения, где лот уже торгуется.
     val message = eventually {
       val next = queue.pull().futureValue.getOrElse(fail("the stream ended"))
       next.activeLot.map(_.id) shouldBe Some(finalist.value.toString)
+      next.getActiveLot.status.isTrading shouldBe true
+      next.getActiveLot.nextPrice should not be empty
       next
     }
     message.getAuction.status.isInFinal shouldBe true

@@ -1,10 +1,15 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { AuctionNoticeView as WireNoticeView } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
+  AuctionNoticeAudience as WireAudience,
   NotificationCategory as WireCategory,
   OutbidFrequency as WireOutbidFrequency,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
-import { createNotificationsAdapter } from "./client.js";
+import {
+  createAuctionAnnouncementsAdapter,
+  createNotificationsAdapter,
+} from "./client.js";
 
 type Rpc = Parameters<typeof createNotificationsAdapter>[0];
 
@@ -435,5 +440,212 @@ describe("auction notification settings", () => {
     expect(
       await notifications.getAuctionNotifications("identity-id"),
     ).toMatchObject({ kind: "unavailable" });
+  });
+});
+
+// Объявление аукциона (PER-765, контракт PER-764): адресат — сходка, кнопка и
+// фото необязательны, отказы — те же переводы, что у рассылок.
+describe("auction announcements", () => {
+  const person = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    rights: ["run-auctions"] as const,
+  };
+  const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
+  const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+
+  it("sends the meetup, the key, the text, the lot button and the lot photo", async () => {
+    const broadcastAuctionNotice = vi.fn().mockResolvedValue({ created: true });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await expect(
+      announcements.announceAuction(person, {
+        meetupId,
+        announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+        text: "Ваза ждёт",
+        audience: "not-in-raffle-or-without-predictions",
+        button: { kind: "lot", lotId },
+        photo: { lotId, photoId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1" },
+      }),
+    ).resolves.toEqual({ kind: "ok", created: true });
+    const [request] = broadcastAuctionNotice.mock.calls[0] ?? [];
+    expect(request).toMatchObject({
+      identityId: person.identityId,
+      meetupId,
+      id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+      body: "Ваза ждёт",
+      audience: WireAudience.NOT_IN_RAFFLE_OR_WITHOUT_PREDICTIONS,
+      button: { view: WireNoticeView.LOT, lotId },
+      photo: { source: { case: "lotPhoto", value: { lotId } } },
+    });
+  });
+
+  // Своё фото или видео (PER-776) — пост чата медиа на месте фото лота: без
+  // него получатели обоих ботов видят голый текст (PER-791).
+  it("sends the media chat post as the photo source", async () => {
+    const broadcastAuctionNotice = vi.fn().mockResolvedValue({ created: true });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await announcements.announceAuction(person, {
+      meetupId,
+      announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+      text: "Смотри видео",
+      audience: "all",
+      post: 42,
+    });
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).toMatchObject({
+      photo: { source: { case: "channelPost", value: { messageId: 42n } } },
+    });
+
+    // Источник в контракте один: пост стоит на месте фото лота.
+    await announcements.announceAuction(person, {
+      meetupId,
+      announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34fe",
+      text: "Смотри видео",
+      audience: "all",
+      photo: { lotId, photoId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1" },
+      post: 42,
+    });
+    expect(broadcastAuctionNotice.mock.calls[1]?.[0]).toMatchObject({
+      photo: { source: { case: "channelPost", value: { messageId: 42n } } },
+    });
+  });
+
+  it("sends no photo without a lot photo or a post", async () => {
+    const broadcastAuctionNotice = vi.fn().mockResolvedValue({ created: true });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await announcements.announceAuction(person, {
+      meetupId,
+      announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+      text: "Текст",
+      audience: "all",
+    });
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).not.toHaveProperty(
+      "photo",
+    );
+  });
+
+  it("sends no button for «Без кнопки»", async () => {
+    const broadcastAuctionNotice = vi
+      .fn()
+      .mockResolvedValue({ created: false });
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice,
+      previewAuctionNotice: vi.fn(),
+    } as never);
+
+    await expect(
+      announcements.announceAuction(person, {
+        meetupId,
+        announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+        text: "Текст",
+        audience: "all",
+      }),
+    ).resolves.toEqual({ kind: "ok", created: false });
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).not.toHaveProperty(
+      "button",
+    );
+    // «Всем» уходит явным значением, а не пустым полем.
+    expect(broadcastAuctionNotice.mock.calls[0]?.[0]).toMatchObject({
+      audience: WireAudience.ALL,
+    });
+  });
+
+  it("counts the audience and maps refusals as the broadcasts do", async () => {
+    const previewAuctionNotice = vi
+      .fn()
+      .mockResolvedValueOnce({ recipientCount: 0 })
+      .mockRejectedValueOnce(new ConnectError("no", Code.Unavailable));
+    const announcements = createAuctionAnnouncementsAdapter({
+      broadcastAuctionNotice: vi
+        .fn()
+        .mockRejectedValue(new ConnectError("no", Code.PermissionDenied)),
+      previewAuctionNotice,
+    } as never);
+
+    await expect(
+      announcements.previewAuctionAnnouncement(
+        person,
+        meetupId,
+        "without-predictions",
+      ),
+    ).resolves.toEqual({ kind: "ok", recipientCount: 0 });
+    expect(previewAuctionNotice.mock.calls[0]?.[0]).toMatchObject({
+      meetupId,
+      audience: WireAudience.WITHOUT_PREDICTIONS,
+    });
+    // Auction недоступен для сужения (PER-778): отказ, а не счёт «всем».
+    await expect(
+      announcements.previewAuctionAnnouncement(
+        person,
+        meetupId,
+        "not-in-raffle",
+      ),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(
+      announcements.announceAuction(person, {
+        meetupId,
+        announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+        text: "Текст",
+        audience: "all",
+      }),
+    ).resolves.toEqual({ kind: "forbidden" });
+  });
+
+  // FAILED_PRECONDITION по причине (PER-792): тексты статуса Notifications
+  // (`NotificationsGrpcService`) — исходы шага, незнакомый — прежний отказ.
+  it("tells the hidden auction, the closed one and the gone audience apart", async () => {
+    const refusals: readonly [string, unknown][] = [
+      ["the auction is hidden", { kind: "refused", reason: "auction-hidden" }],
+      [
+        "the auction is cancelled",
+        { kind: "refused", reason: "auction-closed" },
+      ],
+      [
+        "the auction is discarded",
+        { kind: "refused", reason: "auction-closed" },
+      ],
+      [
+        "the meetup is cancelled",
+        { kind: "refused", reason: "auction-closed" },
+      ],
+      [
+        "the audience cannot be narrowed now: raffle registration is closed",
+        { kind: "refused", reason: "audience-gone" },
+      ],
+      ["something new", expect.objectContaining({ kind: "invalid" })],
+    ];
+    for (const [message, expected] of refusals) {
+      const refused = new ConnectError(message, Code.FailedPrecondition);
+      const announcements = createAuctionAnnouncementsAdapter({
+        broadcastAuctionNotice: vi.fn().mockRejectedValue(refused),
+        previewAuctionNotice: vi.fn().mockRejectedValue(refused),
+      } as never);
+
+      await expect(
+        announcements.previewAuctionAnnouncement(
+          person,
+          meetupId,
+          "not-in-raffle",
+        ),
+      ).resolves.toEqual(expected);
+      await expect(
+        announcements.announceAuction(person, {
+          meetupId,
+          announcementId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ff",
+          text: "Текст",
+          audience: "not-in-raffle",
+        }),
+      ).resolves.toEqual(expected);
+    }
   });
 });

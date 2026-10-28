@@ -80,6 +80,8 @@ const sendingMethods: ReadonlySet<string> = new Set([
   "sendRichMessage",
   "sendDocument",
   "sendPhoto",
+  // Копия поста чата медиа ботов и публикация в него (PER-776).
+  "copyMessage",
 ]);
 
 // Блок фото в ответе на rich-сообщение с загрузкой: бот берёт `file_id`
@@ -170,7 +172,7 @@ function recorder(
     if (
       surface === "auction"
         ? sendingMethods.has(method)
-        : method === "sendMessage"
+        : method === "sendMessage" || method === "copyMessage"
     ) {
       return Promise.resolve({
         ok: true,
@@ -221,6 +223,7 @@ export type HarnessOptions = Partial<
     | "favorites"
     | "proxyExplainer"
     | "live"
+    | "mediaChat"
   >
 > & {
   respond?: Respond;

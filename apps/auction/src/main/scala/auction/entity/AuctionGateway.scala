@@ -79,12 +79,55 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[FinalTimeRejected, AuctionAnswer]]
 
+  /** Порядок и разделы ленты (PER-719): раскладка целиком. */
+  def setLotLayout(
+      auctionId: AuctionId,
+      command: SetLotLayout,
+      initiator: Initiator
+  ): Future[Either[LotLayoutRejected, AuctionAnswer]]
+
   /** Текст «как оплатить и получить» (PER-322): выставить, изменить или снять. */
   def setPaymentInstructions(
       auctionId: AuctionId,
       command: SetPaymentInstructions,
       initiator: Initiator
   ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]]
+
+  /** Промо-видео аукциона (PER-781): выставить, заменить или снять. */
+  def setPromoVideo(
+      auctionId: AuctionId,
+      command: SetPromoVideo,
+      initiator: Initiator
+  ): Future[Either[PromoVideoRejected, AuctionAnswer]]
+
+  /** Создание периода «Счастливых часов» (ADR-047, дополнение 2026-10-27). Ответ — после записи. */
+  def createHappyHourPeriod(
+      auctionId: AuctionId,
+      command: CreateHappyHourPeriod,
+      initiator: Initiator
+  ): Future[Either[CreateHappyHourPeriodRejected, AuctionAnswer]]
+
+  /** Удаление периода «Счастливых часов» до его начала. Ответ — после записи. */
+  def deleteHappyHourPeriod(
+      auctionId: AuctionId,
+      command: DeleteHappyHourPeriod,
+      initiator: Initiator
+  ): Future[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]]
+
+  /** Условия лота в периоде «Счастливых часов» (PER-786). Ответ — после записи; лоту они уходят после неё. */
+  def setHappyHourLotTerms(
+      auctionId: AuctionId,
+      command: SetHappyHourLotTerms,
+      regulars: Option[LotRegulars],
+      initiator: Initiator
+  ): Future[Either[SetHappyHourLotTermsRejected, AuctionAnswer]]
+
+  /** Снятие условий лота в периоде (PER-786). Ответ — после записи или без неё, если снимать нечего. */
+  def clearHappyHourLotTerms(
+      auctionId: AuctionId,
+      command: ClearHappyHourLotTerms,
+      initiator: Initiator
+  ): Future[Either[ClearHappyHourLotTermsRejected, AuctionAnswer]]
 
   /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
   def cancel(
@@ -252,12 +295,55 @@ object AuctionGateway {
       ): Future[Either[FinalTimeRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Announce(command, initiator, _))
 
+      def setLotLayout(
+          auctionId: AuctionId,
+          command: SetLotLayout,
+          initiator: Initiator
+      ): Future[Either[LotLayoutRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Arrange(command, initiator, _))
+
       def setPaymentInstructions(
           auctionId: AuctionId,
           command: SetPaymentInstructions,
           initiator: Initiator
       ): Future[Either[PaymentInstructionsRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Instruct(command, initiator, _))
+
+      def setPromoVideo(
+          auctionId: AuctionId,
+          command: SetPromoVideo,
+          initiator: Initiator
+      ): Future[Either[PromoVideoRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Promote(command, initiator, _))
+
+      def createHappyHourPeriod(
+          auctionId: AuctionId,
+          command: CreateHappyHourPeriod,
+          initiator: Initiator
+      ): Future[Either[CreateHappyHourPeriodRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.CreatePeriod(command, initiator, _))
+
+      def deleteHappyHourPeriod(
+          auctionId: AuctionId,
+          command: DeleteHappyHourPeriod,
+          initiator: Initiator
+      ): Future[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.DeletePeriod(command, initiator, _))
+
+      def setHappyHourLotTerms(
+          auctionId: AuctionId,
+          command: SetHappyHourLotTerms,
+          regulars: Option[LotRegulars],
+          initiator: Initiator
+      ): Future[Either[SetHappyHourLotTermsRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.SetTerms(command, regulars, initiator, _))
+
+      def clearHappyHourLotTerms(
+          auctionId: AuctionId,
+          command: ClearHappyHourLotTerms,
+          initiator: Initiator
+      ): Future[Either[ClearHappyHourLotTermsRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.ClearTerms(command, initiator, _))
 
       def cancel(
           auctionId: AuctionId,

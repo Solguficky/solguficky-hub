@@ -43,11 +43,17 @@ object MethodAccess {
     "HideAuction" -> Set(Caller.HubBot),
     "CancelAuction" -> Set(Caller.HubBot),
     "SetFinalTime" -> Set(Caller.HubBot),
+    "SetLotLayout" -> Set(Caller.HubBot),
+    "SetPromoVideo" -> Set(Caller.HubBot),
     "SelectForFinal" -> Set(Caller.HubBot),
     "DeselectForFinal" -> Set(Caller.HubBot),
     "PreviewParticipantRemoval" -> Set(Caller.HubBot),
     "RemoveParticipant" -> Set(Caller.HubBot),
     "LaunchStepWindow" -> Set(Caller.HubBot),
+    "CreateHappyHourPeriod" -> Set(Caller.HubBot),
+    "DeleteHappyHourPeriod" -> Set(Caller.HubBot),
+    "SetHappyHourLotTerms" -> Set(Caller.HubBot),
+    "ClearHappyHourLotTerms" -> Set(Caller.HubBot),
     "FreezeFinalLineup" -> Set(Caller.HubBot),
     "StartFinal" -> Set(Caller.HubBot),
     "StartNextLot" -> Set(Caller.HubBot),
@@ -65,6 +71,9 @@ object MethodAccess {
     "GetRaffle" -> bots,
     "AssignRaffleWinner" -> Set(Caller.HubBot),
     "ChangeRafflePrize" -> Set(Caller.HubBot),
+    "SetRafflePrizePhoto" -> Set(Caller.HubBot),
+    "RemoveRafflePrizePhoto" -> Set(Caller.HubBot),
+    "GetRafflePrizePhoto" -> bots,
     "SubmitPrediction" -> bots,
     "GetMyPredictions" -> bots,
     "GetPredictionResults" -> bots,
@@ -75,7 +84,9 @@ object MethodAccess {
     "ListMyInvoices" -> bots,
     "ListAuctionInvoices" -> Set(Caller.HubBot),
     "SetPaymentInstructions" -> Set(Caller.HubBot),
-    "GetAuctionDayChronicle" -> bots
+    "GetAuctionDayChronicle" -> bots,
+    "GetAuctionChronicle" -> bots,
+    "ListAuctionEngagement" -> Set(Caller.Notifications)
   )
 
   /** Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого. */

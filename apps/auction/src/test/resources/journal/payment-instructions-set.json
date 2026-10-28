@@ -24,6 +24,12 @@
     "lotSetSettled": null,
     "paymentInstructions": {
       "text": "Перевод на карту организатора до срока.\nСамовывоз — на сходке."
-    }
+    },
+    "lotLayout": null,
+    "promoVideo": null,
+    "happyHourPeriodCreated": null,
+    "happyHourPeriodDeleted": null,
+    "happyHourLotTermsSet": null,
+    "happyHourLotTermsCleared": null
   }
 }

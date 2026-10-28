@@ -27,7 +27,7 @@ export const pictogram = {
    * Раздел аукциона (PER-644): вход «Аукцион» из «Расширений», строка
    * «Аукцион:» карточки сходки и «Лоты» корня аукциона в обоих ботах.
    */
-  auction: "🔨",
+  auction: "🏷️",
   /**
    * Действие управления на экране, который видит и участник (PER-669):
    * «Изменить» и «Статус» сходки, рассылка, «Включить аукцион», «Пульт»,
@@ -68,6 +68,8 @@ export const pictogram = {
    * «Сходками» хаба и «Прошедшие» под «Аукционами» бота аукциона.
    */
   history: "🗂",
+  /** Промо-видео аукциона в корне аукциона обоих ботов (PER-774). */
+  promo: "🎬",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -97,6 +99,10 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
     "Пульт",
     "Ставки зала",
     "Сеты",
+    "Объявление",
+    "Промо-видео",
+    // «Счастливые часы» лота на его карточке (PER-787).
+    "Счастливые часы",
     "Добавить лот",
     "Управление",
   ],
@@ -119,6 +125,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.description]: ["Описание"],
   [pictogram.photo]: ["Фото"],
   [pictogram.history]: ["Архив", "Прошедшие"],
+  [pictogram.promo]: ["Промо"],
 };
 
 /**

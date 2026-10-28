@@ -825,8 +825,54 @@ describe("happy hours in the hub shell", () => {
         },
       }),
     ).toContain(
-      "Следующая ставка: от 1 210 ₽<br>Счастливые часы: шаг 10 ₽ до 10 октября, сб, 21:00<br>Обычный шаг: 50 ₽",
+      "Следующая ставка: от 1 210 ₽<br>Счастливые часы до 10 октября, сб, 21:00: шаг 10 ₽<br>Обычный шаг: 50 ₽",
     );
+  });
+
+  // Период со стартовой ценой (PER-787): у лота без ставок стартовая окна
+  // парой с обычной, без «Обычного шага», когда шаг окно не меняет.
+  it("shows the window start next to the regular start of a lot without bids", () => {
+    expect(
+      facts({
+        nextPrice: rub(800),
+        fixedStep: rub(50),
+        baseStep: rub(50),
+        activeWindow: {
+          from: "2026-10-10T15:00:00Z",
+          until: "2026-10-10T18:00:00Z",
+          start: rub(800),
+        },
+      }),
+    ).toContain(
+      "Следующая ставка: от 800 ₽<br>Счастливые часы до 10 октября, сб, 21:00: от 800 ₽ вместо 1 200 ₽<br>Шаг: 50 ₽",
+    );
+  });
+
+  it("promises the start of a future window only to a lot without bids", () => {
+    const window = {
+      from: "2026-10-11T12:00:00Z",
+      until: "2026-10-11T15:00:00Z",
+      start: rub(800),
+    };
+    expect(
+      facts({ fixedStep: rub(50), baseStep: rub(50), nextWindow: window }),
+    ).toContain(
+      "Счастливые часы: с 11 октября, вс, 15:00 до 18:00, от 800 ₽ вместо 1 200 ₽",
+    );
+    expect(
+      plain(
+        auctionScreen(
+          view([
+            lot({
+              status: { ...trading, leaderId: "someone" },
+              fixedStep: rub(50),
+              baseStep: rub(50),
+              nextWindow: window,
+            }),
+          ]),
+        ).screen.text,
+      ),
+    ).not.toContain("Счастливые часы");
   });
 
   it("shows the thresholds instead of one step when the step is tiered", () => {

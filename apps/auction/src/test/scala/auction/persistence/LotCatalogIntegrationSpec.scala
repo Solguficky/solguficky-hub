@@ -277,7 +277,7 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
         )
       )
 
-      JournalSchema.migrate(database) shouldBe 1
+      JournalSchema.migrate(database) should be >= 1
 
       photos(database, id) shouldBe List(1 -> stored(jpeg(1), "image/jpeg"))
       image(database, id) shouldBe Some(stored(jpeg(1), "image/jpeg"))

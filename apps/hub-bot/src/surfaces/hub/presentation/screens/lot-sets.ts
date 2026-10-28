@@ -15,6 +15,7 @@ import {
   consoleSetDeleteData,
   consoleSetLotData,
   consoleSetsData,
+  consoleViewData,
 } from "../parse-callback.js";
 import { truncate } from "./auction.js";
 import {
@@ -23,13 +24,13 @@ import {
   escapeHtml,
   nextRow,
   outcomeText,
+  type Parent,
   pagedTitle,
   pageSize,
   paginate,
   plural,
   removeLabel,
   screenText,
-  toAuctionRoot,
   toggleLabel,
   withNav,
   withPager,
@@ -38,7 +39,7 @@ import type { ShownScreen } from "./show.js";
 
 // Сеты лотов аукциона (ADR-073, PER-509): организатор называет сет и выбирает
 // его лоты из реестра, пока онлайн-неделя не открыта; после открытия сеты
-// видны только для просмотра. Вход — «🛠 Сеты» корня аукциона.
+// видны только для просмотра. Вход — «Сеты» пульта (PER-802).
 
 const untitled = "Лот без названия";
 const titleLimit = 120;
@@ -159,7 +160,7 @@ export function lotSetsScreen(view: {
               : []),
           ].join("\n"),
     ),
-    keyboard: withNav(keyboard, toAuctionRoot(console.auctionId)),
+    keyboard: withNav(keyboard, toConsole(console.auctionId)),
     format: "HTML",
   };
 }
@@ -299,3 +300,8 @@ export const lotSetPrompt =
 export const lotSetAskErrorText = {
   "name-empty": "Название пустое. Напиши название сета.",
 } as const;
+
+// Вход — из пульта (PER-802), и возврат — в пульт.
+function toConsole(auctionId: string): Parent {
+  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
+}

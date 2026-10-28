@@ -197,6 +197,8 @@ describe("access matrix self-check", () => {
     expect(ACCESS_MATRIX_CASES.map((each) => each.name)).toEqual([
       "hub: hub right starts",
       "hub: hub right presses",
+      "hub: member presses the statistics",
+      "hub: host presses the statistics",
       "hub: allowlisted applies",
       "hub: auction right only starts",
       "hub: auction right only presses",
@@ -220,6 +222,8 @@ describe("access matrix self-check", () => {
       "auction: hub right applies",
       "auction: admin starts",
       "auction: admin presses",
+      "auction: auction right presses the statistics",
+      "auction: admin host presses the statistics",
       "auction: hub right only starts",
       "auction: allowlisted applies",
       "auction: newcomer starts",

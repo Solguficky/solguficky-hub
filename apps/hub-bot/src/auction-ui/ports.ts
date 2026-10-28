@@ -146,11 +146,18 @@ export type LotStatusView =
 
 export type TradingPhase = "online" | "live";
 
-// Окно сниженного шага — полуинтервал `[from, until)`, моменты RFC 3339 в UTC.
+// Окно «Счастливых часов» лота — полуинтервал `[from, until)`, моменты RFC 3339
+// в UTC. Окно задаёт шаг, стартовую цену или оба (ADR-047, дополнение
+// 2026-10-27); хотя бы одно есть всегда.
 export type StepWindowView = {
   from: string;
   until: string;
-  step: Money;
+  // Шаг в окне. Нет — окно шаг не меняет.
+  step?: Money;
+  // Цена первой ставки в окне, пока у лота нет ставок, ниже обычной
+  // стартовой. У действующего окна Auction отдаёт её, только пока она и есть
+  // следующая цена; у будущего — объявленной.
+  start?: Money;
 };
 
 // Порог шага по цене (PER-491): шаг при цене не ниже `lowerBound` и ниже
@@ -294,6 +301,44 @@ export type AuctionSummaryView = {
   // приходит только тому, от кого аукцион не скрыт, — держателю
   // `run_auctions`; остальным скрытого аукциона нет вовсе.
   hidden?: true;
+  // Ориентировочное начало финала (ADR-040, дополнение 2026-10-19): анонс,
+  // а не условие торгов. Нет — администратор его не выставил.
+  finalAt?: string;
+  // «Счастливые часы» недели (PER-724): объявленные в конфигурации и
+  // запущенные по ходу торгов, по началу окна. Нет — окон нет.
+  stepWindows?: readonly AuctionStepWindowView[];
+  // Закрытие регистрации в розыгрыше из конфигурации недели (PER-593) —
+  // строка состояния аукциона в меню и списках (PER-767). Нет — неделя без
+  // розыгрыша.
+  raffleClosesAt?: string;
+  // Порядок и разделы ленты, которые выставил администратор (PER-719). Нет —
+  // администратор лоты не упорядочивал, и лента идёт в порядке создания.
+  layout?: LotLayoutView;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов, который
+  // выставил администратор. Нет — видео нет.
+  promoVideo?: number;
+};
+
+// Порядок и разделы ленты (PER-719): лоты вне разделов и разделы, каждые в
+// порядке администратора. Лот стоит не больше чем в одном месте.
+export type LotLayoutView = {
+  lotIds: readonly string[];
+  sections: readonly LotSectionView[];
+};
+
+// Раздел ленты: номер выбирает пульт, он же едет в кнопке раздела.
+export type LotSectionView = {
+  sectionId: number;
+  name: string;
+  lotIds: readonly string[];
+};
+
+// Окно сниженного шага аукциона — полуинтервал [from, until) моментов
+// RFC 3339 в UTC и лоты, к которым оно применяется.
+export type AuctionStepWindowView = {
+  from: string;
+  until: string;
+  lotIds: readonly string[];
 };
 
 // Замороженный состав финала: лоты в порядке выхода и лот, который ведущий
@@ -421,7 +466,32 @@ export interface AuctionPort {
     viewer: Viewer;
     auctionId: string;
   }): Promise<DayChronicleView>;
+  // Статистика аукциона (PER-770): те же агрегаты за все торги. Право —
+  // `place_bids`, как у хроник дня.
+  getAuctionChronicle(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<AuctionChronicleView>;
 }
+
+// Статистика аукциона (PER-770) — срез `GetAuctionChronicle`: счётчики всех
+// торгов, рекорд роста, который выбрал Auction, и агрегаты каждого лота
+// реестра без значимого порядка. Людей в срезе нет — только их число.
+export type AuctionChronicleView = {
+  bidCount: number;
+  participantCount: number;
+  tradedLotCount: number;
+  // Нет — ни один лот не вырос.
+  growthRecord?: { lotId: string; growth: Money };
+  lots: readonly AuctionChronicleLot[];
+};
+
+export type AuctionChronicleLot = {
+  lotId: string;
+  bidCount: number;
+  leaderChanges: number;
+  longestDuel: number;
+};
 
 // Хроники дня (PER-725) — срез `GetAuctionDayChronicle`: агрегаты окна каждого
 // лота реестра без значимого порядка, а из жизни лота — только число ставок и
@@ -587,6 +657,10 @@ export type RaffleView = {
   // Итог называет администратор, а не маяк (PER-727): известно с фиксации
   // пула, и пересчитывать такой итог нечего. Нет поля — итог по маяку.
   drawnByHand?: true;
+  // Фото приза без байтов (PER-773): байты читает край через
+  // `LotImagePort.getRafflePrizePhoto`, версия — ключ кэша `file_id`. Нет —
+  // приз без фото.
+  prizePhoto?: { photoId: string; version: string };
 };
 
 export type RaffleRegistrationRefusal =
@@ -689,6 +763,12 @@ export interface LotImagePort {
     lotId: string;
     photoId: string;
   }): Promise<LotImage>;
+  // Фото приза розыгрыша аукциона (PER-773) в той же форме. Нет метода —
+  // экран розыгрыша идёт без фото.
+  getRafflePrizePhoto?(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<LotImage>;
 }
 
 // Избранные лоты (ADR-063): отметка «человек следит за лотом» живёт в
@@ -727,4 +807,8 @@ export type AuctionBotPorts = {
   operations: OperationIdPort;
   favorites?: FavoritesPort;
   proxyExplainer?: ProxyExplainerPort;
+  // Чат медиа ботов включён (PER-774): корень аукциона с видео ставит
+  // «🎬 Промо». Нет — кнопки нет, а подделанная кнопка отвечает «видео
+  // недоступно». Показ поста — вызов Telegram, его делает поверхность.
+  media?: true;
 };

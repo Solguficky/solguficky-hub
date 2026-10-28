@@ -12,7 +12,9 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
 
   private val table = CallerTable
     .fromConfig(
-      ConfigFactory.parseString("""auction.grpc.callers { hub-bot = "hub", auction-bot = "auction" }"""),
+      ConfigFactory.parseString(
+        """auction.grpc.callers { hub-bot = "hub", auction-bot = "auction", notifications = "notifications" }"""
+      ),
       MethodAccess.declared
     )
     .value
@@ -36,6 +38,14 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
         GateDecision.Admitted(Caller.AuctionBot)
       CallerGate.decide(table, Some("GetAuctionDaySummary"), Some("Bearer auction")) shouldBe
         GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
+    }
+
+    // PER-769: хроники всего аукциона — чтение участника, как хроники дня.
+    "admits both bots on the chronicle of the whole auction" in {
+      CallerGate.decide(table, Some("GetAuctionChronicle"), Some("Bearer hub")) shouldBe
+        GateDecision.Admitted(Caller.HubBot)
+      CallerGate.decide(table, Some("GetAuctionChronicle"), Some("Bearer auction")) shouldBe
+        GateDecision.Admitted(Caller.AuctionBot)
     }
 
     "admits only the auction bot on the FAQ methods" in {

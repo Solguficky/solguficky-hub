@@ -47,8 +47,22 @@ final case class StoredConfig(
 /** Секция `LotScheduled` и состояния `Scheduled`: `Schedule` снимком. */
 final case class StoredSchedule(startingPrice: StoredMoney, config: StoredConfig)
 
-/** Окно сниженного шага лота: полуинтервал `[from, until)` и сумма шага в нём (ADR-047, дополнение 2026-10-08). */
-final case class StoredStepWindow(from: Instant, until: Instant, step: StoredMoney)
+/**
+ * Окно «Счастливых часов» лота: полуинтервал `[from, until)`, сумма шага и стартовая цена для лота без ставок (ADR-047,
+ * дополнения 2026-10-08 и 2026-10-27), хотя бы одно из двух. `start` добавлен в конец, а `step` стал необязательным:
+ * строка, записанная до них, — окно с одним шагом. Строку без шага образ до дополнения 2026-10-27 не читает. `period` —
+ * период «Счастливых часов», условиями лота в котором окно служит (PER-786); у объявленного и запущенного окна его нет.
+ */
+final case class StoredStepWindow(
+    from: Instant,
+    until: Instant,
+    step: Option[StoredMoney],
+    start: Option[StoredMoney] = None,
+    period: Option[UUID] = None
+)
+
+/** Секция `PeriodWindowCleared`: период, чьё окно лот снял (PER-786). */
+final case class StoredPeriodWindowCleared(period: UUID)
 
 /**
  * `stepWindows` пишется только непустым (ADR-047, дополнение 2026-10-08): строка без него — торги без окна, и так
@@ -111,6 +125,7 @@ final case class StoredParticipantRemoved(
  * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки. Так
  * же без секции `LotMarkedForFinal` и `LotResumed`. Секции добавлялись в конец: строка, записанная до них, читает
  * недостающую как пустую. `stepWindowAdded` — окно, запущенное по ходу торгов (ADR-047, дополнение 2026-10-12).
+ * `periodWindowSet` и `periodWindowCleared` — окно периода «Счастливых часов» и его снятие (PER-786).
  */
 final case class StoredEvent(
     kind: String,
@@ -126,7 +141,9 @@ final case class StoredEvent(
     askAdvanced: Option[StoredAskAdvanced] = None,
     lotWithdrawn: Option[StoredLotWithdrawn] = None,
     stepWindowAdded: Option[StoredStepWindow] = None,
-    participantRemoved: Option[StoredParticipantRemoved] = None
+    participantRemoved: Option[StoredParticipantRemoved] = None,
+    periodWindowSet: Option[StoredStepWindow] = None,
+    periodWindowCleared: Option[StoredPeriodWindowCleared] = None
 )
 
 object StoredEvent {
@@ -403,6 +420,12 @@ object LotJournal {
         StoredEvent.of("LotWithdrawn").copy(lotWithdrawn = Some(StoredLotWithdrawn(reason.toString)))
       case LotEvent.StepWindowAdded(window) =>
         StoredEvent.of("StepWindowAdded").copy(stepWindowAdded = Some(storeWindow(window)))
+      case LotEvent.PeriodWindowSet(window) =>
+        StoredEvent.of("PeriodWindowSet").copy(periodWindowSet = Some(storeWindow(window)))
+      case LotEvent.PeriodWindowCleared(period) =>
+        StoredEvent
+          .of("PeriodWindowCleared")
+          .copy(periodWindowCleared = Some(StoredPeriodWindowCleared(period.value)))
       case LotEvent.ParticipantRemoved(participant, price, leader, leadingBidId) =>
         StoredEvent
           .of("ParticipantRemoved")
@@ -436,7 +459,9 @@ object LotJournal {
       stored.askAdvanced,
       stored.lotWithdrawn,
       stored.stepWindowAdded,
-      stored.participantRemoved
+      stored.participantRemoved,
+      stored.periodWindowSet,
+      stored.periodWindowCleared
     ).count(_.isDefined)
     def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
     (stored.kind, sections) match {
@@ -505,6 +530,15 @@ object LotJournal {
           if (!window.from.isBefore(window.until)) corrupted("step window that ends before it starts")
           LotEvent.StepWindowAdded(window)
         }
+      case ("PeriodWindowSet", 1) =>
+        stored.periodWindowSet.fold(mismatch) { set =>
+          val window = restoreWindow(set)
+          if (!window.from.isBefore(window.until)) corrupted("step window that ends before it starts")
+          if (window.period.isEmpty) corrupted("period window without its period")
+          LotEvent.PeriodWindowSet(window)
+        }
+      case ("PeriodWindowCleared", 1) =>
+        stored.periodWindowCleared.fold(mismatch)(cleared => LotEvent.PeriodWindowCleared(WindowPeriod(cleared.period)))
       case ("ParticipantRemoved", 1) =>
         stored.participantRemoved.fold(mismatch) { removed =>
           if (removed.leader.isDefined != removed.leadingBidId.isDefined)
@@ -726,10 +760,24 @@ object LotJournal {
     Option.when(windows.nonEmpty)(windows.map(storeWindow))
 
   private def storeWindow(window: StepWindow): StoredStepWindow =
-    StoredStepWindow(window.from, window.until, storeMoney(window.step))
+    StoredStepWindow(
+      window.from,
+      window.until,
+      window.step.map(storeMoney),
+      window.start.map(storeMoney),
+      window.period.map(_.value)
+    )
 
   private def restoreWindow(stored: StoredStepWindow): StepWindow =
-    StepWindow(stored.from, stored.until, restoreMoney(stored.step))
+    if (stored.step.isEmpty && stored.start.isEmpty) corrupted("step window with neither a step nor a starting price")
+    else
+      StepWindow(
+        stored.from,
+        stored.until,
+        stored.step.map(restoreMoney),
+        stored.start.map(restoreMoney),
+        stored.period.map(WindowPeriod(_))
+      )
 
   /**
    * Окна И-21: в валюте лота, `from` раньше `until`, без пересечений. Иное — испорченный журнал, а не торги без окна.
@@ -737,7 +785,7 @@ object LotJournal {
    */
   private def restoreWindows(stored: Option[List[StoredStepWindow]], config: LotConfig): List[StepWindow] = {
     val windows = stored.getOrElse(Nil).map(restoreWindow)
-    if (windows.exists(_.step.currency != config.currency)) corrupted("step window in another currency than the lot")
+    if (windows.exists(!_.in(config.currency))) corrupted("step window in another currency than the lot")
     if (windows.exists(window => !window.from.isBefore(window.until)))
       corrupted("step window that ends before it starts")
     val ordered = windows.sortBy(_.from)

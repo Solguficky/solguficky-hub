@@ -47,7 +47,10 @@ export type AccessAnswer =
   // заявки нет (дополнение ADR-060 от 2026-10-25). Только в хабе.
   | "invitation-only"
   // Сбой соседа: ни допуска, ни ответа о заявке.
-  | "unavailable";
+  | "unavailable"
+  // Кнопка, которую поверхность этому человеку больше не ставит: «Статистика»
+  // аукциона без права её открыть (PER-800). Ответ устаревшей кнопки.
+  | "outdated";
 
 export type AccessMatrixPorts = AuctionBotPorts & { entry: EntryPort };
 
@@ -99,6 +102,15 @@ const LOT_BUTTON: AccessAction = {
     page: 0,
   }),
 };
+// «Статистика» аукциона (PER-800) — вход пульта хаба: открывает её только
+// держатель `run_auctions` в хабе.
+const STATISTICS_BUTTON: AccessAction = {
+  kind: "callback",
+  data: encodeAuctionCallback({
+    kind: "auction-chronicle",
+    auctionId: CONTRACT_LOT.auctionId,
+  }),
+};
 const START: AccessAction = { kind: "start" };
 const START_FROM_CHANNEL: AccessAction = { kind: "start", sourceCode: "chat" };
 const APPLY: AccessAction = { kind: "apply" };
@@ -120,6 +132,7 @@ const ADMIN: Person = holder(
   "admit-bidders",
   "manage-meetups",
 );
+const HOST: Person = holder("access-hub", "place-bids", "run-auctions");
 const NEWCOMER: Person = {
   rights: [],
   blocked: false,
@@ -155,6 +168,22 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     surface: "hub",
     person: MEMBER,
     action: LOT_BUTTON,
+    answer: "admitted",
+  },
+  // «Статистика» (PER-800): старая кнопка из корня или подделка у участника —
+  // устаревшая кнопка без чтения Auction; ведущему — экран.
+  {
+    name: "hub: member presses the statistics",
+    surface: "hub",
+    person: MEMBER,
+    action: STATISTICS_BUTTON,
+    answer: "outdated",
+  },
+  {
+    name: "hub: host presses the statistics",
+    surface: "hub",
+    person: HOST,
+    action: STATISTICS_BUTTON,
     answer: "admitted",
   },
   // Белый список, сработавший между приветствием и нажатием, пускает сразу.
@@ -331,6 +360,21 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     person: ADMIN,
     action: LOT_BUTTON,
     answer: "admitted",
+  },
+  // В боте аукциона «Статистики» нет никому (PER-800), и ведущему тоже.
+  {
+    name: "auction: auction right presses the statistics",
+    surface: "auction",
+    person: holder("place-bids"),
+    action: STATISTICS_BUTTON,
+    answer: "outdated",
+  },
+  {
+    name: "auction: admin host presses the statistics",
+    surface: "auction",
+    person: { ...ADMIN, rights: [...ADMIN.rights, "run-auctions"] },
+    action: STATISTICS_BUTTON,
+    answer: "outdated",
   },
   // Право хаба без права аукциона Identity не отдаёт; строка держит, что
   // переход решает право хаба, а не пара прав.

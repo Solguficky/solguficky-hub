@@ -5,14 +5,22 @@ import type {
   ConsolePredictions,
   ConsoleLot as WireConsoleLot,
   ConsoleLotSet as WireConsoleLotSet,
+  HappyHourLotTerms as WireHappyHourLotTerms,
+  HappyHourPeriod as WireHappyHourPeriod,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
-import { finalLineupOf } from "../../../core/auction/auction.js";
+import {
+  finalLineupOf,
+  lotLayoutOf,
+  promoVideoOf,
+} from "../../../core/auction/auction.js";
 import { lotViewOf, moneyOf } from "../../../core/auction/snapshot.js";
 import type {
   AuctionConsoleSnapshot,
   AuctionWeek,
   ConsoleAuctionStatus,
   ConsoleLotSnapshot,
+  HappyHourLotTerms,
+  HappyHourPeriod,
   LotSet,
   PredictionTally,
   StepWindow,
@@ -27,10 +35,13 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
   if (auction === undefined) throw new Error("auction console without auction");
   const week = weekOf(auction);
   const lineup = finalLineupOf(auction.status);
+  const layout = lotLayoutOf(auction.lotLayout);
+  const promoVideo = promoVideoOf(auction.promoVideo);
   return {
     auctionId: auction.id,
     status: statusOf(auction.status),
     hidden: auction.hidden,
+    ...(console.meetupId === "" ? {} : { meetupId: console.meetupId }),
     // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
     // торгов. Нет — анонса нет, и пульт говорит об этом строкой.
     ...(auction.finalAt === undefined || auction.finalAt === ""
@@ -41,8 +52,13 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает, а
     // пульт показывает их рядом с объявленными.
     launchedWindows: console.launchedStepWindows.map(windowOf),
+    happyHourPeriods: console.happyHourPeriods.map(happyHourPeriodOf),
     lots: console.lots.map(consoleLotOf),
     lotSets: console.lotSets.map(lotSetOf),
+    // Порядок и разделы ленты (PER-719); нет — лента в порядке создания.
+    ...(layout === undefined ? {} : { layout }),
+    // Промо-видео (PER-774): номер поста в чате медиа ботов.
+    ...(promoVideo === undefined ? {} : { promoVideo }),
     // Розыгрыш и прогнозы числами (PER-734): организаторы подбирают призы по
     // числу участников. Нет поля — строки нет.
     ...(console.raffleRegistrations === undefined
@@ -119,6 +135,34 @@ function windowOf(window: AuctionStepWindow): StepWindow {
     until: window.until,
     step: moneyOf(window.step),
     lotIds: [...window.lotIds],
+  };
+}
+
+// Период «Счастливых часов» (PER-787). Без идентификатора или условия лота
+// без шага и стартовой — дефект соседа: Auction таких не записывает.
+export function happyHourPeriodOf(
+  period: WireHappyHourPeriod,
+): HappyHourPeriod {
+  if (period.periodId === "") throw new Error("happy hour period without id");
+  return {
+    periodId: period.periodId,
+    from: period.from,
+    until: period.until,
+    lotTerms: period.lotTerms.map(happyHourLotTermsOf),
+  };
+}
+
+export function happyHourLotTermsOf(
+  terms: WireHappyHourLotTerms,
+): HappyHourLotTerms {
+  if (terms.lotId === "") throw new Error("happy hour lot terms without lot");
+  if (terms.step === undefined && terms.start === undefined) {
+    throw new Error("happy hour lot terms without a step and a start");
+  }
+  return {
+    lotId: terms.lotId,
+    ...(terms.step === undefined ? {} : { step: moneyOf(terms.step) }),
+    ...(terms.start === undefined ? {} : { start: moneyOf(terms.start) }),
   };
 }
 

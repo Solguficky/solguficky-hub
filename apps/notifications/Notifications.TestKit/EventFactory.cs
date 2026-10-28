@@ -353,7 +353,8 @@ public static class EventFactory
     /// <summary>
     /// Факт лота в торгах без повода: <paramref name="occasion" /> — имя ветки,
     /// <c>lot_opened</c>, <c>ask_advanced</c>, <c>deadline_extended</c> или
-    /// <c>lot_resumed</c>. Дедлайн и лидер — как в снимке.
+    /// <c>lot_resumed</c>, <c>step_window_added</c> или <c>step_window_changed</c>.
+    /// Дедлайн и лидер — как в снимке; текущая цена — 100 ₽.
     /// </summary>
     public static global::Auction.V1.LotEvent Trading(string lotId, string occasion, long version = 2,
         string? deadline = null, string? leader = null, string? auction = null,
@@ -389,6 +390,7 @@ public static class EventFactory
             case "deadline_extended": message.DeadlineExtended = new global::Auction.V1.DeadlineExtended(); break;
             case "lot_resumed": message.LotResumed = new global::Auction.V1.LotResumed(); break;
             case "step_window_added": message.StepWindowAdded = new global::Auction.V1.StepWindowAdded(); break;
+            case "step_window_changed": message.StepWindowChanged = new global::Auction.V1.StepWindowChanged(); break;
             default: throw new ArgumentOutOfRangeException(nameof(occasion));
         }
         return message;
@@ -652,6 +654,20 @@ public static class EventFactory
             message.State.Scheduled = new global::Auction.V1.AuctionState.Types.Scheduled();
         }
         message.AuctionPublished = new global::Auction.V1.AuctionPublished();
+        return message;
+    }
+
+    /// <summary>
+    /// Аукцион рождён у сходки: снимок черновика, с PER-609 скрытого. Рождение
+    /// заново после удаления идёт тем же фактом со старшей версией.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent AuctionDrafted(string auction, string meetup, bool hidden = true,
+        long version = 1)
+    {
+        var message = AuctionFact(auction, meetup, version);
+        message.State.Hidden = hidden;
+        message.State.Draft = new global::Auction.V1.AuctionState.Types.Draft();
+        message.AuctionDrafted = new global::Auction.V1.AuctionDrafted();
         return message;
     }
 

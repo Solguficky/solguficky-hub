@@ -25,6 +25,10 @@ export type LogFields = {
   // Telegram отверг карточку с постерами, и она ушла без них (PER-443).
   posters_error?: string;
   meetup_id?: string;
+  // Вид сообщения, которое не стало материалом сходки: `forward:<тип>`, вид
+  // медиа, `text` или `other`, у пересланного медиа через запятую
+  // (`forward:user,video`), без содержимого (PER-762).
+  message_kind?: string;
   signal?: string;
   timeout?: number;
   telegram_environment?: string;
@@ -44,6 +48,9 @@ export type LogFields = {
   // Чем кончилась реплика переписки бота поддержки: скопирована, отказ и
   // его вид (ADR-068).
   outcome?: string;
+  // Пост чата медиа ботов, который не показался (PER-776): по номеру его
+  // находят в канале.
+  media_post_id?: number;
 };
 
 export type Logger = {

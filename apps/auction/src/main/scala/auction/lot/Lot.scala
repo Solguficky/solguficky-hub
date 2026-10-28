@@ -89,7 +89,7 @@ object Lot {
           case LotState.Initial => Left(OpenLotRejected.LotNotFound)
           case LotState.Scheduled(schedule) =>
             val windows = command.stepWindows
-              .filter(_.step.currency == schedule.config.currency)
+              .filter(_.in(schedule.config.currency))
               .sortBy(_.from)
             Right(
               Decision.Accepted(
@@ -173,7 +173,7 @@ object Lot {
         case LotState.Held(held) if removedFrom(held.course, command.participant) =>
           Left(SetProxyLimitRejected.ParticipantRemovedFromLot)
         case LotState.Trading(trading) =>
-          proxyLimitSet(trading.config, floor(trading), command).map { set =>
+          proxyLimitSet(trading.config, limitFloor(trading, now), command).map { set =>
             val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
             val derived = resolve(after, proxyBidId, now).toList
             Decision.Accepted(set, if (derived.isEmpty) Nil else derived ++ extended(trading, now))
@@ -215,7 +215,8 @@ object Lot {
    * участник или команда другого вида с тем же `op_id` получает `conflict`: исходный ответ выдал бы чужой `bid_id`, а
    * исполнение заново записало бы вторую транзакцию под тем же `op_id`. Инициатор в окне не хранится, поэтому журнал и
    * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal`, `UnmarkForFinal`, `ResumeLot`,
-   * `WithdrawLot` и `AddStepWindow` участника в событии нет, и своя команда — событие того же вида.
+   * `WithdrawLot`, `AddStepWindow`, `SetPeriodWindow` и `ClearPeriodWindow` участника в событии нет, и своя команда —
+   * событие того же вида.
    */
   private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
     lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))
@@ -528,12 +529,65 @@ object Lot {
         case LotState.Initial => Left(AddStepWindowRejected.LotNotFound)
         case LotState.Trading(trading) if trading.phase == Phase.Online =>
           val window = command.window
-          if (window.step.currency != trading.config.currency || trading.stepWindows.exists(_.overlaps(window)))
+          if (!window.in(trading.config.currency) || trading.stepWindows.exists(_.overlaps(window)))
             Right(None)
           else Right(Some(Decision.Accepted(LotEvent.StepWindowAdded(window))))
         case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) |
             LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
           Left(AddStepWindowRejected.LotNotOpen)
+      }
+    }
+
+  /**
+   * Условия лота в периоде «Счастливых часов» (ADR-047, дополнение 2026-10-27, PER-786): лот в торгах онлайн-этапа
+   * заменяет окно этого периода или дописывает новое событием `PeriodWindowSet` — только пока `now` раньше начала окна:
+   * с начала период заморожен (`PeriodStarted`). Закрытый, снятый, удержанный и вышедший в живой финал лот отвечает
+   * `LotNotOpen`, и аукцион его не ждёт. Повтор — только своей команды.
+   *
+   * `None` — принято без записи: окно то же, что уже записано, в чужой валюте или пересекается с окном другого
+   * происхождения. Пересечения проверяет аукцион, и такая команда до лота не доходит; записанное пересечение сделало бы
+   * журнал нечитаемым (И-21).
+   */
+  def decide(lot: Lot, command: SetPeriodWindow, now: Instant): Either[PeriodWindowRejected, Option[Decision]] =
+    repeatOf(lot, command.opId, PeriodWindowRejected.OpIdTaken) {
+      case _: LotEvent.PeriodWindowSet => true
+      case _ => false
+    }.map(_.map(Some(_))).getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(PeriodWindowRejected.LotNotFound)
+        case LotState.Trading(trading) if trading.phase == Phase.Online =>
+          val window = command.window
+          val others = trading.stepWindows.filterNot(other => window.period.exists(other.of))
+          if (!now.isBefore(window.from)) Left(PeriodWindowRejected.PeriodStarted)
+          else if (trading.stepWindows.contains(window)) Right(None)
+          else if (!window.in(trading.config.currency) || others.exists(_.overlaps(window))) Right(None)
+          else Right(Some(Decision.Accepted(LotEvent.PeriodWindowSet(window))))
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) |
+            LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
+          Left(PeriodWindowRejected.LotNotOpen)
+      }
+    }
+
+  /**
+   * Снятие условий лота в периоде (PER-786): окно периода уходит событием `PeriodWindowCleared`, только пока `now`
+   * раньше его начала. Окна этого периода у лота нет — принято без записи: условия не доходили или уже сняты.
+   */
+  def decide(lot: Lot, command: ClearPeriodWindow, now: Instant): Either[PeriodWindowRejected, Option[Decision]] =
+    repeatOf(lot, command.opId, PeriodWindowRejected.OpIdTaken) {
+      case _: LotEvent.PeriodWindowCleared => true
+      case _ => false
+    }.map(_.map(Some(_))).getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(PeriodWindowRejected.LotNotFound)
+        case LotState.Trading(trading) if trading.phase == Phase.Online =>
+          trading.stepWindows.find(_.of(command.period)) match {
+            case None => Right(None)
+            case Some(window) if !now.isBefore(window.from) => Left(PeriodWindowRejected.PeriodStarted)
+            case Some(_) => Right(Some(Decision.Accepted(LotEvent.PeriodWindowCleared(command.period))))
+          }
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) |
+            LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
+          Left(PeriodWindowRejected.LotNotOpen)
       }
     }
 
@@ -556,15 +610,30 @@ object Lot {
   /**
    * Следующая цена в момент `at`: объявленный ask, если он выше текущей цены, иначе цена плюс шаг от неё (П-01, П-03).
    * До первой ставки — пока лидера нет (И-02) — шага нет: следующая цена равна стартовой, которая до первой ставки и
-   * есть текущая (решение владельца 14.10.2026, PER-618). `at` — серверное время команды, а у чтения — время ответа: в
-   * окне сниженного шага следующая цена ниже.
+   * есть текущая (решение владельца 14.10.2026, PER-618), а в окне со стартовой ценой — стартовой окна
+   * ([[openingPrice]]). `at` — серверное время команды, а у чтения — время ответа: в окне следующая цена ниже.
    */
   def minRequired(trading: TradingState, at: Instant): Money =
     trading.ask.filter(_ > trading.currentPrice) match {
       case Some(ask) => ask
-      case None if opening(trading) => trading.currentPrice
+      case None if opening(trading) => openingPrice(trading, at)
       case None => trading.currentPrice.plus(step(trading, trading.currentPrice, at))
     }
+
+  /**
+   * Цена первой ставки в момент `at` (ADR-047, дополнение 2026-10-27): стартовая окна, если `at` внутри окна лота с ней
+   * и лот в фазе `Online`, причём строго ниже обычной стартовой; иначе обычная — она до первой ставки и есть текущая
+   * цена. После первой ставки лидер есть, и стартовая окна ни на что не влияет: дальше цену ведёт шаг.
+   */
+  def openingPrice(trading: TradingState, at: Instant): Money =
+    activeWindow(trading, at).flatMap(_.start).filter(_ < trading.currentPrice).getOrElse(trading.currentPrice)
+
+  /**
+   * Нижняя граница прокси-лимита в торгах в момент `at`: до первой ставки — цена первой ставки, в окне со стартовой
+   * ценой — стартовая окна, как у ручной ставки; после неё — [[floor]].
+   */
+  private def limitFloor(trading: TradingState, at: Instant): Money =
+    if (opening(trading)) minRequired(trading, at) else floor(trading)
 
   /**
    * Ставок по лоту ещё не было: лидера нет только до первой принятой ставки (И-02), и текущая цена тогда — стартовая.
@@ -579,11 +648,12 @@ object Lot {
   /**
    * Шаг при цене `price` в момент `at` (П-03, дополнение 2026-10-08): сумма окна, если `at` внутри `[from, until)` окна
    * лота и лот в фазе `Online`, но не выше обычного шага; иначе обычный шаг. Окна одного лота не пересекаются (И-21),
-   * поэтому подходит не больше одного. Событий на границах окна нет: шаг вычисляется в момент команды.
+   * поэтому подходит не больше одного. Окно без шага шаг не меняет (дополнение 2026-10-27). Событий на границах окна
+   * нет: шаг вычисляется в момент команды.
    */
   def step(trading: TradingState, price: Money, at: Instant): Money = {
     val base = baseStep(trading, price)
-    activeWindow(trading, at).fold(base)(window => if (window.step < base) window.step else base)
+    activeWindow(trading, at).flatMap(_.step).fold(base)(step => if (step < base) step else base)
   }
 
   /** Окно, которое действует в момент `at`: только в фазе `Online` — в живом финале окна нет по фазе (П-03). */
@@ -697,7 +767,8 @@ object Lot {
    * окна, вне окна — по обычному, и шаги двух режимов в одном событии не смешиваются (П-03).
    *
    * До первой ставки лидера нет, и первая ставка равна `f` без шага, как у ручной (решение владельца 14.10.2026,
-   * PER-618): кандидат — лимит с `max ≥ f`, а производная ставка — ровно `f`.
+   * PER-618): кандидат — лимит с `max ≥ f`, а производная ставка — ровно `f`. В окне со стартовой ценой `f` до первой
+   * ставки — стартовая окна, как у ручной ставки (ADR-047, дополнение 2026-10-27).
    *
    * Так правило читается в фазе `Online`; в `Live` цель ложится на сетку ADR-049 — [[resolveLive]].
    */
@@ -708,7 +779,7 @@ object Lot {
     }
 
   private def resolveOnline(trading: TradingState, bidId: BidId, now: Instant): Option[LotEvent.BidPlaced] = {
-    val f = floor(trading)
+    val f = limitFloor(trading, now)
     val stepAbove = (price: Money) => {
       val step = Lot.step(trading, price, now).minorUnits
       if (price.minorUnits > Long.MaxValue - step) price.copy(minorUnits = Long.MaxValue)
@@ -874,8 +945,10 @@ object Lot {
    * Удержание `LotHeldForFinal` переносит цену, лидера, лимиты и счётчик продлений из торгов как есть, а возврат
    * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09).
    * `AskAdvanced` ставит ask и больше ничего не трогает: цену и лидера меняет только ставка (П-08). `StepWindowAdded`
-   * дописывает окно к окнам торгов в порядке начала (И-21). Окон сниженного шага удержание не несёт (RFC-011,
-   * «Состояние лота»), и в финале их нет; правило шага не применяет их в `Live` и тогда, когда они в состоянии лежат.
+   * дописывает окно к окнам торгов в порядке начала (И-21), `PeriodWindowSet` заменяет окно своего периода или
+   * дописывает его, `PeriodWindowCleared` окно периода снимает (PER-786). Окон сниженного шага удержание не несёт
+   * (RFC-011, «Состояние лота»), и в финале их нет; правило шага не применяет их в `Live` и тогда, когда они в
+   * состоянии лежат.
    */
   def apply(lot: Lot, envelope: Envelope, at: Instant): Lot = {
     val entry = (participant: ParticipantId, move: Move) => Entry(participant, move, at, envelope.sequence)
@@ -924,6 +997,29 @@ object Lot {
             stepWindows = (trading.stepWindows :+ window).sortBy(_.from),
             course = trading.course.map(course =>
               course.copy(addedWindows = course.addedWindows :+ AddedWindow(window, envelope.sequence))
+            )
+          )
+        )
+      // Окно периода заменяет прежнее окно того же периода и в торгах, и в истории: прежняя форма не действовала ни
+      // на один вход, потому что замена идёт только до начала периода (PER-786).
+      case (LotState.Trading(trading), LotEvent.PeriodWindowSet(window)) =>
+        val period = (other: StepWindow) => window.period.exists(other.of)
+        LotState.Trading(
+          trading.copy(
+            stepWindows = (trading.stepWindows.filterNot(period) :+ window).sortBy(_.from),
+            course = trading.course.map(course =>
+              course.copy(addedWindows =
+                course.addedWindows.filterNot(added => period(added.window)) :+ AddedWindow(window, envelope.sequence)
+              )
+            )
+          )
+        )
+      case (LotState.Trading(trading), LotEvent.PeriodWindowCleared(period)) =>
+        LotState.Trading(
+          trading.copy(
+            stepWindows = trading.stepWindows.filterNot(_.of(period)),
+            course = trading.course.map(course =>
+              course.copy(addedWindows = course.addedWindows.filterNot(_.window.of(period)))
             )
           )
         )

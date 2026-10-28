@@ -1,6 +1,7 @@
 import type {
   AccessRight,
   AuctionSummaryView,
+  LotLayoutView,
   LotView,
   RaffleTicketView,
   RaffleView,
@@ -22,6 +23,10 @@ import type {
   MeetupCategory,
   NotificationCategory,
 } from "../notifications/port.js";
+import type {
+  AuctionAnnouncementRequest,
+  AuctionAnnouncementResult,
+} from "./auction-announcements.js";
 
 // Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
 // решают `rights` (RFC-016); те же права уходят смотрящим в Meetups и Auction,
@@ -374,9 +379,14 @@ export type ExecuteRequest =
   | FloorBidsRequest
   | ParticipantRemovalRequest
   | LotSetsRequest
+  | LotLayoutRequest
   | AuctionInvoicesRequest
   | RaffleWinnerRequest
-  | RafflePrizeChangeRequest;
+  | RafflePrizeChangeRequest
+  | RafflePrizePhotoRequest
+  | PromoVideoRequest
+  | HappyHoursRequest
+  | AuctionAnnouncementRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -521,6 +531,24 @@ export type StepWindow = {
   lotIds: readonly string[];
 };
 
+// Период «Счастливых часов» (PER-785, PER-787; ADR-047, дополнение
+// 2026-10-27): полуинтервал `[from, until)` онлайн-недели и условия лотов в
+// нём. Сам период торгов не меняет; до начала его удаляют, с начала он
+// заморожен. Условия — в порядке `lotId`, как их записал аукцион.
+export type HappyHourPeriod = {
+  periodId: string;
+  from: string;
+  until: string;
+  lotTerms: readonly HappyHourLotTerms[];
+};
+
+// Условия лота в периоде: шаг, стартовая цена или оба — хотя бы одно есть.
+export type HappyHourLotTerms = {
+  lotId: string;
+  step?: LotAmount;
+  start?: LotAmount;
+};
+
 // Лот на пульте: снимок, число ставок, отметка «в финал» и просрочка — торги
 // идут дольше дедлайна, а лот не закрыт (решает Auction).
 export type ConsoleLotSnapshot = {
@@ -562,6 +590,11 @@ export type ConsoleSort = {
   direction: ConsoleSortDirection;
 };
 
+// Экраны под пультом (PER-802): «Розыгрыш» — момент, приз, фото и итог,
+// «Финал» — отбор лотов и время финала, «Ещё» — снятие с публикации,
+// удаление и отмена. Без раздела — сам пульт.
+export type ConsoleSection = "raffle" | "final" | "more";
+
 // Замороженный состав финала (PER-337): лоты в порядке выхода и лот, который
 // ведущий торгует сейчас. Активного лота нет между лотами и до первого.
 export type FinalLineup = {
@@ -578,6 +611,9 @@ export type AuctionConsoleSnapshot = {
   // отдаёт признак только держателю `run_auctions` и снимает его открытием
   // онлайн-торгов.
   hidden: boolean;
+  // Сходка аукциона (`AuctionConsole.meetup_id`): только пульт ведёт от
+  // аукциона к сходке. Нет — Auction её не назвал.
+  meetupId?: string;
   // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
   // торгов. Момент RFC 3339 в UTC; нет — анонс не выставлен.
   finalAt?: string;
@@ -587,12 +623,21 @@ export type AuctionConsoleSnapshot = {
   // запуска: их нет в конфигурации, а конфигурация после открытия недели
   // заморожена. Пульт показывает их рядом с объявленными.
   launchedWindows: readonly StepWindow[];
+  // Периоды «Счастливых часов» (PER-787) по возрастанию начала, прошедшие
+  // тоже; удалённых нет.
+  happyHourPeriods: readonly HappyHourPeriod[];
   lots: readonly ConsoleLotSnapshot[];
   // Сеты лотов аукциона (ADR-073, PER-509) в порядке идентификатора — все, и
   // неполные: снимок лота сет меньше чем из двух лотов не показывает, а
   // организатор собирает его постепенно. Сеты читаются с агрегатом и могут
   // назвать лот, которого `lots` ещё не отдаёт.
   lotSets: readonly LotSet[];
+  // Порядок и разделы ленты (PER-719), как их выставил администратор. Нет —
+  // лоты не упорядочены, и лента идёт в порядке создания.
+  layout?: LotLayoutView;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов. Нет —
+  // видео нет.
+  promoVideo?: number;
   // Сколько участников зарегистрировалось в розыгрыше сейчас (PER-734):
   // отменённая регистрация не считается. Есть, только пока розыгрыш держит
   // регистрации; нет — розыгрыша нет, пул зафиксирован или Auction числа не
@@ -631,6 +676,15 @@ export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   // пульта. Нет — момент не прошёл, розыгрыша нет или чтение отказало, и
   // строка называет момент закрытия.
   raffle?: RaffleView;
+  // Сходка аукциона скрыта (PER-801): онлайн-неделя не откроется, пока её не
+  // опубликуют, и пульт говорит это до «Открыть онлайн-неделю». Читается у
+  // Meetups только до открытия недели; нет — сходка видна, неизвестна или
+  // чтение отказало.
+  meetupHidden?: true;
+  // Сходка аукциона опубликована (PER-802): строка «✓» чек-листа подготовки.
+  // Читается тем же чтением, что `meetupHidden`; нет обоих — сходка
+  // неизвестна, и строка говорит об этом.
+  meetupPublished?: true;
 };
 
 // Аукцион, у которого идут торги сообщества (PER-603, PER-618): слот один, и
@@ -839,7 +893,7 @@ export type FinalAskError =
   | "amount-range"
   | "ask-below-current-price";
 
-type AuctionConsoleCall = LotFormCall & { auctionId: string };
+export type AuctionConsoleCall = LotFormCall & { auctionId: string };
 
 // `opId` рождает край: у открытия недели — в кнопке подтверждения, у
 // остальных команд — на каждое нажатие и каждый ответ.
@@ -1101,6 +1155,70 @@ export type LotSetNote =
   | { kind: "lot-not-in-auction" }
   | { kind: "lot-in-another-set"; name?: string };
 
+// Порядок и разделы ленты (PER-719): разделы, список раздела или общий
+// список, лот в раскладке, вопрос о названии раздела и команды. Состояния
+// нет: место кнопка называет номером раздела — `0` — общий список, — а лот
+// токеном; каждая команда читает пульт заново и отдаёт Auction раскладку
+// целиком.
+export type LotLayoutRequest =
+  | (AuctionConsoleCall & { intent: "view-lot-layout" })
+  | (AuctionConsoleCall & {
+      intent: "view-lot-layout-list";
+      place: number;
+      page: number;
+    })
+  | (AuctionConsoleCall & { intent: "view-lot-layout-lot"; lotId: string })
+  | (AuctionConsoleCall & {
+      intent: "move-lot-layout-lot";
+      lotId: string;
+      direction: LayoutDirection;
+      opId: string;
+    })
+  // Перенос лота в раздел или в общий список: лот встаёт в конец места.
+  | (AuctionConsoleCall & {
+      intent: "place-lot-layout-lot";
+      lotId: string;
+      place: number;
+      opId: string;
+    })
+  // Вопрос о названии: нового раздела или, с `sectionId`, переименования.
+  | (AuctionConsoleCall & { intent: "ask-lot-section"; sectionId?: number })
+  | (AuctionConsoleCall & {
+      intent: "name-lot-section";
+      sectionId?: number;
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "move-lot-section";
+      sectionId: number;
+      direction: LayoutDirection;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "prepare-lot-section-delete";
+      sectionId: number;
+    })
+  | (AuctionConsoleCall & {
+      intent: "delete-lot-section";
+      sectionId: number;
+      opId: string;
+    });
+
+export type LayoutDirection = "up" | "down";
+
+// Исход команды над раскладкой: экран исхода с возвратом к «Порядку и
+// разделам». `name` — название раздела, о котором исход.
+export type LotLayoutNote =
+  | { kind: "deleted"; name: string }
+  // Раздел или лот по кнопке не найден: раскладка изменилась.
+  | { kind: "changed" }
+  // Финал начался или аукцион закончился: лента идёт порядком зала либо
+  // больше не меняется (PER-639).
+  | { kind: "closed" }
+  | { kind: "limit" }
+  | { kind: "lot-not-in-auction" };
+
 // Снятие участника с лота администратором (ADR-072, PER-659): участники лота,
 // предпросмотр и снятие. Состояния нет: лот, человек и номер лота
 // предпросмотра едут в кнопке, а ключ команды рождается на нажатие «Да».
@@ -1273,11 +1391,167 @@ export type RafflePrizeChangeRequest =
       opId: string;
     });
 
+// «Счастливые часы» периодами (PER-787; ADR-047, дополнение 2026-10-27):
+// периоды пульта — список, создание ответом о сроках, удаление до начала, — и
+// условия лота в периоде с его карточки — стартовая и шаг ответом, снятие.
+// Период кнопка называет номером в списке и отпечатком его идентификатора;
+// аукцион лота юзкейс читает из снимка лота. `opId` рождает край: у ответа —
+// из сообщения, у кнопки — на нажатие.
+export type HappyHourField = "start" | "step";
+
+export type HappyHoursRequest =
+  | (AuctionConsoleCall & { intent: "view-happy-hour-periods" })
+  | (AuctionConsoleCall & { intent: "ask-happy-hour-period" })
+  | (AuctionConsoleCall & {
+      intent: "create-happy-hour-period";
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "view-happy-hour-period";
+      period: WindowRef;
+    })
+  | (AuctionConsoleCall & {
+      intent: "prepare-happy-hour-period-delete";
+      period: WindowRef;
+    })
+  | (AuctionConsoleCall & {
+      intent: "delete-happy-hour-period";
+      period: WindowRef;
+      opId: string;
+    })
+  | (LotFormCall & { intent: "view-lot-happy-hours"; lotId: string })
+  | (LotFormCall & {
+      intent: "view-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+    })
+  | (LotFormCall & {
+      intent: "ask-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+      field: HappyHourField;
+    })
+  | (LotFormCall & {
+      intent: "set-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+      field: HappyHourField;
+      value: string;
+      opId: string;
+    })
+  | (LotFormCall & {
+      intent: "clear-lot-happy-hour";
+      lotId: string;
+      period: WindowRef;
+      opId: string;
+    });
+
+// Ошибка ответа о сроках периода: разбор края или отказ Auction.
+export type PeriodAskError =
+  | "period-format"
+  | "period-moment"
+  | "period-order"
+  | "period-in-past"
+  | "period-outside-week";
+
+// Ошибка ответа о стартовой или шаге лота в периоде.
+export type HappyHourAmountError =
+  | "amount-format"
+  | "amount-range"
+  | "start-not-lower"
+  | "step-not-lower"
+  | "amount-invalid";
+
+// Исход команды над периодами и условиями лота — свой экран. `period` —
+// номер периода для человека, с единицы.
+export type HappyHourNote =
+  | { kind: "created"; from: string; until: string }
+  | { kind: "removed"; period: number }
+  | { kind: "saved"; period: number; terms: HappyHourLotTerms }
+  | { kind: "cleared"; period: number }
+  // Периоды изменились с тех пор, как экран показан: кнопка устарела.
+  | { kind: "changed" }
+  // Периодов уже столько, сколько держит экран.
+  | { kind: "limit" }
+  // Период начался: с начала он заморожен.
+  | { kind: "started"; period: number }
+  // Онлайн-торги не идут: периоды задаются только в них.
+  | { kind: "closed" }
+  // Лот не торгуется онлайн: открытие не подтверждено, лот закрыт или в финале.
+  | { kind: "lot-not-open" }
+  // Период встречает другое окно того же лота.
+  | { kind: "overlap"; from: string; until: string };
+
+// Лот на экранах «Счастливых часов»: название, обычные стартовая и шаг и
+// есть ли ставки — после первой ставки стартовая периода уже не действует.
+export type HappyHourLot = {
+  lotId: string;
+  auctionId: string;
+  title?: string;
+  // Обычная стартовая — текущая цена лота без ставок; есть только у него.
+  regularStart?: LotAmount;
+  // Обычный шаг при текущей цене или шаг, когда он один на все цены.
+  regularStep?: LotAmount;
+  hasBids: boolean;
+};
+
+// Промо-видео аукциона (PER-774): экран видео из пульта (PER-802) и одна
+// команда — задать, заменить или, без `postId`, убрать. Пост в чате медиа
+// публикует край до команды: это вызов Telegram. Ключ рождается на ответ с
+// видео и на «Да» снятия.
+export type PromoVideoRequest =
+  | (AuctionConsoleCall & { intent: "view-promo-video" })
+  | (AuctionConsoleCall & {
+      intent: "set-promo-video";
+      opId: string;
+      postId?: number;
+    });
+
+// Исход промо-видео — свой экран. `set` и `removed` — Auction принял команду;
+// `media-off` — чат медиа выключен, `media-failed` — пост в нём не
+// опубликовался: команды не было.
+export type PromoVideoNote = "set" | "removed" | "media-off" | "media-failed";
+
 // Исход смены приза — свой экран. `changed` несёт приз из ответа Auction,
 // `already-drawn` — итог уже есть, `without-result` — итога не будет,
 // `no-raffle` — розыгрыша у аукциона нет.
 export type RafflePrizeChangeOutcome =
   | { note: "changed"; prize: string }
+  | { note: "already-drawn" }
+  | { note: "without-result" }
+  | { note: "no-raffle" };
+
+// Фото приза идущего розыгрыша (PER-773): экран фото, вопрос о фото, ответ
+// фотографией с `photoId` из самого ответа и снятие с ключом, рождённым на
+// нажатие «Да».
+export type RafflePrizePhotoRequest =
+  | (AuctionConsoleCall & { intent: "view-raffle-prize-photo" })
+  | (AuctionConsoleCall & { intent: "ask-raffle-prize-photo" })
+  | (AuctionConsoleCall & {
+      intent: "set-raffle-prize-photo";
+      photoId: string;
+      image: Uint8Array;
+    })
+  | (AuctionConsoleCall & {
+      intent: "remove-raffle-prize-photo";
+      opId: string;
+    });
+
+// Непринятый ответ на вопрос о фото приза: не фотография, Telegram файл не
+// отдал, Auction не ответил, файл велик или не изображение.
+export type RafflePrizePhotoAskError =
+  | "photo-needed"
+  | "photo-unavailable"
+  | "photo-not-saved"
+  | "image-too-large"
+  | "unsupported-image";
+
+// Исход фото приза — свой экран. `set` и `removed` — команда принята,
+// остальное — как у смены приза: итог есть, итога не будет, розыгрыша нет.
+export type RafflePrizePhotoOutcome =
+  | { note: "set" }
+  | { note: "removed" }
   | { note: "already-drawn" }
   | { note: "without-result" }
   | { note: "no-raffle" };
@@ -1479,6 +1753,8 @@ export function startExecuteRequest(
 
 export type ExecuteResult =
   | { kind: "message"; text: string }
+  // Объявление аукциона в пульте (PER-765): шаги и исходы.
+  | AuctionAnnouncementResult
   | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
   | { kind: "archived-meetup-list"; meetups: readonly ArchivedMeetupSummary[] }
   // `subscribed` отсутствует, когда Notifications не ответил или не настроен:
@@ -1732,6 +2008,81 @@ export type ExecuteResult =
       kind: "raffle-prize-change-outcome";
       auctionId: string;
     } & RafflePrizeChangeOutcome)
+  // Фото приза идущего розыгрыша (PER-773): экран фото, вопрос и исход.
+  | { kind: "raffle-prize-photo"; auctionId: string; hasPhoto: boolean }
+  | {
+      kind: "raffle-prize-photo-ask";
+      auctionId: string;
+      error?: RafflePrizePhotoAskError;
+      maxBytes?: number;
+    }
+  | ({
+      kind: "raffle-prize-photo-outcome";
+      auctionId: string;
+    } & RafflePrizePhotoOutcome)
+  // Промо-видео (PER-774): экран из пульта (PER-802) и исход команды.
+  // «Счастливые часы» периодами (PER-787). `now` — часы бота: начался ли
+  // период, экран решает по ним.
+  | {
+      kind: "happy-hour-periods";
+      auctionId: string;
+      periods: readonly HappyHourPeriod[];
+      lots: number;
+      now: string;
+    }
+  | {
+      kind: "happy-hour-period";
+      auctionId: string;
+      index: number;
+      period: HappyHourPeriod;
+      titles: Readonly<Record<string, string>>;
+      now: string;
+    }
+  | {
+      kind: "happy-hour-period-remove-confirm";
+      auctionId: string;
+      index: number;
+      period: HappyHourPeriod;
+    }
+  | {
+      kind: "happy-hour-period-ask";
+      auctionId: string;
+      week?: AuctionWeek;
+      error?: PeriodAskError;
+    }
+  | { kind: "happy-hour-outcome"; auctionId: string; note: HappyHourNote }
+  | {
+      kind: "lot-happy-hours";
+      lot: HappyHourLot;
+      periods: readonly HappyHourPeriod[];
+      now: string;
+    }
+  | {
+      kind: "lot-happy-hour";
+      lot: HappyHourLot;
+      index: number;
+      period: HappyHourPeriod;
+      now: string;
+    }
+  | {
+      kind: "lot-happy-hour-ask";
+      lot: HappyHourLot;
+      index: number;
+      period: HappyHourPeriod;
+      field: HappyHourField;
+      error?: HappyHourAmountError;
+      // Обычное значение из отказа Auction, когда оно свежее прочитанного.
+      regular?: LotAmount;
+    }
+  // `back` — период, в который ведёт возврат; нет — к периодам лота.
+  | {
+      kind: "lot-happy-hour-outcome";
+      lot: HappyHourLot;
+      back?: { index: number; period: HappyHourPeriod };
+      note: HappyHourNote;
+    }
+  | { kind: "promo-video"; auctionId: string; video: boolean }
+  | { kind: "promo-video-outcome"; auctionId: string; note: PromoVideoNote }
   // Вопрос о тексте оплаты (PER-322): первый либо тот же заново, с причиной.
   | { kind: "payment-text-ask"; auctionId: string; error?: PaymentTextAskError }
   | { kind: "auction-invoice"; invoice: InvoiceRow }
@@ -1745,6 +2096,39 @@ export type ExecuteResult =
   // Счёта по кнопке в аукционе нет: кнопка подделана или от другого аукциона.
   | { kind: "invoice-missing"; auctionId: string }
   | { kind: "lot-sets"; console: AuctionConsoleSnapshot; note?: LotSetNote }
+  // Порядок и разделы ленты (PER-719): экран разделов либо исход команды.
+  | {
+      kind: "lot-layout";
+      console: AuctionConsoleSnapshot;
+      note?: LotLayoutNote;
+    }
+  // Список раздела (`place` — его номер) или общий список (`0`): страница
+  // либо лот, чью страницу показать.
+  | {
+      kind: "lot-layout-list";
+      console: AuctionConsoleSnapshot;
+      place: number;
+      at: { page: number } | { lotId: string };
+    }
+  // Лот в раскладке; `moved` — команда принята, исход — всплывающий текст.
+  | {
+      kind: "lot-layout-lot";
+      console: AuctionConsoleSnapshot;
+      lotId: string;
+      moved?: true;
+    }
+  // Вопрос о названии раздела: первый либо тот же заново.
+  | {
+      kind: "lot-section-ask";
+      auctionId: string;
+      sectionId?: number;
+      error?: "name-empty" | "name-taken";
+    }
+  | {
+      kind: "lot-section-delete-confirm";
+      console: AuctionConsoleSnapshot;
+      sectionId: number;
+    }
   // Сет и лоты реестра с отметкой «в сете»: страница списка либо лот, чью
   // страницу показать. `toggled` — принят переключатель лота.
   | {

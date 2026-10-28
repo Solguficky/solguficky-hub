@@ -107,6 +107,15 @@ object AuctionFacts {
       case AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared => None
       // Определение сета — рабочий выбор организатора до торгов, как отметка финалиста: фактом он не публикуется.
       case AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) => None
+      // Порядок и разделы ленты — показ для экрана, а не повод для шины (PER-719): читаются вместе с аукционом.
+      case AuctionEvent.LotLayoutSet(_) => None
+      // Промо-видео — показ, а не повод для шины (PER-781): читается вместе с аукционом.
+      case AuctionEvent.PromoVideoSet(_) | AuctionEvent.PromoVideoCleared => None
+      // Период «Счастливых часов» сам торгов не меняет: весть о старте идёт по окнам лотов (ADR-047, дополнение
+      // 2026-10-27), а не по периоду.
+      case AuctionEvent.HappyHourPeriodCreated(_) | AuctionEvent.HappyHourPeriodDeleted(_) => None
+      // Условия лота в периоде доходят до шины снимками его лотов — поводом `step_window_changed` (PER-786).
+      case AuctionEvent.HappyHourLotTermsSet(_, _, _) | AuctionEvent.HappyHourLotTermsCleared(_, _) => None
       // Несобранный сет никому не сообщается (ADR-073, пп. 5–6): факта у него нет.
       case AuctionEvent.LotSetSettled(_, LotSetSettlement.NotCollected) => None
       case AuctionEvent.LotSetSettled(id, LotSetSettlement.Collected(by)) =>

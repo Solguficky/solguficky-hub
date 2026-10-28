@@ -99,6 +99,41 @@ describe("auction callback_data", () => {
     });
   });
 
+  // Раздел ленты (PER-719): аукцион, номер раздела и страница.
+  it("encodes a section of the feed and parses it back", () => {
+    const raw = encodeAuctionCallback({
+      kind: "section",
+      auctionId: AUCTION_ID,
+      sectionId: 12,
+      page: 1,
+    });
+    expect(raw).toBe(`v1:auc:sec:${AUCTION_TOKEN}:12:1`);
+    expect(parseAuctionCallback(raw)).toEqual({
+      ok: true,
+      intent: {
+        kind: "section",
+        auctionId: AUCTION_ID,
+        sectionId: 12,
+        page: 1,
+      },
+    });
+  });
+
+  it("refuses a section of the feed without a valid number or with an extra argument", () => {
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:0:0`)).toBe("malformed");
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:01:0`)).toBe("malformed");
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:1`)).toBe("malformed");
+    expect(reasonOf(`v1:auc:sec:${AUCTION_TOKEN}:1:0:0`)).toBe("malformed");
+    expect(() =>
+      encodeAuctionCallback({
+        kind: "section",
+        auctionId: AUCTION_ID,
+        sectionId: 0,
+        page: 0,
+      }),
+    ).toThrow(RangeError);
+  });
+
   // Кнопка PER-305 без страницы ведёт на ту же карточку, а не в «устарело».
   it("reads a lot button without a page as the first page", () => {
     expect(parseAuctionCallback(`v1:auc:lot:${LOT_TOKEN}`)).toEqual({
@@ -183,6 +218,7 @@ describe("auction callback_data", () => {
   it("encodes the raffle actions and parses them back", () => {
     const cases = [
       [{ kind: "prediction-results" as const, auctionId: AUCTION_ID }, "pi"],
+      [{ kind: "auction-chronicle" as const, auctionId: AUCTION_ID }, "as"],
       [{ kind: "raffle" as const, auctionId: AUCTION_ID }, "rf"],
       [{ kind: "raffle-register" as const, auctionId: AUCTION_ID }, "rr"],
       [{ kind: "raffle-cancel" as const, auctionId: AUCTION_ID }, "rc"],

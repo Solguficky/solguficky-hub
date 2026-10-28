@@ -114,6 +114,55 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(instructionsAnswer)
     }
 
+    var promoAnswer: Either[PromoVideoRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setPromoVideo(auctionId: AuctionId, command: SetPromoVideo, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(promoAnswer)
+    }
+
+    var createPeriodAnswer: Either[CreateHappyHourPeriodRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def createHappyHourPeriod(auctionId: AuctionId, command: CreateHappyHourPeriod, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(createPeriodAnswer)
+    }
+
+    var deletePeriodAnswer: Either[DeleteHappyHourPeriodRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def deleteHappyHourPeriod(auctionId: AuctionId, command: DeleteHappyHourPeriod, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(deletePeriodAnswer)
+    }
+
+    var termsAnswer: Either[SetHappyHourLotTermsRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+    var regularsSeen: Vector[Option[LotRegulars]] = Vector.empty
+
+    def setHappyHourLotTerms(
+        auctionId: AuctionId,
+        command: SetHappyHourLotTerms,
+        regulars: Option[LotRegulars],
+        initiator: Initiator
+    ) = {
+      commands :+= command
+      regularsSeen :+= regulars
+      Future.successful(termsAnswer)
+    }
+
+    var clearTermsAnswer: Either[ClearHappyHourLotTermsRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def clearHappyHourLotTerms(auctionId: AuctionId, command: ClearHappyHourLotTerms, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(clearTermsAnswer)
+    }
+
+    var layoutAnswer: Either[LotLayoutRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def setLotLayout(auctionId: AuctionId, command: SetLotLayout, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(layoutAnswer)
+    }
+
     var cancelAnswer: Either[CancelAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) = {
@@ -965,6 +1014,161 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.LotNotOpen(lot)))
     }
 
+    // ADR-047, дополнение 2026-10-27: период «Счастливых часов» — команда администратора.
+    "answers a repeated happy hour period with the original period without asking meetups or the auction" in {
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(7)), deadline, deadline.plusSeconds(3600))
+      val repeated =
+        Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.HappyHourPeriodCreated(period))))
+      val meetups = Meetups(Authority.NotAdministrator)
+      val command = CreateHappyHourPeriod(period.from, period.until, op(7))
+
+      AuctionCommands(repeated, noLots, meetups)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe Right(period)
+      meetups.asked shouldBe 0
+      repeated.commands shouldBe empty
+    }
+
+    "hands a granted happy hour period to the auction and refuses one the meetup does not admit" in {
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(7)), deadline, deadline.plusSeconds(3600))
+      val command = CreateHappyHourPeriod(period.from, period.until, op(7))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.createPeriodAnswer =
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(7), AuctionEvent.HappyHourPeriodCreated(period))))
+
+      AuctionCommands(auctions, noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Right(period)
+      auctions.commands shouldBe List(command)
+      auctions.createPeriodAnswer = Left(CreateHappyHourPeriodRejected.PeriodInPast)
+      AuctionCommands(auctions, noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodInPast))
+      val cancelled = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(cancelled, noLots, Meetups(Authority.Granted(Standings.cancelled)))
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(HappyHourRefusal.Denied(Denial.MeetupCancelled))
+      cancelled.commands shouldBe empty
+    }
+
+    "refuses a happy hour period under the op_id of another auction command and on an absent auction" in {
+      val command = CreateHappyHourPeriod(deadline, deadline.plusSeconds(3600), op(7))
+      val taken = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(7), AuctionEvent.PrebiddingStarted)))
+
+      AuctionCommands(taken, noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Left(HappyHourRefusal.OpIdTaken)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, granted)
+        .createHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(HappyHourRefusal.Denied(Denial.AuctionNotFound))
+    }
+
+    // PER-786: повтор удаления идёт в entity мимо Meetups — дошлёт снятие условий лотам периода.
+    "hands a repeated deletion of its own period to the auction without meetups and refuses another deletion" in {
+      val period = HappyHourPeriod.idOf(op(7))
+      val other = HappyHourPeriod.idOf(op(6))
+      val original = AuctionEnvelope(6, op(8), AuctionEvent.HappyHourPeriodDeleted(period))
+      val meetups = Meetups(Authority.NotAdministrator)
+      val repeated = Auctions(Inspection.Repeated(original))
+      repeated.deletePeriodAnswer = Right(AuctionAnswer.Written(original))
+      val unrelated = Auctions(Inspection.Repeated(original))
+
+      AuctionCommands(repeated, noLots, meetups)
+        .deleteHappyHourPeriod(auctionOfMeetup, DeleteHappyHourPeriod(period, op(8)), person)
+        .futureValue shouldBe Right(())
+      repeated.commands shouldBe List(DeleteHappyHourPeriod(period, op(8)))
+      AuctionCommands(unrelated, noLots, meetups)
+        .deleteHappyHourPeriod(auctionOfMeetup, DeleteHappyHourPeriod(other, op(8)), person)
+        .futureValue shouldBe Left(HappyHourDeletionRefusal.OpIdTaken)
+      unrelated.commands shouldBe empty
+      meetups.asked shouldBe 0
+    }
+
+    // PER-786: обычные условия лота сверяются до записи, и читает их граница у самого лота.
+    "reads the regular terms of the lot after the right and hands them to the auction with the terms" in {
+      val lotState = trading(price = 1000, policy = fixedHundred).state
+      val lots = new Lots(Left(DraftLotRejected.LotAlreadyExists)) {
+        override def stateOf(lotId: UUID): Future[LotState] = Future.successful(lotState)
+      }
+      val period = HappyHourPeriod.idOf(op(7))
+      val command = SetHappyHourLotTerms(period, lot, None, Some(money(600)), op(20))
+      val terms = HappyHourTerms(None, Some(money(600)))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.termsAnswer =
+        Right(AuctionAnswer.Written(AuctionEnvelope(7, op(20), AuctionEvent.HappyHourLotTermsSet(period, lot, terms))))
+
+      AuctionCommands(auctions, lots, granted)
+        .setHappyHourLotTerms(auctionOfMeetup, command, person)
+        .futureValue shouldBe Right(lot -> terms)
+      auctions.regularsSeen shouldBe Vector(Some(LotRegulars(rub, money(1000), money(100))))
+      auctions.termsAnswer = Left(SetHappyHourLotTermsRejected.StartNotLower(money(1000)))
+      AuctionCommands(auctions, lots, granted)
+        .setHappyHourLotTerms(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Left(HappyHourTermsRefusal.Rejected(SetHappyHourLotTermsRejected.StartNotLower(money(1000))))
+      val cancelled = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(cancelled, noLots, Meetups(Authority.Granted(Standings.cancelled)))
+        .setHappyHourLotTerms(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(HappyHourTermsRefusal.Denied(Denial.MeetupCancelled))
+      cancelled.commands shouldBe empty
+    }
+
+    "hands a repeated set of terms to the auction without meetups or the lot and refuses another command's op_id" in {
+      val period = HappyHourPeriod.idOf(op(7))
+      val terms = HappyHourTerms(Some(money(50)), None)
+      val original = AuctionEnvelope(7, op(20), AuctionEvent.HappyHourLotTermsSet(period, lot, terms))
+      val command = SetHappyHourLotTerms(period, lot, Some(money(50)), None, op(20))
+      val meetups = Meetups(Authority.NotAdministrator)
+      val repeated = Auctions(Inspection.Repeated(original))
+      repeated.termsAnswer = Right(AuctionAnswer.Written(original))
+
+      AuctionCommands(repeated, noLots, meetups)
+        .setHappyHourLotTerms(auctionOfMeetup, command, person)
+        .futureValue shouldBe Right(lot -> terms)
+      repeated.regularsSeen shouldBe Vector(None)
+      val taken = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(20), AuctionEvent.PrebiddingStarted)))
+      AuctionCommands(taken, noLots, meetups)
+        .setHappyHourLotTerms(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(HappyHourTermsRefusal.OpIdTaken)
+      taken.commands shouldBe empty
+      meetups.asked shouldBe 0
+    }
+
+    "answers a removal of terms the lot does not have as accepted and returns the refusal of the auction" in {
+      val command = ClearHappyHourLotTerms(HappyHourPeriod.idOf(op(7)), lot, op(30))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+
+      AuctionCommands(auctions, noLots, granted)
+        .clearHappyHourLotTerms(auctionOfMeetup, command, person)
+        .futureValue shouldBe Right(())
+      auctions.clearTermsAnswer = Left(ClearHappyHourLotTermsRejected.PeriodStarted)
+      AuctionCommands(auctions, noLots, granted)
+        .clearHappyHourLotTerms(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(HappyHourTermsClearingRefusal.Rejected(ClearHappyHourLotTermsRejected.PeriodStarted))
+      auctions.commands shouldBe List(command, command)
+    }
+
+    "hands a granted deletion to the auction and returns its refusal" in {
+      val command = DeleteHappyHourPeriod(HappyHourPeriod.idOf(op(7)), op(8))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.deletePeriodAnswer =
+        Right(AuctionAnswer.Written(AuctionEnvelope(6, op(8), AuctionEvent.HappyHourPeriodDeleted(command.period))))
+
+      AuctionCommands(auctions, noLots, granted)
+        .deleteHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Right(())
+      auctions.deletePeriodAnswer = Left(DeleteHappyHourPeriodRejected.PeriodStarted)
+      AuctionCommands(auctions, noLots, granted)
+        .deleteHappyHourPeriod(auctionOfMeetup, command, person)
+        .futureValue shouldBe
+        Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.PeriodStarted))
+      auctions.commands shouldBe List(command, command)
+    }
+
     // ADR-040, дополнение 2026-10-19: ориентировочное время финала — команда администратора.
     "hands the estimated time of the final to the auction once meetups confirms the administrator" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
@@ -1022,6 +1226,91 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .setPaymentInstructions(auctionOfMeetup, Some(text), op(7), person)
         .futureValue shouldBe Right(())
       auctions.commands shouldBe List(SetPaymentInstructions(Some(text), op(7)))
+    }
+
+    // PER-781: промо-видео — повтор своего видео принимается мимо Meetups и без второго события, другое — чужая команда.
+    "hands the promo video to the auction and answers it repeated under its op_id, refusing another one under it" in {
+      val video = PromoVideo.parse(4321).get
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(auctions, noLots, granted)
+        .setPromoVideo(auctionOfMeetup, Some(video), op(7), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SetPromoVideo(Some(video), op(7)))
+
+      val repeated = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.PromoVideoSet(video))))
+      val meetups = Meetups(Authority.NotAdministrator)
+      AuctionCommands(repeated, noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, Some(video), op(7), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(repeated, noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, PromoVideo.parse(4322), op(7), person)
+        .futureValue shouldBe Left(PromoVideoRefusal.OpIdTaken)
+      AuctionCommands(repeated, noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(PromoVideoRefusal.OpIdTaken)
+      meetups.asked shouldBe 0
+      repeated.commands shouldBe empty
+    }
+
+    "refuses the promo video to whom meetups does not confirm as running the auction" in {
+      for (
+        (answer, denial) <- List(
+          Authority.NotAdministrator -> Denial.NotAdministrator,
+          Authority.MeetupNotFound -> Denial.MeetupNotFound,
+          Authority.Unavailable -> Denial.Unavailable,
+          Authority.Granted(Standings.cancelled) -> Denial.MeetupCancelled
+        )
+      ) {
+        val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+        AuctionCommands(auctions, noLots, Meetups(answer))
+          .setPromoVideo(auctionOfMeetup, PromoVideo.parse(4321), op(7), person)
+          .futureValue shouldBe Left(PromoVideoRefusal.Denied(denial))
+        auctions.commands shouldBe empty
+      }
+    }
+
+    "refuses the promo video of an auction without a journal before asking meetups" in {
+      val meetups = granted
+      AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
+        .setPromoVideo(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound))
+      meetups.asked shouldBe 0
+    }
+
+    // PER-719: раскладка ленты — повтор своей раскладки принимается, другая под тем же `op_id` — чужая команда.
+    "hands the lot layout to the auction and answers it repeated under its op_id, refusing another one under it" in {
+      val books = LotSection(LotSectionId(1).get, LotSectionName("Книги").get, List(lot))
+      val layout = LotLayout.of(Nil, List(books)).toOption.get
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(auctions, noLots, granted)
+        .setLotLayout(auctionOfMeetup, layout, op(7), person)
+        .futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SetLotLayout(layout, op(7)))
+
+      val repeated = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.LotLayoutSet(layout))))
+      AuctionCommands(repeated, noLots, granted)
+        .setLotLayout(auctionOfMeetup, layout, op(7), person)
+        .futureValue shouldBe Right(())
+      AuctionCommands(repeated, noLots, granted)
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(7), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.OpIdTaken)
+      repeated.commands shouldBe empty
+    }
+
+    "refuses the lot layout of a cancelled meetup and answers the refusal of the auction" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(auctions, noLots, Meetups(Authority.Granted(Standings.cancelled)))
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(7), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.Denied(Denial.MeetupCancelled))
+      auctions.commands shouldBe empty
+      auctions.layoutAnswer = Left(LotLayoutRejected.LotNotInAuction(lot))
+      AuctionCommands(auctions, noLots, granted)
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(8), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.LotNotInAuction(lot))
+      auctions.layoutAnswer = Left(LotLayoutRejected.FinalAlreadyStarted)
+      AuctionCommands(auctions, noLots, granted)
+        .setLotLayout(auctionOfMeetup, LotLayout.empty, op(9), person)
+        .futureValue shouldBe Left(LotLayoutRefusal.FinalAlreadyStarted)
     }
 
     "refuses a foreign command that took the op_id of the time" in {

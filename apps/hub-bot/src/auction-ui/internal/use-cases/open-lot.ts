@@ -187,11 +187,17 @@ function lotBody(input: {
       [
         {
           action: "lot.back",
-          callbackData: encodeAuctionCallback({
-            kind: "feed",
-            auctionId: lot.auctionId,
-            page: input.page,
-          }),
+          // Лот раздела возвращает в свой раздел (PER-719).
+          callbackData: encodeAuctionCallback(
+            input.neighbors.sectionId === undefined
+              ? { kind: "feed", auctionId: lot.auctionId, page: input.page }
+              : {
+                  kind: "section",
+                  auctionId: lot.auctionId,
+                  sectionId: input.neighbors.sectionId,
+                  page: input.page,
+                },
+          ),
         },
       ],
     ],
@@ -258,17 +264,34 @@ async function participantNameOf(input: {
   return names[participantId];
 }
 
-// Будущее окно Auction отдаёт с объявленной суммой, не сверяя её с обычным
-// шагом (proto, `next_window`): в окне действует меньшая из двух. Окно, которое
-// при текущей цене шаг не снизит, карточка не обещает — так же Auction молчит о
-// действующем окне, которое шаг не снижает.
+// Будущее окно Auction отдаёт с объявленными суммами, не сверяя их с обычными
+// (proto, `next_window`): в окне действует меньший шаг из двух, а стартовая
+// окна — только пока у лота нет ставок. Чего окно при текущей цене не даст,
+// карточка не обещает — так же Auction молчит о действующем окне, которое
+// ничего не меняет: шаг не ниже обычного не показывается, а стартовая — у лота
+// с лидером и не ниже текущей цены (ADR-047, дополнение 2026-10-27).
 function announcedWindow(lot: LotView): StepWindowView | undefined {
-  const { nextWindow, baseStep } = lot;
+  const { nextWindow, baseStep, status } = lot;
   if (nextWindow === undefined) return undefined;
-  if (baseStep === undefined) return nextWindow;
-  return nextWindow.step.minorUnits < baseStep.minorUnits
-    ? nextWindow
-    : undefined;
+  const step =
+    nextWindow.step !== undefined &&
+    (baseStep === undefined || nextWindow.step.minorUnits < baseStep.minorUnits)
+      ? nextWindow.step
+      : undefined;
+  const start =
+    nextWindow.start !== undefined &&
+    status.kind === "trading" &&
+    status.leaderId === undefined &&
+    nextWindow.start.minorUnits < status.currentPrice.minorUnits
+      ? nextWindow.start
+      : undefined;
+  if (step === undefined && start === undefined) return undefined;
+  return {
+    from: nextWindow.from,
+    until: nextWindow.until,
+    ...(step === undefined ? {} : { step }),
+    ...(start === undefined ? {} : { start }),
+  };
 }
 
 // Отмечен ли лот. Отказ Notifications карточку не роняет: цена и ставка

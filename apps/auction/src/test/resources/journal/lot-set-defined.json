@@ -29,6 +29,12 @@
     "lotSetDeleted": null,
     "lotSetSettled": null,
     "finalTime": null,
-    "paymentInstructions": null
+    "paymentInstructions": null,
+    "lotLayout": null,
+    "promoVideo": null,
+    "happyHourPeriodCreated": null,
+    "happyHourPeriodDeleted": null,
+    "happyHourLotTermsSet": null,
+    "happyHourLotTermsCleared": null
   }
 }

@@ -87,11 +87,15 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       windows.getMessageType.getFields.asScala.map(field => field.getName -> field.getNumber) shouldBe Seq(
         "from" -> 1,
         "until" -> 2,
-        "step" -> 3
+        "step" -> 3,
+        "start" -> 4,
+        "happy_hour_period_id" -> 5
       )
       windows.getMessageType.findFieldByName("from").getType shouldBe FieldDescriptor.Type.STRING
       windows.getMessageType.findFieldByName("until").getType shouldBe FieldDescriptor.Type.STRING
       windows.getMessageType.findFieldByName("step").getMessageType.getFullName shouldBe "auction.v1.Money"
+      windows.getMessageType.findFieldByName("start").getMessageType.getFullName shouldBe "auction.v1.Money"
+      windows.getMessageType.findFieldByName("happy_hour_period_id").getType shouldBe FieldDescriptor.Type.STRING
       reserved should contain allOf (16, 17, 18)
     }
 
@@ -108,8 +112,12 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       val busOnly = Set(AuctionState.javaDescriptor.findFieldByName("discarded").getNumber)
       // Признак скрытия шина теперь несёт вместе с фактами публикации и снятия (ADR-047, дополнение 2026-10-20;
       // PER-646), поэтому исключения у него больше нет. Ориентировочное время финала — только у чтения: факта у него
-      // нет вовсе, оно меняется без повода на шине (ADR-040, дополнение 2026-10-19).
-      val readOnly = Set(AuctionSnapshot.javaDescriptor.findFieldByName("final_at").getNumber)
+      // нет вовсе, оно меняется без повода на шине (ADR-040, дополнение 2026-10-19). Порядок и разделы ленты — тоже
+      // только у чтения: это показ, а не повод для шины (PER-719). Запущенные окна сниженного шага — тоже только у
+      // чтения (PER-724): шина несёт их фактами лота `step_window_added`. Промо-видео — тоже показ без повода на шине
+      // (PER-781). Периоды «Счастливых часов» — тоже только у чтения (PER-804): факта у них на шине нет.
+      val readOnly = Set("final_at", "lot_layout", "launched_step_windows", "promo_video", "happy_hour_periods")
+        .map(AuctionSnapshot.javaDescriptor.findFieldByName(_).getNumber)
 
       (snapshot -- readOnly).foreach { case (number, field) => state.get(number) shouldBe Some(field) }
       (state.keySet -- snapshot.keySet) should contain theSameElementsAs (reservedBySnapshot ++ busOnly)

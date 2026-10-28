@@ -5,7 +5,7 @@ package notifications.v1;
 import "notifications/v1/notifications.proto";
 
 // Manages a person's meetup subscriptions, their notification category
-// settings, the two manual broadcasts and the release-notes summaries of a
+// settings, the three manual broadcasts and the release-notes summaries of a
 // bot's surface. Most callers present the internal identity of the person the
 // command belongs to; the release-notes operations belong to no person and are
 // the one exception. Outgoing notifications are not described here: this
@@ -49,6 +49,13 @@ service NotificationsService {
   // A read. No idempotency key, no body and no names.
   rpc PreviewMeetupBroadcast(PreviewMeetupBroadcastRequest) returns (BroadcastAudience);
   rpc PreviewCommunityBroadcast(PreviewCommunityBroadcastRequest) returns (BroadcastAudience);
+
+  // The announcement of an auction from a person who runs it, to every holder
+  // of the auction right. The same mechanism as the two broadcasts above, and
+  // the same acceptance and audience messages; its own pair because its right,
+  // its audience and its content differ.
+  rpc BroadcastAuctionNotice(BroadcastAuctionNoticeRequest) returns (BroadcastAccepted);
+  rpc PreviewAuctionNotice(PreviewAuctionNoticeRequest) returns (BroadcastAudience);
 
   // Release notes: what the image of the caller's bot carries. These three
   // operations belong to no person, and none of them carries the surface: the
@@ -360,6 +367,80 @@ message PreviewCommunityBroadcastRequest {
   string identity_id = 1;
 
   // The audience is deliberately absent, as in BroadcastToCommunity.
+}
+
+message BroadcastAuctionNoticeRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author: the right to
+  // run the auction of this meetup is checked with Meetups on every call,
+  // repeats included.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens. The meetup whose auction
+  // is announced. The auction id is absent: the service derives it from the
+  // meetup id by the rule of auction.v1, as Auction does.
+  string meetup_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 string with hyphens. Both the
+  // broadcast id and the idempotency key, as in BroadcastToMeetupSubscribers.
+  string id = 3;
+
+  // Author-written content, as in BroadcastToMeetupSubscribers.
+  string body = 4;
+
+  // Optional: unset means a message without a button. When set, view is not
+  // UNSPECIFIED and lot_id is set exactly for the lot view.
+  AuctionNoticeButton button = 5;
+
+  // Optional: unset means a message without a picture.
+  AuctionNoticePhoto photo = 6;
+
+  // Which holders of the auction right receive it. The holders themselves are
+  // chosen by this service, as in BroadcastToCommunity; the author only narrows
+  // them by a filter, never by a list. UNSPECIFIED reads as ALL. A narrowing
+  // filter is answered from Auction at the moment of the call and nothing of
+  // it is kept: Auction unreachable or not configured is UNAVAILABLE, never a
+  // broadcast to everyone; a filter that the auction cannot answer now (the
+  // raffle registration is not open, no prediction round is open) is
+  // FAILED_PRECONDITION. A repeat with the same id and another audience is a
+  // conflict.
+  AuctionNoticeAudience audience = 7;
+}
+
+// Who of the holders of the auction right an auction announcement reaches
+// (PER-768, PER-778). Each narrowing filter is a predicate on a person and the
+// auction at the moment of the call.
+enum AuctionNoticeAudience {
+  // No value: the field is unset. Read as ALL, as before the field existed.
+  AUCTION_NOTICE_AUDIENCE_UNSPECIFIED = 0;
+
+  // Every holder of the auction right.
+  AUCTION_NOTICE_AUDIENCE_ALL = 1;
+
+  // Those not registered in the raffle of the auction. Only while registration
+  // is open: after it closes the filter is FAILED_PRECONDITION.
+  AUCTION_NOTICE_AUDIENCE_NOT_IN_RAFFLE = 2;
+
+  // Those without a non-empty prediction in the round of the predictions game
+  // open now: the final once it opens, otherwise the catalog. Only while a
+  // round is open.
+  AUCTION_NOTICE_AUDIENCE_WITHOUT_PREDICTIONS = 3;
+
+  // Those not registered in the raffle or without a prediction: everyone except
+  // the registered with a prediction. Only while both are open.
+  AUCTION_NOTICE_AUDIENCE_NOT_IN_RAFFLE_OR_WITHOUT_PREDICTIONS = 4;
+}
+
+message PreviewAuctionNoticeRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author asking.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens, as in
+  // BroadcastAuctionNoticeRequest.
+  string meetup_id = 2;
+
+  // As in BroadcastAuctionNoticeRequest: the preview counts the audience by the
+  // same path and refuses by the same rules as the command.
+  AuctionNoticeAudience audience = 3;
 }
 
 // Names are absent. Zero is a present value, not an absent field.

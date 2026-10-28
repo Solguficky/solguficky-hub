@@ -7,6 +7,7 @@ import {
   InputFile,
 } from "grammy";
 import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
+import { promoUnavailableText } from "../../../auction-promo.js";
 import {
   type ApplicationQueue,
   type AuctionBlock,
@@ -60,7 +61,13 @@ import {
 } from "../../../core/entry.js";
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
 import type { LogFields, Logger } from "../../../core/logging.js";
+import type { MediaChat } from "../../../core/media-chat.js";
 import { createChatCommandsSync } from "../../../core/menu-commands.js";
+import {
+  createAnnouncementPhotos,
+  logMissingAnnouncementPhoto,
+  sendOrganizerAnnouncement,
+} from "../../../core/notifications/organizer-announcement.js";
 import {
   type AuctionNotificationChange,
   auctionNotificationsToast,
@@ -68,12 +75,19 @@ import {
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
 import { createUuidV7, uuidV7Of } from "../../../core/uuid-v7.js";
+import type {
+  AnnouncementAudience,
+  AnnouncementTemplate,
+  ButtonChoice,
+} from "../application/auction-announcements.js";
 import { acceptsLots } from "../application/auction-console.js";
 import {
   broadcastBodyLimit,
   checkBroadcastBody,
 } from "../application/broadcasts.js";
 import type { Dispatcher } from "../application/dispatcher.js";
+import { fingerprint } from "../application/fingerprint.js";
+import { periodRef } from "../application/happy-hours.js";
 import {
   decideHubAccess,
   type HubAccess,
@@ -92,12 +106,14 @@ import {
 import type {
   AuctionWeek,
   BroadcastAudience,
+  ConsoleSection,
   ConsoleSort,
   ExecuteRequest,
   ExecuteResult,
   FinalAskError,
   FinalTimeAskError,
   FormField,
+  HappyHourField,
   LotAmount,
   LotAskError,
   LotFormView,
@@ -112,10 +128,12 @@ import type {
   PublishMomentRetry,
   RaffleAskError,
   RafflePrizeAskError,
+  RafflePrizePhotoAskError,
   RaffleWinnerAskError,
   TradingHolder,
   WeekAskError,
   WindowAskError,
+  WindowRef,
 } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
@@ -157,6 +175,11 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 import {
+  parseAnnouncementMedia,
+  parsePreviewText,
+  parseStepText,
+} from "./announcement-input.js";
+import {
   type AuctionParents,
   createAuctionParents,
 } from "./auction-parents.js";
@@ -185,6 +208,7 @@ import {
   isTypedText,
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationHtml,
+  materialRefusal,
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
@@ -195,25 +219,40 @@ import {
   uuidToToken,
 } from "./meetup-deep-link.js";
 import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
-import { telegramTextLimit } from "./notification-message.js";
+import {
+  renderNotification as renderOutgoingNotification,
+  telegramTextLimit,
+} from "./notification-message.js";
 import {
   applyData,
   auctionFaqData,
   type CallbackAction,
   type CardCursor,
   type CommunityPlace,
+  consoleAnnouncementAskData,
+  consoleAnnouncementData,
   consoleAskData,
   consoleFinalTimeData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
+  consoleLayoutData,
+  consoleLayoutListData,
   consolePaymentTermData,
   consolePaymentTextData,
+  consolePeriodAskData,
+  consolePeriodsData,
+  consolePromoVideoAskData,
+  consolePromoVideoData,
   consoleRaffleData,
   consoleRafflePrizeChangeData,
   consoleRafflePrizeData,
+  consoleRafflePrizePhotoAskData,
+  consoleRafflePrizePhotoData,
+  consoleRaffleScreenData,
   consoleRaffleWinnerAskData,
   consoleRaffleWinnerData,
   consoleRaffleWinnerPickData,
+  consoleSectionAskData,
   consoleSetAskData,
   consoleSetsData,
   consoleViewData,
@@ -228,6 +267,8 @@ import {
   lotAskData,
   lotCopyData,
   lotFormData,
+  lotHappyHourAskData,
+  lotHappyHourData,
   lotNewData,
   lotSkipData,
   lotStepModeData,
@@ -264,6 +305,21 @@ import {
   declineConfirmScreen,
 } from "./screens/application.js";
 import { type AuctionView, auctionScreen } from "./screens/auction.js";
+import {
+  announcementAskErrorText,
+  announcementAudienceScreen,
+  announcementButtonScreen,
+  announcementConfirmScreen,
+  announcementLotsScreen,
+  announcementMediaQuestionText,
+  announcementMenuScreen,
+  announcementOutcomeScreen,
+  announcementPhotoScreen,
+  announcementQuestionText,
+  announcementRetryScreen,
+  announcementStaleScreen,
+  announcementWindowsScreen,
+} from "./screens/auction-announcement.js";
 import {
   auctionDiscardedText,
   type ConsoleScreenView,
@@ -311,10 +367,24 @@ import {
   paymentTextPrompt,
 } from "./screens/auction-invoices.js";
 import {
+  promoVideoOutcomeScreen,
+  promoVideoQuestionText,
+  promoVideoRemoveScreen,
+  promoVideoScreen,
+} from "./screens/auction-promo.js";
+import {
   rafflePrizeChangeConfirmScreen,
   rafflePrizeChangeOutcomeScreen,
   rafflePrizeChangeStaleScreen,
 } from "./screens/auction-raffle-prize-change.js";
+import {
+  rafflePrizePhotoAskErrorText,
+  rafflePrizePhotoLabel,
+  rafflePrizePhotoOutcomeScreen,
+  rafflePrizePhotoPrompt,
+  rafflePrizePhotoRemoveConfirmScreen,
+  rafflePrizePhotoScreen,
+} from "./screens/auction-raffle-prize-photo.js";
 import {
   raffleWinnerAskErrorText,
   raffleWinnerConfirmScreen,
@@ -353,6 +423,20 @@ import {
   floorSearchQuestionText,
   floorTitle,
 } from "./screens/floor-bids.js";
+import {
+  happyHourAmountErrorText,
+  happyHourOutcomeScreen,
+  happyHourPeriodRemoveScreen,
+  happyHourPeriodScreen,
+  happyHourPeriodsScreen,
+  lotHappyHourOutcomeScreen,
+  lotHappyHourQuestionText,
+  lotHappyHourScreen,
+  lotHappyHoursScreen,
+  periodAskErrorText,
+  periodQuestionText,
+  periodsTitle,
+} from "./screens/happy-hours.js";
 import {
   type AuctionEntry,
   auctionEntryOf,
@@ -402,6 +486,16 @@ import {
   toLot,
   toLots,
 } from "./screens/lot-form.js";
+import {
+  lotLayoutListScreen,
+  lotLayoutLotScreen,
+  lotLayoutMovedToast,
+  lotLayoutScreen,
+  lotSectionAskErrorText,
+  lotSectionDeleteConfirmScreen,
+  lotSectionPrompt,
+  lotSectionRenamePrompt,
+} from "./screens/lot-layout.js";
 import {
   lotSetAskErrorText,
   lotSetDeleteConfirmScreen,
@@ -518,6 +612,9 @@ export type BotRuntime = {
   // Данные сборки образа (PER-736): строку версии «Помощь» показывает
   // мейнтейнеру. Нет — версия называется локальной сборкой.
   build?: BuildInfo;
+  // Чат медиа ботов (PER-776): своё фото или видео объявления аукциона. Нет
+  // или выключен — шаг фото своего медиа не предлагает.
+  mediaChat?: MediaChat;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -839,6 +936,65 @@ type PendingConsoleRafflePrizeChange = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о сроках нового периода «Счастливых часов» (PER-787). Шаг —
+// аукцион — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePeriod = {
+  kind: "console-period";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о стартовой или шаге лота в периоде (PER-787). Шаг — лот, период
+// номером и отпечатком и что спрошено — лежит в кнопке вопроса.
+type PendingLotHappyHour = {
+  kind: "happy-hour-lot";
+  lotId: string;
+  period: WindowRef;
+  field: HappyHourField;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о промо-видео аукциона (PER-774). Шаг — аукцион — лежит в кнопке
+// вопроса, и ответ видео после рестарта принимается так же.
+type PendingConsolePromoVideo = {
+  kind: "console-promo-video";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о тексте объявления аукциона (PER-765). Шаг — аукцион, шаблон и
+// номер окна или лота — лежит в кнопке вопроса, а черновик ответ читает
+// заново, и после рестарта тоже.
+type PendingConsoleAnnouncement = {
+  kind: "console-announcement";
+  auctionId: string;
+  template: AnnouncementTemplate;
+  ref?: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о своём фото или видео объявления (PER-776). Шаг — кнопка, отпечаток
+// текста и лот шаблона — лежит в кнопке вопроса, а текст — хвостом самого
+// вопроса, поэтому ответ после рестарта принимается так же.
+type PendingConsoleAnnouncementMedia = {
+  kind: "console-announcement-media";
+  auctionId: string;
+  button: ButtonChoice;
+  print: string;
+  // Предвыбор шаблона для шага «Кому» (PER-779).
+  audience: AnnouncementAudience;
+  lot?: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о фото приза идущего розыгрыша (PER-773). Шаг — аукцион — лежит в
+// кнопке вопроса, а можно ли ещё ставить фото, решает Auction на ответе.
+type PendingConsoleRafflePrizePhoto = {
+  kind: "console-raffle-prize-photo";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
@@ -860,6 +1016,16 @@ type PendingConsoleLaunch = {
 type PendingConsoleSet = {
   kind: "console-set";
   auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Вопрос о названии раздела ленты (PER-719): нового либо, с `sectionId`,
+// переименуемого. Шаг лежит в кнопке вопроса, и ответ после рестарта
+// принимается так же.
+type PendingConsoleSection = {
+  kind: "console-section";
+  auctionId: string;
+  sectionId?: number;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -900,9 +1066,16 @@ type HubPendingInput =
   | PendingConsolePaymentText
   | PendingConsoleRaffleWinner
   | PendingConsoleRafflePrizeChange
+  | PendingConsoleRafflePrizePhoto
+  | PendingConsolePromoVideo
+  | PendingConsolePeriod
+  | PendingLotHappyHour
+  | PendingConsoleAnnouncement
+  | PendingConsoleAnnouncementMedia
   | PendingConsoleWindow
   | PendingConsoleLaunch
   | PendingConsoleSet
+  | PendingConsoleSection
   | PendingFinalAsk
   | PendingFloorSearch;
 
@@ -942,6 +1115,10 @@ const consoleQuestionIntents = {
     intent: "pick-raffle-prize-change",
     foreign: "foreign raffle prize change answer ignored",
   },
+  "console-announcement": {
+    intent: "answer-announcement",
+    foreign: "foreign announcement answer ignored",
+  },
   "console-window": {
     intent: "add-step-window",
     foreign: "foreign step window answer ignored",
@@ -953,6 +1130,14 @@ const consoleQuestionIntents = {
   "console-set": {
     intent: "add-lot-set",
     foreign: "foreign lot set answer ignored",
+  },
+  "console-section": {
+    intent: "name-lot-section",
+    foreign: "foreign lot section answer ignored",
+  },
+  "console-period": {
+    intent: "create-happy-hour-period",
+    foreign: "foreign happy hour period answer ignored",
   },
 } as const;
 
@@ -1007,6 +1192,7 @@ type BoundaryOutcome =
       use_case?: ProductUseCase;
       meetup_id?: string;
       identity_id?: string;
+      message_kind?: string;
     }
   | {
       level: "warn" | "error";
@@ -1042,6 +1228,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       environment: runtime.environment ?? defaultTelegramEnvironment,
     });
   const albums = createSeenAlbums();
+  const posts = createPublishedPosts();
   const hintedAlbums = createHintedAlbums();
   const syncCommands = createChatCommandsSync(runtime.logger);
   const liveCards =
@@ -1126,7 +1313,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       ctx,
       runtime,
       questions,
-      { files, albums },
+      { files, albums, posts },
       lotPhotos,
       hintedAlbums,
     ),
@@ -1145,7 +1332,7 @@ async function handleMessage(
   ctx: UpdateContext,
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
-  photos: { files: TelegramFiles; albums: SeenAlbums },
+  photos: { files: TelegramFiles; albums: SeenAlbums; posts: PublishedPosts },
   lotPhotos: LotPhotos,
   hintedAlbums: ReturnType<typeof createHintedAlbums>,
 ): Promise<void> {
@@ -1337,15 +1524,8 @@ async function handleMessage(
       if (pending.kind === "material-source") {
         const source = parseMaterialInput(ctx.message);
         if (source === undefined) {
-          await refuseAnswer(
-            ctx,
-            questions,
-            pending,
-            isTypedText(ctx.message)
-              ? "Текст сам по себе не материал: перешли сообщение из канала или чата, фото или документ."
-              : "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.",
-            replyId,
-          );
+          const refusal = materialRefusal(ctx.message);
+          await refuseAnswer(ctx, questions, pending, refusal.text, replyId);
           outcome = {
             level: "info",
             message: "material source rejected",
@@ -1353,6 +1533,7 @@ async function handleMessage(
             use_case: useCase,
             meetup_id: pending.meetupId,
             identity_id: identity.person.identityId,
+            message_kind: refusal.kind,
           };
           return;
         }
@@ -1640,6 +1821,63 @@ async function handleMessage(
       outcome = adminOutcome(result, identity.person.identityId);
       return;
     }
+    // Фото приза идущего розыгрыша (PER-773): ответ любого вида — не фото
+    // задаёт вопрос заново.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "console-raffle-prize-photo" &&
+      ctx.message !== undefined
+    ) {
+      useCase = "manage_auction";
+      outcome = await answerRafflePrizePhoto(
+        ctx,
+        runtime,
+        questions,
+        photos,
+        pending,
+        replyId,
+        answered,
+      );
+      return;
+    }
+    // Промо-видео (PER-774): ответ любого вида — не видео задаёт вопрос
+    // заново.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "console-promo-video" &&
+      ctx.message !== undefined
+    ) {
+      useCase = "manage_auction";
+      outcome = await handlePromoVideoAnswer(
+        ctx,
+        runtime,
+        questions,
+        photos,
+        pending,
+        replyId,
+        answered,
+      );
+      return;
+    }
+    // Своё фото или видео объявления (PER-776): ответ любого вида — не фото и
+    // не видео задаёт вопрос заново.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "console-announcement-media" &&
+      ctx.message !== undefined
+    ) {
+      useCase = "manage_auction";
+      outcome = await handleAnnouncementMedia(
+        ctx,
+        runtime,
+        questions,
+        photos.albums,
+        pending,
+        replyId,
+        answered,
+      );
+      return;
+    }
     if (
       replyId !== undefined &&
       pending !== undefined &&
@@ -1709,7 +1947,29 @@ async function handleMessage(
               intent: "add-lot-set",
               lotSetId: answerOpId(ctx.message, "console-set-id"),
             }
-          : { ...answer, intent: consoleQuestionIntents[pending.kind].intent },
+          : pending.kind === "console-section"
+            ? // Раздел ленты (PER-719): номер переименуемого раздела едет в
+              // шаге вопроса.
+              {
+                ...answer,
+                intent: "name-lot-section",
+                ...(pending.sectionId === undefined
+                  ? {}
+                  : { sectionId: pending.sectionId }),
+              }
+            : pending.kind === "console-announcement"
+              ? // Объявление аукциона (PER-765): шаблон и номер окна или лота
+                // едут в шаге вопроса; команды ответ не шлёт.
+                {
+                  ...answer,
+                  intent: "answer-announcement",
+                  template: pending.template,
+                  ...(pending.ref === undefined ? {} : { ref: pending.ref }),
+                }
+              : {
+                  ...answer,
+                  intent: consoleQuestionIntents[pending.kind].intent,
+                },
       );
       // Текст оплаты (PER-322) отвечает сводкой счетов, номер победителя
       // (PER-727) — подтверждением итога, а новый приз (PER-737) —
@@ -1720,10 +1980,22 @@ async function handleMessage(
           ? renderRaffleWinnerResult
           : pending.kind === "console-raffle-prize-change"
             ? renderRafflePrizeChangeResult
-            : renderConsoleResult)(ctx, runtime, result, {
+            : pending.kind === "console-announcement"
+              ? renderAnnouncementResult
+              : pending.kind === "console-period"
+                ? renderHappyHourResult
+                : renderConsoleResult)(ctx, runtime, result, {
         person: identity.person,
         questions,
         replyId,
+        // Момент и приз розыгрыша спрашивает «Розыгрыш» пульта (PER-802):
+        // исход ответа возвращает туда.
+        ...(pending.kind === "console-raffle" ||
+        pending.kind === "console-raffle-prize"
+          ? { section: "raffle" as const }
+          : pending.kind === "console-final-time"
+            ? { section: "final" as const }
+            : {}),
       });
       if (
         result.kind !== "auction-week-ask" &&
@@ -1734,10 +2006,71 @@ async function handleMessage(
         result.kind !== "payment-text-ask" &&
         result.kind !== "raffle-winner-ask" &&
         result.kind !== "raffle-prize-change-ask" &&
+        result.kind !== "announcement-ask" &&
         result.kind !== "step-window-ask" &&
         result.kind !== "step-window-launch-ask" &&
-        result.kind !== "lot-set-ask"
+        result.kind !== "lot-set-ask" &&
+        result.kind !== "lot-section-ask" &&
+        result.kind !== "happy-hour-period-ask"
       ) {
+        await answered(result);
+      }
+      return;
+    }
+    // Стартовая или шаг лота в периоде «Счастливых часов» (PER-787): ответ
+    // текстом, ключ команды — из самого сообщения, как у вопросов пульта.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "happy-hour-lot" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_auction";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign happy hour terms answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!canRunAuctions(identity.person)) {
+        await answered();
+        outcome = await refuseConsole(ctx, identity.person);
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "set-lot-happy-hour",
+        lotId: pending.lotId,
+        period: pending.period,
+        field: pending.field,
+        value: ctx.message.text,
+        opId: answerOpId(ctx.message, "happy-hour-lot"),
+        ...rpcCall(ctx, useCase),
+      });
+      outcome = await renderHappyHourResult(ctx, runtime, result, {
+        person: identity.person,
+        questions,
+        replyId,
+      });
+      if (result.kind !== "lot-happy-hour-ask") {
         await answered(result);
       }
       return;
@@ -2186,9 +2519,11 @@ async function handleMessage(
         pending.kind === "console-payment-text" ||
         pending.kind === "console-raffle-winner" ||
         pending.kind === "console-raffle-prize-change" ||
+        pending.kind === "console-announcement" ||
         pending.kind === "console-window" ||
         pending.kind === "console-launch" ||
         pending.kind === "console-set" ||
+        pending.kind === "console-section" ||
         pending.kind === "final-ask" ||
         pending.kind === "floor-search") &&
       ctx.message?.text === undefined
@@ -2209,9 +2544,11 @@ async function handleMessage(
                 pending.kind === "console-payment-text" ||
                 pending.kind === "console-raffle-winner" ||
                 pending.kind === "console-raffle-prize-change" ||
+                pending.kind === "console-announcement" ||
                 pending.kind === "console-window" ||
                 pending.kind === "console-launch" ||
                 pending.kind === "console-set" ||
+                pending.kind === "console-section" ||
                 pending.kind === "final-ask" ||
                 pending.kind === "floor-search"
               ? "manage_auction"
@@ -2658,7 +2995,16 @@ async function handleCallback(
       action.kind === "console-set" ||
       action.kind === "console-set-lot" ||
       action.kind === "console-set-delete" ||
-      action.kind === "console-set-delete-confirm"
+      action.kind === "console-set-delete-confirm" ||
+      action.kind === "console-layout" ||
+      action.kind === "console-layout-list" ||
+      action.kind === "console-layout-lot" ||
+      action.kind === "console-layout-lot-move" ||
+      action.kind === "console-layout-lot-place" ||
+      action.kind === "console-section-ask" ||
+      action.kind === "console-section-move" ||
+      action.kind === "console-section-delete" ||
+      action.kind === "console-section-delete-confirm"
     ) {
       outcome = canRunAuctions(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
@@ -2707,6 +3053,70 @@ async function handleCallback(
         : await refuseConsole(ctx, person);
       return;
     }
+    // Объявление аукциона (PER-765): ряд пульта видит только держатель
+    // права вести аукцион, подделанная кнопка получает отказ до Auction и
+    // Notifications.
+    if (
+      action.kind === "console-announcement" ||
+      action.kind === "console-announcement-windows" ||
+      action.kind === "console-announcement-lots" ||
+      action.kind === "console-announcement-ask" ||
+      action.kind === "console-announcement-button" ||
+      action.kind === "console-announcement-photo" ||
+      action.kind === "console-announcement-media" ||
+      action.kind === "console-announcement-send" ||
+      action.kind === "console-announcement-audience" ||
+      action.kind === "console-announcement-recipients"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleAnnouncementCallback(
+            ctx,
+            runtime,
+            questions,
+            person,
+            action,
+          )
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // «Счастливые часы» периодами (PER-787): экраны пульта и карточки лота
+    // видит только держатель права вести аукцион, подделанная кнопка получает
+    // отказ до Auction.
+    if (
+      action.kind === "console-periods" ||
+      action.kind === "console-period-ask" ||
+      action.kind === "console-period" ||
+      action.kind === "console-period-remove" ||
+      action.kind === "console-period-remove-confirm" ||
+      action.kind === "lot-happy-hours" ||
+      action.kind === "lot-happy-hour" ||
+      action.kind === "lot-happy-hour-ask" ||
+      action.kind === "lot-happy-hour-clear"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleHappyHourCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Промо-видео (PER-774): вход корня видит только держатель права вести
+    // аукцион, подделанная кнопка получает отказ до Auction.
+    if (
+      action.kind === "console-promo-video" ||
+      action.kind === "console-promo-video-ask" ||
+      action.kind === "console-promo-video-remove" ||
+      action.kind === "console-promo-video-remove-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handlePromoVideoCallback(
+            ctx,
+            runtime,
+            questions,
+            person,
+            action,
+          )
+        : await refuseConsole(ctx, person);
+      return;
+    }
     // Смена приза идущего розыгрыша (PER-737): ряд пульта видит только
     // держатель права вести аукцион, подделанная кнопка получает отказ до
     // Auction.
@@ -2716,6 +3126,26 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleRafflePrizeChangeCallback(
+            ctx,
+            runtime,
+            questions,
+            person,
+            action,
+          )
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Фото приза идущего розыгрыша (PER-773): ряд пульта видит только
+    // держатель права вести аукцион, подделанная кнопка получает отказ до
+    // Auction.
+    if (
+      action.kind === "console-raffle-prize-photo" ||
+      action.kind === "console-raffle-prize-photo-ask" ||
+      action.kind === "console-raffle-prize-photo-remove" ||
+      action.kind === "console-raffle-prize-photo-remove-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleRafflePrizePhotoCallback(
             ctx,
             runtime,
             questions,
@@ -3049,7 +3479,7 @@ async function handleCallback(
             version: current.meetup.version,
             telegramUserId: ctx.from?.id ?? 0,
           },
-          `Перешли сообщение или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
+          `Перешли сообщение из канала, пришли ссылку на сообщение чата или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
         );
       } else {
         const materialId = tokenToUuid(action.materialToken);
@@ -7880,7 +8310,16 @@ async function handleConsoleCallback(
         | "console-set"
         | "console-set-lot"
         | "console-set-delete"
-        | "console-set-delete-confirm";
+        | "console-set-delete-confirm"
+        | "console-layout"
+        | "console-layout-list"
+        | "console-layout-lot"
+        | "console-layout-lot-move"
+        | "console-layout-lot-place"
+        | "console-section-ask"
+        | "console-section-move"
+        | "console-section-delete"
+        | "console-section-delete-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -7891,15 +8330,22 @@ async function handleConsoleCallback(
     auctionId,
     ...rpcCall(ctx, useCase),
   };
-  const render = (result: ExecuteResult, page = 0, sort = defaultConsoleSort) =>
+  const render = (
+    result: ExecuteResult,
+    page = 0,
+    sort = defaultConsoleSort,
+    section?: ConsoleSection,
+  ) =>
     renderConsoleResult(ctx, runtime, result, {
       person,
       questions,
       page,
       sort,
+      ...(section === undefined ? {} : { section }),
       retry: ctx.callbackQuery?.data,
     });
   switch (action.kind) {
+    // Экран под пультом (PER-802) — то же чтение пульта с разделом.
     case "console-view":
       return render(
         await runtime.dispatcher.execute({
@@ -7908,6 +8354,7 @@ async function handleConsoleCallback(
         }),
         action.page,
         action.sort,
+        action.section,
       );
     case "console-week":
       // Можно ли ещё менять сроки, решает юзкейс: вопрос либо пульт с причиной.
@@ -7926,6 +8373,9 @@ async function handleConsoleCallback(
           ...call,
           intent: "ask-auction-raffle",
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     case "console-raffle-remove":
       return render(
@@ -7934,6 +8384,9 @@ async function handleConsoleCallback(
           intent: "remove-auction-raffle",
           opId: createUuidV7(),
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     // Приз розыгрыша (PER-649): живёт рядом с моментом, поэтому и вопрос, и
     // снятие решает юзкейс по прочитанной конфигурации.
@@ -7943,6 +8396,9 @@ async function handleConsoleCallback(
           ...call,
           intent: "ask-auction-raffle-prize",
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     case "console-raffle-prize-remove":
       return render(
@@ -7951,6 +8407,9 @@ async function handleConsoleCallback(
           intent: "remove-auction-raffle-prize",
           opId: createUuidV7(),
         }),
+        0,
+        defaultConsoleSort,
+        "raffle",
       );
     // Срок оплаты счёта (PER-722): вопрос решает юзкейс по прочитанной
     // конфигурации — без сроков недели вопроса нет.
@@ -7980,6 +8439,8 @@ async function handleConsoleCallback(
           intent: "ask-auction-final-time",
         }),
       );
+    // С открытия недели время финала живёт на «Финале» пульта (PER-802):
+    // исход возвращает туда, а до открытия — в пульт.
     case "console-final-time-remove":
       return render(
         await runtime.dispatcher.execute({
@@ -7987,6 +8448,9 @@ async function handleConsoleCallback(
           intent: "remove-auction-final-time",
           opId: createUuidV7(),
         }),
+        0,
+        defaultConsoleSort,
+        "final",
       );
     case "console-visibility":
       return render(
@@ -8051,6 +8515,8 @@ async function handleConsoleCallback(
           opId: tokenToUuid(action.op),
         }),
       );
+    // Отметка финала живёт на экране «Финал» (PER-802): туда и исход, и
+    // старая кнопка отметки из прежнего пульта.
     case "console-mark":
       return render(
         await runtime.dispatcher.execute({
@@ -8062,6 +8528,7 @@ async function handleConsoleCallback(
         }),
         action.page,
         action.sort,
+        "final",
       );
     // Состав финала (PER-619). Выбранный порядок едет в кнопках, ключ
     // объявления рождается на нажатие «Да»: повтор после принятого
@@ -8222,6 +8689,90 @@ async function handleConsoleCallback(
           opId: createUuidV7(),
         }),
       );
+    // Порядок и разделы ленты (PER-719). Ключ команды рождается на нажатие:
+    // кнопка несёт лот и направление либо место назначения, и в 64 байта ключ
+    // не помещается. Повтор нажатия — новая правка от прочитанной раскладки.
+    case "console-layout":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-layout",
+        }),
+      );
+    case "console-layout-list":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-layout-list",
+          place: action.place,
+          page: action.page,
+        }),
+      );
+    case "console-layout-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-layout-lot",
+          lotId: tokenToUuid(action.lot),
+        }),
+      );
+    case "console-layout-lot-move":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "move-lot-layout-lot",
+          lotId: tokenToUuid(action.lot),
+          direction: action.direction,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-layout-lot-place":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "place-lot-layout-lot",
+          lotId: tokenToUuid(action.lot),
+          place: action.place,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-section-ask":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-lot-section",
+          ...(action.section === undefined
+            ? {}
+            : { sectionId: action.section }),
+        }),
+      );
+    case "console-section-move":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "move-lot-section",
+          sectionId: action.section,
+          direction: action.direction,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-section-delete":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-lot-section-delete",
+          sectionId: action.section,
+        }),
+      );
+    case "console-section-delete-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "delete-lot-section",
+          sectionId: action.section,
+          opId: createUuidV7(),
+        }),
+      );
     // Запуск окна сниженного шага по ходу торгов (PER-615). Ключ команды
     // рождается на нажатии «Запустить окно»: черновик едет в кнопке, и 64
     // байта на ключ не остаётся.
@@ -8318,6 +8869,7 @@ async function renderConsoleResult(
     questions: Map<string, PendingInput>;
     page?: number;
     sort?: ConsoleSort;
+    section?: ConsoleSection;
     retry?: string | undefined;
     replyId?: number;
   },
@@ -8351,6 +8903,8 @@ async function renderConsoleResult(
         ...(holder === undefined ? {} : { holder }),
         page: context.page ?? 0,
         sort: context.sort ?? defaultConsoleSort,
+        ...(context.section === undefined ? {} : { section: context.section }),
+        ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
         timeZone,
         today: communityToday(ctx),
       };
@@ -8589,6 +9143,57 @@ async function renderConsoleResult(
         }),
       );
       return handled("lot set delete confirmation sent");
+    case "lot-layout":
+      await showScreen(
+        ctx,
+        lotLayoutScreen({ console: result.console, note: result.note }),
+      );
+      return handled(
+        result.note === undefined
+          ? "lot layout sent"
+          : `lot layout sent: ${result.note.kind}`,
+      );
+    case "lot-layout-list":
+      await showScreen(
+        ctx,
+        lotLayoutListScreen({
+          console: result.console,
+          place: result.place,
+          at: result.at,
+        }),
+      );
+      return handled("lot layout list sent");
+    case "lot-layout-lot":
+      // Принятый перенос подтверждает себя всплывающим текстом, как сет.
+      if (result.moved === true) {
+        await ctx.waiting?.answer(lotLayoutMovedToast);
+      }
+      await showScreen(
+        ctx,
+        lotLayoutLotScreen({ console: result.console, lotId: result.lotId }),
+      );
+      return handled("lot layout lot sent");
+    case "lot-section-delete-confirm":
+      await showScreen(
+        ctx,
+        lotSectionDeleteConfirmScreen({
+          console: result.console,
+          sectionId: result.sectionId,
+        }),
+      );
+      return handled("lot section delete confirmation sent");
+    case "lot-section-ask":
+      await askConsoleSection(ctx, context.questions, {
+        auctionId: result.auctionId,
+        sectionId: result.sectionId,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "lot section name requested"
+          : "lot section name asked again",
+      );
     case "lot-set-ask":
       await askConsoleSet(ctx, context.questions, {
         auctionId: result.auctionId,
@@ -8939,6 +9544,42 @@ function askConsoleSet(
     );
   }
   return askQuestion(ctx, questions, pending, lotSetPrompt, ask.replaces);
+}
+
+// Вопрос о названии раздела ленты (PER-719): нового или переименуемого.
+function askConsoleSection(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    sectionId?: number | undefined;
+    error?: "name-empty" | "name-taken" | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-section",
+    auctionId: ask.auctionId,
+    ...(ask.sectionId === undefined ? {} : { sectionId: ask.sectionId }),
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      lotSectionAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    ask.sectionId === undefined ? lotSectionPrompt : lotSectionRenamePrompt,
+    ask.replaces,
+  );
 }
 
 // Вопрос о запуске окна по ходу торгов (PER-615): отказ приходит текстом
@@ -9503,6 +10144,452 @@ async function handleRafflePrizeChangeCallback(
   });
 }
 
+// Промо-видео аукциона (PER-774): экран из пульта (PER-802), вопрос о видео,
+// подтверждение снятия и «Да». Своего состояния нет: аукцион едет в кнопке, а
+// ключ снятия рождается на нажатие «Да».
+// «Счастливые часы» периодами (PER-787): ключ удаления периода и снятия
+// условий рождается на нажатие — повтор застаёт период удалённым или лот без
+// условий, и Auction отвечает тем же исходом.
+async function handleHappyHourCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-periods"
+        | "console-period-ask"
+        | "console-period"
+        | "console-period-remove"
+        | "console-period-remove-confirm"
+        | "lot-happy-hours"
+        | "lot-happy-hour"
+        | "lot-happy-hour-ask"
+        | "lot-happy-hour-clear";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const base = { identity: person, ...rpcCall(ctx, useCase) };
+  const context = { person, questions, retry: ctx.callbackQuery?.data };
+  const run = async (request: ExecuteRequest) =>
+    renderHappyHourResult(
+      ctx,
+      runtime,
+      await runtime.dispatcher.execute(request),
+      context,
+    );
+  switch (action.kind) {
+    case "console-periods":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "view-happy-hour-periods",
+      });
+    case "console-period-ask":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "ask-happy-hour-period",
+      });
+    case "console-period":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "view-happy-hour-period",
+        period: action.period,
+      });
+    case "console-period-remove":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "prepare-happy-hour-period-delete",
+        period: action.period,
+      });
+    case "console-period-remove-confirm":
+      return run({
+        ...base,
+        auctionId: tokenToUuid(action.auction),
+        intent: "delete-happy-hour-period",
+        period: action.period,
+        opId: createUuidV7(),
+      });
+    case "lot-happy-hours":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "view-lot-happy-hours",
+      });
+    case "lot-happy-hour":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "view-lot-happy-hour",
+        period: action.period,
+      });
+    case "lot-happy-hour-ask":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "ask-lot-happy-hour",
+        period: action.period,
+        field: action.field,
+      });
+    case "lot-happy-hour-clear":
+      return run({
+        ...base,
+        lotId: tokenToUuid(action.lot),
+        intent: "clear-lot-happy-hour",
+        period: action.period,
+        opId: createUuidV7(),
+      });
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Экраны периодов и условий лота (PER-787); отказ лота — кадр формы лота,
+// остальное — исходы пульта: отказы и сбои рисуются, как у его команд.
+async function renderHappyHourResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  const moments = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: communityToday(ctx),
+  };
+  switch (result.kind) {
+    case "happy-hour-periods":
+      await showScreen(ctx, happyHourPeriodsScreen({ ...result, ...moments }));
+      return handled("happy hour periods sent");
+    case "happy-hour-period":
+      await showScreen(ctx, happyHourPeriodScreen({ ...result, ...moments }));
+      return handled("happy hour period sent");
+    case "happy-hour-period-remove-confirm":
+      await showScreen(
+        ctx,
+        happyHourPeriodRemoveScreen({ ...result, ...moments }),
+      );
+      return handled("happy hour period removal confirmation sent");
+    case "happy-hour-period-ask": {
+      const pending: PendingBody = {
+        kind: "console-period",
+        auctionId: result.auctionId,
+        telegramUserId: ctx.from?.id ?? 0,
+      };
+      if (result.error !== undefined) {
+        await refuseAnswer(
+          ctx,
+          context.questions,
+          pending,
+          periodAskErrorText(result.error, {
+            timeZone: moments.timeZone,
+            week: result.week,
+          }),
+          context.replyId,
+        );
+        return handled("happy hour period asked again");
+      }
+      await askQuestion(
+        ctx,
+        context.questions,
+        pending,
+        periodQuestionText(moments.timeZone, result.week),
+        context.replyId,
+      );
+      return handled("happy hour period requested");
+    }
+    case "happy-hour-outcome":
+      await showScreen(ctx, happyHourOutcomeScreen({ ...result, ...moments }));
+      return handled(`happy hour: ${result.note.kind}`);
+    case "lot-happy-hours":
+      await showScreen(ctx, lotHappyHoursScreen({ ...result, ...moments }));
+      return handled("lot happy hours sent");
+    case "lot-happy-hour":
+      await showScreen(ctx, lotHappyHourScreen({ ...result, ...moments }));
+      return handled("lot happy hour sent");
+    case "lot-happy-hour-ask": {
+      const pending: PendingBody = {
+        kind: "happy-hour-lot",
+        lotId: result.lot.lotId,
+        period: periodRef(result.period, result.index),
+        field: result.field,
+        telegramUserId: ctx.from?.id ?? 0,
+      };
+      if (result.error !== undefined) {
+        await refuseAnswer(
+          ctx,
+          context.questions,
+          pending,
+          happyHourAmountErrorText(
+            result.error,
+            result.regular ??
+              (result.field === "start"
+                ? result.lot.regularStart
+                : result.lot.regularStep),
+          ),
+          context.replyId,
+        );
+        return handled("lot happy hour asked again");
+      }
+      await askQuestion(
+        ctx,
+        context.questions,
+        pending,
+        lotHappyHourQuestionText({ ...result, ...moments }),
+        context.replyId,
+      );
+      return handled("lot happy hour requested");
+    }
+    case "lot-happy-hour-outcome":
+      await showScreen(
+        ctx,
+        lotHappyHourOutcomeScreen({ ...result, ...moments }),
+      );
+      return handled(`lot happy hour: ${result.note.kind}`);
+    case "lot-refused":
+      return showLotFailure(ctx, result, context);
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
+async function handlePromoVideoCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-promo-video"
+        | "console-promo-video-ask"
+        | "console-promo-video-remove"
+        | "console-promo-video-remove-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const auctionId = tokenToUuid(action.auction);
+  const call = { identity: person, ...rpcCall(ctx, useCase), auctionId };
+  const context = { person, questions, retry: ctx.callbackQuery?.data };
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  switch (action.kind) {
+    case "console-promo-video":
+      return renderPromoVideoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-promo-video",
+        }),
+        context,
+      );
+    // Без чата медиа видео сохранить некуда: подделанная кнопка вопроса не
+    // задаёт.
+    case "console-promo-video-ask":
+      if (runtime.mediaChat?.enabled !== true) {
+        await showScreen(
+          ctx,
+          promoVideoOutcomeScreen({ auctionId, note: "media-off" }),
+        );
+        return handled("promo video: media-off");
+      }
+      await askQuestion(
+        ctx,
+        questions,
+        {
+          kind: "console-promo-video",
+          auctionId,
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        promoVideoQuestionText(),
+      );
+      return handled("promo video requested");
+    case "console-promo-video-remove":
+      await showScreen(ctx, promoVideoRemoveScreen(auctionId));
+      return handled("promo video removal confirmation sent");
+    case "console-promo-video-remove-confirm":
+      return renderPromoVideoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-promo-video",
+          opId: createUuidV7(),
+        }),
+        context,
+      );
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответ на вопрос о промо-видео (PER-774). Бот копирует видео человека в чат
+// медиа ботов, а Auction получает номер поста: так видео одинаково покажут
+// оба бота. Прежний пост остаётся в канале — его не удаляет никто. Повтор
+// доставки того же ответа — повтор команды (PER-793): ключ выводится из
+// сообщения, а пост берётся из памяти процесса, а не публикуется вторым.
+async function handlePromoVideoAnswer(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  { albums, posts }: { albums: SeenAlbums; posts: PublishedPosts },
+  pending: PendingConsolePromoVideo,
+  replyId: number,
+  answered: (result?: ExecuteResult) => Promise<void>,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  if (ctx.from?.id !== pending.telegramUserId) {
+    return {
+      level: "info",
+      message: "foreign promo video answer ignored",
+      result: "ok",
+      use_case: useCase,
+    };
+  }
+  const identity = await resolvePerson(ctx, runtime, useCase);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    false,
+  );
+  if (denied !== undefined) return denied;
+  const { person } = identity;
+  if (!canRunAuctions(person)) {
+    await answered();
+    return refuseConsole(ctx, person);
+  }
+  const { auctionId } = pending;
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  // Видео без звуковой дорожки Telegram присылает анимацией (PER-801): пост
+  // в чат медиа уходит тем же `copyMessage`.
+  if (
+    ctx.message?.video === undefined &&
+    ctx.message?.animation === undefined
+  ) {
+    // Тот же вопрос заново, а прежний закрывается.
+    await askQuestion(
+      ctx,
+      questions,
+      {
+        kind: "console-promo-video",
+        auctionId,
+        telegramUserId: ctx.from?.id ?? 0,
+      },
+      promoVideoQuestionText(true),
+      replyId,
+    );
+    return handled("promo video asked again");
+  }
+  // Видео у аукциона одно: из альбома берётся первое, остальные пропускает
+  // проверка альбомов в начале `handleMessage`.
+  const message = ctx.message;
+  const album = message.media_group_id;
+  if (album !== undefined) albums.remember(album);
+  const media = runtime.mediaChat;
+  const source = questionKey(message.chat.id, message.message_id);
+  const remembered = posts.postOf(source);
+  const published =
+    media === undefined || !media.enabled
+      ? undefined
+      : remembered !== undefined
+        ? { kind: "published" as const, postId: remembered }
+        : await media.publish(ctx.api, message.chat.id, message.message_id);
+  if (published?.kind !== "published") {
+    await answered();
+    const note = published === undefined ? "media-off" : "media-failed";
+    await showScreen(ctx, promoVideoOutcomeScreen({ auctionId, note }));
+    // Отказ Telegram чат медиа уже записал на warn: граница пишет исход.
+    return handled(`promo video: ${note}`);
+  }
+  posts.remember(source, published.postId);
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    // Медленный `copyMessage` не съедает бюджет `SetPromoVideo`, как
+    // `getFile` у фото (PER-728).
+    ...afterTelegram(rpcCall(ctx, useCase)),
+    auctionId,
+    intent: "set-promo-video",
+    opId: answerOpId(message, "console-promo-video"),
+    postId: published.postId,
+  });
+  await answered(result);
+  return renderPromoVideoResult(ctx, runtime, result, {
+    person,
+    questions,
+    replyId,
+  });
+}
+
+// Экраны промо-видео (PER-774); остальное — исходы пульта: отказы и сбои
+// рисуются, как у его команд.
+async function renderPromoVideoResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  switch (result.kind) {
+    case "promo-video":
+      await showScreen(ctx, promoVideoScreen(result));
+      return handled("promo video sent");
+    case "promo-video-outcome":
+      await showScreen(ctx, promoVideoOutcomeScreen(result));
+      return handled(`promo video: ${result.note}`);
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
 // Экраны смены приза (PER-737); остальное — исходы пульта: отказы и сбои
 // рисуются, как у его команд.
 async function renderRafflePrizeChangeResult(
@@ -9580,6 +10667,878 @@ function askRafflePrizeChange(
     rafflePrizeQuestionText(ask.prize),
     ask.replaces,
   );
+}
+
+// Объявление аукциона (PER-765). Сюда доходит только держатель права вести
+// аукцион; право на приём решает Notifications у Meetups. Своего состояния
+// нет: шаблон, лот и фото едут в кнопках номерами, текст — хвостом кадра шага
+// и в предпросмотре, а ключ объявления рождается на «Отправить» из
+// предпросмотра, на который отвечает подтверждение: второе нажатие того же
+// «Отправить» несёт тот же ключ, и второй рассылки не будет.
+async function handleAnnouncementCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-announcement"
+        | "console-announcement-windows"
+        | "console-announcement-lots"
+        | "console-announcement-ask"
+        | "console-announcement-button"
+        | "console-announcement-photo"
+        | "console-announcement-media"
+        | "console-announcement-send"
+        | "console-announcement-audience"
+        | "console-announcement-recipients";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const auctionId = tokenToUuid(action.auction);
+  const call = { identity: person, ...rpcCall(ctx, useCase), auctionId };
+  const context = {
+    person,
+    questions,
+    retry: ctx.callbackQuery?.data,
+    auctionId,
+  };
+  const stale = async (): Promise<BoundaryOutcome> => {
+    await showScreen(ctx, announcementStaleScreen(auctionId));
+    return {
+      level: "warn",
+      message: "announcement step malformed",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category: "invariant",
+      error: "announcement text failed validation",
+    };
+  };
+  switch (action.kind) {
+    case "console-announcement":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "open-announcement",
+        }),
+        context,
+      );
+    case "console-announcement-windows":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "list-announcement-windows",
+        }),
+        context,
+      );
+    case "console-announcement-lots":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "list-announcement-lots",
+        }),
+        { ...context, page: action.page },
+      );
+    case "console-announcement-ask":
+      return renderAnnouncementResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-announcement",
+          template: action.template,
+          ...(action.ref === undefined ? {} : { ref: action.ref }),
+        }),
+        context,
+      );
+    case "console-announcement-button":
+    case "console-announcement-photo": {
+      const text = parseStepText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (text === undefined) return stale();
+      const result = await runtime.dispatcher.execute(
+        action.kind === "console-announcement-button"
+          ? {
+              ...call,
+              intent: "pick-announcement-button",
+              button: action.button,
+              audience: action.audience,
+              ...(action.lot === undefined ? {} : { lot: action.lot }),
+            }
+          : {
+              ...call,
+              intent: "ask-announcement-audience",
+              button: action.button,
+              audience: action.audience,
+              ...(action.lot === undefined ? {} : { lot: action.lot }),
+              ...(action.photo === undefined ? {} : { photo: action.photo }),
+            },
+      );
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text,
+      });
+    }
+    // «Своё фото или видео» (PER-776): вопрос о медиа несёт текст хвостом.
+    case "console-announcement-media": {
+      const text = parseStepText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (text === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "ask-announcement-media",
+        button: action.button,
+        audience: action.audience,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text,
+      });
+    }
+    // Аудитория шага «Кому» (PER-779) ведёт к предпросмотру; текст — хвост
+    // кадра шага.
+    case "console-announcement-recipients": {
+      const text = parseStepText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (text === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "preview-announcement",
+        button: action.button,
+        audience: action.audience,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+        ...(action.photo === undefined ? {} : { photo: action.photo }),
+        ...(action.post === undefined ? {} : { post: action.post }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text,
+      });
+    }
+    // «Нет» подтверждения — обратно в «Кому» с той же аудиторией; текст
+    // читается из предпросмотра, на который подтверждение отвечает.
+    case "console-announcement-audience": {
+      const preview = parsePreviewText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (preview === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "ask-announcement-audience",
+        button: action.button,
+        audience: action.audience,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+        ...(action.photo === undefined ? {} : { photo: action.photo }),
+        ...(action.post === undefined ? {} : { post: action.post }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, {
+        ...context,
+        text: preview.text,
+      });
+    }
+    case "console-announcement-send": {
+      const preview = parsePreviewText(
+        ctx.callbackQuery?.message,
+        ctx.me.id,
+        action.print,
+      );
+      if (preview === undefined) return stale();
+      const result = await runtime.dispatcher.execute({
+        ...call,
+        intent: "send-announcement",
+        announcementId: uuidV7Of(
+          `auction-announcement:${ctx.chat?.id ?? 0}:${preview.messageId}`,
+          preview.sentAt,
+        ),
+        text: preview.text,
+        button: action.button,
+        audience: action.audience,
+        ...(action.lot === undefined ? {} : { lot: action.lot }),
+        ...(action.photo === undefined ? {} : { photo: action.photo }),
+        ...(action.photoPrint === undefined
+          ? {}
+          : { photoPrint: action.photoPrint }),
+        ...(action.post === undefined ? {} : { post: action.post }),
+      });
+      return renderAnnouncementResult(ctx, runtime, result, context);
+    }
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответ на вопрос о своём медиа объявления (PER-776). Бот копирует сообщение
+// человека в чат медиа ботов и ведёт к предпросмотру с номером поста: так
+// медиа одинаково покажут оба бота, а в команду уходит только номер. Текст
+// объявления ответ читает из хвоста вопроса, на который отвечает.
+async function handleAnnouncementMedia(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  albums: SeenAlbums,
+  pending: PendingConsoleAnnouncementMedia,
+  replyId: number,
+  answered: (result?: ExecuteResult) => Promise<void>,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  if (ctx.from?.id !== pending.telegramUserId) {
+    return {
+      level: "info",
+      message: "foreign announcement media answer ignored",
+      result: "ok",
+      use_case: useCase,
+    };
+  }
+  const identity = await resolvePerson(ctx, runtime, useCase);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    false,
+  );
+  if (denied !== undefined) return denied;
+  const { person } = identity;
+  if (!canRunAuctions(person)) {
+    await answered();
+    return refuseConsole(ctx, person);
+  }
+  const { auctionId } = pending;
+  const context = { person, questions, replyId };
+  const text = parseStepText(
+    ctx.message?.reply_to_message,
+    ctx.me.id,
+    pending.print,
+  );
+  if (text === undefined) {
+    await answered();
+    await showScreen(ctx, announcementStaleScreen(auctionId));
+    return {
+      level: "warn",
+      message: "announcement step malformed",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category: "invariant",
+      error: "announcement text failed validation",
+    };
+  }
+  const step = {
+    button: pending.button,
+    audience: pending.audience,
+    ...(pending.lot === undefined ? {} : { lot: pending.lot }),
+  };
+  if (!parseAnnouncementMedia(ctx.message)) {
+    // Тот же шаг заново: вопрос несёт текст, а прежний вопрос закрывается.
+    await askQuestion(
+      ctx,
+      questions,
+      bodyOf(pending),
+      announcementMediaQuestionText(text, true),
+      replyId,
+      undefined,
+      "HTML",
+    );
+    return {
+      level: "info",
+      message: "announcement media asked again",
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  // Альбом приходит сообщением на каждый снимок, а объявление несёт одно
+  // медиа: берётся первый снимок, остальные пропускает проверка альбомов в
+  // начале `handleMessage`, и второго поста в канале нет.
+  const album = ctx.message?.media_group_id;
+  if (album !== undefined) albums.remember(album);
+  const media = runtime.mediaChat;
+  const published =
+    media === undefined || !media.enabled
+      ? undefined
+      : await media.publish(
+          ctx.api,
+          ctx.chat?.id ?? 0,
+          ctx.message?.message_id ?? 0,
+        );
+  if (published?.kind !== "published") {
+    await answered();
+    const note = published === undefined ? "media-off" : "media-failed";
+    await showScreen(
+      ctx,
+      announcementOutcomeScreen({
+        kind: "announcement-outcome",
+        auctionId,
+        note,
+      }),
+    );
+    // Отказ Telegram чат медиа уже записал на warn: граница пишет исход.
+    return {
+      level: "info",
+      message: `announcement: ${note}`,
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    ...rpcCall(ctx, useCase),
+    auctionId,
+    intent: "ask-announcement-audience",
+    ...step,
+    post: published.postId,
+  });
+  await answered(result);
+  return renderAnnouncementResult(ctx, runtime, result, { ...context, text });
+}
+
+// Экраны объявления (PER-765); остальное — исходы пульта: отказы и сбои
+// рисуются, как у его команд.
+async function renderAnnouncementResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+    text?: string;
+    page?: number;
+    auctionId?: string;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  // Сбой, который повтор вылечит, на шаге с текстом хвостом или до рассылки,
+  // которая ещё не видит публикацию (PER-792): кадр несёт текст шага, и
+  // «Повторить» доходит до подсчёта, а не до «Шаг устарел».
+  const { retry, auctionId } = context;
+  if (retry !== undefined && auctionId !== undefined) {
+    if (
+      result.kind === "announcement-outcome" &&
+      result.note === "not-replicated"
+    ) {
+      await showScreen(
+        ctx,
+        announcementRetryScreen({
+          auctionId,
+          reason: "not-replicated",
+          retry,
+          text: context.text,
+        }),
+      );
+      return handled("announcement: not-replicated");
+    }
+    if (retryable(result) && context.text !== undefined) {
+      await showScreen(
+        ctx,
+        announcementRetryScreen({
+          auctionId,
+          reason: "unavailable",
+          retry,
+          text: context.text,
+        }),
+      );
+      return {
+        ...screenBoundary(result, {
+          ok: [],
+          okMessage: "auction console handled",
+          rejectedMessage: "auction console rejected",
+          useCase: "manage_auction",
+        }),
+        identity_id: context.person.identityId,
+      };
+    }
+  }
+  const moments = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: (runtime.today ?? utcToday)(),
+  };
+  switch (result.kind) {
+    case "announcement-menu":
+      await showScreen(ctx, announcementMenuScreen(result));
+      return handled("announcement menu sent");
+    case "announcement-windows":
+      await showScreen(ctx, announcementWindowsScreen(result, moments));
+      return handled("announcement windows sent");
+    case "announcement-lots":
+      await showScreen(ctx, announcementLotsScreen(result, context.page ?? 0));
+      return handled("announcement lots sent");
+    case "announcement-ask": {
+      const pending: PendingBody = {
+        kind: "console-announcement",
+        auctionId: result.auctionId,
+        template: result.template,
+        ...(result.ref === undefined ? {} : { ref: result.ref }),
+        telegramUserId: ctx.from?.id ?? 0,
+      };
+      if (result.error !== undefined) {
+        await refuseAnswer(
+          ctx,
+          context.questions,
+          pending,
+          announcementAskErrorText[result.error],
+          context.replyId,
+        );
+        return handled("announcement asked again");
+      }
+      await askQuestion(
+        ctx,
+        context.questions,
+        pending,
+        announcementQuestionText(result.draft, moments),
+        context.replyId,
+        undefined,
+        "HTML",
+      );
+      return handled("announcement requested");
+    }
+    case "announcement-button-ask":
+      await showScreen(ctx, announcementButtonScreen(result));
+      return handled("announcement button asked");
+    case "announcement-photo-ask":
+      if (context.text === undefined) break;
+      await showScreen(
+        ctx,
+        announcementPhotoScreen({ ...result, text: context.text }),
+      );
+      return handled("announcement photo asked");
+    case "announcement-media-ask":
+      if (context.text === undefined) break;
+      await askQuestion(
+        ctx,
+        context.questions,
+        {
+          kind: "console-announcement-media",
+          auctionId: result.auctionId,
+          button: result.button,
+          print: fingerprint(context.text),
+          audience: result.audience,
+          ...(result.lot === undefined ? {} : { lot: result.lot.index }),
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        announcementMediaQuestionText(context.text),
+        context.replyId,
+        undefined,
+        "HTML",
+      );
+      return handled("announcement media requested");
+    case "announcement-audience-ask":
+      if (context.text === undefined) break;
+      await showScreen(
+        ctx,
+        announcementAudienceScreen({ ...result, text: context.text }),
+      );
+      return handled("announcement audience asked");
+    case "announcement-preview":
+      if (context.text === undefined) break;
+      await sendAnnouncementPreview(ctx, runtime, context.person, {
+        ...result,
+        text: context.text,
+      });
+      return handled("announcement preview sent");
+    case "announcement-sent":
+    case "announcement-outcome":
+      await showScreen(ctx, announcementOutcomeScreen(result));
+      return handled(
+        result.kind === "announcement-sent"
+          ? result.repeated
+            ? "announcement repeated"
+            : "announcement accepted"
+          : `announcement: ${result.note}`,
+      );
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+  return unexpectedOutcome(
+    `announcement step without text: ${result.kind}`,
+    context.person.identityId,
+    "manage_auction",
+  );
+}
+
+// Предпросмотр — ровно то сообщение, которое получит участник: тот же рендер
+// вести и та же отправка с фото лота, что у доставки хаба. Фото читается
+// правами автора; не прочиталось — предпросмотр, как и рассылка, уходит
+// текстом. Подтверждение отвечает на предпросмотр: «Отправить» читает текст
+// оттуда.
+async function sendAnnouncementPreview(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  preview: Extract<ExecuteResult, { kind: "announcement-preview" }> & {
+    text: string;
+  },
+): Promise<void> {
+  const button =
+    preview.button === "none"
+      ? undefined
+      : preview.button === "lot"
+        ? preview.lot === undefined
+          ? undefined
+          : { kind: "lot" as const, lotId: preview.lot.lotId }
+        : { kind: preview.button };
+  const notice = {
+    kind: "organizer-announcement" as const,
+    auctionId: preview.auctionId,
+    text: preview.text,
+    ...(button === undefined ? {} : { button }),
+    ...(preview.photo === undefined
+      ? {}
+      : {
+          photo: { lotId: preview.photo.lotId, photoId: preview.photo.photoId },
+        }),
+    ...(preview.post === undefined ? {} : { post: preview.post }),
+  };
+  const message = renderOutgoingNotification(notice);
+  const photos = createAnnouncementPhotos(async (photo) => {
+    const screens = runtime.auction;
+    if (screens === undefined) throw new Error("auction not configured");
+    return screens
+      .screenPorts(rpcCall(ctx, "manage_auction"))
+      .image.getLotPhoto({ viewer: viewerOf(person), ...photo });
+  }, logMissingAnnouncementPhoto(runtime.logger));
+  if (ctx.callbackQuery !== undefined && ctx.pressedGone !== true) {
+    await clearCallbackKeyboard(ctx);
+  }
+  const chatId = ctx.chat?.id ?? 0;
+  const sent = await sendOrganizerAnnouncement(
+    ctx.api,
+    chatId,
+    {
+      text: message.text,
+      ...(notice.photo === undefined ? {} : { photo: notice.photo }),
+      ...(notice.post === undefined ? {} : { post: notice.post }),
+    },
+    {
+      photos,
+      media: runtime.mediaChat,
+      viewerId: person.identityId,
+      markup: message.keyboard,
+      mark: screenMark("notification"),
+    },
+  );
+  const confirm = announcementConfirmScreen({
+    auctionId: preview.auctionId,
+    text: preview.text,
+    button: preview.button,
+    lot: preview.lot,
+    // Фото или пост, которых автор не увидел, получатели тоже не получат.
+    photo: sent.withPhoto ? preview.photo?.index : undefined,
+    photoPrint:
+      sent.withPhoto && preview.photo !== undefined
+        ? fingerprint(preview.photo.photoId)
+        : undefined,
+    post: sent.withPost ? preview.post : undefined,
+    audience: preview.audience,
+    audiences: preview.audiences,
+    recipientCount: preview.recipientCount,
+  });
+  await ctx.reply(confirm.text, {
+    reply_parameters: { message_id: sent.messageId },
+    parse_mode: "HTML",
+    ...screenMark(confirm.id),
+    reply_markup: confirm.keyboard,
+  });
+}
+
+// Фото приза идущего розыгрыша (PER-773). Сюда доходит только держатель
+// права вести аукцион; право на фото решает Auction у Meetups. Своего
+// состояния нет: аукцион едет в кнопке, а ключ снятия рождается на «Да».
+async function handleRafflePrizePhotoCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-raffle-prize-photo"
+        | "console-raffle-prize-photo-ask"
+        | "console-raffle-prize-photo-remove"
+        | "console-raffle-prize-photo-remove-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const auctionId = tokenToUuid(action.auction);
+  const call = { identity: person, ...rpcCall(ctx, useCase), auctionId };
+  // «Повторить» после сбоя ведёт на экран фото: он прочитает розыгрыш заново,
+  // а снятие, ответ на которое потерялся, могло пройти.
+  const context = {
+    person,
+    questions,
+    retry: consoleRafflePrizePhotoData(action.auction),
+  };
+  switch (action.kind) {
+    case "console-raffle-prize-photo":
+      return renderRafflePrizePhotoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-raffle-prize-photo",
+        }),
+        context,
+      );
+    case "console-raffle-prize-photo-ask":
+      return renderRafflePrizePhotoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-raffle-prize-photo",
+        }),
+        context,
+      );
+    // Подтверждение Auction не читает: розыгрыш, приз которого уже не
+    // меняется, ответит отказом на «Да».
+    case "console-raffle-prize-photo-remove":
+      await showScreen(ctx, rafflePrizePhotoRemoveConfirmScreen(auctionId));
+      return {
+        level: "info",
+        message: "raffle prize photo removal confirmation sent",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
+    case "console-raffle-prize-photo-remove-confirm":
+      return renderRafflePrizePhotoResult(
+        ctx,
+        runtime,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-raffle-prize-photo",
+          opId: createUuidV7(),
+        }),
+        context,
+      );
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Экраны фото приза (PER-773); остальное — исходы пульта: отказы и сбои
+// рисуются, как у его команд.
+async function renderRafflePrizePhotoResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  switch (result.kind) {
+    case "raffle-prize-photo":
+      await showScreen(ctx, rafflePrizePhotoScreen(result));
+      return handled("raffle prize photo sent");
+    case "raffle-prize-photo-ask":
+      await askRafflePrizePhoto(ctx, context.questions, {
+        auctionId: result.auctionId,
+        error: result.error,
+        maxBytes: result.maxBytes,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "raffle prize photo requested"
+          : "raffle prize photo asked again",
+      );
+    case "raffle-prize-photo-outcome":
+      await showScreen(ctx, rafflePrizePhotoOutcomeScreen(result));
+      return handled(`raffle prize photo: ${result.note}`);
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
+// Вопрос о фото приза (PER-773): ответ — фотография; отказ — тот же вопрос с
+// причиной, как у фото лота.
+function askRafflePrizePhoto(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    error?: RafflePrizePhotoAskError | undefined;
+    maxBytes?: number | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-raffle-prize-photo",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      rafflePrizePhotoAskErrorText(ask.error, ask.maxBytes),
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    rafflePrizePhotoPrompt,
+    ask.replaces,
+  );
+}
+
+// Ответ на вопрос о фото приза (PER-773). Фото скачивается здесь, на краю,
+// как фото лота: путь даёт `getFile`, байты — порт скачивания, а юзкейс
+// получает только байты. `photoId` выводится из самого ответа (PER-699):
+// повторная доставка того же сообщения приходит в Auction повтором, а то же
+// фото, присланное заново после замены, — новой командой, и Auction не
+// примет его за повтор старой. Альбом даёт приз одним фото — первым
+// снимком: остальные пропускает проверка альбомов в начале `handleMessage`.
+async function answerRafflePrizePhoto(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  photos: { files: TelegramFiles; albums: SeenAlbums },
+  pending: PendingConsoleRafflePrizePhoto,
+  replyId: number,
+  answered: (result?: ExecuteResult) => Promise<void>,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  if (ctx.from?.id !== pending.telegramUserId) {
+    return {
+      level: "info",
+      message: "foreign raffle prize photo answer ignored",
+      result: "ok",
+      use_case: useCase,
+    };
+  }
+  const identity = await resolvePerson(ctx, runtime, useCase);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    false,
+  );
+  if (denied !== undefined) return denied;
+  const { person } = identity;
+  if (!canRunAuctions(person)) {
+    await answered();
+    return refuseConsole(ctx, person);
+  }
+  const message = ctx.message;
+  const { auctionId } = pending;
+  const album = message?.media_group_id;
+  if (album !== undefined) photos.albums.remember(album);
+  const again = (error: RafflePrizePhotoAskError) =>
+    askRafflePrizePhoto(ctx, questions, {
+      auctionId,
+      error,
+      replaces: replyId,
+    });
+  const input = parseLotPhoto(message);
+  if (message === undefined || input.kind === "not-photo") {
+    await again("photo-needed");
+    return {
+      level: "info",
+      message: "raffle prize photo asked again",
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  // Скачивание — тоже ожидание человека: «печатает…» идёт с него.
+  ctx.waiting?.begin();
+  const downloaded = await downloadPhoto(ctx, photos.files, input.fileId);
+  if (downloaded.kind === "failed") {
+    await again("photo-unavailable");
+    return {
+      level: "warn",
+      message: "raffle prize photo download failed",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category:
+        downloaded.reason === "timeout" ? "timeout" : "dependency_unavailable",
+      error: downloaded.cause.message,
+    };
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    auctionId,
+    intent: "set-raffle-prize-photo",
+    photoId: answerOpId(message, "console-raffle-prize-photo"),
+    image: downloaded.bytes,
+    ...afterTelegram(rpcCall(ctx, useCase)),
+  });
+  if (retryable(result)) {
+    await again("photo-not-saved");
+    return {
+      level: "warn",
+      message: "raffle prize photo not saved",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category:
+        result.kind === "dependency-rejected" && result.reason === "timeout"
+          ? "timeout"
+          : "dependency_unavailable",
+      error: "set_raffle_prize_photo_failed",
+    };
+  }
+  const outcome = await renderRafflePrizePhotoResult(ctx, runtime, result, {
+    person,
+    questions,
+    replyId,
+  });
+  if (result.kind !== "raffle-prize-photo-ask") await answered(result);
+  return outcome;
 }
 
 // «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
@@ -9874,6 +11833,11 @@ async function handleAuctionCallback(
           : {
               proxyExplainer: runtime.proxyExplainer(rpcCall(ctx, useCase)),
             }),
+        // Промо-видео (PER-774): корень ставит «🎬 Промо» только тогда, когда
+        // пост есть чем показать.
+        ...(runtime.mediaChat?.enabled === true
+          ? { media: true as const }
+          : {}),
       },
       identity: resolved,
       user: {
@@ -9980,6 +11944,7 @@ async function handleAuctionCallback(
     // Пульт и входы в форму лота видит держатель права вести аукцион — того
     // же, что «Включить аукцион» (ADR-070, RFC-016).
     canManage,
+    ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
     ...(canAddLots === undefined ? {} : { canAddLots }),
     ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
@@ -9996,6 +11961,35 @@ async function handleAuctionCallback(
     return {
       level: "info",
       message: "auction question asked",
+      result: "ok",
+      use_case: useCase,
+      identity_id: person.identityId,
+    };
+  }
+  // Промо-видео (PER-774): копия поста новым сообщением, а экран, с которого
+  // нажали, остаётся. Поста нет или Telegram его не отдал — ответ на нажатие
+  // «видео недоступно», и корень цел.
+  if (shown.promo !== undefined) {
+    const postId = shown.promo.postId;
+    const media = runtime.mediaChat;
+    const sent =
+      postId === undefined || media === undefined
+        ? undefined
+        : await media.show(ctx.api, ctx.chat?.id ?? 0, postId, {
+            caption: shown.screen.text,
+            format: "HTML",
+            markup: shown.screen.keyboard,
+            mark: screenMark(shown.screen.id),
+          });
+    if (sent?.kind !== "shown") {
+      await ctx.waiting?.answer(promoUnavailableText);
+    }
+    return {
+      level: "info",
+      message:
+        sent?.kind === "shown"
+          ? "auction promo video sent"
+          : "auction promo video unavailable",
       result: "ok",
       use_case: useCase,
       identity_id: person.identityId,
@@ -10241,6 +12235,8 @@ async function readLiveConsole(
           console: result.console,
           page: entry.view.page,
           sort: entry.view.sort,
+          // «Промо-видео» пульта ведущего (PER-802) живёт и в живой правке.
+          ...(entry.view.media === true ? { media: true } : {}),
           timeZone: runtime.communityTimeZone ?? "UTC",
           today: (runtime.today ?? utcToday)(),
         },
@@ -11156,14 +13152,20 @@ async function renderFormResult(
 // пересылает без ответа. Пересылка, фото или документ без ответа идут ответом
 // на открытый вопрос об источнике материала того же человека. Набранный текст
 // так не идёт: подпись к пересылке приходит отдельным сообщением до неё и
-// иначе сняла бы вопрос отказом. Вопрос, заданный до рестарта, карта уже не
+// иначе сняла бы вопрос отказом. Набранная ссылка на сообщение — идёт: она
+// сама источник (PER-762). Вопрос, заданный до рестарта, карта уже не
 // знает, и такое сообщение получает подсказку, как раньше.
 function openMaterialSourceQuestion(
   ctx: UpdateContext,
   questions: Map<string, PendingInput>,
 ): number | undefined {
   const message = ctx.message;
-  if (message === undefined || isTypedText(message)) return undefined;
+  if (
+    message === undefined ||
+    (isTypedText(message) && parseMaterialInput(message) === undefined)
+  ) {
+    return undefined;
+  }
   const prefix = `${ctx.chat?.id ?? "unknown"}:`;
   let found: number | undefined;
   for (const [key, question] of questions) {
@@ -11274,6 +13276,14 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-set",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-section":
+      return {
+        kind: "console-section",
+        auction: uuidToToken(pending.auctionId),
+        ...(pending.sectionId === undefined
+          ? {}
+          : { section: pending.sectionId }),
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -11291,6 +13301,44 @@ function stepOf(pending: PendingBody): QuestionStep {
       return {
         kind: "console-raffle-prize-change",
         auction: uuidToToken(pending.auctionId),
+      };
+    case "console-raffle-prize-photo":
+      return {
+        kind: "console-raffle-prize-photo",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "console-promo-video":
+      return {
+        kind: "console-promo-video",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "console-period":
+      return {
+        kind: "console-period",
+        auction: uuidToToken(pending.auctionId),
+      };
+    case "happy-hour-lot":
+      return {
+        kind: "happy-hour-lot",
+        lot: uuidToToken(pending.lotId),
+        period: pending.period,
+        field: pending.field,
+      };
+    case "console-announcement":
+      return {
+        kind: "console-announcement",
+        auction: uuidToToken(pending.auctionId),
+        template: pending.template,
+        ...(pending.ref === undefined ? {} : { ref: pending.ref }),
+      };
+    case "console-announcement-media":
+      return {
+        kind: "console-announcement-media",
+        auction: uuidToToken(pending.auctionId),
+        button: pending.button,
+        print: pending.print,
+        audience: pending.audience,
+        ...(pending.lot === undefined ? {} : { lot: pending.lot }),
       };
     default: {
       const _exhaustive: never = pending;
@@ -11526,6 +13574,14 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-section":
+      return {
+        kind: "console-section",
+        auctionId: tokenToUuid(step.auction),
+        ...(step.section === undefined ? {} : { sectionId: step.section }),
+        telegramUserId,
+        expiresAt,
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -11552,6 +13608,56 @@ function pendingOf(
       return {
         kind: "console-raffle-prize-change",
         auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-raffle-prize-photo":
+      return {
+        kind: "console-raffle-prize-photo",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-promo-video":
+      return {
+        kind: "console-promo-video",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-period":
+      return {
+        kind: "console-period",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
+    case "happy-hour-lot":
+      return {
+        kind: "happy-hour-lot",
+        lotId: tokenToUuid(step.lot),
+        period: step.period,
+        field: step.field,
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-announcement":
+      return {
+        kind: "console-announcement",
+        auctionId: tokenToUuid(step.auction),
+        template: step.template,
+        ...(step.ref === undefined ? {} : { ref: step.ref }),
+        telegramUserId,
+        expiresAt,
+      };
+    case "console-announcement-media":
+      return {
+        kind: "console-announcement-media",
+        auctionId: tokenToUuid(step.auction),
+        button: step.button,
+        print: step.print,
+        audience: step.audience,
+        ...(step.lot === undefined ? {} : { lot: step.lot }),
         telegramUserId,
         expiresAt,
       };
@@ -11614,16 +13720,24 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "lot-image":
     case "lot-copies":
       return { kind: "lot-form", lot: step.lot };
-    case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-raffle-prize-change":
+      // Вопросы о розыгрыше, о призе и о новом призе идущего розыгрыша заданы
+      // с «Розыгрыша» пульта (PER-802).
+      return {
+        kind: "console-view",
+        auction: step.auction,
+        page: 0,
+        sort: defaultConsoleSort,
+        section: "raffle",
+      };
+    case "console-week":
     case "console-payment-term":
     case "console-final-time":
-    case "console-raffle-prize-change":
     case "final-ask":
-      // Вопросы о сроках, о розыгрыше, о призе, о сроке оплаты, о времени
-      // финала, о новом призе идущего розыгрыша и о цене заданы с пульта
-      // аукциона.
+      // Вопросы о сроках, о сроке оплаты, о времени финала и о цене заданы с
+      // пульта аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -11641,12 +13755,38 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-set":
       // Вопрос о названии сета задан с «Сетов».
       return { kind: "console-sets", auction: step.auction };
+    case "console-section":
+      // Новый раздел заводят с «Порядка», переименовывают — со списка раздела.
+      return step.section === undefined
+        ? { kind: "console-layout", auction: step.auction }
+        : {
+            kind: "console-layout-list",
+            auction: step.auction,
+            place: step.section,
+            page: 0,
+          };
     case "console-payment-text":
       // Вопрос о тексте оплаты задан со «Счетов».
       return { kind: "console-invoices", auction: step.auction, page: 0 };
     case "console-raffle-winner":
       // Вопрос о номере победителя задан с «Итога розыгрыша».
       return { kind: "console-raffle-winner", auction: step.auction, page: 0 };
+    case "console-raffle-prize-photo":
+      // Вопрос о фото приза задан с экрана «Фото приза».
+      return { kind: "console-raffle-prize-photo", auction: step.auction };
+    case "console-announcement":
+    case "console-announcement-media":
+      // Вопросы объявления заданы с меню «Объявления» и его шагов.
+      return { kind: "console-announcement", auction: step.auction };
+    case "console-promo-video":
+      // Вопрос о видео задан с экрана «Промо-видео».
+      return { kind: "console-promo-video", auction: step.auction };
+    case "console-period":
+      // Вопрос о сроках периода задан с «Периодов».
+      return { kind: "console-periods", auction: step.auction };
+    case "happy-hour-lot":
+      // Вопрос о сумме задан с условий лота в периоде.
+      return { kind: "lot-happy-hour", lot: step.lot, period: step.period };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -11692,6 +13832,8 @@ async function askQuestion(
   // Кнопка над «Отменой», которая тоже уводит от вопроса: «Пропустить» фото
   // нового лота (PER-618).
   above?: { text: string; data: string },
+  // Вопрос с разметкой: черновик объявления блоком `<code>` (PER-765).
+  format?: "HTML",
 ): Promise<void> {
   if (ctx.callbackQuery !== undefined && ctx.pressedGone !== true) {
     await clearCallbackKeyboard(ctx);
@@ -11704,6 +13846,7 @@ async function askQuestion(
   );
   const prompt = await ctx.reply(text, {
     ...screenMark("question"),
+    ...(format === undefined ? {} : { parse_mode: format }),
     reply_markup: {
       force_reply: true,
       inline_keyboard: keyboard.inline_keyboard,
@@ -11821,6 +13964,8 @@ function reopenData(step: QuestionStep): string {
       return consoleWindowLaunchData(step.auction);
     case "console-set":
       return consoleSetAskData(step.auction);
+    case "console-section":
+      return consoleSectionAskData(step.auction, step.section);
     case "final-ask":
       return consoleAskData(step.auction, step.position);
     case "floor-search":
@@ -11829,6 +13974,20 @@ function reopenData(step: QuestionStep): string {
       return consoleRaffleWinnerAskData(step.auction);
     case "console-raffle-prize-change":
       return consoleRafflePrizeChangeData(step.auction);
+    case "console-raffle-prize-photo":
+      return consoleRafflePrizePhotoAskData(step.auction);
+    case "console-promo-video":
+      return consolePromoVideoAskData(step.auction);
+    case "console-period":
+      return consolePeriodAskData(step.auction);
+    case "happy-hour-lot":
+      return lotHappyHourAskData(step.lot, step.period, step.field);
+    case "console-announcement":
+      return consoleAnnouncementAskData(step.auction, step.template, step.ref);
+    // Текст объявления в кнопку не помещается: «Ввести заново» начинает
+    // объявление с меню (PER-776).
+    case "console-announcement-media":
+      return consoleAnnouncementData(step.auction);
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -11872,12 +14031,13 @@ function answerParent(step: QuestionStep): Parent {
     case "lot-image":
     case "lot-copies":
       return toLot(tokenToUuid(step.lot));
-    case "console-week":
     case "console-raffle":
     case "console-raffle-prize":
+    case "console-raffle-prize-change":
+      return { name: "Розыгрыш", data: consoleRaffleScreenData(step.auction) };
+    case "console-week":
     case "console-payment-term":
     case "console-final-time":
-    case "console-raffle-prize-change":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
     case "console-window":
@@ -11894,6 +14054,13 @@ function answerParent(step: QuestionStep): Parent {
       };
     case "console-set":
       return { name: "Сеты", data: consoleSetsData(step.auction) };
+    case "console-section":
+      return step.section === undefined
+        ? { name: "Порядок", data: consoleLayoutData(step.auction) }
+        : {
+            name: "Список",
+            data: consoleLayoutListData(step.auction, step.section),
+          };
     case "console-payment-text":
       return {
         name: invoicesLabel,
@@ -11903,6 +14070,29 @@ function answerParent(step: QuestionStep): Parent {
       return {
         name: raffleWinnerLabel,
         data: consoleRaffleWinnerData(step.auction),
+      };
+    case "console-raffle-prize-photo":
+      return {
+        name: rafflePrizePhotoLabel,
+        data: consoleRafflePrizePhotoData(step.auction),
+      };
+    case "console-announcement":
+    case "console-announcement-media":
+      return {
+        name: "Объявление",
+        data: consoleAnnouncementData(step.auction),
+      };
+    case "console-promo-video":
+      return {
+        name: "Промо-видео",
+        data: consolePromoVideoData(step.auction),
+      };
+    case "console-period":
+      return { name: periodsTitle, data: consolePeriodsData(step.auction) };
+    case "happy-hour-lot":
+      return {
+        name: `Период ${step.period.index + 1}`,
+        data: lotHappyHourData(step.lot, step.period),
       };
     default: {
       const _exhaustive: never = step;
@@ -12072,6 +14262,33 @@ function createSeenAlbums(): SeenAlbums {
   };
 }
 
+// Пост чата медиа, опубликованный из ответа человека (PER-793): повторная
+// доставка того же ответа берёт пост отсюда, и второго поста в канале нет.
+// Память процесса, как у альбомов: после рестарта повтор опубликует пост
+// заново, Auction откажет тому же `op_id` с другим постом, а адаптер прочтёт
+// отказ как прикреплённое видео — первым постом; второй останется в канале.
+type PublishedPosts = {
+  postOf(source: string): number | undefined;
+  remember(source: string, postId: number): void;
+};
+
+function createPublishedPosts(): PublishedPosts {
+  const posts = new Map<string, number>();
+  return {
+    postOf(source) {
+      return posts.get(source);
+    },
+    remember(source, postId) {
+      posts.delete(source);
+      posts.set(source, postId);
+      if (posts.size > albumMemory) {
+        const oldest = posts.keys().next().value;
+        if (oldest !== undefined) posts.delete(oldest);
+      }
+    },
+  };
+}
+
 function communityToday(ctx: UpdateContext) {
   return (ctx.today ?? utcToday)();
 }
@@ -12204,6 +14421,33 @@ function callbackUseCase(
     | "console-raffle-winner-confirm"
     | "console-raffle-prize-change"
     | "console-raffle-prize-change-confirm"
+    | "console-raffle-prize-photo"
+    | "console-raffle-prize-photo-ask"
+    | "console-raffle-prize-photo-remove"
+    | "console-raffle-prize-photo-remove-confirm"
+    | "console-promo-video"
+    | "console-promo-video-ask"
+    | "console-promo-video-remove"
+    | "console-promo-video-remove-confirm"
+    | "console-periods"
+    | "console-period-ask"
+    | "console-period"
+    | "console-period-remove"
+    | "console-period-remove-confirm"
+    | "lot-happy-hours"
+    | "lot-happy-hour"
+    | "lot-happy-hour-ask"
+    | "lot-happy-hour-clear"
+    | "console-announcement"
+    | "console-announcement-windows"
+    | "console-announcement-lots"
+    | "console-announcement-ask"
+    | "console-announcement-button"
+    | "console-announcement-photo"
+    | "console-announcement-media"
+    | "console-announcement-send"
+    | "console-announcement-audience"
+    | "console-announcement-recipients"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
@@ -12218,6 +14462,15 @@ function callbackUseCase(
     | "console-set-lot"
     | "console-set-delete"
     | "console-set-delete-confirm"
+    | "console-layout"
+    | "console-layout-list"
+    | "console-layout-lot"
+    | "console-layout-lot-move"
+    | "console-layout-lot-place"
+    | "console-section-ask"
+    | "console-section-move"
+    | "console-section-delete"
+    | "console-section-delete-confirm"
     | "manage-publish"
     | "manage-confirm-publish"
     | "manage-unpublish"
@@ -12411,6 +14664,33 @@ function callbackUseCase(
     case "console-raffle-winner-confirm":
     case "console-raffle-prize-change":
     case "console-raffle-prize-change-confirm":
+    case "console-raffle-prize-photo":
+    case "console-raffle-prize-photo-ask":
+    case "console-raffle-prize-photo-remove":
+    case "console-raffle-prize-photo-remove-confirm":
+    case "console-promo-video":
+    case "console-promo-video-ask":
+    case "console-promo-video-remove":
+    case "console-promo-video-remove-confirm":
+    case "console-periods":
+    case "console-period-ask":
+    case "console-period":
+    case "console-period-remove":
+    case "console-period-remove-confirm":
+    case "lot-happy-hours":
+    case "lot-happy-hour":
+    case "lot-happy-hour-ask":
+    case "lot-happy-hour-clear":
+    case "console-announcement":
+    case "console-announcement-windows":
+    case "console-announcement-lots":
+    case "console-announcement-ask":
+    case "console-announcement-button":
+    case "console-announcement-photo":
+    case "console-announcement-media":
+    case "console-announcement-send":
+    case "console-announcement-audience":
+    case "console-announcement-recipients":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":
@@ -12427,6 +14707,15 @@ function callbackUseCase(
     case "console-set-lot":
     case "console-set-delete":
     case "console-set-delete-confirm":
+    case "console-layout":
+    case "console-layout-list":
+    case "console-layout-lot":
+    case "console-layout-lot-move":
+    case "console-layout-lot-place":
+    case "console-section-ask":
+    case "console-section-move":
+    case "console-section-delete":
+    case "console-section-delete-confirm":
       return "manage_auction";
     case "home":
     case "apply":
@@ -12453,6 +14742,9 @@ function callbackUseCase(
 // идентификатор нового сета — у одного сообщения бывает и ключ команды, и id.
 type AnswerKeyPurpose =
   | ConsoleQuestionPending["kind"]
+  | "console-raffle-prize-photo"
+  | "console-promo-video"
+  | "happy-hour-lot"
   | "final-ask"
   | "console-set-id";
 
@@ -12742,6 +15034,9 @@ function writeBoundary(
   }
   if (ctx.postersRejected !== undefined) {
     fields.posters_error = ctx.postersRejected;
+  }
+  if (outcome.result === "ok" && outcome.message_kind !== undefined) {
+    fields.message_kind = outcome.message_kind;
   }
   if (outcome.result === "error") {
     countFailure(outcome.error_category);

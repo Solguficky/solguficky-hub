@@ -27,6 +27,7 @@ import type {
 } from "../../core/auction/watch.js";
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createLogger, type Logger } from "../../core/logging.js";
+import { createMediaChat, type MediaChat } from "../../core/media-chat.js";
 import type {
   AuctionNotificationChange,
   AuctionNotificationSettings,
@@ -104,6 +105,8 @@ function makeBot(
     live?: Parameters<typeof createBot>[0]["live"];
     // Отказ с кодом, а не 400: `429` и `403` у правки вне update.
     refuseWith?: Record<string, { code: number; description: string }>;
+    // Чат медиа ботов (PER-774): промо-видео аукциона.
+    media?: MediaChat;
   } = {},
 ) {
   const bot = createBot({
@@ -121,6 +124,7 @@ function makeBot(
       ? {}
       : { supportBotUsername: options.supportBotUsername }),
     ...(options.live === undefined ? {} : { live: options.live }),
+    ...(options.media === undefined ? {} : { media: options.media }),
     botInfo,
   });
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -304,6 +308,9 @@ function portsWith(
       getMyPredictions: async () => [],
       getPredictionResults: async () => ({ kind: "after-final" as const }),
       getDayChronicle: async () => {
+        throw new Error("not used");
+      },
+      getAuctionChronicle: async () => {
         throw new Error("not used");
       },
       submitPrediction: async () => {
@@ -779,7 +786,7 @@ describe("auction bot", () => {
         inline_keyboard: [
           [
             {
-              text: "🔨 Лоты",
+              text: "🏷️ Лоты",
               callback_data: encodeAuctionCallback({
                 kind: "feed",
                 auctionId,
@@ -787,7 +794,8 @@ describe("auction bot", () => {
               }),
             },
           ],
-          // Онлайн-неделя: вход в «Хроники дня» (PER-725).
+          // Онлайн-неделя: вход в «Хроники дня» (PER-725) своим рядом;
+          // «Статистики» в боте аукциона нет никому (PER-800).
           [
             {
               text: "Хроники дня",
@@ -917,6 +925,51 @@ describe("auction bot", () => {
         ],
       },
     });
+  });
+
+  // Строка состояния (PER-767): под строкой аукциона в «Аукционах» — день
+  // недели, идущее окно и розыгрыш; текст общий с хабом. Экран идёт через
+  // линтер харнесса.
+  it("shows the status line under the active auction", async () => {
+    vi.useFakeTimers({
+      toFake: ["Date"],
+      now: new Date("2026-10-13T16:00:00Z"),
+    });
+    try {
+      const { bot, calls } = makeBot(
+        portsWith({
+          auctions: {
+            active: [
+              {
+                ...activeAuction,
+                week: {
+                  stage: "prebidding",
+                  opensAt: "2026-10-09T21:00:00Z",
+                  closesAt: "2026-10-16T21:00:00Z",
+                  stepWindows: [
+                    {
+                      from: "2026-10-13T15:00:00Z",
+                      until: "2026-10-13T19:00:00Z",
+                      lotIds: ["lot"],
+                    },
+                  ],
+                  raffleClosesAt: "2026-10-15T18:00:00Z",
+                },
+              },
+            ],
+          },
+        }),
+      );
+      await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
+      const text = String(
+        (calls.at(-1)?.payload as { text?: string } | undefined)?.text,
+      );
+      expect(text).toContain(
+        "\nдень 4 из 7 · 🔥 Счастливые часы до 22:00 · розыгрыш: регистрация до 15.10",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("answers unavailable when the auction list cannot be read", async () => {
@@ -2871,7 +2924,7 @@ describe("happy hours", () => {
     const { bot, calls } = makeBot(portsWith(overrides));
     await bot.handleUpdate(lotPress());
     expect(shown(calls)).toContain("По шагу (1 210 ₽)");
-    expect(shown(calls)).toContain("Счастливые часы: шаг 10 ₽ до");
+    expect(shown(calls)).toContain("Счастливые часы до");
     // Окно кончилось: тот же процесс читает новый снимок по «Обновить».
     overrides.lot = {
       nextPrice: rub(1250),
@@ -3160,7 +3213,121 @@ const openRaffle: RaffleView = {
   tickets: [],
 };
 
+// Программа недели (PER-724): абзац корня аукциона по сводке и розыгрышу.
+describe("week programme in the auction root", () => {
+  const inHours = (hours: number) =>
+    new Date(Date.now() + hours * 3_600_000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
+  function programmePorts(
+    getRaffle: () => Promise<RaffleView | undefined>,
+  ): PortsFactory {
+    return (requestId, deadlineAt) => {
+      const ports = publicPorts(requestId, deadlineAt);
+      return {
+        ...ports,
+        auction: {
+          ...ports.auction,
+          getAuction: async () => ({
+            auctionId,
+            stage: "prebidding" as const,
+            opensAt: inHours(-48),
+            closesAt: inHours(96),
+            final: true,
+            finalAt: inHours(100),
+            stepWindows: [
+              { from: inHours(-1), until: inHours(1), lotIds: ["a", "b", "c"] },
+            ],
+          }),
+          getRaffle,
+        },
+      };
+    };
+  }
+
+  it("shows the happy hours, the raffle, the deadline and the final", async () => {
+    const { bot, calls } = makeBot(
+      programmePorts(async () => ({ ...openRaffle, closesAt: inHours(50) })),
+    );
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    const root = lastScreen(calls);
+    expect(root.text).toContain("<b>Программа недели</b>");
+    expect(root.text).toMatch(
+      /Счастливые часы: сейчас, до (?:.+, )?\d\d:\d\d — 3 лота/,
+    );
+    expect(root.text).toContain("Розыгрыш: ");
+    expect(root.text).toContain("Онлайн-торги до ");
+    expect(root.text).toContain("Финал: ориентировочно ");
+  });
+
+  // Отказ чтения розыгрыша убирает его строку и кнопку, а не корень.
+  it("keeps the root without the raffle line when the raffle read fails", async () => {
+    const { bot, calls } = makeBot(
+      programmePorts(async () => {
+        throw new Error("auction unavailable");
+      }),
+    );
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    const root = lastScreen(calls);
+    expect(root.text).toContain("<b>Программа недели</b>");
+    expect(root.text).not.toContain("Розыгрыш");
+    expect(root.text).toContain("Финал: ориентировочно ");
+    expect(root.keyboard.flat().map((button) => button.text)).not.toContain(
+      "Розыгрыш",
+    );
+  });
+});
+
 describe("raffle among the participants", () => {
+  // «🏷️ Лоты» — своим рядом, «Розыгрыш» и «Прогнозы» — парой под ним, как в
+  // хабе (решение владельца по прогону stage 27.10, PER-798).
+  it("puts the raffle and the predictions in one row under the lots", async () => {
+    const withPredictions =
+      (factory: PortsFactory): PortsFactory =>
+      (requestId, deadlineAt) => {
+        const ports = factory(requestId, deadlineAt);
+        return {
+          ...ports,
+          auction: {
+            ...ports.auction,
+            getMyPredictions: async () => [
+              {
+                round: "catalog" as const,
+                status: "open" as const,
+                answers: [],
+              },
+            ],
+          },
+        };
+      };
+    const rootRows = async (ports: PortsFactory) => {
+      const { bot, calls } = makeBot(ports);
+      await bot.handleUpdate(
+        press(encodeAuctionCallback({ kind: "root", auctionId })),
+      );
+      return lastScreen(calls)
+        .keyboard.slice(0, 2)
+        .map((row) => row.map((button) => button.text));
+    };
+    const raffle = withRaffle(publicPorts, raffleService(openRaffle));
+
+    expect(await rootRows(withPredictions(raffle))).toEqual([
+      ["🏷️ Лоты"],
+      ["Розыгрыш", "Прогнозы"],
+    ]);
+    expect(await rootRows(withPredictions(publicPorts))).toEqual([
+      ["🏷️ Лоты"],
+      ["Прогнозы"],
+    ]);
+    expect(await rootRows(raffle)).toEqual([["🏷️ Лоты"], ["Розыгрыш"]]);
+  });
+
   // Вход — «Розыгрыш» в корне аукциона, как в хабе (PER-644).
   it("registers from the auction root, shows the commitment and then the result", async () => {
     const service = raffleService(openRaffle);
@@ -3299,6 +3466,61 @@ describe("raffle among the participants", () => {
         .keyboard.flat()
         .map((b) => b.text),
     ).toEqual(["‹ Аукцион"]);
+  });
+
+  // Фото приза (PER-773): первым блоком rich-сообщения над заголовком, как
+  // фото лота, `file_id` — в тот же кэш; фото не прочиталось — тот же экран
+  // без фото, а не сбой.
+  it("shows the prize photo above the raffle and the raffle without it when unreadable", async () => {
+    const service = raffleService({
+      ...openRaffle,
+      prize: "Кружка",
+      prizePhoto: { photoId: "prize-1", version: "prize-v1" },
+    });
+    const withPhoto =
+      (
+        getRafflePrizePhoto: NonNullable<LotImagePort["getRafflePrizePhoto"]>,
+      ): PortsFactory =>
+      (requestId, deadlineAt) => {
+        const ports = withRaffle(publicPorts, service)(requestId, deadlineAt);
+        return { ...ports, image: { ...ports.image, getRafflePrizePhoto } };
+      };
+    const raffleData = encodeAuctionCallback({ kind: "raffle", auctionId });
+    const getRafflePrizePhoto = vi.fn(async () => ({
+      content: new Uint8Array([9]),
+      mediaType: "image/jpeg",
+      version: "prize-v1",
+    }));
+    const { bot, calls } = makeBot(withPhoto(getRafflePrizePhoto), {
+      photos: createPhotoCache(),
+    });
+    await bot.handleUpdate(press(raffleData));
+    await bot.handleUpdate(press(raffleData));
+
+    expect(getRafflePrizePhoto).toHaveBeenCalledTimes(1);
+    const edits = calls.filter((call) => call.method === "editMessageText");
+    const first = edits[0]?.payload as { rich_message: { html: string } };
+    expect(first.rich_message.html).toMatch(
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>Розыгрыш среди участников<\/h1>/,
+    );
+    expect(first.rich_message.html).toContain("<p>Приз: Кружка</p>");
+    expect(edits[1]?.payload).toMatchObject({
+      rich_message: { media: [{ id: "lot", media: { media: "large" } }] },
+    });
+
+    const failing = makeBot(
+      withPhoto(async () => {
+        throw new Error("no prize photo");
+      }),
+    );
+    await failing.bot.handleUpdate(press(raffleData));
+    const screen = lastScreen(failing.calls);
+    expect(screen.text).toMatch(/^<h1>Розыгрыш среди участников<\/h1>/);
+    expect(screen.keyboard.flat().map((b) => b.text)).toEqual([
+      "Зарегистрироваться",
+      "Как проверить честность",
+      "‹ Аукцион",
+    ]);
   });
 
   // Отменённый вместе с аукционом розыгрыш (PER-698): «Розыгрыш» корня ведёт
@@ -3675,5 +3897,154 @@ describe("final lot card", () => {
     );
     // Карточка после отказа остаётся живой.
     expect(stream.listeners.size).toBe(1);
+  });
+});
+
+// Промо-видео (PER-774): «🎬 Промо» в корне аукциона, пока у аукциона есть видео
+// и у бота чат медиа; нажатие присылает копию поста новым сообщением, а
+// удалённый пост — ответ на нажатие «видео недоступно», и корень цел.
+describe("promo video in the auction root", () => {
+  const mediaChannelId = -1001234567890;
+  const media = createMediaChat({
+    channelId: mediaChannelId,
+    logger: { warn: () => {} },
+  });
+  const promoPorts =
+    (withMedia: boolean): PortsFactory =>
+    (requestId, deadlineAt) => {
+      const ports = publicPorts(requestId, deadlineAt);
+      return {
+        ...ports,
+        ...(withMedia ? { media: true as const } : {}),
+        auction: {
+          ...ports.auction,
+          getAuction: async () => ({
+            auctionId,
+            stage: "prebidding" as const,
+            final: false,
+            promoVideo: 77,
+          }),
+        },
+      };
+    };
+  const toasts = (calls: Array<{ method: string; payload: unknown }>) =>
+    calls
+      .filter((call) => call.method === "answerCallbackQuery")
+      .map((call) => (call.payload as { text?: string }).text)
+      .filter((text) => text !== undefined);
+
+  it("sends the post with a way back and keeps the root", async () => {
+    const { bot, calls } = makeBot(promoPorts(true), { media });
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    const root = lastScreen(calls);
+    // «🎬 Промо» — первым рядом парой с «🏷️ Лотами» (PER-798).
+    expect(root.keyboard[0]?.map((button) => button.text)).toEqual([
+      "🏷️ Лоты",
+      "🎬 Промо",
+    ]);
+    const promo = root.keyboard
+      .flat()
+      .find((button) => button.text === "🎬 Промо");
+    expect(promo?.callback_data).toBe(
+      encodeAuctionCallback({ kind: "promo", auctionId }),
+    );
+
+    const before = calls.length;
+    await bot.handleUpdate(press(promo?.callback_data ?? ""));
+    const sent = calls.slice(before);
+    expect(
+      sent.filter((call) => call.method !== "answerCallbackQuery"),
+    ).toEqual([
+      {
+        method: "copyMessage",
+        payload: expect.objectContaining({
+          chat_id: privateChat.id,
+          from_chat_id: mediaChannelId,
+          message_id: 77,
+          caption: "<b>Промо-видео</b>",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "‹ Аукцион",
+                  callback_data: encodeAuctionCallback({
+                    kind: "root",
+                    auctionId,
+                  }),
+                },
+              ],
+            ],
+          },
+        }),
+      },
+    ]);
+    expect(toasts(calls)).toEqual([]);
+  });
+
+  it("opens the root as a new message under the video", async () => {
+    const { bot, calls } = makeBot(promoPorts(true), { media });
+    const update = press(encodeAuctionCallback({ kind: "root", auctionId }));
+    (
+      update.callback_query as unknown as { message: Record<string, unknown> }
+    ).message = {
+      message_id: 7,
+      date: 0,
+      chat: privateChat,
+      video: {
+        file_id: "v",
+        file_unique_id: "u",
+        width: 1,
+        height: 1,
+        duration: 3,
+      },
+      caption: "Промо-видео",
+    };
+    await bot.handleUpdate(update);
+    const methods = calls.map((call) => call.method);
+    expect(methods).not.toContain("editMessageText");
+    expect(methods).toContain("sendMessage");
+    expect(methods).toContain("editMessageReplyMarkup");
+  });
+
+  it("answers that the video is unavailable when the post is gone", async () => {
+    const { bot, calls } = makeBot(promoPorts(true), {
+      media,
+      refuse: { copyMessage: "Bad Request: message to copy not found" },
+    });
+    const before = calls.length;
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "promo", auctionId })),
+    );
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(
+      calls
+        .slice(before)
+        .map((call) => call.method)
+        .filter((method) => method !== "answerCallbackQuery"),
+    ).toEqual(["copyMessage"]);
+  });
+
+  it("has no button without the media chat and answers a forged one", async () => {
+    const { bot, calls } = makeBot(promoPorts(false));
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
+    );
+    expect(
+      lastScreen(calls)
+        .keyboard.flat()
+        .map((button) => button.text),
+    ).not.toContain("🎬 Промо");
+    // Без промо «🏷️ Лоты» — своим рядом (PER-798).
+    expect(lastScreen(calls).keyboard[0]?.map((button) => button.text)).toEqual(
+      ["🏷️ Лоты"],
+    );
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "promo", auctionId })),
+    );
+    expect(toasts(calls)).toEqual(["Видео недоступно."]);
+    expect(calls.map((call) => call.method)).not.toContain("copyMessage");
   });
 });

@@ -212,6 +212,125 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(without) shouldBe cleared
     }
 
+    "keeps the stored form of the promo video and reads it back" in {
+      keepsGolden("promo-video-set", stored(AuctionEvent.PromoVideoSet(PromoVideo.parse(4321).get), 7))
+      keepsGolden("promo-video-cleared", stored(AuctionEvent.PromoVideoCleared, 8))
+    }
+
+    // Номер шире `Int`: Jackson, стерев тип внутри `Option`, прочёл бы его другим числом или упал.
+    "keeps the promo video in the snapshot and reads it back" in {
+      val video = PromoVideo.parse(3_000_000_000L).get
+      val withVideo = Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.PromoVideoSet(video)))
+      val stored = AuctionJournal.storeAuction(withVideo, sequence = 5)
+      stored.promoVideo shouldBe Some(StoredPromoVideo(3_000_000_000L))
+      read(kit.system, write(kit.system, stored)) shouldBe stored
+      AuctionJournal.restoreAuction(stored) shouldBe withVideo
+      val cleared = Auction.apply(withVideo, AuctionEnvelope(6, op(6), AuctionEvent.PromoVideoCleared))
+      val without = AuctionJournal.storeAuction(cleared, sequence = 6)
+      without.promoVideo shouldBe None
+      AuctionJournal.restoreAuction(without) shouldBe cleared
+    }
+
+    // Строка, записанная до промо-видео (PER-781): аукцион без видео.
+    "reads a snapshot written before the promo video as an auction without one" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).promoVideo shouldBe None
+    }
+
+    "keeps the stored form of the happy hour periods and of a snapshot that holds one equal to their golden files" in {
+      def at(time: String) = java.time.Instant.parse(time)
+      val kept = HappyHourPeriod(HappyHourPeriod.idOf(op(5)), at("2026-10-05T12:00:00Z"), at("2026-10-05T14:00:00Z"))
+      val dropped = HappyHourPeriod(HappyHourPeriod.idOf(op(6)), at("2026-10-06T12:00:00Z"), at("2026-10-06T13:00:00Z"))
+      val created = AuctionEnvelope(5, op(5), AuctionEvent.HappyHourPeriodCreated(kept))
+      val deleted = AuctionEnvelope(7, op(7), AuctionEvent.HappyHourPeriodDeleted(dropped.id))
+      keepsGolden("happy-hour-period-created", stored(created.event, 5))
+      keepsGolden("happy-hour-period-deleted", stored(deleted.event, 7))
+      val after = Auction.replay(
+        prebidding,
+        List(created, AuctionEnvelope(6, op(6), AuctionEvent.HappyHourPeriodCreated(dropped)), deleted)
+      )
+      after.happyHours shouldBe List(kept)
+      keepsGolden("auction-snapshot-happy-hours", AuctionJournal.storeAuction(after, sequence = 7))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 7)) shouldBe after
+    }
+
+    "keeps the stored form of the terms of lots in periods and of a snapshot that holds them equal to golden files" in {
+      def at(time: String) = java.time.Instant.parse(time)
+      val kept = HappyHourPeriod(HappyHourPeriod.idOf(op(5)), at("2026-10-05T12:00:00Z"), at("2026-10-05T14:00:00Z"))
+      val dropped = HappyHourPeriod(HappyHourPeriod.idOf(op(6)), at("2026-10-06T12:00:00Z"), at("2026-10-06T13:00:00Z"))
+      val keptTerms = HappyHourTerms(Some(money(50)), Some(money(600)))
+      val droppedTerms = HappyHourTerms(None, Some(money(500)))
+      keepsGolden("happy-hour-lot-terms-set", stored(AuctionEvent.HappyHourLotTermsSet(kept.id, lot, keptTerms), 7))
+      keepsGolden("happy-hour-lot-terms-cleared", stored(AuctionEvent.HappyHourLotTermsCleared(kept.id, lot), 8))
+      val after = Auction.replay(
+        prebidding,
+        List(
+          AuctionEnvelope(5, op(5), AuctionEvent.HappyHourPeriodCreated(kept)),
+          AuctionEnvelope(6, op(6), AuctionEvent.HappyHourPeriodCreated(dropped)),
+          AuctionEnvelope(7, op(7), AuctionEvent.HappyHourLotTermsSet(kept.id, lot, keptTerms)),
+          AuctionEnvelope(8, op(8), AuctionEvent.HappyHourLotTermsSet(dropped.id, lot, droppedTerms)),
+          AuctionEnvelope(9, op(9), AuctionEvent.HappyHourPeriodDeleted(dropped.id))
+        )
+      )
+      after.periodTerms shouldBe List(
+        PeriodLotTerms(kept.id, lot, Some(keptTerms), op(7)),
+        PeriodLotTerms(dropped.id, lot, None, op(9))
+      )
+      keepsGolden("auction-snapshot-happy-hour-terms", AuctionJournal.storeAuction(after, sequence = 9))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 9)) shouldBe after
+    }
+
+    // Снимок, записанный до условий лотов в периодах (PER-786): аукцион без них.
+    "reads a snapshot written before the terms of lots in periods as an auction without them" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).periodTerms shouldBe empty
+    }
+
+    "refuses terms of a lot in a period that set neither a step nor a starting price" in {
+      val terms = HappyHourTerms(None, Some(money(1)))
+      val body = stored(AuctionEvent.HappyHourLotTermsSet(HappyHourPeriod.idOf(op(5)), lot, terms), 7).event
+      val section = body.happyHourLotTermsSet.map(_.copy(terms = StoredHappyHourTerms(None, None)))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(body.copy(happyHourLotTermsSet = section))
+    }
+
+    // Снимок, записанный до периодов «Счастливых часов»: аукцион без периодов.
+    "reads a snapshot written before the happy hour periods as an auction without one" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).happyHours shouldBe empty
+    }
+
+    "refuses a happy hour period that ends before it starts instead of recording it" in {
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(5)), decidedAt, decidedAt)
+      val body = stored(AuctionEvent.HappyHourPeriodCreated(period), 5).event
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(body)
+    }
+
+    "keeps the stored form of the lot layout and of a snapshot that holds it equal to their golden files" in {
+      def section(id: Int, name: String, lots: LotId*) =
+        LotSection(LotSectionId(id).get, LotSectionName(name).get, lots.toList)
+      val event = LotLayout.of(List(LotId(uuid(12))), List(section(1, "Книги и комиксы", lot))).toOption.get
+      keepsGolden("lot-layout-set", stored(AuctionEvent.LotLayoutSet(event), 5))
+
+      val books = LotLayout.of(Nil, List(section(1, "Книги", lot))).toOption.get
+      val withLayout = Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.LotLayoutSet(books)))
+      withLayout.layout shouldBe books
+      keepsGolden("auction-snapshot-layout", AuctionJournal.storeAuction(withLayout, sequence = 5))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(withLayout, sequence = 5)) shouldBe withLayout
+    }
+
+    // Строка, записанная до раскладки ленты (PER-719): лента в порядке создания.
+    "reads a snapshot written before the lot layout as an auction without one" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).layout shouldBe LotLayout.empty
+    }
+
+    "refuses a stored lot layout that names a lot twice" in {
+      val twice = StoredAuctionEventBody
+        .of("LotLayoutSet")
+        .copy(lotLayout = Some(StoredLotLayout(List(uuid(11)), List(StoredLotSection(1, "Книги", List(uuid(11)))))))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(twice)
+    }
+
     // Строка, записанная до текста оплаты (PER-322): аукцион без текста.
     "reads a snapshot written before the payment instructions as an auction without them" in {
       val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))

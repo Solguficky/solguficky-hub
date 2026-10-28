@@ -1,4 +1,7 @@
+using Notifications.Auction;
+using Notifications.Broadcasts;
 using Notifications.Domain;
+using Notifications.Infrastructure;
 using Notifications.Reminders;
 using Notifications.Replica;
 using Notifications.V1;
@@ -49,6 +52,13 @@ public static class NotificationFacts
     public const string StepWindowStartedType = "step_window_started";
 
     /// <summary>
+    /// Общая весть о начале окна сниженного шага держателям права ставок, кроме
+    /// следящих за лотом окна (ADR-047, дополнение 2026-10-27). Категории нет:
+    /// гасит её выключатель вестей о новом аукционе и торгах.
+    /// </summary>
+    public const string StepWindowAnnouncedType = "step_window_announced";
+
+    /// <summary>
     /// Напоминание о неоплаченном счёте: момент за 24 часа до срока оплаты
     /// (PER-726; до него — через 12 часов после победы, PER-330). Категории у
     /// повода нет: счёт — дело победителя, а деньги через продукт не проходят.
@@ -91,6 +101,9 @@ public static class NotificationFacts
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string CommunityAnnouncementType = "community_announcement";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string AuctionNoticeType = "auction_notice";
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string AccessRequestedType = "access_requested";
@@ -148,6 +161,16 @@ public static class NotificationFacts
     /// (PER-330).
     /// </summary>
     public const string WithdrawnOnInvoicePaid = "invoice_paid";
+
+    /// <summary>
+    /// Аукцион отменили, пока его объявление ждало релея (PER-780).
+    /// </summary>
+    public const string WithdrawnOnAuctionCancelled = "auction_cancelled";
+
+    /// <summary>
+    /// Аукцион удалили до торгов, пока его объявление ждало релея (PER-780).
+    /// </summary>
+    public const string WithdrawnOnAuctionDiscarded = "auction_discarded";
 
     /// <summary>
     /// Категория, которой человек отказывается от «новой сходки». Настраивается
@@ -472,9 +495,44 @@ public static class NotificationFacts
         {
             LotId = lot.LotId.ToString(),
             Until = Instant(lot.Until),
-            Step = lot.Step.Clone(),
+            Step = lot.Step?.Clone(),
+            Start = lot.Start?.Clone(),
+            RegularStart = lot.RegularStart?.Clone(),
         }));
         notification.StepWindowStarted = body;
+
+        return notification;
+    }
+
+    /// <summary>Общая весть о начале окна одному держателю права ставок.</summary>
+    /// <param name="taskId">Сработавшее задание начала окна — ключ повода.</param>
+    /// <param name="until">Самый поздний конец окон этого начала.</param>
+    /// <param name="lotCount">Сколько лотов в торгах с идущим окном этого начала.</param>
+    public static Notification StepWindowAnnounced(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid auctionId,
+        DateTimeOffset startsAt,
+        DateTimeOffset until,
+        int lotCount,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.StepWindowAnnounced = new V1.StepWindowAnnounced
+        {
+            AuctionId = auctionId.ToString(),
+            StartsAt = Instant(startsAt),
+            Until = Instant(until),
+            LotCount = (uint)lotCount,
+        };
 
         return notification;
     }
@@ -527,6 +585,60 @@ public static class NotificationFacts
         {
             SenderId = senderId.ToString(),
             Body = body,
+        };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Объявление аукциона одному держателю права ставок (PER-764). Повод и
+    /// цепочка — как у <see cref="OrganizerMessage" />; аукцион выведен из
+    /// сходки правилом Auction, название сходки — из реплики на момент приёма.
+    /// </summary>
+    public static Notification AuctionNotice(
+        Guid notificationId,
+        Guid recipientId,
+        Guid broadcastId,
+        Guid senderId,
+        Guid meetupId,
+        string meetupTitle,
+        string body,
+        AuctionNoticeContent content,
+        string? requestId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(notificationId, recipientId, Broadcast(broadcastId), requestId, now, notAfter);
+        notification.AuctionNotice = new V1.AuctionNotice
+        {
+            AuctionId = AuctionOfMeetup.Of(meetupId).ToString(),
+            MeetupId = meetupId.ToString(),
+            MeetupTitle = meetupTitle,
+            SenderId = senderId.ToString(),
+            Body = body,
+            Button = content.Button is { } button
+                ? new AuctionNoticeButton
+                {
+                    View = AuctionNoticeViews.Contract(button.View),
+                    LotId = button.LotId?.ToString() ?? "",
+                }
+                : null,
+            Photo = content.Photo switch
+            {
+                NoticePhoto.LotPhoto lot => new AuctionNoticePhoto
+                {
+                    LotPhoto = new AuctionNoticeLotPhoto
+                    {
+                        LotId = lot.LotId.ToString(),
+                        PhotoId = lot.PhotoId.ToString(),
+                    },
+                },
+                NoticePhoto.ChannelPost post => new AuctionNoticePhoto
+                {
+                    ChannelPost = new AuctionNoticeChannelPost { MessageId = post.MessageId },
+                },
+                _ => null,
+            },
         };
 
         return notification;

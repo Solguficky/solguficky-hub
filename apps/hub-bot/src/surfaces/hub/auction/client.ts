@@ -33,7 +33,10 @@ import {
   ownDisplayNameOf,
   unansweredOn,
 } from "../../../core/auction/commands.js";
-import { dayChronicleOf } from "../../../core/auction/day-chronicle.js";
+import {
+  auctionChronicleOf,
+  dayChronicleOf,
+} from "../../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
 import {
@@ -80,6 +83,12 @@ import type {
 } from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
+  clearHappyHourLotTermsResult,
+  createHappyHourPeriodResult,
+  deleteHappyHourPeriodResult,
+  setHappyHourLotTermsResult,
+} from "./happy-hours.js";
+import {
   type AddLotResult,
   type AdvanceAskResult,
   type AssignRaffleWinnerResult,
@@ -107,12 +116,15 @@ import {
   type LotAdministration,
   type LotCardResult,
   type LotImageResult,
+  type LotLayoutResult,
   type LotParticipant,
   type LotPhotoResult,
   type LotStatisticsReadResult,
   type LotStepPolicyInput,
   type MeetupAuctions,
   type PaymentInstructionsResult,
+  type PromoVideoResult,
+  type RafflePrizePhotoResult,
   type RemovalPreviewResult,
   type RemoveLotResult,
   type RemoveParticipantResult,
@@ -151,6 +163,8 @@ type AuctionRpc = Pick<
   | "getRaffle"
   | "assignRaffleWinner"
   | "changeRafflePrize"
+  | "setRafflePrizePhoto"
+  | "removeRafflePrizePhoto"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "listMyInvoices"
@@ -158,9 +172,11 @@ type AuctionRpc = Pick<
   | "getMyPredictions"
   | "getPredictionResults"
   | "getAuctionDayChronicle"
+  | "getAuctionChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
+  | "getRafflePrizePhoto"
   | "addLotPhoto"
   | "removeLotPhoto"
   | "getAuctionConsole"
@@ -168,6 +184,10 @@ type AuctionRpc = Pick<
   | "getAuctionDaySummary"
   | "scheduleAuction"
   | "launchStepWindow"
+  | "createHappyHourPeriod"
+  | "deleteHappyHourPeriod"
+  | "setHappyHourLotTerms"
+  | "clearHappyHourLotTerms"
   | "startPrebidding"
   | "discardAuction"
   | "cancelAuction"
@@ -176,6 +196,7 @@ type AuctionRpc = Pick<
   | "setFinalTime"
   | "saveLotSet"
   | "deleteLotSet"
+  | "setLotLayout"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -189,6 +210,7 @@ type AuctionRpc = Pick<
   | "markInvoicePaid"
   | "markInvoiceHandedOver"
   | "setPaymentInstructions"
+  | "setPromoVideo"
 >;
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
@@ -442,6 +464,35 @@ export function createAuctionAdapter(
           options(meta),
         );
         return changeRafflePrizeResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Фото приза (PER-773): повтор того же `photo_id` Auction примет без
+    // второй смены, ключ снятия рождается на нажатие «Да».
+    async setRafflePrizePhoto(person, command, meta) {
+      try {
+        const response = await rpc.setRafflePrizePhoto(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            photoId: command.photoId,
+            photo: { content: command.image },
+          },
+          options(meta),
+        );
+        return rafflePrizePhotoResult(response.outcome, true);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async removeRafflePrizePhoto(person, command, meta) {
+      try {
+        const response = await rpc.removeRafflePrizePhoto(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return rafflePrizePhotoResult(response.outcome, false);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -720,6 +771,80 @@ export function createAuctionAdapter(
         return auctionMissing(cause) ?? toFailure(cause);
       }
     },
+    // Периоды «Счастливых часов» и условия лотов в них (PER-787).
+    async createHappyHourPeriod(person, period, meta) {
+      try {
+        const response = await rpc.createHappyHourPeriod(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: period.auctionId,
+            from: period.from,
+            until: period.until,
+            opId: period.opId,
+          },
+          options(meta),
+        );
+        return createHappyHourPeriodResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async deleteHappyHourPeriod(person, period, meta) {
+      try {
+        const response = await rpc.deleteHappyHourPeriod(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: period.auctionId,
+            periodId: period.periodId,
+            opId: period.opId,
+          },
+          options(meta),
+        );
+        return deleteHappyHourPeriodResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async setHappyHourLotTerms(person, terms, meta) {
+      try {
+        const response = await rpc.setHappyHourLotTerms(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: terms.auctionId,
+            periodId: terms.periodId,
+            lotId: terms.lotId,
+            ...(terms.step === undefined
+              ? {}
+              : { step: wireMoney(terms.step) }),
+            ...(terms.start === undefined
+              ? {}
+              : { start: wireMoney(terms.start) }),
+            opId: terms.opId,
+          },
+          options(meta),
+        );
+        return setHappyHourLotTermsResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async clearHappyHourLotTerms(person, terms, meta) {
+      try {
+        const response = await rpc.clearHappyHourLotTerms(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: terms.auctionId,
+            periodId: terms.periodId,
+            lotId: terms.lotId,
+            opId: terms.opId,
+          },
+          options(meta),
+        );
+        return clearHappyHourLotTermsResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
     async startPrebidding(person, start, meta) {
       try {
         const response = await rpc.startPrebidding(
@@ -799,6 +924,30 @@ export function createAuctionAdapter(
           options(meta),
         );
         return saveLotSetResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Порядок и разделы ленты (PER-719): раскладка уходит целиком.
+    async setLotLayout(person, command, meta) {
+      try {
+        const response = await rpc.setLotLayout(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            opId: command.opId,
+            layout: {
+              lotIds: [...command.layout.lotIds],
+              sections: command.layout.sections.map((section) => ({
+                sectionId: section.sectionId,
+                name: section.name,
+                lotIds: [...section.lotIds],
+              })),
+            },
+          },
+          options(meta),
+        );
+        return lotLayoutResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1172,6 +1321,36 @@ export function createAuctionAdapter(
         return auctionMissing(cause) ?? toFailure(cause);
       }
     },
+    // Промо-видео (PER-774): без `postId` — снятие, и Auction отвечает тем
+    // же приёмом.
+    async setPromoVideo(person, command, meta) {
+      try {
+        const response = await rpc.setPromoVideo(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            opId: command.opId,
+            ...(command.postId === undefined
+              ? {}
+              : { video: { messageId: BigInt(command.postId) } }),
+          },
+          options(meta),
+        );
+        return promoVideoResult(response.outcome);
+      } catch (cause) {
+        // Ключ прикрепления выведен из сообщения ответа (PER-793): тот же
+        // ключ с другим постом — повтор доставки после рестарта, когда пост
+        // опубликован заново. Видео уже прикреплено первым постом.
+        if (
+          command.postId !== undefined &&
+          cause instanceof ConnectError &&
+          cause.code === Code.AlreadyExists
+        ) {
+          return { kind: "ok" };
+        }
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
     screenPorts(meta): AuctionScreenPorts {
       return {
         auction: {
@@ -1418,6 +1597,16 @@ export function createAuctionAdapter(
             );
             return dayChronicleOf(response);
           },
+          async getAuctionChronicle(request) {
+            const response = await rpc.getAuctionChronicle(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return auctionChronicleOf(response);
+          },
           submitPrediction(request) {
             return unansweredOn(async () =>
               predictionOutcomeOf(
@@ -1454,6 +1643,21 @@ export function createAuctionAdapter(
                 viewer: wireViewer(request.viewer),
                 lotId: request.lotId,
                 photoId: request.photoId,
+              },
+              options(meta),
+            );
+            return {
+              content: image.content,
+              mediaType: image.mediaType,
+              version: image.version,
+            };
+          },
+          // Фото приза розыгрыша (PER-773) — та же форма.
+          async getRafflePrizePhoto(request) {
+            const image = await rpc.getRafflePrizePhoto(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
               },
               options(meta),
             );
@@ -2105,6 +2309,47 @@ function cancelAuctionResult(
       }
     case undefined:
       return defect("cancel auction response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Раскладка ленты (PER-719): принятие без полей, отказ лота называет лот.
+function lotLayoutResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setLotLayout"]>>["outcome"],
+): LotLayoutResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "finalAlreadyStarted":
+          return { kind: "final-already-started" };
+        case "auctionAlreadyFinished":
+          return { kind: "auction-already-finished" };
+        case "auctionAlreadyCancelled":
+          return { kind: "auction-already-cancelled" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction", lotId: reason.value.lotId };
+        case undefined:
+          return defect("lot layout refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("lot layout response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -2796,6 +3041,38 @@ function paymentInstructionsResult(
   }
 }
 
+// Ответы промо-видео (PER-774): именованный отказ Auction — значение ответа,
+// а не сбой вызова.
+function promoVideoResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setPromoVideo"]>>["outcome"],
+): PromoVideoResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case undefined:
+          return defect("promo video refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("promo video response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
 // Ответы ручного итога розыгрыша (PER-727): именованный отказ Auction —
 // значение ответа, а не сбой вызова.
 function assignRaffleWinnerResult(
@@ -2881,6 +3158,66 @@ function changeRafflePrizeResult(
     }
     case undefined:
       return defect("raffle prize response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+type RafflePrizePhotoOutcome =
+  | Awaited<ReturnType<AuctionRpc["setRafflePrizePhoto"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["removeRafflePrizePhoto"]>>["outcome"];
+
+// Ответы фото приза (PER-773). Отказ изображения бывает только у постановки:
+// у снятия он — дефект соседа, как у фото лота.
+function rafflePrizePhotoResult(
+  outcome: RafflePrizePhotoOutcome,
+  setting: boolean,
+): RafflePrizePhotoResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "alreadyDrawn":
+          return { kind: "already-drawn" };
+        case "withoutResult":
+          return { kind: "without-result" };
+        case "imageTooLarge":
+          return setting
+            ? {
+                kind: "image-too-large",
+                maxBytes: Number(reason.value.maxBytes),
+              }
+            : defect("raffle prize photo removal refused an image");
+        case "unsupportedImage":
+          return setting
+            ? { kind: "unsupported-image" }
+            : defect("raffle prize photo removal refused an image");
+        case "photoConflict":
+          return setting
+            ? { kind: "photo-conflict" }
+            : defect("raffle prize photo removal answered a photo conflict");
+        case undefined:
+          return defect("raffle prize photo refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle prize photo response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

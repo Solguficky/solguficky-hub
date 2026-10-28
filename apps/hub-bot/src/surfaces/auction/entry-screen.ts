@@ -1,4 +1,6 @@
 import {
+  auctionChronicleParagraphs,
+  auctionChronicleTitle,
   dayChronicleButtonLabel,
   dayChronicleParagraphs,
   dayChronicleTitle,
@@ -10,6 +12,10 @@ import {
   finalPriceLines,
   showsStep,
 } from "../../auction-final.js";
+import {
+  activeHappyHourLine,
+  happyHourTerms,
+} from "../../auction-happy-hours.js";
 import {
   predictionButtonLabel,
   predictionNameChoiceText,
@@ -25,6 +31,11 @@ import {
   predictionResultsTitle,
 } from "../../auction-prediction-results.js";
 import {
+  auctionStatusLine,
+  programmeParagraph,
+} from "../../auction-programme.js";
+import { promoButtonLabel, promoCaption } from "../../auction-promo.js";
+import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
@@ -35,6 +46,7 @@ import {
   raffleProofTitle,
   raffleRegisteredParagraphs,
   raffleRegisteredTitle,
+  raffleRichText,
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
@@ -54,6 +66,8 @@ import {
   extensionLine,
   favoritesEmptyText,
   favoritesSummary,
+  feedSectionLabel,
+  feedSectionTitle,
   feedSummary,
   finalFeedLabel,
   followLabel,
@@ -104,6 +118,7 @@ import {
 import {
   type LotPhotoKey,
   lotPhotoKeys,
+  rafflePrizePhotoKeys,
 } from "../../core/auction/lot-photos.js";
 import type { Presentation } from "../../core/config.js";
 import {
@@ -221,6 +236,10 @@ export type RenderedScreen = {
   // Вопрос: адаптер шлёт его новым сообщением с `force_reply` (дизайн-код,
   // «Вопросы»).
   asks?: true;
+  // Промо-видео (PER-774): адаптер присылает копию поста чата медиа ботов с
+  // текстом подписью новым сообщением, а без `postId` отвечает на нажатие
+  // «видео недоступно» и ничего не шлёт.
+  promo?: { postId?: number };
 };
 
 export type RenderOptions = {
@@ -580,11 +599,7 @@ export function renderEntryScreen(
           screen.subject === "notifications"
             ? "Настройка уведомлений сейчас недоступна."
             : "Аукцион сейчас недоступен."
-        }</b> ${
-          exit.kind === "answer"
-            ? "Пришли ответ ещё раз через минуту."
-            : "Попробуй ещё раз через минуту."
-        }`,
+        }</b> ${exit.kind === "answer" ? "Пришли ответ ещё раз через минуту." : "Попробуй ещё раз через минуту."}`,
         // Сбой самих «Аукционов» несёт только повтор: возврат вёл бы туда же.
         keyboard: [
           exit.kind === "retry"
@@ -669,9 +684,23 @@ function renderList(
       list.auctions.length === 0
         ? empty
         : list.auctions
-            .map((auction) =>
-              bullet(auctionLine(auction, options.timeZone, options.now)),
-            )
+            .map((auction) => {
+              // Строка состояния (PER-767) — под строкой аукциона, текст
+              // общий с хабом.
+              const status =
+                auction.week === undefined
+                  ? undefined
+                  : auctionStatusLine(auction.week, {
+                      timeZone: options.timeZone,
+                      now: options.now ?? new Date(),
+                    });
+              const line = bullet(
+                auctionLine(auction, options.timeZone, options.now),
+              );
+              return status === undefined
+                ? line
+                : `${line}\n${escapeHtml(status)}`;
+            })
             .join("\n"),
     ),
     keyboard: [
@@ -918,8 +947,15 @@ function renderBody(
     keyboard,
     format: "html",
     text: screenText(
-      paged("Лоты", feed),
-      ...(feed.lots.length === 0
+      paged(
+        feed.section === undefined
+          ? "Лоты"
+          : feedSectionTitle(feed.section.name),
+        feed,
+      ),
+      // Пустой общий список при заполненных разделах — не пустой аукцион
+      // (PER-719): сводка своих лотов остаётся.
+      ...(feed.lots.length === 0 && (feed.sections?.length ?? 0) === 0
         ? ["Лотов пока нет."]
         : feedSummary(feed, mineOptions)),
     ),
@@ -972,6 +1008,10 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "prediction-results";
       case "day-chronicle":
         return "day-chronicle";
+      case "auction-chronicle":
+        return "auction-chronicle";
+      case "promo":
+        return "promo";
       case "raffle":
         return "raffle";
       case "raffle-registered":
@@ -1007,6 +1047,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "name-answer-refused":
         return "answer-refused";
       case "feed":
+        // Раздел ленты (PER-719) — свой экран с возвратом к списку разделов.
+        if (block.section !== undefined) screen = "feed-section";
         break;
       default: {
         const _exhaustive: never = block;
@@ -1058,6 +1100,13 @@ function rootText(block: RootBlock, options: RenderOptions): string {
         ? ["После них — финал в зале."]
         : []),
     ].join("\n"),
+    // Программа недели (PER-724) — абзацем под сроками, текст общий с хабом.
+    programmeParagraph(block, {
+      moment: (instant) =>
+        readableMoment(instant, options.timeZone, options.now),
+      timeZone: options.timeZone,
+      now: options.now ?? new Date(),
+    }),
   );
 }
 
@@ -1073,9 +1122,19 @@ type FavoritesBlock = Extract<AuctionBlock, { kind: "favorites" }>;
 function renderLeaf(
   blocks: readonly AuctionBlock[],
   options: RenderOptions,
-): Pick<RenderedScreen, "text" | "format" | "asks"> | undefined {
+):
+  | Pick<RenderedScreen, "text" | "format" | "asks" | "photos" | "promo">
+  | undefined {
   for (const block of blocks) {
     switch (block.kind) {
+      // Промо-видео (PER-774): текст — подпись копии поста, слова общие с
+      // хабом.
+      case "promo":
+        return {
+          format: "html",
+          text: screenText(promoCaption),
+          promo: block.postId === undefined ? {} : { postId: block.postId },
+        };
       case "confirm":
         return { format: "html", text: confirmText(block) };
       case "accepted":
@@ -1163,17 +1222,34 @@ function renderLeaf(
             ...dayChronicleParagraphs(block, { money }),
           ),
         };
-      case "raffle":
+      // Статистика аукциона (PER-770): тексты общие с хабом.
+      case "auction-chronicle":
         return {
           format: "html",
           text: screenText(
-            raffleTitle,
-            ...raffleParagraphs(block.raffle, {
-              moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
-            }),
+            auctionChronicleTitle,
+            ...auctionChronicleParagraphs(block, { money }),
           ),
         };
+      case "raffle": {
+        const paragraphs = raffleParagraphs(block.raffle, {
+          moment: (instant) =>
+            readableMoment(instant, options.timeZone, options.now),
+        });
+        // Приз с фото (PER-773) — rich-сообщение, фото над заголовком ставит
+        // адаптер, как у карточки лота; в `plain` фото нет.
+        const photos =
+          (options.presentation ?? "rich") === "rich"
+            ? rafflePrizePhotoKeys(block.raffle)
+            : [];
+        return photos.length === 0
+          ? { format: "html", text: screenText(raffleTitle, ...paragraphs) }
+          : {
+              format: "rich",
+              text: raffleRichText(raffleTitle, paragraphs),
+              photos,
+            };
+      }
       case "raffle-registered":
         return {
           format: "html",
@@ -1794,15 +1870,23 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
 }
 
 // Шаг лота до торгов и в торгах (дизайн-код, «Карточка лота»). В окне
-// «Счастливых часов» — шаг окна до его конца и обычный шаг рядом, иначе строка
+// «Счастливых часов» — его условия до конца, стартовая окна, шаг или оба
+// (PER-787), и обычный шаг рядом, иначе строка
 // «Шаг», когда шаг один на все цены, или «Шаг по порогам». Будущее окно —
 // отдельной строкой: когда и какой шаг; окна Auction отдаёт только в торгах.
 function stepLines(block: LotBlock, options: RenderOptions): string[] {
   const at = (instant: string) =>
     readableMoment(instant, options.timeZone, options.now);
   const active = block.activeWindow;
-  const current =
+  const activeTerms =
     active === undefined
+      ? undefined
+      : happyHourTerms(active, regularStart(block), money);
+  const current =
+    // Окно только со стартовой шаг не меняет: строка шага остаётся.
+    active === undefined ||
+    activeTerms === undefined ||
+    active.step === undefined
       ? block.tiers === undefined
         ? block.fixedStep === undefined
           ? []
@@ -1814,13 +1898,25 @@ function stepLines(block: LotBlock, options: RenderOptions): string[] {
             ),
           ]
       : [
-          `Счастливые часы: шаг ${money(active.step)} до ${at(active.until)}`,
+          activeHappyHourLine(at(active.until), activeTerms),
           ...(block.baseStep === undefined
             ? []
             : [`Обычный шаг: ${money(block.baseStep)}`]),
         ];
+  const startOnly =
+    active !== undefined &&
+    activeTerms !== undefined &&
+    active.step === undefined
+      ? [activeHappyHourLine(at(active.until), activeTerms)]
+      : [];
   const next = block.nextWindow;
-  if (next === undefined) return current;
+  const nextTerms =
+    next === undefined
+      ? undefined
+      : happyHourTerms(next, regularStart(block), money);
+  if (next === undefined || nextTerms === undefined) {
+    return [...startOnly, ...current];
+  }
   // Окно внутри одного дня называет день один раз: «с 12 июня, сб, 18:00 до
   // 21:00».
   const until =
@@ -1829,9 +1925,18 @@ function stepLines(block: LotBlock, options: RenderOptions): string[] {
       ? clockOf(next.until, options.timeZone)
       : at(next.until);
   return [
+    ...startOnly,
     ...current,
-    `Счастливые часы: с ${at(next.from)} до ${until}, шаг ${money(next.step)}`,
+    `Счастливые часы: с ${at(next.from)} до ${until}, ${nextTerms}`,
   ];
+}
+
+// Обычная стартовая — текущая цена лота в торгах без ставок: с ней стартовая
+// окна идёт парой (PER-787).
+function regularStart(block: LotBlock): Money | undefined {
+  return block.status.kind === "trading" && block.status.leaderId === undefined
+    ? block.status.currentPrice
+    : undefined;
 }
 
 function clockOf(instant: string, timeZone: string): string {
@@ -1914,6 +2019,13 @@ function renderButton(
       if (item === undefined) return text(untitled);
       return text(setLotLabel(item, setOptions));
     }
+    // Раздел ленты (PER-719): название и число лотов.
+    case "feed.open-section": {
+      const section = blocks
+        .find((block): block is FeedBlock => block.kind === "feed")
+        ?.sections?.find((each) => each.sectionId === button.sectionId);
+      return text(section === undefined ? untitled : feedSectionLabel(section));
+    }
     case "feed.prev":
       return text("←");
     case "feed.next":
@@ -1927,6 +2039,12 @@ function renderButton(
     case "root.day-chronicle":
       return text(dayChronicleButtonLabel);
     case "day-chronicle.back":
+      return text("‹ Аукцион");
+    case "auction-chronicle.back":
+      return text("‹ Аукцион");
+    case "root.promo":
+      return text(promoButtonLabel);
+    case "promo.back":
       return text("‹ Аукцион");
     case "lot.refresh":
       return text(refreshLabel);
@@ -1957,8 +2075,16 @@ function renderButton(
       return text("←");
     case "favorites.next":
       return text("→");
-    case "favorites.back":
+    // С раздела ленты возврат — к списку разделов (PER-719).
     case "feed.back":
+      return text(
+        blocks.some(
+          (block) => block.kind === "feed" && block.section !== undefined,
+        )
+          ? "‹ Лоты"
+          : `‹ ${rootTitle}`,
+      );
+    case "favorites.back":
     case "raffle.back":
       return text(`‹ ${rootTitle}`);
     // Без ставок первая ставка — не «по шагу» (PER-631, №82).
