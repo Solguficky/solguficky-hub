@@ -1989,7 +1989,11 @@ describe("auction console", () => {
       raffleRegistrations: 12,
       predictionTally: { participants: 5, answers: 21 },
     });
-    expect(counted).toContain("Розыгрыш: зарегистрировались 12.");
+    expect(counted).toContain("Зарегистрировались в розыгрыше: 12.");
+    // Строка срока и строка регистраций — разные подписи (PER-804).
+    expect(
+      counted.split("\n").filter((line) => line.startsWith("Розыгрыш:")),
+    ).toHaveLength(1);
     expect(counted).toContain("Прогнозы: 5 участников, 21 ответ.");
 
     const nobody = await open({
@@ -1999,7 +2003,7 @@ describe("auction console", () => {
       raffleRegistrations: 0,
       predictionTally: { participants: 0, answers: 0 },
     });
-    expect(nobody).toContain("Розыгрыш: пока никто не зарегистрировался.");
+    expect(nobody).toContain("В розыгрыше пока никто не зарегистрировался.");
     expect(nobody).toContain("Прогнозы: пока ни одного.");
 
     const bare = await open({
@@ -4945,6 +4949,44 @@ describe("happy hours", () => {
 
     expect(plain(last(calls))).toContain("Запущенные окна:");
     expect(plain(last(calls))).toContain("шаг 50 ₽");
+    // После открытия недели экран не говорит «Окна задаются до открытия» и
+    // «Окон пока нет» над запущенным окном (PER-804).
+    expect(plain(last(calls))).not.toContain("Окон пока нет");
+    expect(plain(last(calls))).not.toContain(
+      "Окна задаются до открытия недели",
+    );
+  });
+
+  // PER-804: после открытия недели период — тоже «Счастливые часы», и экран
+  // называет их число, а «Окон и периодов нет» — только без того и другого.
+  it("names the periods after the week opens and says nothing is there only without them", async () => {
+    const open = async (periods: readonly HappyHourPeriod[]) => {
+      const { bot, calls } = harness(
+        "admin",
+        fakeAuction({
+          status: "prebidding",
+          week: { ...week, final: true, windows: [] },
+          lots: [vase],
+          periods,
+        }),
+      );
+      await bot.init();
+      await bot.handleUpdate(press(consoleData));
+      await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
+      return plain(last(calls));
+    };
+    const withPeriod = await open([
+      {
+        periodId: "0198f2a4-7c1e-5d3a-9b21-4f8e12ab3401",
+        from: "2026-10-21T15:00:00Z",
+        until: "2026-10-21T18:00:00Z",
+        lotTerms: [{ lotId: vaseId, step: rub(5_000) }],
+      },
+    ]);
+    expect(withPeriod).toContain("Периоды: 1 период.");
+    expect(withPeriod).not.toContain("Окон");
+
+    expect(await open([])).toContain("Окон и периодов нет.");
   });
 });
 
@@ -7827,6 +7869,14 @@ describe("auction announcement", () => {
   ): AuctionConsoles & AuctionScreens & MeetupAuctions & LotAdministration {
     return {
       ...auction.port,
+      // Пульт называет сходку аукциона, как Auction (`AuctionConsole.meetup_id`):
+      // объявление берёт адресата отсюда, а не из памяти процесса (PER-804).
+      async getAuctionConsole(...args) {
+        const read = await auction.port.getAuctionConsole(...args);
+        return read.kind === "ok"
+          ? { ...read, console: { ...read.console, meetupId } }
+          : read;
+      },
       screenPorts(meta) {
         const ports = auction.port.screenPorts(meta);
         return {
@@ -7849,12 +7899,6 @@ describe("auction announcement", () => {
 
   const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
 
-  function knownMeetup() {
-    const parents = createAuctionParents();
-    parents.remember(auctionId, meetupId);
-    return parents;
-  }
-
   function bot(
     auction: ReturnType<typeof fakeAuction>,
     notices: ReturnType<typeof announcements>,
@@ -7862,7 +7906,7 @@ describe("auction announcement", () => {
     readable = true,
     // Чат медиа ботов (PER-776): номер канала и ответ Telegram на копию.
     media?: { respond?: (method: string, payload: unknown) => unknown },
-    parents = knownMeetup(),
+    parents = createAuctionParents(),
     // Часы бота: момент T розыгрыша решает, какие аудитории есть (PER-779).
     clock = now,
   ) {
@@ -7984,7 +8028,9 @@ describe("auction announcement", () => {
     });
     const notices = announcements(7);
     const calls: RecordedCall[] = [];
-    const parents = knownMeetup();
+    // Родитель корня — «Расширения» сходки, которую процесс видел.
+    const parents = createAuctionParents();
+    parents.remember(auctionId, meetupId);
     const step = async (update: Update) => {
       const fresh = bot(auction, notices, calls, true, undefined, parents);
       await fresh.init();
@@ -8126,7 +8172,7 @@ describe("auction announcement", () => {
       "without-predictions": 9,
     });
     const calls: RecordedCall[] = [];
-    const parents = knownMeetup();
+    const parents = createAuctionParents();
     const fresh = async () => {
       const hub = bot(
         auction,
@@ -8204,7 +8250,7 @@ describe("auction announcement", () => {
     });
     const notices = audienceCounts({ "without-predictions": 4 });
     const calls: RecordedCall[] = [];
-    const parents = knownMeetup();
+    const parents = createAuctionParents();
     const afterT = new Date("2026-10-23T09:00:00Z");
     const step = async (update: Update) => {
       const hub = bot(
@@ -8255,7 +8301,7 @@ describe("auction announcement", () => {
       calls,
       true,
       undefined,
-      knownMeetup(),
+      createAuctionParents(),
       new Date("2026-10-23T09:00:00Z"),
     );
     await hub.init();
@@ -8447,7 +8493,7 @@ describe("auction announcement", () => {
       });
     const notices = announcements(3);
     const calls: RecordedCall[] = [];
-    const parents = knownMeetup();
+    const parents = createAuctionParents();
     const step = async (
       auction: ReturnType<typeof fakeAuction>,
       update: Update,
@@ -8612,6 +8658,68 @@ describe("auction announcement", () => {
     expect(notices.accepted).toEqual([]);
   });
 
+  // PER-804: шаблон «Счастливые часы» знает периоды и не предлагает прошедшее
+  // окно; часы бота — 6 октября, 12:00 по Москве.
+  it("offers the running and the coming period and not the past window", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: {
+        ...week,
+        final: true,
+        windows: [
+          {
+            from: "2026-10-06T05:00:00Z",
+            until: "2026-10-06T06:00:00Z",
+            step: rub(5_000),
+            lotIds: [vaseId],
+          },
+        ],
+      },
+      lots: [vase],
+      periods: [
+        {
+          periodId: "0198f2a4-7c1e-5d3a-9b21-4f8e12ab3402",
+          from: "2026-10-07T15:00:00Z",
+          until: "2026-10-07T16:00:00Z",
+          lotTerms: [{ lotId: vaseId, step: rub(5_000) }],
+        },
+        {
+          periodId: "0198f2a4-7c1e-5d3a-9b21-4f8e12ab3401",
+          from: "2026-10-06T08:30:00Z",
+          until: "2026-10-06T10:00:00Z",
+          lotTerms: [{ lotId: vaseId, start: rub(80_000), step: rub(5_000) }],
+        },
+      ],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, announcements(), calls);
+    await hub.init();
+    await hub.handleUpdate(press(consoleData));
+    await hub.handleUpdate(press(dataOf(last(calls), "Объявление")));
+    await hub.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
+
+    expect(labels(last(calls))).toEqual([
+      ["Период: с 6 октября, вт, 11:30 до 6 октября, вт, 13:00"],
+      ["Период: с 7 октября, ср, 18:00 до 7 октября, ср, 19:00"],
+      ["‹ Объявление"],
+    ]);
+
+    await hub.handleUpdate(
+      press(
+        dataOf(
+          last(calls),
+          "Период: с 6 октября, вт, 11:30 до 6 октября, вт, 13:00",
+        ),
+      ),
+    );
+    // Черновик периода называет условия лота, а не шаг окна.
+    const draft = plain(question(calls).payload);
+    expect(draft).toContain(
+      "Счастливые часы с 6 октября, вт, 11:30 до 6 октября, вт, 13:00: особые условия на лотах: Ваза — старт 800",
+    );
+    expect(draft).toContain("шаг 50");
+  });
+
   it("refuses an announcement text longer than a photo caption", async () => {
     const auction = fakeAuction({
       status: "prebidding",
@@ -8645,30 +8753,36 @@ describe("auction announcement", () => {
     expect(plain(last(calls))).toContain("Объявлять некому");
   });
 
-  // После рестарта процесс сходку аукциона не помнит: кадр ведёт открыть
-  // аукцион с карточки сходки, и Notifications не зовётся.
-  it("sends to the meetup card when the process does not know the meetup", async () => {
+  // Свежий процесс сходку аукциона не помнит: пульт, открытый из «Событий»
+  // или сразу после рестарта, открывает объявление и отправляет его сходке,
+  // которую назвал пульт (PER-804).
+  it("opens and sends the announcement on a fresh process from the meetup the console names", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       week: { ...week, final: true },
       lots: [vase],
     });
-    const notices = announcements();
+    const notices = announcements(7);
     const calls: RecordedCall[] = [];
-    const hub = bot(
-      auction,
-      notices,
-      calls,
-      true,
-      undefined,
-      createAuctionParents(),
+    const step = async (update: Update) => {
+      const fresh = bot(auction, notices, calls);
+      await fresh.init();
+      await fresh.handleUpdate(update);
+    };
+    await step(press(consoleData));
+    await step(press(dataOf(last(calls), "Объявление")));
+    expect(plain(last(calls))).not.toContain(
+      "Открой аукцион с карточки сходки",
     );
-    await hub.init();
-    await hub.handleUpdate(press(`v1:ac:na:${auctionToken}`));
+    expect(labels(last(calls)).flat()).toContain("Своё объявление");
 
-    expect(plain(last(calls))).toContain("Открой аукцион с карточки сходки");
-    expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
-    expect(notices.accepted).toEqual([]);
+    await step(press(dataOf(last(calls), "Своё объявление")));
+    const text = "После рестарта.";
+    await step(answer(calls, { text }));
+    await step(pressUnder(dataOf(last(calls), "К аукциону"), last(calls)));
+    await step(pressSend(calls, "✔️ Да, отправить 7"));
+    expect(plain(last(calls))).toContain("Объявление принято");
+    expect(notices.accepted[0]?.command).toMatchObject({ meetupId, text });
   });
 
   // Своё фото или видео (PER-776): ответ на вопрос о медиа уходит копией в чат
@@ -9101,9 +9215,9 @@ describe("auction announcement", () => {
     expect(notices.accepted[0]?.command.post).toBeUndefined();
   });
 
-  // Ответ на вопрос о медиа после рестарта: сходки процесс не помнит, и пост
-  // в канал медиа не публикуется зря.
-  it("sends to the meetup card instead of publishing a post when the process does not know the meetup", async () => {
+  // Ответ на вопрос о медиа после рестарта: сходку называет пульт, и шаг
+  // идёт дальше с номером поста (PER-804).
+  it("publishes the post and goes on after a restart", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       week: { ...week, final: true },
@@ -9128,20 +9242,14 @@ describe("auction announcement", () => {
     await hub.handleUpdate(
       pressUnder(dataOf(last(calls), "Своё фото или видео"), last(calls)),
     );
-    const restarted = bot(
-      auction,
-      notices,
-      calls,
-      true,
-      {},
-      createAuctionParents(),
-    );
+    const restarted = bot(auction, notices, calls, true, {});
     await restarted.init();
     await restarted.handleUpdate(reply(calls, photo));
 
-    expect(plain(last(calls))).toContain("Открой аукцион с карточки сходки");
-    expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
-    expect(copies(calls)).toEqual([]);
+    expect(plain(last(calls))).not.toContain(
+      "Открой аукцион с карточки сходки",
+    );
+    expect(copies(calls)[0]?.chat_id).toBe(mediaChannelId);
     expect(notices.accepted).toEqual([]);
   });
 
@@ -9185,7 +9293,7 @@ describe("auction announcement", () => {
     expect(plain(last(calls))).toContain(
       "Не получилось сохранить фото или видео",
     );
-    expect(copies(calls)).toHaveLength(1);
+    expect(copies(calls)[0]?.chat_id).toBe(mediaChannelId);
     expect(notices.accepted).toEqual([]);
   });
 });

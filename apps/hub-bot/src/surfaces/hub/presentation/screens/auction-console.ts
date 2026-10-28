@@ -404,15 +404,16 @@ function rafflePrizeLines(
 }
 
 // Розыгрыш и прогнозы числами (PER-734), пока идёт онлайн-неделя: по ним
-// организаторы подбирают призы. Числа нет — строки нет.
+// организаторы подбирают призы. Числа нет — строки нет. Регистрации идут без
+// префикса «Розыгрыш:»: им уже начата строка срока над ними (PER-804).
 function participationLines(console: AuctionConsoleView): string[] {
   const lines: string[] = [];
   const registrations = console.raffleRegistrations;
   if (registrations !== undefined) {
     lines.push(
       registrations === 0
-        ? "Розыгрыш: пока никто не зарегистрировался."
-        : `Розыгрыш: зарегистрировались ${registrations}.`,
+        ? "В розыгрыше пока никто не зарегистрировался."
+        : `Зарегистрировались в розыгрыше: ${registrations}.`,
     );
   }
   const tally = console.predictionTally;
@@ -2113,15 +2114,27 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
   if (view.launch === true) {
     nextRow(keyboard).text("Запустить окно", consoleWindowLaunchData(auction));
   }
+  // Текст — по стадии (PER-804): до открытия недели окна задаются здесь, после
+  // — объявленные заморожены, а по ходу торгов есть запущенные окна и
+  // периоды. «Окон нет» — только когда нет ни того, ни другого.
+  const periods = console.happyHourPeriods.length;
+  const nothing =
+    windows.length === 0 && launched.length === 0 && periods === 0;
   return {
     id: "step-windows",
     text: screenText(
       "Счастливые часы",
       escapeHtml(
-        "В окне ставка на выбранных лотах растёт на меньший шаг. Окна задаются до открытия недели.",
+        editable
+          ? "В окне ставка на выбранных лотах растёт на меньший шаг. Окна задаются до открытия недели."
+          : "В окне ставка на выбранных лотах растёт на меньший шаг. Объявленные окна заданы до открытия недели, по ходу торгов окно запускается, а период задаёт условия лотов.",
       ),
       windows.length === 0
-        ? "Окон пока нет."
+        ? editable
+          ? "Окон пока нет."
+          : nothing
+            ? "Окон и периодов нет."
+            : undefined
         : windows
             .map((window, index) =>
               escapeHtml(
@@ -2139,6 +2152,9 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
               ),
             ),
           ].join("\n"),
+      editable || periods === 0
+        ? undefined
+        : `Периоды: ${counted(periods, ["период", "периода", "периодов"])}.`,
     ),
     keyboard: withNav(keyboard, {
       name: "Пульт",

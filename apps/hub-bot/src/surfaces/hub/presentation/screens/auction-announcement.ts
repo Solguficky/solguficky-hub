@@ -8,6 +8,7 @@ import {
 import type {
   AnnouncementAudience,
   AnnouncementDraft,
+  AnnouncementHappyHourLot,
   AnnouncementLot,
   AnnouncementTemplate,
   AnnouncementTextError,
@@ -15,7 +16,6 @@ import type {
   ButtonChoice,
 } from "../../application/auction-announcements.js";
 import { fingerprint } from "../../application/fingerprint.js";
-import type { StepWindow } from "../../application/types.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
@@ -35,7 +35,6 @@ import {
   buttonText,
   confirmKeyboard,
   escapeHtml,
-  exitToMeetups,
   outcomeText,
   type Parent,
   pagedTitle,
@@ -117,7 +116,7 @@ function moment(instant: string, view: Moments): string {
   return readableMoment(communityLocalTime(instant, view.timeZone), view.today);
 }
 
-function span(window: StepWindow, view: Moments): string {
+function span(window: { from: string; until: string }, view: Moments): string {
   return `с ${moment(window.from, view)} до ${moment(window.until, view)}`;
 }
 
@@ -171,7 +170,10 @@ export function announcementMenuScreen(
   };
 }
 
-/** Окна «Счастливых часов» для шаблона: объявленные, затем запущенные. */
+/**
+ * «Счастливые часы» для шаблона: окна и периоды, которые идут или впереди, по
+ * началу (PER-804).
+ */
 export function announcementWindowsScreen(
   view: Extract<AuctionAnnouncementResult, { kind: "announcement-windows" }>,
   moments: Moments,
@@ -181,7 +183,9 @@ export function announcementWindowsScreen(
   view.windows.forEach((window, index) => {
     if (index > 0) keyboard.row();
     keyboard.text(
-      buttonText(`Окно ${index + 1}: ${span(window, moments)}`),
+      buttonText(
+        `${window.kind === "period" ? "Период" : "Окно"}: ${span(window, moments)}`,
+      ),
       consoleAnnouncementAskData(auction, "windows", index),
     );
   });
@@ -191,8 +195,8 @@ export function announcementWindowsScreen(
       "Счастливые часы",
       escapeHtml(
         view.windows.length === 0
-          ? "Окон нет: объявлять нечего."
-          : "О каком окне объявить?",
+          ? "Окон и периодов впереди нет: объявлять нечего."
+          : "О каких счастливых часах объявить?",
       ),
     ),
     keyboard: withNav(keyboard, toAnnouncement(view.auctionId)),
@@ -233,6 +237,15 @@ export function announcementLotsScreen(
   };
 }
 
+// Лот периода в черновике: «Ваза — старт 800 ₽, шаг 50 ₽».
+function lotTerms(lot: AnnouncementHappyHourLot): string {
+  const terms = [
+    ...(lot.start === undefined ? [] : [`старт ${money(lot.start)}`]),
+    ...(lot.step === undefined ? [] : [`шаг ${money(lot.step)}`]),
+  ];
+  return terms.length === 0 ? lot.title : `${lot.title} — ${terms.join(", ")}`;
+}
+
 // Черновик — заготовка слов, а не готовое объявление: организатор правит его
 // и присылает своим текстом. Названия лотов и приз — слова организатора, и
 // черновик их не обрезает, кроме длины всего текста.
@@ -263,11 +276,21 @@ export function draftText(
           .join(" "),
         announcementTextLimit,
       );
-    case "windows":
+    case "windows": {
+      const { window, lots } = draft;
+      // Окно снижает шаг всем своим лотам, период задаёт условия каждому
+      // лоту свои (PER-804).
+      const terms =
+        window.step !== undefined
+          ? `шаг ставки снижен до ${money(window.step)}${lots.length === 0 ? "" : ` на лотах: ${lots.map((lot) => lot.title).join(", ")}`}`
+          : lots.length === 0
+            ? "особые условия торгов"
+            : `особые условия на лотах: ${lots.map(lotTerms).join("; ")}`;
       return truncate(
-        `Счастливые часы ${span(draft.window, moments)}: шаг ставки снижен до ${money(draft.window.step)}${draft.lotTitles.length === 0 ? "" : ` на лотах: ${draft.lotTitles.join(", ")}`}. Успей поставить!`,
+        `Счастливые часы ${span(window, moments)}: ${terms}. Успей поставить!`,
         announcementTextLimit,
       );
+    }
     case "lot":
       return truncate(`История лота «${draft.title}»: `, announcementTextLimit);
     case "chronicle":
@@ -639,22 +662,6 @@ export function announcementRetryScreen(view: {
       new InlineKeyboard().text(retryLabel, view.retry),
       toConsole(view.auctionId),
     ),
-    format: "HTML",
-  };
-}
-
-/**
- * Сходки аукциона процесс не знает — так бывает после рестарта: объявление
- * адресуется сходкой, а Auction её по аукциону не отдаёт. Карточка сходки
- * напомнит её процессу.
- */
-export function announcementWithoutMeetupScreen(): ShownScreen {
-  return {
-    id: "outcome",
-    text: outcomeText(
-      "Открой аукцион с карточки сходки. Объявлению нужна сходка аукциона, а бот её сейчас не помнит: открой сходку, «🧩 Расширения», аукцион и «🛠 Пульт» — и нажми «Объявление» снова.",
-    ),
-    keyboard: exitToMeetups(),
     format: "HTML",
   };
 }
