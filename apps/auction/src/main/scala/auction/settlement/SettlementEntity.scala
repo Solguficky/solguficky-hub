@@ -12,15 +12,12 @@ import org.apache.pekko.persistence.typed.PersistenceId
 import org.apache.pekko.persistence.typed.RecoveryCompleted
 import org.apache.pekko.persistence.typed.scaladsl.*
 import org.apache.pekko.util.Timeout
-import net.logstash.logback.argument.StructuredArguments
-import org.slf4j.LoggerFactory
 
 import java.time.Clock
 import java.util.UUID
 import scala.concurrent.Future
 import scala.concurrent.duration.*
 import scala.util.*
-import scala.jdk.CollectionConverters.*
 
 /**
  * Расчёты лота: сохраняет намерение до эффекта, повторяет его после recovery и до подтверждения. Таймер повторяет
@@ -56,23 +53,11 @@ object SettlementEntity {
       invoices: InvoiceGateway,
       clock: Clock,
       newId: () => UUID,
-      retryEvery: FiniteDuration
+      retryEvery: FiniteDuration,
+      failed: Throwable => Unit
   ): Behavior[Command] =
     Behaviors.withTimers { timers =>
       Behaviors.setup { context =>
-        val logger = LoggerFactory.getLogger("auction.settlement")
-        def failed(error: Throwable): Unit = {
-          val frames = error.getStackTrace.mkString("\n")
-          val fields = Map[String, Any](
-            "operation" -> "settlement.follow",
-            "result" -> "error",
-            "error_category" -> "dependency_unavailable",
-            "error" -> error.getClass.getName,
-            "stack" -> frames,
-            "lot_id" -> lotId
-          )
-          logger.error("settlement effect will retry", StructuredArguments.entries(fields.asJava))
-        }
         def drive(state: Settlement): Unit =
           state match {
             case active: Settlement.Open =>
@@ -125,11 +110,11 @@ object SettlementEntity {
               answer(Settlement.accept(state, offer, participant, op, clock.instant()), replyTo)
             case Decline(offer, participant, op, replyTo) =>
               answer(Settlement.decline(state, offer, participant, op), replyTo)
-            case Closed(op, Success(Right(_))) => persist(Settlement.closureCompleted(state, op, true))
+            case Closed(op, Success(Right(_))) => persist(Settlement.closureCompleted(state, op, ClosureOutcome.Closed))
             case Closed(op, Success(Left(InvoiceRefusal.InvoiceAlreadyPaid))) =>
-              persist(Settlement.closureCompleted(state, op, false))
+              persist(Settlement.closureCompleted(state, op, ClosureOutcome.AlreadyPaid))
             case Closed(op, Success(Left(InvoiceRefusal.OpIdTaken))) =>
-              persist(Settlement.closureCompleted(state, op, false))
+              persist(Settlement.closureCompleted(state, op, ClosureOutcome.OpIdTaken))
             case Closed(_, Success(Left(refusal))) =>
               throw new IllegalStateException(s"settlement invoice closure answered $refusal")
             case Issued(invoice, Success(_)) => persist(Settlement.invoiceConfirmed(state, invoice))
@@ -167,6 +152,7 @@ object SettlementGateway {
       clock: Clock,
       newId: () => UUID,
       askTimeout: FiniteDuration,
+      failed: (String, Throwable) => Unit,
       retryEvery: FiniteDuration = 1.second
   ): SettlementGateway = {
     val settings = ClusterShardingSettings(system)
@@ -174,7 +160,7 @@ object SettlementGateway {
       .withRememberEntitiesStoreMode(ClusterShardingSettings.RememberEntitiesStoreModeEventSourced)
     sharding.init(
       Entity(SettlementEntity.TypeKey)(context =>
-        SettlementEntity(context.entityId, invoices, clock, newId, retryEvery)
+        SettlementEntity(context.entityId, invoices, clock, newId, retryEvery, error => failed(context.entityId, error))
       ).withSettings(settings)
     )
     new SettlementGateway {

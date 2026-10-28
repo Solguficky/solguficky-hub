@@ -77,6 +77,7 @@ import auction.projection.InvoicingHandler
 import auction.projection.InvoicingProjection
 import auction.projection.SettlementSalesHandler
 import auction.settlement.SettlementGateway
+import auction.telemetry.SettlementFailures
 import auction.results.ResultsForecasts
 import auction.results.ResultsGateway
 import auction.results.ResultsOutcomes
@@ -274,6 +275,7 @@ object AuctionNode {
       sharding: ClusterSharding,
       invoices: InvoiceGateway,
       metrics: ProjectionMetrics,
+      settlementFailures: SettlementFailures,
       askTimeout: FiniteDuration,
       backlogTimeout: FiniteDuration,
       clock: Clock = Clock.systemUTC()
@@ -287,7 +289,15 @@ object AuctionNode {
     )
     auction.projection.InvoicePaymentClock.start(system, invoices)
     metrics.watchBacklog(InvoicingProjection.Name, InvoicingProjection.backlog(system, backlogTimeout))
-    val settlements = SettlementGateway.sharded(system, sharding, invoices, clock, UuidV7.generator(clock), askTimeout)
+    val settlements = SettlementGateway.sharded(
+      system,
+      sharding,
+      invoices,
+      clock,
+      UuidV7.generator(clock),
+      askTimeout,
+      settlementFailures.record
+    )
     InvoicingProjection.init(
       system,
       metrics,

@@ -206,7 +206,16 @@ object Main {
       )
     val projectionMetrics = ProjectionMetrics(telemetry.getMeter("auction"), clock)
     AuctionNode.startProjection(system, projectionMetrics, backlogTimeout)
-    AuctionNode.startInvoicing(system, sharding, invoices, projectionMetrics, askTimeout, backlogTimeout, clock)
+    AuctionNode.startInvoicing(
+      system,
+      sharding,
+      invoices,
+      projectionMetrics,
+      new auction.telemetry.SettlementFailures(telemetry.getMeter("auction")),
+      askTimeout,
+      backlogTimeout,
+      clock
+    )
     AuctionNode.watchDeadlines(
       system,
       DeadlineMetrics(telemetry.getMeter("auction")),

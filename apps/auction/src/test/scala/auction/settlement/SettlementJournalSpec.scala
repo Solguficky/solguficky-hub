@@ -28,11 +28,11 @@ final class SettlementJournalSpec extends AnyWordSpec with Matchers with BeforeA
       val events = List(
         SettlementEvent.Opened(sale, List(candidate)),
         SettlementEvent.ClosureRequested(sale.invoice, op(1)),
-        SettlementEvent.ClosureCompleted(op(1), true),
+        SettlementEvent.ClosureCompleted(op(1), ClosureOutcome.Closed),
         SettlementEvent.OfferAccepted(candidate.bid, participant(2), replacement, op(2)),
         SettlementEvent.InvoiceConfirmed(replacement.id),
         SettlementEvent.ClosureRequested(replacement.id, op(3)),
-        SettlementEvent.ClosureCompleted(op(3), true)
+        SettlementEvent.ClosureCompleted(op(3), ClosureOutcome.Closed)
       )
       val restored = events.map { event =>
         val stored = SettlementJournal.store(uuid(1), decidedAt)(event)
@@ -46,7 +46,8 @@ final class SettlementJournalSpec extends AnyWordSpec with Matchers with BeforeA
         events.foldLeft[Settlement](Settlement.Initial)(Settlement.apply)
       List(
         SettlementEvent.OfferDeclined(candidate.bid, participant(2), op(4)),
-        SettlementEvent.ClosureCompleted(op(5), false)
+        SettlementEvent.ClosureCompleted(op(5), ClosureOutcome.AlreadyPaid),
+        SettlementEvent.ClosureCompleted(op(6), ClosureOutcome.OpIdTaken)
       ).foreach { event =>
         val stored = SettlementJournal.store(uuid(2), decidedAt)(event)
         SettlementJournal.restore(
@@ -56,7 +57,8 @@ final class SettlementJournalSpec extends AnyWordSpec with Matchers with BeforeA
     }
 
     "refuses a row with sections that do not match the saved step" in {
-      val stored = SettlementJournal.store(uuid(1), decidedAt)(SettlementEvent.ClosureCompleted(op(1), true))
+      val stored =
+        SettlementJournal.store(uuid(1), decidedAt)(SettlementEvent.ClosureCompleted(op(1), ClosureOutcome.Closed))
       an[JournalCorrupted] should be thrownBy SettlementJournal.restore(stored.copy(kind = "OfferAccepted"))
     }
   }

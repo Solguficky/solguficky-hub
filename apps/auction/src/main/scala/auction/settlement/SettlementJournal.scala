@@ -21,7 +21,7 @@ final case class StoredSettlementOpened(
     candidates: List[StoredSettlementCandidate]
 )
 final case class StoredSettlementClosure(invoiceId: UUID, opId: UUID)
-final case class StoredSettlementClosed(opId: UUID, closed: Boolean)
+final case class StoredSettlementClosed(opId: UUID, outcome: String)
 final case class StoredSettlementResponse(
     offerId: UUID,
     participantId: UUID,
@@ -85,8 +85,13 @@ object SettlementJournal {
         )
       case SettlementEvent.ClosureRequested(invoice, op) =>
         empty.copy(kind = "ClosureRequested", closure = Some(StoredSettlementClosure(invoice.value, op.value)))
-      case SettlementEvent.ClosureCompleted(op, closed) =>
-        empty.copy(kind = "ClosureCompleted", closed = Some(StoredSettlementClosed(op.value, closed)))
+      case SettlementEvent.ClosureCompleted(op, outcome) =>
+        val name = outcome match {
+          case ClosureOutcome.Closed => "Closed"
+          case ClosureOutcome.AlreadyPaid => "AlreadyPaid"
+          case ClosureOutcome.OpIdTaken => "OpIdTaken"
+        }
+        empty.copy(kind = "ClosureCompleted", closed = Some(StoredSettlementClosed(op.value, name)))
       case SettlementEvent.OfferDeclined(offer, participant, op) =>
         empty.copy(
           kind = "OfferDeclined",
@@ -126,7 +131,13 @@ object SettlementJournal {
       case StoredSettlementEvent(_, _, "ClosureRequested", None, Some(value), None, None, None) =>
         SettlementEvent.ClosureRequested(InvoiceId(value.invoiceId), OpId(value.opId))
       case StoredSettlementEvent(_, _, "ClosureCompleted", None, None, Some(value), None, None) =>
-        SettlementEvent.ClosureCompleted(OpId(value.opId), value.closed)
+        val outcome = value.outcome match {
+          case "Closed" => ClosureOutcome.Closed
+          case "AlreadyPaid" => ClosureOutcome.AlreadyPaid
+          case "OpIdTaken" => ClosureOutcome.OpIdTaken
+          case _ => throw new JournalCorrupted("unknown settlement closure outcome")
+        }
+        SettlementEvent.ClosureCompleted(OpId(value.opId), outcome)
       case StoredSettlementEvent(
             _,
             _,

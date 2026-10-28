@@ -17,6 +17,25 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
   private val boris = SettlementCandidate(bid(2), participant(2), money(800))
   private val vera = SettlementCandidate(bid(3), participant(3), money(600))
 
+  private def writtenHistory(events: List[LotEvent]): List[Written] = {
+    val prefix = List(
+      LotEvent.LotDrafted(auctionId(1)),
+      LotEvent.LotScheduled(schedule()),
+      LotEvent.LotOpened(money(100), config(), Some(deadline))
+    )
+    (prefix ++ events).zipWithIndex.map { (event, index) =>
+      Written(Envelope(index.toLong + 1, op(index + 100), event), calm)
+    }
+  }
+
+  private def auctionWithLimits(): Journal = {
+    val draft = Journal.of(Lot.initial).draft(draftLot(1))._2
+    val scheduled = draft.schedule(scheduleLot(2))._2
+    val opened = scheduled.open(openLot(3))._2
+    val m = opened.limit(setProxyLimit(2, 900, 4))._2
+    m.limit(setProxyLimit(3, 1000, 5))._2
+  }
+
   private def opened(candidates: List[SettlementCandidate] = List(boris, vera)): Settlement =
     Settlement(Settlement.Initial, SettlementEvent.Opened(sale, candidates))
 
@@ -25,7 +44,7 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
 
   private def offering(candidates: List[SettlementCandidate] = List(boris, vera)): Settlement = {
     val closing = written(opened(candidates), Settlement.requestUnredeemed(opened(candidates), sale.invoice, op(10)))
-    Settlement(closing, Settlement.closureCompleted(closing, op(10), true).get)
+    Settlement(closing, Settlement.closureCompleted(closing, op(10), ClosureOutcome.Closed).get)
   }
 
   "settlement" should {
@@ -36,7 +55,7 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
         LotEvent.BidPlaced(boris.bid, boris.participant, boris.amount, None, BidOrigin.Proxy),
         LotEvent.BidPlaced(bid(1), participant(1), money(1000), None, BidOrigin.Manual(BidSource.Bot))
       )
-      Settlement.candidates(history, participant(1)) shouldBe List(boris)
+      Settlement.candidates(writtenHistory(history), participant(1)) shouldBe List(boris)
     }
 
     "excludes a removed participant even though the journal retains their accepted bids" in {
@@ -44,7 +63,38 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
         LotEvent.BidPlaced(boris.bid, boris.participant, boris.amount, None, BidOrigin.Manual(BidSource.Bot)),
         LotEvent.ParticipantRemoved(boris.participant, money(100), None, None)
       )
-      Settlement.candidates(history, participant(1)) shouldBe Nil
+      Settlement.candidates(writtenHistory(history), participant(1)) shouldBe Nil
+    }
+
+    "offers the recalculated 100 instead of the 910 raised against a removed participant" in {
+      val before = auctionWithLimits()
+      tradingOf(before.lot).currentPrice shouldBe money(910)
+      val (result, removed) = before.remove(removeParticipant(2, 6, before.entries.size.toLong))
+      result.isRight shouldBe true
+      tradingOf(removed.lot).currentPrice shouldBe money(100)
+      val withdrawn = removed.withdraw(withdrawProxyLimit(3, 7))._2
+      val winning = withdrawn.submit(placeBid(1, 200, 8), bid(80))._2
+      val sold = winning.close(closeLot(9, CloseReason.ByAuctioneer), calm)._2
+      sold.lot.state.asInstanceOf[LotState.Sold].sale.price shouldBe money(200)
+      val candidates = Settlement.candidates(sold.rows.toList, participant(1))
+      candidates.map(candidate => candidate.participant -> candidate.amount) shouldBe
+        List(participant(3) -> money(100))
+      val state = offering(candidates)
+      val accepted = written(state, Settlement.accept(state, candidates.head.bid, participant(3), op(90), calm))
+        .asInstanceOf[Settlement.Open]
+      accepted.current.terms.amount shouldBe money(100)
+    }
+
+    "recalculates a nonleading candidate as well as the leader when another participant is removed" in {
+      val before = auctionWithLimits().limit(setProxyLimit(4, 2000, 6))._2
+      val removed = before.remove(removeParticipant(2, 7, before.entries.size.toLong))._2
+      val bWithdrawn = removed.withdraw(withdrawProxyLimit(3, 8))._2
+      val cWithdrawn = bWithdrawn.withdraw(withdrawProxyLimit(4, 9))._2
+      val winning = cWithdrawn.submit(placeBid(1, 1100, 10), bid(81))._2
+      val sold = winning.close(closeLot(11, CloseReason.ByAuctioneer), calm)._2
+      val candidates = Settlement.candidates(sold.rows.toList, participant(1))
+      candidates.find(_.participant == participant(3)).map(_.amount) shouldBe Some(money(100))
+      candidates.exists(_.participant == participant(2)) shouldBe false
     }
 
     "waits for an explicit unredeemed command and confirmed closure before offering the lot" in {
@@ -59,11 +109,11 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
 
     "keeps the original obligation when payment won the race with closure" in {
       val closing = written(opened(), Settlement.requestUnredeemed(opened(), sale.invoice, op(10)))
-      val after = Settlement(closing, Settlement.closureCompleted(closing, op(10), false).get)
+      val after = Settlement(closing, Settlement.closureCompleted(closing, op(10), ClosureOutcome.AlreadyPaid).get)
         .asInstanceOf[Settlement.Open]
       after.stage shouldBe SettlementStage.AwaitingPayment
       after.offers shouldBe Nil
-      after.closures shouldBe Map(op(10) -> false)
+      after.closures shouldBe Map(op(10) -> ClosureOutcome.AlreadyPaid)
     }
 
     "creates immutable new terms after consent with the auction term counted from consent" in {
@@ -80,6 +130,15 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
         None
       )
       accepted.stage shouldBe SettlementStage.Issuing
+    }
+
+    "keeps an operation conflict distinct from payment and does not offer the lot after either refusal" in {
+      val closing = written(opened(), Settlement.requestUnredeemed(opened(), sale.invoice, op(10)))
+      val after = Settlement(closing, Settlement.closureCompleted(closing, op(10), ClosureOutcome.OpIdTaken).get)
+        .asInstanceOf[Settlement.Open]
+      after.closures shouldBe Map(op(10) -> ClosureOutcome.OpIdTaken)
+      after.offers shouldBe Nil
+      Settlement.requestUnredeemed(after, sale.invoice, op(10)) shouldBe Right(None)
     }
 
     "does not create an invoice on decline and finishes unredeemed after the last decline" in {
@@ -101,7 +160,8 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
       val confirmed = Settlement(accepted, Settlement.invoiceConfirmed(accepted, accepted.current.id).get)
       val closing = written(confirmed, Settlement.requestUnredeemed(confirmed, accepted.current.id, op(12)))
       val next =
-        Settlement(closing, Settlement.closureCompleted(closing, op(12), true).get).asInstanceOf[Settlement.Open]
+        Settlement(closing, Settlement.closureCompleted(closing, op(12), ClosureOutcome.Closed).get)
+          .asInstanceOf[Settlement.Open]
       next.stage shouldBe SettlementStage.Offering(SettlementOffer(vera))
       next.offers.map(_.offer.candidate.participant) shouldBe List(boris.participant, vera.participant)
     }
@@ -112,7 +172,7 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
       val next = written(state, Settlement.decline(state, boris.bid, boris.participant, op(11)))
       Settlement.accept(next, boris.bid, boris.participant, op(12), calm) shouldBe Left(SettlementRefusal.StaleOffer)
       Settlement.requestUnredeemed(next, InvoiceId.of(bid(99)), op(10)) shouldBe Left(SettlementRefusal.OpIdTaken)
-      Settlement.closureCompleted(next, op(10), true) shouldBe None
+      Settlement.closureCompleted(next, op(10), ClosureOutcome.Closed) shouldBe None
       Settlement.invoiceConfirmed(next, sale.invoice) shouldBe None
       Settlement.open(next, sale, Nil) shouldBe None
     }
