@@ -8724,6 +8724,56 @@ describe("auction announcement", () => {
     expect(draft).toContain("шаг 50");
   });
 
+  // Кнопка называет номер в полном списке по началу: период, закончившийся
+  // между показом и нажатием, номера следующего не сдвигает (PER-804).
+  it("keeps the button on its period when an earlier one ends before the press", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+      periods: [
+        {
+          periodId: "0198f2a4-7c1e-5d3a-9b21-4f8e12ab3401",
+          from: "2026-10-06T08:30:00Z",
+          until: "2026-10-06T09:30:00Z",
+          lotTerms: [{ lotId: vaseId, step: rub(5_000) }],
+        },
+        {
+          periodId: "0198f2a4-7c1e-5d3a-9b21-4f8e12ab3402",
+          from: "2026-10-07T15:00:00Z",
+          until: "2026-10-07T16:00:00Z",
+          lotTerms: [{ lotId: vaseId, start: rub(80_000) }],
+        },
+      ],
+    });
+    const notices = announcements();
+    const calls: RecordedCall[] = [];
+    const shown = bot(auction, notices, calls);
+    await shown.init();
+    await shown.handleUpdate(press(consoleData));
+    await shown.handleUpdate(press(dataOf(last(calls), "Объявление")));
+    await shown.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
+    const coming = dataOf(
+      last(calls),
+      "Период: с 7 октября, ср, 18:00 до 7 октября, ср, 19:00",
+    );
+
+    const later = bot(
+      auction,
+      notices,
+      calls,
+      true,
+      undefined,
+      createAuctionParents(),
+      new Date("2026-10-06T10:00:00Z"),
+    );
+    await later.init();
+    await later.handleUpdate(press(coming));
+    expect(plain(question(calls).payload)).toContain(
+      "с 7 октября, ср, 18:00 до 7 октября, ср, 19:00: особые условия на лотах: Ваза — старт 800",
+    );
+  });
+
   it("refuses an announcement text longer than a photo caption", async () => {
     const auction = fakeAuction({
       status: "prebidding",

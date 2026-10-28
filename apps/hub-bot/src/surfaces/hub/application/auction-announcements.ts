@@ -151,6 +151,9 @@ export type AnnouncementDraft =
  * период. У окна шаг один на все его лоты, у периода условия у каждого лота.
  */
 export type AnnouncementHappyHour = {
+  // Номер в полном списке по началу, прошедшие тоже: его несёт кнопка, и
+  // окно, закончившееся между показом и нажатием, номеров не сдвигает.
+  index: number;
   kind: "window" | "period";
   from: string;
   until: string;
@@ -474,37 +477,44 @@ export function announcementLots(
 }
 
 /**
- * «Счастливые часы», о которых можно объявить: окна — объявленные и
- * запущенные — и периоды (PER-787), которые идут или впереди, по началу.
- * Прошедшие не предлагаются (PER-804): объявлять о них некому.
+ * «Счастливые часы» аукциона по началу: окна — объявленные и запущенные — и
+ * периоды (PER-787, PER-804). Номер в этом списке называет кнопка шаблона.
  */
 export function announcementWindows(
   console: AuctionConsoleSnapshot,
-  now: Date,
 ): readonly AnnouncementHappyHour[] {
   const windows = [
     ...(console.week?.windows ?? []),
     ...console.launchedWindows,
-  ].map(
-    (window): AnnouncementHappyHour => ({
-      kind: "window",
-      from: window.from,
-      until: window.until,
-      step: window.step,
-      lots: window.lotIds.map((lotId) => ({ lotId })),
-    }),
-  );
-  const periods = console.happyHourPeriods.map(
-    (period): AnnouncementHappyHour => ({
-      kind: "period",
-      from: period.from,
-      until: period.until,
-      lots: period.lotTerms,
-    }),
-  );
+  ].map((window) => ({
+    kind: "window" as const,
+    from: window.from,
+    until: window.until,
+    step: window.step,
+    lots: window.lotIds.map((lotId) => ({ lotId })),
+  }));
+  const periods = console.happyHourPeriods.map((period) => ({
+    kind: "period" as const,
+    from: period.from,
+    until: period.until,
+    lots: period.lotTerms,
+  }));
   return [...windows, ...periods]
-    .filter((entry) => Date.parse(entry.until) > now.getTime())
-    .sort((left, right) => Date.parse(left.from) - Date.parse(right.from));
+    .sort((left, right) => Date.parse(left.from) - Date.parse(right.from))
+    .map((entry, index) => ({ ...entry, index }));
+}
+
+/**
+ * «Счастливые часы», о которых можно объявить: те, что идут или впереди.
+ * Прошедшие не предлагаются (PER-804): объявлять о них некому.
+ */
+export function upcomingAnnouncementWindows(
+  console: AuctionConsoleSnapshot,
+  now: Date,
+): readonly AnnouncementHappyHour[] {
+  return announcementWindows(console).filter(
+    (entry) => Date.parse(entry.until) > now.getTime(),
+  );
 }
 
 /** Кнопки, которые объявление этого аукциона может нести сейчас. */
@@ -690,9 +700,7 @@ export function createAuctionAnnouncements(
       }
       case "windows": {
         const window =
-          ref === undefined
-            ? undefined
-            : announcementWindows(console, clock())[ref];
+          ref === undefined ? undefined : announcementWindows(console)[ref];
         if (window === undefined) return gone("window-gone");
         const titles = new Map(
           announcementLots(console).map((lot) => [lot.lotId, lot.title]),
@@ -895,7 +903,7 @@ export function createAuctionAnnouncements(
           kind: "announcement-menu",
           auctionId: request.auctionId,
           raffle,
-          windows: announcementWindows(console, clock()).length,
+          windows: upcomingAnnouncementWindows(console, clock()).length,
           lots: console.lots.length,
           chronicle: console.status === "prebidding",
         };
@@ -906,7 +914,7 @@ export function createAuctionAnnouncements(
         return {
           kind: "announcement-windows",
           auctionId: request.auctionId,
-          windows: announcementWindows(found.console, clock()),
+          windows: upcomingAnnouncementWindows(found.console, clock()),
         };
       }
       case "list-announcement-lots": {

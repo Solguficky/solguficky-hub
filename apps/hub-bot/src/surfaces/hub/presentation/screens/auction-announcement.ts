@@ -180,13 +180,13 @@ export function announcementWindowsScreen(
 ): ShownScreen {
   const auction = uuidToToken(view.auctionId);
   const keyboard = new InlineKeyboard();
-  view.windows.forEach((window, index) => {
-    if (index > 0) keyboard.row();
+  view.windows.forEach((window, position) => {
+    if (position > 0) keyboard.row();
     keyboard.text(
       buttonText(
         `${window.kind === "period" ? "Период" : "Окно"}: ${span(window, moments)}`,
       ),
-      consoleAnnouncementAskData(auction, "windows", index),
+      consoleAnnouncementAskData(auction, "windows", window.index),
     );
   });
   return {
