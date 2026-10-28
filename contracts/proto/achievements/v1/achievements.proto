@@ -1,0 +1,119 @@
+syntax = "proto3";
+
+package achievements.v1;
+
+// Value types of Achievements shared by its service and its outgoing facts. They
+// live apart from achievements_service.proto so that a consumer of the facts does
+// not drag AchievementsService and its requests into its codegen.
+//
+// No message here names anything of a module's domain: no lot, bid, invoice or
+// price. A module appears only as the kind of an event a set belongs to, in
+// EventRef. Rules, the right of an organizer and refusal conditions live in
+// docs/services/achievements.md and docs/architecture/integration.md, section
+// "Achievements gRPC".
+
+// The event a set of achievements belongs to: a meetup or an auction. Exactly one
+// is set, and an empty oneof is not a value. A new kind of event is a new branch.
+message EventRef {
+  oneof kind {
+    // Canonical lowercase UUIDv7 with hyphens: the meetup id of Meetups.
+    string meetup_id = 1;
+
+    // Canonical lowercase UUID with hyphens: the auction id of Auction, version
+    // 5 or 7 as Auction gives it.
+    string auction_id = 2;
+  }
+}
+
+// One achievement as its definition describes it. Definitions ship with the
+// service, so the same code always describes the same achievement.
+message Achievement {
+  // Stable code of the definition, lowercase snake_case. It never changes once
+  // the achievement is in a set, and it is unique across all definitions.
+  string code = 1;
+
+  string title = 2;
+
+  string description = 3;
+
+  Rarity rarity = 4;
+
+  // Unset when the achievement has no image. The bytes are not here: they are
+  // read with GetAchievementImage, so a caller that already shows this version
+  // does not load them.
+  AchievementImageRef image = 5;
+
+  Recipients recipients = 6;
+
+  IssueMethod issue_method = 7;
+}
+
+// Names the image of an achievement without carrying it.
+message AchievementImageRef {
+  // Opaque, compared only for equality: it changes whenever the image changes.
+  string version = 1;
+}
+
+// Rarity changes the presentation only, never the mechanics. The values arrive
+// with the first set of definitions; a value a caller does not know is shown as
+// the default presentation.
+enum Rarity {
+  RARITY_UNSPECIFIED = 0;
+}
+
+// How many people of one event may hold the achievement.
+enum Recipients {
+  RECIPIENTS_UNSPECIFIED = 0;
+
+  // At most one holder per event: the first one by the order of facts.
+  RECIPIENTS_ONE = 1;
+
+  // Everyone who meets the rule, or everyone an organizer grants it to.
+  RECIPIENTS_MANY = 2;
+}
+
+// How the achievement is meant to be granted.
+enum IssueMethod {
+  ISSUE_METHOD_UNSPECIFIED = 0;
+
+  // Achievements grants it by itself from the facts of the event.
+  ISSUE_METHOD_RULE = 1;
+
+  // An organizer of the event grants it with GrantAchievement.
+  ISSUE_METHOD_MANUAL = 2;
+}
+
+// How one grant actually happened. It is not IssueMethod: a maintainer
+// correction can grant an achievement of either issue method.
+enum GrantMethod {
+  GRANT_METHOD_UNSPECIFIED = 0;
+
+  GRANT_METHOD_RULE = 1;
+
+  GRANT_METHOD_ORGANIZER = 2;
+
+  GRANT_METHOD_MAINTAINER_CORRECTION = 3;
+}
+
+// One grant: who holds which achievement of which event, since when and how.
+//
+// Who granted it is deliberately absent: the registry keeps it for the
+// investigation of an erroneous grant, and no reader shows it.
+message Grant {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  EventRef event = 2;
+
+  // Code of the achievement within the set of the event.
+  string achievement_code = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the identity from Identity who holds
+  // the achievement. A grant belongs to the person, not to a bot or a circle.
+  string identity_id = 4;
+
+  // RFC 3339 instant in UTC: the moment the grant was committed.
+  string granted_at = 5;
+
+  GrantMethod method = 6;
+}

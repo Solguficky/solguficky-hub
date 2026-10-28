@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package achievements.v1;
+
+import "achievements/v1/achievements.proto";
+
+// Outgoing facts of Achievements. They live apart from achievements_service.proto
+// for the same reason the value types do: a consumer of the facts must not drag
+// AchievementsService and its requests into its codegen.
+//
+// Every grant is its own fact, even when one occasion - one incoming fact of a
+// module or one command - grants several achievements. A consumer that wants
+// one message per occasion groups the facts by cause_id of the snapshot.
+//
+// Subjects, delivery semantics and the rules a consumer follows when it applies
+// these facts are not repeated here: they live in docs/architecture/integration.md,
+// section "Achievements NATS".
+
+// A recorded fact about one grant: what happened to it and what is true about it
+// now.
+message AchievementGrantEvent {
+  // Canonical lowercase UUIDv7 with hyphens. Identifies the outbox row and is the
+  // same value again when that row is published more than once.
+  string event_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. The grant this fact belongs to. It
+  // repeats state.grant.id so that the envelope alone identifies the subject of
+  // the fact.
+  string achievement_grant_id = 2;
+
+  // Grant version after the event was applied. Monotonic within one grant and
+  // starting at 1, so 0 is not a valid value.
+  int64 version = 3;
+
+  // RFC 3339 instant in UTC: the one moment the change was decided from and
+  // committed with. It is neither the moment of publication nor the moment of
+  // delivery, both of which happen later and are not carried at all.
+  string occurred_at = 4;
+
+  // The grant after the event was applied. Always set: the body of every event is
+  // a whole snapshot, never a delta.
+  AchievementGrantState state = 5;
+
+  // What happened - the occasion. Exactly one is set, and an empty oneof is not a
+  // value.
+  oneof occasion {
+    AchievementGranted achievement_granted = 6;
+  }
+}
+
+// The state of one grant after an event.
+message AchievementGrantState {
+  Grant grant = 1;
+
+  // The definition the grant refers to, so that a consumer composes its message
+  // without reading the service.
+  Achievement achievement = 2;
+
+  // Canonical lowercase UUID with hyphens: what caused the grant - the event_id
+  // of the incoming module fact for a rule, the op_id of the command for an
+  // organizer or a maintainer correction. Grants of one occasion share it; it is
+  // opaque and names nothing of the module.
+  string cause_id = 3;
+}
+
+// The achievement was granted. The grant, its method and its cause are in the
+// snapshot.
+message AchievementGranted {}
