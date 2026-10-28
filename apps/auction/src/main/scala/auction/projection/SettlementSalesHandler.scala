@@ -24,7 +24,7 @@ final class SettlementSalesHandler(
     paymentTerm: AuctionId => Future[Duration],
     invoices: InvoiceGateway,
     settlements: SettlementGateway,
-    history: InvoicingProjection.Envelope => Future[List[auction.lot.LotEvent]]
+    history: InvoicingProjection.Envelope => Future[List[auction.lot.Written]]
 )(using ExecutionContext)
     extends Handler[InvoicingProjection.Envelope] {
 
@@ -52,7 +52,7 @@ final class SettlementSalesHandler(
 object SettlementSalesHandler {
   val Name = "settlement-sales"
 
-  def history(system: ActorSystem[?]): InvoicingProjection.Envelope => Future[List[auction.lot.LotEvent]] = {
+  def history(system: ActorSystem[?]): InvoicingProjection.Envelope => Future[List[auction.lot.Written]] = {
     val database = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database
     val serialization = SerializationExtension(system.classicSystem)
     envelope =>
@@ -63,7 +63,9 @@ object SettlementSalesHandler {
           }
         if (rows.map(_._1) != (1L to envelope.sequenceNr))
           throw new IllegalStateException("settlement requires the complete lot history through its sale")
-        rows.map((sequence, stored) => LotJournal.envelope(sequence, stored).event).toList
+        rows
+          .map((sequence, stored) => auction.lot.Written(LotJournal.envelope(sequence, stored), stored.occurredAt))
+          .toList
       })
   }
 }

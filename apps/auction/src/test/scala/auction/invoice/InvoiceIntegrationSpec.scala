@@ -85,7 +85,16 @@ final class InvoiceIntegrationSpec
       val metrics = ProjectionMetrics(meter, clock)
       AuctionNode.startProjection(kit.system, metrics, 5.seconds)
       val settlements =
-        AuctionNode.startInvoicing(kit.system, sharding, wrap(invoices), metrics, 5.seconds, 5.seconds, clock)
+        AuctionNode.startInvoicing(
+          kit.system,
+          sharding,
+          wrap(invoices),
+          metrics,
+          new auction.telemetry.SettlementFailures(meter),
+          5.seconds,
+          5.seconds,
+          clock
+        )
       AuctionNode.startPublication(
         kit.system,
         metrics,

@@ -42,10 +42,14 @@ enum SettlementRefusal {
   case SettlementNotFound, StaleInvoice, StaleOffer, OfferNotFound, Busy, OpIdTaken
 }
 
+enum ClosureOutcome {
+  case Closed, AlreadyPaid, OpIdTaken
+}
+
 enum SettlementEvent {
   case Opened(sale: SettlementSale, candidates: List[SettlementCandidate])
   case ClosureRequested(invoice: InvoiceId, opId: OpId)
-  case ClosureCompleted(opId: OpId, closed: Boolean)
+  case ClosureCompleted(opId: OpId, outcome: ClosureOutcome)
   case OfferDeclined(offer: BidId, participant: ParticipantId, opId: OpId)
   case OfferAccepted(offer: BidId, participant: ParticipantId, invoice: SettlementInvoice, opId: OpId)
   case InvoiceConfirmed(invoice: InvoiceId)
@@ -60,7 +64,7 @@ enum Settlement {
       current: SettlementInvoice,
       stage: SettlementStage,
       offers: List[OfferRecord],
-      closures: Map[OpId, Boolean],
+      closures: Map[OpId, ClosureOutcome],
       seen: Map[OpId, SettlementAction]
   )
 }
@@ -68,18 +72,38 @@ enum Settlement {
 object Settlement {
 
   /**
-   * История по порядку журнала: последнее принятое предложение цены каждого участника, от последнего к первому. Снятые
-   * участники не возвращаются по старым ставкам. ProxyLimitSet сам по себе кандидата не создаёт.
+   * Последние принятые ставки с учётом уже выполненных снятий (решение владельца PER-694: 100, не 910). При снятии цены
+   * берутся из пересчитанной истории теми же правилами, что ADR-072. Сам лимит кандидата не создаёт.
    */
-  def candidates(events: List[LotEvent], winner: ParticipantId): List[SettlementCandidate] = {
-    val (latest, removed) = events.foldLeft((List.empty[SettlementCandidate], Set.empty[ParticipantId])) {
-      case ((bids, excluded), LotEvent.BidPlaced(id, participant, amount, _, _, _)) =>
-        (SettlementCandidate(id, participant, amount) :: bids.filterNot(_.participant == participant), excluded)
-      case ((bids, excluded), event: LotEvent.ParticipantRemoved) =>
-        (bids.filterNot(_.participant == event.participant), excluded + event.participant)
-      case (state, _) => state
+  def candidates(events: List[Written], winner: ParticipantId): List[SettlementCandidate] = {
+    val (_, latest) = events.foldLeft((Lot.initial, List.empty[SettlementCandidate])) { case ((lot, bids), row) =>
+      val after = Lot(lot, row.envelope, row.at)
+      val next = row.envelope.event match {
+        case LotEvent.BidPlaced(id, participant, amount, _, _, _) =>
+          SettlementCandidate(id, participant, amount) :: bids.filterNot(_.participant == participant)
+        case removed: LotEvent.ParticipantRemoved =>
+          val (config, course) = lot.state match {
+            case LotState.Trading(trading) => trading.config -> trading.course
+            case LotState.Held(held) => held.config -> held.course
+            case _ => throw new IllegalStateException("participant removal outside trading history")
+          }
+          val history = course.getOrElse(throw new IllegalStateException("participant removal without course"))
+          val position = removed.leadingBidId.getOrElse(BidId(row.envelope.opId.value))
+          Lot
+            .replayedBids(config, history.copy(removed = history.removed + removed.participant), position)
+            .flatMap { effective =>
+              if (removed.leader.contains(effective.participant))
+                removed.leadingBidId.map(id => SettlementCandidate(id, effective.participant, removed.price))
+              else
+                bids
+                  .find(_.participant == effective.participant)
+                  .map(previous => previous.copy(amount = effective.amount))
+            }
+        case _ => bids
+      }
+      after -> next
     }
-    latest.filterNot(candidate => candidate.participant == winner || removed(candidate.participant))
+    latest.filterNot(_.participant == winner)
   }
 
   def open(state: Settlement, sale: SettlementSale, candidates: List[SettlementCandidate]): Option[SettlementEvent] =
@@ -173,10 +197,10 @@ object Settlement {
     }
 
   /** Подтверждения старого ask после следующего шага не могут откатить состояние. */
-  def closureCompleted(state: Settlement, opId: OpId, closed: Boolean): Option[SettlementEvent] =
+  def closureCompleted(state: Settlement, opId: OpId, outcome: ClosureOutcome): Option[SettlementEvent] =
     state match {
       case active: Settlement.Open if active.stage == SettlementStage.Closing(opId) =>
-        Some(SettlementEvent.ClosureCompleted(opId, closed))
+        Some(SettlementEvent.ClosureCompleted(opId, outcome))
       case _ => None
     }
 
@@ -230,9 +254,13 @@ object Settlement {
           stage = SettlementStage.Closing(opId),
           seen = active.seen + (opId -> SettlementAction.Close(invoice))
         )
-      case (active: Settlement.Open, SettlementEvent.ClosureCompleted(opId, closed)) =>
-        val after = active.copy(closures = active.closures + (opId -> closed))
-        if (closed) offerNext(after) else after.copy(stage = SettlementStage.AwaitingPayment)
+      case (active: Settlement.Open, SettlementEvent.ClosureCompleted(opId, outcome)) =>
+        val after = active.copy(closures = active.closures + (opId -> outcome))
+        outcome match {
+          case ClosureOutcome.Closed => offerNext(after)
+          case ClosureOutcome.AlreadyPaid | ClosureOutcome.OpIdTaken =>
+            after.copy(stage = SettlementStage.AwaitingPayment)
+        }
       case (active: Settlement.Open, SettlementEvent.OfferDeclined(offer, participant, opId)) =>
         offerNext(
           active.copy(
