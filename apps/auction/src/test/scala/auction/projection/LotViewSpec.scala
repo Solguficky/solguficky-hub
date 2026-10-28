@@ -91,6 +91,38 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       bids.map(_.lotId).distinct shouldBe List(lotId)
     }
 
+    // PER-810: строка ставки несёт стартовую окна, которое действовало в её момент: снимок проданного лота окон не
+    // несёт, а стартовую роста статистика считает по первой неснятой ставке.
+    "records the starting price of the window a bid fell into, and none outside a window" in {
+      val window = (from: java.time.Instant, until: java.time.Instant) =>
+        opened.copy(stepWindows = List(StepWindow(from, until, None, Some(money(5000)))))
+      val bids = Vector(
+        LotEvent.BidPlaced(bid(0), participant(0), money(5000), None, BidOrigin.Manual(BidSource.Bot)),
+        LotEvent.BidPlaced(bid(1), participant(1), money(5500), Some(participant(0)), BidOrigin.Manual(BidSource.Bot))
+      )
+      def recorded(open: LotEvent.LotOpened): List[Option[Long]] =
+        deliver(
+          numbered((Vector(lotDrafted, lotScheduled, open) ++ bids).zipWithIndex.map((e, i) => stored(i + 1, e)))
+        )._2.map(_.windowStart)
+
+      recorded(window(decidedAt.minusSeconds(3600), decidedAt.plusSeconds(3600))) shouldBe List(
+        Some(5000L),
+        Some(5000L)
+      )
+      // Окно кончилось до ставок: стартовой окна у них нет.
+      recorded(window(decidedAt.minusSeconds(7200), decidedAt.minusSeconds(3600))) shouldBe List(None, None)
+      // Свёртка догонки пишет то же, что проекция по одному событию.
+      val events = numbered(
+        (Vector(
+          lotDrafted,
+          lotScheduled,
+          window(decidedAt.minusSeconds(3600), decidedAt.plusSeconds(3600))
+        ) ++ bids).zipWithIndex
+          .map((e, i) => stored(i + 1, e))
+      )
+      folded(None, events).bids.map(_.windowStart) shouldBe List(Some(5000L), Some(5000L))
+    }
+
     "takes the auction of the lot from the event that drafted it" in {
       val (row, _) = deliver(numbered(journal(Nil)))
       row.map(_.auctionId) shouldBe Some(auctionId(1).value)

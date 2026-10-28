@@ -22,7 +22,13 @@ config :logger, :default_formatter,
     :event_id,
     :published,
     :grpc_port,
-    :bus
+    :bus,
+    :achievement,
+    :stream_seq,
+    :granted,
+    :outcome,
+    :caller,
+    :caller_refusal
   ]
 
 # Экспорт выключен, пока среда не дала адрес OTLP (config/runtime.exs).

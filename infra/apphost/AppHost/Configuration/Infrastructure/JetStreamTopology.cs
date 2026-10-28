@@ -45,6 +45,12 @@ internal static class JetStreamTopology
         // первого канала: retention limits держит опубликованное до появления
         // его durable, и факты, вынесенные релеем до того, не теряются.
         new("NOTIFICATIONS_EVENTS", "events.notifications.>"),
+
+        // Факты выдачи Achievements (PER-752). Стрим заведён раньше своего
+        // потребителя Notifications (PER-573) по тому же доводу, что
+        // NOTIFICATIONS_EVENTS: выдачи, вынесенные релеем до его durable, ждут
+        // в окне хранения, а не теряются.
+        new("ACHIEVEMENTS_EVENTS", "events.achievements.>"),
     ];
 
     /// <summary>
@@ -81,7 +87,7 @@ internal static class JetStreamTopology
         {
             ["MEETUPS_EVENTS"] = "events.meetups.meetup_cancelled",
         }),
-        new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS", "NOTIFICATIONS_EVENTS"]),
+        new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS", "NOTIFICATIONS_EVENTS", "ACHIEVEMENTS_EVENTS"]),
     ];
 
     /// <summary>

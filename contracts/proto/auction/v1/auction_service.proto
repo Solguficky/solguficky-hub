@@ -2307,6 +2307,11 @@ message LotStatistics {
   // Absolute difference between current and starting price, in the lot's currency,
   // not a percentage. Unset when no starting price exists; set to zero before the
   // first bid. A zero starting price does not make the difference undefined.
+  // The starting price is the one the lot opened at: the regular starting price,
+  // or the starting price of the window its first standing accepted bid fell into
+  // when that one was lower, never above the amount of that bid nor the price the
+  // last participant removal left the lot at. A difference,
+  // not a price: the contract does not promise it is non-negative.
   Money price_growth = 4;
 
   // RFC 3339 instant in UTC of the last BidPlaced in journal sequence order,
@@ -2369,7 +2374,8 @@ message DayLotStatistics {
   Money max_price = 3;
 
   // max_price minus the price the lot had when the window opened: the price of its
-  // last accepted bid before the window, or its starting price when there was none.
+  // last accepted bid before the window, or its starting price when there was none —
+  // the one the lot opened at, as in LotStatistics.price_growth.
   // Absolute difference, in the lot's currency, not a percentage. Unset when the lot
   // took no accepted bid in the window or had no price before the window; a zero
   // difference is a real value.
@@ -3403,7 +3409,8 @@ message GetAuctionChronicleResponse {
 
   // Every lot of the registry, without pagination or a meaningful order. The
   // aggregates of DayLotStatistics over the whole trading: growth is the
-  // highest price minus the starting price, and the leader changes and duels
+  // highest price minus the starting price the lot opened at, as in
+  // LotStatistics.price_growth, and the leader changes and duels
   // are those of the life of the lot. The caller ranks the complete list.
   repeated DayLotStatistics lots = 6;
 }

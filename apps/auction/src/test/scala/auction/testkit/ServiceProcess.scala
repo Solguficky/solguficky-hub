@@ -68,10 +68,15 @@ final class ServiceProcess private (process: Process, val grpcPort: Int, val htt
 
 object ServiceProcess {
 
-  /** Стартует сервис на свободных портах. Готовность — отдельным `awaitReady`. */
-  def start(environment: Map[String, String], log: Path): ServiceProcess = {
-    val grpcPort = freePort()
-    val httpPort = Iterator.continually(freePort()).dropWhile(_ == grpcPort).next()
+  /**
+   * Стартует сервис на свободных портах либо на `ports` (gRPC, HTTP) прежнего процесса: так поднятый после убийства
+   * сервис отвечает по тем же адресам, и клиенты переподключаются к ним сами. Готовность — отдельным `awaitReady`.
+   */
+  def start(environment: Map[String, String], log: Path, ports: Option[(Int, Int)] = None): ServiceProcess = {
+    val (grpcPort, httpPort) = ports.getOrElse {
+      val grpc = freePort()
+      (grpc, Iterator.continually(freePort()).dropWhile(_ == grpc).next())
+    }
     val java = Paths.get(sys.props("java.home"), "bin", "java").toString
     val builder = new ProcessBuilder(java, "-cp", classpath, "auction.Main")
     val env = builder.environment()

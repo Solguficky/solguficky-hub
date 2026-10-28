@@ -1,10 +1,9 @@
 defmodule Achievements.Application do
   @moduledoc """
   Дерево процесса. Порядок детей — порядок готовности: база, миграции до
-  listen (обработчик рассчитывает на готовую схему), шина и релей outbox,
-  место под акторы ачивок и последним gRPC-граница. Акторов пока нет:
-  определения и правила приносят соседние задачи (ADR-077, дополнение
-  2026-10-26).
+  listen (обработчик рассчитывает на готовую схему), метрики, шина и релей
+  outbox, каталог с акторами ачивок и последним gRPC-граница (ADR-077,
+  дополнение 2026-10-26).
   """
   use Application
 
@@ -19,8 +18,9 @@ defmodule Achievements.Application do
       [
         Achievements.Repo,
         {Ecto.Migrator, repos: Application.fetch_env!(:achievements, :ecto_repos), log: :info},
+        Achievements.Metrics,
         bus(env[:nats], Keyword.get(env, :relay_interval, 1_000)),
-        {DynamicSupervisor, name: Achievements.Actors, strategy: :one_for_one},
+        {Achievements.Actors, bus?: env[:nats] != nil, actor: Keyword.get(env, :actor, [])},
         {GRPC.Server.Supervisor,
          endpoint: Achievements.Endpoint,
          port: Keyword.fetch!(env, :grpc_port),
@@ -37,7 +37,8 @@ defmodule Achievements.Application do
     Supervisor.start_link(children, strategy: :one_for_one, name: Achievements.Supervisor)
   end
 
-  # Без адреса шины релея нет: строки ждут в outbox.
+  # Без адреса шины нет ни релея, ни акторов: строки ждут в outbox, а стрим
+  # модуля дочитают акторы, когда адрес появится.
   defp bus(nil, _interval), do: []
 
   defp bus(settings, interval) do

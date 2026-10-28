@@ -670,6 +670,17 @@ auction-test-integration:
 auction-test-browser:
     cd apps/auction && AUCTION_BROWSER_TESTS=1 sbt -batch test
 
+# Инструмент, а не тест: в `verify`, `test-all` и CI не входит. Сценарий и стенд
+# задают переменные SCREEN_LOAD_*: стенд local (по умолчанию) сам поднимает
+# PostgreSQL в Docker, заглушку Meetups и Auction отдельным процессом, remote идёт
+# против развёрнутого сервиса по адресам и токену вызывающего. Chromium — тот же,
+# что у auction-test-browser. Переменные, сценарии и форма записи результатов —
+# docs/services/auction-screen-load.md; отчёт пишется в apps/auction/target/screen-load/.
+#
+# Прогон экрана зала под залпом ставок (PER-486); нужны Docker и Chromium Playwright
+auction-screen-load:
+    cd apps/auction && sbt -batch "Test/runMain auction.screen.load.ScreenLoad"
+
 # scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
 # отдельная задача — иначе build.sbt остаётся единственным неформатируемым
 # файлом компонента.
@@ -729,27 +740,33 @@ auction-verify:
 #
 # Версии Erlang/OTP и Elixir — apps/achievements/.tool-versions, суммы архивов —
 # ERLANG_SHA256 и ELIXIR_SHA256 выше; библиотеки закреплены в mix.lock.
-# Сервис — скелет: база с миграциями Ecto, health по gRPC и релей outbox;
-# правил, определений и контракта в нём пока нет (ADR-077, дополнение
-# 2026-10-26).
+# Сервис — реестр выдач ачивок: определения кодом, акторы над AUCTION_EVENTS,
+# outbox фактов выдачи и чтения по gRPC (ADR-077, дополнение 2026-10-26).
+# Код из contracts/proto генерирует buf (BUF_VERSION выше) плагином
+# protoc-gen-elixir — escript того же hex-пакета protobuf, что в mix.lock, —
+# и в Git он не лежит.
 
-# Hex, rebar и зависимости по mix.lock. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
+# Hex, rebar, зависимости по mix.lock и protoc-gen-elixir версии protobuf из mix.lock в ~/.mix/escripts. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
 achievements-tools:
-    cd apps/achievements && mix local.hex --force --if-missing && mix local.rebar --force --if-missing && mix deps.get
+    cd apps/achievements && mix local.hex --force --if-missing && mix local.rebar --force --if-missing && mix deps.get && mix escript.install hex protobuf "$(sed -n 's/.*"protobuf": {:hex, :protobuf, "\([^"]*\)".*/\1/p' mix.lock)" --force
+
+# Сгенерировать Elixir-модули achievements/v1 и фактов auction/v1 в apps/achievements/lib/generated; нужны buf и плагин из achievements-tools
+achievements-proto:
+    PATH="$HOME/.mix/escripts:$PATH" buf generate --template apps/achievements/buf.gen.yaml
 
 # Сборка сервиса; предупреждение — ошибка сборки
-achievements-build:
+achievements-build: achievements-proto
     cd apps/achievements && mix compile --warnings-as-errors
 
 # Уровень выбирает переменная, а не пропуск: test_helper.exs исключает тег
 # :integration и роняет прогон на пропуске и недоборе до порога своего уровня.
 #
 # Прогон ExUnit L0; Docker не нужен
-achievements-test:
+achievements-test: achievements-proto
     cd apps/achievements && mix test --warnings-as-errors
 
-# L1: миграции, health по gRPC и релей outbox на PostgreSQL и NATS в Testcontainers; нужен Docker
-achievements-test-integration:
+# L1: миграции, health, релей outbox, акторы ачивок над стримом и чтения по gRPC на PostgreSQL и NATS в Testcontainers; нужен Docker
+achievements-test-integration: achievements-proto
     cd apps/achievements && ACHIEVEMENTS_INTEGRATION_TESTS=1 mix test --warnings-as-errors
 
 # Гейт форматирования по apps/achievements/.formatter.exs

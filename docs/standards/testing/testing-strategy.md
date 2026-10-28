@@ -82,6 +82,25 @@
 - Суффикс моста повторяет минорную версию ScalaCheck, под которую он собран, и обновляется вместе с ней: `scalacheck-1-18` идёт к ScalaCheck 1.18.x. Имя артефакта проверяется по Maven Central, а не выводится из номера ScalaCheck: моста под непубликованный минор не существует, а сборка узнаёт об этом отказом резолвинга.
 - Форму имени сьюта и файла задаёт секция Scala в [naming.md](naming.md); раскладка — стандартная для sbt `src/test/scala/` по пути пакета SUT, отдельных тест-проектов Scala не заводит.
 
+## Стек Elixir
+
+Первым Elixir-компонентом стал Achievements ([PER-750](https://linear.app/anticnvm/issue/per-750)); языковые правила — [languages/elixir.md](../languages/elixir.md). Стек записан по его `mix.exs` и тестам, версии закрепляет `mix.lock`.
+
+| Назначение | Инструмент |
+|---|---|
+| Test framework и runner | ExUnit |
+| Настоящие PostgreSQL и NATS | `testcontainers` |
+| gRPC-клиент к настоящей границе | `grpc` с адаптером `mint`, только в `:test` |
+
+- Тесты не стартуют приложение: алиас `test: "test --no-start"` в `mix.exs`. L0 проверяет функции и не поднимает ни дерево, ни базу; приложение стартует только L1, сам, когда положил конфигурацию по адресам своих контейнеров.
+- Решение, которое иначе спряталось бы в процессе или за вызовом зависимости, выносится в функцию модуля с `@doc false`, а зависимость приходит в неё аргументом-функцией. L0 зовёт её напрямую: так проверяются отображение полей лога, разбор ответа JetStream и ответ пробы здоровья. Зависимость, которую тест не задал, обязана падать — `fn -> flunk(...) end`, — а не отвечать молчаливым успехом.
+- L0 идёт с `async: true`, кроме модуля, который меняет общее состояние VM — переменные среды через `System.put_env`: он `async: false`, иначе параллельные тесты гоняются за одну переменную. L1 — `async: false`: узел и его именованные процессы в прогоне одни.
+- Порог `test_helper.exs` считает тесты прогона, а прогон с переменной уровня гонит все уровни: порог L1 — это L0 плюс L1. Новый L0-тест поднимает оба порога, новый L1 — только порог L1. Прогон одного файла (`mix test <файл>`) на пороге падает — это ожидаемо, а не дефект.
+- L1 лежит в `test/integration/` с `@moduletag :integration` и поднимает свои контейнеры в `setup_all`: PostgreSQL `postgres:16-alpine` и NATS с JetStream под паролем, как в Aspire и чарте. Схему создают миграции самого сервиса при старте узла, а не тест.
+- Таймер процесса L1 не ждёт: тест отодвигает интервал конфигурацией и вызывает тик сам (`Relay.run_once/0`), иначе таймер забирает данные раньше утверждения.
+- Уровень выбирает переменная `ACHIEVEMENTS_INTEGRATION_TESTS`, а не пропуск; пропуск и недобор до порога уровня роняют прогон из `test_helper.exs` (раздел «Уровни» выше).
+- Форму имени модуля, файла и строки `test` задаёт секция Elixir в [naming.md](naming.md).
+
 ## Структура .NET тест-проекта
 
 Раздел действует для F# и C#. У Go и TypeScript раскладку задаёт язык: тест лежит рядом с исходником, см. [naming.md](naming.md).
@@ -118,6 +137,10 @@ just notifications-test-integration      # Notifications.IntegrationTests, ну�
 just auction-test                        # L0, всё кроме *IntegrationSpec и *BrowserSpec; Docker не нужен
 just auction-test-integration            # *IntegrationSpec, Testcontainers, нужен Docker
 just auction-test-browser                # *BrowserSpec, Chromium через Playwright for Java, нужен Docker
+
+# Achievements (Elixir) — уровень выбирается тегом :integration и переменной
+just achievements-test                   # L0, тег :integration исключён; Docker не нужен
+just achievements-test-integration       # все уровни, Testcontainers, нужен Docker
 
 # Сквозной контур (L2)
 just contour-test                        # дымовой сценарий Identity и Meetups

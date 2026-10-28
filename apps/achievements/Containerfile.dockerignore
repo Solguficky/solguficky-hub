@@ -1,11 +1,16 @@
 # Контекст сборки Containerfile рядом — корень репозитория, поэтому список
 # разрешённого: всё, что не названо ниже, в контекст не попадает. Так _build/
-# и deps/ рабочего дерева и чужие компоненты не доезжают до сборки.
+# и deps/ рабочего дерева и чужие компоненты не доезжают до сборки. Код из
+# contracts/proto образ генерирует сам, поэтому lib/generated рабочего дерева
+# в контекст не идёт.
 # Docker находит файл по имени сам, podman получает его через --ignorefile.
 *
+!contracts/proto
+!apps/achievements/buf.gen.yaml
 !apps/achievements/.tool-versions
 !apps/achievements/mix.exs
 !apps/achievements/mix.lock
 !apps/achievements/config
 !apps/achievements/lib
 !apps/achievements/priv
+apps/achievements/lib/generated

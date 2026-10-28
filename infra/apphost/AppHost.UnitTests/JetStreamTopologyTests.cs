@@ -210,6 +210,7 @@ public class JetStreamTopologyTests
     [InlineData("IDENTITY_EVENTS", 7)]
     [InlineData("AUCTION_EVENTS", 90)]
     [InlineData("NOTIFICATIONS_EVENTS", 7)]
+    [InlineData("ACHIEVEMENTS_EVENTS", 7)]
     public void ToConfig_Stream_KeepsMessagesForItsRetention(string streamName, int days)
     {
         var stream = JetStreamTopology.Streams.Single(candidate => candidate.Name == streamName);

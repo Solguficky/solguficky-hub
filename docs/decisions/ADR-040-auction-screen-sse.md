@@ -124,6 +124,7 @@ Phoenix остаётся подходящим инструментом для с
 - Задача: [PER-148](https://linear.app/anticnvm/issue/per-148)
 - Дополнение 2026-10-19: [PER-483](https://linear.app/anticnvm/issue/per-483); публичный вход — [ADR-071](ADR-071-public-entry-through-cloudflare-tunnel.md)
 - Сервис: [Auction](../services/auction.md)
+- Прогон под нагрузкой и его результаты: [auction-screen-load.md](../services/auction-screen-load.md), [PER-486](https://linear.app/anticnvm/issue/per-486)
 - Продуктовые вопросы: [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md)
 - Предыдущее решение: [ADR-018](ADR-018-websocket-gateway-signalr.md) — заменяется для read-only экрана; история прежней консоли сохраняется
 - [Выбор технологий](../architecture/technology-selection.md)

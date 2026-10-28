@@ -84,6 +84,8 @@ jobs:
               - 'justfile'
               - '.github/workflows/ci.yml'
             achievements:
+              # Код контракта и фактов Auction генерируется из схем при сборке.
+              - 'contracts/proto/**'
               - 'apps/achievements/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
@@ -655,6 +657,15 @@ jobs:
           key: achievements-${{ runner.os }}-${{ hashFiles('apps/achievements/.tool-versions', 'apps/achievements/mix.lock') }}
       - name: just из justfile
         run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
+      # buf генерирует модули contracts/proto перед сборкой (achievements-proto);
+      # версия — BUF_VERSION из justfile, как у джобы contracts.
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
       - run: just achievements-tools
       - run: just achievements-format-check
       - run: just achievements-build

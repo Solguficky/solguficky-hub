@@ -1,0 +1,152 @@
+syntax = "proto3";
+
+package achievements.v1;
+
+import "achievements/v1/achievements.proto";
+
+// The reads of both bots - the person's own collection, the set of an event and
+// the image of an achievement - and the manual grant by an organizer of the
+// event. Every request that belongs to a person carries their internal identity;
+// the reads of a set and of an image belong to no person, because a set is
+// public to everyone who sees the event.
+//
+// Names are deliberately absent everywhere: a holder is an identity id, and the
+// bot takes the name from the owner of the event's names.
+//
+// A named refusal is a value of the response, not a gRPC status. Which
+// conditions still answer with a status and how op_id is replayed are documented
+// in docs/architecture/integration.md, section "Achievements gRPC".
+service AchievementsService {
+  rpc ListMyAchievements(ListMyAchievementsRequest) returns (MyAchievements);
+  rpc GetEventAchievements(GetEventAchievementsRequest) returns (EventAchievements);
+  rpc GetAchievementImage(GetAchievementImageRequest) returns (AchievementImage);
+  rpc GrantAchievement(GrantAchievementRequest) returns (GrantAchievementResponse);
+}
+
+message ListMyAchievementsRequest {
+  // Canonical lowercase UUIDv7 with hyphens. The person whose own collection is
+  // read; no request reads the collection of somebody else.
+  string identity_id = 1;
+}
+
+// The person's collection across all events, earliest grant first. Empty when
+// the person holds nothing. A grant cancelled by a maintainer is not here.
+message MyAchievements {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string identity_id = 1;
+
+  repeated HeldAchievement achievements = 2;
+}
+
+message HeldAchievement {
+  Grant grant = 1;
+
+  // The current definition with the code of the grant. A set fixes which codes
+  // it holds, not a copy of their definitions.
+  Achievement achievement = 2;
+}
+
+message GetEventAchievementsRequest {
+  EventRef event = 1;
+}
+
+// The set of an event in the order of its definitions.
+message EventAchievements {
+  EventRef event = 1;
+
+  // Before the set is fixed, the definitions that would form it now, all
+  // without holders. Empty when the kind of the event has no definitions.
+  repeated EventAchievement achievements = 2;
+
+  // Whether the set of the event is fixed. Unfixed means that the event has not
+  // needed it yet: no fact a rule reads and no manual grant.
+  bool fixed = 3;
+}
+
+message EventAchievement {
+  Achievement achievement = 1;
+
+  // Canonical lowercase UUIDv7 strings with hyphens: the holders, earliest grant
+  // first. A grant cancelled by a maintainer has no holder here.
+  repeated string holder_identity_ids = 2;
+
+  // Holders whose data was erased. They are counted and never named: an erased
+  // holder of a one-holder achievement keeps it taken.
+  uint32 erased_holders = 3;
+}
+
+message GetAchievementImageRequest {
+  // Code of the achievement whose image is read.
+  string achievement_code = 1;
+}
+
+message AchievementImage {
+  // The encoded image file.
+  bytes content = 1;
+
+  // IANA media type of content, such as image/png.
+  string media_type = 2;
+
+  // The version of these bytes, as AchievementImageRef.version.
+  string version = 3;
+}
+
+message GrantAchievementRequest {
+  // Canonical lowercase UUIDv7 with hyphens. The organizer who grants. The right
+  // is checked with the owner of the event, so no rights travel here.
+  string identity_id = 1;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens: the idempotency
+  // key. A repeat of an accepted grant with the same op_id and the same body
+  // answers the original grant; a refusal is not remembered.
+  string op_id = 2;
+
+  EventRef event = 3;
+
+  // Code of an achievement of the event's set. A grant for an event whose set is
+  // not fixed yet fixes it first.
+  string achievement_code = 4;
+
+  // Canonical lowercase UUIDv7 with hyphens: the person who receives it.
+  string recipient_identity_id = 5;
+}
+
+message GrantAchievementResponse {
+  // Exactly one is set.
+  oneof outcome {
+    Grant accepted = 1;
+    GrantAchievementRefusal refused = 2;
+  }
+}
+
+message GrantAchievementRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotOrganizer not_organizer = 1;
+    SelfGrant self_grant = 2;
+    AchievementNotInSet achievement_not_in_set = 3;
+    NotManual not_manual = 4;
+    AlreadyGranted already_granted = 5;
+    HolderTaken holder_taken = 6;
+  }
+}
+
+// The caller is not an organizer of the event.
+message NotOrganizer {}
+
+// The recipient is the caller.
+message SelfGrant {}
+
+// The code names no achievement of the event's set.
+message AchievementNotInSet {}
+
+// The achievement is granted by a rule, not by hand.
+message NotManual {}
+
+// The recipient already has a grant of this achievement in this set, live or
+// cancelled.
+message AlreadyGranted {}
+
+// A one-holder achievement of the set is already taken by somebody else: held,
+// cancelled or erased.
+message HolderTaken {}
