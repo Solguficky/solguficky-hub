@@ -111,6 +111,7 @@ public class JetStreamTopologyScriptTests
     [InlineData("IDENTITY_EVENTS", 7)]
     [InlineData("AUCTION_EVENTS", 90)]
     [InlineData("NOTIFICATIONS_EVENTS", 7)]
+    [InlineData("ACHIEVEMENTS_EVENTS", 7)]
     public void Files_StreamConfig_CarriesItsRetention(string streamName, int days)
     {
         using var json = JsonDocument.Parse(JetStreamTopologyScript.Files()[JetStreamTopologyScript.StreamFile(streamName)]);

@@ -5,8 +5,29 @@ defmodule Achievements.SettingsTest do
 
   @var "ACHIEVEMENTS_TEST_PORT"
 
+  @tokens ["ACHIEVEMENTS_CALLER_TOKEN_TEST_BOT", "ACHIEVEMENTS_CALLER_TOKEN_OTHER_BOT"]
+
   setup do
-    on_exit(fn -> System.delete_env(@var) end)
+    on_exit(fn -> Enum.each([@var | @tokens], &System.delete_env/1) end)
+  end
+
+  test "callers read the token of each caller from its own variable" do
+    System.put_env("ACHIEVEMENTS_CALLER_TOKEN_TEST_BOT", "t1")
+    System.put_env("ACHIEVEMENTS_CALLER_TOKEN_OTHER_BOT", "t2")
+
+    assert Settings.callers!([:test_bot, :other_bot]) == %{test_bot: "t1", other_bot: "t2"}
+  end
+
+  test "callers refuse a missing or empty token, naming the variable" do
+    System.put_env("ACHIEVEMENTS_CALLER_TOKEN_TEST_BOT", "")
+
+    assert_raise RuntimeError, ~r/ACHIEVEMENTS_CALLER_TOKEN_TEST_BOT/, fn ->
+      Settings.callers!([:test_bot])
+    end
+
+    assert_raise RuntimeError, ~r/ACHIEVEMENTS_CALLER_TOKEN_OTHER_BOT/, fn ->
+      Settings.callers!([:other_bot])
+    end
   end
 
   test "port falls back to the default when the variable is unset" do
