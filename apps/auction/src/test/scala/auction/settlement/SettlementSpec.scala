@@ -107,6 +107,38 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
       offering().asInstanceOf[Settlement.Open].stage shouldBe SettlementStage.Offering(SettlementOffer(boris))
     }
 
+    "skips a proxy with no recorded bid even if a removal replay hypothetically gives it a nonleading bid" in {
+      val draft = Journal.of(Lot.initial).draft(draftLot(1))._2
+      val opened = draft.schedule(scheduleLot(2))._2.open(openLot(3))._2
+      val r = opened.limit(setProxyLimit(2, 1000, 4))._2
+      val q = r.limit(setProxyLimit(3, 300, 5))._2
+      val p = q.limit(setProxyLimit(4, 500, 6))._2
+      p.entries.collect { case Envelope(_, _, event: LotEvent.BidPlaced) => event.participant }.toSet shouldBe
+        Set(participant(2))
+      val removed = p.remove(removeParticipant(2, 7, p.entries.size.toLong))._2
+      tradingOf(removed.lot).leader shouldBe Some(participant(4))
+      tradingOf(removed.lot).currentPrice shouldBe money(310)
+      val withdrawn = removed.withdraw(withdrawProxyLimit(4, 8))._2
+      val won = withdrawn.submit(placeBid(1, 320, 9), bid(82))._2
+      val sold = won.close(closeLot(10, CloseReason.ByAuctioneer), calm)._2
+      // P имеет записанную позицию лидера снятия; Q не имеет ни BidPlaced, ни такой позиции.
+      Settlement
+        .candidates(sold.rows.toList, participant(1))
+        .map(candidate => candidate.participant -> candidate.amount) shouldBe List(participant(4) -> money(310))
+    }
+
+    "does not resurrect a price raised against either of two removed participants" in {
+      val before = auctionWithLimits().limit(setProxyLimit(4, 2000, 6))._2
+      val first = before.remove(removeParticipant(2, 7, before.entries.size.toLong))._2
+      val second = first.remove(removeParticipant(4, 8, first.entries.size.toLong))._2
+      val withdrawn = second.withdraw(withdrawProxyLimit(3, 9))._2
+      val won = withdrawn.submit(placeBid(1, 200, 10), bid(83))._2
+      val sold = won.close(closeLot(11, CloseReason.ByAuctioneer), calm)._2
+      Settlement
+        .candidates(sold.rows.toList, participant(1))
+        .map(candidate => candidate.participant -> candidate.amount) shouldBe List(participant(3) -> money(100))
+    }
+
     "keeps the original obligation when payment won the race with closure" in {
       val closing = written(opened(), Settlement.requestUnredeemed(opened(), sale.invoice, op(10)))
       val after = Settlement(closing, Settlement.closureCompleted(closing, op(10), ClosureOutcome.AlreadyPaid).get)

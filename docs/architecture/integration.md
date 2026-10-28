@@ -4,7 +4,7 @@
 
 Wire-схемы находятся в `contracts/proto/`. Этот документ описывает transport boundaries и имена NATS subjects, которые не являются частью `.proto`.
 
-Внутренние расчёты невыкупленного лота ([решение](../decisions/ADR-draft-auction-lot-settlement-aggregate.md), PER-694) пока не имеют публичного входа. Контракт закрытия счёта, предложений и актуального покупателя вводит [PER-805](https://linear.app/anticnvm/issue/per-805); доставка и прекращение напоминаний — [PER-807](https://linear.app/anticnvm/issue/per-807) и [PER-808](https://linear.app/anticnvm/issue/per-808). До этого внутренний `InvoiceUnredeemed` не публикует новый повод шины; закрытый статус в старом снимке не подменяется `awaiting_payment` и отдаётся пустым oneof.
+Внутренние расчёты невыкупленного лота ([решение](../decisions/ADR-079-auction-lot-settlement-aggregate.md), PER-694) пока не имеют публичного входа. Контракт закрытия счёта, предложений и актуального покупателя вводит [PER-805](https://linear.app/anticnvm/issue/per-805); доставка и прекращение напоминаний — [PER-807](https://linear.app/anticnvm/issue/per-807) и [PER-808](https://linear.app/anticnvm/issue/per-808). До этого внутренний `InvoiceUnredeemed` не публикует новый повод шины; закрытый статус в старом снимке не подменяется `awaiting_payment` и отдаётся пустым oneof.
 
 ## Базовое разделение
 
