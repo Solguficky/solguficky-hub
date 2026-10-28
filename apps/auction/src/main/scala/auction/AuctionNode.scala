@@ -104,6 +104,8 @@ import org.apache.pekko.cluster.sharding.typed.scaladsl.Entity
 import org.apache.pekko.cluster.typed.Cluster
 import org.apache.pekko.cluster.typed.Join
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.SystemMaterializer
 import org.apache.pekko.util.Timeout
 import org.slf4j.LoggerFactory
 
@@ -584,6 +586,7 @@ object AuctionNode {
   def screen(system: ActorSystem[?], changes: AuctionChanges, standings: MeetupStandings): Route = {
     val config = system.settings.config
     import system.executionContext
+    given Materializer = SystemMaterializer(system).materializer
     val views = SlickScreenViews(system)
     val feed = ScreenFeed(
       views,
