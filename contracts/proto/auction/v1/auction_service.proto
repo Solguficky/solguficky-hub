@@ -2492,6 +2492,13 @@ message AuctionSnapshot {
   // SetPromoVideo (PER-781). Unset when there is none.
   AuctionPromoVideo promo_video = 9;
 
+  // The happy hour periods of the auction that are not deleted, by ascending
+  // from, past ones included: the same list as AuctionConsole.happy_hour_periods.
+  // With the windows they are the programme of the week a participant reads
+  // (PER-804). Empty is a real value: the auction has no period. Number 19 is
+  // not used: auction.v1.AuctionState carries the discarded status under it.
+  repeated HappyHourPeriod happy_hour_periods = 20;
+
   // Where the auction is. Exactly one is set.
   oneof status {
     AuctionState.Draft draft = 10;

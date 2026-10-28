@@ -1,6 +1,7 @@
 package auction.grpc
 
 import auction.aggregate.AskRefusal
+import auction.aggregate.Auction
 import auction.aggregate.HappyHourPeriod
 import auction.aggregate.HappyHourTerms
 import auction.aggregate.HappyHourTermsRefusal
@@ -1450,6 +1451,11 @@ object ResponseMapping {
       // администратор в пульте.
       launchedStepWindows = view.auction.launched.map(_.window).map(AuctionValues.stepWindow),
       promoVideo = view.auction.promoVideo.map(video => wire.AuctionPromoVideo(video.messageId)),
+      // Периоды «Счастливых часов» (PER-804): участник видит их в программе недели рядом с окнами — тот же список, что
+      // у пульта, по возрастанию начала и с прошедшими.
+      happyHourPeriods = view.auction.happyHours
+        .sortBy(_.from)
+        .map(period => happyHourPeriod(period, Auction.termsOf(view.auction, period.id))),
       status = status
     )
   }

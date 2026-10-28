@@ -3314,6 +3314,39 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Seq((deadline.plusSeconds(600).toString, deadline.plusSeconds(3600).toString, Seq(first.toString)))
     }
 
+    // Периоды «Счастливых часов» (PER-804): программа недели участника показывает их рядом с окнами.
+    "shows a participant the happy hour periods by ascending start, as the console does" in {
+      val id = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val later =
+        HappyHourPeriod(
+          HappyHourPeriod.idOf(OpId(new UUID(7L, 2L))),
+          deadline.plusSeconds(7200),
+          deadline.plusSeconds(9000)
+        )
+      val earlier =
+        HappyHourPeriod(
+          HappyHourPeriod.idOf(OpId(new UUID(7L, 3L))),
+          deadline.plusSeconds(600),
+          deadline.plusSeconds(1800)
+        )
+      val running = withLaunchedWindow(new UUID(7L, 1L)).copy(happyHours = List(later, earlier))
+      val views = new AuctionViews {
+        def byId(auctionId: UUID) = Future.successful(Option.when(auctionId == id)(AuctionSnapshotView(id, running)))
+        def byMeetup(meetup: MeetupId) = fail("a meetup auction was read")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("a list was read")
+      }
+      val read = service(Unreachable, auctionViews = views, caller = Some(Caller.AuctionBot))
+        .getAuction(wire.GetAuctionRequest(Some(viewer), id.toString))
+        .futureValue
+        .getAuction
+
+      read.happyHourPeriods.map(period => (period.periodId, period.from, period.until)) shouldBe Seq(
+        (earlier.id.value.toString, deadline.plusSeconds(600).toString, deadline.plusSeconds(1800).toString),
+        (later.id.value.toString, deadline.plusSeconds(7200).toString, deadline.plusSeconds(9000).toString)
+      )
+    }
+
     "shows the promo video of the auction in its snapshot, by id and by meetup" in {
       val id = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
       val promoted = withLaunchedWindow(new UUID(7L, 1L)).copy(promoVideo = PromoVideo.parse(4321))
