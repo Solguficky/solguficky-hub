@@ -319,7 +319,6 @@ import {
   announcementRetryScreen,
   announcementStaleScreen,
   announcementWindowsScreen,
-  announcementWithoutMeetupScreen,
 } from "./screens/auction-announcement.js";
 import {
   auctionDiscardedText,
@@ -10707,20 +10706,6 @@ async function handleAnnouncementCallback(
     retry: ctx.callbackQuery?.data,
     auctionId,
   };
-  // Notifications адресует объявление сходкой (PER-764), а Auction сходку по
-  // аукциону не отдаёт: её помнит процесс с открытия карточки сходки. После
-  // рестарта пары нет — кадр ведёт открыть аукцион с карточки сходки.
-  const meetupId = ctx.auctionParents?.meetupOf(auctionId);
-  if (meetupId === undefined) {
-    await showScreen(ctx, announcementWithoutMeetupScreen());
-    return {
-      level: "info",
-      message: "announcement meetup unknown",
-      result: "ok",
-      use_case: useCase,
-      identity_id: person.identityId,
-    };
-  }
   const stale = async (): Promise<BoundaryOutcome> => {
     await showScreen(ctx, announcementStaleScreen(auctionId));
     return {
@@ -10789,7 +10774,6 @@ async function handleAnnouncementCallback(
           ? {
               ...call,
               intent: "pick-announcement-button",
-              meetupId,
               button: action.button,
               audience: action.audience,
               ...(action.lot === undefined ? {} : { lot: action.lot }),
@@ -10797,7 +10781,6 @@ async function handleAnnouncementCallback(
           : {
               ...call,
               intent: "ask-announcement-audience",
-              meetupId,
               button: action.button,
               audience: action.audience,
               ...(action.lot === undefined ? {} : { lot: action.lot }),
@@ -10841,7 +10824,6 @@ async function handleAnnouncementCallback(
       const result = await runtime.dispatcher.execute({
         ...call,
         intent: "preview-announcement",
-        meetupId,
         button: action.button,
         audience: action.audience,
         ...(action.lot === undefined ? {} : { lot: action.lot }),
@@ -10865,7 +10847,6 @@ async function handleAnnouncementCallback(
       const result = await runtime.dispatcher.execute({
         ...call,
         intent: "ask-announcement-audience",
-        meetupId,
         button: action.button,
         audience: action.audience,
         ...(action.lot === undefined ? {} : { lot: action.lot }),
@@ -10887,7 +10868,6 @@ async function handleAnnouncementCallback(
       const result = await runtime.dispatcher.execute({
         ...call,
         intent: "send-announcement",
-        meetupId,
         announcementId: uuidV7Of(
           `auction-announcement:${ctx.chat?.id ?? 0}:${preview.messageId}`,
           preview.sentAt,
@@ -10968,20 +10948,6 @@ async function handleAnnouncementMedia(
       error: "announcement text failed validation",
     };
   }
-  // Сходку предпросмотру даёт память процесса, как у кнопок объявления: после
-  // рестарта её нет, и пост в канал медиа не публикуется зря.
-  const meetupId = ctx.auctionParents?.meetupOf(auctionId);
-  if (meetupId === undefined) {
-    await answered();
-    await showScreen(ctx, announcementWithoutMeetupScreen());
-    return {
-      level: "info",
-      message: "announcement meetup unknown",
-      result: "ok",
-      use_case: useCase,
-      identity_id: person.identityId,
-    };
-  }
   const step = {
     button: pending.button,
     audience: pending.audience,
@@ -11045,7 +11011,6 @@ async function handleAnnouncementMedia(
     ...rpcCall(ctx, useCase),
     auctionId,
     intent: "ask-announcement-audience",
-    meetupId,
     ...step,
     post: published.postId,
   });

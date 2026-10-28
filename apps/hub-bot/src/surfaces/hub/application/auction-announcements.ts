@@ -12,8 +12,8 @@ import { fingerprint } from "./fingerprint.js";
 import type {
   AuctionConsoleSnapshot,
   ExecuteResult,
+  LotAmount,
   Person,
-  StepWindow,
 } from "./types.js";
 
 // Объявление аукциона в пульте (PER-765, эпик PER-763): держатель права вести
@@ -25,7 +25,7 @@ import type {
 // Auction, а лот и его фото — сейчас, а не в момент вопроса. Приём, право и
 // рассылку держит Notifications (PER-764), и адресует она объявление сходкой:
 // связи «аукцион — сходка» у неё нет, поэтому шаги, которые зовут
-// Notifications, несут сходку — её край берёт из памяти процесса.
+// Notifications, несут сходку — её называет прочитанный пульт (PER-804).
 // Своё фото или видео (PER-776) приходит сюда уже постом чата медиа ботов —
 // номером поста: публикует его представление, потому что это вызов Telegram.
 // Аудитория (PER-779, решение PER-768) — шаг любого объявления: шаблон её
@@ -138,9 +138,36 @@ export type AnnouncementDraft =
       closesAt?: string;
       predictions: boolean;
     }
-  | { kind: "windows"; window: StepWindow; lotTitles: readonly string[] }
+  | {
+      kind: "windows";
+      window: AnnouncementHappyHour;
+      lots: readonly AnnouncementHappyHourLot[];
+    }
   | { kind: "lot"; title: string }
   | { kind: "chronicle" };
+
+/**
+ * «Счастливые часы» шаблона (PER-804): окно — объявленное или запущенное — или
+ * период. У окна шаг один на все его лоты, у периода условия у каждого лота.
+ */
+export type AnnouncementHappyHour = {
+  // Номер в полном списке по началу, прошедшие тоже: его несёт кнопка, и
+  // окно, закончившееся между показом и нажатием, номеров не сдвигает.
+  index: number;
+  kind: "window" | "period";
+  from: string;
+  until: string;
+  // Шаг окна; у периода его нет — условия у лотов.
+  step?: LotAmount;
+  lots: readonly { lotId: string; step?: LotAmount; start?: LotAmount }[];
+};
+
+/** Лот шаблона «Счастливые часы»: название из реестра и условия. */
+export type AnnouncementHappyHourLot = {
+  title: string;
+  step?: LotAmount;
+  start?: LotAmount;
+};
 
 export type AnnouncementTextError = "empty" | "too-long" | "nul";
 
@@ -176,7 +203,6 @@ export type AuctionAnnouncementRequest =
   // `audience` — предвыбор шаблона или выбор в подтверждении (PER-779).
   | (Call & {
       intent: "pick-announcement-button";
-      meetupId: string;
       button: ButtonChoice;
       audience: AnnouncementAudience;
       lot?: number;
@@ -191,7 +217,6 @@ export type AuctionAnnouncementRequest =
   // Шаг «Кому» (PER-779): после кнопки и фото, а из подтверждения — «Нет».
   | (Call & {
       intent: "ask-announcement-audience";
-      meetupId: string;
       button: ButtonChoice;
       audience: AnnouncementAudience;
       lot?: number;
@@ -200,7 +225,6 @@ export type AuctionAnnouncementRequest =
     })
   | (Call & {
       intent: "preview-announcement";
-      meetupId: string;
       button: ButtonChoice;
       audience: AnnouncementAudience;
       lot?: number;
@@ -209,7 +233,6 @@ export type AuctionAnnouncementRequest =
     })
   | (Call & {
       intent: "send-announcement";
-      meetupId: string;
       announcementId: string;
       text: string;
       button: ButtonChoice;
@@ -236,7 +259,7 @@ export type AuctionAnnouncementResult =
   | {
       kind: "announcement-windows";
       auctionId: string;
-      windows: readonly StepWindow[];
+      windows: readonly AnnouncementHappyHour[];
     }
   | {
       kind: "announcement-lots";
@@ -335,6 +358,14 @@ const notAdministrator: ExecuteResult = {
 const auctionNotFound: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "auction-not-found",
+};
+
+// Пульт без сходки — нарушение контракта Auction: `AuctionConsole.meetup_id`
+// задан всегда. Объявление без адресата не уходит.
+const withoutMeetup: ExecuteResult = {
+  kind: "dependency-rejected",
+  reason: "invalid",
+  cause: new Error("auction console without meetup"),
 };
 
 function failed(failure: AuctionFailure | NotificationFailure): ExecuteResult {
@@ -445,11 +476,45 @@ export function announcementLots(
     }));
 }
 
-/** Окна «Счастливых часов» пульта: объявленные, затем запущенные. */
+/**
+ * «Счастливые часы» аукциона по началу: окна — объявленные и запущенные — и
+ * периоды (PER-787, PER-804). Номер в этом списке называет кнопка шаблона.
+ */
 export function announcementWindows(
   console: AuctionConsoleSnapshot,
-): readonly StepWindow[] {
-  return [...(console.week?.windows ?? []), ...console.launchedWindows];
+): readonly AnnouncementHappyHour[] {
+  const windows = [
+    ...(console.week?.windows ?? []),
+    ...console.launchedWindows,
+  ].map((window) => ({
+    kind: "window" as const,
+    from: window.from,
+    until: window.until,
+    step: window.step,
+    lots: window.lotIds.map((lotId) => ({ lotId })),
+  }));
+  const periods = console.happyHourPeriods.map((period) => ({
+    kind: "period" as const,
+    from: period.from,
+    until: period.until,
+    lots: period.lotTerms,
+  }));
+  return [...windows, ...periods]
+    .sort((left, right) => Date.parse(left.from) - Date.parse(right.from))
+    .map((entry, index) => ({ ...entry, index }));
+}
+
+/**
+ * «Счастливые часы», о которых можно объявить: те, что идут или впереди.
+ * Прошедшие не предлагаются (PER-804): объявлять о них некому.
+ */
+export function upcomingAnnouncementWindows(
+  console: AuctionConsoleSnapshot,
+  now: Date,
+): readonly AnnouncementHappyHour[] {
+  return announcementWindows(console).filter(
+    (entry) => Date.parse(entry.until) > now.getTime(),
+  );
 }
 
 /** Кнопки, которые объявление этого аукциона может нести сейчас. */
@@ -643,9 +708,9 @@ export function createAuctionAnnouncements(
         return ok({
           kind: "windows",
           window,
-          lotTitles: window.lotIds.flatMap((lotId) => {
+          lots: window.lots.flatMap(({ lotId, ...terms }) => {
             const title = titles.get(lotId);
-            return title === undefined ? [] : [title];
+            return title === undefined ? [] : [{ title, ...terms }];
           }),
         });
       }
@@ -677,7 +742,6 @@ export function createAuctionAnnouncements(
 
   async function preview(
     request: Call & {
-      meetupId: string;
       button: ButtonChoice;
       audience: AnnouncementAudience;
       lot?: number;
@@ -685,16 +749,18 @@ export function createAuctionAnnouncements(
       post?: AnnouncementPost;
     },
   ): Promise<ExecuteResult> {
-    const [found, counted] = await Promise.all([
-      read(request),
-      announcements.previewAuctionAnnouncement(
-        request.identity,
-        request.meetupId,
-        request.audience,
-        rpcMeta(request),
-      ),
-    ]);
+    // Адресат — сходка аукциона из ответа пульта (PER-804): память процесса
+    // «аукцион — сходка» после рестарта пуста, а пульт называет её всегда.
+    const found = await read(request);
     if (found.kind === "refused") return found.result;
+    const { meetupId } = found.console;
+    if (meetupId === undefined) return withoutMeetup;
+    const counted = await announcements.previewAuctionAnnouncement(
+      request.identity,
+      meetupId,
+      request.audience,
+      rpcMeta(request),
+    );
     const picked = pick(found.console, request.auctionId, request);
     if (!picked.ok) return picked.result;
     const audiences = announcementAudiences(found.console, clock());
@@ -718,7 +784,6 @@ export function createAuctionAnnouncements(
   // не назовёт, шаг не держит: первой тогда стоит «всем».
   async function askAudience(
     request: Call & {
-      meetupId: string;
       button: ButtonChoice;
       audience: AnnouncementAudience;
       lot?: number;
@@ -784,6 +849,8 @@ export function createAuctionAnnouncements(
   ): Promise<ExecuteResult> {
     const found = await read(request);
     if (found.kind === "refused") return found.result;
+    const { meetupId } = found.console;
+    if (meetupId === undefined) return withoutMeetup;
     const picked = pick(found.console, request.auctionId, request);
     if (!picked.ok) return picked.result;
     const audiences = announcementAudiences(found.console, clock());
@@ -791,7 +858,7 @@ export function createAuctionAnnouncements(
     const accepted = await announcements.announceAuction(
       request.identity,
       {
-        meetupId: request.meetupId,
+        meetupId,
         announcementId: request.announcementId,
         text: request.text,
         audience: request.audience,
@@ -836,7 +903,7 @@ export function createAuctionAnnouncements(
           kind: "announcement-menu",
           auctionId: request.auctionId,
           raffle,
-          windows: announcementWindows(console).length,
+          windows: upcomingAnnouncementWindows(console, clock()).length,
           lots: console.lots.length,
           chronicle: console.status === "prebidding",
         };
@@ -847,7 +914,7 @@ export function createAuctionAnnouncements(
         return {
           kind: "announcement-windows",
           auctionId: request.auctionId,
-          windows: announcementWindows(found.console),
+          windows: upcomingAnnouncementWindows(found.console, clock()),
         };
       }
       case "list-announcement-lots": {

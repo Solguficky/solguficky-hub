@@ -116,9 +116,20 @@ function withProgramme(snapshot: AuctionSnapshot) {
   const raffleClosesAt = lenientInstant(
     snapshot.config?.onlinePhase?.raffleClosesAt,
   );
+  // Периоды «Счастливых часов» (PER-804) — те же часы для участника, что окна:
+  // лоты периода — лоты с условиями в нём. Период без условий торгов не
+  // меняет, и программа его не называет.
+  const periods = snapshot.happyHourPeriods
+    .filter((period) => period.lotTerms.length > 0)
+    .map((period) => ({
+      from: period.from,
+      until: period.until,
+      lotIds: period.lotTerms.map((terms) => terms.lotId),
+    }));
   const stepWindows = [
     ...(snapshot.config?.stepWindows ?? []),
     ...snapshot.launchedStepWindows,
+    ...periods,
   ]
     .flatMap((window) => {
       const from = lenientInstant(window.from);
