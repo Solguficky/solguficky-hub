@@ -58,8 +58,8 @@ auction: ContainerResource
   health: auction_http_/health_200_check
 auction-bot: ContainerResource
   image: /hub-bot:latest
-  env: AUCTION_FAQ_QUESTION_URL=https://t.me/{support-bot-username.value}?start=auction
   env: ACHIEVEMENTS_GRPC_URL={achievements.bindings.grpc.url}
+  env: AUCTION_FAQ_QUESTION_URL=https://t.me/{support-bot-username.value}?start=auction
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
