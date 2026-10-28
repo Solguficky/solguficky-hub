@@ -71,6 +71,7 @@ object LocalStand {
       "AUCTION_DATABASE_PASSWORD" -> postgres.password,
       "AUCTION_CALLER_TOKEN_HUB_BOT" -> HubToken,
       "AUCTION_CALLER_TOKEN_AUCTION_BOT" -> "screen-load-auction",
+      "AUCTION_CALLER_TOKEN_NOTIFICATIONS" -> "screen-load-notifications",
       "AUCTION_MEETUPS_GRPC_URL" -> meetups.url,
       "AUCTION_SERVICE_TOKEN" -> "screen-load-own",
       "AUCTION_SCREEN_MAX_STREAMS" -> maxStreams.toString
