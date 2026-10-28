@@ -60,15 +60,17 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
       lotId: UUID,
       minorUnits: Long,
       at: Instant,
-      by: UUID = UUID.randomUUID()
+      by: UUID = UUID.randomUUID(),
+      windowStart: Option[Long] = None
   ): Unit = {
     connection
       .createStatement()
       .executeUpdate(
         s"""INSERT INTO lot_bid (lot_id, sequence, bid_id, participant_id, minor_units, currency, origin, source,
-                                 occurred_at)
+                                 occurred_at, window_start_minor_units)
             SELECT '$lotId', COALESCE(MAX(sequence), 0) + 1, '${UUID.randomUUID()}', '$by',
-                   $minorUnits, 'RUB', 'Manual', 'Bot', '${at.toString}'::timestamptz
+                   $minorUnits, 'RUB', 'Manual', 'Bot', '${at.toString}'::timestamptz,
+                   ${windowStart.fold("NULL")(_.toString)}
             FROM lot_bid WHERE lot_id = '$lotId'"""
       )
     ()
@@ -181,6 +183,50 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
       withViews(database) { views =>
         val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue.head
         single.priceBefore shouldBe Some(Money(500, CurrencyCode("RUB")))
+        single.growth shouldBe Some(Money(0, CurrencyCode("RUB")))
+      }
+    }
+
+    // PER-810: первая ставка легла по стартовой окна ниже обычной — окно открылось по ней, и рост от неё, а не
+    // отрицательный от обычной стартовой.
+    "opens the window at the starting price of the window the first bid took" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        startingPrice(connection, id, 300)
+        bid(connection, id, 150, windowFrom.plusSeconds(1), windowStart = Some(150))
+        bid(connection, id, 155, windowFrom.plusSeconds(2), windowStart = Some(150))
+        id
+      }
+      withViews(database) { views =>
+        val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue.head
+        single.lotId shouldBe lotId
+        single.priceBefore shouldBe Some(Money(150, CurrencyCode("RUB")))
+        single.growth shouldBe Some(Money(5, CurrencyCode("RUB")))
+      }
+    }
+
+    // PER-810: сняли автора первой ставки, а вторая легла уже за окном ниже обычной стартовой — стартовая роста не выше
+    // суммы первой оставшейся ставки, и рост не уходит ниже нуля.
+    "opens the window no higher than the first bid that remains after a removal" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val removed = UUID.randomUUID()
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        startingPrice(connection, id, 300)
+        bid(connection, id, 150, windowFrom.plusSeconds(1), removed, windowStart = Some(150))
+        bid(connection, id, 170, windowFrom.plusSeconds(2))
+        connection
+          .createStatement()
+          .executeUpdate(s"UPDATE lot_bid SET removed = true WHERE lot_id = '$id' AND participant_id = '$removed'")
+        id
+      }
+      withViews(database) { views =>
+        val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue.head
+        single.lotId shouldBe lotId
+        single.priceBefore shouldBe Some(Money(170, CurrencyCode("RUB")))
         single.growth shouldBe Some(Money(0, CurrencyCode("RUB")))
       }
     }
