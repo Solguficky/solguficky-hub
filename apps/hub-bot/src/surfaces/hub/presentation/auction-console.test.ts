@@ -1829,6 +1829,29 @@ describe("entry into the auction console", () => {
     },
   );
 
+  // PER-811: ответ Auction пришёл, но перевод его отверг. Человек видит тот же
+  // кадр недоступности с повтором, а запись границы называет причину дефектом
+  // соседа, а не недоступностью зависимости.
+  it("names the cause of a console the translation rejects and keeps the retry frame", async () => {
+    const auction = fakeAuction({ lots: [vase] });
+    auction.port.getAuctionConsole = async () => ({
+      kind: "invalid",
+      cause: new Error("auction console without auction"),
+    });
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+
+    expect(last(calls).text).toContain("Не получилось загрузить данные");
+    expect(labels(last(calls)).flat()).toContain("Повторить");
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "invariant",
+      error: "auction console without auction",
+    });
+  });
+
   it("does not read the console for a member's feed", async () => {
     const auction = fakeAuction({ lots: [vase] });
     const { bot } = harness("member", auction);
@@ -1879,6 +1902,25 @@ describe("entry into the auction console", () => {
 });
 
 describe("auction console", () => {
+  // Ставка по стартовой окна ниже обычной стартовой даёт отрицательный рост
+  // (PER-811): пульт открывается и показывает рост как есть.
+  it("opens the console of a lot whose price is below its regular starting price", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [{ ...vase, priceGrowth: rub(-15_000) }],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Сортировка: ставки ↓")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Сортировка: люди ↓")));
+
+    expect(plain(last(calls))).toContain("Сортировка: по росту цены ↓.");
+    expect(plain(last(calls))).toMatch(/рост\s-150\s₽/);
+  });
+
   // Сортировка — одна кнопка-переключатель по кругу «ставки → люди → рост»
   // по убыванию (PER-802); возрастание открывает старая кнопка пульта.
   it("sorts all lots by the metric of one toggle and keeps an old ascending button", async () => {
@@ -5541,6 +5583,35 @@ describe("day summary screen", () => {
         until: now.toISOString(),
       },
     ]);
+  });
+
+  // PER-811: рост ниже нуля — ставка по стартовой окна ниже обычной стартовой.
+  // Сводка открывается, а рекорд роста ищется только среди выросших лотов.
+  it("opens the day summary with a lot whose growth is below zero", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [vase],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 1,
+          maxPrice: rub(15_000),
+          growth: rub(-15_000),
+          leaderChangeCount: 0,
+          longestDuel: 0,
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(summaryData));
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("Сводка дня");
+    expect(screen).not.toContain("Не получилось загрузить данные");
+    expect(screen).not.toContain("Больше всех выросла цена:");
   });
 
   // PER-511: «тёмная лошадка» — среди лотов, у которых до суток было не больше

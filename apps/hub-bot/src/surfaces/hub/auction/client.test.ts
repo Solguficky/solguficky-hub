@@ -27,6 +27,7 @@ import {
   FreezeFinalLineupRefusalSchema,
   FreezeFinalLineupResponseSchema,
   GetAuctionConsoleResponseSchema,
+  GetAuctionDaySummaryResponseSchema,
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
   GetRaffleResponseSchema,
@@ -986,9 +987,10 @@ describe("auction console adapter", () => {
         },
       },
     });
-    // Дефект перевода человек видит как «недоступно», а не пульт с выдумкой.
+    // Дефект перевода человек видит как «недоступно», а не пульт с выдумкой;
+    // исход называет дефект соседа, а не недоступность (PER-811).
     await expect(reading(undefined)).resolves.toMatchObject({
-      kind: "unavailable",
+      kind: "invalid",
     });
   });
 
@@ -1116,10 +1118,106 @@ describe("auction console adapter", () => {
     expect(bare.kind === "ok" && bare.console).not.toHaveProperty(
       "predictionTally",
     );
-    // Ответов меньше, чем людей, не бывает: это дефект соседа.
+    // Ответов меньше, чем людей, не бывает: это дефект соседа с причиной, а не
+    // недоступность (PER-811).
     await expect(
       reading({ predictions: { participants: 3, answers: 1 } }),
+    ).resolves.toMatchObject({
+      kind: "invalid",
+      cause: new Error("prediction tally with fewer answers than participants"),
+    });
+  });
+
+  // PER-811: ответ пришёл, но перевод его отверг — повтор не вылечит, и запись
+  // границы называет причину; настоящая недоступность остаётся недоступностью.
+  it("reads a response the translation rejects as a defect, and a dropped call as unavailable", async () => {
+    const broken = adapter({
+      getAuctionConsole: async () =>
+        create(GetAuctionConsoleResponseSchema, {
+          outcome: { case: "console", value: {} },
+        }),
+    });
+    const down = adapter({
+      getAuctionConsole: () =>
+        Promise.reject(new ConnectError("down", Code.Unavailable)),
+    });
+    // Бросок до ответа — не ConnectError, но и не перевод: ответа не было, и
+    // это отказ вызова, а не дефект соседа.
+    const unwrapped = adapter({
+      getAuctionConsole: () => Promise.reject(new Error("socket hang up")),
+    });
+
+    await expect(broken.getAuctionConsole(admin, auctionId)).resolves.toEqual({
+      kind: "invalid",
+      cause: new Error("auction console without auction"),
+    });
+    await expect(
+      down.getAuctionConsole(admin, auctionId),
     ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(
+      unwrapped.getAuctionConsole(admin, auctionId),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  // Рост — разность цен: ставка по стартовой окна ниже обычной стартовой даёт
+  // отрицательный рост, и это ответ, а не дефект (PER-811).
+  it("reads a negative price growth of the statistics and of the day summary", async () => {
+    const read = adapter({
+      getAuctionLotStatistics: async () =>
+        create(GetAuctionLotStatisticsResponseSchema, {
+          outcome: {
+            case: "statistics",
+            value: {
+              lots: [
+                {
+                  lotId,
+                  bidCount: 1n,
+                  uniqueParticipantCount: 1n,
+                  priceGrowth: { minorUnits: -15_000n, currency: "RUB" },
+                },
+              ],
+            },
+          },
+        }),
+      getAuctionDaySummary: async () =>
+        create(GetAuctionDaySummaryResponseSchema, {
+          outcome: {
+            case: "summary",
+            value: {
+              lots: [
+                {
+                  lotId,
+                  bidCount: 1n,
+                  maxPrice: { minorUnits: 15_000n, currency: "RUB" },
+                  growth: { minorUnits: -15_000n, currency: "RUB" },
+                },
+              ],
+            },
+          },
+        }),
+    });
+
+    await expect(
+      read.getAuctionLotStatistics(admin, auctionId),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      lots: [{ priceGrowth: { minorUnits: -15_000, currency: "RUB" } }],
+    });
+    await expect(
+      read.getAuctionDaySummary(admin, {
+        auctionId,
+        from: "2026-10-27T21:00:00Z",
+        until: "2026-10-28T21:00:00Z",
+      }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      lots: [
+        {
+          maxPrice: { minorUnits: 15_000, currency: "RUB" },
+          growth: { minorUnits: -15_000, currency: "RUB" },
+        },
+      ],
+    });
   });
 
   it("reads ranked-statistics inputs without exposing participant identities", async () => {
@@ -2140,7 +2238,7 @@ describe("auction adapter in the final", () => {
     });
     await expect(
       console({ case: "inFinal", value: { order: [] } }),
-    ).resolves.toMatchObject({ kind: "unavailable" });
+    ).resolves.toMatchObject({ kind: "invalid" });
   });
 
   it("sends the lineup in its order and reads every refusal of the announcement", async () => {
