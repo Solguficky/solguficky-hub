@@ -21,8 +21,8 @@ import java.util.UUID
  */
 
 /**
- * Идентификатор счёта — UUIDv5 от `bid_id` выигравшей ставки: повторная доставка продажи приходит в тот же счёт, а
- * продажа другой ставке — в другой.
+ * Идентификатор счёта — UUIDv5 от `bid_id` принятой ставки: повторная доставка продажи или согласия на предложение
+ * приходит в тот же счёт; ставка следующего покупателя даёт другой.
  */
 final case class InvoiceId(value: UUID)
 
@@ -42,8 +42,9 @@ enum FulfillmentMethod {
 }
 
 /**
- * Условия счёта: аукцион и лот продажи, победитель, сумма — цена продажи — и момент, до которого счёт ждёт оплаты. Срок
- * отсутствует до завершения аукциона; сумма и адресат неизменны.
+ * Условия счёта: аукцион и лот, адресат обязательства (историческое имя поля winner), сумма и момент, до которого счёт
+ * ждёт оплаты. У исходного счёта это победитель и цена продажи, у переданного — согласившийся кандидат и его ставка. Срок
+ * отсутствует, пока не закончены все торги; сумма и адресат неизменны.
  */
 final case class InvoiceTerms(
     auction: AuctionId,
@@ -81,11 +82,12 @@ final case class InvoiceView(
     fulfillment: Option[FulfillmentMethod]
 )
 
-/** Где счёт. Путь один и в одну сторону: к оплате, затем оплачено, затем выдано. Просрочка — не статус. */
+/** Из ожидания оплаты — оплата и выдача либо терминальный невыкуп. Просрочка — не статус. */
 enum InvoiceStatus {
   case AwaitingPayment
   case Paid
   case HandedOver
+  case Unredeemed
 }
 
 /** Команда, принятая под `op_id`: окно `seen` отличает повтор своей команды от чужого `op_id`. */
@@ -93,6 +95,7 @@ enum InvoiceAction {
   case MarkPaid
   case MarkHandedOver
   case ChooseFulfillment
+  case MarkUnredeemed
 }
 
 enum InvoiceEvent {
@@ -100,6 +103,7 @@ enum InvoiceEvent {
   case PaymentDueChanged(dueAt: Option[Instant])
   case InvoicePaid(opId: OpId)
   case InvoiceHandedOver(opId: OpId)
+  case InvoiceUnredeemed(opId: OpId)
 
   /** Приватный факт: на шину он не идёт (integration.md, «Счёт на шине»), но занимает номер в журнале счёта. */
   case FulfillmentChosen(method: FulfillmentMethod, opId: OpId)
@@ -114,6 +118,8 @@ enum InvoiceRefusal {
   case OpIdTaken
   case InvoiceNotPaid
   case FulfillmentFrozen
+  case InvoiceClosed
+  case InvoiceAlreadyPaid
 }
 
 /**
@@ -158,6 +164,7 @@ object Invoice {
       invoice.status match {
         case InvoiceStatus.AwaitingPayment => Right(Some(InvoiceEvent.InvoicePaid(opId)))
         case InvoiceStatus.Paid | InvoiceStatus.HandedOver => Right(None)
+        case InvoiceStatus.Unredeemed => Left(InvoiceRefusal.InvoiceClosed)
       }
     }
 
@@ -168,6 +175,7 @@ object Invoice {
         case InvoiceStatus.AwaitingPayment => Left(InvoiceRefusal.InvoiceNotPaid)
         case InvoiceStatus.Paid => Right(Some(InvoiceEvent.InvoiceHandedOver(opId)))
         case InvoiceStatus.HandedOver => Right(None)
+        case InvoiceStatus.Unredeemed => Left(InvoiceRefusal.InvoiceClosed)
       }
     }
 
@@ -188,10 +196,21 @@ object Invoice {
         issued(state, opId, InvoiceAction.ChooseFulfillment) { invoice =>
           invoice.status match {
             case InvoiceStatus.HandedOver => Left(InvoiceRefusal.FulfillmentFrozen)
+            case InvoiceStatus.Unredeemed => Left(InvoiceRefusal.InvoiceClosed)
             case InvoiceStatus.AwaitingPayment | InvoiceStatus.Paid =>
               Right(Some(InvoiceEvent.FulfillmentChosen(method, opId)))
           }
         }
+    }
+
+  /** Оплата и невыкуп решаются одним агрегатом: закрытое обязательство никогда не возвращается к оплате. */
+  def markUnredeemed(state: Invoice, opId: OpId): Either[InvoiceRefusal, Option[InvoiceEvent]] =
+    issued(state, opId, InvoiceAction.MarkUnredeemed) { invoice =>
+      invoice.status match {
+        case InvoiceStatus.AwaitingPayment => Right(Some(InvoiceEvent.InvoiceUnredeemed(opId)))
+        case InvoiceStatus.Unredeemed => Right(None)
+        case InvoiceStatus.Paid | InvoiceStatus.HandedOver => Left(InvoiceRefusal.InvoiceAlreadyPaid)
+      }
     }
 
   /** Общий порядок команд: счёта нет — отказ, повтор своей команды — исходный ответ, чужой `op_id` — отказ. */
@@ -218,6 +237,8 @@ object Invoice {
         invoice.copy(status = InvoiceStatus.Paid, seen = invoice.seen + (opId -> InvoiceAction.MarkPaid))
       case (invoice: Issued, InvoiceEvent.InvoiceHandedOver(opId)) =>
         invoice.copy(status = InvoiceStatus.HandedOver, seen = invoice.seen + (opId -> InvoiceAction.MarkHandedOver))
+      case (invoice: Issued, InvoiceEvent.InvoiceUnredeemed(opId)) =>
+        invoice.copy(status = InvoiceStatus.Unredeemed, seen = invoice.seen + (opId -> InvoiceAction.MarkUnredeemed))
       case (invoice: Issued, InvoiceEvent.FulfillmentChosen(method, opId)) =>
         invoice.copy(fulfillment = Some(method), seen = invoice.seen + (opId -> InvoiceAction.ChooseFulfillment))
       case (other, written) =>

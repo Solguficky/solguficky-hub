@@ -42,6 +42,8 @@ object InvoiceEntity {
 
   final case class MarkPaid(opId: OpId, replyTo: ActorRef[Either[InvoiceRefusal, Done]]) extends Command
 
+  final case class MarkUnredeemed(opId: OpId, replyTo: ActorRef[Either[InvoiceRefusal, Done]]) extends Command
+
   final case class MarkHandedOver(opId: OpId, replyTo: ActorRef[Either[InvoiceRefusal, Done]]) extends Command
 
   final case class ChooseFulfillment(
@@ -82,6 +84,7 @@ object InvoiceEntity {
               case None => Effect.reply(replyTo)(Done)
             }
           case MarkPaid(opId, replyTo) => answer(Invoice.markPaid(state, opId), replyTo)
+          case MarkUnredeemed(opId, replyTo) => answer(Invoice.markUnredeemed(state, opId), replyTo)
           case MarkHandedOver(opId, replyTo) => answer(Invoice.markHandedOver(state, opId), replyTo)
           case ChooseFulfillment(viewer, method, opId, replyTo) =>
             answer(Invoice.chooseFulfillment(state, viewer, method, opId), replyTo)
@@ -106,6 +109,9 @@ object InvoiceEntity {
  * ответ.
  */
 trait InvoiceGateway {
+  def markUnredeemed(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
+    Future.failed(new IllegalStateException("invoice closure is not wired in this gateway"))
+
   def issue(invoice: InvoiceId, terms: InvoiceTerms): Future[Done]
 
   def changeDue(invoice: InvoiceId, expected: Option[Instant], dueAt: Option[Instant]): Future[Done] =
@@ -179,6 +185,9 @@ object InvoiceGateway {
 
       def markPaid(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
         entity(invoice).ask(InvoiceEntity.MarkPaid(opId, _))
+
+      override def markUnredeemed(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
+        entity(invoice).ask(InvoiceEntity.MarkUnredeemed(opId, _))
 
       def markHandedOver(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
         entity(invoice).ask(InvoiceEntity.MarkHandedOver(opId, _))

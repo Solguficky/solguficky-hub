@@ -47,11 +47,16 @@ object InvoicingProjection {
 
   type Envelope = EventEnvelope[StoredLotEvent]
 
-  def init(system: ActorSystem[?], metrics: ProjectionMetrics, handler: () => Handler[Envelope]): Unit =
+  def init(
+      system: ActorSystem[?],
+      metrics: ProjectionMetrics,
+      handler: () => Handler[Envelope],
+      name: String = Name
+  ): Unit =
     ShardedDaemonProcess(system).init[ProjectionBehavior.Command](
-      Name,
+      name,
       LotTags.Count,
-      index => ProjectionBehavior(projection(system, LotTags.all(index), metrics, handler)),
+      index => ProjectionBehavior(projection(system, LotTags.all(index), metrics, handler, name)),
       ShardedDaemonProcessSettings(system),
       Some(ProjectionBehavior.Stop)
     )
@@ -60,12 +65,13 @@ object InvoicingProjection {
       system: ActorSystem[?],
       tag: String,
       metrics: ProjectionMetrics,
-      handler: () => Handler[Envelope]
+      handler: () => Handler[Envelope],
+      name: String = Name
   ): AtLeastOnceProjection[Offset, Envelope] = {
     val source = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database
     JdbcProjection
       .atLeastOnceAsync(
-        ProjectionId(Name, tag),
+        ProjectionId(name, tag),
         EventSourcedProvider.eventsByTag[StoredLotEvent](system, JdbcReadJournal.Identifier, tag),
         () => new PooledJdbcSession(source.source),
         handler
