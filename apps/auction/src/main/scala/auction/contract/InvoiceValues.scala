@@ -26,6 +26,7 @@ object InvoiceValues {
           bus.InvoiceState.Status.AwaitingPayment(bus.InvoiceState.AwaitingPayment())
         case InvoiceStatus.Paid => bus.InvoiceState.Status.Paid(bus.InvoiceState.Paid())
         case InvoiceStatus.HandedOver => bus.InvoiceState.Status.HandedOver(bus.InvoiceState.HandedOver())
+        case InvoiceStatus.Unredeemed => bus.InvoiceState.Status.Empty
       }
     )
 
@@ -43,6 +44,7 @@ object InvoiceValues {
           wire.InvoiceSnapshot.Status.AwaitingPayment(bus.InvoiceState.AwaitingPayment())
         case InvoiceStatus.Paid => wire.InvoiceSnapshot.Status.Paid(bus.InvoiceState.Paid())
         case InvoiceStatus.HandedOver => wire.InvoiceSnapshot.Status.HandedOver(bus.InvoiceState.HandedOver())
+        case InvoiceStatus.Unredeemed => wire.InvoiceSnapshot.Status.Empty
       }
     )
 

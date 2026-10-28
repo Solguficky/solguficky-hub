@@ -1,0 +1,136 @@
+package auction.settlement
+
+import auction.catalog.LotId
+import auction.entity.JournalFixtures.uuid
+import auction.invoice.*
+import auction.lot.*
+import auction.lot.LotFixtures.*
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
+
+import java.time.Duration
+
+final class SettlementSpec extends AnyWordSpec with Matchers {
+  private val terms =
+    InvoiceTerms.ofSale(auctionId(1), LotId(uuid(10)), participant(1), money(1000), calm, Duration.ofDays(7))
+  private val sale = SettlementSale(InvoiceId.of(bid(1)), terms, Duration.ofDays(7))
+  private val boris = SettlementCandidate(bid(2), participant(2), money(800))
+  private val vera = SettlementCandidate(bid(3), participant(3), money(600))
+
+  private def opened(candidates: List[SettlementCandidate] = List(boris, vera)): Settlement =
+    Settlement(Settlement.Initial, SettlementEvent.Opened(sale, candidates))
+
+  private def written(state: Settlement, result: Either[SettlementRefusal, Option[SettlementEvent]]): Settlement =
+    result.toOption.get.fold(state)(Settlement(state, _))
+
+  private def offering(candidates: List[SettlementCandidate] = List(boris, vera)): Settlement = {
+    val closing = written(opened(candidates), Settlement.requestUnredeemed(opened(candidates), sale.invoice, op(10)))
+    Settlement(closing, Settlement.closureCompleted(closing, op(10), true).get)
+  }
+
+  "settlement" should {
+    "offers each participant once at the last accepted bid including automatic bids, skipping a proxy without a bid" in {
+      val history = List(
+        LotEvent.BidPlaced(bid(10), participant(2), money(300), None, BidOrigin.Manual(BidSource.Bot)),
+        LotEvent.ProxyLimitSet(participant(4), money(2000)),
+        LotEvent.BidPlaced(boris.bid, boris.participant, boris.amount, None, BidOrigin.Proxy),
+        LotEvent.BidPlaced(bid(1), participant(1), money(1000), None, BidOrigin.Manual(BidSource.Bot))
+      )
+      Settlement.candidates(history, participant(1)) shouldBe List(boris)
+    }
+
+    "excludes a removed participant even though the journal retains their accepted bids" in {
+      val history = List(
+        LotEvent.BidPlaced(boris.bid, boris.participant, boris.amount, None, BidOrigin.Manual(BidSource.Bot)),
+        LotEvent.ParticipantRemoved(boris.participant, money(100), None, None)
+      )
+      Settlement.candidates(history, participant(1)) shouldBe Nil
+    }
+
+    "waits for an explicit unredeemed command and confirmed closure before offering the lot" in {
+      val state = opened()
+      state.asInstanceOf[Settlement.Open].stage shouldBe SettlementStage.AwaitingPayment
+      val closing = written(state, Settlement.requestUnredeemed(state, sale.invoice, op(10)))
+      closing.asInstanceOf[Settlement.Open].offers shouldBe Nil
+      Settlement.buyer(closing) shouldBe Some(participant(1))
+      Settlement.buyer(offering()) shouldBe None
+      offering().asInstanceOf[Settlement.Open].stage shouldBe SettlementStage.Offering(SettlementOffer(boris))
+    }
+
+    "keeps the original obligation when payment won the race with closure" in {
+      val closing = written(opened(), Settlement.requestUnredeemed(opened(), sale.invoice, op(10)))
+      val after = Settlement(closing, Settlement.closureCompleted(closing, op(10), false).get)
+        .asInstanceOf[Settlement.Open]
+      after.stage shouldBe SettlementStage.AwaitingPayment
+      after.offers shouldBe Nil
+      after.closures shouldBe Map(op(10) -> false)
+    }
+
+    "creates immutable new terms after consent with the auction term counted from consent" in {
+      val state = offering()
+      val acceptedAt = calm.plus(Duration.ofDays(20))
+      val accepted = written(state, Settlement.accept(state, boris.bid, boris.participant, op(11), acceptedAt))
+        .asInstanceOf[Settlement.Open]
+      accepted.current.id shouldBe InvoiceId.of(boris.bid)
+      accepted.current.terms.amount shouldBe money(800)
+      accepted.current.terms.paymentDueAt shouldBe acceptedAt.plus(Duration.ofDays(7))
+      accepted.sale shouldBe sale
+      accepted.invoices.head shouldBe SettlementInvoice(sale.invoice, terms)
+      Settlement.accept(accepted, boris.bid, boris.participant, op(11), acceptedAt.plusSeconds(100)) shouldBe Right(
+        None
+      )
+      accepted.stage shouldBe SettlementStage.Issuing
+    }
+
+    "does not create an invoice on decline and finishes unredeemed after the last decline" in {
+      val state = offering()
+      val next = written(state, Settlement.decline(state, boris.bid, boris.participant, op(11)))
+      next.asInstanceOf[Settlement.Open].stage shouldBe SettlementStage.Offering(SettlementOffer(vera))
+      val end =
+        written(next, Settlement.decline(next, vera.bid, vera.participant, op(12))).asInstanceOf[Settlement.Open]
+      end.stage shouldBe SettlementStage.Unredeemed
+      end.invoices shouldBe List(SettlementInvoice(sale.invoice, terms))
+      Settlement.buyer(end) shouldBe None
+      Settlement.decline(end, boris.bid, boris.participant, op(11)) shouldBe Right(None)
+    }
+
+    "continues with the remaining candidates when a replacement buyer also fails to redeem" in {
+      val state = offering()
+      val accepted = written(state, Settlement.accept(state, boris.bid, boris.participant, op(11), calm))
+        .asInstanceOf[Settlement.Open]
+      val confirmed = Settlement(accepted, Settlement.invoiceConfirmed(accepted, accepted.current.id).get)
+      val closing = written(confirmed, Settlement.requestUnredeemed(confirmed, accepted.current.id, op(12)))
+      val next =
+        Settlement(closing, Settlement.closureCompleted(closing, op(12), true).get).asInstanceOf[Settlement.Open]
+      next.stage shouldBe SettlementStage.Offering(SettlementOffer(vera))
+      next.offers.map(_.offer.candidate.participant) shouldBe List(boris.participant, vera.participant)
+    }
+
+    "rejects foreign and stale offers and never applies an operation to a different invoice" in {
+      val state = offering()
+      Settlement.accept(state, boris.bid, vera.participant, op(11), calm) shouldBe Left(SettlementRefusal.OfferNotFound)
+      val next = written(state, Settlement.decline(state, boris.bid, boris.participant, op(11)))
+      Settlement.accept(next, boris.bid, boris.participant, op(12), calm) shouldBe Left(SettlementRefusal.StaleOffer)
+      Settlement.requestUnredeemed(next, InvoiceId.of(bid(99)), op(10)) shouldBe Left(SettlementRefusal.OpIdTaken)
+      Settlement.closureCompleted(next, op(10), true) shouldBe None
+      Settlement.invoiceConfirmed(next, sale.invoice) shouldBe None
+      Settlement.open(next, sale, Nil) shouldBe None
+    }
+  }
+
+  "invoice closure" should {
+    "serializes payment and unredeemed closure in either order without changing the historical terms" in {
+      val original = Invoice(Invoice.initial, InvoiceEvent.InvoiceIssued(terms))
+      val paid = Invoice(original, Invoice.markPaid(original, op(20)).toOption.get.get)
+      Invoice.markUnredeemed(paid, op(21)) shouldBe Left(InvoiceRefusal.InvoiceAlreadyPaid)
+      val closed = Invoice(original, Invoice.markUnredeemed(original, op(21)).toOption.get.get)
+      Invoice.markPaid(closed, op(20)) shouldBe Left(InvoiceRefusal.InvoiceClosed)
+      Invoice.markHandedOver(closed, op(22)) shouldBe Left(InvoiceRefusal.InvoiceClosed)
+      Invoice.chooseFulfillment(closed, terms.winner, FulfillmentMethod.Pickup, op(23)) shouldBe
+        Left(InvoiceRefusal.InvoiceClosed)
+      Invoice.issue(closed, terms.copy(amount = money(5))) shouldBe None
+      Invoice.markUnredeemed(closed, op(21)) shouldBe Right(None)
+      closed.asInstanceOf[Invoice.Issued].terms shouldBe terms
+    }
+  }
+}

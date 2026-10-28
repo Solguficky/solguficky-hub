@@ -75,6 +75,8 @@ import auction.projection.InvoicePublicationHandler
 import auction.projection.InvoiceViewHandler
 import auction.projection.InvoicingHandler
 import auction.projection.InvoicingProjection
+import auction.projection.SettlementSalesHandler
+import auction.settlement.SettlementGateway
 import auction.results.ResultsForecasts
 import auction.results.ResultsGateway
 import auction.results.ResultsOutcomes
@@ -272,8 +274,9 @@ object AuctionNode {
       invoices: InvoiceGateway,
       metrics: ProjectionMetrics,
       askTimeout: FiniteDuration,
-      backlogTimeout: FiniteDuration
-  ): Unit = {
+      backlogTimeout: FiniteDuration,
+      clock: Clock = Clock.systemUTC()
+  ): SettlementGateway = {
     import system.executionContext
     val auctions = AuctionGateway.sharded(sharding, askTimeout)
     InvoicingProjection.init(
@@ -282,6 +285,24 @@ object AuctionNode {
       () => InvoicingHandler(auction => auctions.get(auction).map(InvoicingHandler.termOf), invoices.issue)
     )
     metrics.watchBacklog(InvoicingProjection.Name, InvoicingProjection.backlog(system, backlogTimeout))
+    val settlements = SettlementGateway.sharded(system, sharding, invoices, clock, UuidV7.generator(clock), askTimeout)
+    InvoicingProjection.init(
+      system,
+      metrics,
+      () =>
+        new SettlementSalesHandler(
+          auction => auctions.get(auction).map(InvoicingHandler.termOf),
+          invoices,
+          settlements,
+          SettlementSalesHandler.history(system)
+        ),
+      SettlementSalesHandler.Name
+    )
+    metrics.watchBacklog(
+      SettlementSalesHandler.Name,
+      LotProjection.backlog(system, SettlementSalesHandler.Name, backlogTimeout)
+    )
+    settlements
   }
 
   /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */
