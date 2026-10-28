@@ -425,6 +425,8 @@ object Lot {
       case Move.LimitWithdrawn => false
     }
 
+  private final case class RemovalReplay(trading: TradingState, bids: List[LotEvent.BidPlaced])
+
   /**
    * Переигрывание торгов без `without` (ADR-072, п. 2) от стартовой цены по входам оставшихся в порядке журнала.
    * Правила те же, что в торгах, и функции те же: ручная ставка ложится [[bidden]] без проверок П-01 — она уже принята,
@@ -438,8 +440,6 @@ object Lot {
    * Позиция лидера — `positionId` у любой ставки повтора: какая ставка её дала, событию не важно, а сумма позиции —
    * итоговая цена.
    */
-  private final case class RemovalReplay(trading: TradingState, bids: List[LotEvent.BidPlaced])
-
   private def rerun(config: LotConfig, course: Course, without: Set[ParticipantId], positionId: BidId): TradingState =
     replayRemoval(config, course, without, positionId).trading
 

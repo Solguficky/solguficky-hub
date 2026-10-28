@@ -94,6 +94,8 @@ object Settlement {
             .flatMap { effective =>
               if (removed.leader.contains(effective.participant))
                 removed.leadingBidId.map(id => SettlementCandidate(id, effective.participant, removed.price))
+              // Позиция лидера записана ParticipantRemoved и считается ставкой (ADR-072).
+              // Нелидер без своей принятой ставки остаётся лишь лимитом: ADR-075 исключает его из кандидатов.
               else
                 bids
                   .find(_.participant == effective.participant)
