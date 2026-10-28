@@ -31,7 +31,7 @@ final class SettlementEntitySpec extends AnyWordSpec with Matchers with BeforeAn
         @volatile var now = calm
         def instant() = now
         def getZone: ZoneId = ZoneOffset.UTC
-        def withZone(zone: ZoneId): Clock = this
+        override def withZone(zone: ZoneId): Clock = this
       }
       val clock = new MovableClock
       val invoices = new InvoiceGateway {
