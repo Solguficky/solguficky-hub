@@ -20,22 +20,31 @@ defmodule Achievements.Test.Rules do
 
   defmodule Flaky do
     @moduledoc false
-    # Ачивка каждому, кто оплатил счёт, — пока тест не поднял флаг сбоя: тогда
-    # правило бросает исключение, как правило с дефектом.
+    # Ачивка каждому, кто оплатил счёт, — пока тест не назвал место дефекта:
+    # :evaluate и :state_keys бросают исключение, :state отвечает состоянием,
+    # которое не кодируется в JSON, как правило с дефектом.
     @behaviour Achievements.Rule
 
-    def fail(on?), do: :persistent_term.put({__MODULE__, :fail}, on?)
+    def fail(where), do: :persistent_term.put({__MODULE__, :fail}, where)
+
+    defp failing, do: :persistent_term.get({__MODULE__, :fail}, false)
 
     @impl true
     def reads, do: [:invoice_paid]
 
     @impl true
-    def state_keys(_fact), do: []
+    def state_keys(_fact) do
+      if failing() == :state_keys, do: raise("defective state keys")
+      ["flaky"]
+    end
 
     @impl true
     def evaluate(fact, _states) do
-      if :persistent_term.get({__MODULE__, :fail}, false), do: raise("defective rule")
-      {[fact.subject], %{}}
+      case failing() do
+        :evaluate -> raise("defective rule")
+        :state -> {[fact.subject], %{"flaky" => %{"owner" => self()}}}
+        _ -> {[fact.subject], %{}}
+      end
     end
   end
 

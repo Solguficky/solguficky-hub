@@ -94,10 +94,15 @@ defmodule Achievements.Ledger do
   defp handle(_definition, {:error, reason}, _now), do: {:undecodable, reason}
 
   defp handle(%Definition{rule: rule} = definition, {:ok, %Fact{} = fact}, now) do
-    cond do
-      fact.kind not in rule.reads() ->
-        :ignored
+    case reads?(rule, fact) do
+      {:ok, false} -> :ignored
+      {:ok, true} -> read(definition, fact, now)
+      {:error, reason} -> Repo.rollback({:rule, reason})
+    end
+  end
 
+  defp read(%Definition{rule: rule} = definition, fact, now) do
+    cond do
       DateTime.compare(fact.occurred_at, definition.starts_at) == :lt ->
         :before_start
 
@@ -107,32 +112,87 @@ defmodule Achievements.Ledger do
       true ->
         join_set(definition, fact, now)
 
-        states = load_states(definition.code, rule.state_keys(fact))
-
-        case evaluate(rule, fact, states) do
-          {:ok, recipients, states} ->
-            save_states(definition.code, states)
-            {:granted, grant_all(definition, fact, Enum.uniq(recipients), now)}
-
-          {:error, reason} ->
-            Repo.rollback({:rule, reason})
+        with {:ok, keys} <- state_keys(rule, fact),
+             {:ok, recipients, states} <-
+               evaluate(rule, fact, load_states(definition.code, keys)) do
+          save_states(definition.code, states)
+          {:granted, grant_all(definition, fact, Enum.uniq(recipients), now)}
+        else
+          {:error, reason} -> Repo.rollback({:rule, reason})
         end
     end
   end
 
   # Исключение правила повторится на том же факте при каждой доставке: падение
   # актора на нём за секунды исчерпало бы рестарты супервизора и погасило узел
-  # вместе с gRPC (норматив, «Процессы и супервизия»). Поэтому любой отказ
-  # правила — значение, а запись о нём пишет актор. Правило — чистая функция:
-  # базы и шины в rescue нет, их отказы сюда не попадают.
-  defp evaluate(rule, fact, states) do
-    {recipients, states} = rule.evaluate(fact, states)
+  # вместе с gRPC (норматив, «Процессы и супервизия»). Поэтому каждый вызов
+  # правила идёт через rule_call/1, его ответ проверяется до записи в базу, и
+  # любой отказ правила — значение, а запись о нём пишет актор. Правило — чистые
+  # функции: базы и шины внутри rescue нет, их отказы сюда не попадают.
+  defp reads?(rule, fact) do
+    rule_call(fn ->
+      case rule.reads() do
+        kinds when is_list(kinds) -> {:ok, fact.kind in kinds}
+        _ -> {:error, "the rule reads no list of fact kinds"}
+      end
+    end)
+  end
 
+  defp state_keys(rule, fact) do
+    rule_call(fn ->
+      case rule.state_keys(fact) do
+        keys when is_list(keys) ->
+          if Enum.all?(keys, &is_binary/1),
+            do: {:ok, keys},
+            else: {:error, "the rule named a state key that is not a string"}
+
+        _ ->
+          {:error, "the rule named no list of state keys"}
+      end
+    end)
+  end
+
+  defp evaluate(rule, fact, states) do
+    rule_call(fn ->
+      with {recipients, new_states} when is_list(recipients) and is_map(new_states) <-
+             rule.evaluate(fact, states),
+           :ok <- canonical(recipients),
+           :ok <- storable(new_states) do
+        {:ok, recipients, new_states}
+      else
+        {:error, reason} -> {:error, reason}
+        _ -> {:error, "the rule answered no recipients and states"}
+      end
+    end)
+  end
+
+  defp canonical(recipients) do
     if Enum.all?(recipients, &match?({:ok, _}, Proto.uuid(&1))),
-      do: {:ok, recipients, states},
+      do: :ok,
       else: {:error, "the rule named a recipient that is not a canonical UUID"}
+  end
+
+  # Состояние ложится в jsonb: то, что не кодируется в JSON, отказало бы в
+  # Postgrex исключением, которое не отличить от отказа базы.
+  defp storable(states) do
+    cond do
+      not Enum.all?(states, fn {key, state} -> is_binary(key) and is_map(state) end) ->
+        {:error, "the rule answered a state that is not a map under a string key"}
+
+      match?({:error, _}, Jason.encode(states)) ->
+        {:error, "the rule answered a state that does not encode as JSON"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp rule_call(call) do
+    call.()
   rescue
     error -> {:error, Exception.message(error)}
+  catch
+    kind, reason -> {:error, "the rule failed with #{kind}: #{inspect(reason)}"}
   end
 
   defp lock_cursor(code, stream) do

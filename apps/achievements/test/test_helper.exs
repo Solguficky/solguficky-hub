@@ -7,7 +7,7 @@
 # рецепте, чтобы его нёс и прямой `mix test` в каталоге компонента. Добавил или удалил тест —
 # поправь порог своего уровня тем же изменением.
 integration? = System.get_env("ACHIEVEMENTS_INTEGRATION_TESTS") == "1"
-minimum = if integration?, do: 86, else: 62
+minimum = if integration?, do: 88, else: 62
 
 ExUnit.after_suite(fn %{total: total, skipped: skipped} = result ->
   ran = total - skipped - Map.get(result, :excluded, 0)

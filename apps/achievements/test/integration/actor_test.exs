@@ -103,21 +103,27 @@ defmodule Achievements.ActorIntegrationTest do
     assert Repo.aggregate(Outbox, :count) == 0
   end
 
-  test "a defective rule holds only its own achievement and grants once it is fixed" do
-    auction = uuid()
-    buyer = uuid()
-    Rules.Flaky.fail(true)
+  for {where, what} <- [
+        evaluate: "an exception in evaluate",
+        state_keys: "an exception in state_keys",
+        state: "a state that does not encode as JSON"
+      ] do
+    test "a rule defect — #{what} — holds only its own achievement and grants once it is fixed" do
+      auction = uuid()
+      buyer = uuid()
+      Rules.Flaky.fail(unquote(where))
 
-    seq = publish(paid(auction, buyer, ~U[2026-10-10 12:00:00Z]), reading() -- ["flaky"])
+      seq = publish(paid(auction, buyer, ~U[2026-10-10 12:00:00Z]), reading() -- ["flaky"])
 
-    assert holders(auction, "buyer") == [buyer]
-    assert holders(auction, "flaky") == []
-    assert cursor("flaky") < seq
-    assert Process.whereis(Achievements.Actors)
+      assert holders(auction, "buyer") == [buyer]
+      assert holders(auction, "flaky") == []
+      assert cursor("flaky") < seq
+      assert Process.whereis(Achievements.Actors)
 
-    Rules.Flaky.fail(false)
-    wait_for(["flaky"], seq)
-    assert holders(auction, "flaky") == [buyer]
+      Rules.Flaky.fail(false)
+      wait_for(["flaky"], seq)
+      assert holders(auction, "flaky") == [buyer]
+    end
   end
 
   test "an actor restarted by its supervisor resumes after its cursor" do
