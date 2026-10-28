@@ -450,7 +450,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return assignRaffleWinnerResult(response.outcome);
+        return translated(() => assignRaffleWinnerResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -463,7 +463,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return changeRafflePrizeResult(response.outcome);
+        return translated(() => changeRafflePrizeResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -481,7 +481,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return rafflePrizePhotoResult(response.outcome, true);
+        return translated(() => rafflePrizePhotoResult(response.outcome, true));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -492,7 +492,9 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return rafflePrizePhotoResult(response.outcome, false);
+        return translated(() =>
+          rafflePrizePhotoResult(response.outcome, false),
+        );
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -503,7 +505,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), meetupId, opId },
           options(meta),
         );
-        return enableResult(response.outcome);
+        return translated(() => enableResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -514,7 +516,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...card },
           options(meta),
         );
-        return cardResult(response.outcome, false);
+        return translated(() => cardResult(response.outcome, false));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -539,7 +541,9 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return cardResult(response.outcome, image !== undefined);
+        return translated(() =>
+          cardResult(response.outcome, image !== undefined),
+        );
       } catch (cause) {
         return toFailure(cause);
       }
@@ -555,7 +559,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return photoResult(response.outcome, true);
+        return translated(() => photoResult(response.outcome, true));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -570,7 +574,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return photoResult(response.outcome, false);
+        return translated(() => photoResult(response.outcome, false));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -581,7 +585,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...lot },
           options(meta),
         );
-        return addLotResult(response.outcome);
+        return translated(() => addLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -592,7 +596,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...lot },
           options(meta),
         );
-        return removeLotResult(response.outcome);
+        return translated(() => removeLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -638,7 +642,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return scheduleLotResult(response.outcome);
+        return translated(() => scheduleLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -665,7 +669,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), auctionId },
           options(meta),
         );
-        return consoleResult(response.outcome);
+        return translated(() => consoleResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -676,7 +680,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), auctionId },
           options(meta),
         );
-        return lotStatisticsResult(response.outcome);
+        return translated(() => lotStatisticsResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -692,7 +696,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return daySummaryResult(response.outcome);
+        return translated(() => daySummaryResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -744,7 +748,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return scheduleAuctionResult(response.outcome);
+        return translated(() => scheduleAuctionResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -766,7 +770,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return launchStepWindowResult(response.outcome);
+        return translated(() => launchStepWindowResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -784,7 +788,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return createHappyHourPeriodResult(response.outcome);
+        return translated(() => createHappyHourPeriodResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -800,7 +804,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return deleteHappyHourPeriodResult(response.outcome);
+        return translated(() => deleteHappyHourPeriodResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -823,7 +827,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return setHappyHourLotTermsResult(response.outcome);
+        return translated(() => setHappyHourLotTermsResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -840,7 +844,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return clearHappyHourLotTermsResult(response.outcome);
+        return translated(() => clearHappyHourLotTermsResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -851,7 +855,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...start },
           options(meta),
         );
-        return startPrebiddingResult(response.outcome);
+        return translated(() => startPrebiddingResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -862,7 +866,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...discard },
           options(meta),
         );
-        return discardAuctionResult(response.outcome);
+        return translated(() => discardAuctionResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -873,7 +877,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...cancel },
           options(meta),
         );
-        return cancelAuctionResult(response.outcome);
+        return translated(() => cancelAuctionResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -884,7 +888,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...publish },
           options(meta),
         );
-        return visibilityResult(response.outcome, "publish");
+        return translated(() => visibilityResult(response.outcome, "publish"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -895,7 +899,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...hide },
           options(meta),
         );
-        return visibilityResult(response.outcome, "hide");
+        return translated(() => visibilityResult(response.outcome, "hide"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -908,7 +912,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return finalTimeResult(response.outcome);
+        return translated(() => finalTimeResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -923,7 +927,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return saveLotSetResult(response.outcome);
+        return translated(() => saveLotSetResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -947,7 +951,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return lotLayoutResult(response.outcome);
+        return translated(() => lotLayoutResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -958,7 +962,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...set },
           options(meta),
         );
-        return deleteLotSetResult(response.outcome);
+        return translated(() => deleteLotSetResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -969,7 +973,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...mark },
           options(meta),
         );
-        return finalistResult(response.outcome, "select");
+        return translated(() => finalistResult(response.outcome, "select"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -980,7 +984,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...mark },
           options(meta),
         );
-        return finalistResult(response.outcome, "deselect");
+        return translated(() => finalistResult(response.outcome, "deselect"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -999,7 +1003,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return freezeFinalLineupResult(response.outcome);
+        return translated(() => freezeFinalLineupResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1011,7 +1015,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...start },
           options(meta),
         );
-        return startFinalResult(response.outcome);
+        return translated(() => startFinalResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1022,7 +1026,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...start },
           options(meta),
         );
-        return startNextLotResult(response.outcome);
+        return translated(() => startNextLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1039,7 +1043,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return advanceAskResult(response.outcome);
+        return translated(() => advanceAskResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1050,7 +1054,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...close },
           options(meta),
         );
-        return closeLotResult(response.outcome);
+        return translated(() => closeLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1170,7 +1174,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return floorBidResult(response.outcome);
+        return translated(() => floorBidResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -1254,7 +1258,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...target },
           options(meta),
         );
-        return removalPreviewResult(response.outcome);
+        return translated(() => removalPreviewResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -1272,7 +1276,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return removeParticipantResult(response.outcome);
+        return translated(() => removeParticipantResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -1283,7 +1287,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), auctionId },
           options(meta),
         );
-        return invoicesResult(response.outcome);
+        return translated(() => invoicesResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1316,7 +1320,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return paymentInstructionsResult(response.outcome);
+        return translated(() => paymentInstructionsResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1336,7 +1340,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return promoVideoResult(response.outcome);
+        return translated(() => promoVideoResult(response.outcome));
       } catch (cause) {
         // Ключ прикрепления выведен из сообщения ответа (PER-793): тот же
         // ключ с другим постом — повтор доставки после рестарта, когда пост
@@ -2010,7 +2014,7 @@ function lotStatisticsResult(
             uniqueParticipantCount,
             ...(lot.priceGrowth === undefined
               ? {}
-              : { priceGrowth: moneyOf(lot.priceGrowth) }),
+              : { priceGrowth: growthOf(lot.priceGrowth) }),
           };
         }),
       };
@@ -2063,7 +2067,7 @@ function daySummaryResult(
               : { maxPrice: moneyOf(lot.maxPrice) }),
             ...(lot.growth === undefined
               ? {}
-              : { growth: moneyOf(lot.growth) }),
+              : { growth: growthOf(lot.growth) }),
           };
         }),
       };
@@ -2098,9 +2102,23 @@ function safeCount(value: bigint, field: string): number {
 }
 
 function moneyOf(value: { minorUnits: bigint; currency: string }): Money {
+  return amountOf(value, "price", true);
+}
+
+// Рост — разность цен, а не цена: контракт знака не ограничивает, и ставка по
+// стартовой окна ниже обычной стартовой даёт отрицательный рост (PER-811).
+function growthOf(value: { minorUnits: bigint; currency: string }): Money {
+  return amountOf(value, "price growth", false);
+}
+
+function amountOf(
+  value: { minorUnits: bigint; currency: string },
+  what: string,
+  nonNegative: boolean,
+): Money {
   const minorUnits = Number(value.minorUnits);
-  if (!Number.isSafeInteger(minorUnits) || minorUnits < 0) {
-    throw new Error("price growth out of range");
+  if (!Number.isSafeInteger(minorUnits) || (nonNegative && minorUnits < 0)) {
+    throw new Error(`${what} out of range`);
   }
   return { minorUnits, currency: value.currency };
 }
@@ -3343,6 +3361,18 @@ function summaryOrNothing(
     return { auction: auctionSummaryViewOf(snapshot) };
   } catch {
     return {};
+  }
+}
+
+// Ответ Auction пришёл, но перевод его отверг (PER-811): дефект соседа с
+// причиной, а не недоступность — повтор его не вылечит, а запись границы
+// называет причину. Обёртка стоит вокруг перевода, а не в `toFailure`: бросок до
+// ответа — сборка запроса или заголовков — остаётся отказом вызова.
+function translated<T>(read: () => T): T | { kind: "invalid"; cause: unknown } {
+  try {
+    return read();
+  } catch (cause) {
+    return { kind: "invalid", cause };
   }
 }
 
