@@ -670,6 +670,17 @@ auction-test-integration:
 auction-test-browser:
     cd apps/auction && AUCTION_BROWSER_TESTS=1 sbt -batch test
 
+# Инструмент, а не тест: в `verify`, `test-all` и CI не входит. Сценарий и стенд
+# задают переменные SCREEN_LOAD_*: стенд local (по умолчанию) сам поднимает
+# PostgreSQL в Docker, заглушку Meetups и Auction отдельным процессом, remote идёт
+# против развёрнутого сервиса по адресам и токену вызывающего. Chromium — тот же,
+# что у auction-test-browser. Переменные, сценарии и форма записи результатов —
+# docs/services/auction-screen-load.md; отчёт пишется в apps/auction/target/screen-load/.
+#
+# Прогон экрана зала под залпом ставок (PER-486); нужны Docker и Chromium Playwright
+auction-screen-load:
+    cd apps/auction && sbt -batch "Test/runMain auction.screen.load.ScreenLoad"
+
 # scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
 # отдельная задача — иначе build.sbt остаётся единственным неформатируемым
 # файлом компонента.
