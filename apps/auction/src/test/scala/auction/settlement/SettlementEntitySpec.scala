@@ -71,7 +71,7 @@ final class SettlementEntitySpec extends AnyWordSpec with Matchers with BeforeAn
         )
       )
       clock.now = terms.paymentDueAt.plusSeconds(1)
-      ManualTime(kit.system).timePasses(8.days)
+      ManualTime()(using kit.system).timePasses(8.days)
       val after = entity.runCommand[Settlement](SettlementEntity.Get(_)).reply.asInstanceOf[Settlement.Open]
       after.stage shouldBe SettlementStage.AwaitingPayment
       after.offers shouldBe Nil
