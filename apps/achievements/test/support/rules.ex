@@ -18,6 +18,27 @@ defmodule Achievements.Test.Rules do
     def evaluate(fact, _states), do: {[fact.subject], %{}}
   end
 
+  defmodule Flaky do
+    @moduledoc false
+    # Ачивка каждому, кто оплатил счёт, — пока тест не поднял флаг сбоя: тогда
+    # правило бросает исключение, как правило с дефектом.
+    @behaviour Achievements.Rule
+
+    def fail(on?), do: :persistent_term.put({__MODULE__, :fail}, on?)
+
+    @impl true
+    def reads, do: [:invoice_paid]
+
+    @impl true
+    def state_keys(_fact), do: []
+
+    @impl true
+    def evaluate(fact, _states) do
+      if :persistent_term.get({__MODULE__, :fail}, false), do: raise("defective rule")
+      {[fact.subject], %{}}
+    end
+  end
+
   defmodule TwoLots do
     @moduledoc false
     # Ачивка тому, кто оплатил второй счёт: правило держит число оплат субъекта.

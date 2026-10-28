@@ -78,6 +78,15 @@ defmodule Achievements.AuctionFactsTest do
     assert reason =~ "winner_id"
   end
 
+  test "a paid invoice of an auction id that is not canonical is undecodable" do
+    event = put_in(invoice_paid().state.auction_id, String.upcase(@auction))
+
+    assert {:error, reason} =
+             AuctionFacts.decode("events.auction.invoice_paid", InvoiceEvent.encode(event))
+
+    assert reason =~ "auction_id"
+  end
+
   test "a paid invoice with an occurred_at that is not an instant is undecodable" do
     event = %{invoice_paid() | occurred_at: "yesterday"}
 

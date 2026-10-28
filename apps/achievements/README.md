@@ -15,6 +15,7 @@
 - `lib/achievements/grpc/` — граница: интерцептор записи `boundary.ex` и проверка вызывающего по токену `callers.ex` (ADR-056).
 - `lib/achievements/maintenance.ex` — гашение ошибочной выдачи мейнтейнером через `bin/achievements rpc`.
 - `lib/achievements/metrics.ex` — `solguficky.failures` и отставание актора от стрима по OTLP.
+- `lib/achievements/telemetry.ex` — поле `service` в каждой записи и экспорт логов по OTLP, когда среда дала `OTEL_EXPORTER_OTLP_ENDPOINT`; трейсы и метрики включает `config/runtime.exs`.
 - `lib/achievements/health/` — `grpc.health.v1.Health/Check`: пустое имя — liveness без базы, `achievements.v1.AchievementsService` — readiness с базой. Схема health чужая и в `contracts/proto` не лежит, поэтому записана DSL библиотеки `protobuf` руками.
 - `lib/achievements/relay.ex` — релей outbox в JetStream по порядку `position` с `Nats-Msg-Id` = `event_id`; отказ шины останавливает пачку на первой неподтверждённой строке.
 - `lib/generated/` — модули `achievements.v1` и фактов `auction.v1`, которые пишет `buf generate` по `buf.gen.yaml`; в Git их нет.

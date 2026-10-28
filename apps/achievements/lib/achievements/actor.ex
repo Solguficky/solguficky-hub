@@ -71,6 +71,10 @@ defmodule Achievements.Actor do
   def handle_info({:pull_expired, ref}, %{waiting: ref} = state),
     do: reconnect(state, "stream_pull", "no answer to a pull within its expiry")
 
+  # 100 — пульс сервера, ответом на выборку он не является: сторож ждёт дальше.
+  def handle_info({:msg, %{sid: sid, status: "100"}}, %{sid: sid} = state),
+    do: {:noreply, state}
+
   def handle_info({:msg, %{sid: sid} = message}, %{sid: sid} = state),
     do: answer(cancel_wait(state), message)
 
@@ -138,17 +142,49 @@ defmodule Achievements.Actor do
 
   # С позиции + 1, а без позиции — с даты начала ачивки. Дата раньше окна
   # хранения стрима — чтение с самого раннего факта и предупреждение.
+  #
+  # Позиция дальше последнего номера стрима значит, что стрим пересоздан и
+  # нумерация пошла заново: с seq + 1 актор ждал бы вечно. Тогда позиция
+  # сбрасывается и чтение идёт с даты начала — повтор уже обработанных фактов
+  # отсекает строка дедупликации по event_id.
   defp start_position(state, code, starts_at) do
     case Ledger.cursor(code, state.stream) do
       seq when is_integer(seq) ->
-        {:ok, %{deliver_policy: :by_start_sequence, opt_start_seq: seq + 1}}
+        if recreated?(state, seq) do
+          Logger.warning("achievement stream was recreated",
+            operation: "consumer_create",
+            result: "error",
+            error_category: "invariant",
+            error: "stream position #{seq} is past the end of the stream",
+            achievement: code
+          )
+
+          Metrics.failure("invariant")
+          :ok = Ledger.reset_cursor(code, state.stream)
+          from_start(state, starts_at)
+        else
+          {:ok, %{deliver_policy: :by_start_sequence, opt_start_seq: seq + 1}}
+        end
 
       nil ->
-        warn_before_window(state, starts_at)
-        {:ok, %{deliver_policy: :by_start_time, opt_start_time: starts_at}}
+        from_start(state, starts_at)
     end
   rescue
     error in [DBConnection.ConnectionError, Postgrex.Error] -> {:error, Exception.message(error)}
+  end
+
+  defp from_start(state, starts_at) do
+    warn_before_window(state, starts_at)
+    {:ok, %{deliver_policy: :by_start_time, opt_start_time: starts_at}}
+  end
+
+  # Не ответивший стрим — не пересозданный: заведение потребителя скажет о нём
+  # само.
+  defp recreated?(state, seq) do
+    match?(
+      {:ok, %{state: %{last_seq: last}}} when seq > last,
+      Stream.info(state.connection, state.stream)
+    )
   end
 
   # Пустой стрим окна не имеет: его первый номер — 0.
@@ -194,9 +230,6 @@ defmodule Achievements.Actor do
     {:noreply, state}
   end
 
-  # 100 — пульс сервера, ответом на выборку он не является.
-  defp answer(state, %{status: "100"}), do: {:noreply, state}
-
   # Потребителя нет или он сменился: сервер его убрал, перезапустился.
   defp answer(state, message),
     do: reconnect(state, "stream_pull", "consumer answered #{inspect(Map.get(message, :status))}")
@@ -229,9 +262,10 @@ defmodule Achievements.Actor do
         send(self(), :pull)
         {:noreply, state}
 
-      {:error, reason} ->
+      {:error, kind, reason} ->
         # Повтор того же сообщения не раньше, чем через retry: без задержки
-        # JetStream отдал бы его сразу, и лежащая база крутила бы цикл.
+        # JetStream отдал бы его сразу, и лежащая база или дефект правила
+        # крутили бы цикл.
         _ =
           publish(
             state,
@@ -240,16 +274,24 @@ defmodule Achievements.Actor do
             []
           )
 
-        Logger.warning(
+        {level, category} = failure(kind)
+
+        Logger.log(
+          level,
           "achievement fact failed",
-          [result: "error", error_category: "dependency_unavailable", error: reason] ++ fields
+          [result: "error", error_category: category, error: reason] ++ fields
         )
 
-        Metrics.failure("dependency_unavailable")
+        Metrics.failure(category)
         Process.send_after(self(), :pull, state.retry_ms)
         {:noreply, state}
     end
   end
+
+  # Отказ базы повторится сам, когда она вернётся; дефект правила стоит до
+  # новой поставки и требует внимания.
+  defp failure(:unavailable), do: {:warning, "dependency_unavailable"}
+  defp failure(:rule), do: {:error, "unexpected"}
 
   defp publish(state, topic, body, opts) do
     case Gnat.pub(state.connection, topic, body, opts) do

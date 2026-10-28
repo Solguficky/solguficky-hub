@@ -37,6 +37,15 @@ defmodule Achievements.Ledger do
     |> Repo.one()
   end
 
+  @doc "Забывает позицию ачивки в стриме: следующее чтение начнётся с даты начала."
+  @spec reset_cursor(String.t(), String.t()) :: :ok
+  def reset_cursor(code, stream) do
+    from(c in "stream_cursor", where: c.achievement_code == ^code and c.stream == ^stream)
+    |> Repo.delete_all()
+
+    :ok
+  end
+
   @doc """
   Обрабатывает сообщение стрима `stream` под номером `seq` для ачивки
   `definition`. Исход:
@@ -50,9 +59,16 @@ defmodule Achievements.Ledger do
     сдвигается, иначе одно битое сообщение навсегда остановило бы ачивку;
   - `{:granted, rows}` — факт прочитан правилом; `rows` — новые выдачи,
     возможно ни одной.
+
+  Отказ — транзакция откатывается целиком, и сообщение повторяется:
+
+  - `{:error, :unavailable, reason}` — отказ базы;
+  - `{:error, :rule, reason}` — правило бросило исключение или назвало
+    получателя не каноническим UUID. Это дефект правила, а не тела: позиция
+    стоит, пока поставка его не исправит, а соседние ачивки читают дальше.
   """
   @spec apply(Definition.t(), String.t(), pos_integer(), String.t(), binary(), DateTime.t()) ::
-          {:ok, outcome()} | {:error, String.t()}
+          {:ok, outcome()} | {:error, :unavailable | :rule, String.t()}
   def apply(%Definition{} = definition, stream, seq, subject, payload, now \\ DateTime.utc_now()) do
     Repo.transaction(fn ->
       case lock_cursor(definition.code, stream) do
@@ -65,8 +81,13 @@ defmodule Achievements.Ledger do
           outcome
       end
     end)
+    |> case do
+      {:ok, outcome} -> {:ok, outcome}
+      {:error, {:rule, reason}} -> {:error, :rule, reason}
+    end
   rescue
-    error in [DBConnection.ConnectionError, Postgrex.Error] -> {:error, Exception.message(error)}
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      {:error, :unavailable, Exception.message(error)}
   end
 
   defp handle(_definition, :ignored, _now), do: :ignored
@@ -86,12 +107,32 @@ defmodule Achievements.Ledger do
       true ->
         join_set(definition, fact, now)
 
-        {recipients, states} =
-          rule.evaluate(fact, load_states(definition.code, rule.state_keys(fact)))
+        states = load_states(definition.code, rule.state_keys(fact))
 
-        save_states(definition.code, states)
-        {:granted, grant_all(definition, fact, Enum.uniq(recipients), now)}
+        case evaluate(rule, fact, states) do
+          {:ok, recipients, states} ->
+            save_states(definition.code, states)
+            {:granted, grant_all(definition, fact, Enum.uniq(recipients), now)}
+
+          {:error, reason} ->
+            Repo.rollback({:rule, reason})
+        end
     end
+  end
+
+  # Исключение правила повторится на том же факте при каждой доставке: падение
+  # актора на нём за секунды исчерпало бы рестарты супервизора и погасило узел
+  # вместе с gRPC (норматив, «Процессы и супервизия»). Поэтому любой отказ
+  # правила — значение, а запись о нём пишет актор. Правило — чистая функция:
+  # базы и шины в rescue нет, их отказы сюда не попадают.
+  defp evaluate(rule, fact, states) do
+    {recipients, states} = rule.evaluate(fact, states)
+
+    if Enum.all?(recipients, &match?({:ok, _}, Proto.uuid(&1))),
+      do: {:ok, recipients, states},
+      else: {:error, "the rule named a recipient that is not a canonical UUID"}
+  rescue
+    error -> {:error, Exception.message(error)}
   end
 
   defp lock_cursor(code, stream) do

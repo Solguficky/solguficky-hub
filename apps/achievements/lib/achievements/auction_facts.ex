@@ -117,10 +117,12 @@ defmodule Achievements.AuctionFacts do
          } =
            event,
          :invoice_paid
-       )
-       when auction != "" do
+       ) do
+    # auction_id — ключ набора: неканоническая форма завела бы набор, который
+    # чтение по каноническому EventRef не найдёт никогда.
     with {:ok, occurred_at} <- instant(event.occurred_at),
          :ok <- uuid(event.event_id, "event_id"),
+         :ok <- uuid(auction, "auction_id"),
          :ok <- uuid(winner, "winner_id") do
       {:ok,
        %Fact{

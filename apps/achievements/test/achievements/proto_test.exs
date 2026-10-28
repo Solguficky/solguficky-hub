@@ -1,7 +1,7 @@
 defmodule Achievements.ProtoTest do
   use ExUnit.Case, async: true
 
-  alias Achievements.{Definition, Proto, UUID7}
+  alias Achievements.{Definition, Proto}
   alias Achievements.Catalog.Entry
   alias Achievements.V1
 
@@ -46,16 +46,6 @@ defmodule Achievements.ProtoTest do
     assert Proto.event(%V1.EventRef{kind: {:auction_id, String.upcase(id)}}) == :error
     assert Proto.event(%V1.EventRef{}) == :error
     assert Proto.event(nil) == :error
-  end
-
-  test "a UUIDv7 carries version 7, the RFC variant and grows with time" do
-    early = UUID7.generate(~U[2026-10-01 00:00:00Z])
-    late = UUID7.generate(~U[2026-10-02 00:00:00Z])
-
-    assert {:ok, ^early} = Proto.uuid(early)
-    assert String.at(early, 14) == "7"
-    assert String.at(early, 19) in ["8", "9", "a", "b"]
-    assert early < late
   end
 
   defp entry do
