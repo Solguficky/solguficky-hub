@@ -15,8 +15,6 @@ defmodule Achievements.Grpc.Callers do
   """
   @behaviour GRPC.Server.Interceptor
 
-  require Logger
-
   @service "/achievements.v1.AchievementsService/"
 
   # Колонка Caller раздела «Achievements gRPC» integration.md.
