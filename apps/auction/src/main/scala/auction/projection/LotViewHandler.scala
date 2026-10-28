@@ -168,7 +168,8 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
     Using.resource(
       connection.prepareStatement(
         """INSERT INTO lot_bid (lot_id, sequence, bid_id, participant_id, minor_units, currency, origin, source,
-          |occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lot_id, sequence) DO NOTHING""".stripMargin
+          |occurred_at, window_start_minor_units) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          |ON CONFLICT (lot_id, sequence) DO NOTHING""".stripMargin
       )
     ) { statement =>
       statement.setObject(1, bid.lotId)
@@ -180,6 +181,10 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
       statement.setString(7, bid.origin)
       statement.setString(8, bid.source.orNull)
       statement.setTimestamp(9, Timestamp.from(bid.occurredAt))
+      bid.windowStart match {
+        case Some(start) => statement.setLong(10, start)
+        case None => statement.setNull(10, java.sql.Types.BIGINT)
+      }
       statement.executeUpdate()
     }
 }

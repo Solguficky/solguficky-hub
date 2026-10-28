@@ -158,6 +158,27 @@ final class LotProjectionIntegrationSpec
       .futureValue
   }
 
+  /**
+   * Лот в торгах с окном «Счастливых часов» вокруг `now`: обычная стартовая 100, стартовая окна 50, без шага окна
+   * (PER-810).
+   */
+  private def openedInWindow(node: Node, id: UUID, now: Instant): Unit = {
+    val entity = lot(node, id)
+    entity
+      .ask[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN = 1), Initiator.Scheduler, _))
+      .futureValue
+    entity
+      .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(scheduleLot(opN = 2), Initiator.Scheduler, _))
+      .futureValue
+    val window = StepWindow(now.minusSeconds(3600), now.plusSeconds(3600), None, Some(money(50)))
+    entity
+      .ask[Either[OpenLotRejected, Envelope]](
+        LotEntity.Open(OpenLot(Some(distantDeadline), op(3), List(window)), Initiator.Scheduler, _)
+      )
+      .futureValue
+      .isRight shouldBe true
+  }
+
   /** Лот в торгах: рождение, условия и открытие. */
   private def tradingLot(node: Node, id: UUID = ids()): UUID = {
     draftPlanOpen(node, id, distantDeadline)
@@ -417,6 +438,52 @@ final class LotProjectionIntegrationSpec
         version(database, id) shouldBe Some(6L)
       }
       bidRows(database, id) shouldBe 3
+    }
+
+    // PER-810: лот открыт с окном «Счастливых часов» со стартовой 50 при обычной 100. Первая ставка по стартовой окна
+    // даёт рост 0, а не −50, следующая на шаг — 10: стартовая роста — та, по которой лот открылся.
+    "grows the price of a lot from the starting price of the window its first bid took" in {
+      val database = migrated()
+      val auctionId = UUID.randomUUID()
+      val id = ids()
+      val now = Instant.now()
+      val growth = withNode(database) { node =>
+        openedInWindow(node, id, now)
+        registered(database, auctionId, Set.empty, id)
+        bidOn(node, id, who = 1, amount = 50).futureValue.isRight shouldBe true
+        eventually(version(database, id) shouldBe Some(journalVersion(database, id)))
+        val first = statisticsOf(node, auctionId).map(_.priceGrowth)
+        bidOn(node, id, who = 2, amount = 60).futureValue.isRight shouldBe true
+        eventually(version(database, id) shouldBe Some(journalVersion(database, id)))
+        (first, statisticsOf(node, auctionId).map(_.priceGrowth))
+      }
+      growth shouldBe (List(Some(money(0))), List(Some(money(10))))
+      query(database, "SELECT window_start_minor_units FROM lot_bid WHERE lot_id = ? ORDER BY sequence", id)(row =>
+        Option(row.getObject(1)).map(_ => row.getLong(1))
+      ) shouldBe List(Some(50L), Some(50L))
+    }
+
+    // PER-810: сняли единственного участника, чья ставка легла по стартовой окна. Цена остаётся 50 без лидера (И-23), а
+    // неснятых ставок нет — база роста — цена снятия, и рост 0, а не −50 от обычной стартовой.
+    "keeps the growth at zero when the only bidder in the window is removed" in {
+      val database = migrated()
+      val auctionId = UUID.randomUUID()
+      val id = ids()
+      val growth = withNode(database) { node =>
+        openedInWindow(node, id, Instant.now())
+        registered(database, auctionId, Set.empty, id)
+        bidOn(node, id, who = 1, amount = 50).futureValue.isRight shouldBe true
+        lot(node, id)
+          .ask[Either[RemoveParticipantRejected, LotEntity.Recorded]](
+            LotEntity
+              .Remove(removeParticipant(1, 10, journalVersion(database, id)), Initiator.Operator(participant(9)), _)
+          )
+          .futureValue
+          .isRight shouldBe true
+        eventually(version(database, id) shouldBe Some(journalVersion(database, id)))
+        statisticsOf(node, auctionId).map(_.priceGrowth)
+      }
+      growth shouldBe List(Some(money(0)))
     }
 
     "counts the statistics of a lot once per event and the same again after a rebuild from scratch" in {

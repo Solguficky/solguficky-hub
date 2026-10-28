@@ -41,6 +41,21 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
   // снятого участника не считаются (ADR-072, PER-658).
   private val BidCountSql = "(SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id AND NOT b.removed)"
 
+  // Стартовая роста лота `v` (ADR-067, дополнение 2026-10-28, PER-810) — одно выражение у статистики и сводки дня:
+  // цена, по которой лот открылся, — обычная стартовая `LotOpened`, стартовая окна первой неснятой ставки, если та
+  // пришлась на окно со стартовой ниже, и не выше суммы самой этой ставки: снятие первого участника переигрывает торги
+  // по суммам оставшихся, и вторая ставка могла лечь ниже обычной стартовой уже за окном. И не выше цены последнего
+  // снятия участника `x`: снятие всех ставок оставляет лот без лидера по цене не выше прежней (И-23), и с неё он
+  // открывается заново; пока ставки остаются, цена снятия не ниже первой из них и базу не меняет. `LEAST` пропускает
+  // NULL: без ставок, окна и снятий остаётся обычная стартовая. Нужны соединения `s` (`lot_starting_price`), `f` и `x`
+  // — [[FirstBidSql]].
+  private val GrowthBaseSql = "LEAST(s.minor_units, f.window_start_minor_units, f.minor_units, x.minor_units)"
+  private val FirstBidSql =
+    """LEFT JOIN LATERAL (SELECT b.minor_units, b.window_start_minor_units FROM lot_bid b
+      |  WHERE b.lot_id = v.lot_id AND NOT b.removed ORDER BY b.sequence LIMIT 1) f ON TRUE
+      |LEFT JOIN LATERAL (SELECT r.minor_units FROM lot_removal r
+      |  WHERE r.lot_id = v.lot_id ORDER BY r.sequence DESC LIMIT 1) x ON TRUE""".stripMargin
+
   // Сет лота (ADR-073) — полный сет аукциона лота, в котором лот есть; лот входит не больше чем в один сет.
   private val LotSetSql =
     """LEFT JOIN LATERAL (SELECT s.lot_set_id, s.name, s.lot_ids, s.collector_id FROM auction_lot_set s
@@ -274,7 +289,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     )
 
   private def statisticsAction(auctionId: UUID): DBIO[List[LotStatisticsView]] =
-    sql"""SELECT v.lot_id::text, v.state::text, s.minor_units, s.currency, #$BidCountSql,
+    sql"""SELECT v.lot_id::text, v.state::text, #$GrowthBaseSql, s.currency, #$BidCountSql,
                    (SELECT COUNT(*) FROM lot_participant p WHERE p.lot_id = v.lot_id AND NOT p.removed),
                    (SELECT b.occurred_at FROM lot_bid b WHERE b.lot_id = v.lot_id AND NOT b.removed
                       ORDER BY b.sequence DESC LIMIT 1),
@@ -283,6 +298,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
                       AND res.sequence IS NOT NULL AND b.sequence > res.sequence)
             FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
             LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
+            #$FirstBidSql
             LEFT JOIN lot_hold h ON h.lot_id = v.lot_id
             LEFT JOIN lot_resume res ON res.lot_id = v.lot_id
             LEFT JOIN auction_lineup l ON l.auction_id = r.auction_id AND l.lot_id = v.lot_id
@@ -301,8 +317,9 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
   /**
    * Статистика лота за окно (PER-492). Цена и её валюта берутся одной строкой ставки — той, что несёт максимум окна, —
    * поэтому у лота с одной валютой нет второго чтения, которое могло бы её разойтись. Цена к открытию окна — тоже
-   * строка: последняя ставка до окна по номеру события, а без ставок — стартовая цена `LotOpened`. Обе ветки пусты
-   * только у лота без ставок вовсе и без стартовой цены, и тогда роста у него нет.
+   * строка: последняя ставка до окна по номеру события, а без ставок — стартовая роста [[GrowthBaseSql]], та же, что у
+   * статистики (PER-810). Обе ветки пусты только у лота без ставок вовсе и без стартовой цены, и тогда роста у него
+   * нет.
    */
   def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]] = {
     val windowFrom = Timestamp.from(from)
@@ -313,7 +330,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
                       WHERE b.lot_id = v.lot_id AND NOT b.removed
                         AND b.occurred_at >= $windowFrom AND b.occurred_at < $windowUntil),
                    t.minor_units, t.currency,
-                   COALESCE(p.minor_units, s.minor_units), COALESCE(p.currency, s.currency)
+                   COALESCE(p.minor_units, #$GrowthBaseSql), COALESCE(p.currency, s.currency)
             FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
             LEFT JOIN LATERAL (
               SELECT b.minor_units, b.currency
@@ -334,6 +351,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
               ORDER BY e.sequence DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
+            #$FirstBidSql
             WHERE r.auction_id = ${auctionId.toString}::uuid
             ORDER BY r.lot_id""".as[DayLotStatisticsView].map(_.toList)
     withContest(auctionId, lots)((lot, history) => lot.copy(contest = LotContest.of(history, Some((from, until)))))(
