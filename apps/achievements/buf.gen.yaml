@@ -1,0 +1,21 @@
+# Кодогенерация Achievements: свой контракт achievements/v1 и факты Auction,
+# которые читают правила (ADR-077, п. 3). Плагин protoc-gen-elixir — escript
+# того же hex-пакета protobuf, что в mix.lock: `just achievements-tools` ставит
+# его той же версией, а сгенерированный код не коммитится (.gitignore).
+# plugins=grpc даёт ещё и модули сервисов: AchievementsService обслуживает
+# Achievements.Server, а сгенерированный рядом клиент (`use GRPC.Stub`)
+# требует пакета grpc в каждой среде сборки. Сервис Auction сервису не нужен,
+# поэтому из его схем берутся только значения и факты.
+version: v2
+clean: true
+plugins:
+  - local: protoc-gen-elixir
+    out: apps/achievements/lib/generated
+    opt:
+      - plugins=grpc
+inputs:
+  - directory: contracts/proto
+    paths:
+      - contracts/proto/achievements
+      - contracts/proto/auction/v1/auction.proto
+      - contracts/proto/auction/v1/auction_events.proto

@@ -578,7 +578,7 @@ Auction недоступен — Notifications отказывает `UNAVAILABLE
 
 ### Achievements gRPC
 
-> **Слой:** Future. Контракт описан в [PER-751](https://linear.app/anticnvm/issue/per-751), сервер его ещё не обслуживает: чтения и реестр выдач делает [PER-752](https://linear.app/anticnvm/issue/per-752), ручную выдачу — [PER-753](https://linear.app/anticnvm/issue/per-753), экраны ботов — [PER-572](https://linear.app/anticnvm/issue/per-572), [PER-742](https://linear.app/anticnvm/issue/per-742) и [PER-754](https://linear.app/anticnvm/issue/per-754). Токены вызывающих в таблицу [Service authentication](#service-authentication) и в AppHost приходят вместе с сервером.
+> **Слой:** Future. Контракт описан в [PER-751](https://linear.app/anticnvm/issue/per-751). Сервер обслуживает чтения — `ListMyAchievements`, `GetEventAchievements` и `GetAchievementImage` ([PER-752](https://linear.app/anticnvm/issue/per-752)); `GrantAchievement` до ручной выдачи [PER-753](https://linear.app/anticnvm/issue/per-753) отвечает `UNIMPLEMENTED`. Экраны ботов — [PER-572](https://linear.app/anticnvm/issue/per-572), [PER-742](https://linear.app/anticnvm/issue/per-742) и [PER-754](https://linear.app/anticnvm/issue/per-754). Вызывающих сервер принимает по токену ([Service authentication](#service-authentication)).
 
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
@@ -807,7 +807,7 @@ Subject называет повод, сообщение на всех повод
 
 ### Achievements NATS
 
-> **Слой:** Future. Контракт описан в [PER-751](https://linear.app/anticnvm/issue/per-751); публиковать факт начнут реестр выдач ([PER-752](https://linear.app/anticnvm/issue/per-752)) и ручная выдача ([PER-753](https://linear.app/anticnvm/issue/per-753)), разбирать — Notifications ([PER-573](https://linear.app/anticnvm/issue/per-573)).
+> **Слой:** Future. Контракт описан в [PER-751](https://linear.app/anticnvm/issue/per-751); факт публикует реестр выдач на каждую выдачу правилом ([PER-752](https://linear.app/anticnvm/issue/per-752)), ручная выдача добавит свои ([PER-753](https://linear.app/anticnvm/issue/per-753)), разбирать будет Notifications ([PER-573](https://linear.app/anticnvm/issue/per-573)).
 
 | Subject | Message | Producer | Consumers |
 |---|---|---|---|
@@ -873,7 +873,7 @@ Subject называет повод, сообщение на всех повод
 
 У `AUCTION_EVENTS` срок свой — 90 дней ([PER-758](https://linear.app/anticnvm/issue/per-758)): ачивки ([ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md)) выдадут по фактам аукциона 2026 правилами, когда появится сервис Achievements, а за семь дней факты недели торгов истекли бы задолго до первого правила. Это запас до переотправки фактов новому подписчику из журнала модуля ([PER-757](https://linear.app/anticnvm/issue/per-757)), а не гарантия хранения. Смену `max_age` JetStream принимает на живом стриме, и новый срок действует и на уже лежащие сообщения: удалять том NATS для неё не нужно.
 
-Стрим `ACHIEVEMENTS_EVENTS` описан контрактом ([PER-751](https://linear.app/anticnvm/issue/per-751)), но в таблице топологии AppHost его ещё нет: его объявляет первый producer — реестр выдач или ручная выдача ([PER-752](https://linear.app/anticnvm/issue/per-752), [PER-753](https://linear.app/anticnvm/issue/per-753)) — по образцу `NOTIFICATIONS_EVENTS` ниже. Пока outbox Achievements пуст, публиковать в него нечего. Durable Notifications на нём заводит [PER-573](https://linear.app/anticnvm/issue/per-573), durable `nats-tester` — тот же producer, что объявляет стрим.
+Стрим `ACHIEVEMENTS_EVENTS` объявлен вместе с первым producer'ом — реестром выдач ([PER-752](https://linear.app/anticnvm/issue/per-752)), — раньше своего продуктового потребителя, по образцу `NOTIFICATIONS_EVENTS` ниже: выдачи, вынесенные релеем до durable Notifications, ждут его в окне хранения. Durable Notifications на нём заводит [PER-573](https://linear.app/anticnvm/issue/per-573), durable `nats-tester` заведён вместе со стримом.
 
 Стрим `NOTIFICATIONS_EVENTS` заведён вместе с producer'ом адресного факта ([PER-216](https://linear.app/anticnvm/issue/per-216)), раньше первого канала: retention `limits` держит опубликованное независимо от состава потребителей, и факты, вынесенные до появления durable канала, дождутся его в пределах окна хранения. Durable канала заведён вместе с каналом ([PER-217](https://linear.app/anticnvm/issue/per-217)). `AUCTION_EVENTS` и durable Notifications заведены с первым потребителем (PER-326): модуль `Auction/` разбирает поводы лота — `bid_placed`, `lot_sold` и `participant_removed` ([PER-672](https://linear.app/anticnvm/issue/per-672)), — и поводы аукциона, остальные подтверждает без разбора. Publisher Auction — релей outbox проекции публикации ([PER-331](https://linear.app/anticnvm/issue/per-331)). Новый лидер, отличный от присутствующего `previous_leader_id`, создаёт адресный `lot_outbid` прежнему лидеру. Ключ события и outbox записываются атомарно; порядок версий, подписки и реплика Identity не фильтруют этот повод. Общий транспорт находится в `Messaging/`, обработчик реплики этих событий не видит.
 
@@ -891,6 +891,9 @@ Subject называет повод, сообщение на всех повод
 | `nats-tester-meetups-events` | `MEETUPS_EVENTS` | `events.meetups.>` | `tools/nats-tester`, ручная проверка |
 | `nats-tester-identity-events` | `IDENTITY_EVENTS` | `events.identity.>` | то же |
 | `nats-tester-notifications-events` | `NOTIFICATIONS_EVENTS` | `events.notifications.>` | то же |
+| `nats-tester-achievements-events` | `ACHIEVEMENTS_EVENTS` | `events.achievements.>` | то же |
+
+**Исключение — акторы ачивок.** Achievements читает `AUCTION_EVENTS` не durable из этой таблицы, а эфемерным pull-потребителем на каждую ачивку с правилом, которого заводит сам ([ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md), дополнение 2026-10-26; решение владельца на чекпоинте [PER-752](https://linear.app/anticnvm/issue/per-752) 28.10.2026). Ачивки приходят с поставкой, и заранее объявить их потребителей таблица не может; позиция чтения каждой лежит строкой базы Achievements в транзакции факта, а потребитель заводится с позиции + 1 или, у новой ачивки, с даты начала её действия. Сообщение, пришедшее до первого старта, поэтому не теряется: стрим держит его в окне хранения, и потребитель читает с нужного места сам. Durable на сервере был бы второй позицией, которая разошлась бы с базой после её отката из дампа. Потребитель — `ack_policy=explicit`, `max_ack_pending=1`, `inactive_threshold` 60 секунд: актора нет — сервер убирает потребителя сам.
 
 **Имя** — `<потребитель>-<стрим в нижнем регистре через дефис>`: `notifications` и `MEETUPS_EVENTS` дают `notifications-meetups-events`. Имя постоянно, поэтому позиция живёт на сервере, и рестарт потребителя продолжает с последнего подтверждённого сообщения, а не с начала. Один durable на пару «потребитель, стрим»: второй экземпляр того же потребителя читает тот же durable и делит с первым поток, а не получает копию. Пары «потребитель, стрим» топология перечисляет явно, а не берёт произведением всех потребителей на все стримы: Notifications свой выход не читает, и durable `notifications-notifications-events` копил бы сообщения, которые никто не подтверждает.
 
@@ -919,7 +922,7 @@ Bucket объявляет та же таблица топологии AppHost, �
 
 ## Service authentication
 
-Принято [ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md), реализация идёт: токены обеим сторонам раздаёт AppHost, а проверяют их Auction ([PER-323](https://linear.app/anticnvm/issue/per-323)), Notifications ([PER-417](https://linear.app/anticnvm/issue/per-417)), Meetups ([PER-416](https://linear.app/anticnvm/issue/per-416)) и Identity ([PER-415](https://linear.app/anticnvm/issue/per-415)).
+Принято [ADR-056](../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md), реализация идёт: токены обеим сторонам раздаёт AppHost, а проверяют их Auction ([PER-323](https://linear.app/anticnvm/issue/per-323)), Notifications ([PER-417](https://linear.app/anticnvm/issue/per-417)), Meetups ([PER-416](https://linear.app/anticnvm/issue/per-416)), Identity ([PER-415](https://linear.app/anticnvm/issue/per-415)) и Achievements ([PER-752](https://linear.app/anticnvm/issue/per-752)).
 
 - Каждый вызывающий процесс несёт свой секрет в `authorization: Bearer <token>`. Бот хаба, бот аукциона, Meetups и Notifications — разные вызывающие; maintainer-секрет [ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md) к ним не относится и ими не заменяется.
 - Вызываемый узнаёт вызывающего по совпавшему токену и допускает его только к методам, где тот объявлен. Объявление — колонка Caller таблиц этого каталога; вызывающий «внутренние сервисы» не бывает, он называется по имени. «Hub Bot» в колонке — бот хаба; бот аукциона — отдельный вызывающий и попадает в колонку `ResolveIdentity` и других методов вместе со своим первым вызовом ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)), а не заранее: объявление вызывающего без токена сервис не стартует. Строки «Maintainer (`grpcurl`)» — не вызывающий этой таблицы: их защищает секрет ADR-037.
@@ -938,6 +941,7 @@ Bucket объявляет та же таблица топологии AppHost, �
 | Meetups | `MEETUPS_SERVICE_TOKEN` | `MEETUPS_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS`, `MEETUPS_CALLER_TOKEN_AUCTION` |
 | Notifications | `NOTIFICATIONS_SERVICE_TOKEN` | `NOTIFICATIONS_CALLER_TOKEN_HUB_BOT`, `NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT` |
 | Auction | `AUCTION_SERVICE_TOKEN` | `AUCTION_CALLER_TOKEN_HUB_BOT`, `AUCTION_CALLER_TOKEN_AUCTION_BOT`, `AUCTION_CALLER_TOKEN_NOTIFICATIONS` |
+| Achievements | — | `ACHIEVEMENTS_CALLER_TOKEN_HUB_BOT`, `ACHIEVEMENTS_CALLER_TOKEN_AUCTION_BOT` |
 
 Meetups проверяет вызывающего интерцептором перед диспетчером ([PER-416](https://linear.app/anticnvm/issue/per-416)): четырнадцать пользовательских методов принимают только бота хаба, `CheckMeetupAuthority` — Notifications и Auction, `GetMeetupStanding` — только Auction, `ListMeetupStates` закрыт для всех. Перед стартом проверяются все три токена вызывающих и собственный токен: отсутствие, пустота, совпадение токенов вызывающих или собственного с одним из них останавливают процесс, не раскрывая значения. Вызов `CheckAccessRight` из Meetups предъявляет `MEETUPS_SERVICE_TOKEN` вместе с заголовками цепочки; `UNAUTHENTICATED` от Identity сводится к `INTERNAL`, а не к отсутствию права у человека.
 

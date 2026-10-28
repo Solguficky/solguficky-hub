@@ -1,17 +1,21 @@
 # Production-образ Achievements: `mix release` в образе сборки hexpm/elixir,
 # рантайм — debian bookworm-slim без Erlang и Elixir: ERTS едет в release.
-# Контекст сборки — корень репозитория, как у остальных сервисов: контракт
-# сервиса принесёт кодогенерацию из contracts/proto. Что попадает в контекст,
-# решает соседний Containerfile.dockerignore — список разрешённого.
+# Контекст сборки — корень репозитория, как у остальных сервисов: `buf
+# generate` нужен contracts/proto. Что попадает в контекст, решает соседний
+# Containerfile.dockerignore — список разрешённого.
 #
 # Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
-# роняет сборку на теге. Версии Elixir и OTP в теге базы сборки обязаны
-# совпадать с apps/achievements/.tool-versions, по которому CI гоняет тесты:
-# сверка ниже роняет сборку на расхождении. Обновить базу — заменить тег и
-# digest целиком тем же изменением, что .tool-versions.
+# роняет сборку на теге. Версия buf обязана совпадать с BUF_VERSION в justfile
+# (код SOLG-IMG-BUF). Версии Elixir и OTP в теге базы сборки обязаны совпадать
+# с apps/achievements/.tool-versions, по которому CI гоняет тесты: сверка ниже
+# роняет сборку на расхождении. Обновить базу — заменить тег и digest целиком
+# тем же изменением, что .tool-versions.
+
+FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756b37f121ec858fb0407a168c269 AS buf
 
 FROM docker.io/hexpm/elixir:1.20.4-erlang-28.5.0.8-debian-bookworm-20261005-slim@sha256:60112cdaea82fe99fcda9918faabb0bfca317cb2ac865ee526ea9774608b897d AS build
 ENV MIX_ENV=prod LANG=C.UTF-8
+COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
 WORKDIR /src/apps/achievements
 COPY apps/achievements/.tool-versions ./
 RUN want="$(awk '$1 == "erlang" {print $2}' .tool-versions)/$(awk '$1 == "elixir" {sub(/-otp-.*/, "", $2); print $2}' .tool-versions)" \
@@ -22,11 +26,18 @@ RUN mix local.hex --force && mix local.rebar --force
 # mix.lock, и слой переживает правку кода.
 COPY apps/achievements/mix.exs apps/achievements/mix.lock ./
 COPY apps/achievements/config/config.exs apps/achievements/config/prod.exs config/
-RUN mix deps.get --only prod && mix deps.compile
+# Плагин кодогенерации — escript того же hex-пакета protobuf, что в mix.lock.
+# Версия вырезается из mix.lock, а не хвостом строки: mix.lock из рабочей копии
+# на Windows несёт CRLF.
+RUN mix deps.get --only prod && mix deps.compile \
+    && mix escript.install hex protobuf "$(sed -n 's/.*"protobuf": {:hex, :protobuf, "\([0-9.]*\)".*/\1/p' mix.lock)" --force
+COPY contracts/proto /src/contracts/proto
+COPY apps/achievements/buf.gen.yaml ./
 COPY apps/achievements/config/runtime.exs config/
 COPY apps/achievements/lib lib
 COPY apps/achievements/priv priv
-RUN mix compile --warnings-as-errors && mix release
+RUN cd /src && PATH="/root/.mix/escripts:$PATH" buf generate --template apps/achievements/buf.gen.yaml \
+    && cd apps/achievements && mix compile --warnings-as-errors && mix release
 
 # База со shell и coreutils, как у Identity: канарейки tools/image/check-test.sh
 # исполняют RUN, а критерий `podman run <образ> id` — `id` из образа. Release

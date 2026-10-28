@@ -10,7 +10,7 @@ defmodule Achievements.Health.Server do
   alias Grpc.Health.V1.{HealthCheckRequest, HealthCheckResponse}
 
   # Полное имя основного gRPC-сервиса контракта, как у остальных сервисов
-  # (AppHostNames.Readiness). Сам сервис приносит соседняя задача контракта.
+  # (AppHostNames.Readiness); его обслуживает Achievements.Server.
   @readiness "achievements.v1.AchievementsService"
 
   def readiness_service, do: @readiness
