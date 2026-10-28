@@ -44,6 +44,15 @@ export const auctionSurface: SurfaceDefinition = ({
   if (!loaded.ok) return loaded;
   const auction = loaded.config;
   const clients = createClients({
+    onAchievementsRefused: (cause, meta) =>
+      logger.warn("achievement screen unavailable", {
+        ...(meta?.requestId === undefined ? {} : { request_id: meta.requestId }),
+        error_category: "dependency_unavailable",
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
+    ...(auction.achievementsUrl === undefined
+      ? {}
+      : { achievementsUrl: auction.achievementsUrl }),
     identityUrl: config.identityUrl,
     auctionUrl: auction.auctionUrl,
     ...(auction.notificationsUrl === undefined

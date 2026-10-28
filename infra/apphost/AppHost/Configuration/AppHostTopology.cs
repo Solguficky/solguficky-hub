@@ -31,9 +31,9 @@ internal static class AppHostTopology
         topology.AddService(R.Identity, [R.Postgres, R.Nats], IdentitySetup.Configure, P.Workload(IdentitySetup.Publish));
         topology.AddService(R.Meetups, [R.Postgres, R.Nats, R.Identity], MeetupsSetup.Configure, P.Workload(MeetupsSetup.Publish));
         topology.AddService(R.Notifications, [R.Postgres, R.Nats, R.Loki, R.Identity, R.Meetups, R.Auction], NotificationsSetup.Configure, P.Workload(NotificationsSetup.Publish));
-        topology.AddService(R.HubBot, [R.Nats, R.Identity, R.Meetups, R.Notifications, R.Auction], HubBotSetup.Configure, P.Workload(HubBotSetup.Publish));
+        topology.AddService(R.HubBot, [R.Nats, R.Identity, R.Meetups, R.Notifications, R.Auction, R.Achievements], HubBotSetup.Configure, P.Workload(HubBotSetup.Publish));
         topology.AddService(R.Auction, [R.Postgres, R.Nats, R.Meetups], AuctionSetup.Configure, P.Workload(AuctionSetup.Publish));
-        topology.AddService(R.AuctionBot, [R.Nats, R.Identity, R.Auction, R.Notifications], AuctionBotSetup.Configure, P.Workload(AuctionBotSetup.Publish));
+        topology.AddService(R.AuctionBot, [R.Nats, R.Identity, R.Auction, R.Notifications, R.Achievements], AuctionBotSetup.Configure, P.Workload(AuctionBotSetup.Publish));
         topology.AddService(R.SupportBot, [R.Nats, R.Identity], SupportBotSetup.Configure, P.Workload(SupportBotSetup.Publish));
         topology.AddService(R.Achievements, [R.Postgres, R.Nats], AchievementsSetup.Configure, P.Workload(AchievementsSetup.Publish));
         topology.AddService(R.Cloudflared, [R.Auction], CloudflaredSetup.Configure, P.Workload(CloudflaredSetup.Publish));

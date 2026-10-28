@@ -1,3 +1,7 @@
+export type {
+  AchievementScreen,
+  AchievementsPort,
+} from "./achievement-types.js";
 // Публичная граница аукционного дерева. Сырые юзкейсы и диспетчер отсюда не
 // уходят: поверхность входит в аукцион только через `handleAuctionUpdate`, вход
 // на поверхность решает `decideEntry` (ADR-044, «Доступ как обязательный

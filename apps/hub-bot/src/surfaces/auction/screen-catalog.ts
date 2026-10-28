@@ -30,6 +30,38 @@ export const auctionLists = ["auctions", "past"] as const;
 // родителей каждого экрана доходит до корня, держит проверка графа
 // `inspectCatalog` test kit.
 export const screenCatalog = {
+  "my-achievements": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивки",
+    parent: "menu",
+    backName: "Ачивки",
+  },
+  "my-achievement": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивка",
+    parent: "my-achievements",
+  },
+  "auction-achievements": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивки",
+    parent: "root",
+    backName: "Ачивки",
+  },
+  "auction-achievement": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивка",
+    parent: "auction-achievements",
+  },
+  "achievements-unavailable": {
+    class: "screen",
+    nav: "exit",
+    title: "Ачивки недоступны",
+  },
+
   menu: {
     class: "screen",
     nav: "root",

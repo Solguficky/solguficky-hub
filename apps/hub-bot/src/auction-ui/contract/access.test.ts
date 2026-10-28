@@ -195,6 +195,12 @@ describe("access matrix self-check", () => {
 
   it("checks every row of the matrix", () => {
     expect(ACCESS_MATRIX_CASES.map((each) => each.name)).toEqual([
+      "hub: member presses achievement set",
+      "auction: guest presses achievement set",
+      "auction: admin presses achievement set",
+      "auction: community member presses achievement set",
+      "auction: newcomer presses achievement set",
+      "auction: blocked presses achievement set",
       "hub: hub right starts",
       "hub: hub right presses",
       "hub: member presses the statistics",

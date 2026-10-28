@@ -8,6 +8,7 @@ import {
 } from "grammy";
 import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
 import { promoUnavailableText } from "../../../auction-promo.js";
+import type { AchievementsPort } from "../../../auction-ui/index.js";
 import {
   type ApplicationQueue,
   type AuctionBlock,
@@ -624,6 +625,7 @@ export type BotRuntime = {
   // Избранные лоты у Notifications (PER-495): порт дерева на каждый update.
   // Нет — карточка лота без кнопки избранного, а лента без «Избранного».
   favorites?: (meta?: RpcMetadata) => FavoritesPort;
+  achievements?: (meta?: RpcMetadata) => AchievementsPort;
   // Отметка «пояснение автоставки видено» у Notifications (PER-517). Нет —
   // вопрос лимита объясняет автоставку каждый раз.
   proxyExplainer?: (meta?: RpcMetadata) => ProxyExplainerPort;
@@ -11824,6 +11826,9 @@ async function handleAuctionCallback(
         // Личность уже разрешена этим update: шлюз её не перечитывает.
         identity: { resolveIdentity: () => Promise.resolve(resolved) },
         auction: ports.auction,
+        ...(runtime.achievements === undefined
+          ? {}
+          : { achievements: runtime.achievements(rpcCall(ctx, useCase)) }),
         operations: ports.operations,
         ...(runtime.favorites === undefined
           ? {}
@@ -11998,10 +12003,19 @@ async function handleAuctionCallback(
   // Ответ принят: результат приходит одним новым сообщением, а «Отмена»
   // вопроса снимается.
   if (answer !== undefined) ctx.fresh = true;
+  const achievementReads = runtime.achievements?.(rpcCall(ctx, useCase));
   const delivered = await deliverAuctionScreen(ctx, {
     view,
     lotPhotos,
-    image: ports.image,
+    image: {
+      ...ports.image,
+      ...(achievementReads === undefined
+        ? {}
+        : {
+            getAchievementImage: (code: string) =>
+              achievementReads.getImage(code),
+          }),
+    },
     viewer: viewerOf(person),
     logger: runtime.logger,
   });

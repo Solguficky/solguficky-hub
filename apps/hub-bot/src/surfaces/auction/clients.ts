@@ -19,12 +19,14 @@ import type {
   AccessRequest,
   AccessRequestAnswer,
   AccessRequestOutcome,
+  AchievementsPort,
   LotImagePort,
   Money,
   ResolvedIdentity,
   TelegramUser,
   Viewer,
 } from "../../auction-ui/index.js";
+import { createAchievementsClient } from "../../core/achievements/client.js";
 import { auctionSummaryViewOf } from "../../core/auction/auction.js";
 import {
   bidOutcomeOf,
@@ -152,6 +154,10 @@ export type PortsFactory = (
 ) => EntryPorts & { image: LotImagePort };
 
 export type PortsOptions = {
+  achievements?: (meta: {
+    requestId: string;
+    deadlineAt?: number;
+  }) => AchievementsPort;
   timeoutMs?: number;
   // Источник `op_id`; тесты подменяют его, чтобы ключ команды был виден.
   newOperationId?: () => string;
@@ -175,6 +181,7 @@ export function createPorts(
   identity: IdentityRpc,
   auction: AuctionRpc,
   {
+    achievements,
     timeoutMs = rpcTimeoutMs,
     newOperationId = createUuidV7,
     onNamesRefused,
@@ -186,6 +193,10 @@ export function createPorts(
   }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
+    const achievementReads = achievements?.({
+      requestId,
+      ...(deadlineAt === undefined ? {} : { deadlineAt }),
+    });
     const headers = { [requestIdHeader]: requestId };
     // Остаток бюджета считается в момент вызова, а не при сборке портов.
     const callOptions = (ownMs: number) => ({
@@ -196,6 +207,9 @@ export function createPorts(
       headers,
     });
     return {
+      ...(achievementReads === undefined
+        ? {}
+        : { achievements: achievementReads }),
       identity: {
         async resolveIdentity(user: TelegramUser): Promise<ResolvedIdentity> {
           const response = await identity.resolveIdentity(
@@ -545,6 +559,12 @@ export function createPorts(
         },
       },
       image: {
+        ...(achievementReads === undefined
+          ? {}
+          : {
+              getAchievementImage: (code: string) =>
+                achievementReads.getImage(code),
+            }),
         async getLotImage(request) {
           const image = await auction.getLotImage(
             { viewer: wireViewer(request.viewer), lotId: request.lotId },
@@ -688,6 +708,11 @@ export function createClients(options: {
   identityUrl: string;
   auctionUrl: string;
   notificationsUrl?: string;
+  achievementsUrl?: string;
+  onAchievementsRefused?: (
+    cause: unknown,
+    meta?: import("../../core/rpc-metadata.js").RpcMetadata,
+  ) => void;
   serviceToken: string;
   tracing: Tracing;
   onNamesRefused?: (cause: unknown, requestId: string) => void;
@@ -697,6 +722,15 @@ export function createClients(options: {
   // Keepalive соединения с Auction; тесты сжимают его до долей секунды.
   auctionKeepalive?: Http2SessionOptions;
 }): Clients {
+  const achievements =
+    options.achievementsUrl === undefined
+      ? undefined
+      : createAchievementsClient(options.achievementsUrl, {
+          ...options,
+          ...(options.onAchievementsRefused === undefined
+            ? {}
+            : { onFailure: options.onAchievementsRefused }),
+        });
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(
     options.auctionUrl,
@@ -739,6 +773,9 @@ export function createClients(options: {
         );
   return {
     ports: createPorts(identity, auction, {
+      ...(achievements === undefined
+        ? {}
+        : { achievements: achievements.port }),
       ...(options.onNamesRefused === undefined
         ? {}
         : { onNamesRefused: options.onNamesRefused }),
@@ -757,6 +794,7 @@ export function createClients(options: {
     watch: watchSourceOf(auction),
     outbidSettings: notifications !== undefined,
     close() {
+      achievements?.close();
       identitySession.abort();
       auctionSession.abort();
       notificationsSession?.abort();

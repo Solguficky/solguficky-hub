@@ -12,6 +12,7 @@ import { type FaqContent, readFaqContent } from "./faq.js";
 export type AuctionConfig = {
   auctionUrl: string;
   faq: FaqContent;
+  achievementsUrl?: string;
   // Настройка «перебили» (PER-515) и избранные лоты (PER-495) — расширение,
   // а не опора бота: без адреса Notifications нет ни пункта меню
   // «Уведомления», ни «Частоты уведомлений» под вестями о торгах, ни кнопки избранного на карточке
@@ -24,6 +25,7 @@ export type AuctionConfig = {
 
 export function readAuctionConfig(env: Env): Loaded<AuctionConfig> {
   const read = reader(env);
+  const achievementsUrl = read("ACHIEVEMENTS_GRPC_URL");
   const faq = readFaqContent(env);
   if (!faq.ok) return faq;
   const notificationsUrl = read("NOTIFICATIONS_GRPC_URL");
@@ -36,6 +38,7 @@ export function readAuctionConfig(env: Env): Loaded<AuctionConfig> {
     config: {
       auctionUrl: read("AUCTION_GRPC_URL") ?? "http://127.0.0.1:8081",
       faq: faq.content,
+      ...(achievementsUrl === undefined ? {} : { achievementsUrl }),
       ...(notificationsUrl === undefined ? {} : { notificationsUrl }),
       ...(supportBot.config === undefined
         ? {}

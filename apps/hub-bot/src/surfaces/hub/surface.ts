@@ -1,3 +1,4 @@
+import { createAchievementsClient } from "../../core/achievements/client.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
@@ -83,6 +84,19 @@ export const hubSurface: SurfaceDefinition = ({
     tracing,
     serviceToken,
   });
+  const achievements =
+    hub.achievementsUrl === undefined
+      ? undefined
+      : createAchievementsClient(hub.achievementsUrl, {
+          tracing,
+          serviceToken,
+          onFailure: (cause, meta) =>
+            logger.warn("achievement screen unavailable", {
+              ...(meta?.requestId === undefined ? {} : { request_id: meta.requestId }),
+              error_category: "dependency_unavailable",
+              error: cause instanceof Error ? cause.message : String(cause),
+            }),
+        });
   const notifications = createNotificationsClient(hub.notificationsUrl, {
     tracing,
     serviceToken,
@@ -212,6 +226,9 @@ export const hubSurface: SurfaceDefinition = ({
       ? {}
       : {
           auction,
+          ...(achievements === undefined
+            ? {}
+            : { achievements: achievements.port }),
           ...(watches === undefined
             ? {}
             : {
@@ -438,6 +455,7 @@ export const hubSurface: SurfaceDefinition = ({
         watches?.close();
         identity.close();
         meetups.close();
+        achievements?.close();
         notifications.close();
         auction?.close();
       },

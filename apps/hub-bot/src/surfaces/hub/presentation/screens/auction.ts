@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { achievementScreen } from "../../../../achievement-screen.js";
 import { dayChronicleButtonLabel } from "../../../../auction-day-chronicle.js";
 import {
   finalBidLabel,
@@ -254,6 +255,31 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
   // экраны; отказ и непринятый ответ — тоже (PER-472).
   for (const block of view.body.blocks) {
     switch (block.kind) {
+      case "achievements": {
+        const shown = achievementScreen(
+          block.screen,
+          view.presentation === "rich",
+        );
+        if (shown.id === "my-achievements" || shown.id === "my-achievement")
+          throw new Error("private auction collection is unavailable in hub");
+        const photos = view.presentation === "rich" ? (view.photos ?? []) : [];
+        const keyboard = new InlineKeyboard();
+        for (const [index, row] of shown.keyboard.entries()) {
+          if (index > 0) keyboard.row();
+          for (const button of row)
+            keyboard.text(button.text, button.callback_data);
+        }
+        return {
+          screen: {
+            id: shown.id,
+            text: richPhotoBlock(photos.map((photo) => photo.id)) + shown.text,
+            ...(photos.length === 0 ? {} : { media: photos }),
+            keyboard,
+            format: view.presentation === "rich" ? "rich" : "HTML",
+          },
+          ...(view.presentation === "rich" ? { images: shown.photos } : {}),
+        };
+      }
       case "confirm":
         return { screen: confirmScreen(block, view.body.keyboard, money) };
       case "accepted":
@@ -536,6 +562,9 @@ function rootScreen(
     (button) => button.action === "root.favorites",
   );
   const invoices = buttons.find((button) => button.action === "root.invoices");
+  const achievements = buttons.find(
+    (button) => button.action === "root.achievements",
+  );
   const promo = buttons.find((button) => button.action === "root.promo");
   // «🏷️ Лоты» — первым рядом парой с «🎬 Промо» (PER-774), пока у аукциона
   // есть видео, иначе своим рядом; «Розыгрыш» и «Прогнозы» — парой под ним
@@ -565,6 +594,8 @@ function rootScreen(
   if (invoices !== undefined) {
     nextRow(keyboard).text(invoicesButtonLabel, invoices.callbackData).row();
   }
+  if (achievements !== undefined)
+    nextRow(keyboard).text("Ачивки", achievements.callbackData).row();
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);
   }
@@ -692,6 +723,7 @@ function feedLabel(
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
     case "auction-chronicle.back":
@@ -940,6 +972,7 @@ function lotLabel(
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
     case "auction-chronicle.back":
@@ -1086,6 +1119,7 @@ function setLotLabelOf(
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
     case "auction-chronicle.back":
@@ -1323,6 +1357,7 @@ function historyLabel(button: AuctionButton): string {
     case "root.predictions":
     case "root.prediction-results":
     case "prediction-results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
     case "auction-chronicle.back":

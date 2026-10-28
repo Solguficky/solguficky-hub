@@ -90,6 +90,10 @@ export type FeedSectionItem = {
 
 export type AuctionBlock =
   | {
+      kind: "achievements";
+      screen: import("./achievement-types.js").AchievementScreen;
+    }
+  | {
       // Корень аукциона (PER-605): стадия и сроки, вход в лоты и розыгрыш.
       // Нет `auction` — Auction аукцион не отдал: кнопка устарела.
       kind: "root";
@@ -598,6 +602,7 @@ export type AuctionButton =
   | { action: "lot.bid-final"; amount: Money; callbackData: string }
   | {
       action: // Корень аукциона: лоты, розыгрыш и избранное.
+        | "root.achievements"
         | "root.lots"
         | "root.predictions"
         | "root.prediction-results"

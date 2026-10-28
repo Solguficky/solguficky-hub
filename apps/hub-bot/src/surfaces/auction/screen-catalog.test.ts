@@ -1203,6 +1203,67 @@ const shown: readonly {
   presentation?: "plain";
   supportBotUsername?: string;
 }[] = [
+  ...(["mine", "event"] as const).flatMap((scope) =>
+    (["list", "card"] as const).map((view) => ({
+      screen: {
+        kind: "auction" as const,
+        body: {
+          blocks: [
+            {
+              kind: "achievements" as const,
+              screen: {
+                scope,
+                page: 0,
+                pages: 1,
+                items: [],
+                back: scope === "mine" ? "v1:entry:menu" : "v1:auc:rt:test",
+                ...(view === "list"
+                  ? { view: "list" as const }
+                  : {
+                      view: "card" as const,
+                      achievement: {
+                        code: "first",
+                        title: "Первая ачивка",
+                        description: "За участие",
+                        recipients: "many" as const,
+                        manual: false,
+                      },
+                      holderNames: ["Сова"],
+                      erasedHolders: 0,
+                      holdersPage: 0,
+                      holderPages: 1,
+                      back: "v1:auc:ach:test:0",
+                    }),
+              },
+            },
+          ],
+          keyboard: [],
+        },
+      },
+    })),
+  ),
+  {
+    screen: {
+      kind: "auction",
+      body: {
+        blocks: [
+          {
+            kind: "achievements",
+            screen: {
+              scope: "event",
+              view: "unavailable",
+              retry: "v1:auc:ach:test:0",
+              page: 0,
+              pages: 1,
+              items: [],
+              back: "v1:auc:rt:test",
+            },
+          },
+        ],
+        keyboard: [],
+      },
+    },
+  },
   {
     screen: {
       kind: "notify",

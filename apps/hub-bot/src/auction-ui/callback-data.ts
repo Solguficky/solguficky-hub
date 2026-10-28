@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AchievementsIntent } from "./achievement-types.js";
 import type { FulfillmentMethod } from "./ports.js";
 import {
   type PredictionNomination,
@@ -75,6 +76,7 @@ export type PendingCommand = {
 export type AuctionQuestion = "bid" | "proxy" | "alias";
 
 export type AuctionIntent =
+  | AchievementsIntent
   // Корень аукциона (PER-605): стадия, сроки и входы в лоты и розыгрыш.
   | { kind: "root"; auctionId: string }
   | { kind: "feed"; auctionId: string; page: number }
@@ -300,7 +302,7 @@ const UuidSchema = z
   .string()
   .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
 
-function uuidToToken(id: string): string {
+export function uuidToToken(id: string): string {
   return Buffer.from(UuidSchema.parse(id).replaceAll("-", ""), "hex").toString(
     "base64url",
   );
@@ -421,6 +423,22 @@ function addresseeOf(raw: string | undefined): number | undefined {
 export function encodeAuctionCallback(intent: AuctionIntent): string {
   const prefix = `${VERSION}:${AUCTION_CALLBACK_DOMAIN}`;
   switch (intent.kind) {
+    case "achievements":
+      return [
+        prefix,
+        "ach",
+        intent.auctionId === undefined ? "_" : uuidToToken(intent.auctionId),
+        pageArgument(intent.page),
+      ].join(":");
+    case "achievement":
+      return [
+        prefix,
+        "acd",
+        intent.auctionId === undefined ? "_" : uuidToToken(intent.auctionId),
+        intent.reference,
+        pageArgument(intent.page),
+        pageArgument(intent.holdersPage),
+      ].join(":");
     case "root":
       return `${prefix}:rt:${uuidToToken(intent.auctionId)}`;
     case "feed":
@@ -551,6 +569,40 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (action === undefined) return refuse("malformed");
   const command = commandAction(action, args);
   if (command !== undefined) return command;
+  if (action === "ach" || action === "acd") {
+    const [target, referenceOrPage, rawPage, rawHolders] = args;
+    const auctionId = target === "_" ? undefined : tokenToUuid(target ?? "");
+    if (target !== "_" && auctionId === undefined) return refuse("malformed");
+    const event = auctionId === undefined ? {} : { auctionId };
+    if (action === "ach") {
+      const page = pageOf(referenceOrPage);
+      return args.length === 2 && page !== undefined
+        ? { ok: true, intent: { kind: "achievements", ...event, page } }
+        : refuse("malformed");
+    }
+    const page = pageOf(rawPage);
+    const holdersPage = pageOf(rawHolders);
+    const reference = referenceOrPage ?? "";
+    const validReference =
+      target === "_"
+        ? tokenToUuid(reference) !== undefined
+        : /^[0-9a-f]{12}$/.test(reference);
+    return args.length === 4 &&
+      validReference &&
+      page !== undefined &&
+      holdersPage !== undefined
+      ? {
+          ok: true,
+          intent: {
+            kind: "achievement",
+            ...event,
+            reference,
+            page,
+            holdersPage,
+          },
+        }
+      : refuse("malformed");
+  }
   if (action === "fav") return favoritesAction(args);
   if (action === "rt") return rootAction(args);
   if (action === "sec") return sectionAction(args);
