@@ -901,10 +901,11 @@ function renderBody(
     (block) => block.kind === "achievements",
   );
   if (achievements !== undefined) {
-    const shown = achievementScreen(
-      achievements.screen,
-      options.presentation !== "plain",
-    );
+    const shown = achievementScreen(achievements.screen, {
+      rich: options.presentation !== "plain",
+      timeZone: options.timeZone,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
     return {
       ...shown,
       format: options.presentation === "plain" ? "html" : "rich",

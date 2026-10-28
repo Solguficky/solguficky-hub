@@ -13,7 +13,7 @@
 - запущенный Docker daemon;
 - Go и `buf` для профилей с Identity; `grpcurl` для ручной проверки gRPC-сервисов;
 - JDK версии из `apps/auction/.java-version`, sbt и `just` в PATH для профилей с Auction — `auction`, `auction-bot` и `hub-auction`: `java` из PATH запускает сервис, и его версия обязана совпадать с той, под которую собран код;
-- Erlang/OTP и Elixir версий из `apps/achievements/.tool-versions`, `buf` и зависимости `just achievements-tools` для профиля `achievements`;
+- Erlang/OTP и Elixir версий из `apps/achievements/.tool-versions`, `buf` и зависимости `just achievements-tools` для профилей `achievements`, `auction-bot` и `hub-auction`;
 - Node.js, npm и Telegram Bot token для профилей с Hub Bot; для прогона против тестовой среды — отдельный аккаунт тестового дата-центра и токен тестового бота ([ADR-046](../decisions/ADR-046-telegram-test-contour.md)).
 
 SDK закреплён в корневом `global.json`: базовая версия `10.0.100` и `rollForward: latestFeature` принимают любой установленный SDK линейки .NET 10 — и более новый feature band, и более новый патч. Роняет сборку только SDK ниже 10.0.100: roll forward идёт вверх и никогда вниз, поэтому базовой версией стоит начало линейки, а не та, что оказалась у автора коммита. AppHost таргетит `net10.0`, а все `Aspire.Hosting.*` packages обновляются одной стабильной линией. Текущая линия — 13.5.3.

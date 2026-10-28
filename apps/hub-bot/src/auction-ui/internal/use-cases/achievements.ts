@@ -140,6 +140,7 @@ export async function openAchievements(input: {
       ...base,
       view: "unavailable",
       retry: encodeAuctionCallback(intent),
+      ...(intent.kind === "achievement" ? { backToList: true } : {}),
     });
   }
 }

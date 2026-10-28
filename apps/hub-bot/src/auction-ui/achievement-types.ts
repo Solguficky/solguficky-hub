@@ -61,5 +61,5 @@ export type AchievementScreen = {
       holdersPage: number;
       holderPages: number;
     }
-  | { view: "unavailable"; retry: string }
+  | { view: "unavailable"; retry: string; backToList?: true }
 );

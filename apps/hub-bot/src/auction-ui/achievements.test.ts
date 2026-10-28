@@ -132,6 +132,9 @@ describe.each(["hub", "auction"] as const)("achievements: %s", (kind) => {
       view: "unavailable",
       retry: data,
     });
+    expect(
+      achievementScreen(await f.press(data)).keyboard.at(-1)?.[0]?.text,
+    ).toBe("‹ Ачивки");
     f.achievements.getEvent = vi.fn(async () => {
       throw new Error("offline");
     });
@@ -179,6 +182,20 @@ describe("private collection", () => {
     expect(shown.keyboard.at(-1)).toEqual([
       { text: "‹ Меню", callback_data: "v1:entry:menu" },
     ]);
+  });
+  it("formats the grant date in the community time zone with a differing year", async () => {
+    const f = fixture("auction");
+    const list = await f.press(
+      encodeAuctionCallback({ kind: "achievements", page: 0 }),
+    );
+    const card = await f.press(list.items[0]?.callbackData ?? "");
+    if (card.view !== "card") throw new Error("card expected");
+    const shown = achievementScreen(
+      { ...card, grantedAt: "2026-12-31T22:05:00Z" },
+      { timeZone: "Europe/Moscow", now: new Date("2026-12-31T20:00:00Z") },
+    );
+    expect(shown.text).toContain("Получена: 1 января 2027, пт, 01:05");
+    expect(shown.text).not.toContain("01:05.");
   });
   it("paginates collections and clamps a stale page", async () => {
     const f = fixture("auction");

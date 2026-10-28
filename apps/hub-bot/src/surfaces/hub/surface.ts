@@ -1,4 +1,5 @@
 import { createAchievementsClient } from "../../core/achievements/client.js";
+import { reportAchievementsFailure } from "../../core/achievements/failures.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
@@ -91,10 +92,10 @@ export const hubSurface: SurfaceDefinition = ({
           tracing,
           serviceToken,
           onFailure: (cause, meta) =>
-            logger.warn("achievement screen unavailable", {
-              ...(meta?.requestId === undefined ? {} : { request_id: meta.requestId }),
-              error_category: "dependency_unavailable",
-              error: cause instanceof Error ? cause.message : String(cause),
+            reportAchievementsFailure({
+              logger,
+              cause,
+              ...(meta === undefined ? {} : { meta }),
             }),
         });
   const notifications = createNotificationsClient(hub.notificationsUrl, {

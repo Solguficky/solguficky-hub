@@ -256,10 +256,10 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
   for (const block of view.body.blocks) {
     switch (block.kind) {
       case "achievements": {
-        const shown = achievementScreen(
-          block.screen,
-          view.presentation === "rich",
-        );
+        const shown = achievementScreen(block.screen, {
+          rich: view.presentation === "rich",
+          timeZone: view.timeZone,
+        });
         if (shown.id === "my-achievements" || shown.id === "my-achievement")
           throw new Error("private auction collection is unavailable in hub");
         const photos = view.presentation === "rich" ? (view.photos ?? []) : [];

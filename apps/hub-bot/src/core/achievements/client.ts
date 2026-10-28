@@ -19,6 +19,7 @@ import {
 } from "../rpc-metadata.js";
 import type { Tracing } from "../tracing.js";
 import { traceRpc } from "../tracing.js";
+import { AchievementsInvariant } from "./failures.js";
 
 export type AchievementsRpc = Pick<
   Client<typeof AchievementsService>,
@@ -37,16 +38,20 @@ export function achievementsPort(
     async listMine(identityId) {
       const result = await rpc.listMyAchievements({ identityId }, options());
       if (result.identityId !== identityId)
-        throw new Error("achievements collection identity mismatch");
+        throw new AchievementsInvariant(
+          "achievements collection identity mismatch",
+        );
       return result.achievements.flatMap((row) => {
         if (row.grant === undefined || row.achievement === undefined)
-          throw new Error("incomplete held achievement");
+          throw new AchievementsInvariant("incomplete held achievement");
         const grant = row.grant;
         if (grant.identityId !== identityId)
-          throw new Error("achievement holder identity mismatch");
+          throw new AchievementsInvariant(
+            "achievement holder identity mismatch",
+          );
         if (grant.event?.kind.case !== "auctionId") return [];
         if (grant.achievementCode !== row.achievement.code)
-          throw new Error("achievement grant code mismatch");
+          throw new AchievementsInvariant("achievement grant code mismatch");
         return [
           {
             grantId: grant.id,
@@ -66,10 +71,10 @@ export function achievementsPort(
         result.event?.kind.case !== "auctionId" ||
         result.event.kind.value !== auctionId
       )
-        throw new Error("achievement event mismatch");
+        throw new AchievementsInvariant("achievement event mismatch");
       return result.achievements.map((row) => {
         if (row.achievement === undefined)
-          throw new Error("incomplete event achievement");
+          throw new AchievementsInvariant("incomplete event achievement");
         return {
           achievement: definition(row.achievement),
           holderIds: row.holderIdentityIds,
