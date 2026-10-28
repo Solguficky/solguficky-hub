@@ -65,7 +65,7 @@ enum Rarity {
 enum Recipients {
   RECIPIENTS_UNSPECIFIED = 0;
 
-  // At most one holder per event: the first one by the order of facts.
+  // At most one holder per event.
   RECIPIENTS_ONE = 1;
 
   // Everyone who meets the rule, or everyone an organizer grants it to.

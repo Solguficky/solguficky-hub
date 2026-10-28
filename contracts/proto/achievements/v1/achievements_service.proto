@@ -30,7 +30,7 @@ message ListMyAchievementsRequest {
 }
 
 // The person's collection across all events, earliest grant first. Empty when
-// the person holds nothing.
+// the person holds nothing. A grant cancelled by a maintainer is not here.
 message MyAchievements {
   // Canonical lowercase UUIDv7 with hyphens.
   string identity_id = 1;
@@ -41,7 +41,8 @@ message MyAchievements {
 message HeldAchievement {
   Grant grant = 1;
 
-  // The definition the grant refers to, as the set of its event holds it.
+  // The current definition with the code of the grant. A set fixes which codes
+  // it holds, not a copy of their definitions.
   Achievement achievement = 2;
 }
 
@@ -49,19 +50,24 @@ message GetEventAchievementsRequest {
   EventRef event = 1;
 }
 
-// The set of an event in the order of its definitions. Empty when the event has
-// no set: the set is fixed only when the event first needs it.
+// The set of an event in the order of its definitions.
 message EventAchievements {
   EventRef event = 1;
 
+  // Before the set is fixed, the definitions that would form it now, all
+  // without holders. Empty when the kind of the event has no definitions.
   repeated EventAchievement achievements = 2;
+
+  // Whether the set of the event is fixed. Unfixed means that the event has not
+  // needed it yet: no fact a rule reads and no manual grant.
+  bool fixed = 3;
 }
 
 message EventAchievement {
   Achievement achievement = 1;
 
   // Canonical lowercase UUIDv7 strings with hyphens: the holders, earliest grant
-  // first.
+  // first. A grant cancelled by a maintainer has no holder here.
   repeated string holder_identity_ids = 2;
 
   // Holders whose data was erased. They are counted and never named: an erased
@@ -91,12 +97,14 @@ message GrantAchievementRequest {
   string identity_id = 1;
 
   // Caller-generated canonical lowercase UUIDv7 with hyphens: the idempotency
-  // key. A repeat with the same op_id answers the original response.
+  // key. A repeat of an accepted grant with the same op_id and the same body
+  // answers the original grant; a refusal is not remembered.
   string op_id = 2;
 
   EventRef event = 3;
 
-  // Code of an achievement of the event's set.
+  // Code of an achievement of the event's set. A grant for an event whose set is
+  // not fixed yet fixes it first.
   string achievement_code = 4;
 
   // Canonical lowercase UUIDv7 with hyphens: the person who receives it.
@@ -135,9 +143,10 @@ message AchievementNotInSet {}
 // The achievement is granted by a rule, not by hand.
 message NotManual {}
 
-// The recipient already has a grant of this achievement in this set: live or
-// cancelled by a maintainer. Only a maintainer reverses a cancellation.
+// The recipient already has a grant of this achievement in this set, live or
+// cancelled.
 message AlreadyGranted {}
 
-// A one-holder achievement of the set is already held by somebody else.
+// A one-holder achievement of the set is already taken by somebody else: held,
+// cancelled or erased.
 message HolderTaken {}

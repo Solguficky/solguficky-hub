@@ -9,8 +9,11 @@ import "achievements/v1/achievements.proto";
 // AchievementsService and its requests into its codegen.
 //
 // Every grant is its own fact, even when one occasion - one incoming fact of a
-// module or one command - grants several achievements. A consumer that wants
-// one message per occasion groups the facts by cause_id of the snapshot.
+// module or one command - grants several achievements, possibly to several
+// people. The facts of one occasion share cause_id of the snapshot, so a
+// consumer groups them by cause_id together with the recipient; nothing tells
+// how many there are or that the last one has arrived, so grouping is best
+// effort.
 //
 // Subjects, delivery semantics and the rules a consumer follows when it applies
 // these facts are not repeated here: they live in docs/architecture/integration.md,
