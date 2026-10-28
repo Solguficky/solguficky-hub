@@ -1,6 +1,6 @@
 # Achievements
 
-> **Слой:** Future. **Устройство и границы:** Accepted, [ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md) с дополнением 2026-10-26. **Стек и рантайм:** Elixir на OTP, `mix release` — решение владельца 26.10 в [PER-750](https://linear.app/anticnvm/issue/per-750). **Контракт:** не заведён. **Реализация:** скелет в [`apps/achievements`](../../apps/achievements/README.md) — база, health и релей outbox, без правил и определений.
+> **Слой:** Future. **Устройство и границы:** Accepted, [ADR-077](../decisions/ADR-077-achievements-cross-cutting-service.md) с дополнением 2026-10-26. **Стек и рантайм:** Elixir на OTP, `mix release` — решение владельца 26.10 в [PER-750](https://linear.app/anticnvm/issue/per-750). **Контракт:** `achievements/v1` — [PER-751](https://linear.app/anticnvm/issue/per-751), каталог — разделы [Achievements gRPC](../architecture/integration.md#achievements-grpc) и [Achievements NATS](../architecture/integration.md#achievements-nats). **Реализация:** скелет в [`apps/achievements`](../../apps/achievements/README.md) — база, health и релей outbox, без правил и определений.
 
 Achievements отвечает на вопрос **«что у кого есть и за что»**. Это сквозной сервис по [RFC-001](../rfcs/RFC-001-meetup-modules-topology.md#10-классы-компонентов): он не подключается к сходке и не занимает слот. Поведение задаёт [продуктовая модель](../product/future/achievements.md).
 

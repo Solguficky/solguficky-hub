@@ -4,9 +4,11 @@
 `docs/architecture/integration.md` и `NATS_PROTO_FILES` в `proto_sources.py`.
 
 Схемы `identity/v1/identity_service.proto`, `meetups/v1/meetups_service.proto`,
-`notifications/v1/notifications_service.proto` и `auction/v1/auction_service.proto`
+`notifications/v1/notifications_service.proto`, `auction/v1/auction_service.proto`
+и `achievements/v1/achievements_service.proto`
 обслуживают gRPC и в реестр не попадают: subject у них не бывает. Классы
-`meetups/v1/meetups.proto`, `identity/v1/access.proto` и `auction/v1/auction.proto`
+`meetups/v1/meetups.proto`, `identity/v1/access.proto`, `auction/v1/auction.proto`
+и `achievements/v1/achievements.proto`
 собираются как payload: их импортируют схемы событий своих доменов, и без них
 те не импортируются.
 
@@ -27,6 +29,7 @@ from typing import Type
 
 from google.protobuf.message import Message
 
+from nats_tester.generated.achievements.v1 import achievements_events_pb2
 from nats_tester.generated.auction.v1 import auction_events_pb2
 from nats_tester.generated.identity.v1 import identity_events_pb2
 from nats_tester.generated.meetups.v1 import meetups_events_pb2
@@ -92,6 +95,7 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.invoice_handed_over': auction_events_pb2.InvoiceEvent,
     'events.auction.raffle_drawn': auction_events_pb2.RaffleEvent,
     'events.auction.prediction_results_settled': auction_events_pb2.PredictionResultsEvent,
+    'events.achievements.achievement_granted': achievements_events_pb2.AchievementGrantEvent,
 }
 
 COMMAND_TYPES: dict[str, Type[Message]] = {}
