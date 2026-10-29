@@ -47,6 +47,7 @@ final class InvoiceJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("invoice-issued", InvoiceEvent.InvoiceIssued(terms))
       keepsGolden("invoice-paid", InvoiceEvent.InvoicePaid(op(2)))
       keepsGolden("invoice-handed-over", InvoiceEvent.InvoiceHandedOver(op(3)))
+      keepsGolden("invoice-unredeemed", InvoiceEvent.InvoiceUnredeemed(op(2)))
       keepsGolden("fulfillment-chosen", InvoiceEvent.FulfillmentChosen(FulfillmentMethod.Delivery, op(4)))
     }
 

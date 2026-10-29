@@ -43,5 +43,7 @@ object InvoiceFacts {
       case InvoiceEvent.InvoiceHandedOver(_) =>
         Some("invoice_handed_over" -> bus.InvoiceEvent.Occasion.InvoiceHandedOver(bus.InvoiceHandedOver()))
       case InvoiceEvent.FulfillmentChosen(_, _) => None
+      // Публичный факт закрытия вводит PER-805; до него внутренний переход не подменяется другим поводом.
+      case InvoiceEvent.InvoiceUnredeemed(_) => None
     }
 }

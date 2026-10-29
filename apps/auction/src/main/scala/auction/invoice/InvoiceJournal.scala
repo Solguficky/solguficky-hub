@@ -8,6 +8,7 @@ import auction.entity.StoredMoney
 import auction.lot.AuctionId
 import auction.lot.OpId
 import auction.lot.ParticipantId
+import com.fasterxml.jackson.annotation.JsonInclude
 
 import java.time.Instant
 import java.util.UUID
@@ -38,7 +39,8 @@ final case class StoredInvoiceEventBody(
     invoiceIssued: Option[StoredInvoiceIssued],
     invoicePaid: Option[StoredInvoiceMark],
     invoiceHandedOver: Option[StoredInvoiceMark],
-    fulfillmentChosen: Option[StoredFulfillmentChosen]
+    fulfillmentChosen: Option[StoredFulfillmentChosen],
+    @JsonInclude(JsonInclude.Include.NON_ABSENT) invoiceUnredeemed: Option[StoredInvoiceMark] = None
 )
 
 /** Строка журнала счёта. Счёт строки — её `persistence_id`. */
@@ -71,6 +73,8 @@ object InvoiceJournal {
         empty.copy(kind = "InvoicePaid", invoicePaid = Some(StoredInvoiceMark(opId.value)))
       case InvoiceEvent.InvoiceHandedOver(opId) =>
         empty.copy(kind = "InvoiceHandedOver", invoiceHandedOver = Some(StoredInvoiceMark(opId.value)))
+      case InvoiceEvent.InvoiceUnredeemed(opId) =>
+        empty.copy(kind = "InvoiceUnredeemed", invoiceUnredeemed = Some(StoredInvoiceMark(opId.value)))
       case InvoiceEvent.FulfillmentChosen(method, opId) =>
         empty.copy(
           kind = "FulfillmentChosen",
@@ -81,7 +85,7 @@ object InvoiceJournal {
   /** Ровно та секция, что названа `kind`. Иначе строка испорчена. */
   def restoreEvent(stored: StoredInvoiceEventBody): InvoiceEvent =
     stored match {
-      case StoredInvoiceEventBody("InvoiceIssued", Some(issued), None, None, None) =>
+      case StoredInvoiceEventBody("InvoiceIssued", Some(issued), None, None, None, None) =>
         InvoiceEvent.InvoiceIssued(
           InvoiceTerms(
             AuctionId(issued.auctionId),
@@ -91,12 +95,14 @@ object InvoiceJournal {
             issued.paymentDueAt
           )
         )
-      case StoredInvoiceEventBody("InvoicePaid", None, Some(mark), None, None) =>
+      case StoredInvoiceEventBody("InvoicePaid", None, Some(mark), None, None, None) =>
         InvoiceEvent.InvoicePaid(OpId(mark.opId))
-      case StoredInvoiceEventBody("InvoiceHandedOver", None, None, Some(mark), None) =>
+      case StoredInvoiceEventBody("InvoiceHandedOver", None, None, Some(mark), None, None) =>
         InvoiceEvent.InvoiceHandedOver(OpId(mark.opId))
-      case StoredInvoiceEventBody("FulfillmentChosen", None, None, None, Some(chosen)) =>
+      case StoredInvoiceEventBody("FulfillmentChosen", None, None, None, Some(chosen), None) =>
         InvoiceEvent.FulfillmentChosen(restoreMethod(chosen.method), OpId(chosen.opId))
+      case StoredInvoiceEventBody("InvoiceUnredeemed", None, None, None, None, Some(mark)) =>
+        InvoiceEvent.InvoiceUnredeemed(OpId(mark.opId))
       case other =>
         throw new JournalCorrupted(s"invoice event of kind ${other.kind} with sections that do not match it")
     }
@@ -117,6 +123,7 @@ object InvoiceJournal {
       case InvoiceStatus.AwaitingPayment => "AwaitingPayment"
       case InvoiceStatus.Paid => "Paid"
       case InvoiceStatus.HandedOver => "HandedOver"
+      case InvoiceStatus.Unredeemed => "Unredeemed"
     }
 
   def restoreStatus(name: String): InvoiceStatus =
@@ -124,6 +131,7 @@ object InvoiceJournal {
       case "AwaitingPayment" => InvoiceStatus.AwaitingPayment
       case "Paid" => InvoiceStatus.Paid
       case "HandedOver" => InvoiceStatus.HandedOver
+      case "Unredeemed" => InvoiceStatus.Unredeemed
       case other => throw new JournalCorrupted(s"invoice row names an unknown status $other")
     }
 
