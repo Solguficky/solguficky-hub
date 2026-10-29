@@ -48,10 +48,12 @@ describe("extensions menu hall links", () => {
   });
 
   it("keeps the links while the auction runs and drops them after it ends", () => {
-    expect(urls(atStage("prebidding"), hall)).toHaveLength(2);
-    expect(urls(atStage("in-final"), hall)).toHaveLength(2);
-    expect(urls(atStage("finished"), hall)).toEqual([]);
-    expect(urls(atStage("cancelled"), hall)).toEqual([]);
+    for (const stage of ["prebidding", "settling", "on-break", "in-final"]) {
+      expect(urls(atStage(stage), hall)).toHaveLength(2);
+    }
+    for (const stage of ["draft", "scheduled", "finished", "cancelled"]) {
+      expect(urls(atStage(stage), hall)).toEqual([]);
+    }
   });
 
   it("has no links without an auction", () => {

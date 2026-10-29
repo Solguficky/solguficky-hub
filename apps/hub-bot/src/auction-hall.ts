@@ -17,6 +17,13 @@ export const hallScreenLabel = `Экран зала${linkSign}`;
 export const hallStreamLabel = `Стрим${linkSign}`;
 
 const URL_LIMIT = 2048;
+// К базе дописывается идентификатор аукциона (UUID с чертой и запасом): адрес
+// кнопки не должен перейти предел Bot API.
+const BASE_LIMIT = URL_LIMIT - 64;
+
+function isIpAddress(host: string): boolean {
+  return host.startsWith("[") || /^\d{1,3}(\.\d{1,3}){3}$/.test(host);
+}
 
 function readHttpsUrl(
   env: Readonly<Record<string, string | undefined>>,
@@ -29,8 +36,9 @@ function readHttpsUrl(
     ok: false,
     error: `${name} must be an HTTPS URL without credentials${base ? ", query or fragment" : ""}`,
   } as const;
-  if (raw.length > URL_LIMIT) {
-    return { ok: false, error: `${name} exceeds ${URL_LIMIT} characters` };
+  const limit = base ? BASE_LIMIT : URL_LIMIT;
+  if (raw.length > limit) {
+    return { ok: false, error: `${name} exceeds ${limit} characters` };
   }
   let url: URL;
   try {
@@ -41,12 +49,23 @@ function readHttpsUrl(
   if (url.protocol !== "https:" || url.username !== "" || url.password !== "") {
     return refusal;
   }
+  // Bot API отвергает кнопку-URL с локальным адресом или IP и отвечает на
+  // весь экран `BUTTON_URL_INVALID`, поэтому такое значение — отказ старта, а
+  // не пропавшая карточка лота.
+  if (!url.hostname.includes(".") || isIpAddress(url.hostname)) {
+    return {
+      ok: false,
+      error: `${name} must have a public host name, not an IP address or a local name`,
+    };
+  }
   // К базе дописывается идентификатор: запрос или фрагмент в ней увели бы его
   // не в путь.
-  if (base && (url.search !== "" || url.hash !== "")) return refusal;
+  // Пустые «?» и «#» поля `search` и `hash` не заполняют, но остаются в адресе:
+  // смотрим на сырое значение.
+  if (base && /[?#]/.test(raw)) return refusal;
   const href = base ? url.href.replace(/\/+$/, "") : url.href;
-  if (href.length > URL_LIMIT) {
-    return { ok: false, error: `${name} exceeds ${URL_LIMIT} characters` };
+  if (href.length > limit) {
+    return { ok: false, error: `${name} exceeds ${limit} characters` };
   }
   return { ok: true, url: href };
 }

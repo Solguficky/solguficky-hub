@@ -28,9 +28,15 @@ describe("readHallLinks", () => {
       ["BOT_HALL_SCREEN_URL", "http://hall.example.org/screen"],
       ["BOT_HALL_SCREEN_URL", "https://user:pw@hall.example.org/screen"],
       ["BOT_HALL_SCREEN_URL", "https://hall.example.org/screen?x=1"],
+      ["BOT_HALL_SCREEN_URL", "https://hall.example.org/screen?"],
+      ["BOT_HALL_SCREEN_URL", "https://hall.example.org/screen#"],
       ["BOT_HALL_SCREEN_URL", "not a url"],
       ["BOT_STREAM_URL", "http://stream.example.org"],
       ["BOT_STREAM_URL", "https://token@stream.example.org"],
+      ["BOT_HALL_SCREEN_URL", "https://localhost:5173/screen"],
+      ["BOT_HALL_SCREEN_URL", "https://10.0.0.5/screen"],
+      ["BOT_STREAM_URL", "https://[::1]/live"],
+      ["BOT_HALL_SCREEN_URL", `https://hall.example.org/${"a".repeat(2000)}`],
     ] as const) {
       const result = readHallLinks({ [name]: value });
       expect(result.ok).toBe(false);

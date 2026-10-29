@@ -1,7 +1,10 @@
 import { InlineKeyboard } from "grammy";
 import { type HallLinks, hallButtons } from "../../../../auction-hall.js";
 import { nameSettingsTitle } from "../../../../auction-standing.js";
-import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
+import {
+  type AuctionStageView,
+  encodeAuctionCallback,
+} from "../../../../auction-ui/index.js";
 import { adminLabel, marked, pictogram } from "../../../../core/pictograms.js";
 import type { MeetupAuctionView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
@@ -37,6 +40,16 @@ export const toSettingsExtensions: Parent = {
   data: settingsExtensionsData,
 };
 
+// Стадии, пока идут торги (PER-825): только в них «Экран зала ↗» и «Стрим ↗»
+// стоят в «Расширениях».
+const tradingStages: ReadonlySet<AuctionStageView> = new Set([
+  "prebidding",
+  "settling",
+  "on-break",
+  "lineup-frozen",
+  "in-final",
+]);
+
 // Вход в раздел аукциона несёт его знак во всех ботах (PER-644).
 const auctionLabel = marked(pictogram.auction, "Аукцион");
 const enableLabel = adminLabel("Включить аукцион");
@@ -65,10 +78,11 @@ export function extensionsScreen(view: {
       "Аукцион: торги лотов сходки, избранное, розыгрыш и правила.",
     );
     keyboard.text(auctionLabel, auctionRootData(auction.auctionId)).row();
-    // Пока аукцион идёт: у завершённого и отменённого экрана зала для
-    // просмотра хода торгов уже нет смысла (PER-825).
+    // Пока аукцион идёт (PER-825): у черновика, ещё не открытого, завершённого
+    // и отменённого экрана зала для хода торгов нет. Сводки нет — стадию не
+    // узнать, и ссылки остаются.
     const stage = auction.auction?.stage;
-    if (stage !== "finished" && stage !== "cancelled") {
+    if (stage === undefined || tradingStages.has(stage)) {
       for (const button of hallButtons(view.hall, auction.auctionId)) {
         keyboard.url(button.text, button.url).row();
       }
