@@ -12,7 +12,7 @@
 - Личные чтения Auction привязаны к одному аукциону: `ListMyInvoices` и `GetMyPredictions` принимают `auction_id` (`contracts/proto/auction/v1/auction_service.proto`). Чтения «все мои ставки» нет.
 - `ListAuctions` с `AUCTION_LISTING_FINISHED` отдаёт общий список прошедших аукционов, не по участнику.
 - В read model `lot_bid` нет индекса по `participant_id` (`apps/auction/src/main/resources/db/migration/V5__lot_projection.sql`), у `auction_invoice` есть индекс `(auction_id, winner_id)` (`V17`).
-- Бот хранилища не имеет ([ADR-030](ADR-030-telegram-bot.md)).
+- Бот не хранит доменных данных торгов ([ADR-030](ADR-030-telegram-bot.md)): в его JetStream KV лежат только журнал доставки и реестр живых экранов.
 - `participant_id` в `lot_bid` и `winner_id` счёта — сам identity id платформы (`Viewer.identity_id`), отдельного псевдонима нет. Путь удаления субъекта [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md) («стереть связь identity → participant_id в Identity») в коде не существует; потребителя факта удаления субъекта в Auction нет, `PredictionStore.erase` вызывать некому.
 
 ## Варианты
