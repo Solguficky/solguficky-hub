@@ -87,11 +87,13 @@ export function createDispatcher(
   // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
   // пускает право вести аукцион.
   const floorBids =
-    consoles === undefined ? undefined : createFloorBids(
-            consoles.auctions,
-            consoles.room ?? createMemoryRoom(),
-            consoles.members,
-          );
+    consoles === undefined
+      ? undefined
+      : createFloorBids(
+          consoles.auctions,
+          consoles.room ?? createMemoryRoom(),
+          consoles.members,
+        );
   // Снятие участника с лота (PER-659) — тот же порт: команды администратора
   // пускает право вести аукцион.
   const participantRemoval =

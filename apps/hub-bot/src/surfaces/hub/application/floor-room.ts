@@ -12,7 +12,9 @@ export type RoomMember = { identityId: string; username?: string };
 export type RoomRead =
   | { kind: "ok"; members: readonly RoomMember[] }
   | { kind: "unavailable"; cause?: unknown };
-export type RoomWrite = { kind: "ok" } | { kind: "unavailable"; cause?: unknown };
+export type RoomWrite =
+  | { kind: "ok" }
+  | { kind: "unavailable"; cause?: unknown };
 
 export type FloorRoomStore = {
   read(auctionId: string): Promise<RoomRead>;

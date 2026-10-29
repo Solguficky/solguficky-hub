@@ -11,7 +11,6 @@ import type {
   AuctionNotificationSettings,
 } from "../../../core/notifications/outbid.js";
 import type { CommunityDay } from "../community-time.js";
-import type { RoomMember } from "./floor-room.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
@@ -28,6 +27,7 @@ import type {
   AuctionAnnouncementRequest,
   AuctionAnnouncementResult,
 } from "./auction-announcements.js";
+import type { RoomMember } from "./floor-room.js";
 
 // Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
 // решают `rights` (RFC-016); те же права уходят смотрящим в Meetups и Auction,

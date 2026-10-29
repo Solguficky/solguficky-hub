@@ -6716,9 +6716,7 @@ describe("floor bids of the assistant", () => {
     };
     const down = await open(running());
     expect(plain(last(down.calls))).toContain("Состав зала не прочитался.");
-    expect(labels(last(down.calls)).flat()).not.toContain(
-      "Добавить человека…",
-    );
+    expect(labels(last(down.calls)).flat()).not.toContain("Добавить человека…");
 
     const failed = await open(running({ peopleFail: true }));
     expect(labels(last(failed.calls)).flat()).toContain("Повторить");
@@ -6750,9 +6748,9 @@ describe("floor bids of the assistant", () => {
       "@newcomer_n — 1 300 ₽",
     );
     const room = await currentRoom.read(auctionId);
-    expect(room.kind === "ok" && room.members.map((m) => m.identityId)).toContain(
-      newcomerId,
-    );
+    expect(
+      room.kind === "ok" && room.members.map((m) => m.identityId),
+    ).toContain(newcomerId);
   });
 
   it("finds nobody among guests and says when everyone found is in the room", async () => {

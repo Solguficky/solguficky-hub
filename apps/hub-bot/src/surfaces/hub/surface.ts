@@ -47,6 +47,7 @@ import {
   logBodyMissing,
 } from "./delivery/access-request.js";
 import { decodeNotification } from "./delivery/notification.js";
+import { createFloorRoomBus } from "./floor-room-bus.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLiveScreensNats } from "./live-screens-nats.js";
 import { createMeetupsClient } from "./meetups/client.js";
@@ -58,7 +59,6 @@ import {
   createNotificationSender,
 } from "./presentation/notification-message.js";
 import { releaseTraceDay } from "./presentation/screens/release-notes.js";
-import { createFloorRoomBus } from "./floor-room-bus.js";
 import { toReleaseTrace } from "./release-lines.js";
 import { startReleaseNotesReport } from "./release-report.js";
 

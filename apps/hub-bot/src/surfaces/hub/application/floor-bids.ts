@@ -116,12 +116,12 @@ export function createFloorBids(
     const named = listed.names
       .filter((each) => each.name !== "")
       .map((each) => ({ participantId: each.participantId, name: each.name }));
-    const names = new Map(
-      named.map((each) => [each.participantId, each.name]),
-    );
+    const names = new Map(named.map((each) => [each.participantId, each.name]));
     const members = stored.kind === "ok" ? stored.members : [];
     const inRoom = new Set(members.map((each) => each.identityId));
-    const people = named.filter((each) => inRoom.has(each.participantId)).sort(byName);
+    const people = named
+      .filter((each) => inRoom.has(each.participantId))
+      .sort(byName);
     const waiting = members.filter((each) => !names.has(each.identityId));
     const snapshot = found.console;
     const active =
@@ -259,7 +259,9 @@ export function createFloorBids(
       current.floor.people.some(
         (each) => each.participantId === member.identityId,
       ) ||
-      current.floor.waiting.some((each) => each.identityId === member.identityId);
+      current.floor.waiting.some(
+        (each) => each.identityId === member.identityId,
+      );
     if (already) return screen({ kind: "member-already-in" });
     const written = await room.add(request.auctionId, member);
     if (written.kind !== "ok") return screen({ kind: "room-write-failed" });
