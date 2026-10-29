@@ -47,9 +47,7 @@ describe("live screen record store", () => {
     await store.save({ ...target, messageId: 10 });
 
     expect([...kv.values.keys()]).toEqual(["console.-1001234"]);
-    await expect(store.list()).resolves.toEqual([
-      { ...target, messageId: 10 },
-    ]);
+    await expect(store.list()).resolves.toEqual([{ ...target, messageId: 10 }]);
   });
 
   it("keeps the kinds apart", async () => {
