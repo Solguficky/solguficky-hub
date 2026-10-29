@@ -1,4 +1,5 @@
 import type { KV } from "@nats-io/kv";
+import { z } from "zod";
 
 // Состав зала (PER-816, ADR-070, дополнение 2026-10-29): люди, которые сейчас
 // в зале, набирает помощник. Ставка зала идёт только за человека из состава —
@@ -60,24 +61,21 @@ export function createMemoryRoom(): FloorRoomStore {
 
 export type RoomKv = Pick<KV, "get" | "create" | "update">;
 
-type Stored = { i: string; u?: string };
+const StoredSchema = z.array(
+  z.object({ i: z.string().min(1), u: z.string().min(1).optional() }),
+);
 
 // Bucket — общее хранилище, и прочитанное оттуда — ввод: запись не той формы
 // считается пустым составом.
 function parse(raw: string): RoomMember[] {
   try {
-    const value: unknown = JSON.parse(raw);
-    if (!Array.isArray(value)) return [];
-    return value.flatMap((each: unknown) => {
-      if (typeof each !== "object" || each === null) return [];
-      const { i, u } = each as Stored;
-      if (typeof i !== "string" || i === "") return [];
-      return [
-        typeof u === "string" && u !== ""
-          ? { identityId: i, username: u }
-          : { identityId: i },
-      ];
-    });
+    const parsed = StoredSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) return [];
+    return parsed.data.map((each) =>
+      each.u === undefined
+        ? { identityId: each.i }
+        : { identityId: each.i, username: each.u },
+    );
   } catch {
     return [];
   }
