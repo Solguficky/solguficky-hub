@@ -77,6 +77,7 @@ import type {
 import type { IdentityResolver } from "../identity/port.js";
 import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
 import { createAuctionParents } from "./auction-parents.js";
+import type { LiveScreenStore, LiveScreenTarget } from "./live-screens.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { type CallbackAction, parseCallback } from "./parse-callback.js";
 import {
@@ -5802,6 +5803,37 @@ const flush = async () => {
   for (let i = 0; i < 50; i += 1) await Promise.resolve();
 };
 
+// Запись открытых живых экранов в памяти (PER-815): тест «рестарта» поднимает
+// второго бота на том же хранилище.
+function memoryStore() {
+  const records = new Map<number, LiveScreenTarget>();
+  const store: LiveScreenStore = {
+    save: async (target) => {
+      records.set(target.chatId, target);
+    },
+    remove: async (chatId) => {
+      records.delete(chatId);
+    },
+    list: async () => [...records.values()],
+  };
+  return { records, store };
+}
+
+// Хранилище одного вида экрана; другой вид живёт без записи.
+function kindStore(
+  store: LiveScreenStore,
+  kind: "console" | "floor" = "console",
+) {
+  const none: LiveScreenStore = {
+    save: async () => {},
+    remove: async () => {},
+    list: async () => [],
+  };
+  return {
+    screens: (each: "console" | "floor") => (each === kind ? store : none),
+  };
+}
+
 describe("live console of the auctioneer", () => {
   const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
   const live = (lotId: string, version: number, price: number): LotView => ({
@@ -6005,6 +6037,149 @@ describe("live console of the auctioneer", () => {
     };
     return () => release();
   };
+
+  // Рестарт бота хаба (PER-815): память процесса пропала, запись осталась в
+  // хранилище, и новый процесс сам догоняет пульт, открытый до рестарта.
+  describe("after the bot restarts", () => {
+    // Бот поднимается на том же хранилище и том же Auction: пока его не было,
+    // ставка могла пройти. Повторов чтения в тесте нет.
+    const boot = async (
+      auction: ReturnType<typeof running>,
+      store: LiveScreenStore,
+    ) => {
+      const watch = stream();
+      const { bot, calls } = harness(
+        "admin",
+        auction,
+        [],
+        undefined,
+        undefined,
+        {
+          live: {
+            watches: watch.watches,
+            limiter: immediate,
+            names: { getDisplayNames: async () => ({}) },
+            ...kindStore(store),
+            restorePauses: [],
+          },
+        },
+      );
+      await bot.init();
+      return { bot, calls, watch };
+    };
+
+    const opened = async () => {
+      const { records, store } = memoryStore();
+      const auction = running();
+      const first = await boot(auction, store);
+      await first.bot.handleUpdate(press(consoleData));
+      await flush();
+      expect(records.size).toBe(1);
+      return { records, store, auction };
+    };
+
+    it("shows the bid made while the bot was down and follows the stream again", async () => {
+      const { records, store, auction } = await opened();
+
+      // Бота нет, а ставка прошла.
+      bid(auction, 4, 130_000);
+      const second = await boot(auction, store);
+      await flush();
+
+      const caught = edits(second.calls).at(-1)?.payload as Sent;
+      expect(plain(caught)).toContain("Цена: 1 300 ₽, следующая: 1 400 ₽.");
+      expect(plain(caught)).toMatch(/Обновлено в \d\d:\d\d:\d\d/);
+      expect(second.watch.subscribers.size).toBe(1);
+      const before = edits(second.calls).length;
+
+      second.watch.emit(bid(auction, 5, 140_000));
+      await flush();
+
+      expect(edits(second.calls)).toHaveLength(before + 1);
+      expect(plain(edits(second.calls).at(-1)?.payload as Sent)).toContain(
+        "Цена: 1 400 ₽",
+      );
+      expect(records.size).toBe(1);
+    });
+
+    it("survives a second restart in a row", async () => {
+      const { records, store, auction } = await opened();
+      await boot(auction, store);
+      await flush();
+
+      bid(auction, 4, 130_000);
+      const third = await boot(auction, store);
+      await flush();
+
+      expect(records.size).toBe(1);
+      expect(third.watch.subscribers.size).toBe(1);
+      expect(plain(edits(third.calls).at(-1)?.payload as Sent)).toContain(
+        "Цена: 1 300 ₽",
+      );
+    });
+
+    it("shows the end of the final that came while the bot was down", async () => {
+      const { records, store, auction } = await opened();
+      auction.state.status = "finished";
+      auction.state.lineup = { order: [vaseId, mugId] };
+
+      const second = await boot(auction, store);
+      await flush();
+
+      expect(edits(second.calls)).not.toHaveLength(0);
+      expect(plain(edits(second.calls).at(-1)?.payload as Sent)).not.toContain(
+        "Цена: 1 200 ₽",
+      );
+      expect(second.watch.subscribers.size).toBe(0);
+      expect(records.size).toBe(0);
+    });
+
+    it("does not bring back a screen the person left during the restore", async () => {
+      const { store, auction } = await opened();
+      const release = heldRead(auction);
+      const second = await boot(auction, store);
+      await flush();
+
+      await second.bot.handleUpdate(press(rootData));
+      const before = edits(second.calls).length;
+      release();
+      await flush();
+
+      expect(second.watch.subscribers.size).toBe(0);
+      expect(edits(second.calls)).toHaveLength(before);
+    });
+
+    it("forgets the record when the rights were taken away", async () => {
+      const { records, store, auction } = await opened();
+      auction.port.getAuctionConsole = async () => ({
+        kind: "not-administrator",
+      });
+
+      const second = await boot(auction, store);
+      await flush();
+
+      expect(second.watch.subscribers.size).toBe(0);
+      expect(records.size).toBe(0);
+    });
+
+    it("keeps the record when the auction cannot be read yet", async () => {
+      const { records, store, auction } = await opened();
+      auction.port.getAuctionConsole = async () => {
+        throw new Error("unavailable");
+      };
+
+      const second = await boot(auction, store);
+      await flush();
+
+      expect(second.watch.subscribers.size).toBe(0);
+      expect(records.size).toBe(1);
+    });
+  });
+
+  it("shows the time of the last update in the final console", async () => {
+    const { calls } = await setup();
+    expect(plain(last(calls))).toMatch(/Обновлено в \d\d:\d\d:\d\d/);
+  });
 
   it("keeps the stale mark when the stream breaks off during a read", async () => {
     const { calls, auction, watch } = await setup();
@@ -6534,6 +6709,44 @@ describe("floor bids of the assistant", () => {
       expect(edits(calls)).toHaveLength(before + 1);
       expect(plain(edits(calls).at(-1)?.payload as Sent)).toContain(
         "Связь с аукционом прервалась — цена могла устареть.",
+      );
+    });
+
+    // Рестарт бота хаба (PER-815): «Ставки зала», открытые до него, после
+    // старта догоняют цену и снова слушают поток.
+    it("catches up after the bot restarts", async () => {
+      const { records, store } = memoryStore();
+      const auction = running();
+      const first = harness("admin", auction, [], undefined, undefined, {
+        live: {
+          watches: stream().watches,
+          limiter: immediate,
+          names: { getDisplayNames: async () => ({}) },
+          ...kindStore(store, "floor"),
+        },
+      });
+      await first.bot.init();
+      await first.bot.handleUpdate(press(floorData));
+      await flush();
+      expect(records.size).toBe(1);
+
+      botBid(auction, 130_000);
+      const watch = stream();
+      const second = harness("admin", auction, [], undefined, undefined, {
+        live: {
+          watches: watch.watches,
+          limiter: immediate,
+          names: { getDisplayNames: async () => ({}) },
+          ...kindStore(store, "floor"),
+          restorePauses: [],
+        },
+      });
+      await second.bot.init();
+      await flush();
+
+      expect(watch.subscribers.size).toBe(1);
+      expect(plain(edits(second.calls).at(-1)?.payload as Sent)).toContain(
+        "Цена: 1 300 ₽, следующая: 1 400 ₽.",
       );
     });
 
