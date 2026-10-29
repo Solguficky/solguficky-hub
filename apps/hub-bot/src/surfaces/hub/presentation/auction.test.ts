@@ -335,17 +335,6 @@ function fakeAuction(
             throw new Error("not used");
           },
           listMyInvoices: async () => invoices.current,
-          chooseFulfillment: async (request) => {
-            invoices.current = {
-              ...invoices.current,
-              invoices: invoices.current.invoices.map((invoice) =>
-                invoice.invoiceId === request.invoiceId
-                  ? { ...invoice, fulfillment: request.method }
-                  : invoice,
-              ),
-            };
-            return { kind: "accepted" as const };
-          },
           getMyPredictions: async () => options.predictions ?? [],
           getPredictionResults: async () => ({ kind: "after-final" as const }),
           getDayChronicle: async () => {
@@ -2089,28 +2078,8 @@ describe("winner invoices in the hub", () => {
     );
     const invoice = lastScreen(calls);
     expect(invoice.text).toMatch(/^<b>Счёт: Кружка с совой<\/b>/);
-    expect(invoice.text).toContain("Получение: способ не выбран");
-    expect(labels(invoice)).toEqual([
-      ["Самовывоз"],
-      ["Доставка"],
-      ["Цифровая выдача"],
-      ["‹ Счета"],
-    ]);
-
-    await bot.handleUpdate(
-      press(
-        encodeAuctionCallback({
-          kind: "fulfillment",
-          lotId,
-          invoiceId,
-          method: "delivery",
-        }),
-      ),
-    );
-    const chosen = lastScreen(calls);
-    expect(chosen.text).toContain("Способ получения выбран");
-    expect(chosen.text).toContain("Получение: доставка");
-    expect(labels(chosen)[1]).toEqual(["Доставка · выбрано"]);
+    expect(invoice.text).not.toContain("Получение");
+    expect(labels(invoice)).toEqual([["‹ Счета"]]);
   });
 
   it("shows no invoices entry to a viewer without invoices", async () => {

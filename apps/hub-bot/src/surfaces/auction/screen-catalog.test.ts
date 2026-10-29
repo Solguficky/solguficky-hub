@@ -968,7 +968,6 @@ const invoicesBody = (instructions?: string): AuctionScreenBody => ({
           ...winnerInvoice,
           invoiceId: "inv-2",
           status: "paid",
-          fulfillment: "pickup",
         },
       ],
       ...(instructions === undefined
@@ -997,29 +996,16 @@ const invoicesBody = (instructions?: string): AuctionScreenBody => ({
 
 const invoiceBody = (
   status: "awaiting-payment" | "paid" | "handed-over",
-  notice?: "fulfillment-chosen" | "fulfillment-frozen",
 ): AuctionScreenBody => ({
   blocks: [
     {
       kind: "invoice",
       auctionId: "auc-1",
-      invoice: { ...winnerInvoice, status, fulfillment: "delivery" },
+      invoice: { ...winnerInvoice, status },
       paymentInstructions: "Перевод на карту.\nСамовывоз — на сходке.",
-      ...(notice === undefined ? {} : { notice }),
     },
   ],
-  keyboard: [
-    ...(status === "handed-over"
-      ? []
-      : (["pickup", "delivery", "digital"] as const).map((method) => [
-          {
-            action: "invoice.fulfillment" as const,
-            method,
-            callbackData: `v1:auc:im:a:b:${method[0]}`,
-          },
-        ])),
-    [{ action: "invoice.back", callbackData: "v1:auc:iv:a" }],
-  ],
+  keyboard: [[{ action: "invoice.back", callbackData: "v1:auc:iv:a" }]],
 });
 
 // Регистрация принята (прогон 14.10, №69): кадр исхода с отменой и
@@ -1523,13 +1509,13 @@ const shown: readonly {
   {
     screen: {
       kind: "auction",
-      body: invoiceBody("paid", "fulfillment-chosen"),
+      body: invoiceBody("paid"),
     },
   },
   {
     screen: {
       kind: "auction",
-      body: invoiceBody("handed-over", "fulfillment-frozen"),
+      body: invoiceBody("handed-over"),
     },
   },
   {

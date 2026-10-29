@@ -76,8 +76,6 @@ export type {
   FavoritesPort,
   FinalLineupView,
   FollowOutcome,
-  FulfillmentMethod,
-  FulfillmentOutcome,
   IdentityPort,
   InvoiceStatus,
   LotCardView,

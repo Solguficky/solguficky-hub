@@ -125,9 +125,6 @@ function ports(
         throw new Error("not used");
       }),
       listMyInvoices: async () => ({ invoices: [] }),
-      chooseFulfillment: async () => {
-        throw new Error("not used");
-      },
       getMyPredictions: vi.fn(async () => []),
       getPredictionResults: vi.fn(async () => {
         throw new Error("not used");

@@ -8,7 +8,6 @@ import {
 } from "@connectrpc/connect-node";
 import {
   BidSource,
-  FulfillmentMethod,
   type StepPolicySchema,
 } from "../../../../gen/auction/v1/auction_pb.js";
 import type {
@@ -39,11 +38,7 @@ import {
 } from "../../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
-import {
-  fulfillmentOutcomeOn,
-  myInvoicesOf,
-  wireFulfillment,
-} from "../../../core/auction/invoices.js";
+import { myInvoicesOf } from "../../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
@@ -75,12 +70,7 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
-import type {
-  FulfillmentMethod as FulfillmentView,
-  Invoice,
-  Person,
-  RemovalRefusal,
-} from "../application/types.js";
+import type { Invoice, Person, RemovalRefusal } from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
   clearHappyHourLotTermsResult,
@@ -168,7 +158,6 @@ type AuctionRpc = Pick<
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "listMyInvoices"
-  | "chooseFulfillment"
   | "getMyPredictions"
   | "getPredictionResults"
   | "getAuctionDayChronicle"
@@ -1525,19 +1514,6 @@ export function createAuctionAdapter(
                 {
                   viewer: wireViewer(request.viewer),
                   auctionId: request.auctionId,
-                },
-                options(meta),
-              ),
-            );
-          },
-          chooseFulfillment(request) {
-            return fulfillmentOutcomeOn(() =>
-              rpc.chooseFulfillment(
-                {
-                  viewer: wireViewer(request.viewer),
-                  invoiceId: request.invoiceId,
-                  method: wireFulfillment(request.method),
-                  opId: request.opId,
                 },
                 options(meta),
               ),
@@ -3009,24 +2985,8 @@ function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
     winnerId: snapshot.winnerId,
     amount: moneyOf(snapshot.amount),
     paymentDueAt: snapshot.paymentDueAt,
-    fulfillment: fulfillmentOf(snapshot.fulfillment),
     status,
   };
-}
-
-// Способ новее схемы бот не знает и показывает как невыбранный: счёт важнее
-// подписи способа.
-function fulfillmentOf(method: FulfillmentMethod): FulfillmentView {
-  switch (method) {
-    case FulfillmentMethod.PICKUP:
-      return "pickup";
-    case FulfillmentMethod.DELIVERY:
-      return "delivery";
-    case FulfillmentMethod.DIGITAL:
-      return "digital";
-    default:
-      return "unspecified";
-  }
 }
 
 // Ответы текста «Как оплатить и получить» (PER-322): именованный отказ

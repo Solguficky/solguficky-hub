@@ -13,11 +13,7 @@ import {
 } from "./internal/use-cases/commands.js";
 import { openDayChronicle } from "./internal/use-cases/day-chronicle.js";
 import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
-import {
-  chooseFulfillment,
-  openInvoice,
-  openInvoices,
-} from "./internal/use-cases/invoices.js";
+import { openInvoice, openInvoices } from "./internal/use-cases/invoices.js";
 import {
   answerNameQuestion,
   askNameAlias,
@@ -275,8 +271,6 @@ export function dispatchAuctionIntent(input: {
       return openInvoices(context, intent.auctionId);
     case "invoice":
       return openInvoice(context, intent.lotId, intent.invoiceId);
-    case "fulfillment":
-      return chooseFulfillment(context, intent);
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

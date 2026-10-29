@@ -448,8 +448,16 @@ const rafflePhases: ReadonlySet<ConsoleAuctionStatus> = new Set([
   "prebidding",
   "settling",
   "break",
+  "lineup-frozen",
   "finished",
 ]);
+// Статусы, в которых пульт читает текст оплаты для своей строки (PER-814).
+const paymentTextPhases: ReadonlySet<ConsoleAuctionStatus> = new Set([
+  "draft",
+  "scheduled",
+  "prebidding",
+]);
+
 /**
  * Сколько лотов держит состав финала в кнопке (PER-619): номер лота — знак
  * base36, и выбор порядка с отпечатком и страницей укладывается в 64 байта
@@ -767,11 +775,12 @@ export function createAuctionConsole(
       });
     }
     const live = liveActive({ ...found.console, lots });
-    const [trading, raffle, leaders, meetup] = await Promise.all([
+    const [trading, raffle, leaders, meetup, paymentText] = await Promise.all([
       tradingOf(request, live),
       raffleOf(request, live),
       leadersOf(request, live),
       meetupHiddenOf(request, live),
+      paymentTextOf(request, live),
     ]);
     const console = {
       ...live,
@@ -789,8 +798,31 @@ export function createAuctionConsole(
         ...(raffle === undefined ? {} : { raffle }),
         ...(meetup === "hidden" ? { meetupHidden: true as const } : {}),
         ...(meetup === "published" ? { meetupPublished: true as const } : {}),
+        ...(paymentText === undefined ? {} : { paymentText }),
       },
     };
+  }
+
+  // Текст оплаты для строки пульта (PER-814): его задают до дедлайна недели, и
+  // строка говорит, задан ли он. Читается у Auction тем же чтением, что сводка
+  // счетов, пока торги впереди или идут; дальше строки нет, текст живёт в
+  // «Счетах». Отказ чтения пульт не роняет: строка скажет, что не проверила.
+  async function paymentTextOf(
+    request: AuctionConsoleRequest,
+    console: AuctionConsoleView,
+  ): Promise<"set" | "unset" | undefined> {
+    if (!paymentTextPhases.has(console.status)) return undefined;
+    try {
+      const found = await consoles.listAuctionInvoices(
+        request.identity,
+        request.auctionId,
+        rpcMeta(request),
+      );
+      if (found.kind !== "ok") return undefined;
+      return found.paymentInstructions === undefined ? "unset" : "set";
+    } catch {
+      return undefined;
+    }
   }
 
   // Скрытая сходка закрывает открытие онлайн-недели (ADR-047, дополнение

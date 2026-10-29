@@ -685,6 +685,9 @@ export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   // Читается тем же чтением, что `meetupHidden`; нет обоих — сходка
   // неизвестна, и строка говорит об этом.
   meetupPublished?: true;
+  // Задан ли текст «как оплатить и получить» (PER-814): строка пульта до и во
+  // время онлайн-торгов. Нет — текст не читался или чтение отказало.
+  paymentText?: "set" | "unset";
 };
 
 // Аукцион, у которого идут торги сообщества (PER-603, PER-618): слот один, и
@@ -1293,13 +1296,6 @@ export type RemovalConfirm = {
 // списка, как велит integration.md, «Счета».
 export type InvoiceStatus = "awaiting-payment" | "paid" | "handed-over";
 
-// `unspecified` — победитель способ ещё не выбрал; это значение, а не пропуск.
-export type FulfillmentMethod =
-  | "unspecified"
-  | "pickup"
-  | "delivery"
-  | "digital";
-
 // Счёт, как его отдаёт Auction.
 export type Invoice = {
   invoiceId: string;
@@ -1309,7 +1305,6 @@ export type Invoice = {
   amount: LotAmount;
   // RFC 3339 в UTC: оплатить до этого мига.
   paymentDueAt: string;
-  fulfillment: FulfillmentMethod;
   status: InvoiceStatus;
 };
 

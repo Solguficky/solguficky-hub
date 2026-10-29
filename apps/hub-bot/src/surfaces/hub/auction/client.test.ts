@@ -132,7 +132,6 @@ function adapter(rpc: {
   setPaymentInstructions?: Call;
   setPromoVideo?: Call;
   listMyInvoices?: Call;
-  chooseFulfillment?: Call;
   removeLot?: Call;
   getLotPhoto?: Call;
   addLotPhoto?: Call;
@@ -210,7 +209,6 @@ function adapter(rpc: {
     setPaymentInstructions: (rpc.setPaymentInstructions ?? notUsed) as never,
     setPromoVideo: (rpc.setPromoVideo ?? notUsed) as never,
     listMyInvoices: (rpc.listMyInvoices ?? notUsed) as never,
-    chooseFulfillment: (rpc.chooseFulfillment ?? notUsed) as never,
   });
 }
 
@@ -2930,7 +2928,7 @@ describe("auction invoices adapter", () => {
     status: { case: status, value: {} },
   });
 
-  it("reads every invoice of the auction with its status and method", async () => {
+  it("reads every invoice of the auction with its status", async () => {
     const sent: unknown[] = [];
     const invoices = adapter({
       listAuctionInvoices: async (request) => {
@@ -2939,10 +2937,7 @@ describe("auction invoices adapter", () => {
           outcome: {
             case: "invoices",
             value: {
-              invoices: [
-                snapshot("awaitingPayment"),
-                { ...snapshot("handedOver"), fulfillment: 7 },
-              ],
+              invoices: [snapshot("awaitingPayment"), snapshot("handedOver")],
             },
           },
         };
@@ -2957,12 +2952,9 @@ describe("auction invoices adapter", () => {
           invoiceId,
           amount: { minorUnits: 150_000, currency: "RUB" },
           paymentDueAt: "2026-10-30T12:00:00Z",
-          fulfillment: "pickup",
           status: "awaiting-payment",
         }),
-        // Способ новее схемы — как невыбранный.
         expect.objectContaining({
-          fulfillment: "unspecified",
           status: "handed-over",
         }),
       ],

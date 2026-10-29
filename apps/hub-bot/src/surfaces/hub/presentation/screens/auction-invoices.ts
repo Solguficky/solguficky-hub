@@ -2,7 +2,6 @@ import { InlineKeyboard } from "grammy";
 import { money, truncate } from "../../../../core/format.js";
 import { paymentTextLimit } from "../../application/auction-invoices.js";
 import type {
-  FulfillmentMethod,
   InvoiceMark,
   InvoiceMarkNote,
   InvoiceRow,
@@ -66,13 +65,6 @@ function winnerOf(invoice: InvoiceRow): string {
 function momentOf(at: string, clock: Clock): string {
   return readableMoment(communityLocalTime(at, clock.timeZone), clock.today);
 }
-
-const fulfillmentText: Record<FulfillmentMethod, string> = {
-  unspecified: "способ получения не выбран",
-  pickup: "самовывоз",
-  delivery: "доставка",
-  digital: "цифровой лот",
-};
 
 function statusText(invoice: InvoiceRow, clock: Clock): string {
   switch (invoice.status) {
@@ -200,7 +192,7 @@ export function invoicesScreen(
         .map((invoice) =>
           escapeHtml(
             bullet(
-              `${lotTitle(invoice)} — ${winnerOf(invoice)}, ${money(invoice.amount)}: ${statusText(invoice, view)}, ${fulfillmentText[invoice.fulfillment]}.`,
+              `${lotTitle(invoice)} — ${winnerOf(invoice)}, ${money(invoice.amount)}: ${statusText(invoice, view)}.`,
             ),
           ),
         )
@@ -263,7 +255,6 @@ export function invoiceScreen(
           `Победитель: ${winnerOf(invoice)}.`,
           `Сумма: ${money(invoice.amount)}.`,
           `Статус: ${statusText(invoice, view)}.`,
-          `Получение: ${fulfillmentText[invoice.fulfillment]}.`,
         ].join("\n"),
       ),
     ),

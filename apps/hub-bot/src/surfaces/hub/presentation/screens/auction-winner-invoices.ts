@@ -4,7 +4,6 @@ import type {
   AuctionButton,
 } from "../../../../auction-ui/index.js";
 import {
-  fulfillmentLabel,
   invoiceLabel,
   invoiceMissingParagraphs,
   invoiceMissingTitle,
@@ -74,14 +73,6 @@ export function invoiceScreen(
   view: View,
 ): ShownScreen {
   const rows = new InlineKeyboard();
-  for (const button of keyboard.flat()) {
-    if (button.action === "invoice.fulfillment") {
-      nextRow(rows).text(
-        fulfillmentLabel(button.method, block.invoice.fulfillment),
-        button.callbackData,
-      );
-    }
-  }
   return {
     id: "my-invoice",
     text: screenText(
