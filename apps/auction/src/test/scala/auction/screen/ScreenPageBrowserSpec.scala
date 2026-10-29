@@ -187,8 +187,11 @@ final class ScreenPageBrowserSpec
     assertThat(page.locator("body"))
       .hasAttribute("data-status", value, LocatorAssertions.HasAttributeOptions().setTimeout(within.toMillis.toDouble))
 
-  /** Цифры цены на экране: разделители разрядов и знак валюты зависят от локали, сумма — нет. */
-  private def digits(page: Page): String = page.locator(".price").textContent().replaceAll("\\D", "")
+  /**
+   * Цифры текущей ставки на экране: разделители разрядов и знак валюты зависят от локали, сумма — нет. Главная цифра
+   * `.price` с PER-819 — следующая цена, текущая ставка — `.current-price`.
+   */
+  private def digits(page: Page): String = page.locator(".current-price").textContent().replaceAll("\\D", "")
 
   /** Копейки экран показывает, только когда они есть (`money` в `screen.js`). */
   private def expected(price: Money): String =

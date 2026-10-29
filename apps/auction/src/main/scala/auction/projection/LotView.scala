@@ -73,7 +73,8 @@ enum HistoryRecord {
  * `LotOpened`: в состоянии лота после открытия её нет, а рост цены статистики считается от неё. `heldPrice` — цена
  * удержания из `LotHeldForFinal` и из снятия участника с удержанного лота (PER-658), которую состояние `Held` теряет
  * при `LotResumed`; `resumedSequence` — номер события `LotResumed`: по нему ставки финала отделяются от ставок недели
- * (PER-608). `removals` — снятия участников: их ставки и участие помечаются снятыми, а снятие ложится в хронологию.
+ * (PER-608), `resumedAt` — его время (PER-819). `removals` — снятия участников: их ставки и участие помечаются снятыми,
+ * а снятие ложится в хронологию.
  */
 final case class LotViewFold(
     row: Option[LotViewRow],
@@ -82,6 +83,7 @@ final case class LotViewFold(
     startingPrice: Option[StoredMoney],
     heldPrice: Option[StoredMoney] = None,
     resumedSequence: Option[Long] = None,
+    resumedAt: Option[Instant] = None,
     removals: List[RemovalRecord] = Nil
 )
 
@@ -155,13 +157,15 @@ object LotView {
       events: Seq[(Long, StoredLotEvent)]
   ): Either[LotViewDefect, LotViewFold] =
     replay(current, lotId, events).map { applied =>
+      val resumed = applied.filter(step => step.stored.event.kind == "LotResumed").lastOption
       LotViewFold(
         row = applied.lastOption.map(_.row),
         bids = applied.flatMap(_.bid),
         participants = applied.flatMap(step => participant(step.stored)),
         startingPrice = applied.flatMap(step => step.stored.event.lotOpened.map(_.startingPrice)).lastOption,
         heldPrice = applied.flatMap(heldPrice).lastOption,
-        resumedSequence = applied.filter(step => step.stored.event.kind == "LotResumed").lastOption.map(_.sequence),
+        resumedSequence = resumed.map(_.sequence),
+        resumedAt = resumed.map(_.stored.occurredAt),
         removals = applied.flatMap(step => removal(lotId, step.sequence, step.stored))
       )
     }

@@ -2,7 +2,6 @@ package auction.persistence
 
 import auction.aggregate.AuctionState
 import auction.entity.AuctionJournal
-import auction.entity.LotJournal
 import auction.lot.BidOrigin
 import auction.lot.BidSource
 import auction.lot.CurrencyCode
@@ -14,6 +13,7 @@ import auction.projection.AuctionViewJson
 import auction.projection.AuctionWatchView
 import auction.projection.LotViewJson
 import auction.screen.RecentBid
+import auction.screen.ScreenLot
 import auction.screen.Screen
 import auction.screen.ScreenImage
 import auction.screen.ScreenReading
@@ -24,8 +24,10 @@ import org.apache.pekko.persistence.jdbc.db.SlickExtension
 import slick.jdbc.GetResult
 import slick.jdbc.JdbcBackend.Database
 import slick.jdbc.PostgresProfile.api.*
+import slick.jdbc.SQLActionBuilder
 import slick.jdbc.TransactionIsolation
 
+import java.time.Instant
 import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -35,8 +37,8 @@ import scala.concurrent.Future
  * ставки читаются только у лота, который экран показывает в торгах, а проданные лоты — только у завершённого или
  * отменённого аукциона: остальным состояниям они не нужны.
  */
-final class SlickScreenViews(database: Database, auctions: AuctionViewJson, lots: SlickLotViews, lotJson: LotViewJson)(
-    using ExecutionContext
+final class SlickScreenViews(database: Database, auctions: AuctionViewJson, lots: SlickLotViews)(using
+    ExecutionContext
 ) extends ScreenViews {
 
   def read(auctionId: UUID): Future[Option[ScreenReading]] =
@@ -49,15 +51,28 @@ final class SlickScreenViews(database: Database, auctions: AuctionViewJson, lots
             for {
               found <- if (order.isEmpty) DBIO.successful(Vector.empty) else lots.lotsAction(order.map(_.value))
               base = ScreenReading(auctionId, meetupId, auction, AuctionWatchView.arrange(order, found), Nil, Nil)
-              bids <- Screen.shownLot(base).filter(view => isTrading(view.lot.state)) match {
+              live = Screen.shownLot(base).filter(view => isTrading(view.lot.state))
+              bids <- live match {
                 case Some(view) => recentBidsAction(view.lotId)
                 case None => DBIO.successful(Nil)
+              }
+              final_ <- live match {
+                case Some(view) => finalFactsAction(view.lotId)
+                case None => DBIO.successful((None, None))
               }
               sold <- auction.state match {
                 case AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) => soldAction(auctionId)
                 case _ => DBIO.successful(Nil)
               }
-            } yield Some(base.copy(recentBids = bids, sold = sold))
+            } yield Some(
+              base.copy(
+                recentBids = bids,
+                sold = sold,
+                resumedAt = final_._1,
+                heldPrice = final_._2,
+                readAt = Instant.now()
+              )
+            )
         }
         .transactionally
         .withTransactionIsolation(TransactionIsolation.RepeatableRead)
@@ -99,18 +114,59 @@ final class SlickScreenViews(database: Database, auctions: AuctionViewJson, lots
         )
       })
 
-  // Все лоты, рождённые в аукционе, а не состав: проданный в перерыве лот из состава выпадает, но в итог входит.
+  // Время возврата лота в торги финала и цена его удержания: у лота, возвращённого до появления времени (V22) или не
+  // удержанного, чего-то из этого нет, и страница тогда не показывает соответствующую строку.
+  private def finalFactsAction(lotId: UUID): DBIO[(Option[Instant], Option[Money])] =
+    sql"""SELECT r.occurred_at, h.minor_units, h.currency
+          FROM lot_view v
+          LEFT JOIN lot_resume r ON r.lot_id = v.lot_id
+          LEFT JOIN lot_hold h ON h.lot_id = v.lot_id
+          WHERE v.lot_id = ${lotId.toString}::uuid"""
+      .as[(Option[java.sql.Timestamp], Option[Long], Option[String])]
+      .headOption
+      .map {
+        case Some((at, minor, currency)) =>
+          (at.map(_.toInstant), minor.zip(currency).map((units, code) => Money(units, CurrencyCode(code))))
+        case None => (None, None)
+      }
+
+  // Все лоты, рождённые в аукционе, а не состав: проданный в перерыве лот из состава выпадает, но в итог входит. Рост
+  // считается от стартовой цены лота и, у лота состава, от цены удержания в конце онлайн-торгов (PER-819).
   private def soldAction(auctionId: UUID): DBIO[List[SoldLot]] =
-    sql"""SELECT v.state::text,
-                 EXISTS (SELECT 1 FROM auction_lineup l WHERE l.auction_id = v.auction_id AND l.lot_id = v.lot_id)
-          FROM lot_view v WHERE v.auction_id = ${auctionId.toString}::uuid"""
-      .as[(String, Boolean)]
-      .map(_.toList.flatMap { (state, inLineup) =>
-        LotJournal.restoreLot(lotJson.read(state)).state match {
-          case LotState.Sold(sale) => Some(SoldLot(sale.price, inLineup))
-          case _ => None
-        }
-      })
+    for {
+      ids <- sql"""SELECT lot_id::text FROM lot_view WHERE auction_id = ${auctionId.toString}::uuid""".as[String]
+      views <- if (ids.isEmpty) DBIO.successful(Vector.empty) else lots.lotsAction(ids.map(UUID.fromString).toList)
+      starts <- moneyByLot(sql"""SELECT s.lot_id::text, s.minor_units, s.currency FROM lot_starting_price s
+                                 JOIN lot_view v ON v.lot_id = s.lot_id
+                                 WHERE v.auction_id = ${auctionId.toString}::uuid""")
+      holds <- moneyByLot(sql"""SELECT h.lot_id::text, h.minor_units, h.currency FROM lot_hold h
+                                JOIN lot_view v ON v.lot_id = h.lot_id
+                                WHERE v.auction_id = ${auctionId.toString}::uuid""")
+      lineup <- sql"""SELECT lot_id::text FROM auction_lineup WHERE auction_id = ${auctionId.toString}::uuid"""
+        .as[String]
+        .map(_.map(UUID.fromString).toSet)
+    } yield views.toList.flatMap { view =>
+      view.lot.state match {
+        case LotState.Sold(sale) =>
+          Some(
+            SoldLot(
+              ScreenLot(view.lotId, view.card.map(_.title.value), view.card.flatMap(_.image)),
+              sale.price,
+              sale.winner,
+              starts.get(view.lotId),
+              holds.get(view.lotId),
+              lineup.contains(view.lotId),
+              sale.at
+            )
+          )
+        case _ => None
+      }
+    }
+
+  private def moneyByLot(query: SQLActionBuilder): DBIO[Map[UUID, Money]] =
+    query
+      .as[(String, Long, String)]
+      .map(_.map((lot, minor, currency) => UUID.fromString(lot) -> Money(minor, CurrencyCode(currency))).toMap)
 }
 
 object SlickScreenViews {
@@ -132,6 +188,6 @@ object SlickScreenViews {
     val database = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database
     given ExecutionContext = system.executionContext
     val lotJson = LotViewJson(system)
-    new SlickScreenViews(database, AuctionViewJson(system), new SlickLotViews(database, lotJson), lotJson)
+    new SlickScreenViews(database, AuctionViewJson(system), new SlickLotViews(database, lotJson))
   }
 }

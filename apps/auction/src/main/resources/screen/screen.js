@@ -4,7 +4,9 @@
 
 import {
   createSseParser,
+  elapsedText,
   finaleText,
+  growth,
   heartbeatOf,
   initial,
   MAX_RETRY_MS,
@@ -21,6 +23,7 @@ const main = document.getElementById("screen");
 const banner = document.getElementById("banner");
 
 let current = initial;
+let clock = null;
 
 /**
  * Снимок неожиданной формы не должен останавливать цикл подключения: отрисовка, которая упала, оставляет экран в
@@ -99,6 +102,9 @@ async function run() {
 // --- отрисовка ---------------------------------------------------------------
 
 function render(state) {
+  // Часы лота живут, пока на экране лот в торгах: каждый снимок рисуется заново и заводит их снова.
+  clearInterval(clock);
+  clock = null;
   document.body.dataset.status = state.status;
   banner.hidden = state.status !== "stale";
   banner.textContent = state.status === "stale" ? "Нет связи — данные могут быть устаревшими" : "";
@@ -111,6 +117,14 @@ function render(state) {
     return;
   }
   main.replaceChildren(...phase(state.view));
+  const elapsed = main.querySelector(".elapsed[data-started]");
+  if (elapsed !== null) {
+    const tick = () => {
+      elapsed.textContent = elapsedText(elapsed.dataset.started, Date.now()) ?? "";
+    };
+    tick();
+    clock = setInterval(tick, 1000);
+  }
 }
 
 function phase(view) {
@@ -124,9 +138,9 @@ function phase(view) {
     case "between":
       return [between(view.closed, view.next)];
     case "finished":
-      return [heading("Аукцион завершён"), totals(view.totals)];
+      return [heading("Аукцион завершён"), soldLots(view.sold), totals(view.totals)];
     case "cancelled":
-      return [heading("Аукцион отменён"), totals(view.totals)];
+      return [heading("Аукцион отменён"), soldLots(view.sold), totals(view.totals)];
     default:
       return [message("Подключение…")];
   }
@@ -141,13 +155,81 @@ function finalAt(view) {
   return finaleText(view.final_at, Date.now());
 }
 
+/**
+ * Лот в торгах (PER-819): главная цифра — следующая цена, та, которую нужно назвать, чтобы перебить; текущая ставка и
+ * лидер мельче, ниже шаг, время лота и рост к стартовой и к цене конца онлайн-торгов. Снимок без `next` (прежняя схема)
+ * рисуется с текущей ценой, чтобы страница не падала на нём.
+ */
 function live(lot) {
+  const next = lot.next ?? lot.price;
+  const asked = lot.ask !== null && lot.ask.amount > lot.price.amount;
   const info = el("div", "info");
-  info.append(title(lot), el("div", "price", money(lot.price)));
-  if (lot.ask !== null) info.append(line("ask", `Ведущий просит ${money(lot.ask)}`));
-  info.append(line("leader", lot.leader === null ? "Ставок пока нет" : `Лидирует ${lot.leader}`));
+  info.append(title(lot), el("div", "label", asked ? "Ведущий просит" : "Следующая цена"), el("div", "price", money(next)));
+  const current = el("p", "current");
+  current.append(
+    "Текущая ставка ",
+    el("span", "current-price", money(lot.price)),
+    lot.leader === null ? " · ставок пока нет" : ` · лидирует ${lot.leader}`,
+  );
+  info.append(current);
+  const facts = el("ul", "facts");
+  if (lot.step) facts.append(fact("Шаг", `+${money(lot.step)}`));
+  if (typeof lot.started_at === "string") {
+    const elapsed = el("span", "elapsed");
+    elapsed.dataset.started = lot.started_at;
+    const item = el("li", "fact");
+    item.append(el("span", "fact-label", "В торгах"), elapsed);
+    facts.append(item);
+  }
+  const fromStart = growthText(lot.price, lot.start);
+  if (fromStart !== null) facts.append(fact("К стартовой", fromStart));
+  const fromOnline = growthText(lot.price, lot.online_end);
+  if (fromOnline !== null) facts.append(fact("К концу онлайн-торгов", fromOnline));
+  if (facts.childElementCount > 0) info.append(facts);
   info.append(bids(lot.bids));
   return card(lot, info);
+}
+
+function fact(label, value) {
+  const item = el("li", "fact");
+  item.append(el("span", "fact-label", label), el("span", "fact-value", value));
+  return item;
+}
+
+/** «+500 ₽ (+25%)»; без базы — `null`, и строка не рисуется. */
+function growthText(price, base) {
+  const value = growth(price, base ?? null);
+  // Цена не выросла: «+0 ₽ (+0%)» — шум, а не рост.
+  if (value === null || value.delta === 0) return null;
+  const sign = value.delta >= 0 ? "+" : "−";
+  const amount = money({ amount: Math.abs(value.delta), currency: price.currency });
+  return value.percent === null ? `${sign}${amount}` : `${sign}${amount} (${sign}${Math.abs(value.percent)}%)`;
+}
+
+/** Итог: каждый проданный лот с ценой, покупателем и ростом к стартовой, по порядку продажи. */
+function soldLots(list) {
+  const items = el("ol", "sold");
+  for (const lot of list ?? []) {
+    const item = el("li", "sold-lot");
+    if (typeof lot.image === "string" && lot.image.startsWith("/screen/")) {
+      const image = el("img", "sold-photo");
+      image.src = lot.image;
+      image.alt = "";
+      item.append(image);
+    }
+    const text = el("div", "sold-text");
+    text.append(el("div", "sold-title", lot.title ?? "Лот без названия"), el("div", "sold-buyer", lot.buyer));
+    const price = el("div", "sold-price");
+    price.append(el("span", "sold-amount", money(lot.price)));
+    // Рост к стартовой, а у лота финала ещё и к цене конца онлайн-торгов.
+    const fromStart = growthText(lot.price, lot.start);
+    if (fromStart !== null) price.append(el("span", "sold-growth", `к стартовой ${fromStart}`));
+    const fromOnline = growthText(lot.price, lot.online_end);
+    if (fromOnline !== null) price.append(el("span", "sold-growth", `к концу онлайн-торгов ${fromOnline}`));
+    item.append(text, price);
+    items.append(item);
+  }
+  return items;
 }
 
 function between(closed, next) {
