@@ -7071,6 +7071,21 @@ describe("floor bids of the assistant", () => {
       expect(labels(found)).toHaveLength(8 + 1);
     });
 
+    it("adds a found person who stands beyond the first sixteen of the community", async () => {
+      communityMembers = Array.from({ length: 30 }, (_, at) =>
+        communityMember(
+          `0198f2a4-7c1e-7d3a-9b21-4f8e12ab35${String(at).padStart(2, "0")}`,
+          `guest_${String(at + 1).padStart(2, "0")}`,
+        ),
+      );
+      const { bot, calls } = await open(running());
+      await bot.handleUpdate(press(dataOf(last(calls), "Добавить человека…")));
+      await bot.handleUpdate(answer(calls, { text: "guest_29" }));
+      await bot.handleUpdate(press(dataOf(last(calls), "@guest_29")));
+
+      expect(plain(last(calls))).toContain("@guest_29 в зале.");
+    });
+
     it("reads a price beyond six base-36 digits from the button", () => {
       const minorUnits = 36 ** 6 + 5;
       const data = `v1:ac:bp:${uuidToToken(vaseId)}:${uuidToToken(anyaId)}:${minorUnits.toString(36)}`;

@@ -171,7 +171,7 @@ export function createFloorBids(
     }
     // Поиск — по нику среди участников сообщества (PER-816): человека, которого
     // в зале ещё нет, помощник находит и добавляет в состав.
-    const found = await members(request, search);
+    const found = await members(request, { search });
     if (found.kind !== "ok") {
       return {
         kind: "floor-bids",
@@ -199,7 +199,7 @@ export function createFloorBids(
   // Identity отдаёт держателю права состава; без него поиска нет.
   async function members(
     request: { identity: { identityId: string } } & FloorBidsRequest,
-    search?: string,
+    filter: { search?: string; id?: string } = {},
   ): Promise<
     { kind: "ok"; members: readonly RoomMember[] } | { kind: "unavailable" }
   > {
@@ -210,7 +210,7 @@ export function createFloorBids(
       rpcMeta(request),
     );
     if (listed.kind !== "ok") return { kind: "unavailable" };
-    const needle = search?.toLocaleLowerCase("ru");
+    const needle = filter.search?.toLocaleLowerCase("ru");
     return {
       kind: "ok",
       members: listed.value.members
@@ -218,6 +218,7 @@ export function createFloorBids(
           (each) =>
             each.circle === "member" &&
             each.telegramUsername !== undefined &&
+            (filter.id === undefined || each.identityId === filter.id) &&
             (needle === undefined ||
               each.telegramUsername.toLocaleLowerCase("ru").includes(needle)),
         )
@@ -241,7 +242,7 @@ export function createFloorBids(
   async function add(
     request: Extract<FloorBidsRequest, { intent: "add-floor-member" }>,
   ): Promise<ExecuteResult> {
-    const all = await members(request);
+    const all = await members(request, { id: request.memberId });
     const current = await read(request);
     if (current.kind === "refused") return current.result;
     const screen = (note: FloorNote): ExecuteResult => ({
