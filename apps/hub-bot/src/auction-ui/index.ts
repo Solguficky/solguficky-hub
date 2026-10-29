@@ -37,6 +37,7 @@ export {
   dayNominations,
   duelMinChanges,
 } from "./day-nominations.js";
+export { FinalBidReadUnavailable } from "./final-bid-failure.js";
 export {
   type AuctionDenial,
   type AuctionResult,

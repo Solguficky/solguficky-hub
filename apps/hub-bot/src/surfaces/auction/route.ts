@@ -6,6 +6,7 @@ import {
   applicationQueue,
   decideEntry,
   encodeAuctionCallback,
+  FinalBidReadUnavailable,
   handleAuctionUpdate,
   parseAuctionCallback,
   type ResolvedIdentity,
@@ -476,7 +477,18 @@ async function routeEntry(input: {
         return { screen: { kind: "outdated" }, identityId };
       }
     }
-    return { screen: unavailable, identityId, failure: classify(cause) };
+    return {
+      screen: {
+        ...unavailable,
+        ...(cause instanceof FinalBidReadUnavailable
+          ? { bidRejected: true as const }
+          : {}),
+      },
+      identityId,
+      failure: classify(
+        cause instanceof FinalBidReadUnavailable ? cause.cause : cause,
+      ),
+    };
   }
 }
 
