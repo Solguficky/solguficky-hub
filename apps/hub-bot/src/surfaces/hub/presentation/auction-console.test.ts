@@ -199,6 +199,7 @@ const forgedAuctionPresses = {
   "console-lineup-confirm": `v1:ac:ly:${auctionToken}:abcde:0`,
   "console-start-final": `v1:ac:g:${auctionToken}`,
   "console-next-lot": `v1:ac:n:${auctionToken}`,
+  "console-open-ask": `v1:ac:go:${auctionToken}`,
   "console-ask": `v1:ac:a:${auctionToken}:1`,
   "console-close": `v1:ac:c:${auctionToken}:1`,
   "console-close-confirm": `v1:ac:k:${auctionToken}:1:${uuidToToken(mugId)}:x`,
@@ -3283,7 +3284,7 @@ describe("the raffle line of the console", () => {
     await bot.handleUpdate(press(consoleData));
 
     expect(plain(last(calls))).toContain(
-      "Аукцион завершён.\nВремя финала: не выставлено.\nРозыгрыш: выиграл билет №1 — Сова*, билетов: 1.",
+      "Аукцион завершён.\nРозыгрыш: выиграл билет №1 — Сова*, билетов: 1.",
     );
   });
 });
@@ -4102,16 +4103,19 @@ describe("final of the auctioneer", () => {
     expect(labels(last(calls))).toEqual([["Открыть первый лот"], ["‹ Пульт"]]);
 
     await next((history) => press(dataOf(last(history), "Открыть первый лот")));
+    expect(plain(last(calls))).toBe(
+      "Открыть следующий лот?\n\nТорги по нему начнутся сразу.",
+    );
+    expect(auction.sent("startNextLot")).toEqual([]);
+    await next((history) => press(dataOf(last(history), "✔️ Да, открыть")));
     const panel = last(calls);
     expect(plain(panel)).toContain("1. Ваза — 1 200 ₽ · торгуется");
     expect(plain(panel)).toContain(
       "Сейчас: Ваза.\nЦена: 1 200 ₽, следующая: 1 300 ₽.\nЛидер: Бэтмен.\nПоследние ставки:\n1 200 ₽ — Бэтмен\n1 100 ₽",
     );
     expect(labels(panel)).toEqual([
-      ["Поднять цену"],
       ["Продать"],
       ["Ставки зала"],
-      ["Сеты"],
       ["Ещё"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
@@ -4119,7 +4123,7 @@ describe("final of the auctioneer", () => {
 
     // Порог вопроса — следующая цена (PER-640): сумма не выше неё до Auction
     // не доходит, и исход называет тот же порог.
-    await next((history) => press(dataOf(last(history), "Поднять цену")));
+    await next(() => press(`v1:ac:a:${auctionToken}:0`));
     const asked = question(calls).payload;
     expect(dataOf(asked, "Отмена")).toBe(`v1:q:fa:${auctionToken}:0:42`);
     expect(spaced(asked.text ?? "")).toContain(
@@ -4170,7 +4174,6 @@ describe("final of the auctioneer", () => {
     expect(labels(last(calls))).toEqual([
       ["Открыть следующий лот"],
       ["Ставки зала"],
-      ["Сеты"],
       ["Ещё"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
@@ -4202,7 +4205,8 @@ describe("final of the auctioneer", () => {
       await next((history) =>
         press(dataOf(last(history), "Открыть первый лот")),
       );
-      await next((history) => press(dataOf(last(history), "Поднять цену")));
+      await next((history) => press(dataOf(last(history), "✔️ Да, открыть")));
+      await next(() => press(`v1:ac:a:${auctionToken}:0`));
       return { auction, calls, next };
     }
     // Ключи отправленных `AdvanceAsk`: журнал команд фейка хранит аргументы
@@ -4352,8 +4356,17 @@ describe("final of the auctioneer", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
     await bot.handleUpdate(press(dataOf(last(calls), "Открыть следующий лот")));
-    await bot.handleUpdate(press(dataOf(last(calls), "Продать")));
-    await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, продать")));
+    await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, открыть")));
+    // На последнем лоте состава кнопка говорит, что аукцион завершится.
+    await bot.handleUpdate(
+      press(dataOf(last(calls), "Продать и завершить аукцион")),
+    );
+    expect(plain(last(calls))).toContain(
+      "Это последний лот: после него аукцион завершится.",
+    );
+    await bot.handleUpdate(
+      press(dataOf(last(calls), "✔️ Да, продать и завершить")),
+    );
 
     expect(spaced(last(calls).text ?? "")).toBe(
       "<b>Лот продан</b>\n\n<b>Кружка</b>\n\nЦена: 500 ₽, покупатель — Бэтмен. Это был последний лот — аукцион завершён: 2 лота, 1 700 ₽.",
@@ -4372,6 +4385,7 @@ describe("final of the auctioneer", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
     await bot.handleUpdate(press(dataOf(last(calls), "Открыть следующий лот")));
+    await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, открыть")));
     expect(plain(last(calls))).toContain("Ставок нет.");
 
     await bot.handleUpdate(press(dataOf(last(calls), "Закрыть без продажи")));
@@ -4550,6 +4564,7 @@ describe("final lineup", () => {
     await next((history) =>
       press(dataOf(last(history), "Открыть следующий лот")),
     );
+    await next((history) => press(dataOf(last(history), "✔️ Да, открыть")));
     expect(plain(last(calls))).toContain("1. Кружка — 500 ₽ · торгуется");
     await next((history) =>
       press(dataOf(last(history), "Закрыть без продажи")),
@@ -5926,10 +5941,8 @@ describe("live console of the auctioneer", () => {
     expect(plain(edited)).toContain("Цена: 1 300 ₽, следующая: 1 400 ₽.");
     expect(plain(edited)).toContain("Лидер: Бэтмен.");
     expect(labels(edited)).toEqual([
-      ["Поднять цену"],
       ["Продать"],
       ["Ставки зала"],
-      ["Сеты"],
       ["Ещё"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
@@ -5939,7 +5952,7 @@ describe("live console of the auctioneer", () => {
 
   // «Промо-видео» пульта ведущего (PER-802) при чате медиа не пропадает
   // после живой правки по потоку.
-  it("keeps the promo video row after a live edit", async () => {
+  it("has no promo video row in the final console, before and after a live edit", async () => {
     const watch = stream();
     const auction = running();
     const { bot, calls } = harness("admin", auction, [], undefined, undefined, {
@@ -5955,7 +5968,7 @@ describe("live console of the auctioneer", () => {
     });
     await bot.init();
     await bot.handleUpdate(press(consoleData));
-    expect(labels(last(calls))).toContainEqual(["Промо-видео"]);
+    expect(labels(last(calls)).flat()).not.toContain("Промо-видео");
     const before = edits(calls).length;
 
     watch.emit(bid(auction, 4, 130_000));
@@ -5963,7 +5976,8 @@ describe("live console of the auctioneer", () => {
 
     expect(edits(calls)).toHaveLength(before + 1);
     const edited = edits(calls).at(-1)?.payload as Sent;
-    expect(labels(edited)).toContainEqual(["Промо-видео"]);
+    expect(labels(edited).flat()).not.toContain("Промо-видео");
+    expect(labels(edited).flat()).not.toContain("Сеты");
   });
 
   it("does not read the console again for a state it already shows", async () => {

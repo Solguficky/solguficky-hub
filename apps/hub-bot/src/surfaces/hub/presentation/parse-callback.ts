@@ -629,6 +629,7 @@ type PlainAction =
   // нуля: токен лота рядом с аукционом и ключом в 64 байта не помещается.
   | { kind: "console-start-final"; auction: string }
   | { kind: "console-next-lot"; auction: string }
+  | { kind: "console-open-ask"; auction: string }
   | { kind: "console-ask"; auction: string; position: number }
   | { kind: "console-close"; auction: string; position: number }
   // «Да» подтверждения закрытия: ключ рождён, когда подтверждение показано.
@@ -1993,6 +1994,11 @@ export function consoleNextLotData(auction: string): string {
   return `v1:ac:n:${auction}`;
 }
 
+/** Подтверждение открытия лота финала (PER-816). */
+export function consoleOpenAskData(auction: string): string {
+  return `v1:ac:go:${auction}`;
+}
+
 /** «Поднять цену» лота финала с номером `position` в составе. */
 export function consoleAskData(auction: string, position: number): string {
   return `v1:ac:a:${auction}:${position}`;
@@ -3335,6 +3341,10 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "n":
       return parts.length === 4
         ? { kind: "console-next-lot", auction: auction.data }
+        : { kind: "malformed" };
+    case "go":
+      return parts.length === 4
+        ? { kind: "console-open-ask", auction: auction.data }
         : { kind: "malformed" };
     case "a":
     case "c": {

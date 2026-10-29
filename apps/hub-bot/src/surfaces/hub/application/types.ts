@@ -1052,6 +1052,7 @@ export type AuctionConsoleRequest =
   // помещается, а порядок после заморозки не меняется.
   | (AuctionConsoleCall & { intent: "start-auction-final"; opId: string })
   | (AuctionConsoleCall & { intent: "start-final-lot"; opId: string })
+  | (AuctionConsoleCall & { intent: "prepare-final-open" })
   // Вопрос о следующей цене лота: вопрос называет текущую.
   | (AuctionConsoleCall & { intent: "ask-final-price"; position: number })
   // Цена приходит строкой, как её написал человек: разбор — дело юзкейса.
@@ -2251,11 +2252,14 @@ export type ExecuteResult =
     }
   // Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо
   // закрытие без продажи, если ставок нет. `opId` уедет в «Да».
+  | { kind: "final-open-confirm"; auctionId: string }
   | {
       kind: "final-close-confirm";
       auctionId: string;
       position: number;
       opId: string;
+      // Последний лот состава: после продажи аукцион завершается.
+      last?: true;
       title?: string;
       price?: LotAmount;
       leaderName?: string;

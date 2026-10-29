@@ -328,6 +328,7 @@ import {
   type ConsoleScreenView,
   cancelConfirmScreen,
   closeConfirmScreen,
+  openConfirmScreen,
   closedScreen,
   consoleMeetupCancelledText,
   consoleMissingText,
@@ -3005,6 +3006,7 @@ async function handleCallback(
       action.kind === "console-lineup-confirm" ||
       action.kind === "console-start-final" ||
       action.kind === "console-next-lot" ||
+      action.kind === "console-open-ask" ||
       action.kind === "console-ask" ||
       action.kind === "console-close" ||
       action.kind === "console-close-confirm" ||
@@ -8320,6 +8322,7 @@ async function handleConsoleCallback(
         | "console-lineup-confirm"
         | "console-start-final"
         | "console-next-lot"
+        | "console-open-ask"
         | "console-ask"
         | "console-close"
         | "console-close-confirm"
@@ -8597,6 +8600,13 @@ async function handleConsoleCallback(
           ...call,
           intent: "start-final-lot",
           opId: createUuidV7(),
+        }),
+      );
+    case "console-open-ask":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-final-open",
         }),
       );
     case "console-ask":
@@ -9263,6 +9273,9 @@ async function renderConsoleResult(
           ? "final ask requested"
           : "final ask asked again",
       );
+    case "final-open-confirm":
+      await showScreen(ctx, openConfirmScreen(result));
+      return handled("final lot open confirmation sent");
     case "final-close-confirm":
       await showScreen(ctx, closeConfirmScreen(result));
       return handled("final lot close confirmation sent");
@@ -14486,6 +14499,7 @@ function callbackUseCase(
     | "console-lineup-confirm"
     | "console-start-final"
     | "console-next-lot"
+    | "console-open-ask"
     | "console-ask"
     | "console-close"
     | "console-close-confirm"
@@ -14729,6 +14743,7 @@ function callbackUseCase(
     case "console-lineup-confirm":
     case "console-start-final":
     case "console-next-lot":
+    case "console-open-ask":
     case "console-ask":
     case "console-close":
     case "console-close-confirm":

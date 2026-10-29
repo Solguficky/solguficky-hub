@@ -828,6 +828,11 @@ export const screenCatalog = {
   // Закрытие лота финала ведущим (PER-337): продажа необратима, поэтому —
   // подтверждение с красным «Да». Заголовок — вопрос с названием лота,
   // линтер сверяет его по началу.
+  "final-open-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Открыть следующий лот",
+  },
   "final-close-confirm": {
     class: "screen",
     nav: "confirm",

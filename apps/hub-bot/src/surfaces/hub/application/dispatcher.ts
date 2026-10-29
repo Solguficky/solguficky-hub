@@ -364,6 +364,7 @@ export function createDispatcher(
         case "freeze-final-lineup":
         case "start-auction-final":
         case "start-final-lot":
+        case "prepare-final-open":
         case "ask-final-price":
         case "advance-final-ask":
         case "prepare-final-close":
