@@ -1087,9 +1087,13 @@ describe("auction root and the way back", () => {
     await bare.bot.handleUpdate(press(extensionsData));
     expect(JSON.stringify(labels(lastScreen(bare.calls)))).not.toContain("↗");
 
-    const { bot, calls } = harness("member", fakeAuction({ existing: true }), {
-      hall,
-    });
+    // Ссылки в «Расширениях» стоят, пока идут торги: стадия фикстуры по
+    // умолчанию — «scheduled».
+    const { bot, calls } = harness(
+      "member",
+      fakeAuction({ existing: true, stage: "prebidding" }),
+      { hall },
+    );
     await bot.init();
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);
