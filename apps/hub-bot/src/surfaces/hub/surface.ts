@@ -36,6 +36,7 @@ import {
 } from "../../core/notifications/step-window-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { rpcMeta } from "../../core/rpc-metadata.js";
+import { serviceNames } from "../../core/service.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createDispatcher } from "./application/dispatcher.js";
 import { createAuctionClient } from "./auction/client.js";
@@ -47,6 +48,7 @@ import {
 } from "./delivery/access-request.js";
 import { decodeNotification } from "./delivery/notification.js";
 import { createIdentityClient } from "./identity/client.js";
+import { createLiveScreensNats } from "./live-screens-nats.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
 import { createBot } from "./presentation/bot.js";
@@ -196,6 +198,16 @@ export const hubSurface: SurfaceDefinition = ({
           onError: (_auctionId, cause, failure) =>
             reportWatchFailure(logger, cause, failure),
         });
+  // Открытые пульт ведущего и «Ставки зала» переживают рестарт (PER-815):
+  // записи лежат в bucket'е, который объявляет платформа.
+  const liveScreens =
+    watches === undefined
+      ? undefined
+      : createLiveScreensNats({
+          url: config.natsUrl,
+          service: serviceNames.hub,
+          logger,
+        });
   const limiter = createEditLimiter({
     onError: (_key, cause) =>
       reportLiveEditFailure(
@@ -236,6 +248,9 @@ export const hubSurface: SurfaceDefinition = ({
                 live: {
                   watches,
                   limiter,
+                  ...(liveScreens === undefined
+                    ? {}
+                    : { screens: (kind) => liveScreens.screens(kind) }),
                   names: {
                     getDisplayNames: (request) =>
                       auction
@@ -454,6 +469,7 @@ export const hubSurface: SurfaceDefinition = ({
         releaseReport.close();
         limiter.close();
         watches?.close();
+        void liveScreens?.close();
         identity.close();
         meetups.close();
         achievements?.close();

@@ -153,6 +153,9 @@ export type ConsoleScreenView = {
   section?: ConsoleSection;
   // У бота есть чат медиа (PER-774): без него промо-видео не задать.
   media?: boolean;
+  // Когда пульт прочитан, мс эпохи (PER-815): ведущий по времени замечает
+  // застывший экран и без плашки об обрыве.
+  updatedAt?: number;
 };
 
 export const staleConsoleText =
@@ -691,6 +694,7 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
     text: screenText(
       "Пульт",
       view.stale === true ? escapeHtml(staleConsoleText) : undefined,
+      updatedLine(view),
       statusLines(view).map(escapeHtml).join("\n"),
       lineupLines(console).map(escapeHtml).join("\n"),
       trading.length === 0 ? undefined : trading.map(escapeHtml).join("\n"),
@@ -698,6 +702,20 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
     keyboard: withNav(keyboard, toAuctionRoot(console.auctionId)),
     format: "HTML",
   };
+}
+
+// «Обновлено в 21:15:42» (PER-815): время сообщества, с секундами — залп ставок
+// двигает экран чаще минуты, и по минутам застывший экран не отличить.
+function updatedLine(view: ConsoleScreenView): string | undefined {
+  if (view.updatedAt === undefined) return undefined;
+  const time = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: view.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(view.updatedAt);
+  return escapeHtml(`Обновлено в ${time}`);
 }
 
 function priceLabel(status: LotStatusView): string {
