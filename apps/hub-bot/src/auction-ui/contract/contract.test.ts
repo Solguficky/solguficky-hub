@@ -218,6 +218,7 @@ describe("auction contract self-check", () => {
       "lot: scheduled",
       "lot: scheduled, step by thresholds",
       "lot: held",
+      "lot: held with proxy",
       "lot: draft",
       "history: newest page",
       "history: earlier page",

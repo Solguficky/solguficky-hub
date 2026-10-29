@@ -8,6 +8,7 @@ import type {
   FavoritesPort,
   LotStatusView,
   LotView,
+  Money,
   StepWindowView,
   Viewer,
 } from "../../ports.js";
@@ -488,6 +489,8 @@ function bidRows(
   page: number,
 ): AuctionButton[][] {
   const { nextPrice, status } = lot;
+  if (status.kind === "held")
+    return heldRows(lot, status.currentPrice, viewer, page);
   if (
     status.kind !== "trading" ||
     nextPrice === undefined ||
@@ -543,6 +546,39 @@ function bidRows(
       ...(lot.proxyEnabled
         ? [{ action: "lot.proxy" as const, callbackData: ask("proxy") }]
         : []),
+    ],
+  ];
+}
+
+// Лот, который ждёт финала, принимает только лимит автоставки (PER-821,
+// ADR-079): он сработает в финале по сетке цен, а ставки и «Своей суммы» у
+// удержания нет. Лидеру удержания ряд тоже нужен — лимит лидера разрешён.
+// Ряд — тому, кто вправе ставить: хаб пускает в аукцион и держателя
+// `run-auctions` без права ставок, а его лимит Auction отклонил бы.
+function heldRows(
+  lot: LotView,
+  currentPrice: Money,
+  viewer: Viewer,
+  page: number,
+): AuctionButton[][] {
+  if (
+    !lot.proxyEnabled ||
+    !viewer.rights.includes("place-bids") ||
+    currentPrice.minorUnits > MAX_COMMAND_AMOUNT
+  ) {
+    return [];
+  }
+  return [
+    [
+      {
+        action: "lot.proxy",
+        callbackData: encodeAuctionCallback({
+          kind: "ask",
+          question: "proxy",
+          lotId: lot.lotId,
+          page,
+        }),
+      },
     ],
   ];
 }

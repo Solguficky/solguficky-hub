@@ -2399,6 +2399,77 @@ describe("bid leaf delivery", () => {
     });
   });
 
+  // Лот ждёт финала (PER-821, ADR-079): лимит спрашивается и подтверждается
+  // словами финала. Бот создан заново на каждом шаге: состояния у вопроса нет,
+  // шаг едет в кнопке.
+  it("asks and confirms the limit of a lot waiting for the final", async () => {
+    const held = portsWith({
+      lot: {
+        proxyEnabled: true,
+        status: {
+          kind: "held",
+          currentPrice: { minorUnits: 90_000, currency: "RUB" },
+        },
+      },
+    });
+    const asked = makeBot(held);
+    await asked.bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({
+          kind: "ask",
+          question: "proxy",
+          lotId,
+          page: 0,
+        }),
+        message: { message_id: 7, date: 0, chat: privateChat, text: "card" },
+      },
+    } as Update);
+    expect(
+      asked.calls.find((call) => call.method === "sendMessage")?.payload,
+    ).toMatchObject({
+      text: expect.stringContaining("Лот ждёт финала"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Отмена" }]],
+      },
+    });
+
+    const limitStep = encodeAuctionCallback({
+      kind: "question",
+      question: "proxy",
+      lotId,
+      page: 0,
+      addressee: from.id,
+    });
+    const confirmed = makeBot(held);
+    await confirmed.bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "2 000",
+        reply_to_message: {
+          ...questionMessage,
+          text: "Автоставка",
+          reply_markup: {
+            inline_keyboard: [[{ text: "Отмена", callback_data: limitStep }]],
+          },
+        },
+      },
+    } as Update);
+    expect(
+      confirmed.calls.find((call) => call.method === "sendMessage")?.payload,
+    ).toMatchObject({
+      text: expect.stringContaining("Лимит сработает в финале"),
+    });
+  });
+
   it("confirms the typed amount and closes the question", async () => {
     const { bot, calls } = makeBot(trading);
     await bot.handleUpdate(answer({ text: "1 300" }));

@@ -142,3 +142,22 @@ export function finalBidHeadline(
   }
   return finalBidLine(outcome, money);
 }
+
+/**
+ * Слова лимита автоставки лоту, который ждёт финала (PER-821, ADR-079):
+ * лимит сработает в финале по сетке цен, а остаток лимита, который не доходит
+ * до следующей цены сетки, не добирается (ADR-049). Общие у двух ботов.
+ */
+const gridRemainder = "Остаток лимита, не кратный шагу сетки, не добирается.";
+
+export const heldProxyQuestion = `Пришли лимит в рублях. Лот ждёт финала: лимит сработает там, и бот будет ставить за тебя по сетке цен финала. ${gridRemainder} Лимит видишь только ты.`;
+
+export function heldProxyConfirmation(
+  currentPrice: Money,
+  limit: Money,
+  money: (m: Money) => string,
+): string {
+  return `Цена сейчас ${money(currentPrice)}. Лимит сработает в финале: бот будет ставить за тебя по сетке цен, но не выше ${money(limit)}. ${gridRemainder}`;
+}
+
+export const heldProxyAccepted = `Лимит сработает в финале по сетке цен. ${gridRemainder}`;

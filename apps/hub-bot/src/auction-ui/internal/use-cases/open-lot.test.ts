@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { AuctionPort, FavoritesPort, LotView } from "../../ports.js";
+import type {
+  AuctionPort,
+  FavoritesPort,
+  LotView,
+  Viewer,
+} from "../../ports.js";
 import { previewLot, showLot } from "./open-lot.js";
 
 // Предпросмотр лота (PER-512): блок тот же, что у карточки участника, на
@@ -179,5 +184,55 @@ describe("lot preview", () => {
     if (trading === undefined) throw new Error("no trading lot");
     const preview = await previewLot({ auction, viewer: VIEWER, lot: trading });
     expect(preview.blocks[0]).toMatchObject({ participantName: "Сова" });
+  });
+});
+
+// Ряд «Автоставка» лота, который ждёт финала (PER-821, ADR-079).
+describe("proxy row of a lot waiting for the final", () => {
+  const held = (over: Partial<LotView> = {}): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Шарф", description: "" },
+    proxyEnabled: true,
+    status: { kind: "held", currentPrice: rub(900) },
+    ...over,
+  });
+  const rowsOf = async (
+    lot: LotView,
+    viewer: Viewer | typeof VIEWER = VIEWER,
+  ) => {
+    const body = await showLot({ auction, viewer, lot, page: 0 });
+    return body.keyboard
+      .flat()
+      .map((button) => button.action)
+      .filter(
+        (action) => action.startsWith("lot.bid") || action === "lot.proxy",
+      );
+  };
+
+  it("offers only the proxy limit, to the leader too", async () => {
+    expect(await rowsOf(held())).toEqual(["lot.proxy"]);
+    expect(
+      await rowsOf(
+        held({
+          status: {
+            kind: "held",
+            currentPrice: rub(900),
+            leaderId: VIEWER.identityId,
+          },
+        }),
+      ),
+    ).toEqual(["lot.proxy"]);
+  });
+
+  it("offers nothing without the proxy, the right to bid or on a sold lot", async () => {
+    expect(await rowsOf(held({ proxyEnabled: false }))).toEqual([]);
+    expect(await rowsOf(held(), { ...VIEWER, rights: [] })).toEqual([]);
+    expect(
+      await rowsOf(
+        held({ status: { kind: "sold", winnerId: LEADER, price: rub(900) } }),
+      ),
+    ).toEqual([]);
   });
 });

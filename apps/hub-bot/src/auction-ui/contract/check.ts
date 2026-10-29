@@ -528,6 +528,15 @@ const HELD_LOT: LotView = {
   status: { kind: "held", currentPrice: rub(900) },
 };
 
+// Удержанный лот, у которого автоставка включена (PER-821, ADR-079): карточка
+// несёт ряд «Автоставка», лимит сработает в финале.
+const HELD_PROXY_LOT: LotView = {
+  ...HELD_LOT,
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b4a",
+  card: { title: "Варежки", description: "" },
+  proxyEnabled: true,
+};
+
 const DRAFT_LOT: LotView = {
   lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b42",
   auctionId: CONTRACT_AUCTION_ID,
@@ -540,7 +549,7 @@ const DRAFT_LOT: LotView = {
 // Лоты, которых нет в страницах ленты: тела ленты выше от них не зависят.
 const OFF_FEED_AUCTION: ContractAuction = {
   ...AUCTION,
-  lots: [...AUCTION.lots, HELD_LOT, DRAFT_LOT],
+  lots: [...AUCTION.lots, HELD_LOT, HELD_PROXY_LOT, DRAFT_LOT],
 };
 
 const EMPTY_AUCTION: ContractAuction = {
@@ -6103,6 +6112,40 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: lotKeyboard(HELD_LOT.lotId, 0),
+    },
+  },
+  // Удержанный лот с автоставкой: ряд «Автоставка» — единственный ряд ставки,
+  // ставки и «Своей суммы» у удержания нет.
+  {
+    intent: "lot: held with proxy",
+    callbackData: lotCallback(HELD_PROXY_LOT.lotId, 0),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_PROXY_LOT.lotId), ...CARD_CALLS],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: HELD_PROXY_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 4,
+          card: { title: "Варежки", description: "" },
+          status: { kind: "held", currentPrice: rub(900) },
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.proxy" as const,
+            callbackData: callback({
+              kind: "ask",
+              question: "proxy",
+              lotId: HELD_PROXY_LOT.lotId,
+              page: 0,
+            }),
+          },
+        ],
+        ...lotKeyboard(HELD_PROXY_LOT.lotId, 0),
+      ],
     },
   },
   // Лот без условий торгов сам не меняется: ни «Обновить», ни хронологии.
