@@ -1888,6 +1888,8 @@ describe("final of the auctioneer", () => {
       auctionId,
       position: 1,
       opId,
+      // Вторая позиция из двух — последняя: продажа завершит аукцион.
+      last: true,
       title: "Ваза",
     });
   });

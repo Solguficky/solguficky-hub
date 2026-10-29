@@ -798,6 +798,15 @@ export const screenCatalog = {
     parent: "floor-bids",
     pairedContent: true,
   },
+  // Правка состава зала (PER-816): те же люди кнопками «убрать», возврат —
+  // «Готово» на экран людей.
+  "floor-room": {
+    class: "screen",
+    nav: "tree",
+    title: "Ставки зала",
+    parent: "floor-bids",
+    pairedContent: true,
+  },
   // Ставка зала за другого человека необратима: подтверждение с красным
   // «Да». Заголовок — вопрос с именем и ценой, линтер сверяет его по началу.
   "floor-confirm": {

@@ -58,6 +58,7 @@ import {
   createNotificationSender,
 } from "./presentation/notification-message.js";
 import { releaseTraceDay } from "./presentation/screens/release-notes.js";
+import { createFloorRoomBus } from "./floor-room-bus.js";
 import { toReleaseTrace } from "./release-lines.js";
 import { startReleaseNotesReport } from "./release-report.js";
 
@@ -158,6 +159,9 @@ export const hubSurface: SurfaceDefinition = ({
             : String(failure.cause)),
       }),
   });
+  // Состав зала помощника (PER-816): bucket KV, соединение открывается при
+  // первом обращении к экрану «Ставки зала».
+  const floorRoom = createFloorRoomBus(config.natsUrl);
   const dispatcher = createDispatcher(
     meetups,
     notifications,
@@ -170,6 +174,8 @@ export const hubSurface: SurfaceDefinition = ({
           auctions: auction,
           timeZone: communityTimeZone,
           usernames: identity,
+          room: floorRoom.store,
+          members: identity,
           // Приём объявления аукциона (PER-765) — Notifications.
           announcements: notifications.announcements,
           media: mediaChat.enabled,
@@ -466,6 +472,7 @@ export const hubSurface: SurfaceDefinition = ({
             }),
         }),
       close() {
+        void floorRoom.close();
         releaseReport.close();
         limiter.close();
         watches?.close();

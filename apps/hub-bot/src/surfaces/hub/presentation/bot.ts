@@ -3046,6 +3046,9 @@ async function handleCallback(
     if (
       action.kind === "console-floor" ||
       action.kind === "console-floor-search" ||
+      action.kind === "console-floor-edit" ||
+      action.kind === "console-floor-add" ||
+      action.kind === "console-floor-remove" ||
       action.kind === "console-floor-pick" ||
       action.kind === "console-floor-confirm" ||
       action.kind === "console-floor-leader"
@@ -11598,6 +11601,9 @@ async function handleFloorCallback(
       kind:
         | "console-floor"
         | "console-floor-search"
+        | "console-floor-edit"
+        | "console-floor-add"
+        | "console-floor-remove"
         | "console-floor-pick"
         | "console-floor-confirm"
         | "console-floor-leader";
@@ -11632,6 +11638,34 @@ async function handleFloorCallback(
           auctionId: tokenToUuid(action.auction),
         }),
       );
+    case "console-floor-edit":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-floor-bids",
+          auctionId: tokenToUuid(action.auction),
+          page: 0,
+          edit: true,
+        }),
+      );
+    case "console-floor-add":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "add-floor-member",
+          auctionId: tokenToUuid(action.auction),
+          memberId: tokenToUuid(action.member),
+        }),
+      );
+    case "console-floor-remove":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-floor-member",
+          auctionId: tokenToUuid(action.auction),
+          memberId: tokenToUuid(action.member),
+        }),
+      );
     // Лидер — на своём месте с пометкой (решение владельца 20.10.2026):
     // нажатие отвечает подсказкой, экран остаётся, Auction не зовётся.
     case "console-floor-leader":
@@ -11651,17 +11685,16 @@ async function handleFloorCallback(
         participantId: tokenToUuid(action.person),
         amount: { minorUnits: action.minorUnits, currency: lotCurrency },
       };
+      // Ставка без подтверждения (PER-816): защита от миссклика — явный состав
+      // зала, а ошибку исправляет снятие участника с лота. Старая кнопка «Да»
+      // ставит так же.
       return render(
-        await runtime.dispatcher.execute(
-          action.kind === "console-floor-pick"
-            ? { ...call, intent: "prepare-floor-bid", target }
-            : {
-                ...call,
-                intent: "place-floor-bid",
-                target,
-                opId: createUuidV7(),
-              },
-        ),
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "place-floor-bid",
+          target,
+          opId: createUuidV7(),
+        }),
       );
     }
     default: {
@@ -11698,6 +11731,7 @@ async function renderFloorResult(
         page: result.page,
         ...(result.note === undefined ? {} : { note: result.note }),
         ...(result.search === undefined ? {} : { search: result.search }),
+        ...(result.edit === true ? { edit: true } : {}),
         ...(result.stale === true ? { stale: true } : {}),
       };
       const sent = await showScreen(ctx, floorScreen(view));
@@ -14505,6 +14539,9 @@ function callbackUseCase(
     | "console-close-confirm"
     | "console-floor"
     | "console-floor-search"
+    | "console-floor-edit"
+    | "console-floor-add"
+    | "console-floor-remove"
     | "console-floor-pick"
     | "console-floor-confirm"
     | "console-floor-leader"
@@ -14749,6 +14786,9 @@ function callbackUseCase(
     case "console-close-confirm":
     case "console-floor":
     case "console-floor-search":
+    case "console-floor-edit":
+    case "console-floor-add":
+    case "console-floor-remove":
     case "console-floor-pick":
     case "console-floor-confirm":
     case "console-floor-leader":

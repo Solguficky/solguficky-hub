@@ -11,6 +11,7 @@ import type {
   AuctionNotificationSettings,
 } from "../../../core/notifications/outbid.js";
 import type { CommunityDay } from "../community-time.js";
+import type { RoomMember } from "./floor-room.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
@@ -1099,8 +1100,21 @@ export type FloorBidsRequest =
       intent: "view-floor-bids";
       auctionId: string;
       page: number;
-      // Ответ на «Другой человек…»: люди, в чьём имени есть эта строка.
+      // Ответ на «Добавить человека…»: люди сообщества, в чьём нике есть эта
+      // строка (PER-816).
       search?: string;
+      // Правка состава зала: кнопки людей убирают их из состава.
+      edit?: true;
+    })
+  | (FloorCall & {
+      intent: "add-floor-member";
+      auctionId: string;
+      memberId: string;
+    })
+  | (FloorCall & {
+      intent: "remove-floor-member";
+      auctionId: string;
+      memberId: string;
     })
   | (FloorCall & { intent: "ask-floor-search"; auctionId: string })
   | (FloorCall & { intent: "prepare-floor-bid"; target: FloorBidTarget })
@@ -1592,6 +1606,15 @@ export type FloorLot = {
 export type FloorView = {
   auctionId: string;
   status: ConsoleAuctionStatus;
+  // Люди состава, у которых в аукционе ещё нет имени: ставить за них нельзя,
+  // пока человек не откроет бота и не выберет имя (ADR-070, дополнение
+  // 2026-10-29).
+  waiting: readonly RoomMember[];
+  // Найденные по нику в ответ на «Добавить человека…».
+  found?: readonly RoomMember[];
+  // Состав не прочитался: экран людей не показывается, и «Повторить» читает
+  // заново.
+  roomUnavailable?: true;
   // Нет — лот не открыт: до старта финала, между лотами и после.
   lot?: FloorLot;
   // По алфавиту имени: место человека на экране не меняется от ставок
@@ -1623,7 +1646,13 @@ export type FloorNote =
   | { kind: "removed-from-lot"; name?: string }
   // Ответа на ставку не было: она могла пройти, и лидера показывает экран.
   | { kind: "unanswered"; name?: string; price: LotAmount }
-  | { kind: "not-found"; search: string };
+  | { kind: "not-found"; search: string }
+  | { kind: "not-in-room" }
+  | { kind: "member-added"; name: string }
+  | { kind: "member-removed"; name: string }
+  | { kind: "member-already-in" }
+  | { kind: "members-unavailable" }
+  | { kind: "room-write-failed" };
 
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
 // кругу сообщества, который разворачивает Notifications. Списка получателей
@@ -1922,6 +1951,7 @@ export type ExecuteResult =
       page: number;
       note?: FloorNote;
       search?: string;
+      edit?: true;
       // Чтение после ставки отказало: экран — прочитанный до неё, и цена
       // могла устареть.
       stale?: true;
