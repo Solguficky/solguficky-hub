@@ -24,6 +24,25 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
     journal
   }
 
+  /**
+   * Удержанный лот по цене 1000 с шагом 100 и лимитами `(участник -> максимум)`, записанными в удержании по порядку:
+   * `setSeq` — место в списке. Лидер, если назван, ставку держит без лимита, пока лимит ему не записан.
+   */
+  private def heldWith(leader: Option[Int], limits: (Int, Int)*): Lot =
+    lotIn(
+      LotState.Held(
+        HeldState(
+          config(fixedHundred),
+          money(1000),
+          leader.map(participant),
+          leader.map(_ => bid(0)),
+          limits.zipWithIndex.map { case ((who, max), index) => participant(who) -> limit(max.toLong, index + 1L) }.toMap,
+          extensionsUsed = 0,
+          course = None
+        )
+      )
+    )
+
   /** Тот же лот, удержанный закрытием по наступившему дедлайну. */
   private def holding: Journal = marked.close(closeLot(opN = 2), deadline)._2
 
@@ -290,6 +309,68 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
       resumed shouldBe Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(2), 2, 110, Some(1)))))
       tradingOf(live.lot).leader shouldBe Some(participant(2))
       tradingOf(live.lot).currentPrice shouldBe money(110)
+    }
+
+    "settle every limit the hold kept, not one rival: a leaderless lot goes to the strongest at the second maximum plus a step" in {
+      val waiting = Journal.of(heldWith(None, 1 -> 3000, 2 -> 2500))
+
+      val (resumed, live) = waiting.resume(resumeLot(opN = 1))
+
+      resumed shouldBe Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 2600, None))))
+      tradingOf(live.lot).leader shouldBe Some(participant(1))
+      tradingOf(live.lot).currentPrice shouldBe money(2600)
+    }
+
+    "settle a leaderless lot at the tied maximum for the earlier limit when two limits are equal" in {
+      val waiting = Journal.of(heldWith(None, 1 -> 3000, 2 -> 3000))
+
+      waiting.resume(resumeLot(opN = 1))._1 shouldBe
+        Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 3000, None))))
+    }
+
+    "count a third limit of the hold in the price of the winner" in {
+      val waiting = Journal.of(heldWith(None, 1 -> 3000, 2 -> 2500, 3 -> 2000))
+
+      waiting.resume(resumeLot(opN = 1))._1 shouldBe
+        Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 2600, None))))
+    }
+
+    "outbid a leader without a limit over the second maximum of the limits the hold kept" in {
+      val waiting = Journal.of(heldWith(Some(9), 1 -> 3000, 2 -> 2500))
+
+      waiting.resume(resumeLot(opN = 1))._1 shouldBe
+        Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 2600, Some(9)))))
+    }
+
+    "outbid a leader whose limit is lower than both rivals over the second maximum, not over the leader's limit" in {
+      val waiting = Journal.of(heldWith(Some(9), 1 -> 3000, 2 -> 2500, 9 -> 1500))
+
+      waiting.resume(resumeLot(opN = 1))._1 shouldBe
+        Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 2600, Some(9)))))
+    }
+
+    "keep a leader whose limit is higher than both rivals at the second maximum plus a step" in {
+      val waiting = Journal.of(heldWith(Some(9), 1 -> 3000, 2 -> 2500, 9 -> 4000))
+
+      val (resumed, live) = waiting.resume(resumeLot(opN = 1))
+
+      resumed shouldBe Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 9, 3100, Some(9)))))
+      tradingOf(live.lot).leader shouldBe Some(participant(9))
+    }
+
+    "leave above the price only the limit of the leader after the resume, whatever limits the hold kept" in {
+      val limits = Gen.mapOf(Gen.zip(Gen.choose(1, 5), Gen.choose(0, 30)))
+      val leaders = Gen.option(Gen.choose(1, 9))
+      forAll(limits, leaders) { (kept, leader) =>
+        val waiting = Journal.of(heldWith(leader, kept.toList.map((who, steps) => who -> (1000 + 100 * steps))*))
+
+        val (_, live) = waiting.resume(resumeLot(opN = 1))
+
+        val after = tradingOf(live.lot)
+        after.proxyLimits.foreach { (who, limit) =>
+          if (!after.leader.contains(who)) limit.max should be <= after.currentPrice
+        }
+      }
     }
 
     "answer a repeated resume with the original response" in {
