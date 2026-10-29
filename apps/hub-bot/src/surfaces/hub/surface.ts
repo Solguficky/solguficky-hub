@@ -300,6 +300,12 @@ export const hubSurface: SurfaceDefinition = ({
               lotId,
               requestId === undefined ? undefined : rpcMeta({ requestId }),
             ),
+          auctionFinalAt: (identityId, auctionId, requestId) =>
+            auction.auctionFinalAt(
+              identityId,
+              auctionId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
         };
   const renderLot = createLotNoticeRender({
     reads: noticeReads,
@@ -312,6 +318,7 @@ export const hubSurface: SurfaceDefinition = ({
   const renderFinal = createFinalNoticeRender({
     reads: noticeReads,
     onTitleMissing: logMissingTitle(logger),
+    timeZone: communityTimeZone,
   });
   // Начало окна «Счастливых часов» (PER-616) — тот же общий рендер и те же
   // чтения, что у бота аукциона: право получателя у Identity, названия лотов

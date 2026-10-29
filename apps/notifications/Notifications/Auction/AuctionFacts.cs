@@ -31,6 +31,12 @@ public static class AuctionFacts
     /// </summary>
     public const string FinalLotNextType = "auction_final_lot_next";
 
+    /// <summary>Конец онлайн-торгов — всем держателям права ставок (PER-812).</summary>
+    public const string PrebiddingEndedType = "auction_prebidding_ended";
+
+    /// <summary>Продажа лота в финале — всем, кто ставил на этот лот (PER-812).</summary>
+    public const string LotSoldInFinalType = "auction_lot_sold_in_final";
+
     public const string RaffleResultType = "raffle_result";
     public const string RaffleCauseKind = "auction_raffle_event";
 
@@ -287,11 +293,12 @@ public static class AuctionFacts
     };
 
     /// <summary>
-    /// Следующий лот финала одному лидеру этого лота: лот идёт следом, а
-    /// оценка его длительности — по уже прошедшим лотам финала.
+    /// Следующий лот финала одному лидеру этого лота: лот, который идёт сейчас,
+    /// и место своего лота в составе. Длительность не выдумывается: оценка
+    /// ноль значит «неизвестно» (PER-812).
     /// </summary>
-    public static Notification FinalLotNext(Guid notificationId, Guid recipientId, Guid lotId, int estimatedMinutes,
-        Guid eventId, DateTimeOffset now, DateTimeOffset notAfter) => new()
+    public static Notification FinalLotNext(Guid notificationId, Guid recipientId, Guid lotId, Guid? activeLotId,
+        int place, int lineupSize, Guid eventId, DateTimeOffset now, DateTimeOffset notAfter) => new()
     {
         NotificationId = notificationId.ToString(),
         RecipientId = recipientId.ToString(),
@@ -301,7 +308,43 @@ public static class AuctionFacts
         AuctionFinalLotNext = new AuctionFinalLotNext
         {
             LotId = lotId.ToString(),
-            EstimatedMinutes = estimatedMinutes,
+            ActiveLotId = activeLotId?.ToString() ?? "",
+            Place = (uint)place,
+            LineupSize = (uint)lineupSize,
+        },
+    };
+
+    /// <summary>Конец онлайн-торгов: сколько лотов продано и сколько ждёт финала.</summary>
+    public static Notification PrebiddingEnded(Guid notificationId, Guid recipientId, AuctionTradingEnded ended,
+        int soldCount, int heldCount, DateTimeOffset now, DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = recipientId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionEventId = ended.EventId.ToString() },
+        AuctionPrebiddingEnded = new AuctionPrebiddingEnded
+        {
+            AuctionId = ended.AuctionId.ToString(),
+            MeetupId = ended.MeetupId.ToString(),
+            SoldCount = (uint)soldCount,
+            HeldCount = (uint)heldCount,
+        },
+    };
+
+    /// <summary>Продажа лота в финале тому, кто на него ставил и не выиграл: победитель получает покупку.</summary>
+    public static Notification LotSoldInFinal(Guid notificationId, Guid recipientId, AuctionSale sale,
+        DateTimeOffset now, DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = recipientId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionLotEventId = sale.EventId.ToString() },
+        AuctionLotSoldInFinal = new AuctionLotSoldInFinal
+        {
+            LotId = sale.LotId.ToString(),
+            Price = sale.Price.Clone(),
         },
     };
 

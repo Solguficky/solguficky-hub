@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   AuctionFinalLineupSchema,
   AuctionFinalStartedSchema,
+  AuctionLotSoldInFinalSchema,
+  AuctionPrebiddingEndedSchema,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import { money } from "../format.js";
 import {
@@ -139,6 +141,8 @@ describe("renderFinalNotice", () => {
         "",
         `• «Банка солёных грибов» — ${p1}`,
         `• «Кружка» — ${p2}`,
+        "",
+        "Раунд 2 прогнозов открыт — он закроется, когда начнётся финал.",
       ].join("\n"),
     );
     expect(view.rows).toEqual([]);
@@ -197,7 +201,7 @@ describe("renderFinalNotice", () => {
     expect(lines.filter((line) => line.startsWith("• "))).toHaveLength(
       LINEUP_LOT_LIMIT,
     );
-    expect(lines.at(-1)).toBe("…и ещё лотов: 3.");
+    expect(lines.at(-3)).toBe("…и ещё лотов: 3.");
   });
 
   // Первая строка обещает свой лот: он стоит строкой и за пределом.
@@ -216,7 +220,7 @@ describe("renderFinalNotice", () => {
       lots: new Map([[beyond, { title: "Кружка" }]]),
     }).text.split("\n");
     expect(lines).toContain(`• «Кружка» — ${money(rub(100))}, лот за тобой`);
-    expect(lines.at(-1)).toBe("…и ещё лотов: 2.");
+    expect(lines.at(-3)).toBe("…и ещё лотов: 2.");
   });
 });
 
@@ -352,5 +356,145 @@ describe("createFinalNoticeRender", () => {
     const result = await render(lineup([lot(2)]), context);
     expect(result).toMatchObject({ kind: "ready", message: { rows: [] } });
     expect(onTitleMissing).toHaveBeenCalledWith(permanent, "r-1");
+  });
+});
+
+// Вести конца торгов и продажи лота в финале (PER-812).
+describe("end of online trading and a lot sold in the final", () => {
+  const ended = (soldCount: number, heldCount: number) => ({
+    case: "auctionPrebiddingEnded" as const,
+    value: create(AuctionPrebiddingEndedSchema, {
+      auctionId,
+      meetupId: lot(99),
+      soldCount,
+      heldCount,
+    }),
+  });
+
+  it("reads the counts of the end of trading", () => {
+    expect(finalNoticeOf(ended(4, 2))).toEqual({
+      kind: "prebidding-ended",
+      auctionId,
+      soldCount: 4,
+      heldCount: 2,
+    });
+  });
+
+  it("reads a lot sold in the final and rejects a broken one", () => {
+    const sold = (lotId: string, currency: string) => ({
+      case: "auctionLotSoldInFinal" as const,
+      value: create(AuctionLotSoldInFinalSchema, {
+        lotId,
+        price: { minorUnits: 90_000n, currency },
+      }),
+    });
+    expect(finalNoticeOf(sold(lot(5), "RUB"))).toEqual({
+      kind: "lot-sold-in-final",
+      lotId: lot(5),
+      price: rub(900),
+    });
+    expect(finalNoticeOf(sold("nope", "RUB"))).toBeUndefined();
+    expect(finalNoticeOf(sold(lot(5), ""))).toBeUndefined();
+  });
+
+  it("tells the counts, the final time and what comes next", () => {
+    const view = renderFinalNotice(
+      { kind: "prebidding-ended", auctionId, soldCount: 4, heldCount: 2 },
+      {
+        lots: new Map(),
+        timeZone: "Europe/Moscow",
+        finalAt: "2026-10-31T17:00:00Z",
+      },
+    );
+    expect(view.text).toBe(
+      [
+        "Онлайн-торги закончились. Продано лотов: 4. В финал идут: 2.",
+        "",
+        "Финал ориентировочно 31.10 в 20:00.",
+        "Состав финала объявят отдельным сообщением, тогда же откроется раунд 2 прогнозов.",
+      ].join("\n"),
+    );
+    expect(view.rows).toEqual([]);
+  });
+
+  it("leaves the final time out when it is not set", () => {
+    const view = renderFinalNotice(
+      { kind: "prebidding-ended", auctionId, soldCount: 1, heldCount: 3 },
+      { lots: new Map() },
+    );
+    expect(view.text).not.toContain("ориентировочно");
+  });
+
+  it("says there is no final when no lot is held", () => {
+    const view = renderFinalNotice(
+      { kind: "prebidding-ended", auctionId, soldCount: 5, heldCount: 0 },
+      { lots: new Map() },
+    );
+    expect(view.text).toBe(
+      [
+        "Онлайн-торги закончились. Продано лотов: 5.",
+        "",
+        "Финала не будет: итоги аукциона смотри в боте.",
+      ].join("\n"),
+    );
+  });
+
+  it("names the lot sold in the final and leads to it", () => {
+    const view = renderFinalNotice(
+      { kind: "lot-sold-in-final", lotId: lot(5), price: rub(900) },
+      { lots: new Map([[lot(5), { title: "Кружка" }]]) },
+    );
+    expect(view.text).toBe(
+      `Лот «Кружка» продан в финале за ${money(rub(900))}. Ты на него ставил.`,
+    );
+    expect(view.rows).toEqual([
+      [{ kind: "lot", lotId: lot(5), text: "К лоту" }],
+    ]);
+  });
+
+  it("reads the final time as the recipient and survives a failed read", async () => {
+    const auctionFinalAt = vi
+      .fn()
+      .mockResolvedValueOnce("2026-10-31T17:00:00Z")
+      .mockRejectedValueOnce(new Error("down"));
+    const reads: LotNoticeReads = {
+      holdsPlaceBids: async () => true,
+      lotInfo: async () => ({ title: "" }),
+      auctionFinalAt,
+    };
+    const onTitleMissing = vi.fn();
+    const render = createFinalNoticeRender({
+      reads,
+      onTitleMissing,
+      timeZone: "Europe/Moscow",
+    });
+    const notice: FinalNotice = {
+      kind: "prebidding-ended",
+      auctionId,
+      soldCount: 1,
+      heldCount: 1,
+    };
+
+    const first = await render(notice, context);
+    const second = await render(notice, context);
+
+    expect(first).toMatchObject({ kind: "ready" });
+    expect(JSON.stringify(first)).toContain("31.10 в 20:00");
+    expect(auctionFinalAt).toHaveBeenCalledWith(
+      context.recipientId,
+      auctionId,
+      context.requestId,
+    );
+    // Недоступное чтение времени не теряет весть.
+    expect(second).toMatchObject({ kind: "ready" });
+    expect(JSON.stringify(second)).not.toContain("ориентировочно");
+    expect(onTitleMissing).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the second round of predictions in the lineup", () => {
+    const view = renderFinalNotice(lineup(), { lots: new Map() });
+    expect(view.text).toContain(
+      "Раунд 2 прогнозов открыт — он закроется, когда начнётся финал.",
+    );
   });
 });
