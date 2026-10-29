@@ -41,11 +41,7 @@ import {
 } from "../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
-import {
-  fulfillmentOutcomeOn,
-  myInvoicesOf,
-  wireFulfillment,
-} from "../../core/auction/invoices.js";
+import { myInvoicesOf } from "../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
@@ -134,7 +130,6 @@ export type AuctionRpc = Pick<
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
   | "listMyInvoices"
-  | "chooseFulfillment"
 >;
 // Notifications боту аукциона нужен ради настроек уведомлений аукциона
 // (PER-515, PER-539),
@@ -405,19 +400,6 @@ export function createPorts(
               {
                 viewer: wireViewer(request.viewer),
                 auctionId: request.auctionId,
-              },
-              callOptions(timeoutMs),
-            ),
-          );
-        },
-        chooseFulfillment(request) {
-          return fulfillmentOutcomeOn(() =>
-            auction.chooseFulfillment(
-              {
-                viewer: wireViewer(request.viewer),
-                invoiceId: request.invoiceId,
-                method: wireFulfillment(request.method),
-                opId: request.opId,
               },
               callOptions(timeoutMs),
             ),

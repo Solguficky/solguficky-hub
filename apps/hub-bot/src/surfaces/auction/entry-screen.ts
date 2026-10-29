@@ -105,7 +105,6 @@ import {
   predictionSpec,
 } from "../../auction-ui/index.js";
 import {
-  fulfillmentLabel,
   invoiceLabel,
   invoiceMissingParagraphs,
   invoiceMissingTitle,
@@ -2181,13 +2180,6 @@ function renderButton(
           block?.invoices.find((item) => item.invoiceId === button.invoiceId),
         ),
       );
-    }
-    case "invoice.fulfillment": {
-      const block = blocks.find(
-        (each): each is Extract<AuctionBlock, { kind: "invoice" }> =>
-          each.kind === "invoice",
-      );
-      return text(fulfillmentLabel(button.method, block?.invoice.fulfillment));
     }
     case "invoices.back":
       return text(`‹ ${rootTitle}`);

@@ -736,7 +736,6 @@ function feedLabel(
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a feed body`);
@@ -982,7 +981,6 @@ function lotLabel(
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a lot body`);
@@ -1130,7 +1128,6 @@ function setLotLabelOf(
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a set body`);
@@ -1370,7 +1367,6 @@ function historyLabel(button: AuctionButton): string {
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a history body`);

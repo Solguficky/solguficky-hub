@@ -394,6 +394,7 @@ export function announceable(console: AuctionConsoleSnapshot): boolean {
       return !console.hidden;
     case "prebidding":
     case "break":
+    case "lineup-frozen":
       return true;
     default:
       return false;

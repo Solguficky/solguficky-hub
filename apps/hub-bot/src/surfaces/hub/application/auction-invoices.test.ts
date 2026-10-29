@@ -51,7 +51,6 @@ function invoice(
     winnerId: jay,
     amount,
     paymentDueAt,
-    fulfillment: "unspecified",
     status,
   };
 }

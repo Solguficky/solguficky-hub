@@ -108,9 +108,6 @@ function surfaceFor(
         async listMyInvoices() {
           return { invoices: [] };
         },
-        async chooseFulfillment() {
-          throw new Error("not used");
-        },
         async getMyPredictions() {
           return [];
         },

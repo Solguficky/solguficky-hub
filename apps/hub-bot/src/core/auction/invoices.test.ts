@@ -5,23 +5,12 @@ import {
   InvoiceState_AwaitingPaymentSchema,
   InvoiceState_HandedOverSchema,
 } from "../../../gen/auction/v1/auction_events_pb.js";
+import { MoneySchema } from "../../../gen/auction/v1/auction_pb.js";
 import {
-  FulfillmentMethod,
-  MoneySchema,
-} from "../../../gen/auction/v1/auction_pb.js";
-import {
-  ChooseFulfillmentRefusalSchema,
-  ChooseFulfillmentResponseSchema,
-  FulfillmentAcceptedSchema,
-  FulfillmentFrozenSchema,
   InvoiceSnapshotSchema,
   ListMyInvoicesResponseSchema,
 } from "../../../gen/auction/v1/auction_service_pb.js";
-import {
-  fulfillmentOutcomeOn,
-  myInvoicesOf,
-  wireFulfillment,
-} from "./invoices.js";
+import { myInvoicesOf } from "./invoices.js";
 
 const snapshot = (fields: Record<string, unknown> = {}) =>
   create(InvoiceSnapshotSchema, {
@@ -46,7 +35,6 @@ describe("myInvoicesOf", () => {
           invoices: [
             snapshot(),
             snapshot({
-              fulfillment: FulfillmentMethod.DELIVERY,
               status: {
                 case: "handedOver",
                 value: create(InvoiceState_HandedOverSchema),
@@ -70,7 +58,6 @@ describe("myInvoicesOf", () => {
           lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d",
           amount: { minorUnits: 300_000, currency: "RUB" },
           paymentDueAt: "2026-10-31T18:00:00Z",
-          fulfillment: "delivery",
           status: "handed-over",
         },
       ],
@@ -86,49 +73,5 @@ describe("myInvoicesOf", () => {
     expect(() =>
       myInvoicesOf(response({ status: { case: undefined } })),
     ).toThrow();
-  });
-});
-
-describe("fulfillmentOutcomeOn", () => {
-  it("answers acceptance, a frozen method, a missing invoice and silence", async () => {
-    await expect(
-      fulfillmentOutcomeOn(async () =>
-        create(ChooseFulfillmentResponseSchema, {
-          outcome: {
-            case: "accepted",
-            value: create(FulfillmentAcceptedSchema),
-          },
-        }),
-      ),
-    ).resolves.toEqual({ kind: "accepted" });
-    await expect(
-      fulfillmentOutcomeOn(async () =>
-        create(ChooseFulfillmentResponseSchema, {
-          outcome: {
-            case: "refused",
-            value: create(ChooseFulfillmentRefusalSchema, {
-              reason: {
-                case: "fulfillmentFrozen",
-                value: create(FulfillmentFrozenSchema),
-              },
-            }),
-          },
-        }),
-      ),
-    ).resolves.toEqual({ kind: "refused", refusal: "fulfillment-frozen" });
-    await expect(
-      fulfillmentOutcomeOn(async () => {
-        throw new ConnectError("no invoice", Code.NotFound);
-      }),
-    ).resolves.toEqual({ kind: "not-found" });
-    await expect(
-      fulfillmentOutcomeOn(async () => {
-        throw new ConnectError("silent", Code.Unavailable);
-      }),
-    ).resolves.toEqual({ kind: "unanswered" });
-  });
-
-  it("names the method on the wire", () => {
-    expect(wireFulfillment("digital")).toBe(FulfillmentMethod.DIGITAL);
   });
 });

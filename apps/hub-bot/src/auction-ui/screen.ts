@@ -4,7 +4,6 @@ import type {
   BidOriginView,
   BidRefusal,
   DisplayNameRefusal,
-  FulfillmentMethod,
   LotCardView,
   LotSetView,
   LotStatusView,
@@ -383,14 +382,12 @@ export type AuctionBlock =
       paymentInstructions?: string;
     }
   | {
-      // Счёт победителя (PER-322): лот, сумма, статус, срок оплаты, способ
-      // получения и текст организатора. `notice` — исход выбора способа, с
-      // которого экран открыт.
+      // Счёт победителя (PER-322): лот, сумма, статус, срок оплаты и текст
+      // организатора.
       kind: "invoice";
       auctionId: string;
       invoice: InvoiceItem;
       paymentInstructions?: string;
-      notice?: "fulfillment-chosen" | "fulfillment-frozen";
     }
   | {
       // Счёта по кнопке нет: лот или счёт Auction не отдал. `auctionId` —
@@ -589,12 +586,6 @@ export type AuctionButton =
   | { action: "set.open-lot"; lotId: string; callbackData: string }
   // Счёт в списке счетов: подпись — название лота из блока (PER-322).
   | { action: "invoices.open"; invoiceId: string; callbackData: string }
-  // Способ получения на экране счёта: подпись — способ, выбранный отмечен.
-  | {
-      action: "invoice.fulfillment";
-      method: FulfillmentMethod;
-      callbackData: string;
-    }
   // «По шагу» с порогом в подписи: сумма — та, что уедет в подтверждение.
   | { action: "lot.bid-step"; amount: Money; callbackData: string }
   // «Поставить N» карточки финала: сумма — следующая цена, она же ожидаемая

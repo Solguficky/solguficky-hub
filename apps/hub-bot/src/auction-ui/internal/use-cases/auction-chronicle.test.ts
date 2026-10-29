@@ -55,7 +55,6 @@ function open(chronicle: AuctionChronicleView) {
     getAuction: notUsed,
     getRaffle: notUsed,
     listMyInvoices: notUsed,
-    chooseFulfillment: notUsed,
     getMyPredictions: notUsed,
     getPredictionResults: notUsed,
     getDayChronicle: notUsed,

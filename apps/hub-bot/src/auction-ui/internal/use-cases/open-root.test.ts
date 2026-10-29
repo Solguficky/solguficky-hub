@@ -37,9 +37,6 @@ function auctionOf(
     getAuction: async () => SUMMARY,
     getRaffle: async () => undefined,
     listMyInvoices: async () => ({ invoices: [] }),
-    chooseFulfillment: async () => {
-      throw new Error("not used");
-    },
     getMyPredictions: predictions,
     getPredictionResults: notUsed,
     getDayChronicle: notUsed,

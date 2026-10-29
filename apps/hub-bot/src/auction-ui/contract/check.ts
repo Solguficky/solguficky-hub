@@ -19,7 +19,6 @@ import type {
   DayChronicleView,
   DisplayNameOutcome,
   FollowOutcome,
-  FulfillmentOutcome,
   LotHistoryEntryView,
   LotHistoryPage,
   LotPage,
@@ -170,11 +169,6 @@ export type PortCall =
       method: "listMyInvoices";
       request: Parameters<AuctionMethods["listMyInvoices"]>[0];
     }
-  | {
-      port: "auction";
-      method: "chooseFulfillment";
-      request: Parameters<AuctionMethods["chooseFulfillment"]>[0];
-    }
   // Избранное (PER-495): отметки живут в Notifications, а не в Auction.
   | { port: "favorites"; method: "listFollowedLots"; request: Viewer }
   | {
@@ -239,9 +233,6 @@ export type ContractAuction = {
   // Счета смотрящего и текст организатора (PER-322). Нет — `ListMyInvoices`
   // отказывает, как `unavailable`: корень тогда без «Моих счетов».
   invoices?: MyInvoicesView | "unavailable";
-  // Ответы выбора способа получения по порядку вызовов; принятый выбор
-  // следующее чтение счетов уже видит.
-  fulfillments?: readonly FulfillmentOutcome[];
   predictionResults?: PredictionResultsView;
   // Хроники дня (PER-725). Нет — чтение не ожидается.
   dayChronicle?: DayChronicleView;
@@ -5425,40 +5416,11 @@ const invoicesCallback = encodeAuctionCallback({
 const invoiceCallback = (invoiceId: string) =>
   encodeAuctionCallback({ kind: "invoice", lotId: SOLD_LOT.lotId, invoiceId });
 
-const fulfillmentCallback = (method: "pickup" | "delivery" | "digital") =>
-  encodeAuctionCallback({
-    kind: "fulfillment",
-    lotId: SOLD_LOT.lotId,
-    invoiceId: INVOICE_ID,
-    method,
-  });
-
 const findSoldCall: PortCall = {
   port: "auction",
   method: "findLot",
   request: { viewer: CONTRACT_VIEWER, lotId: SOLD_LOT.lotId },
 };
-
-const choiceCall = (method: "pickup" | "delivery" | "digital"): PortCall => ({
-  port: "auction",
-  method: "chooseFulfillment",
-  request: {
-    viewer: CONTRACT_VIEWER,
-    invoiceId: INVOICE_ID,
-    method,
-    opId: CONTRACT_OP_IDS[0],
-  },
-});
-
-const fulfillmentRows = (["pickup", "delivery", "digital"] as const).map(
-  (method) => [
-    {
-      action: "invoice.fulfillment" as const,
-      method,
-      callbackData: fulfillmentCallback(method),
-    },
-  ],
-);
 
 const toInvoicesRow = [
   { action: "invoice.back" as const, callbackData: invoicesCallback },
@@ -5518,7 +5480,7 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
     },
   },
   {
-    intent: "my invoice: an invoice with the choice of fulfillment",
+    intent: "my invoice: an invoice with the organizer's text and no choice",
     callbackData: invoiceCallback(INVOICE_ID),
     auction: { ...AUCTION, invoices: MY_INVOICES },
     auctionCalls: [findSoldCall, invoicesCall(CONTRACT_AUCTION_ID)],
@@ -5531,7 +5493,7 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
           paymentInstructions: PAYMENT_TEXT,
         },
       ],
-      keyboard: [...fulfillmentRows, toInvoicesRow],
+      keyboard: [toInvoicesRow],
     },
   },
   {
@@ -5541,97 +5503,6 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [findSoldCall, invoicesCall(CONTRACT_AUCTION_ID)],
     body: {
       blocks: [{ kind: "invoice-missing", auctionId: CONTRACT_AUCTION_ID }],
-      keyboard: [toInvoicesRow],
-    },
-  },
-  {
-    intent: "fulfillment: the chosen method is shown on the invoice",
-    callbackData: fulfillmentCallback("delivery"),
-    auction: {
-      ...AUCTION,
-      invoices: MY_INVOICES,
-      fulfillments: [{ kind: "accepted" }],
-    },
-    auctionCalls: [
-      choiceCall("delivery"),
-      findSoldCall,
-      invoicesCall(CONTRACT_AUCTION_ID),
-    ],
-    body: {
-      blocks: [
-        {
-          kind: "invoice",
-          auctionId: CONTRACT_AUCTION_ID,
-          invoice: {
-            ...SOLD_INVOICE,
-            fulfillment: "delivery",
-            title: "Плакат",
-          },
-          paymentInstructions: PAYMENT_TEXT,
-          notice: "fulfillment-chosen",
-        },
-      ],
-      keyboard: [...fulfillmentRows, toInvoicesRow],
-    },
-  },
-  {
-    intent: "fulfillment: the chosen method shows while the read model lags",
-    callbackData: fulfillmentCallback("digital"),
-    auction: {
-      ...AUCTION,
-      invoices: MY_INVOICES,
-      fulfillments: [{ kind: "accepted" }],
-      lagging: true,
-    },
-    auctionCalls: [
-      choiceCall("digital"),
-      findSoldCall,
-      invoicesCall(CONTRACT_AUCTION_ID),
-    ],
-    body: {
-      blocks: [
-        {
-          kind: "invoice",
-          auctionId: CONTRACT_AUCTION_ID,
-          invoice: { ...SOLD_INVOICE, fulfillment: "digital", title: "Плакат" },
-          paymentInstructions: PAYMENT_TEXT,
-          notice: "fulfillment-chosen",
-        },
-      ],
-      keyboard: [...fulfillmentRows, toInvoicesRow],
-    },
-  },
-  {
-    intent: "fulfillment: a handed over lot keeps its method",
-    callbackData: fulfillmentCallback("pickup"),
-    auction: {
-      ...AUCTION,
-      invoices: {
-        invoices: [
-          { ...SOLD_INVOICE, status: "handed-over", fulfillment: "digital" },
-        ],
-      },
-      fulfillments: [{ kind: "refused", refusal: "fulfillment-frozen" }],
-    },
-    auctionCalls: [
-      choiceCall("pickup"),
-      findSoldCall,
-      invoicesCall(CONTRACT_AUCTION_ID),
-    ],
-    body: {
-      blocks: [
-        {
-          kind: "invoice",
-          auctionId: CONTRACT_AUCTION_ID,
-          invoice: {
-            ...SOLD_INVOICE,
-            status: "handed-over",
-            fulfillment: "digital",
-            title: "Плакат",
-          },
-          notice: "fulfillment-frozen",
-        },
-      ],
       keyboard: [toInvoicesRow],
     },
   },
@@ -6358,8 +6229,7 @@ export function spyPorts(
     typeof snapshot.predictions === "string"
       ? undefined
       : [...snapshot.predictions];
-  const fulfillments = [...(snapshot.fulfillments ?? [])];
-  let invoices = snapshot.invoices;
+  const invoices = snapshot.invoices;
   const { followed, explainer } = snapshot;
   const followCommand = (outcome: FollowOutcome | undefined) => {
     if (outcome === undefined) throw new Error("follow is not expected");
@@ -6550,28 +6420,6 @@ export function spyPorts(
           throw new Error("invoices unavailable");
         }
         return invoices;
-      },
-      async chooseFulfillment(request) {
-        calls.push({ port: "auction", method: "chooseFulfillment", request });
-        const outcome = fulfillments.shift();
-        if (outcome === undefined) throw new Error("choice is not expected");
-        // Отставшая read model (`lagging`) принятого выбора ещё не видит.
-        if (
-          outcome.kind === "accepted" &&
-          snapshot.lagging !== true &&
-          invoices !== undefined &&
-          invoices !== "unavailable"
-        ) {
-          invoices = {
-            ...invoices,
-            invoices: invoices.invoices.map((invoice) =>
-              invoice.invoiceId === request.invoiceId
-                ? { ...invoice, fulfillment: request.method }
-                : invoice,
-            ),
-          };
-        }
-        return outcome;
       },
     },
     operations: {
