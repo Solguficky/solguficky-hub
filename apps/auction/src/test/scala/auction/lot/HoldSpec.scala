@@ -36,7 +36,9 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
           money(1000),
           leader.map(participant),
           leader.map(_ => bid(0)),
-          limits.zipWithIndex.map { case ((who, max), index) => participant(who) -> limit(max.toLong, index + 1L) }.toMap,
+          limits.zipWithIndex.map { case ((who, max), index) =>
+            participant(who) -> limit(max.toLong, index + 1L)
+          }.toMap,
           extensionsUsed = 0,
           course = None
         )
