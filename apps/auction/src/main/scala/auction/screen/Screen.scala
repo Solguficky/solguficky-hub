@@ -8,6 +8,7 @@ import auction.aggregate.MeetupVisibility
 import auction.catalog.ImageVersion
 import auction.lot.BidOrigin
 import auction.lot.BidSource
+import auction.lot.Lot
 import auction.lot.LotState
 import auction.lot.Money
 import auction.lot.ParticipantId
@@ -39,11 +40,11 @@ enum ScreenState {
   /** Между лотами финала: исход закрытого и следующий по составу. */
   case Between(closed: ClosedLot, next: Option[ScreenLot])
 
-  /** Аукцион завершён. */
-  case Finished(totals: Totals)
+  /** Аукцион завершён: проданные лоты по порядку продажи и итог сбора. */
+  case Finished(sold: List[ScreenSold], totals: Totals)
 
-  /** Аукцион отменён после старта торгов: итог того, что успело продаться. */
-  case Cancelled(totals: Totals)
+  /** Аукцион отменён после старта торгов: то, что успело продаться, и итог. */
+  case Cancelled(sold: List[ScreenSold], totals: Totals)
 }
 
 /** Лот так, как его видит зритель: название и версия изображения из карточки, если карточка есть. */
@@ -66,12 +67,23 @@ object BidChannel {
     }
 }
 
+/**
+ * Лот в торгах. `next` — следующая цена, главная цифра экрана: ask ведущего, если он выше цены, иначе цена плюс шаг
+ * (`Lot.minRequired`). `step` — шаг при текущей цене. `startedAt` — когда лот вернулся в торги финала: у лота,
+ * возвращённого до появления времени в read model, его нет. `startingPrice` и `onlineEndPrice` — база роста: стартовая
+ * цена лота и цена, с которой лот удержан в конце онлайн-торгов; нет базы — нет и роста.
+ */
 final case class LiveLot(
     lot: ScreenLot,
     price: Money,
     ask: Option[Money],
     leader: Option[String],
-    bids: List[ScreenBid]
+    bids: List[ScreenBid],
+    next: Money,
+    step: Money,
+    startedAt: Option[Instant],
+    startingPrice: Option[Money],
+    onlineEndPrice: Option[Money]
 )
 
 final case class ClosedLot(lot: ScreenLot, outcome: Outcome)
@@ -88,15 +100,37 @@ final case class Sales(count: Int, sums: List[Money])
 /** Итог сбора всего аукциона, онлайн и в финале. Лот, проданный в перерыве, в состав не входит и считается онлайн. */
 final case class Totals(all: Sales, online: Sales, inFinal: Sales)
 
-/** Проданный лот для итога: цена и признак состава финала из `auction_lineup`. */
-final case class SoldLot(price: Money, inLineup: Boolean)
+/**
+ * Проданный лот для итога: сам лот, цена, покупатель, база роста и признак состава финала из `auction_lineup`. `at` —
+ * время продажи, по нему лоты идут в итоге по порядку.
+ */
+final case class SoldLot(
+    lot: ScreenLot,
+    price: Money,
+    buyer: ParticipantId,
+    startingPrice: Option[Money],
+    onlineEndPrice: Option[Money],
+    inLineup: Boolean,
+    at: Instant
+)
+
+/** Проданный лот так, как его видит зритель: покупатель — отображаемое имя. */
+final case class ScreenSold(
+    lot: ScreenLot,
+    price: Money,
+    buyer: String,
+    startingPrice: Option[Money],
+    onlineEndPrice: Option[Money],
+    inFinal: Boolean
+)
 
 /** Ставка, как её читает экран: автор, сумма и происхождение. */
 final case class RecentBid(participant: ParticipantId, amount: Money, origin: BidOrigin)
 
 /**
  * То, что прочитано для одного состояния: аукцион, лоты состава в порядке выхода, последние ставки активного лота от
- * новой к старой и проданные лоты аукциона. Последние два читаются, только когда нужны состоянию.
+ * новой к старой и проданные лоты аукциона. Последние два читаются, только когда нужны состоянию. `resumedAt` и
+ * `heldPrice` — время возврата в торги и цена удержания показанного лота; `readAt` — момент чтения.
  */
 final case class ScreenReading(
     auctionId: UUID,
@@ -104,14 +138,17 @@ final case class ScreenReading(
     auction: Auction,
     lineup: List[LotSnapshotView],
     recentBids: List[RecentBid],
-    sold: List[SoldLot]
+    sold: List[SoldLot],
+    resumedAt: Option[Instant] = None,
+    heldPrice: Option[Money] = None,
+    readAt: Instant = Instant.EPOCH
 ) {
 
   /** Кого экран назовёт: лидер и авторы ставок активного лота, покупатель закрытого и предыдущего. */
   def participants: Set[ParticipantId] = {
     val inLot =
       (Screen.shownLot(this) ++ Screen.previousLot(this)).toList.flatMap(view => Screen.people(view.lot.state))
-    (inLot ++ recentBids.map(_.participant)).toSet
+    (inLot ++ recentBids.map(_.participant) ++ sold.map(_.buyer)).toSet
   }
 }
 
@@ -208,7 +245,12 @@ object Screen {
                     trading.leader.map(name),
                     reading.recentBids.map(bid =>
                       ScreenBid(name(bid.participant), bid.amount, BidChannel.of(bid.origin))
-                    )
+                    ),
+                    Lot.minRequired(trading, reading.readAt),
+                    Lot.step(trading, trading.currentPrice, reading.readAt),
+                    reading.resumedAt,
+                    trading.course.map(_.startingPrice),
+                    reading.heldPrice
                   )
                 )
               // Лот уже активирован аукционом, а `LotResumed` в read model ещё нет: проекции лота и аукциона
@@ -225,8 +267,8 @@ object Screen {
                 ScreenState.Between(ClosedLot(lot(view), outcome(closedState, name)), next)
             }
         }
-      case AuctionState.Finished(_, _) => ScreenState.Finished(totals(reading.sold))
-      case AuctionState.Cancelled(_, _, _) => ScreenState.Cancelled(totals(reading.sold))
+      case AuctionState.Finished(_, _) => ScreenState.Finished(sold(reading.sold, name), totals(reading.sold))
+      case AuctionState.Cancelled(_, _, _) => ScreenState.Cancelled(sold(reading.sold, name), totals(reading.sold))
     }
   }
 
@@ -243,6 +285,12 @@ object Screen {
       case LotState.Withdrawn(_) => Outcome.Withdrawn
       case _ => Outcome.Unsold
     }
+
+  /** Проданные лоты по порядку продажи. */
+  private def sold(lots: List[SoldLot], name: ParticipantId => String): List[ScreenSold] =
+    lots
+      .sortBy(_.at)
+      .map(lot => ScreenSold(lot.lot, lot.price, name(lot.buyer), lot.startingPrice, lot.onlineEndPrice, lot.inLineup))
 
   def totals(sold: List[SoldLot]): Totals =
     Totals(sales(sold), sales(sold.filterNot(_.inLineup)), sales(sold.filter(_.inLineup)))

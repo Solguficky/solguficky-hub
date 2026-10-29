@@ -126,3 +126,32 @@ export function finaleText(finalAt, now, timeZone = COMMUNITY_TIME_ZONE) {
   const date = new Intl.DateTimeFormat("ru-RU", { timeZone, day: "numeric", month: "long" });
   return `Финал ${date.format(at)} в ${time.format(at)}`;
 }
+
+/**
+ * Сколько лот уже в торгах (`started_at`, PER-819): «м:сс», с часами от часа. Без времени или с моментом, который не
+ * разбирается, — `null`: экран не показывает то, чего не знает. Момент из будущего (часы страницы и сервиса
+ * расходятся) даёт ноль, а не отрицательное время. `now` — мгновение в миллисекундах.
+ */
+export function elapsedText(startedAt, now) {
+  if (typeof startedAt !== "string") return null;
+  const started = new Date(startedAt).getTime();
+  if (Number.isNaN(started)) return null;
+  const total = Math.max(0, Math.floor((now - started) / 1000));
+  const pad = (value) => String(value).padStart(2, "0");
+  const seconds = pad(total % 60);
+  const minutes = Math.floor(total / 60) % 60;
+  const hours = Math.floor(total / 3600);
+  return hours > 0 ? `${hours}:${pad(minutes)}:${seconds}` : `${pad(minutes)}:${seconds}`;
+}
+
+/**
+ * Рост цены к базе (`start`, `online_end`): разница в минорных единицах и процент, округлённый до целого. Нет базы или
+ * база в другой валюте — `null`, чужую валюту не вычитают; от нулевой базы процент не определён — он `null`, а разница
+ * остаётся.
+ */
+export function growth(price, base) {
+  if (base === null || base === undefined || base.currency !== price.currency) return null;
+  const delta = price.amount - base.amount;
+  const percent = base.amount > 0 ? Math.round((delta / base.amount) * 100) : null;
+  return { delta, percent };
+}
