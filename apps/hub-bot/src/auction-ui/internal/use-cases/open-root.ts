@@ -42,27 +42,29 @@ export async function openRoot(input: {
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
-  const [raffle, predictionRound, invoices] = await Promise.all([
-    raffleRead,
-    predictionRead,
-    invoicesRead,
-  ]);
-  if (auction === undefined) {
-    return {
-      blocks: [{ kind: "root", auctionId: input.auctionId }],
-      keyboard: [],
-    };
-  }
-  const hasAchievements =
-    input.achievements === undefined
-      ? false
-      : await input.achievements.getEvent(input.auctionId).then(
+  const achievementsRead =
+    auction === undefined || input.achievements === undefined
+      ? Promise.resolve(false)
+      : input.achievements.getEvent(input.auctionId).then(
           (rows) => rows.length > 0,
           (cause) => {
             input.achievements?.reportFailure?.(cause);
             return true;
           },
         );
+  const [raffle, predictionRound, invoices, hasAchievements] =
+    await Promise.all([
+      raffleRead,
+      predictionRead,
+      invoicesRead,
+      achievementsRead,
+    ]);
+  if (auction === undefined) {
+    return {
+      blocks: [{ kind: "root", auctionId: input.auctionId }],
+      keyboard: [],
+    };
+  }
   const raffleButtons =
     raffle !== undefined
       ? [

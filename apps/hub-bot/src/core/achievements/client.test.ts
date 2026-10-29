@@ -1,6 +1,10 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it, vi } from "vitest";
 import {
+  IssueMethod,
+  Recipients,
+} from "../../../gen/achievements/v1/achievements_pb.js";
+import {
   AchievementImageSchema,
   EventAchievementsSchema,
   MyAchievementsSchema,
@@ -9,6 +13,10 @@ import { type AchievementsRpc, achievementsPort } from "./client.js";
 
 const id = "01929b7e-5c1d-7a3f-8e4b-000000000001";
 const auctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+const known = {
+  recipients: Recipients.MANY,
+  issueMethod: IssueMethod.RULE,
+};
 function rpc(): AchievementsRpc {
   return {
     listMyAchievements: vi.fn(async () =>
@@ -44,7 +52,7 @@ describe("achievements read adapter", () => {
               event: { kind: { case: "auctionId", value: auctionId } },
               achievementCode: "first",
             },
-            achievement: { code: "first", title: "Первая" },
+            achievement: { code: "first", title: "Первая", ...known },
           },
           {
             grant: {
@@ -96,13 +104,34 @@ describe("achievements read adapter", () => {
       create(EventAchievementsSchema, {
         fixed: false,
         event: { kind: { case: "auctionId", value: auctionId } },
-        achievements: [{ achievement: { code: "first" }, erasedHolders: 1 }],
+        achievements: [
+          { achievement: { code: "first", ...known }, erasedHolders: 1 },
+        ],
       }),
     );
     expect(await achievementsPort(client).getEvent(auctionId)).toHaveLength(1);
     await expect(achievementsPort(client).getEvent(id)).rejects.toThrow(
       "event mismatch",
     );
+  });
+  it("rejects a definition with an unspecified or unknown enum", async () => {
+    for (const unknown of [
+      { recipients: Recipients.UNSPECIFIED, issueMethod: IssueMethod.RULE },
+      { recipients: Recipients.MANY, issueMethod: IssueMethod.UNSPECIFIED },
+      { recipients: 99 as Recipients, issueMethod: IssueMethod.MANUAL },
+    ]) {
+      const client = rpc();
+      client.getEventAchievements = vi.fn(async () =>
+        create(EventAchievementsSchema, {
+          fixed: true,
+          event: { kind: { case: "auctionId", value: auctionId } },
+          achievements: [{ achievement: { code: "first", ...unknown } }],
+        }),
+      );
+      await expect(
+        achievementsPort(client).getEvent(auctionId),
+      ).rejects.toThrow("unknown enum");
+    }
   });
   it("loads image bytes independently of the list", async () => {
     const client = rpc();

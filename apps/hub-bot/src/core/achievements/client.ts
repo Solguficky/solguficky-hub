@@ -97,6 +97,13 @@ export function achievementsPort(
 }
 
 function definition(value: Achievement) {
+  if (
+    (value.recipients !== Recipients.ONE &&
+      value.recipients !== Recipients.MANY) ||
+    (value.issueMethod !== IssueMethod.RULE &&
+      value.issueMethod !== IssueMethod.MANUAL)
+  )
+    throw new AchievementsInvariant("achievement definition has unknown enum");
   return {
     code: value.code,
     title: value.title,
