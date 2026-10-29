@@ -1,3 +1,4 @@
+import { achievementScreen } from "../../achievement-screen.js";
 import {
   auctionChronicleParagraphs,
   auctionChronicleTitle,
@@ -390,6 +391,15 @@ export function renderEntryScreen(
         text: screenText(menuTitle, ...auctionMenuIntro),
         keyboard: [
           [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
+          [
+            {
+              text: "Ачивки",
+              callback_data: encodeAuctionCallback({
+                kind: "achievements",
+                page: 0,
+              }),
+            },
+          ],
           [{ text: settingsTitle, callback_data: entryCallback("settings") }],
           [{ text: faqTitle, callback_data: entryCallback("faq") }],
         ],
@@ -887,6 +897,21 @@ function renderBody(
   body: AuctionScreenBody,
   options: RenderOptions,
 ): RenderedScreen {
+  const achievements = body.blocks.find(
+    (block) => block.kind === "achievements",
+  );
+  if (achievements !== undefined) {
+    const shown = achievementScreen(achievements.screen, {
+      rich: options.presentation !== "plain",
+      timeZone: options.timeZone,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
+    return {
+      ...shown,
+      format: options.presentation === "plain" ? "html" : "rich",
+      ...(options.presentation === "plain" ? { photos: [] } : {}),
+    };
+  }
   const items = new Map<string, FeedItem>();
   for (const block of body.blocks) {
     if (
@@ -975,6 +1000,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
   let screen: ScreenId = "feed";
   for (const block of blocks) {
     switch (block.kind) {
+      case "achievements":
+        return achievementScreen(block.screen).id;
       case "root":
         return "root";
       case "lot":
@@ -2036,6 +2063,8 @@ function renderButton(
       return text(predictionResultsButtonLabel);
     case "prediction-results.back":
       return text("‹ Аукцион");
+    case "root.achievements":
+      return text("Ачивки");
     case "root.day-chronicle":
       return text(dayChronicleButtonLabel);
     case "day-chronicle.back":

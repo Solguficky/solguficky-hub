@@ -46,6 +46,42 @@ const lot = (
 });
 
 describe("lot card in the hub shell", () => {
+  it("attaches the achievement image to the rich card after loading it", () => {
+    const block: AuctionBlock = {
+      kind: "achievements",
+      screen: {
+        scope: "event",
+        view: "card",
+        auctionId,
+        page: 0,
+        pages: 1,
+        items: [],
+        back: "v1:auc:ach:test:0",
+        holderNames: ["Сова"],
+        erasedHolders: 0,
+        holdersPage: 0,
+        holderPages: 1,
+        achievement: {
+          code: "first",
+          title: "Первая ачивка",
+          description: "За участие",
+          recipients: "many",
+          manual: false,
+          imageVersion: "v1",
+        },
+      },
+    };
+    const data = view([block]);
+    expect(auctionScreen(data).images).toEqual([
+      { lotId: "achievement:first", achievementCode: "first", version: "v1" },
+    ]);
+    const photos = [{ id: "lot", fileId: "photo-1" }];
+    const shown = auctionScreen({ ...data, photos }).screen;
+    expect(shown.media).toEqual(photos);
+    expect(shown.text).toContain('<img src="tg://photo?id=lot"/>');
+    expect(shown.text).toContain("Сова");
+    expect(auctionScreen(view([block], "plain")).images).toBeUndefined();
+  });
   it("orders the groups as status, price with leader and deadline, course, description", () => {
     const { screen } = auctionScreen(
       view([

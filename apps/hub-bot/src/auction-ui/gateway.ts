@@ -153,7 +153,18 @@ export async function handleAuctionUpdate(
     };
   }
 
+  // Своя коллекция в хабе — PER-572. Здесь она открыта только поверхности аукциона.
+  if (
+    (intent.kind === "achievements" || intent.kind === "achievement") &&
+    intent.auctionId === undefined &&
+    surface.kind !== "auction"
+  ) {
+    return { kind: "unreadable", error: new AuctionCallbackError("outdated") };
+  }
   const body = await dispatchAuctionIntent({
+    ...(surface.ports.achievements === undefined
+      ? {}
+      : { achievements: surface.ports.achievements }),
     auction: surface.ports.auction,
     operations: surface.ports.operations,
     ...(surface.ports.favorites === undefined

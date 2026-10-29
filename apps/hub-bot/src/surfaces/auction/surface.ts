@@ -1,3 +1,4 @@
+import { reportAchievementsFailure } from "../../core/achievements/failures.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
@@ -44,6 +45,15 @@ export const auctionSurface: SurfaceDefinition = ({
   if (!loaded.ok) return loaded;
   const auction = loaded.config;
   const clients = createClients({
+    onAchievementsRefused: (cause, meta) =>
+      reportAchievementsFailure({
+        logger,
+        cause,
+        ...(meta === undefined ? {} : { meta }),
+      }),
+    ...(auction.achievementsUrl === undefined
+      ? {}
+      : { achievementsUrl: auction.achievementsUrl }),
     identityUrl: config.identityUrl,
     auctionUrl: auction.auctionUrl,
     ...(auction.notificationsUrl === undefined

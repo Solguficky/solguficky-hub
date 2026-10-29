@@ -30,6 +30,7 @@ import { readRaffle } from "./open-feed.js";
 export async function openRoot(input: {
   auction: AuctionPort;
   favorites?: FavoritesPort;
+  achievements?: import("../../achievement-types.js").AchievementsPort;
   media?: true;
   viewer: Viewer;
   auctionId: string;
@@ -41,11 +42,23 @@ export async function openRoot(input: {
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
-  const [raffle, predictionRound, invoices] = await Promise.all([
-    raffleRead,
-    predictionRead,
-    invoicesRead,
-  ]);
+  const achievementsRead =
+    auction === undefined || input.achievements === undefined
+      ? Promise.resolve(false)
+      : input.achievements.getEvent(input.auctionId).then(
+          (rows) => rows.length > 0,
+          (cause) => {
+            input.achievements?.reportFailure?.(cause);
+            return true;
+          },
+        );
+  const [raffle, predictionRound, invoices, hasAchievements] =
+    await Promise.all([
+      raffleRead,
+      predictionRead,
+      invoicesRead,
+      achievementsRead,
+    ]);
   if (auction === undefined) {
     return {
       blocks: [{ kind: "root", auctionId: input.auctionId }],
@@ -139,6 +152,20 @@ export async function openRoot(input: {
           : []),
       ],
       ...raffleAndPredictionRows,
+      ...(hasAchievements
+        ? [
+            [
+              {
+                action: "root.achievements" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "achievements",
+                  auctionId: input.auctionId,
+                  page: 0,
+                }),
+              },
+            ],
+          ]
+        : []),
       // Хроники дня (PER-725): сводка последних суток, пока идёт онлайн-неделя
       // — от открытия торгов до закрытия последнего лота по дедлайну. Читает её
       // только держатель `place_bids`: держатель одного `run_auctions`, которого

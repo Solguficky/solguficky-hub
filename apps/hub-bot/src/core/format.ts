@@ -3,6 +3,32 @@
 
 export type FormattedMoney = { minorUnits: number; currency: string };
 
+/** Читаемая дата с годом только вне текущего года сообщества. */
+export function readableInstant(input: {
+  instant: string;
+  timeZone: string;
+  now?: Date;
+}): string {
+  const formatter = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: input.timeZone,
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = formatter.formatToParts(new Date(input.instant));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  const currentYear = formatter
+    .formatToParts(input.now ?? new Date())
+    .find((p) => p.type === "year")?.value;
+  const year = part("year") === currentYear ? "" : ` ${part("year")}`;
+  return `${part("day")} ${part("month")}${year}, ${part("weekday")}, ${part("hour")}:${part("minute")}`;
+}
+
 // Валюта у платформы одна — рубль, и у неё две цифры после запятой. Копейки
 // показываются, только когда они есть.
 export function money(amount: FormattedMoney): string {

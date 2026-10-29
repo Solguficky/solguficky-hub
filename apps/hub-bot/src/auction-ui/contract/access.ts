@@ -156,6 +156,29 @@ const AUCTION_ONLY: Person = {
 // он отвечает приветствием, и только «Подать заявку» зовёт заявку — её исход
 // и видит человек.
 export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
+  ...(
+    [
+      ["hub", "member", MEMBER, "admitted"],
+      ["auction", "guest", AUCTION_ONLY, "admitted"],
+      ["auction", "admin", ADMIN, "admitted"],
+      ["auction", "community member", MEMBER, "in-community"],
+      ["auction", "newcomer", NEWCOMER, "welcome"],
+      ["auction", "blocked", BLOCKED, "blocked"],
+    ] as const
+  ).map(([surface, role, person, answer]) => ({
+    name: `${surface}: ${role} presses achievement set`,
+    surface,
+    person,
+    answer,
+    action: {
+      kind: "callback" as const,
+      data: encodeAuctionCallback({
+        kind: "achievements",
+        auctionId: CONTRACT_LOT.auctionId,
+        page: 0,
+      }),
+    },
+  })),
   {
     name: "hub: hub right starts",
     surface: "hub",

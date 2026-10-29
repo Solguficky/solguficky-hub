@@ -1,4 +1,6 @@
+import type { AchievementsPort } from "./achievement-types.js";
 import type { AuctionIntent } from "./callback-data.js";
+import { openAchievements } from "./internal/use-cases/achievements.js";
 import { openAuctionChronicle } from "./internal/use-cases/auction-chronicle.js";
 import {
   answerQuestion,
@@ -69,6 +71,7 @@ export function dispatchAuctionIntent(input: {
   auction: AuctionPort;
   operations: OperationIdPort;
   favorites?: FavoritesPort;
+  achievements?: AchievementsPort;
   proxyExplainer?: ProxyExplainerPort;
   media?: true;
   viewer: Viewer;
@@ -90,9 +93,22 @@ export function dispatchAuctionIntent(input: {
     viewer: input.viewer,
     user: input.user,
   };
+  const achievements =
+    input.achievements === undefined
+      ? {}
+      : { achievements: input.achievements };
   switch (intent.kind) {
+    case "achievements":
+    case "achievement":
+      return openAchievements({
+        auction: input.auction,
+        ...achievements,
+        viewer: input.viewer,
+        intent,
+      });
     case "root":
       return openRoot({
+        ...achievements,
         auction: input.auction,
         ...favorites,
         ...media,

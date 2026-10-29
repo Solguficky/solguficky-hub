@@ -168,6 +168,41 @@ const feedButton = encodeAuctionCallback({
   page: 0,
 });
 
+describe("achievement collection admission", () => {
+  const data = encodeAuctionCallback({ kind: "achievements", page: 0 });
+  it.each([
+    { rights: GUEST, allowed: true },
+    { rights: [...MEMBER, "manage-members"] as const, allowed: true },
+    { rights: MEMBER, allowed: false },
+  ])("keeps admission for $rights", async ({ rights, allowed }) => {
+    const p = ports(identity({ rights }));
+    const listMine = vi.fn(async () => []);
+    p.achievements = {
+      listMine,
+      getEvent: async () => [],
+      getImage: async () => {
+        throw new Error("not needed");
+      },
+    };
+    const result = await routeAuctionCallback({ ports: p, user, data });
+    if (allowed) {
+      expect(result.screen).toMatchObject({
+        kind: "auction",
+        body: {
+          blocks: [
+            { kind: "achievements", screen: { scope: "mine", view: "list" } },
+          ],
+        },
+      });
+      expect(listMine).toHaveBeenCalledWith(VIEWER_ID);
+    } else {
+      expect(result.screen).toEqual({ kind: "denied", reason: "in-community" });
+      expect(listMine).not.toHaveBeenCalled();
+    }
+    expect(p.identity.resolveIdentity).toHaveBeenCalledTimes(1);
+  });
+});
+
 // Шаг вопроса суммы — данные «Отмены» под вопросом, заданным этому человеку.
 const QUESTION_STEP = encodeAuctionCallback({
   kind: "question",

@@ -178,6 +178,8 @@ describe("auction contract self-check", () => {
     expect(AUCTION_CONTRACT_CASES.map((c) => c.intent)).toEqual([
       "lot: the card of a lot of a set",
       "set: the screen of the set",
+      "achievements: empty event set",
+      "achievements: event set",
       "root: with a raffle",
       "root: cancelled auction keeps the raffle",
       "root: raffle read refused",

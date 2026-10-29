@@ -78,6 +78,7 @@ export type AuctionContractApp = (
 type AuctionMethods = AuctionBotPorts["auction"];
 
 export type PortCall =
+  | { port: "achievements"; method: "getEvent"; request: string }
   | { port: "identity"; method: "resolveIdentity"; request: TelegramUser }
   | {
       port: "auction";
@@ -188,6 +189,7 @@ export type PortCall =
 // Запрос того, чего в снимке нет, падает — так suite ловит приложение, которое
 // спрашивает не то, а не подсовывает ему правдоподобный ответ.
 export type ContractAuction = {
+  achievements?: readonly import("../achievement-types.js").EventAchievementView[];
   // Сам аукцион для его корня (PER-605). Нет — Auction его не отдаёт;
   // `unavailable` — `GetAuction` отказывает.
   summary?: AuctionSummaryView | "unavailable";
@@ -5746,6 +5748,79 @@ const PROMO_CASES: readonly AuctionContractCase[] = [
 
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...SET_CASES,
+  ...([false, true] as const).map((populated): AuctionContractCase => {
+    const achievement = {
+      code: "first",
+      title: "Первая ачивка",
+      description: "За участие",
+      recipients: "many" as const,
+      manual: false,
+    };
+    const summary: AuctionSummaryView = {
+      auctionId: CONTRACT_AUCTION_ID,
+      stage: "finished",
+      final: true,
+    };
+    return {
+      intent: populated
+        ? "achievements: event set"
+        : "achievements: empty event set",
+      callbackData: callback({
+        kind: "achievements",
+        auctionId: CONTRACT_AUCTION_ID,
+        page: 0,
+      }),
+      auction: {
+        ...AUCTION,
+        summary,
+        achievements: populated
+          ? [{ achievement, holderIds: [], erasedHolders: 0 }]
+          : [],
+      },
+      auctionCalls: [
+        {
+          port: "auction",
+          method: "getAuction",
+          request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+        },
+        {
+          port: "achievements",
+          method: "getEvent",
+          request: CONTRACT_AUCTION_ID,
+        },
+      ],
+      body: {
+        blocks: [
+          {
+            kind: "achievements",
+            screen: {
+              scope: "event",
+              auctionId: CONTRACT_AUCTION_ID,
+              view: "list",
+              page: 0,
+              pages: 1,
+              back: callback({ kind: "root", auctionId: CONTRACT_AUCTION_ID }),
+              items: populated
+                ? [
+                    {
+                      title: achievement.title,
+                      callbackData: callback({
+                        kind: "achievement",
+                        auctionId: CONTRACT_AUCTION_ID,
+                        reference: "a7937b64b8ca",
+                        page: 0,
+                        holdersPage: 0,
+                      }),
+                    },
+                  ]
+                : [],
+            },
+          },
+        ],
+        keyboard: [],
+      },
+    };
+  }),
   ...ROOT_CASES,
   ...PROMO_CASES,
   ...PREDICTION_RESULTS_CASES,
@@ -6298,6 +6373,26 @@ export function spyPorts(
     return outcome;
   };
   return {
+    ...(snapshot.achievements === undefined
+      ? {}
+      : {
+          achievements: {
+            async getEvent(auctionId: string) {
+              calls.push({
+                port: "achievements" as const,
+                method: "getEvent" as const,
+                request: auctionId,
+              });
+              return snapshot.achievements ?? [];
+            },
+            async listMine() {
+              throw new Error("collection is not expected");
+            },
+            async getImage() {
+              throw new Error("image is not expected");
+            },
+          },
+        }),
     ...(snapshot.media === undefined ? {} : { media: snapshot.media }),
     identity: {
       async resolveIdentity(request) {

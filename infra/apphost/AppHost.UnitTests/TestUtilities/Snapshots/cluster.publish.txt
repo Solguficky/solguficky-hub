@@ -58,6 +58,7 @@ auction: ContainerResource
   health: auction_http_/health_200_check
 auction-bot: ContainerResource
   image: /hub-bot:latest
+  env: ACHIEVEMENTS_GRPC_URL={achievements.bindings.grpc.url}
   env: AUCTION_FAQ_QUESTION_URL=https://t.me/{support-bot-username.value}?start=auction
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
@@ -70,10 +71,12 @@ auction-bot: ContainerResource
   env: BOT_TOKEN={auction-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
+  waits: achievements WaitUntilHealthy
   waits: auction WaitUntilHealthy
   waits: identity WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: notifications WaitUntilHealthy
+  relationship: Reference achievements
   relationship: Reference auction
   relationship: Reference auction-bot-service-token
   relationship: Reference auction-bot-token
@@ -82,6 +85,7 @@ auction-bot: ContainerResource
   relationship: Reference nats
   relationship: Reference notifications
   relationship: Reference support-bot-username
+  relationship: WaitFor achievements
   relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor nats
@@ -116,6 +120,7 @@ cloudflared-tunnel-token: ParameterResource
 hub-bot: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/hub-bot/Containerfile context=<repo>
+  env: ACHIEVEMENTS_GRPC_URL={achievements.bindings.grpc.url}
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
@@ -128,11 +133,13 @@ hub-bot: ContainerResource
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
+  waits: achievements WaitUntilHealthy
   waits: auction WaitUntilHealthy
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy
   waits: notifications WaitUntilHealthy
+  relationship: Reference achievements
   relationship: Reference auction
   relationship: Reference bot-media-channel-id
   relationship: Reference hub-bot-service-token
@@ -142,6 +149,7 @@ hub-bot: ContainerResource
   relationship: Reference nats
   relationship: Reference notifications
   relationship: Reference support-bot-username
+  relationship: WaitFor achievements
   relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor meetups

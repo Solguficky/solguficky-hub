@@ -387,6 +387,51 @@ function keyboardOf(payload: unknown): SentButton[][] {
 }
 
 describe("auction bot", () => {
+  it("opens the guest collection from menu and its card without Telegram", async () => {
+    const listMine = vi.fn(async () => [
+      {
+        grantId: "01929b7e-5c1d-7a3f-8e4b-0000000000b1",
+        auctionId,
+        grantedAt: "2026-10-28T12:00:00Z",
+        achievement: {
+          code: "first",
+          title: "Первая ачивка",
+          description: "За участие",
+          recipients: "many" as const,
+          manual: false,
+        },
+      },
+    ]);
+    const factory: PortsFactory = (requestId) => ({
+      ...portsWith()(requestId),
+      achievements: {
+        listMine,
+        getEvent: async () => [],
+        getImage: async () => {
+          throw new Error("not needed");
+        },
+      },
+    });
+    const { bot, calls } = makeBot(factory);
+    await bot.handleUpdate(lotPress({ data: entryCallback("menu") }));
+    const menu = calls
+      .flatMap((call) => keyboardOf(call.payload).flat())
+      .find((button) => button.text === "Ачивки");
+    expect(menu?.callback_data).toBeDefined();
+    await bot.handleUpdate(lotPress({ data: menu?.callback_data ?? "" }));
+    expect(listMine).toHaveBeenCalledWith(VIEWER_ID);
+    const item = calls
+      .flatMap((call) => keyboardOf(call.payload).flat())
+      .find((button) => button.text === "Первая ачивка");
+    expect(item?.callback_data).toBeDefined();
+    await bot.handleUpdate(lotPress({ data: item?.callback_data ?? "" }));
+    expect(JSON.stringify(calls)).toContain("За участие");
+    expect(
+      calls
+        .flatMap((call) => keyboardOf(call.payload).flat())
+        .some((button) => button.text === "‹ Ачивки"),
+    ).toBe(true);
+  });
   it("keeps completion across bot instances and permits reopening FAQ", async () => {
     let acknowledged = false;
     const ports: PortsFactory = (requestId) => ({

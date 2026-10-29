@@ -30,6 +30,25 @@ export const manageMembersParent = "manage-members-parent";
 // владельца 10 октября 2026 года). Что цепочка родителей каждого экрана
 // доходит до корня, держит проверка графа `inspectCatalog` test kit.
 export const screenCatalog = {
+  "auction-achievements": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивки",
+    parent: "auction-root",
+    backName: "Ачивки",
+  },
+  "auction-achievement": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивка",
+    parent: "auction-achievements",
+  },
+  "achievements-unavailable": {
+    class: "screen",
+    nav: "exit",
+    title: "Ачивки недоступны",
+  },
+
   menu: {
     class: "screen",
     nav: "root",

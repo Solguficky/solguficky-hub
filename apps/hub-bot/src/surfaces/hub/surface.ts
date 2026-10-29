@@ -1,3 +1,5 @@
+import { createAchievementsClient } from "../../core/achievements/client.js";
+import { reportAchievementsFailure } from "../../core/achievements/failures.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
@@ -83,6 +85,19 @@ export const hubSurface: SurfaceDefinition = ({
     tracing,
     serviceToken,
   });
+  const achievements =
+    hub.achievementsUrl === undefined
+      ? undefined
+      : createAchievementsClient(hub.achievementsUrl, {
+          tracing,
+          serviceToken,
+          onFailure: (cause, meta) =>
+            reportAchievementsFailure({
+              logger,
+              cause,
+              ...(meta === undefined ? {} : { meta }),
+            }),
+        });
   const notifications = createNotificationsClient(hub.notificationsUrl, {
     tracing,
     serviceToken,
@@ -212,6 +227,9 @@ export const hubSurface: SurfaceDefinition = ({
       ? {}
       : {
           auction,
+          ...(achievements === undefined
+            ? {}
+            : { achievements: achievements.port }),
           ...(watches === undefined
             ? {}
             : {
@@ -438,6 +456,7 @@ export const hubSurface: SurfaceDefinition = ({
         watches?.close();
         identity.close();
         meetups.close();
+        achievements?.close();
         notifications.close();
         auction?.close();
       },

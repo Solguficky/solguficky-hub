@@ -77,6 +77,7 @@ describe("renderEntryScreen", () => {
     const menu = renderEntryScreen({ kind: "menu" }, options);
     expect(menu.keyboard.flat().map((button) => button.text)).toEqual([
       "Аукционы",
+      "Ачивки",
       "Настройки",
       "Правила и FAQ",
     ]);

@@ -756,6 +756,7 @@ export type LotImage = {
 // `file_id` — дело Telegram-края приложения (ADR-057, дополнение), а тип здесь,
 // чтобы оба бота реализовали одну сигнатуру.
 export interface LotImagePort {
+  getAchievementImage?(code: string): Promise<LotImage>;
   getLotImage(request: { viewer: Viewer; lotId: string }): Promise<LotImage>;
   // Одно фото лота по идентификатору из `LotCardView.photos` (PER-721).
   getLotPhoto(request: {
@@ -802,6 +803,7 @@ export interface ProxyExplainerPort {
 // без кнопки избранного, а список отказывает как недоступный сосед. Нет
 // `proxyExplainer` — вопрос лимита объясняет автоставку каждый раз.
 export type AuctionBotPorts = {
+  achievements?: import("./achievement-types.js").AchievementsPort;
   identity: IdentityPort;
   auction: AuctionPort;
   operations: OperationIdPort;

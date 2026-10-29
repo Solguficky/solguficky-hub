@@ -24,6 +24,7 @@ export type LotPhotoKey = {
   // Фото приза розыгрыша этого аукциона (PER-773): байты читает
   // `GetRafflePrizePhoto`, а `lotId` — только место записи в кэше.
   rafflePrizeOf?: string;
+  achievementCode?: string;
 };
 
 /**
@@ -75,6 +76,11 @@ export function loadLotPhoto(
   viewer: Viewer,
   key: LotPhotoKey,
 ): Promise<LotImage> {
+  if (key.achievementCode !== undefined) {
+    return port.getAchievementImage === undefined
+      ? Promise.reject(new Error("achievement image port not configured"))
+      : port.getAchievementImage(key.achievementCode);
+  }
   if (key.rafflePrizeOf !== undefined) {
     return port.getRafflePrizePhoto === undefined
       ? Promise.reject(new Error("raffle prize photo port not configured"))
