@@ -7,6 +7,7 @@ import {
   InputFile,
 } from "grammy";
 import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
+import type { HallLinks } from "../../../auction-hall.js";
 import { promoUnavailableText } from "../../../auction-promo.js";
 import type { AchievementsPort } from "../../../auction-ui/index.js";
 import {
@@ -634,6 +635,9 @@ export type BotRuntime = {
   // Пояс, в котором человек читает дедлайн лота; тот же, что у Meetups.
   communityTimeZone?: string;
   faq?: FaqContent;
+  // Экран зала и стрим (PER-825): кнопки-URL на карточке лота и в
+  // «Расширениях» сходки. Нет адресов — нет кнопок.
+  hall?: HallLinks;
   // Память процесса: тесты подставляют свою, чтобы проверить рестарт.
   auctionParents?: AuctionParents;
   lotPhotos?: LotPhotos;
@@ -7116,6 +7120,7 @@ async function openMeetupExtensions(
         meetup: result.meetup,
         auction: result.auction,
         manageable: canRunAuctions(person),
+        ...(runtime.hall === undefined ? {} : { hall: runtime.hall }),
       }),
     );
   } else {
@@ -12010,6 +12015,7 @@ async function handleAuctionCallback(
     // же, что «Включить аукцион» (ADR-070, RFC-016).
     canManage,
     ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
+    ...(runtime.hall === undefined ? {} : { hall: runtime.hall }),
     ...(canAddLots === undefined ? {} : { canAddLots }),
     ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
@@ -12388,6 +12394,7 @@ async function editLiveLotCard(
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
     canManage: canRunAuctions(card.viewer),
+    ...(runtime.hall === undefined ? {} : { hall: runtime.hall }),
     ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
   const shown = auctionScreen(view);

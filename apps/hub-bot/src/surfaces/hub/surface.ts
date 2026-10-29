@@ -225,6 +225,7 @@ export const hubSurface: SurfaceDefinition = ({
     presentation: config.presentation,
     environment,
     faq: hub.faq,
+    hall: hub.hall,
     today,
     build,
     mediaChat,

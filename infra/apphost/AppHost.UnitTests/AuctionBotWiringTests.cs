@@ -237,13 +237,39 @@ public class AuctionBotWiringTests
         environment["BOT_ENVIRONMENT"].ShouldBe("test");
     }
 
+    /// <summary>Экран зала и стрим под карточкой лота бота (PER-825).</summary>
+    [Fact]
+    public async Task AuctionBot_GetsTheConfiguredHallLinks()
+    {
+        var (bot, _) = Materialize(
+            "prod",
+            hallScreenUrl: " https://hall.example.org/screen ",
+            hallStreamUrl: "https://stream.example.org/live");
+        var environment = await EnvironmentAsync(bot);
+
+        environment["BOT_HALL_SCREEN_URL"].ShouldBe("https://hall.example.org/screen");
+        environment["BOT_STREAM_URL"].ShouldBe("https://stream.example.org/live");
+    }
+
+    [Fact]
+    public async Task AuctionBot_WithoutHallLinks_GetsNoVariables()
+    {
+        var (bot, _) = Materialize("prod");
+        var environment = await EnvironmentAsync(bot);
+
+        environment.ShouldNotContainKey("BOT_HALL_SCREEN_URL");
+        environment.ShouldNotContainKey("BOT_STREAM_URL");
+    }
+
     private static (IResource Bot, ServiceGraphContext Context) Materialize(
         string telegramEnvironment,
         string? staleAuctionId = null,
         bool withNotifications = true,
         string? supportBotUsername = null,
         string? mediaChannelId = null,
-        bool withAchievements = false)
+        bool withAchievements = false,
+        string? hallScreenUrl = null,
+        string? hallStreamUrl = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -266,6 +292,8 @@ public class AuctionBotWiringTests
             ["AuctionBot:AuctionId"] = staleAuctionId,
             [SupportBotLink.UsernameKey] = supportBotUsername,
             [BotMediaChannel.ChannelIdKey] = mediaChannelId,
+            [BotHallLinks.ScreenUrlKey] = hallScreenUrl,
+            [BotHallLinks.StreamUrlKey] = hallStreamUrl,
         });
         if (withNotifications)
         {

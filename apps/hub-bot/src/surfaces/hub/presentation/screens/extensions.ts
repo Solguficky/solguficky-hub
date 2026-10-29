@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { type HallLinks, hallButtons } from "../../../../auction-hall.js";
 import { nameSettingsTitle } from "../../../../auction-standing.js";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import { adminLabel, marked, pictogram } from "../../../../core/pictograms.js";
@@ -51,6 +52,8 @@ export function extensionsScreen(view: {
   // Нет — бот без Auction или человек, за которого Auction не зовут.
   auction?: MeetupAuctionView | undefined;
   manageable: boolean;
+  // Экран зала и стрим (PER-825). Нет — кнопок нет.
+  hall?: HallLinks;
 }): ShownScreen {
   const { meetup, auction } = view;
   const token = uuidToToken(meetup.id);
@@ -62,6 +65,14 @@ export function extensionsScreen(view: {
       "Аукцион: торги лотов сходки, избранное, розыгрыш и правила.",
     );
     keyboard.text(auctionLabel, auctionRootData(auction.auctionId)).row();
+    // Пока аукцион идёт: у завершённого и отменённого экрана зала для
+    // просмотра хода торгов уже нет смысла (PER-825).
+    const stage = auction.auction?.stage;
+    if (stage !== "finished" && stage !== "cancelled") {
+      for (const button of hallButtons(view.hall, auction.auctionId)) {
+        keyboard.url(button.text, button.url).row();
+      }
+    }
   } else if (auction?.kind === "unavailable") {
     line = "Аукцион сейчас не отвечает. Попробуй ещё раз.";
     keyboard.text(retryLabel, extensionsData(token)).row();

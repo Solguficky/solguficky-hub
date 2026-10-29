@@ -13,6 +13,7 @@ import {
   finalPriceLines,
   showsStep,
 } from "../../auction-final.js";
+import { type HallLinks, hallButtons } from "../../auction-hall.js";
 import {
   activeHappyHourLine,
   happyHourTerms,
@@ -250,6 +251,9 @@ export type RenderedScreen = {
 
 export type RenderOptions = {
   faq?: FaqContent;
+  // Экран зала и стрим (PER-825): ряды кнопок-URL под карточкой лота. Нет
+  // адресов — рядов нет.
+  hall?: HallLinks;
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
   // Форма карточки лота; по умолчанию `rich`.
@@ -905,6 +909,24 @@ function yearOf(instant: string, timeZone: string, now?: Date): string {
   return shown === year(now ?? new Date()) ? "" : ` ${shown}`;
 }
 
+// Ссылки на экран зала и стрим (PER-825) — каждая своим рядом под кнопками
+// карточки лота: пара кнопок вне дизайн-кода линтер не пускает. Без настройки
+// рядов нет.
+function hallRow(
+  keyboard: readonly (readonly TelegramButton[])[],
+  hall: HallLinks | undefined,
+  auctionId: string,
+): readonly (readonly TelegramButton[])[] {
+  const buttons = hallButtons(hall, auctionId);
+  // Последний ряд карточки — возврат (линтер, правило nav): ссылки встают
+  // над ним.
+  return [
+    ...keyboard.slice(0, -1),
+    ...buttons.map((button) => [button]),
+    ...keyboard.slice(-1),
+  ];
+}
+
 function renderBody(
   body: AuctionScreenBody,
   options: RenderOptions,
@@ -950,7 +972,11 @@ function renderBody(
     (block): block is LotBlock => block.kind === "lot",
   );
   if (id === "lot" && lot !== undefined) {
-    return { id, keyboard, ...renderCard(lot, options) };
+    return {
+      id,
+      keyboard: hallRow(keyboard, options.hall, lot.auctionId),
+      ...renderCard(lot, options),
+    };
   }
   const history = body.blocks.find(
     (block): block is HistoryBlock => block.kind === "history",
