@@ -3324,6 +3324,37 @@ describe("the raffle line of the console", () => {
       "Аукцион завершён.\nРозыгрыш: выиграл билет №1 — Сова*, билетов: 1.",
     );
   });
+
+  // Пульт завершённого аукциона (PER-816): только нужное — счета, розыгрыш,
+  // итоги; управлять уже нечем.
+  it("keeps the controls of a running auction off the console of a finished one", async () => {
+    const auction = fakeAuction({
+      status: "finished",
+      week: raffleWeek,
+      consoleRaffle: raffle({
+        status: "drawn",
+        tickets: [{ number: 1, displayName: "Сова*" }],
+        reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+      }),
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, undefined, {
+      mediaChat: createMediaChat({
+        channelId: -100500,
+        logger: { warn: () => {} },
+      }),
+    });
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+
+    expect(plain(last(calls))).not.toContain("Время финала");
+    const buttons = labels(last(calls)).flat();
+    for (const gone of ["Сводка дня", "Промо-видео", "Сеты", "Время финала"]) {
+      expect(buttons).not.toContain(gone);
+    }
+    expect(buttons).toContain("Счета");
+    expect(buttons).toContain("Розыгрыш");
+  });
 });
 
 describe("opening the online week", () => {
