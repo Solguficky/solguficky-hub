@@ -63,6 +63,8 @@ export function finalBidLine(
   switch (outcome.kind) {
     case "accepted":
       return `Твоя ставка ${money(outcome.amount)} принята`;
+    case "accepted-unread":
+      return `Ставка ${money(outcome.amount)} принята: обнови карточку, чтобы узнать лидера`;
     case "unknown":
       return "Аукцион не ответил: ставка могла пройти, смотри лидера";
     case "price-changed":
@@ -100,4 +102,43 @@ export function finalBidLine(
       return _exhaustive;
     }
   }
+}
+
+// Исход читает актуальный снимок: принятую ставку уже могли перебить.
+export function finalBidHeadline(
+  block: LotBlock,
+  money: (m: Money) => string,
+): string | undefined {
+  const outcome = block.finalBid;
+  if (outcome === undefined) return undefined;
+  if (outcome.kind === "accepted") {
+    if (block.standing === "leader" || block.standing === "won")
+      return `Ты лидер: ставка ${money(outcome.amount)} принята`;
+    if (block.status.kind === "trading")
+      return `Твою ставку перебили — цена уже ${money(block.status.currentPrice)}`;
+    if (block.status.kind === "sold")
+      return `Твою ставку перебили — цена продажи ${money(block.status.price)}`;
+  }
+  if (outcome.kind === "price-changed")
+    return `Твоя ставка не прошла — следующая цена ${money(outcome.next)}`;
+  if (
+    outcome.kind === "refused" &&
+    outcome.refusal.kind === "bid-not-at-next-price"
+  )
+    return `Твоя ставка не прошла — следующая цена ${money(outcome.refusal.expected)}`;
+  if (
+    outcome.kind === "refused" &&
+    ["bid-below-minimum", "lot-not-open"].includes(outcome.refusal.kind)
+  ) {
+    const price =
+      block.status.kind === "trading"
+        ? block.status.currentPrice
+        : block.status.kind === "sold"
+          ? block.status.price
+          : undefined;
+    return price === undefined
+      ? `Твоя ставка не прошла: ${finalBidLine(outcome, money)}`
+      : `Твоя ставка не прошла — цена уже ${money(price)}`;
+  }
+  return finalBidLine(outcome, money);
 }

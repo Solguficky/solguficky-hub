@@ -2,8 +2,8 @@ import { InlineKeyboard } from "grammy";
 import { achievementScreen } from "../../../../achievement-screen.js";
 import { dayChronicleButtonLabel } from "../../../../auction-day-chronicle.js";
 import {
+  finalBidHeadline,
   finalBidLabel,
-  finalBidLine,
   finalPriceLines,
   showsStep,
 } from "../../../../auction-final.js";
@@ -677,6 +677,7 @@ function feedLabel(
       return "←";
     case "feed.next":
       return "→";
+    case "lot.current":
     case "lot.refresh":
     case "lot.bid-step":
     case "lot.bid-final":
@@ -789,30 +790,26 @@ function lotScreen(
   // лидера и срока со знаками, группа хода торгов, описание — группы через
   // пустую строку, в rich — блоками. Исход ставки финала — своей группой под
   // ними (PER-336).
-  const groups = [
-    ...statusGroups(lot, view),
-    ...(lot.finalBid === undefined
-      ? []
-      : [[finalBidLine(lot.finalBid, money)]]),
-    ...setGroups(lot),
-  ];
+  const groups = [...statusGroups(lot, view), ...setGroups(lot)];
   const mark = preview === undefined ? [] : [lotPreviewMark];
   const rich = view.presentation === "rich";
   const photos = rich ? (view.photos ?? []) : [];
   const images = lotPhotoKeys(lot.lotId, lot.card);
   // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026
   // года, «Показ фото лота»); несколько — каруселью (PER-721).
+  const result = finalBidHeadline(lot, money);
   const text = rich
     ? [
         richPhotoBlock(photos.map((photo) => photo.id)),
         `<h1>${escapeHtml(title)}</h1>`,
+        ...(result === undefined ? [] : [`<h2>${escapeHtml(result)}</h2>`]),
         ...groups.map(
           (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
         ),
         ...richParagraphs(description),
         ...mark.map((line) => `<p>${escapeHtml(line)}</p>`),
       ].join("")
-    : plainLot(title, description, groups, mark);
+    : plainLot(title, description, groups, mark, result);
   return {
     screen: {
       id: preview === undefined ? "lot" : "lot-preview",
@@ -845,10 +842,12 @@ function plainLot(
   description: string | undefined,
   groups: readonly (readonly string[])[],
   footer: readonly string[] = [],
+  result?: string,
 ): string {
   const join = (shown: string | undefined) =>
     screenText(
       title,
+      result === undefined ? undefined : `<b>${escapeHtml(result)}</b>`,
       ...groups.map((lines) => lines.map(escapeHtml).join("\n")),
       shown === undefined ? undefined : escapeHtml(shown),
       ...footer.map(escapeHtml),
@@ -906,6 +905,8 @@ function lotLabel(
   lot: Extract<AuctionBlock, { kind: "lot" }>,
 ): string {
   switch (button.action) {
+    case "lot.current":
+      return "К текущему лоту";
     case "lot.refresh":
       return refreshLabel;
     case "lot.history":
@@ -1077,6 +1078,7 @@ function setLotLabelOf(
     case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
+    case "lot.current":
     case "lot.refresh":
     case "lot.history":
     case "lot.back":
@@ -1313,6 +1315,7 @@ function historyLabel(button: AuctionButton): string {
     case "feed.open-section":
     case "feed.prev":
     case "feed.next":
+    case "lot.current":
     case "lot.refresh":
     case "lot.bid-step":
     case "lot.bid-final":

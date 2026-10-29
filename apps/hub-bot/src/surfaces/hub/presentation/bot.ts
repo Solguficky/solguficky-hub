@@ -18,6 +18,7 @@ import {
   type AuctionUpdate,
   encodeAuctionCallback,
   type FavoritesPort,
+  FinalBidReadUnavailable,
   isAuctionQuestion,
   type LotImagePort,
   type ProxyExplainerPort,
@@ -44,6 +45,7 @@ import {
   richPhotoFileIds,
   richPhotoId,
 } from "../../../core/auction/lot-photos.js";
+import { auctionRootFrom } from "../../../core/auction/origin.js";
 import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -11883,10 +11885,12 @@ async function handleAuctionCallback(
     // NOT_FOUND у `GetLot`, им начинаются карточка, хронология и экран сета.
     // Лента на аукцион, которого нет, отвечает пустой страницей, так что её
     // отказ — всегда сбой.
+    const failure =
+      cause instanceof FinalBidReadUnavailable ? cause.cause : cause;
     const parsed = parseAuctionCallback(treeData);
     const notFound =
-      cause instanceof ConnectError &&
-      cause.code === Code.NotFound &&
+      failure instanceof ConnectError &&
+      failure.code === Code.NotFound &&
       parsed.ok &&
       (parsed.intent.kind === "lot" ||
         parsed.intent.kind === "set" ||
@@ -11897,8 +11901,37 @@ async function handleAuctionCallback(
     // ответ ещё раз, а «Повторить» с шагом вопроса сработало бы как «Отмена».
     await showRefusal(
       ctx,
-      notFound ? "Лот не найден или больше недоступен." : unavailableText,
-      notFound || answer !== undefined ? exitToMeetups() : exitRetry(data),
+      notFound
+        ? "Лот не найден или больше недоступен."
+        : cause instanceof FinalBidReadUnavailable
+          ? cause.message
+          : unavailableText,
+      (() => {
+        const back = auctionRootFrom([
+          treeData,
+          ...(ctx.callbackQuery?.message?.reply_markup?.inline_keyboard.flatMap(
+            (row) =>
+              row.flatMap((button) =>
+                "callback_data" in button
+                  ? [auctionEntryOf(button.callback_data).data]
+                  : [],
+              ),
+          ) ?? []),
+        ]);
+        return back === undefined
+          ? notFound || answer !== undefined
+            ? exitToMeetups()
+            : exitRetry(data)
+          : withNav(
+              answer !== undefined || notFound
+                ? new InlineKeyboard()
+                : new InlineKeyboard().text(retryLabel, data),
+              {
+                name: "Аукцион",
+                data: back,
+              },
+            );
+      })(),
     );
     return {
       level: notFound ? "warn" : "error",
@@ -11908,10 +11941,12 @@ async function handleAuctionCallback(
       identity_id: person.identityId,
       error_category: notFound
         ? "visibility"
-        : cause instanceof ConnectError
-          ? grpcFailureCategory(Code[cause.code])
+        : failure instanceof ConnectError
+          ? grpcFailureCategory(Code[failure.code])
           : "unexpected",
-      ...(cause instanceof ConnectError ? { grpc_code: Code[cause.code] } : {}),
+      ...(failure instanceof ConnectError
+        ? { grpc_code: Code[failure.code] }
+        : {}),
       error: errorText(cause),
     };
   }

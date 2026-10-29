@@ -23,6 +23,7 @@ import {
   richPhotoFileIds,
   richPhotoId,
 } from "../../core/auction/lot-photos.js";
+import { auctionRootFrom } from "../../core/auction/origin.js";
 import type { AuctionWatches } from "../../core/auction/watch.js";
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
@@ -292,6 +293,18 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         firstName: ctx.from.first_name,
         data,
       });
+      if (outcome.screen.kind === "unavailable") {
+        const back = auctionRootFrom([
+          data,
+          ...(ctx.callbackQuery.message?.reply_markup?.inline_keyboard.flatMap(
+            (row) =>
+              row.flatMap((button) =>
+                "callback_data" in button ? [button.callback_data] : [],
+              ),
+          ) ?? []),
+        ]);
+        if (back !== undefined) outcome.screen = { ...outcome.screen, back };
+      }
       const screen = render(outcome.screen);
       // Подтверждение выбора уходит ответом на нажатие до показа экрана:
       // показ ответил бы на нажатие сам, без текста.

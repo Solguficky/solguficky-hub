@@ -543,6 +543,7 @@ export type CommandResult =
 // — гонка нажатий: карточка уже несёт кнопку на новую цену.
 export type FinalBidOutcome =
   | { kind: "accepted"; amount: Money }
+  | { kind: "accepted-unread"; amount: Money }
   | { kind: "refused"; refusal: BidRefusal }
   | { kind: "unknown" }
   // Цена ушла, пока человек выбирал имя (PER-713): ставка не отправлена,
@@ -621,6 +622,7 @@ export type AuctionButton =
         | "invoice.retry"
         | "feed.prev"
         | "feed.next"
+        | "lot.current"
         | "lot.refresh"
         | "lot.bid-custom"
         | "lot.proxy"

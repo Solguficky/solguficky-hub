@@ -2085,9 +2085,27 @@ describe("waiting", () => {
 // Нажатие кнопки в сообщении бота: текстовом, rich-карточке или сообщении-фото
 // от прежней версии бота.
 function lotPress(
-  options: { photo?: boolean; rich?: boolean; data?: string } = {},
+  options: {
+    photo?: boolean;
+    rich?: boolean;
+    data?: string;
+    back?: string;
+  } = {},
 ): Update {
-  const base = { message_id: 7, date: 0, chat: privateChat };
+  const base = {
+    message_id: 7,
+    date: 0,
+    chat: privateChat,
+    ...(options.back === undefined
+      ? {}
+      : {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "‹ Лоты", callback_data: options.back }],
+            ],
+          },
+        }),
+  };
   return {
     update_id: 3,
     callback_query: {
@@ -3759,6 +3777,93 @@ describe("final lot card", () => {
     return { bot, calls, stream };
   }
 
+  it("revives the old sold card after restarting the auction bot", async () => {
+    const stream = liveStream();
+    const nextId = "01929b7e-5c1d-7a3f-8e4b-0000000000b2";
+    const base = portsWith({
+      lot: {
+        ...liveLot(4, 1400),
+        status: { kind: "sold", winnerId: RIVAL, price: rub(1400) },
+      },
+    });
+    const ports: PortsFactory = (...args) => {
+      const p = base(...args);
+      return {
+        ...p,
+        auction: {
+          ...p.auction,
+          getAuction: async () => ({
+            auctionId,
+            stage: "in-final",
+            final: true,
+            lineup: { order: [lotId, nextId], activeLotId: nextId },
+          }),
+        },
+      };
+    };
+    const { bot, calls } = makeBot(ports, {
+      live: {
+        watches: stream.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({ [RIVAL]: "@jay" }) },
+      },
+    });
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+      }),
+    );
+    expect(stream.listeners.size).toBe(1);
+    expect(
+      lastScreen(calls)
+        .keyboard.flat()
+        .map((b) => b.text),
+    ).toContain("К текущему лоту");
+    stream.emit({ ...liveLot(1, 2000), lotId: nextId });
+    await flush();
+    expect(htmlOf(edits(calls).at(-1)?.payload)).toContain("Цена: 2 000 ₽");
+  });
+
+  it("answers a bid outage explicitly and recovers the auction exit from the old keyboard", async () => {
+    const base = portsWith();
+    const ports: PortsFactory = (...args) => {
+      const p = base(...args);
+      return {
+        ...p,
+        auction: {
+          ...p.auction,
+          getLot: async () => {
+            throw new ConnectError("offline", Code.Unavailable);
+          },
+        },
+      };
+    };
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+        back: encodeAuctionCallback({ kind: "feed", auctionId, page: 0 }),
+      }),
+    );
+    expect(lastScreen(calls).text).toContain(
+      "Аукцион недоступен, ставка не принята",
+    );
+    expect(lastScreen(calls).keyboard.flat()).toContainEqual({
+      text: "‹ Аукцион",
+      callback_data: encodeAuctionCallback({ kind: "root", auctionId }),
+    });
+  });
+
   it("keeps one button at the next price as the price moves", async () => {
     const { bot, calls, stream } = setup();
     await bot.handleUpdate(lotPress({ rich: true }));
@@ -3935,7 +4040,7 @@ describe("final lot card", () => {
     );
     const shown = lastScreen(calls);
     expect(plain(shown.text)).toContain(
-      "Цену уже подняли: следующая ставка — 1 400 ₽",
+      "<h2>Твоя ставка не прошла — следующая цена 1 400 ₽</h2>",
     );
     expect(shown.keyboard.flat().map((b) => plain(b.text))).toContain(
       "Поставить 1 400 ₽",
