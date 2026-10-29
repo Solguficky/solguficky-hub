@@ -16,6 +16,8 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
 
   private val oneMinuteBefore: Instant = deadline.minus(Duration.ofMinutes(1))
 
+  private val leaderLimit: Map[ParticipantId, ProxyLimit] = Map(participant(1) -> limit(max = 1500, setSeq = 1))
+
   /** Лот с лидером 2 по 500 и лимитами двух участников, отмеченный для финала. */
   private def marked: Journal = {
     val limits = Map(participant(2) -> limit(max = 800, setSeq = 1), participant(3) -> limit(max = 450, setSeq = 2))
@@ -313,7 +315,7 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
       tradingOf(live.lot).currentPrice shouldBe money(110)
     }
 
-    "settle every limit the hold kept, not one rival: a leaderless lot goes to the strongest at the second maximum plus a step" in {
+    "give a leaderless lot to the strongest limit at the second maximum plus a step" in {
       val waiting = Journal.of(heldWith(None, 1 -> 3000, 2 -> 2500))
 
       val (resumed, live) = waiting.resume(resumeLot(opN = 1))
@@ -335,6 +337,40 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
 
       waiting.resume(resumeLot(opN = 1))._1 shouldBe
         Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 2600, None))))
+    }
+
+    "round the price of the winner down to the grid when the second maximum plus a step lies between its points" in {
+      val waiting = Journal.of(heldWith(None, 1 -> 3050, 2 -> 2540))
+
+      waiting.resume(resumeLot(opN = 1))._1 shouldBe
+        Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 2600, None))))
+    }
+
+    "price a lone rival over the limit of the leader in live trading as before" in {
+      val waiting = Journal.of(heldWith(Some(9), 1 -> 3000))
+
+      waiting.resume(resumeLot(opN = 1))._1 shouldBe
+        Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(1), 1, 1100, Some(9)))))
+    }
+
+    "price a lone rival over the limit of the leader in online trading as before" in {
+      val withLimit = Journal.of(trading(1000, fixedHundred, leader = Some(participant(1)), limits = leaderLimit))
+      val without = Journal.of(trading(1000, fixedHundred, leader = Some(participant(1))))
+
+      withLimit.limit(setProxyLimit(who = 2, max = 3000, opN = 1))._1 shouldBe
+        Right(
+          Decision.Accepted(
+            LotEvent.ProxyLimitSet(participant(2), money(3000)),
+            List(proxied(proxyBid(1), 2, 1600, Some(1)))
+          )
+        )
+      without.limit(setProxyLimit(who = 2, max = 3000, opN = 1))._1 shouldBe
+        Right(
+          Decision.Accepted(
+            LotEvent.ProxyLimitSet(participant(2), money(3000)),
+            List(proxied(proxyBid(1), 2, 1100, Some(1)))
+          )
+        )
     }
 
     "outbid a leader without a limit over the second maximum of the limits the hold kept" in {
