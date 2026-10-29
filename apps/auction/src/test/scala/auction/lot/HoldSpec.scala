@@ -370,7 +370,7 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
 
         val after = tradingOf(live.lot)
         after.proxyLimits.foreach { (who, limit) =>
-          if (!after.leader.contains(who)) limit.max should be <= after.currentPrice
+          if (!after.leader.contains(who)) withClue(s"limit of $who")(limit.max <= after.currentPrice shouldBe true)
         }
       }
     }
