@@ -4,6 +4,7 @@ import {
   encodeAuctionCallback,
   type PendingCommand,
 } from "../../callback-data.js";
+import { FinalBidReadUnavailable } from "../../final-bid-failure.js";
 import type {
   AuctionPort,
   BidRefusal,
@@ -277,7 +278,13 @@ export async function placeFinalBid(
   context: CommandContext,
   intent: { lotId: string; amount: number; page: number },
 ): Promise<AuctionScreenBody> {
-  return placeFinalBidOn(context, await readLot(context, intent.lotId), intent);
+  let lot: LotView;
+  try {
+    lot = await readLot(context, intent.lotId);
+  } catch (cause) {
+    throw new FinalBidReadUnavailable(cause);
+  }
+  return placeFinalBidOn(context, lot, intent);
 }
 
 // Ставка финала по уже прочитанному лоту: и нажатие «Поставить», и выбранное
@@ -295,7 +302,9 @@ async function placeFinalBidOn(
       page: intent.page,
       ...(finalBid === undefined ? {} : { finalBid }),
     });
-  if (status.kind !== "trading" || status.phase !== "live") return shown(lot);
+  if (status.kind === "trading" && status.phase !== "live") return shown(lot);
+  if (status.kind !== "trading")
+    return shown(lot, { kind: "refused", refusal: { kind: "lot-not-open" } });
   const amount: Money = {
     minorUnits: intent.amount,
     currency: status.currentPrice.currency,
@@ -309,22 +318,35 @@ async function placeFinalBidOn(
       opId,
     }),
   );
+  // После отправки недоступность чтения не означает отказ ставки. Хотя бы
+  // исход команды остаётся видимым на уже прочитанной карточке.
+  const reread = async (version?: number) => {
+    try {
+      return await context.auction.getLot({
+        viewer: context.viewer,
+        lotId: intent.lotId,
+        ...(version === undefined || version <= 0
+          ? {}
+          : { atLeastVersion: version }),
+      });
+    } catch {
+      return undefined;
+    }
+  };
   switch (outcome.kind) {
-    case "accepted":
+    case "accepted": {
       // Чтение отстаёт от команды: карточка дочитывает лот до версии ответа,
       // иначе принятая ставка стояла бы над прежней ценой.
+      const current = await reread(outcome.lotVersion);
       return shown(
-        await context.auction.getLot({
-          viewer: context.viewer,
-          lotId: intent.lotId,
-          ...(outcome.lotVersion > 0
-            ? { atLeastVersion: outcome.lotVersion }
-            : {}),
-        }),
-        { kind: "accepted", amount },
+        current ?? lot,
+        current === undefined
+          ? { kind: "accepted-unread", amount }
+          : { kind: "accepted", amount },
       );
+    }
     case "unanswered":
-      return shown(await readLot(context, intent.lotId), { kind: "unknown" });
+      return shown((await reread()) ?? lot, { kind: "unknown" });
     case "refused": {
       const { refusal } = outcome;
       if (refusal.kind === "display-name-not-chosen") {
@@ -335,10 +357,10 @@ async function placeFinalBidOn(
           intent.page,
         );
       }
-      return shown(
-        atLeastExpected(await readLot(context, intent.lotId), refusal),
-        { kind: "refused", refusal },
-      );
+      return shown(atLeastExpected((await reread()) ?? lot, refusal), {
+        kind: "refused",
+        refusal,
+      });
     }
     default: {
       const _exhaustive: never = outcome;

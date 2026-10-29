@@ -175,12 +175,29 @@ function lotBody(input: {
           ? {}
           : { viewerProxyLimit: lot.viewerProxyLimit }),
         ...(following === undefined ? {} : { following }),
-        ...(isLive(lot.status) ? { live: { page: input.page } } : {}),
+        ...(isLive(lot.status) || input.neighbors.final !== undefined
+          ? { live: { page: input.page } }
+          : {}),
         ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
       },
     ],
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
+      ...(input.neighbors.final?.activeLotId === undefined ||
+      input.neighbors.final.activeLotId === lot.lotId
+        ? []
+        : [
+            [
+              {
+                action: "lot.current" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "lot",
+                  lotId: input.neighbors.final.activeLotId,
+                  page: input.page,
+                }),
+              },
+            ],
+          ]),
       ...(lookRow.length === 0 ? [] : [lookRow]),
       ...(setRow.length === 0 ? [] : [setRow]),
       ...pagerRows(input.neighbors, refresh),

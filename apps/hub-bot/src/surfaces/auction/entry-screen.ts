@@ -8,8 +8,8 @@ import {
 } from "../../auction-day-chronicle.js";
 import { renderFaqText } from "../../auction-faq.js";
 import {
+  finalBidHeadline,
   finalBidLabel,
-  finalBidLine,
   finalPriceLines,
   showsStep,
 } from "../../auction-final.js";
@@ -197,7 +197,13 @@ export type AuctionEntryScreen =
   | { kind: "denied"; reason: AuctionDenial }
   | { kind: "outdated" }
   // `subject` называет недоступный сервис, когда это не аукцион.
-  | { kind: "unavailable"; exit: UnavailableExit; subject?: "notifications" };
+  | {
+      kind: "unavailable";
+      exit: UnavailableExit;
+      subject?: "notifications";
+      back?: string;
+      bidRejected?: true;
+    };
 
 // Выход кадра «недоступно». `retry` — «Повторить» с данными действия, на
 // котором случился отказ: хранилища у экранов нет, и повтор едет в кнопке.
@@ -605,16 +611,23 @@ export function renderEntryScreen(
         id: "unavailable",
         format: "html",
         text: `<b>${
-          screen.subject === "notifications"
-            ? "Настройка уведомлений сейчас недоступна."
-            : "Аукцион сейчас недоступен."
+          screen.bidRejected === true
+            ? "Аукцион недоступен, ставка не принята."
+            : screen.subject === "notifications"
+              ? "Настройка уведомлений сейчас недоступна."
+              : "Аукцион сейчас недоступен."
         }</b> ${exit.kind === "answer" ? "Пришли ответ ещё раз через минуту." : "Попробуй ещё раз через минуту."}`,
         // Сбой самих «Аукционов» несёт только повтор: возврат вёл бы туда же.
         keyboard: [
           exit.kind === "retry"
             ? exit.data === toAuctions.callback_data
               ? [retry(exit.data)]
-              : [retry(exit.data), toAuctions]
+              : [
+                  retry(exit.data),
+                  screen.back === undefined
+                    ? toAuctions
+                    : { text: "‹ Аукцион", callback_data: screen.back },
+                ]
             : exit.kind === "enter"
               ? [retry(exit.data)]
               : [toAuctions],
@@ -1752,13 +1765,8 @@ function renderCard(
 ): Pick<RenderedScreen, "text" | "format" | "photos"> {
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
   // Исход ставки финала — своей группой под статусом и ценой (PER-336).
-  const groups = [
-    ...statusGroups(block, options),
-    ...(block.finalBid === undefined
-      ? []
-      : [[finalBidLine(block.finalBid, money)]]),
-    ...setGroups(block),
-  ];
+  const groups = [...statusGroups(block, options), ...setGroups(block)];
+  const result = finalBidHeadline(block, money);
   const rich = (options.presentation ?? "rich") === "rich";
   // Пустое описание — та же заглушка, что у карточки сходки хаба (дизайн-код,
   // «Карточка»; PER-594).
@@ -1775,6 +1783,7 @@ function renderCard(
       format: "html",
       text: screenText(
         title,
+        result === undefined ? undefined : `<b>${escapeHtml(result)}</b>`,
         ...groups.map((lines) => escapeHtml(lines.join("\n"))),
         escapeHtml(description),
       ),
@@ -1792,7 +1801,7 @@ function renderCard(
   const photos = lotPhotoKeys(block.lotId, block.card);
   return {
     format: "rich",
-    text: `<h1>${escapeHtml(title)}</h1>${blocks
+    text: `<h1>${escapeHtml(title)}</h1>${result === undefined ? "" : `<h2>${escapeHtml(result)}</h2>`}${blocks
       .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`)
       .join("")}`,
     ...(photos.length === 0 ? {} : { photos }),
@@ -2074,6 +2083,8 @@ function renderButton(
       return text(promoButtonLabel);
     case "promo.back":
       return text("‹ Аукцион");
+    case "lot.current":
+      return text("К текущему лоту");
     case "lot.refresh":
       return text(refreshLabel);
     case "lot.history":

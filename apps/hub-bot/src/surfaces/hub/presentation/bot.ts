@@ -18,6 +18,7 @@ import {
   type AuctionUpdate,
   encodeAuctionCallback,
   type FavoritesPort,
+  FinalBidReadUnavailable,
   isAuctionQuestion,
   type LotImagePort,
   type ProxyExplainerPort,
@@ -37,12 +38,14 @@ import {
 import {
   reportLiveConsoleFailure,
   reportLiveEditFailure,
+  reportLiveRestore,
 } from "../../../core/auction/live-failures.js";
 import {
   loadLotPhoto,
   richPhotoFileIds,
   richPhotoId,
 } from "../../../core/auction/lot-photos.js";
+import { auctionRootFrom } from "../../../core/auction/origin.js";
 import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -193,16 +196,15 @@ import { parseBroadcastPreview } from "./broadcast-input.js";
 import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
 import {
   createLiveConsoles,
-  type LiveConsoleEntry,
   type LiveConsoleRead,
   type LiveConsoles,
 } from "./live-console.js";
-import {
-  createLiveFloors,
-  type LiveFloorEntry,
-  type LiveFloors,
-} from "./live-floor.js";
-import type { LiveScreenRead } from "./live-screens.js";
+import { createLiveFloors, type LiveFloors } from "./live-floor.js";
+import type {
+  LiveScreenRead,
+  LiveScreenStore,
+  LiveScreenTarget,
+} from "./live-screens.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
@@ -644,7 +646,14 @@ export type BotRuntime = {
     watches: AuctionWatches;
     limiter: EditLimiter;
     names: Pick<AuctionPort, "getDisplayNames">;
+    // Запись открытых пультов и «Ставок зала» вне процесса (PER-815): по
+    // хранилищу на экран. Нет — реестр живёт, пока жив процесс.
+    screens?: (kind: "console" | "floor") => LiveScreenStore;
+    // Паузы между повторами чтения при восстановлении; тест подменяет.
+    restorePauses?: readonly number[];
   };
+  // Часы бота, мс эпохи: время «Обновлено» в пульте финала (PER-815).
+  now?: () => number;
 };
 
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
@@ -1247,9 +1256,10 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       : createLiveConsoles({
           watches: runtime.live.watches,
           limiter: runtime.live.limiter,
-          read: (entry) => readLiveConsole(runtime, entry),
+          read: (target) => readLiveConsole(runtime, target),
           edit: (entry, screen) =>
             editLiveConsole(bot.api, runtime, entry, screen),
+          ...liveStoreOptions(runtime, "console"),
         });
   const liveFloors =
     runtime.live === undefined
@@ -1257,10 +1267,26 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       : createLiveFloors({
           watches: runtime.live.watches,
           limiter: runtime.live.limiter,
-          read: (entry) => readLiveFloor(runtime, entry),
+          read: (target) => readLiveFloor(runtime, target),
           edit: (entry, screen) =>
             editLiveConsole(bot.api, runtime, entry, screen),
+          ...liveStoreOptions(runtime, "floor"),
         });
+  // Экраны, открытые до рестарта (PER-815): запись из хранилища читается сразу,
+  // не дожидаясь поллера, — Telegram держит сообщения, а правка идёт по токену.
+  for (const [name, screens] of [
+    ["console", liveConsoles],
+    ["floor", liveFloors],
+  ] as const) {
+    void screens
+      ?.restore()
+      .then((outcomes) => {
+        for (const outcome of outcomes) {
+          reportLiveRestore(runtime.logger, name, outcome.kind);
+        }
+      })
+      .catch(() => {});
+  }
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
@@ -8909,6 +8935,7 @@ async function renderConsoleResult(
         ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
         timeZone,
         today: communityToday(ctx),
+        updatedAt: (runtime.now ?? Date.now)(),
       };
       const sent = await showScreen(ctx, consoleScreen(view));
       // Пульт финала (PER-566): сообщение, в котором он оказался, правится
@@ -11709,13 +11736,13 @@ async function renderFloorResult(
 // правами помощника, открывшего экран, с той же страницей людей.
 async function readLiveFloor(
   runtime: BotRuntime,
-  entry: LiveFloorEntry,
+  entry: LiveScreenTarget,
 ): Promise<LiveScreenRead<FloorScreenView>> {
   const result = await runtime.dispatcher.execute({
     identity: entry.person,
     auctionId: entry.auctionId,
     intent: "view-floor-bids",
-    page: entry.view.page,
+    page: entry.params.page,
     requestId: createUuidV7(),
     useCase: "manage_auction",
   });
@@ -11858,10 +11885,12 @@ async function handleAuctionCallback(
     // NOT_FOUND у `GetLot`, им начинаются карточка, хронология и экран сета.
     // Лента на аукцион, которого нет, отвечает пустой страницей, так что её
     // отказ — всегда сбой.
+    const failure =
+      cause instanceof FinalBidReadUnavailable ? cause.cause : cause;
     const parsed = parseAuctionCallback(treeData);
     const notFound =
-      cause instanceof ConnectError &&
-      cause.code === Code.NotFound &&
+      failure instanceof ConnectError &&
+      failure.code === Code.NotFound &&
       parsed.ok &&
       (parsed.intent.kind === "lot" ||
         parsed.intent.kind === "set" ||
@@ -11872,8 +11901,37 @@ async function handleAuctionCallback(
     // ответ ещё раз, а «Повторить» с шагом вопроса сработало бы как «Отмена».
     await showRefusal(
       ctx,
-      notFound ? "Лот не найден или больше недоступен." : unavailableText,
-      notFound || answer !== undefined ? exitToMeetups() : exitRetry(data),
+      notFound
+        ? "Лот не найден или больше недоступен."
+        : cause instanceof FinalBidReadUnavailable
+          ? cause.message
+          : unavailableText,
+      (() => {
+        const back = auctionRootFrom([
+          treeData,
+          ...(ctx.callbackQuery?.message?.reply_markup?.inline_keyboard.flatMap(
+            (row) =>
+              row.flatMap((button) =>
+                "callback_data" in button
+                  ? [auctionEntryOf(button.callback_data).data]
+                  : [],
+              ),
+          ) ?? []),
+        ]);
+        return back === undefined
+          ? notFound || answer !== undefined
+            ? exitToMeetups()
+            : exitRetry(data)
+          : withNav(
+              answer !== undefined || notFound
+                ? new InlineKeyboard()
+                : new InlineKeyboard().text(retryLabel, data),
+              {
+                name: "Аукцион",
+                data: back,
+              },
+            );
+      })(),
     );
     return {
       level: notFound ? "warn" : "error",
@@ -11883,10 +11941,12 @@ async function handleAuctionCallback(
       identity_id: person.identityId,
       error_category: notFound
         ? "visibility"
-        : cause instanceof ConnectError
-          ? grpcFailureCategory(Code[cause.code])
+        : failure instanceof ConnectError
+          ? grpcFailureCategory(Code[failure.code])
           : "unexpected",
-      ...(cause instanceof ConnectError ? { grpc_code: Code[cause.code] } : {}),
+      ...(failure instanceof ConnectError
+        ? { grpc_code: Code[failure.code] }
+        : {}),
       error: errorText(cause),
     };
   }
@@ -12227,12 +12287,27 @@ async function deliverAuctionScreen(
   }
 }
 
+// Хранилище и паузы восстановления живых экранов (PER-815); без хранилища
+// реестр живёт, пока жив процесс.
+function liveStoreOptions(
+  runtime: BotRuntime,
+  kind: "console" | "floor",
+): { store?: LiveScreenStore; restorePauses?: readonly number[] } {
+  const live = runtime.live;
+  return {
+    ...(live?.screens === undefined ? {} : { store: live.screens(kind) }),
+    ...(live?.restorePauses === undefined
+      ? {}
+      : { restorePauses: live.restorePauses }),
+  };
+}
+
 // Чтение пульта ведущего вне update (PER-566): тот же юзкейс, что у
 // «Обновить», правами ведущего, открывшего пульт. Страница и сортировка — те,
 // что он видит.
 async function readLiveConsole(
   runtime: BotRuntime,
-  entry: LiveConsoleEntry,
+  entry: LiveScreenTarget,
 ): Promise<LiveConsoleRead> {
   const result = await runtime.dispatcher.execute({
     identity: entry.person,
@@ -12247,12 +12322,13 @@ async function readLiveConsole(
         kind: "console",
         view: {
           console: result.console,
-          page: entry.view.page,
-          sort: entry.view.sort,
+          page: entry.params.page,
+          sort: entry.params.sort ?? defaultConsoleSort,
           // «Промо-видео» пульта ведущего (PER-802) живёт и в живой правке.
-          ...(entry.view.media === true ? { media: true } : {}),
+          ...(entry.params.media === true ? { media: true } : {}),
           timeZone: runtime.communityTimeZone ?? "UTC",
           today: (runtime.today ?? utcToday)(),
+          updatedAt: (runtime.now ?? Date.now)(),
         },
       };
     case "auction-console-refused":

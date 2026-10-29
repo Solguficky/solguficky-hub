@@ -2525,6 +2525,80 @@ describe("final lot card in the hub", () => {
     expect(labels(edited)[0]?.map(plain)).toEqual(["Поставить 1 500 ₽"]);
   });
 
+  it("revives an old sold card on the first click after a process restart", async () => {
+    const watch = stream();
+    const nextId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+    const sold: LotView = {
+      ...live(4, 1400),
+      status: { kind: "sold", winnerId: rival, price: rub(1400) },
+    };
+    const auction = fakeAuction({
+      existing: true,
+      lot: sold,
+      summary: {
+        stage: "in-final",
+        lineup: { order: [lotId, nextId], activeLotId: nextId },
+      },
+    });
+    // Новый bot/реестр, но callback старого сообщения до рестарта.
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+      live: {
+        watches: watch.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({ [rival]: "@jay" }) },
+      },
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+      ),
+    );
+    expect(watch.listeners.size).toBe(1);
+    expect(labels(lastScreen(calls)).flat()).toContain("К текущему лоту");
+    watch.emit({ ...live(1, 2000), lotId: nextId });
+    await flush();
+    const edited = liveEdits(calls).at(-1)?.payload as Shown;
+    expect(plain(edited.text ?? "")).toContain("Цена: 2 000 ₽");
+    expect(labels(edited).flat().map(plain)).toContain("Поставить 2 100 ₽");
+  });
+
+  it("answers a bid during an Auction outage and returns to its auction after restart", async () => {
+    const auction = fakeAuction({ existing: true });
+    auction.getLot.mockRejectedValue(
+      new ConnectError("offline", Code.Unavailable),
+    );
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+        {
+          reply_markup: {
+            inline_keyboard: [[{ text: "‹ Лоты", callback_data: feedData }]],
+          },
+        },
+      ),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Аукцион недоступен, ставка не принята");
+    expect(data(screen, "‹ Аукцион")).toBe(
+      encodeAuctionCallback({ kind: "root", auctionId }),
+    );
+    expect(auction.opIds).toHaveLength(0);
+  });
+
   it("stops editing once another screen takes the message", async () => {
     const { bot, calls, watch } = await setup();
     await bot.handleUpdate(press(lotData));

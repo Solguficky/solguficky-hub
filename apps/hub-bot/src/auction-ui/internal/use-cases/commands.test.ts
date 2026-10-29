@@ -444,3 +444,117 @@ describe.each(AUCTION_SURFACES)(
     });
   },
 );
+
+// Повторное открытие после потери памяти процесса и отказы одинаковы у двух ботов.
+describe.each(AUCTION_SURFACES)("final recovery (%s)", (surface) => {
+  const call = (
+    ports: ReturnType<typeof spyPorts>,
+    kind: "lot" | "final-bid" = "final-bid",
+  ) =>
+    handleAuctionUpdate(
+      { kind: surface, ports },
+      {
+        identity: contractIdentity(surface),
+        user,
+        input: {
+          kind: "callback",
+          data: encodeAuctionCallback(
+            kind === "lot"
+              ? { kind, lotId: CONTRACT_LOT.lotId, page: 0 }
+              : { kind, lotId: CONTRACT_LOT.lotId, amount: 130000, page: 0 },
+          ),
+        },
+      },
+    );
+
+  it("revives a sold card in the final and offers the current lot", async () => {
+    const nextId = "01929b7e-5c1d-7a3f-8e4b-0000000000b2";
+    const ports = spyPorts(
+      [],
+      {
+        ...AUCTION,
+        lots: [
+          {
+            ...CONTRACT_LOT,
+            status: { kind: "sold", winnerId: "rival", price: rub(1400) },
+          },
+        ],
+        summary: {
+          auctionId: CONTRACT_LOT.auctionId,
+          stage: "in-final",
+          final: true,
+          lineup: { order: [CONTRACT_LOT.lotId, nextId], activeLotId: nextId },
+        },
+      },
+      contractIdentity(surface),
+    );
+    const result = await call(ports, "lot");
+    if (result.kind !== "screen") throw new Error("no card");
+    expect(lotBlock(result.body).live).toEqual({ page: 0 });
+    expect(result.body.keyboard.flat()).toContainEqual({
+      action: "lot.current",
+      callbackData: encodeAuctionCallback({
+        kind: "lot",
+        lotId: nextId,
+        page: 0,
+      }),
+    });
+  });
+
+  it("refuses explicitly if the initial read fails and sends no bid", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(calls, AUCTION, contractIdentity(surface));
+    ports.auction.getLot = async () => {
+      throw new Error("offline");
+    };
+    await expect(call(ports)).rejects.toThrow(
+      "Аукцион недоступен, ставка не принята",
+    );
+    expect(commandCalls(calls)).toHaveLength(0);
+  });
+
+  it("keeps an unknown outcome if both bid replies and the following read are lost", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      {
+        ...AUCTION,
+        lots: [liveAt(1200, 1300)],
+        bids: [{ kind: "unanswered" }, { kind: "unanswered" }],
+      },
+      contractIdentity(surface),
+    );
+    let reads = 0;
+    const initial = ports.auction.getLot;
+    ports.auction.getLot = (request) =>
+      ++reads === 1 ? initial(request) : Promise.reject(new Error("offline"));
+    const result = await call(ports);
+    if (result.kind !== "screen") throw new Error("no card");
+    expect(lotBlock(result.body).finalBid).toEqual({ kind: "unknown" });
+    expect(commandCalls(calls)).toHaveLength(2);
+  });
+
+  it("keeps the acknowledged acceptance when the following read fails", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      {
+        ...AUCTION,
+        lots: [liveAt(1200, 1300)],
+        bids: [{ kind: "accepted", lotVersion: 5 }],
+      },
+      contractIdentity(surface),
+    );
+    let reads = 0;
+    const initial = ports.auction.getLot;
+    ports.auction.getLot = (request) =>
+      ++reads === 1 ? initial(request) : Promise.reject(new Error("offline"));
+    const result = await call(ports);
+    if (result.kind !== "screen") throw new Error("no card");
+    expect(lotBlock(result.body).finalBid).toEqual({
+      kind: "accepted-unread",
+      amount: rub(1300),
+    });
+    expect(commandCalls(calls)).toHaveLength(1);
+  });
+});

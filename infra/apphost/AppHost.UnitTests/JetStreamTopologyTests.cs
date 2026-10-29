@@ -125,6 +125,19 @@ public class JetStreamTopologyTests
         topics.MaxAge.ShouldBe(TimeSpan.FromDays(180));
     }
 
+    /// <summary>
+    /// Открытые живые экраны бота хаба (PER-815) живут двое суток с последней
+    /// записи: запись старого пульта не копится, а второй рестарт подряд её
+    /// не теряет.
+    /// </summary>
+    [Fact]
+    public void KeyValueBuckets_HubBotLiveScreens_LiveTwoDays()
+    {
+        var screens = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "hub-bot-live-screens");
+
+        screens.MaxAge.ShouldBe(TimeSpan.FromDays(2));
+    }
+
     [Fact]
     public void ToConfig_Bucket_KeepsLatestStateOnDisk()
     {
