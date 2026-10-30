@@ -12,10 +12,10 @@ import {
   happyHourTerms,
 } from "../../../../auction-happy-hours.js";
 import { predictionButtonLabel } from "../../../../auction-prediction.js";
-import { predictionResultsButtonLabel } from "../../../../auction-prediction-results.js";
 import { programmeParagraph } from "../../../../auction-programme.js";
 import { promoButtonLabel } from "../../../../auction-promo.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
+import { auctionResultsButtonLabel } from "../../../../auction-results.js";
 import {
   collectedLine,
   type SetLotOptions,
@@ -95,7 +95,6 @@ import {
 } from "./auction-bid.js";
 import { auctionChronicleScreen } from "./auction-chronicle.js";
 import { dayChronicleScreen } from "./auction-day-chronicle.js";
-import { predictionResultsScreen } from "./auction-prediction-results.js";
 import {
   predictionAliasQuestionScreen,
   predictionAnswerRefusedScreen,
@@ -113,6 +112,7 @@ import {
   raffleRegisteredScreen,
   raffleScreen,
 } from "./auction-raffle.js";
+import { auctionResultsScreen } from "./auction-results.js";
 import { stageLine } from "./auction-stage.js";
 import {
   invoiceMissingScreen,
@@ -309,8 +309,8 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
       case "follow-refused":
         return { screen: followRefusedScreen(block, view.body.keyboard) };
       // Розыгрыш среди участников (ADR-066).
-      case "prediction-results":
-        return { screen: predictionResultsScreen(block) };
+      case "auction-results":
+        return { screen: auctionResultsScreen(block) };
       case "day-chronicle":
         return { screen: dayChronicleScreen(block) };
       case "auction-chronicle":
@@ -551,9 +551,7 @@ function rootScreen(
   const predictions = buttons.find(
     (button) => button.action === "root.predictions",
   );
-  const predictionResults = buttons.find(
-    (button) => button.action === "root.prediction-results",
-  );
+  const results = buttons.find((button) => button.action === "root.results");
   const dayChronicle = buttons.find(
     (button) => button.action === "root.day-chronicle",
   );
@@ -581,8 +579,8 @@ function rootScreen(
     keyboard.text(predictionButtonLabel, predictions.callbackData);
     nextRow(keyboard);
   }
-  if (predictionResults !== undefined) {
-    keyboard.text(predictionResultsButtonLabel, predictionResults.callbackData);
+  if (results !== undefined) {
+    keyboard.text(auctionResultsButtonLabel, results.callbackData);
   }
   nextRow(keyboard);
   // «Хроники дня» (PER-725) — своим рядом, пока идёт онлайн-неделя.
@@ -722,8 +720,8 @@ function feedLabel(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
     case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
@@ -732,6 +730,7 @@ function feedLabel(
     case "promo.back":
     case "root.raffle":
     case "lot.set":
+    case "lot.invoices":
     case "set.open-lot":
     case "set.back":
     case "root.invoices":
@@ -913,6 +912,9 @@ function lotLabel(
     // Лоты сета — экран сета с карточки (ADR-073, п. 7).
     case "lot.set":
       return setLabel;
+    // «Мои счета» победителю на карточке проданного лота (PER-813).
+    case "lot.invoices":
+      return invoicesButtonLabel;
     // Без ставок первая ставка — не «по шагу» (PER-631, №82).
     case "lot.bid-step":
       return stepBidLabel(button.amount, awaitsFirstBid(lot.status));
@@ -970,8 +972,8 @@ function lotLabel(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
     case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
@@ -1117,8 +1119,8 @@ function setLotLabelOf(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
     case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
@@ -1126,6 +1128,7 @@ function setLotLabelOf(
     case "root.promo":
     case "promo.back":
     case "root.raffle":
+    case "lot.invoices":
     case "set.back":
     case "root.invoices":
     case "invoices.open":
@@ -1355,8 +1358,8 @@ function historyLabel(button: AuctionButton): string {
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
     case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
@@ -1365,6 +1368,7 @@ function historyLabel(button: AuctionButton): string {
     case "promo.back":
     case "root.raffle":
     case "lot.set":
+    case "lot.invoices":
     case "set.open-lot":
     case "set.back":
     case "root.invoices":

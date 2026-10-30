@@ -942,7 +942,7 @@ describe("auction root and the way back", () => {
     expect(labels(lastScreen(calls)).flat()).not.toContain("Статистика");
   });
 
-  it("opens prediction results from a finished auction", async () => {
+  it("opens the auction results from a finished auction", async () => {
     const auction = fakeAuction({ existing: true, stage: "finished" });
     const { bot, calls } = harness("member", auction, {
       presentation: "plain",
@@ -954,7 +954,7 @@ describe("auction root and the way back", () => {
     const root = lastScreen(calls);
     expect(labels(root)).toContainEqual(["Итоги"]);
     await bot.handleUpdate(press(data(root, "Итоги") ?? ""));
-    expect(lastScreen(calls).text).toContain("Итоги после финала.");
+    expect(lastScreen(calls).text).toContain("Итоги аукциона");
   });
 
   // Программа недели (PER-724): абзац под сроками, текст общий с ботом

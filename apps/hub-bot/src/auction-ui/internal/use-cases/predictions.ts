@@ -4,6 +4,7 @@ import type {
   DisplayNameRefusal,
   LotView,
   PredictionAnswer,
+  PredictionNominationResult,
   PredictionOutcome,
   PredictionRoundView,
 } from "../../ports.js";
@@ -19,6 +20,7 @@ import type {
   AnswerRefusal,
   AuctionButton,
   AuctionScreenBody,
+  PredictionResultsLine,
 } from "../../screen.js";
 import { collectPages } from "./collect-pages.js";
 import { type CommandContext, withOneRetry } from "./commands.js";
@@ -151,6 +153,8 @@ export async function openPrediction(
     status === "open",
     round.answers,
   );
+  const results =
+    status === "closed" ? await roundResults(context, input) : undefined;
   const nominations = predictionNominationsFor(input.round);
   const keyboard =
     status !== "open"
@@ -179,6 +183,7 @@ export async function openPrediction(
           ? {}
           : { staleNominations: lotDetails.staleNominations }),
         ...(closeAt === undefined ? {} : { closesAt: closeAt }),
+        ...(results === undefined ? {} : { results }),
         ...(input.notice === undefined ? {} : { notice: input.notice }),
       },
     ],
@@ -196,6 +201,69 @@ export async function openPrediction(
       [toRoot(input.auctionId)],
     ],
   };
+}
+
+type RoundResults = Extract<
+  AuctionScreenBody["blocks"][number],
+  { kind: "prediction" }
+>["results"];
+
+// Итоги раунда во вкладке «Прогнозы» (PER-813): после подсчёта номинации раунда
+// с итогом. Пока итогов нет, отказ чтения и «после финала» дают вкладку без них:
+// итоги — добавка к экрану, а не причина его уронить.
+async function roundResults(
+  context: PredictionContext,
+  input: { auctionId: string; round: PredictionRound },
+): Promise<RoundResults> {
+  try {
+    const results = await context.auction.getPredictionResults({
+      viewer: context.viewer,
+      auctionId: input.auctionId,
+    });
+    if (results.kind === "by-hand" || results.kind === "cancelled") {
+      return { kind: results.kind };
+    }
+    if (results.kind === "after-final") return undefined;
+    const own = new Set<string>(
+      predictionNominationsFor(input.round).map((each) => each.id),
+    );
+    const nominations: PredictionResultsLine[] = [];
+    for (const nomination of results.nominations) {
+      if (own.has(nomination.nomination)) {
+        nominations.push(await resultLine(context, nomination));
+      }
+    }
+    return { kind: "counted", nominations };
+  } catch {
+    return undefined;
+  }
+}
+
+const untitledLot = "Лот без названия";
+
+async function resultLine(
+  context: PredictionContext,
+  nomination: PredictionNominationResult,
+): Promise<PredictionResultsLine> {
+  const shared = {
+    nomination: nomination.nomination,
+    winnerNames: nomination.winnerNames,
+    winnerCount: nomination.winnerCount,
+    ...(nomination.mine === undefined ? {} : { mine: nomination.mine }),
+  };
+  if (nomination.value.kind === "number") {
+    return { ...shared, value: nomination.value };
+  }
+  const titles: string[] = [];
+  for (const lotId of nomination.value.lotIds) {
+    const lot = await context.auction.findLot({
+      viewer: context.viewer,
+      lotId,
+    });
+    const title = lot?.card?.title.trim() ?? "";
+    titles.push(title === "" ? untitledLot : title);
+  }
+  return { ...shared, value: { kind: "lots", titles } };
 }
 
 export async function editPrediction(
