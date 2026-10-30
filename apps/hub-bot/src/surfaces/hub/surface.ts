@@ -1,3 +1,5 @@
+import { createAchievementsClient } from "../../core/achievements/client.js";
+import { reportAchievementsFailure } from "../../core/achievements/failures.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
@@ -34,6 +36,7 @@ import {
 } from "../../core/notifications/step-window-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { rpcMeta } from "../../core/rpc-metadata.js";
+import { serviceNames } from "../../core/service.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createDispatcher } from "./application/dispatcher.js";
 import { createAuctionClient } from "./auction/client.js";
@@ -44,7 +47,9 @@ import {
   logBodyMissing,
 } from "./delivery/access-request.js";
 import { decodeNotification } from "./delivery/notification.js";
+import { createFloorRoomBus } from "./floor-room-bus.js";
 import { createIdentityClient } from "./identity/client.js";
+import { createLiveScreensNats } from "./live-screens-nats.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
 import { createBot } from "./presentation/bot.js";
@@ -83,6 +88,19 @@ export const hubSurface: SurfaceDefinition = ({
     tracing,
     serviceToken,
   });
+  const achievements =
+    hub.achievementsUrl === undefined
+      ? undefined
+      : createAchievementsClient(hub.achievementsUrl, {
+          tracing,
+          serviceToken,
+          onFailure: (cause, meta) =>
+            reportAchievementsFailure({
+              logger,
+              cause,
+              ...(meta === undefined ? {} : { meta }),
+            }),
+        });
   const notifications = createNotificationsClient(hub.notificationsUrl, {
     tracing,
     serviceToken,
@@ -141,6 +159,9 @@ export const hubSurface: SurfaceDefinition = ({
             : String(failure.cause)),
       }),
   });
+  // Состав зала помощника (PER-816): bucket KV, соединение открывается при
+  // первом обращении к экрану «Ставки зала».
+  const floorRoom = createFloorRoomBus(config.natsUrl);
   const dispatcher = createDispatcher(
     meetups,
     notifications,
@@ -153,6 +174,8 @@ export const hubSurface: SurfaceDefinition = ({
           auctions: auction,
           timeZone: communityTimeZone,
           usernames: identity,
+          room: floorRoom.store,
+          members: identity,
           // Приём объявления аукциона (PER-765) — Notifications.
           announcements: notifications.announcements,
           media: mediaChat.enabled,
@@ -181,6 +204,16 @@ export const hubSurface: SurfaceDefinition = ({
           onError: (_auctionId, cause, failure) =>
             reportWatchFailure(logger, cause, failure),
         });
+  // Открытые пульт ведущего и «Ставки зала» переживают рестарт (PER-815):
+  // записи лежат в bucket'е, который объявляет платформа.
+  const liveScreens =
+    watches === undefined
+      ? undefined
+      : createLiveScreensNats({
+          url: config.natsUrl,
+          service: serviceNames.hub,
+          logger,
+        });
   const limiter = createEditLimiter({
     onError: (_key, cause) =>
       reportLiveEditFailure(
@@ -198,6 +231,7 @@ export const hubSurface: SurfaceDefinition = ({
     presentation: config.presentation,
     environment,
     faq: hub.faq,
+    hall: hub.hall,
     today,
     build,
     mediaChat,
@@ -212,12 +246,21 @@ export const hubSurface: SurfaceDefinition = ({
       ? {}
       : {
           auction,
+          ...(achievements === undefined
+            ? {}
+            : { achievements: achievements.port }),
           ...(watches === undefined
             ? {}
             : {
                 live: {
                   watches,
                   limiter,
+                  ...(liveScreens === undefined
+                    ? {}
+                    : {
+                        screens: (kind) => liveScreens.screens(kind),
+                        broadcasts: liveScreens.broadcasts(),
+                      }),
                   names: {
                     getDisplayNames: (request) =>
                       auction
@@ -267,6 +310,12 @@ export const hubSurface: SurfaceDefinition = ({
               lotId,
               requestId === undefined ? undefined : rpcMeta({ requestId }),
             ),
+          auctionFinalAt: (identityId, auctionId, requestId) =>
+            auction.auctionFinalAt(
+              identityId,
+              auctionId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
         };
   const renderLot = createLotNoticeRender({
     reads: noticeReads,
@@ -279,6 +328,7 @@ export const hubSurface: SurfaceDefinition = ({
   const renderFinal = createFinalNoticeRender({
     reads: noticeReads,
     onTitleMissing: logMissingTitle(logger),
+    timeZone: communityTimeZone,
   });
   // Начало окна «Счастливых часов» (PER-616) — тот же общий рендер и те же
   // чтения, что у бота аукциона: право получателя у Identity, названия лотов
@@ -433,11 +483,14 @@ export const hubSurface: SurfaceDefinition = ({
             }),
         }),
       close() {
+        void floorRoom.close();
         releaseReport.close();
         limiter.close();
         watches?.close();
+        void liveScreens?.close();
         identity.close();
         meetups.close();
+        achievements?.close();
         notifications.close();
         auction?.close();
       },

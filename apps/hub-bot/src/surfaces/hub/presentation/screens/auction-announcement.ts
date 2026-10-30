@@ -16,7 +16,11 @@ import type {
   ButtonChoice,
 } from "../../application/auction-announcements.js";
 import { fingerprint } from "../../application/fingerprint.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import {
+  type CommunityDay,
+  communityLocalTime,
+  communityShownTime,
+} from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleAnnouncementAskData,
@@ -116,8 +120,12 @@ function moment(instant: string, view: Moments): string {
   return readableMoment(communityLocalTime(instant, view.timeZone), view.today);
 }
 
+function deadline(instant: string, view: Moments): string {
+  return readableMoment(communityShownTime(instant, view.timeZone), view.today);
+}
+
 function span(window: { from: string; until: string }, view: Moments): string {
-  return `с ${moment(window.from, view)} до ${moment(window.until, view)}`;
+  return `с ${moment(window.from, view)} до ${deadline(window.until, view)}`;
 }
 
 /** Меню: своё объявление и шаблоны, которые аукцион сейчас может нести. */
@@ -266,7 +274,7 @@ export function draftText(
           `Бесплатный розыгрыш среди участников аукциона${draft.prize === undefined ? "" : `: разыгрываем «${draft.prize}»`}.`,
           draft.closesAt === undefined
             ? undefined
-            : `Регистрация открыта до ${moment(draft.closesAt, moments)}.`,
+            : `Регистрация открыта до ${deadline(draft.closesAt, moments)}.`,
           draft.predictions
             ? "А ещё прогнозы: угадай, как закончатся торги."
             : undefined,

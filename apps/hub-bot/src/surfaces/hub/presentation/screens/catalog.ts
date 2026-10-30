@@ -30,6 +30,25 @@ export const manageMembersParent = "manage-members-parent";
 // владельца 10 октября 2026 года). Что цепочка родителей каждого экрана
 // доходит до корня, держит проверка графа `inspectCatalog` test kit.
 export const screenCatalog = {
+  "auction-achievements": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивки",
+    parent: "auction-root",
+    backName: "Ачивки",
+  },
+  "auction-achievement": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивка",
+    parent: "auction-achievements",
+  },
+  "achievements-unavailable": {
+    class: "screen",
+    nav: "exit",
+    title: "Ачивки недоступны",
+  },
+
   menu: {
     class: "screen",
     nav: "root",
@@ -294,12 +313,12 @@ export const screenCatalog = {
     parent: "lots",
     backName: "Лоты",
   },
-  // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
-  // корня аукциона и возврат туда же (PER-644).
-  "prediction-results": {
+  // Итоги завершённого аукциона (PER-813) — тело общего аукционного дерева,
+  // вход из корня аукциона и возврат туда же.
+  "auction-results": {
     class: "screen",
     nav: "tree",
-    title: "Итоги прогнозов",
+    title: "Итоги аукциона",
     parent: "auction-root",
     backName: "Итоги",
   },
@@ -363,14 +382,16 @@ export const screenCatalog = {
   // складываются по смыслу (PER-594, PER-644, PER-669): ставка по шагу, своя
   // сумма с автоставкой, «Ставки» с избранным (PER-495), «Лоты сета»
   // (ADR-073, п. 7), «🛠 Изменить лот» администратора своим рядом, листание
-  // `[◀️][🔄 Обновить][▶️]` и навигация — семь, у участника шесть.
+  // `[◀️][🔄 Обновить][▶️]` и навигация — семь, у участника шесть. Ссылок
+  // «Стрим финала ↗» и «Экран финала ↗» на карточке нет: они в корне
+  // аукциона (PER-832).
   lot: {
     class: "screen",
     nav: "tree",
     parent: "lots",
     backName: "Лот",
     refresh: true,
-    maxRows: 7,
+    maxRows: 9,
   },
   // Сет лотов (ADR-073, п. 7): экран-раздел карточки лота — лоты сета и,
   // после итога, кто его собрал. Открывается с карточки лота сета.
@@ -500,6 +521,14 @@ export const screenCatalog = {
     title: "Финал",
     parent: "auction-console",
     backName: "Финал",
+  },
+  // «Оплата» под пультом (PER-834): текст и срок оплаты на одном экране.
+  "console-payment": {
+    class: "screen",
+    nav: "tree",
+    title: "Оплата",
+    parent: "auction-console",
+    backName: "Оплата",
   },
   // «Ещё» под пультом (PER-802): снятие с публикации, удаление и отмена.
   "console-more": {
@@ -779,6 +808,15 @@ export const screenCatalog = {
     parent: "floor-bids",
     pairedContent: true,
   },
+  // Правка состава зала (PER-816): те же люди кнопками «убрать», возврат —
+  // «Готово» на экран людей.
+  "floor-room": {
+    class: "screen",
+    nav: "tree",
+    title: "Ставки зала",
+    parent: "floor-bids",
+    pairedContent: true,
+  },
   // Ставка зала за другого человека необратима: подтверждение с красным
   // «Да». Заголовок — вопрос с именем и ценой, линтер сверяет его по началу.
   "floor-confirm": {
@@ -809,6 +847,11 @@ export const screenCatalog = {
   // Закрытие лота финала ведущим (PER-337): продажа необратима, поэтому —
   // подтверждение с красным «Да». Заголовок — вопрос с названием лота,
   // линтер сверяет его по началу.
+  "final-open-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Открыть следующий лот",
+  },
   "final-close-confirm": {
     class: "screen",
     nav: "confirm",
@@ -872,6 +915,13 @@ export const screenCatalog = {
     nav: "confirm",
     title: "Включить автоставку",
     irreversible: true,
+  },
+  // Снять свой лимит (PER-822): подтверждение с вопросом-заголовком; поставить
+  // лимит можно снова, поэтому «необратимого» в нём нет.
+  "withdraw-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Снять автоставку",
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
@@ -1028,6 +1078,9 @@ export const screenCatalog = {
   // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
   hint: { class: "screen", nav: "exit" },
   notification: { class: "trace", nav: "free" },
+  // Трансляция хода торгов живого финала (PER-826): одно сообщение подписчика,
+  // которое бот правит на каждую ставку; одна кнопка «Не следить».
+  "bid-watch": { class: "trace", nav: "free" },
   // Файл материала (PER-644): подпись — название без разметки, под ним одна
   // кнопка «‹ Материалы».
   "material-file": { class: "trace", nav: "tree", parent: "materials" },

@@ -8,7 +8,6 @@ import {
 } from "@connectrpc/connect-node";
 import {
   BidSource,
-  FulfillmentMethod,
   type StepPolicySchema,
 } from "../../../../gen/auction/v1/auction_pb.js";
 import type {
@@ -32,6 +31,7 @@ import {
   limitOutcomeOf,
   ownDisplayNameOf,
   unansweredOn,
+  withdrawOutcomeOf,
 } from "../../../core/auction/commands.js";
 import {
   auctionChronicleOf,
@@ -39,11 +39,7 @@ import {
 } from "../../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
-import {
-  fulfillmentOutcomeOn,
-  myInvoicesOf,
-  wireFulfillment,
-} from "../../../core/auction/invoices.js";
+import { myInvoicesOf } from "../../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
@@ -75,12 +71,7 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
-import type {
-  FulfillmentMethod as FulfillmentView,
-  Invoice,
-  Person,
-  RemovalRefusal,
-} from "../application/types.js";
+import type { Invoice, Person, RemovalRefusal } from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
   clearHappyHourLotTermsResult,
@@ -158,6 +149,7 @@ type AuctionRpc = Pick<
   | "listAuctionNames"
   | "placeBid"
   | "setProxyLimit"
+  | "withdrawProxyLimit"
   | "chooseDisplayName"
   | "getAuction"
   | "getRaffle"
@@ -168,7 +160,6 @@ type AuctionRpc = Pick<
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "listMyInvoices"
-  | "chooseFulfillment"
   | "getMyPredictions"
   | "getPredictionResults"
   | "getAuctionDayChronicle"
@@ -304,13 +295,31 @@ export type LotInfoReader = {
     lotId: string,
     meta?: RpcMetadata,
   ): Promise<LotInfo>;
+  // Ориентировочное время финала для вести о конце торгов (PER-812).
+  auctionFinalAt(
+    identityId: string,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<string | undefined>;
 };
 
 export function createLotInfoReader(
-  rpc: Pick<AuctionRpc, "getLot">,
+  rpc: Pick<AuctionRpc, "getLot" | "getAuction">,
   timeoutMs = 3_000,
 ): LotInfoReader {
   return {
+    async auctionFinalAt(identityId, auctionId, meta) {
+      const { auction } = await rpc.getAuction(
+        {
+          viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+          auctionId,
+        },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      return auction === undefined
+        ? undefined
+        : auctionSummaryViewOf(auction).finalAt;
+    },
     async lotInfo(identityId, lotId, meta) {
       const snapshot = await rpc.getLot(
         {
@@ -1087,7 +1096,11 @@ export function createAuctionAdapter(
     // имён.
     async recentBids(person, read, meta) {
       const viewer = wireViewer(viewerOf(person));
-      let bids: { amount: Money; participantId: string }[] = [];
+      let bids: {
+        amount: Money;
+        participantId: string;
+        origin?: "floor" | "proxy";
+      }[] = [];
       try {
         let pageToken = "";
         for (let page = 0; page < historyPageLimit; page += 1) {
@@ -1103,7 +1116,13 @@ export function createAuctionAdapter(
             // запись снятия в последние ставки не идут.
             ...history.entries.flatMap((entry) =>
               entry.kind === "bid" && entry.removed !== true
-                ? [{ amount: entry.amount, participantId: entry.participantId }]
+                ? [
+                    {
+                      amount: entry.amount,
+                      participantId: entry.participantId,
+                      ...originMark(entry.origin),
+                    },
+                  ]
                 : [],
             ),
           ].slice(-read.limit);
@@ -1471,6 +1490,20 @@ export function createAuctionAdapter(
               ),
             );
           },
+          withdrawProxyLimit(request) {
+            return unansweredOn(async () =>
+              withdrawOutcomeOf(
+                await rpc.withdrawProxyLimit(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    lotId: request.lotId,
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
+              ),
+            );
+          },
           async chooseDisplayName(request) {
             const { choice } = request;
             return displayNameOutcomeOf(
@@ -1525,19 +1558,6 @@ export function createAuctionAdapter(
                 {
                   viewer: wireViewer(request.viewer),
                   auctionId: request.auctionId,
-                },
-                options(meta),
-              ),
-            );
-          },
-          chooseFulfillment(request) {
-            return fulfillmentOutcomeOn(() =>
-              rpc.chooseFulfillment(
-                {
-                  viewer: wireViewer(request.viewer),
-                  invoiceId: request.invoiceId,
-                  method: wireFulfillment(request.method),
-                  opId: request.opId,
                 },
                 options(meta),
               ),
@@ -2091,6 +2111,14 @@ function daySummaryResult(
       return _exhaustive;
     }
   }
+}
+
+// Пометка ставки в «Последних ставках» пульта (PER-834): зал и автоставка.
+function originMark(
+  origin: { kind: "manual"; source: "bot" | "floor" } | { kind: "proxy" },
+): { origin?: "floor" | "proxy" } {
+  if (origin.kind === "proxy") return { origin: "proxy" };
+  return origin.source === "floor" ? { origin: "floor" } : {};
 }
 
 function safeCount(value: bigint, field: string): number {
@@ -3009,24 +3037,8 @@ function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
     winnerId: snapshot.winnerId,
     amount: moneyOf(snapshot.amount),
     paymentDueAt: snapshot.paymentDueAt,
-    fulfillment: fulfillmentOf(snapshot.fulfillment),
     status,
   };
-}
-
-// Способ новее схемы бот не знает и показывает как невыбранный: счёт важнее
-// подписи способа.
-function fulfillmentOf(method: FulfillmentMethod): FulfillmentView {
-  switch (method) {
-    case FulfillmentMethod.PICKUP:
-      return "pickup";
-    case FulfillmentMethod.DELIVERY:
-      return "delivery";
-    case FulfillmentMethod.DIGITAL:
-      return "digital";
-    default:
-      return "unspecified";
-  }
 }
 
 // Ответы текста «Как оплатить и получить» (PER-322): именованный отказ

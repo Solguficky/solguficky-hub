@@ -57,55 +57,23 @@ public class FinalLotNextTests
     }
 
     [Fact]
-    public void When_NoLotTradedYet_Expect_FallbackEstimate()
-    {
-        // Пока не прошёл ни один лот, длительность его неизвестна: оценка
-        // запасная — 6-8 лотов на 40-60 минут.
-        FinalEstimate.Minutes([]).ShouldBe(FinalEstimate.FallbackMinutes);
-        FinalEstimate.Minutes([EventFactory.Committed]).ShouldBe(FinalEstimate.FallbackMinutes);
-    }
-
-    [Fact]
-    public void When_TwoLotsTraded_Expect_AverageOfThem()
-    {
-        // Два лота по шесть минут — среднее шесть.
-        var activations = new[]
-        {
-            EventFactory.Committed,
-            EventFactory.Committed.AddMinutes(6),
-        };
-
-        FinalEstimate.Minutes(activations).ShouldBe(6);
-    }
-
-    [Fact]
-    public void When_AverageIsFractional_Expect_RoundedDown()
-    {
-        // Три лота: две минуты, четыре и пять — среднее 3⅓, и обещать больше
-        // трёх минут нельзя: лот протянет дольше обещанного.
-        var activations = new[]
-        {
-            EventFactory.Committed,
-            EventFactory.Committed.AddMinutes(2),
-            EventFactory.Committed.AddMinutes(6),
-            EventFactory.Committed.AddMinutes(11),
-        };
-
-        FinalEstimate.Minutes(activations).ShouldBe(3);
-    }
-
-    [Fact]
-    public void When_NextLotAnnounced_Expect_FactWithLotAndEstimate()
+    public void When_NextLotAnnounced_Expect_FactWithActiveLotAndPlace()
     {
         var eventId = EventFactory.NewId();
         var lotId = EventFactory.NewId();
+        var activeLotId = EventFactory.NewId();
 
-        var notification = AuctionFacts.FinalLotNext(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.Parse(lotId), 7,
-            Guid.Parse(eventId), EventFactory.Committed, EventFactory.Committed.AddHours(1));
+        var notification = AuctionFacts.FinalLotNext(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.Parse(lotId),
+            Guid.Parse(activeLotId), 3, 5, Guid.Parse(eventId), EventFactory.Committed,
+            EventFactory.Committed.AddHours(1));
 
         notification.AuctionFinalLotNext.ShouldNotBeNull();
         notification.AuctionFinalLotNext.LotId.ShouldBe(lotId);
-        notification.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(7);
+        notification.AuctionFinalLotNext.ActiveLotId.ShouldBe(activeLotId);
+        notification.AuctionFinalLotNext.Place.ShouldBe(3u);
+        notification.AuctionFinalLotNext.LineupSize.ShouldBe(5u);
+        // Времени фабрика не обещает: ноль значит «неизвестно».
+        notification.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(0);
         // Повод — событие аукциона: взятого в работу лота.
         notification.Cause.AuctionEventId.ShouldBe(eventId);
     }

@@ -18,7 +18,23 @@ describe("readHubConfig", () => {
         notificationsUrl: "http://127.0.0.1:50053",
         auctionUrl: "http://auction:8081",
         faq: defaultFaq,
+        hall: {},
       },
+    });
+  });
+
+  it("reads the hall screen and stream addresses, and refuses a wrong one", () => {
+    const result = readHubConfig({
+      BOT_HALL_SCREEN_URL: "https://hall.example.org/screen",
+    });
+    expect(result.ok && result.config.hall).toEqual({
+      screenUrl: "https://hall.example.org/screen",
+    });
+    expect(
+      readHubConfig({ BOT_STREAM_URL: "http://stream.example.org" }),
+    ).toEqual({
+      ok: false,
+      error: "BOT_STREAM_URL must be an HTTPS URL without credentials",
     });
   });
 

@@ -40,11 +40,14 @@ import type {
   WindowNote,
   WindowRef,
 } from "../../application/types.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import {
+  type CommunityDay,
+  communityLocalTime,
+  communityShownTime,
+} from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleAnnouncementData,
-  consoleAskData,
   consoleCancelConfirmData,
   consoleCancelData,
   consoleCloseConfirmData,
@@ -65,8 +68,12 @@ import {
   consoleMarkData,
   consoleMoreData,
   consoleNextLotData,
+  consoleOpenAskData,
   consoleOpenData,
+  consolePaymentScreenData,
   consolePaymentTermData,
+  consolePaymentTextData,
+  consolePaymentTextRemoveData,
   consolePeriodsData,
   consolePromoVideoData,
   consoleRaffleData,
@@ -96,7 +103,13 @@ import {
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import { announcementLabel } from "./auction-announcement.js";
-import { invoicesLabel } from "./auction-invoices.js";
+import {
+  invoicesLabel,
+  paymentLabel,
+  paymentTextLabel,
+  paymentTextParagraph,
+  paymentTextRemoveLabel,
+} from "./auction-invoices.js";
 import { promoVideoLabel } from "./auction-promo.js";
 import { rafflePrizeChangeLabel } from "./auction-raffle-prize-change.js";
 import { rafflePrizePhotoLabel } from "./auction-raffle-prize-photo.js";
@@ -153,6 +166,9 @@ export type ConsoleScreenView = {
   section?: ConsoleSection;
   // У бота есть чат медиа (PER-774): без него промо-видео не задать.
   media?: boolean;
+  // Когда пульт прочитан, мс эпохи (PER-815): ведущий по времени замечает
+  // застывший экран и без плашки об обрыве.
+  updatedAt?: number;
 };
 
 export const staleConsoleText =
@@ -246,13 +262,13 @@ function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
       return week?.opensAt === undefined || week.closesAt === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(
-            `Сроки недели сохранены: с ${moment(week.opensAt, view)} до ${moment(week.closesAt, view)}`,
+            `Сроки недели сохранены: с ${moment(week.opensAt, view)} до ${deadline(week.closesAt, view)}`,
           );
     case "raffle-saved":
       return week?.raffleClosesAt === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(
-            `Регистрация в розыгрыше закроется ${moment(week.raffleClosesAt, view)}`,
+            `Регистрация в розыгрыше закроется ${deadline(week.raffleClosesAt, view)}`,
           );
     // Приз называет себя сам (PER-649): строка «Приз: …» идёт и в сводке.
     case "prize-saved":
@@ -308,7 +324,7 @@ export function tradingElsewhere(
     holder.meetupTitle !== undefined
       ? `у сходки «${holder.meetupTitle.replace(/\s+/g, " ").trim()}»`
       : holder.opensAt !== undefined && holder.closesAt !== undefined
-        ? `у аукциона с онлайн-неделей с ${localMoment(holder.opensAt, view)} до ${localMoment(holder.closesAt, view)}`
+        ? `у аукциона с онлайн-неделей с ${localMoment(holder.opensAt, view)} до ${deadline(holder.closesAt, view)}`
         : "у другого аукциона";
   return `Торги уже идут ${where}: открыть неделю можно, когда они закончатся`;
 }
@@ -331,6 +347,15 @@ export function finalToast(final: boolean): string {
 
 function moment(instant: string, view: ConsoleScreenView): string {
   return readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+}
+
+// Срок, на котором торги или приём кончаются: полночь читается как 23:59
+// предыдущего дня (PER-831).
+function deadline(
+  instant: string,
+  view: { timeZone: string; today: CommunityDay },
+): string {
+  return readableMoment(communityShownTime(instant, view.timeZone), view.today);
 }
 
 function finalLine(week: AuctionWeek): string {
@@ -362,11 +387,11 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
   if (week.raffleClosesAt === undefined) return "Розыгрыш: нет.";
   const raffle = view.console.raffle;
   if (raffle === undefined) {
-    return `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+    return `Розыгрыш: регистрация до ${deadline(week.raffleClosesAt, view)}.`;
   }
   switch (raffle.status) {
     case "open":
-      return `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+      return `Розыгрыш: регистрация до ${deadline(week.raffleClosesAt, view)}.`;
     case "closing":
     case "awaiting-beacon":
       return "Розыгрыш: регистрация закрыта, жеребьёвка идёт.";
@@ -442,6 +467,54 @@ function paymentTermText(seconds: number): string {
   return `${paymentTermInDays(seconds)} дн.`;
 }
 
+// Строка о тексте оплаты в онлайн-торгах: задан он или нет, пока его можно
+// менять из пульта (PER-814). Чтение отказало — строки нет.
+function paymentTextLines(console: AuctionConsoleView): string[] {
+  switch (console.paymentText) {
+    case "set":
+      return ["Текст оплаты задан."];
+    case "unset":
+      return [paymentTextUnset];
+    case undefined:
+      return [];
+    default: {
+      const _exhaustive: never = console.paymentText;
+      return _exhaustive;
+    }
+  }
+}
+
+// «Оплата» (PER-834): текст победителям и срок счёта настраиваются с одного
+// экрана — вместо трёх входов в пульте и пары в «Счетах». Срок меняют, пока
+// неделя не открыта (PER-722); текст — всегда, снять его можно, пока он задан.
+function paymentScreen(view: ConsoleScreenView): ShownScreen {
+  const { console } = view;
+  const auction = uuidToToken(console.auctionId);
+  const keyboard = new InlineKeyboard();
+  nextRow(keyboard).text(paymentTextLabel, consolePaymentTextData(auction));
+  if (console.paymentInstructions !== undefined) {
+    nextRow(keyboard).text(
+      paymentTextRemoveLabel,
+      consolePaymentTextRemoveData(auction),
+    );
+  }
+  if (preparing(console) && console.week !== undefined) {
+    nextRow(keyboard).text("Срок оплаты", consolePaymentTermData(auction));
+  }
+  return {
+    id: "console-payment",
+    text: screenText(
+      paymentLabel,
+      console.week === undefined
+        ? undefined
+        : escapeHtml(paymentTermLines(console.week).join("\n")),
+      paymentTextParagraph(console.paymentInstructions),
+    ),
+    keyboard: withNav(keyboard, toConsole(console.auctionId)),
+    format: "HTML",
+  };
+}
+
 function paymentTermLines(week: AuctionWeek): string[] {
   return week.paymentTermSeconds === undefined
     ? []
@@ -460,7 +533,7 @@ function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
   if (week.opensAt === undefined || week.closesAt === undefined) {
     return "Сроки недели заданы не полностью.";
   }
-  return `Онлайн-неделя: с ${moment(week.opensAt, view)} до ${moment(week.closesAt, view)}.`;
+  return `Онлайн-неделя: с ${moment(week.opensAt, view)} до ${deadline(week.closesAt, view)}.`;
 }
 
 // Вход к скрытой сходке, где её публикуют (PER-801): цель словом, как
@@ -521,7 +594,7 @@ function statusLines(view: ConsoleScreenView): string[] {
       return [
         week?.closesAt === undefined
           ? "Идут онлайн-торги."
-          : `Идут онлайн-торги до ${moment(week.closesAt, view)}.`,
+          : `Идут онлайн-торги до ${deadline(week.closesAt, view)}.`,
         ...(week === undefined
           ? []
           : [
@@ -532,6 +605,7 @@ function statusLines(view: ConsoleScreenView): string[] {
               ...rafflePrizeLines(week, view),
               ...participationLines(view.console),
               ...paymentTermLines(week),
+              ...paymentTextLines(view.console),
             ]),
       ];
     case "settling":
@@ -547,15 +621,16 @@ function statusLines(view: ConsoleScreenView): string[] {
         ...raffleLines(view),
       ];
     case "lineup-frozen":
-      return ["Состав финала объявлен.", ...finalTimeLines(view.console, view)];
-    case "final":
-      return ["Идёт финал.", ...finalTimeLines(view.console, view)];
-    case "finished":
       return [
-        "Аукцион завершён.",
+        "Состав финала объявлен.",
         ...finalTimeLines(view.console, view),
         ...raffleLines(view),
       ];
+    case "final":
+      return ["Идёт финал.", ...finalTimeLines(view.console, view)];
+    // Время финала после конца аукциона ничего не говорит (PER-816).
+    case "finished":
+      return ["Аукцион завершён.", ...raffleLines(view)];
     case "cancelled":
       return ["Аукцион отменён: проданные лоты остались проданными."];
     default: {
@@ -571,12 +646,13 @@ function inFinal(console: AuctionConsoleView): boolean {
   return console.status === "lineup-frozen" || console.status === "final";
 }
 
-// Пульт финала — экран ведущего, и счета там не показываются: к ним
-// возвращаются в перерыве и после конца аукциона.
+// Пульт самого финала — экран ведущего, и счета там не показываются: к ним
+// возвращаются в перерыве, после объявления состава и после конца аукциона.
 function invoicesShown(console: AuctionConsoleView): boolean {
   return (
     console.status === "settling" ||
     console.status === "break" ||
+    console.status === "lineup-frozen" ||
     console.status === "finished" ||
     console.status === "cancelled"
   );
@@ -619,6 +695,14 @@ function lineupLines(console: AuctionConsoleView): string[] {
   });
 }
 
+// Ставка зала и автоставка в «Последних ставках» (PER-834): иначе все строки
+// читаются как онлайн-ставки людей.
+const bidOriginMark = {
+  online: "",
+  floor: " · зал",
+  proxy: " · авто",
+} as const;
+
 function tradingLines(console: AuctionConsoleView): string[] {
   const entry = activeLot(console);
   if (entry === undefined) {
@@ -642,7 +726,7 @@ function tradingLines(console: AuctionConsoleView): string[] {
           "Последние ставки:",
           ...trading.bids.map(
             (bid) =>
-              `${money(bid.amount)}${bid.name === undefined ? "" : ` — ${bid.name}`}`,
+              `${money(bid.amount)}${bid.name === undefined ? "" : ` — ${bid.name}`}${bidOriginMark[bid.origin ?? "online"]}`,
           ),
         ]),
   ];
@@ -655,35 +739,32 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
   const order = console.lineup?.order ?? [];
   const entry = activeLot(console);
   const position = entry === undefined ? -1 : order.indexOf(entry.lot.lotId);
-  if (console.status === "lineup-frozen") {
-    keyboard.text("Начать финал", consoleStartFinalData(auction));
-  } else if (
+  if (
     entry !== undefined &&
     position >= 0 &&
     entry.lot.status.kind === "trading"
   ) {
-    keyboard
-      .text("Поднять цену", consoleAskData(auction, position))
-      .row()
-      .text(
-        entry.lot.status.leaderId === undefined
-          ? "Закрыть без продажи"
+    // «Поднять цену» убрана (PER-816, решение владельца 29.10.2026): ведущий
+    // объявляет цену голосом, а ставку зала заносит помощник. На последнем
+    // лоте продажа ещё и завершает аукцион — это сказано на кнопке.
+    keyboard.text(
+      entry.lot.status.leaderId === undefined
+        ? "Закрыть без продажи"
+        : position === order.length - 1
+          ? "Продать и завершить аукцион"
           : "Продать",
-        consoleCloseData(auction, position),
-      );
+      consoleCloseData(auction, position),
+    );
   } else {
-    keyboard.text("Открыть следующий лот", consoleNextLotData(auction));
+    keyboard.text("Открыть следующий лот", consoleOpenAskData(auction));
   }
-  // Финал — тоже торги: отмена доступна и ведущему (ADR-047, дополнение
-  // 2026-10-12), отдельным рядом над «Обновить» — рядов у финала мало.
-  withCancel(nextRow(keyboard), console);
-  // «Ставки зала» помощника (PER-565) и сеты (PER-509) — из пульта ведущего,
-  // а не из корня аукциона (PER-802): в корне у администратора один вход.
+  // «Ставки зала» помощника (PER-565) — из пульта финала, а не из корня
+  // аукциона (PER-802). Сетов и промо-видео на экране финала нет (PER-816):
+  // это управление аукционом, а не финалом.
   nextRow(keyboard).text(floorLabel, floorData(auction));
-  nextRow(keyboard).text(lotSetsLabel, consoleSetsData(auction));
-  if (view.media === true) {
-    nextRow(keyboard).text(promoVideoLabel, consolePromoVideoData(auction));
-  }
+  // Отмена доступна и ведущему (ADR-047, дополнение 2026-10-12), но в «Ещё»,
+  // как на онлайн-этапе (PER-814): рядом с «Продать» её нажали бы случайно.
+  moreRow(keyboard, console);
   nextRow(keyboard).text(refreshLabel, consoleViewData(auction));
   const trading = tradingLines(console);
   return {
@@ -691,6 +772,7 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
     text: screenText(
       "Пульт",
       view.stale === true ? escapeHtml(staleConsoleText) : undefined,
+      updatedLine(view),
       statusLines(view).map(escapeHtml).join("\n"),
       lineupLines(console).map(escapeHtml).join("\n"),
       trading.length === 0 ? undefined : trading.map(escapeHtml).join("\n"),
@@ -698,6 +780,20 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
     keyboard: withNav(keyboard, toAuctionRoot(console.auctionId)),
     format: "HTML",
   };
+}
+
+// «Обновлено в 21:15:42» (PER-815): время сообщества, с секундами — залп ставок
+// двигает экран чаще минуты, и по минутам застывший экран не отличить.
+function updatedLine(view: ConsoleScreenView): string | undefined {
+  if (view.updatedAt === undefined) return undefined;
+  const time = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: view.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).format(view.updatedAt);
+  return escapeHtml(`Обновлено в ${time}`);
 }
 
 function priceLabel(status: LotStatusView): string {
@@ -886,7 +982,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     // «Начать финал» посреди финала отвечает тем же исходом — там первый лот
     // уже открывали, и кнопки нет.
     if (view.note === "final-started" && noLotOpened(console)) {
-      keyboard.text("Открыть первый лот", consoleNextLotData(auction));
+      keyboard.text("Открыть первый лот", consoleOpenAskData(auction));
     }
     // Слот торгов занят (PER-606): исход ведёт и к идущему аукциону — в его
     // корень, а не в пульт: пульт чужого аукциона спросит своё право.
@@ -910,6 +1006,8 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       return finalSectionScreen(view);
     case "more":
       return moreScreen(view);
+    case "payment":
+      return paymentScreen(view);
     case undefined:
       break;
     default: {
@@ -917,7 +1015,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       return _exhaustive;
     }
   }
-  if (inFinal(console)) return finalScreen(view);
+  if (console.status === "final") return finalScreen(view);
   return preparing(console) ? preparationScreen(view) : tradingScreen(view);
 }
 
@@ -997,12 +1095,33 @@ function checklistLines(view: ConsoleScreenView): string[] {
       ? `${checkNone} Розыгрыш не назначен.`
       : week.rafflePrize === undefined
         ? `${checkNo} Розыгрыш: приз не задан.`
-        : `${checkYes} Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}, приз есть.`,
+        : `${checkYes} Розыгрыш: регистрация до ${deadline(week.raffleClosesAt, view)}, приз есть.`,
+    paymentTextCheck(console),
     console.hidden
       ? `${checkNo} Аукцион скрыт от участников: они его не видят, пока не опубликуешь.`
       : `${checkYes} Аукцион виден участникам.`,
   ];
 }
+
+// Текст оплаты (PER-814) не условие открытия, как розыгрыш: без него торги
+// пройдут, а победители не увидят, как оплатить.
+function paymentTextCheck(console: AuctionConsoleView): string {
+  switch (console.paymentText) {
+    case "set":
+      return `${checkYes} Текст оплаты задан.`;
+    case "unset":
+      return `${checkNone} ${paymentTextUnset}`;
+    case undefined:
+      return `${checkUnknown} Текст оплаты: не получилось проверить, задан ли он.`;
+    default: {
+      const _exhaustive: never = console.paymentText;
+      return _exhaustive;
+    }
+  }
+}
+
+const paymentTextUnset =
+  "Текст оплаты не задан: победители не увидят, как оплатить.";
 
 const checkYes = "✓";
 const checkNo = "✗";
@@ -1038,9 +1157,8 @@ function preparationScreen(view: ConsoleScreenView): ShownScreen {
   }
   finalTimeRow(keyboard, console);
   if (week !== undefined) {
-    nextRow(keyboard)
-      .text("Счастливые часы", consoleWindowsData(auction))
-      .text("Срок оплаты", consolePaymentTermData(auction));
+    nextRow(keyboard).text("Счастливые часы", consoleWindowsData(auction));
+    nextRow(keyboard).text(paymentLabel, consolePaymentScreenData(auction));
     nextRow(keyboard).text(raffleLabel, consoleRaffleScreenData(auction));
   }
   if (console.hidden) {
@@ -1095,6 +1213,11 @@ function tradingScreen(view: ConsoleScreenView): ShownScreen {
       consoleLineupData(auction),
     );
   }
+  // Перерыв после объявления состава сохраняет кнопки онлайн-этапа (PER-814):
+  // к ним добавлены «Начать финал» и «Ставки зала» ведущего.
+  if (console.status === "lineup-frozen") {
+    nextRow(keyboard).text("Начать финал", consoleStartFinalData(auction));
+  }
   // Счета (PER-321): лоты продаются с общего дедлайна онлайн-недели, и с него
   // же у аукциона появляются счета. Отменённый аукцион их сохраняет: проданный
   // лот остаётся проданным.
@@ -1103,11 +1226,19 @@ function tradingScreen(view: ConsoleScreenView): ShownScreen {
   }
   // «Торги» (PER-802): «Счастливые часы» — пока идёт неделя, в них же
   // запускается окно по ходу торгов (PER-615), и «Сводка дня» (PER-492).
+  // Завершённому аукциону «Сводка дня» не нужна (PER-816): итоги — в «Итогах».
   nextRow(keyboard);
   if (console.status === "prebidding") {
     keyboard.text("Счастливые часы", consoleWindowsData(auction));
   }
-  keyboard.text("Сводка дня", consoleDaySummaryData(auction));
+  if (console.status !== "finished") {
+    keyboard.text("Сводка дня", consoleDaySummaryData(auction));
+  }
+  // «Оплата» (PER-834) — до дедлайна недели (PER-814); с дедлайна она среди
+  // «Счетов», где её читает и сводка.
+  if (console.status === "prebidding") {
+    nextRow(keyboard).text(paymentLabel, consolePaymentScreenData(auction));
+  }
   participantsRow(keyboard, view);
   if (raffleShown(console)) {
     nextRow(keyboard).text(raffleLabel, consoleRaffleScreenData(auction));
@@ -1119,7 +1250,15 @@ function tradingScreen(view: ConsoleScreenView): ShownScreen {
     );
   }
   feedRow(keyboard, console);
+  if (console.status === "lineup-frozen") {
+    nextRow(keyboard).text(floorLabel, floorData(auction));
+  }
   moreRow(keyboard, console);
+  // Пульт с объявленным составом держит «Обновить», как пульт финала
+  // (решение владельца 11 октября 2026 года): ведущий ждёт начала финала.
+  if (console.status === "lineup-frozen") {
+    nextRow(keyboard).text(refreshLabel, consoleViewData(auction));
+  }
   withPager(keyboard, page, (target) =>
     consoleViewData(auction, target, view.sort),
   );
@@ -1132,6 +1271,9 @@ function tradingScreen(view: ConsoleScreenView): ShownScreen {
         .filter((line) => line !== undefined)
         .map(escapeHtml)
         .join("\n"),
+      console.status === "lineup-frozen"
+        ? lineBlock(lineupLines(console))
+        : undefined,
       escapeHtml(sortLine(view.sort)),
       lotsBlock(console, page.items),
       overdue.length === 0
@@ -1190,8 +1332,12 @@ function participantsRow(keyboard: InlineKeyboard, view: ConsoleScreenView) {
   const announcement =
     (console.status === "scheduled" && !console.hidden) ||
     console.status === "prebidding" ||
-    console.status === "break";
-  const promo = view.media === true && console.status !== "cancelled";
+    console.status === "break" ||
+    console.status === "lineup-frozen";
+  const promo =
+    view.media === true &&
+    console.status !== "cancelled" &&
+    console.status !== "finished";
   if (!announcement && !promo) return;
   nextRow(keyboard);
   if (announcement) {
@@ -1204,7 +1350,10 @@ function participantsRow(keyboard: InlineKeyboard, view: ConsoleScreenView) {
 // просмотра, и «Порядок» (PER-719), пока финал впереди.
 function feedRow(keyboard: InlineKeyboard, console: AuctionConsoleView) {
   const auction = uuidToToken(console.auctionId);
-  nextRow(keyboard).text(lotSetsLabel, consoleSetsData(auction));
+  // После конца аукциона сеты не нужны (PER-816).
+  if (console.status !== "finished") {
+    nextRow(keyboard).text(lotSetsLabel, consoleSetsData(auction));
+  }
   if (layoutEditable(console.status)) {
     keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
@@ -1232,8 +1381,11 @@ function raffleShown(console: AuctionConsoleView): boolean {
 }
 
 // «Финал» в онлайн-торгах и перерыве: отбор лотов, пока финал у недели есть
-// или лот отмечен, и время финала, пока его можно задать или снять.
+// или лот отмечен, и время финала, пока его можно задать или снять. После
+// объявления состава менять в нём нечего, но раздел остаётся (PER-814): он
+// называет, сколько лотов отмечено, и ведущий находит его там же, где искал.
 function finalSectionShown(console: AuctionConsoleView): boolean {
+  if (console.status === "lineup-frozen") return true;
   if (
     console.status !== "prebidding" &&
     console.status !== "settling" &&
@@ -1374,7 +1526,9 @@ function finalSectionScreen(view: ConsoleScreenView): ShownScreen {
       lineBlock([
         ...(week === undefined ? [] : [finalLine(week)]),
         ...finalTimeLines(console, view),
-        `В финал отмечено: ${marked} из ${console.lots.length}.`,
+        console.status === "lineup-frozen"
+          ? `В финале: ${plural(console.lineup?.order.length ?? 0, ["лот", "лота", "лотов"])}.`
+          : `В финал отмечено: ${marked} из ${console.lots.length}.`,
         ...(console.status === "prebidding"
           ? []
           : ["Отмечать лоты можно, пока идут онлайн-торги."]),
@@ -1456,7 +1610,7 @@ export function weekConfirmScreen(confirm: {
             : []),
           ...(closesAt === undefined
             ? []
-            : [`Торги закроются ${moment(closesAt, view)}.`]),
+            : [`Торги закроются ${deadline(closesAt, view)}.`]),
         ].join(" "),
       ),
       confirm.idle === 0
@@ -1684,6 +1838,28 @@ export function cancelConfirmScreen(confirm: {
 }
 
 /**
+ * Подтверждение открытия лота финала (PER-816): торги по нему начинаются
+ * сразу, и нажатие по ошибке стоило бы ведущему темпа. «Да» — прежняя кнопка
+ * открытия, поэтому исход тот же.
+ */
+export function openConfirmScreen(confirm: { auctionId: string }): ShownScreen {
+  const auction = uuidToToken(confirm.auctionId);
+  return {
+    id: "final-open-confirm",
+    text: screenText(
+      "Открыть следующий лот?",
+      escapeHtml("Торги по нему начнутся сразу."),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, открыть",
+      yesData: consoleNextLotData(auction),
+      noData: consoleViewData(auction),
+    }),
+    format: "HTML",
+  };
+}
+
+/**
  * Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо,
  * без ставок, закрытие без продажи. Ключ закрытия рождён здесь и едет в «Да»:
  * повторное нажатие той же кнопки Auction примет как повтор, и второй
@@ -1698,6 +1874,7 @@ export function closeConfirmScreen(confirm: {
   leaderName?: string | undefined;
   leaderUsername?: string | undefined;
   changed?: true | undefined;
+  last?: true | undefined;
 }): ShownScreen {
   const auction = uuidToToken(confirm.auctionId);
   const title = truncate(confirm.title ?? untitled, titleLimit);
@@ -1720,9 +1897,17 @@ export function closeConfirmScreen(confirm: {
           : `Продажа за ${money(confirm.price)}${buyer}.`,
       ),
       escapeHtml("Отменить закрытие нельзя: торги по лоту закончатся."),
+      confirm.last === true
+        ? escapeHtml("Это последний лот: после него аукцион завершится.")
+        : undefined,
     ),
     keyboard: confirmKeyboard({
-      yes: confirm.price === undefined ? "Да, закрыть" : "Да, продать",
+      yes:
+        confirm.price === undefined
+          ? "Да, закрыть"
+          : confirm.last === true
+            ? "Да, продать и завершить"
+            : "Да, продать",
       yesData: consoleCloseConfirmData(
         auction,
         confirm.position,
@@ -2029,7 +2214,9 @@ function spanLine(
 ): string {
   const local = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);
-  return `с ${local(window.from)} до ${local(window.until)}, шаг ${money(window.step)}`;
+  const until = (instant: string) =>
+    readableMoment(communityShownTime(instant, view.timeZone), view.today);
+  return `с ${local(window.from)} до ${until(window.until)}, шаг ${money(window.step)}`;
 }
 
 // Лоты окна, которых нет в реестре, Auction принимает молча (ADR-047,
@@ -2066,7 +2253,9 @@ export function windowNoteText(
     case "launched": {
       const local = (instant: string) =>
         readableMoment(communityLocalTime(instant, view.timeZone), view.today);
-      return `Окно запущено: с ${local(note.from)} до ${local(note.until)}, шаг ${money(note.step)}.`;
+      const until = (instant: string) =>
+        readableMoment(communityShownTime(instant, view.timeZone), view.today);
+      return `Окно запущено: с ${local(note.from)} до ${until(note.until)}, шаг ${money(note.step)}.`;
     }
     case "launch-closed":
       return "Запуск окна доступен только во время онлайн-торгов.";
@@ -2413,13 +2602,15 @@ export function launchScreen(view: {
   // Начало «сейчас» — момент, в который сервис решил команду, и назвать его
   // нечем: пульт пишет «сейчас».
   const from = draft.from === undefined ? "сейчас" : local(draft.from);
+  const until = readableMoment(
+    communityShownTime(draft.until, view.timeZone),
+    view.today,
+  );
   return {
     id: "step-window-launch",
     text: screenText(
       title,
-      escapeHtml(
-        `с ${from} до ${local(draft.until)}, шаг ${money(draft.step)}`,
-      ),
+      escapeHtml(`с ${from} до ${until}, шаг ${money(draft.step)}`),
       escapeHtml("Вкл — лот в окне, Выкл — шаг у лота обычный."),
       escapeHtml(`лотов ${selected.size} из ${lots.length}`),
       // Набор лотов едет в кнопке пульта битовой маской (PER-615): реестр

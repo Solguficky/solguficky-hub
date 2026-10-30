@@ -3,6 +3,56 @@
 
 export type FormattedMoney = { minorUnits: number; currency: string };
 
+/**
+ * Момент для показа людям (PER-831): ровно 00:00 по времени сообщества читается
+ * как «ещё весь следующий день», хотя торги кончаются в полночь, поэтому боты
+ * показывают его как 23:59 предыдущего дня. Хранимый срок не меняется, меняется
+ * только мгновение, которое подставляется в форматтер; любой другой момент
+ * возвращается как есть (анти-снайп 00:03 остаётся 00:03).
+ */
+export function shownInstant(instant: string, timeZone: string): string {
+  const at = Date.parse(instant);
+  if (Number.isNaN(at)) return instant;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(at));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value;
+  // Секунды не нулевые — срок кончится уже после полуночи, и «23:59» соврал бы.
+  return at % 60_000 === 0 && part("hour") === "00" && part("minute") === "00"
+    ? new Date(at - 60_000).toISOString()
+    : instant;
+}
+
+/** Читаемая дата с годом только вне текущего года сообщества. */
+export function readableInstant(input: {
+  instant: string;
+  timeZone: string;
+  now?: Date;
+}): string {
+  const formatter = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: input.timeZone,
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = formatter.formatToParts(new Date(input.instant));
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  const currentYear = formatter
+    .formatToParts(input.now ?? new Date())
+    .find((p) => p.type === "year")?.value;
+  const year = part("year") === currentYear ? "" : ` ${part("year")}`;
+  return `${part("day")} ${part("month")}${year}, ${part("weekday")}, ${part("hour")}:${part("minute")}`;
+}
+
 // Валюта у платформы одна — рубль, и у неё две цифры после запятой. Копейки
 // показываются, только когда они есть.
 export function money(amount: FormattedMoney): string {

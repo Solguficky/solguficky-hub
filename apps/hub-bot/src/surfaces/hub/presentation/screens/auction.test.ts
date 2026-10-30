@@ -46,6 +46,112 @@ const lot = (
 });
 
 describe("lot card in the hub shell", () => {
+  // Стрим и экран финала (PER-832): на карточке лота ссылок нет, они в корне.
+  it("has no hall links on the lot card", () => {
+    const rows = auctionScreen({
+      ...view([lot({})]),
+      hall: {
+        screenUrl: "https://hall.example.org/screen",
+        streamUrl: "https://stream.example.org/live",
+      },
+    }).screen.keyboard.inline_keyboard;
+    expect(rows.some((row) => row.some((button) => "url" in button))).toBe(
+      false,
+    );
+  });
+
+  const rootView = (
+    hall?: { screenUrl?: string; streamUrl?: string },
+    keyboard: AuctionView["body"]["keyboard"] = [],
+  ): AuctionView => ({
+    ...view([
+      {
+        kind: "root",
+        auctionId,
+        auction: { stage: "prebidding" },
+      } as unknown as AuctionBlock,
+    ]),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId,
+          auction: { stage: "prebidding" },
+        } as unknown as AuctionBlock,
+      ],
+      keyboard,
+    },
+    ...(hall === undefined ? {} : { hall }),
+  });
+  const labels = (view: AuctionView) =>
+    auctionScreen(view).screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => button.text),
+    );
+
+  it("puts the stream and the screen of the final into one row of the root", () => {
+    expect(labels(rootView())).not.toContainEqual(
+      expect.arrayContaining(["Стрим финала ↗"]),
+    );
+    const rows = auctionScreen(
+      rootView({
+        screenUrl: "https://hall.example.org/screen",
+        streamUrl: "https://stream.example.org/live",
+      }),
+    ).screen.keyboard.inline_keyboard;
+    expect(rows.at(-2)).toEqual([
+      { text: "Стрим финала ↗", url: "https://stream.example.org/live" },
+      {
+        text: "Экран финала ↗",
+        url: `https://hall.example.org/screen/${auctionId}`,
+      },
+    ]);
+  });
+
+  it("puts the results and the invoices of a finished auction into one row", () => {
+    const keyboard = [
+      [{ action: "root.results", callbackData: "v1:auc:res:x" }],
+      [{ action: "root.invoices", callbackData: "v1:auc:inv:x" }],
+    ] as unknown as AuctionView["body"]["keyboard"];
+    const rows = labels(rootView(undefined, keyboard));
+    expect(rows).toContainEqual(["Итоги", "Мои счета"]);
+  });
+
+  it("attaches the achievement image to the rich card after loading it", () => {
+    const block: AuctionBlock = {
+      kind: "achievements",
+      screen: {
+        scope: "event",
+        view: "card",
+        auctionId,
+        page: 0,
+        pages: 1,
+        items: [],
+        back: "v1:auc:ach:test:0",
+        holderNames: ["Сова"],
+        erasedHolders: 0,
+        holdersPage: 0,
+        holderPages: 1,
+        achievement: {
+          code: "first",
+          title: "Первая ачивка",
+          description: "За участие",
+          recipients: "many",
+          manual: false,
+          imageVersion: "v1",
+        },
+      },
+    };
+    const data = view([block]);
+    expect(auctionScreen(data).images).toEqual([
+      { lotId: "achievement:first", achievementCode: "first", version: "v1" },
+    ]);
+    const photos = [{ id: "lot", fileId: "photo-1" }];
+    const shown = auctionScreen({ ...data, photos }).screen;
+    expect(shown.media).toEqual(photos);
+    expect(shown.text).toContain('<img src="tg://photo?id=lot"/>');
+    expect(shown.text).toContain("Сова");
+    expect(auctionScreen(view([block], "plain")).images).toBeUndefined();
+  });
   it("orders the groups as status, price with leader and deadline, course, description", () => {
     const { screen } = auctionScreen(
       view([
@@ -97,9 +203,33 @@ describe("lot card in the hub shell", () => {
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
         "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
-        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n" +
+        "Если лот попадёт в финал, лимит сработает и там\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лоту, который ждёт финала, лимит обещает финал, а лимит ниже цены лота — нет
+  // (PER-822).
+  it("promises the final to a limit of a held lot only when it covers the price", () => {
+    const held = (limit: number) =>
+      plain(
+        auctionScreen(
+          view(
+            [
+              lot({
+                card: { title: "Кружка", description: "" },
+                status: { kind: "held", currentPrice: rub(1200) },
+                viewerProxyLimit: rub(limit),
+              }),
+            ],
+            "plain",
+          ),
+        ).screen.text,
+      );
+    expect(held(2000)).toContain("сработает в финале");
+    expect(held(900)).toContain("в финале не сработает");
+    expect(held(900)).not.toContain("сработает в финале");
   });
 
   // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81).
@@ -332,6 +462,30 @@ describe("lot card in the hub shell", () => {
       ),
     );
     expect(plain(screen.text)).toContain("Торги до: 9 января 2027, сб, 21:00");
+  });
+
+  // PER-831: дедлайн в полночь читается как 23:59 предыдущего дня.
+  it.each([
+    ["2026-10-30T21:00:00Z", "Торги до: 30 октября, пт, 23:59"],
+    ["2026-10-30T21:03:00Z", "Торги до: 31 октября, сб, 00:03"],
+    ["2026-10-30T10:30:00Z", "Торги до: 30 октября, пт, 13:30"],
+  ])("shows the deadline %s as it reads at midnight", (deadline, line) => {
+    const { screen } = auctionScreen(
+      view(
+        [
+          lot({
+            status: {
+              kind: "trading",
+              currentPrice: rub(1),
+              deadline,
+              phase: "online",
+            },
+          }),
+        ],
+        "plain",
+      ),
+    );
+    expect(plain(screen.text)).toContain(line);
   });
 
   // Карточка лота: статус первой группой, строки-поля без точки в конце.

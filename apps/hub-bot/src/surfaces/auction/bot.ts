@@ -1,5 +1,6 @@
 import { type Bot, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
+import type { HallLinks } from "../../auction-hall.js";
 import { promoUnavailableText } from "../../auction-promo.js";
 import {
   type AuctionPort,
@@ -9,6 +10,14 @@ import {
   replacesAuctionQuestion,
   type Viewer,
 } from "../../auction-ui/index.js";
+import {
+  type BroadcastStore,
+  createLiveBroadcasts,
+} from "../../core/auction/broadcast.js";
+import {
+  BROADCAST_STOP_DATA,
+  createBroadcastApi,
+} from "../../core/auction/broadcast-telegram.js";
 import {
   createLiveCards,
   type LiveCardEntry,
@@ -23,6 +32,7 @@ import {
   richPhotoFileIds,
   richPhotoId,
 } from "../../core/auction/lot-photos.js";
+import { auctionRootFrom } from "../../core/auction/origin.js";
 import type { AuctionWatches } from "../../core/auction/watch.js";
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
@@ -80,6 +90,8 @@ export type BotOptions = {
   ports: PortsFactory;
   logger: Logger;
   faq?: FaqContent;
+  // Стрим и экран финала (PER-825, PER-832): ряд кнопок-URL в корне аукциона.
+  hall?: HallLinks;
   // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку
   // «Написать в поддержку ↗» (PER-625, ADR-068). Нет — кнопки нет.
   supportBotUsername?: string;
@@ -99,6 +111,9 @@ export type BotOptions = {
     watches: AuctionWatches;
     limiter: EditLimiter;
     names: Pick<AuctionPort, "getDisplayNames">;
+    // Записи трансляций хода торгов (PER-826); нет — трансляция живёт, пока
+    // жив процесс.
+    broadcasts?: BroadcastStore;
   };
 };
 
@@ -121,6 +136,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ? {}
         : { presentation: options.presentation }),
       ...(options.faq === undefined ? {} : { faq: options.faq }),
+      ...(options.hall === undefined ? {} : { hall: options.hall }),
       ...(options.supportBotUsername === undefined
         ? {}
         : { supportBotUsername: options.supportBotUsername }),
@@ -141,6 +157,32 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
               logger,
             }),
         });
+  // Трансляция хода торгов (PER-826): подписка по кнопке карточки финала,
+  // правка одного сообщения на человека по потоку аукциона.
+  const broadcasts =
+    options.live === undefined
+      ? undefined
+      : createLiveBroadcasts({
+          watches: options.live.watches,
+          limiter: options.live.limiter,
+          names: options.live.names,
+          ...(options.live.broadcasts === undefined
+            ? {}
+            : { store: options.live.broadcasts }),
+          timeZone: options.timeZone,
+          api: createBroadcastApi({
+            api: bot.api,
+            mark: screenMark("bid-watch"),
+            report: (error) => reportLiveEditFailure(logger, error),
+          }),
+          onError: (cause) =>
+            reportLiveEditFailure(
+              logger,
+              cause instanceof Error ? cause.message : String(cause),
+              "unexpected",
+            ),
+        });
+  void broadcasts?.restore();
   // Что показало сообщение: карточку финала реестр запоминает, другой экран в
   // том же сообщении её вытесняет (PER-336).
   const observe = (
@@ -151,6 +193,17 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     const chatId = ctx.chat?.id;
     if (liveCards === undefined || chatId === undefined) return;
     if (messageId === undefined) return;
+    if (outcome.screen.kind === "auction" && outcome.viewer !== undefined) {
+      for (const block of outcome.screen.body.blocks) {
+        if (block.kind === "lot" && block.watch === true) {
+          void broadcasts?.start({
+            chatId,
+            auctionId: block.auctionId,
+            viewer: outcome.viewer,
+          });
+        }
+      }
+    }
     liveCards.shown(
       chatId,
       messageId,
@@ -265,6 +318,13 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     }),
   );
 
+  // «Не следить» под сообщением трансляции (PER-826): действие над своим
+  // чатом, без дерева и без разрешения личности.
+  direct.callbackQuery(BROADCAST_STOP_DATA, async (ctx) => {
+    await broadcasts?.stop(ctx.chat.id, ctx.callbackQuery.message?.message_id);
+    await ctx.answerCallbackQuery().catch(() => undefined);
+  });
+
   direct.on("callback_query:data", async (ctx) => {
     // Ответ на нажатие уходит вместе с результатом, а не до похода к
     // сервисам: пока его нет, клиент сам крутит индикатор на кнопке
@@ -292,6 +352,18 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         firstName: ctx.from.first_name,
         data,
       });
+      if (outcome.screen.kind === "unavailable") {
+        const back = auctionRootFrom([
+          data,
+          ...(ctx.callbackQuery.message?.reply_markup?.inline_keyboard.flatMap(
+            (row) =>
+              row.flatMap((button) =>
+                "callback_data" in button ? [button.callback_data] : [],
+              ),
+          ) ?? []),
+        ]);
+        if (back !== undefined) outcome.screen = { ...outcome.screen, back };
+      }
       const screen = render(outcome.screen);
       // Подтверждение выбора уходит ответом на нажатие до показа экрана:
       // показ ответил бы на нажатие сам, без текста.

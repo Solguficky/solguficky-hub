@@ -18,7 +18,11 @@ import type {
   AuctionButton,
 } from "../../../../auction-ui/index.js";
 import { richPhotoBlock } from "../../../../core/auction/lot-photos.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import {
+  type CommunityDay,
+  communityLocalTime,
+  communityShownTime,
+} from "../../community-time.js";
 import { nameChoiceScreen } from "./auction-bid.js";
 import {
   cancelLabel,
@@ -72,6 +76,8 @@ export function raffleScreen(
   }
   const paragraphs = raffleParagraphs(block.raffle, {
     moment: (instant) =>
+      readableMoment(communityShownTime(instant, view.timeZone), view.today),
+    eventMoment: (instant) =>
       readableMoment(communityLocalTime(instant, view.timeZone), view.today),
   });
   // Розыгрыш открыт из корня аукциона, и тело ведёт назад туда же
@@ -115,7 +121,7 @@ export function raffleRegisteredScreen(
       ...raffleRegisteredParagraphs(block.raffle, {
         moment: (instant) =>
           readableMoment(
-            communityLocalTime(instant, view.timeZone),
+            communityShownTime(instant, view.timeZone),
             view.today,
           ),
       }),

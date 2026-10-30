@@ -13,9 +13,11 @@ import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.lot.BidOrigin
 import auction.lot.BidSource
+import auction.lot.Course
 import auction.lot.Lot
 import auction.lot.LotFixtures.*
 import auction.lot.LotState
+import auction.lot.Money
 import auction.lot.ParticipantId
 import auction.lot.Phase
 import auction.lot.WithdrawnReason
@@ -51,9 +53,31 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       lineup: List[LotSnapshotView] = Nil,
       bids: List[RecentBid] = Nil,
       sold: List[SoldLot] = Nil,
-      finalAt: Option[Instant] = None
+      finalAt: Option[Instant] = None,
+      resumedAt: Option[Instant] = None,
+      heldPrice: Option[Money] = None
   ): ScreenReading =
-    ScreenReading(auctionId, meetupId, auctionIn(state, finalAt), lineup, bids, sold)
+    ScreenReading(auctionId, meetupId, auctionIn(state, finalAt), lineup, bids, sold, resumedAt, heldPrice)
+
+  private val resumed = Instant.parse("2026-10-31T19:05:00Z")
+
+  private def soldLot(
+      lot: LotId,
+      price: Long,
+      buyer: Int,
+      inLineup: Boolean,
+      at: Instant = resumed,
+      start: Option[Long] = None
+  ): SoldLot =
+    SoldLot(
+      ScreenLot(lot.value, Some("Лот"), Some(ImageVersion("v1"))),
+      money(price),
+      participant(buyer),
+      start.map(money),
+      None,
+      inLineup,
+      at
+    )
 
   private def name(participant: ParticipantId): String = s"@p${participant.value.getLeastSignificantBits}"
 
@@ -124,17 +148,25 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       Screen.of(reading(started, lineup), name) shouldBe expected
     }
 
-    "show the active lot with its price, ask, leader by name and recent bids by channel" in {
+    "show the active lot with the next price first, then price, step, lot time, growth bases, leader and bids" in {
       val live =
-        trading(price = 700, phase = Phase.Live, leader = Some(participant(1)), ask = Some(750), closesAt = None)
+        trading(
+          price = 700,
+          phase = Phase.Live,
+          leader = Some(participant(1)),
+          ask = Some(750),
+          closesAt = None,
+          course = Some(Course.opened(money(500), Nil))
+        )
       val state = AuctionState.Final(AuctionFixtures.config(), opened, List(second, first), List(second), Nil)
       val bids = List(
         RecentBid(participant(1), money(700), BidOrigin.Manual(BidSource.Floor)),
         RecentBid(participant(2), money(650), BidOrigin.Proxy),
         RecentBid(participant(1), money(600), BidOrigin.Manual(BidSource.Bot))
       )
+      val lineup = List(view(second, live), view(first, held(200, participant(2))))
 
-      Screen.of(reading(state, List(view(second, live), view(first, held(200, participant(2)))), bids), name) shouldBe
+      Screen.of(reading(state, lineup, bids, resumedAt = Some(resumed), heldPrice = Some(money(200))), name) shouldBe
         ScreenState.Live(
           LiveLot(
             ScreenLot(second.value, Some("Лот"), Some(ImageVersion("v1"))),
@@ -145,9 +177,39 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
               ScreenBid("@p1", money(700), BidChannel.Hall),
               ScreenBid("@p2", money(650), BidChannel.Online),
               ScreenBid("@p1", money(600), BidChannel.Online)
-            )
+            ),
+            next = money(750),
+            step = money(10),
+            startedAt = Some(resumed),
+            startingPrice = Some(money(500)),
+            onlineEndPrice = Some(money(200))
           )
         )
+    }
+
+    "ask the price plus the step without an ask, and the starting price before the first bid" in {
+      val state = AuctionState.Final(AuctionFixtures.config(), opened, List(second), List(second), Nil)
+      def next(lot: Lot): Money =
+        Screen.of(reading(state, List(view(second, lot))), name) match {
+          case ScreenState.Live(live) => live.next
+          case other => fail(s"not a live lot: $other")
+        }
+
+      next(trading(price = 700, phase = Phase.Live, leader = Some(participant(1)), closesAt = None)) shouldBe money(710)
+      next(trading(price = 500, phase = Phase.Live, closesAt = None)) shouldBe money(500)
+    }
+
+    "leave out what the read model does not know: the lot time, the starting price and the online end" in {
+      val live = trading(price = 700, phase = Phase.Live, leader = Some(participant(1)), closesAt = None)
+      val state = AuctionState.Final(AuctionFixtures.config(), opened, List(second), List(second), Nil)
+
+      Screen.of(reading(state, List(view(second, live))), name) match {
+        case ScreenState.Live(shown) =>
+          shown.startedAt shouldBe None
+          shown.startingPrice shouldBe None
+          shown.onlineEndPrice shouldBe None
+        case other => fail(s"not a live lot: $other")
+      }
     }
 
     "show the outcome of the closed lot and the next one between lots" in {
@@ -189,14 +251,35 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
     "total the whole auction, online and in the final from the sold lots" in {
       val finished = AuctionState.Finished(AuctionFixtures.config(), opened)
       val sales = List(
-        SoldLot(money(500), inLineup = false),
-        SoldLot(money(900), inLineup = true),
-        SoldLot(money(100), inLineup = false)
+        soldLot(first, 500, buyer = 1, inLineup = false),
+        soldLot(second, 900, buyer = 2, inLineup = true),
+        soldLot(first, 100, buyer = 3, inLineup = false)
       )
 
-      Screen.of(reading(finished, sold = sales), name) shouldBe ScreenState.Finished(
-        Totals(Sales(3, List(money(1500))), Sales(2, List(money(600))), Sales(1, List(money(900))))
+      Screen.of(reading(finished, sold = sales), name) match {
+        case ScreenState.Finished(_, totals) =>
+          totals shouldBe Totals(Sales(3, List(money(1500))), Sales(2, List(money(600))), Sales(1, List(money(900))))
+        case other => fail(s"not finished: $other")
+      }
+    }
+
+    "list the sold lots in the order of sale with the buyer by name and the growth bases" in {
+      val earlier = Instant.parse("2026-10-31T18:00:00Z")
+      val finished = AuctionState.Finished(AuctionFixtures.config(), opened)
+      val sales = List(
+        soldLot(second, 900, buyer = 2, inLineup = true, at = resumed, start = Some(300)),
+        soldLot(first, 500, buyer = 1, inLineup = false, at = earlier)
       )
+
+      Screen.of(reading(finished, sold = sales), name) match {
+        case ScreenState.Finished(sold, _) =>
+          sold.map(lot => (lot.lot.lotId, lot.price, lot.buyer, lot.startingPrice, lot.inFinal)) shouldBe List(
+            (first.value, money(500), "@p1", None, false),
+            (second.value, money(900), "@p2", Some(money(300)), true)
+          )
+        case other => fail(s"not finished: $other")
+      }
+      reading(finished, sold = sales).participants shouldBe Set(participant(1), participant(2))
     }
 
     "name only the leader, bidders and buyer of the shown lot" in {
@@ -216,7 +299,12 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
         money(700),
         None,
         Some("@p1"),
-        List(ScreenBid("@p1", money(700), BidChannel.Hall))
+        List(ScreenBid("@p1", money(700), BidChannel.Hall)),
+        next = money(710),
+        step = money(10),
+        startedAt = Some(resumed),
+        startingPrice = Some(money(500)),
+        onlineEndPrice = None
       )
       val json = ScreenJson.render(auctionId, ScreenState.Live(live))
 
@@ -227,6 +315,31 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       json should include(""""channel":"hall"""")
       json should not include participant(1).value.toString
       json should not include "\n"
+    }
+
+    "carry every sold lot of a finished auction with its buyer and its growth bases" in {
+      val sold = ScreenSold(
+        ScreenLot(first.value, Some("Лот"), None),
+        money(900),
+        "@p2",
+        Some(money(300)),
+        Some(money(600)),
+        inFinal = true
+      )
+      val json = ScreenJson.render(
+        auctionId,
+        ScreenState.Finished(
+          List(sold),
+          Totals(Sales(1, List(money(900))), Sales(0, Nil), Sales(1, List(money(900))))
+        )
+      )
+
+      json should include(""""phase":"finished"""")
+      json should include(""""sold":[{"id":"%s","title":"Лот","image":null,""".format(first.value))
+      json should include(""""buyer":"@p2"""")
+      json should include(""""start":{"amount":300,"currency":"RUB"}""")
+      json should include(""""online_end":{"amount":600,"currency":"RUB"}""")
+      json should include(""""in_final":true""")
     }
 
     "say the final time is unknown before the lineup freezes" in {

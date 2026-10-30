@@ -2,7 +2,6 @@ import { InlineKeyboard } from "grammy";
 import { money, truncate } from "../../../../core/format.js";
 import { paymentTextLimit } from "../../application/auction-invoices.js";
 import type {
-  FulfillmentMethod,
   InvoiceMark,
   InvoiceMarkNote,
   InvoiceRow,
@@ -11,15 +10,14 @@ import type {
   PaymentTextAskError,
   PaymentTextNote,
 } from "../../application/types.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import { type CommunityDay, communityShownTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleInvoiceData,
   consoleInvoiceMarkConfirmData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
-  consolePaymentTextData,
-  consolePaymentTextRemoveData,
+  consolePaymentScreenData,
   consoleViewData,
 } from "../parse-callback.js";
 import {
@@ -64,15 +62,8 @@ function winnerOf(invoice: InvoiceRow): string {
 }
 
 function momentOf(at: string, clock: Clock): string {
-  return readableMoment(communityLocalTime(at, clock.timeZone), clock.today);
+  return readableMoment(communityShownTime(at, clock.timeZone), clock.today);
 }
-
-const fulfillmentText: Record<FulfillmentMethod, string> = {
-  unspecified: "способ получения не выбран",
-  pickup: "самовывоз",
-  delivery: "доставка",
-  digital: "цифровой лот",
-};
 
 function statusText(invoice: InvoiceRow, clock: Clock): string {
   switch (invoice.status) {
@@ -116,13 +107,15 @@ function toInvoice(invoice: InvoiceRow): Parent {
 // Текст «Как оплатить и получить» (PER-322): один свободный текст на весь
 // аукцион, который победители читают в своих счетах. Деньги мимо бота, поэтому
 // реквизиты — просто слова организатора, без проверки и без формы.
-export const paymentTextLabel = "Текст оплаты";
-export const paymentTextRemoveLabel = "Убрать текст оплаты";
+// Вход «Оплата» (PER-834) ведёт на экран, где текст и срок настраиваются вместе.
+export const paymentLabel = "Оплата";
+export const paymentTextLabel = "Изменить текст";
+export const paymentTextRemoveLabel = "Убрать текст";
 const paymentTextHeading = "<b>Как оплатить и получить</b>";
 const noPaymentText =
   "Текста «Как оплатить и получить» ещё нет. Победители не видят, как оплатить и забрать лот.";
 
-function paymentTextParagraph(text: string | undefined): string {
+export function paymentTextParagraph(text: string | undefined): string {
   return text === undefined
     ? escapeHtml(noPaymentText)
     : `${paymentTextHeading}\n${escapeHtml(text)}`;
@@ -169,13 +162,7 @@ export function invoicesScreen(
     );
   }
   withPager(keyboard, page, (at) => consoleInvoicesData(auction, at));
-  nextRow(keyboard).text(paymentTextLabel, consolePaymentTextData(auction));
-  if (view.paymentInstructions !== undefined) {
-    nextRow(keyboard).text(
-      paymentTextRemoveLabel,
-      consolePaymentTextRemoveData(auction),
-    );
-  }
+  nextRow(keyboard).text(paymentLabel, consolePaymentScreenData(auction));
   const overdue = view.invoices.filter((invoice) => invoice.overdue).length;
   return {
     id: "invoices",
@@ -200,7 +187,7 @@ export function invoicesScreen(
         .map((invoice) =>
           escapeHtml(
             bullet(
-              `${lotTitle(invoice)} — ${winnerOf(invoice)}, ${money(invoice.amount)}: ${statusText(invoice, view)}, ${fulfillmentText[invoice.fulfillment]}.`,
+              `${lotTitle(invoice)} — ${winnerOf(invoice)}, ${money(invoice.amount)}: ${statusText(invoice, view)}.`,
             ),
           ),
         )
@@ -263,7 +250,6 @@ export function invoiceScreen(
           `Победитель: ${winnerOf(invoice)}.`,
           `Сумма: ${money(invoice.amount)}.`,
           `Статус: ${statusText(invoice, view)}.`,
-          `Получение: ${fulfillmentText[invoice.fulfillment]}.`,
         ].join("\n"),
       ),
     ),

@@ -9,7 +9,12 @@ import {
   type RenderContext,
   type RenderResult,
 } from "../delivery/index.js";
-import { type FormattedMoney, money, truncate } from "../format.js";
+import {
+  type FormattedMoney,
+  money,
+  shownInstant,
+  truncate,
+} from "../format.js";
 import type { Logger } from "../logging.js";
 import { marked, pictogram } from "../pictograms.js";
 
@@ -51,7 +56,17 @@ export type LotNotice =
   | { kind: "lot-deadline-close"; lotId: string }
   // Следующий лот живого финала — тот, что человек вёл (ADR-063, дополнение
   // 2026-10-20).
-  | { kind: "lot-final-next"; lotId: string; estimatedMinutes: number };
+  | {
+      kind: "lot-final-next";
+      lotId: string;
+      // Лот, который идёт сейчас; на старте финала его ещё нет.
+      activeLotId?: string;
+      // Место своего лота в составе с единицы; ноль — издатель без поля.
+      place: number;
+      lineupSize: number;
+      // Ноль — длительность неизвестна: издатель её не выдумывает (PER-812).
+      estimatedMinutes: number;
+    };
 
 const lotNoticeKinds: ReadonlySet<string> = new Set<LotNotice["kind"]>([
   "lot-outbid",
@@ -160,7 +175,20 @@ export function lotNoticeOf(type: LotBranch): LotNotice | undefined {
       // Оценка длительности лота: число минут, сколько он примерно протянет.
       const estimatedMinutes = type.value.estimatedMinutes;
       if (lotId === undefined || estimatedMinutes < 0) return undefined;
-      return { kind: "lot-final-next", lotId, estimatedMinutes };
+      // Идущий лот: пустая строка — «ещё нет», неканоническая — дефект.
+      const active = type.value.activeLotId;
+      const activeLotId = active === "" ? undefined : canonical(active);
+      if (active !== "" && activeLotId === undefined) return undefined;
+      const { place, lineupSize } = type.value;
+      if (place > lineupSize) return undefined;
+      return {
+        kind: "lot-final-next",
+        lotId,
+        ...(activeLotId === undefined ? {} : { activeLotId }),
+        place,
+        lineupSize,
+        estimatedMinutes,
+      };
     }
     default: {
       const _exhaustive: never = type;
@@ -250,6 +278,13 @@ export type LotNoticeReads = {
     lotId: string,
     requestId?: string,
   ): Promise<LotInfo>;
+  // Ориентировочное время финала аукциона (PER-812); `undefined` — не выставлено.
+  // Чтения может не быть: тогда весть обходится без времени.
+  auctionFinalAt?(
+    identityId: string,
+    auctionId: string,
+    requestId?: string,
+  ): Promise<string | undefined>;
 };
 
 // Кнопка уведомления: лот открывает карточку, частота — экран частоты; оба
@@ -369,6 +404,21 @@ export function createLotNoticeRender({
         if (isPermanentFailure(cause)) return { kind: "rejected", cause };
         onTitleMissing(cause, requestId);
       }
+      // Идущий лот финала называется в тексте; не прочитался — текст
+      // обходится словом «лот», а весть не теряется.
+      if (
+        notice.kind === "lot-final-next" &&
+        notice.activeLotId !== undefined
+      ) {
+        try {
+          lots.set(
+            notice.activeLotId,
+            await reads.lotInfo(recipientId, notice.activeLotId, requestId),
+          );
+        } catch (cause) {
+          onTitleMissing(cause, requestId);
+        }
+      }
     }
     return {
       kind: "ready",
@@ -478,7 +528,7 @@ export function renderLotNotice(
     text: toLotLabel,
   };
   return {
-    text: singleText(notice, lot, info, timeZone, recipientId),
+    text: singleText(notice, lot, info, timeZone, recipientId, lots),
     rows: [
       // Частота управляет перебитием, ответом автоставки и сводкой; покупки и
       // напоминания о дедлайне она не касается — напоминание выключается
@@ -502,6 +552,7 @@ function singleText(
   info: LotInfo | undefined,
   timeZone: string,
   recipientId?: string,
+  lots: ReadonlyMap<string, LotInfo> = new Map(),
 ): string {
   // Лот назван словом «лот» и названием в кавычках: склоняется слово, а
   // название остаётся как есть (PER-708). Без названия остаётся слово.
@@ -542,8 +593,22 @@ function singleText(
       // Второй момент того же напоминания: дедлайн уже близко, и время названо
       // прямо — «скоро» здесь было бы пустым словом.
       return `Дедлайн избранного лота${lot === undefined ? "" : ` ${lot}`}${deadlineTime(info, timeZone)}. Успей сделать ставку.`;
-    case "lot-final-next":
-      return `Твой ${lotWord} следующий.${minutesText(notice.estimatedMinutes)}`;
+    case "lot-final-next": {
+      // Называем идущий лот и место своего в составе; времени не обещаем, если
+      // издатель его не назвал (PER-812).
+      const where =
+        notice.place > 0 && notice.lineupSize > 0
+          ? ` — ${notice.place}-й из ${notice.lineupSize} в составе`
+          : "";
+      const minutes = minutesText(notice.estimatedMinutes);
+      if (notice.activeLotId !== undefined) {
+        const active = named(lots.get(notice.activeLotId)?.title, TITLE_LIMIT);
+        return `Твой ${lotWord} следующий${where}. Сейчас идёт лот${active === undefined ? "" : ` ${active}`}.${minutes}`;
+      }
+      return notice.place === 1
+        ? `Финал начинается с твоего лота: ${lotWord} идёт первым.${minutes}`
+        : `Твой ${lotWord} следующий${where}.${minutes}`;
+    }
     default: {
       const _exhaustive: never = notice;
       return _exhaustive;
@@ -587,12 +652,13 @@ function minutesText(estimatedMinutes: number): string {
 }
 
 // Момент RFC 3339 в местное время пояса: «22:45». Непонятный момент —
-// отсутствие времени, а не «00:00».
+// отсутствие времени, а не «00:00». Это время срока, поэтому полночь читается
+// как «23:59» (PER-831).
 export function localTime(
   instant: string,
   timeZone: string,
 ): string | undefined {
-  const date = new Date(instant);
+  const date = new Date(shownInstant(instant, timeZone));
   if (Number.isNaN(date.getTime())) return undefined;
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,

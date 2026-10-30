@@ -18,8 +18,9 @@ import {
   toMoney,
 } from "./lot-notice.js";
 
-// Анонс финала аукциона (PER-477, PER-478) — состав и старт живого финала тем,
-// кто вёл лот аукциона. У двух ботов он один, по кругу получателя, как вести о
+// Вести конца онлайн-торгов и финала (PER-477, PER-478, PER-812) — конец
+// онлайн-торгов, состав и старт живого финала всем держателям права ставок,
+// а не только ведшим лот, и продажа лота финала тем, кто на него ставил. У двух ботов он один, по кругу получателя, как вести о
 // лотах (ADR-064, п. 16): участнику его доставляет бот хаба, гостю — бот
 // аукциона. «Твой лот в финале» — не своя ветка, а тот же состав с непустым
 // `your_lot_ids`: факт на человека один. Вид — ряды кнопок вести о лоте, и
@@ -37,11 +38,23 @@ export type FinalNotice =
       // простой анонс.
       yourLotIds: readonly string[];
     }
-  | { kind: "final-started"; auctionId: string };
+  | { kind: "final-started"; auctionId: string }
+  // Конец онлайн-торгов: сколько лотов продано и сколько ждёт финала; ноль
+  // удержанных — финала не будет.
+  | {
+      kind: "prebidding-ended";
+      auctionId: string;
+      soldCount: number;
+      heldCount: number;
+    }
+  // Лот финала продан не тебе, а ты на него ставил.
+  | { kind: "lot-sold-in-final"; lotId: string; price: NoticeMoney };
 
 const finalNoticeKinds: ReadonlySet<string> = new Set<FinalNotice["kind"]>([
   "final-lineup",
   "final-started",
+  "prebidding-ended",
+  "lot-sold-in-final",
 ]);
 
 /** Анонс финала среди веток канала: его рисует общий рендер. */
@@ -53,7 +66,13 @@ export function isFinalNotice<C extends { kind: string }>(
 
 type FinalBranch = Extract<
   Notification["type"],
-  { case: "auctionFinalLineup" | "auctionFinalStarted" }
+  {
+    case:
+      | "auctionFinalLineup"
+      | "auctionFinalStarted"
+      | "auctionPrebiddingEnded"
+      | "auctionLotSoldInFinal";
+  }
 >;
 
 // Факт — ввод соседа: пустой состав, лот или аукцион не в канонической форме,
@@ -62,10 +81,25 @@ type FinalBranch = Extract<
 // разбор ставит в порядок состава сам: кнопки идут в порядке финала, а не
 // провода.
 export function finalNoticeOf(type: FinalBranch): FinalNotice | undefined {
+  if (type.case === "auctionLotSoldInFinal") {
+    const lotId = canonical(type.value.lotId);
+    const price = toMoney(type.value.price);
+    return lotId === undefined || price === undefined
+      ? undefined
+      : { kind: "lot-sold-in-final", lotId, price };
+  }
   const auctionId = canonical(type.value.auctionId);
   if (auctionId === undefined) return undefined;
   if (type.case === "auctionFinalStarted") {
     return { kind: "final-started", auctionId };
+  }
+  if (type.case === "auctionPrebiddingEnded") {
+    return {
+      kind: "prebidding-ended",
+      auctionId,
+      soldCount: type.value.soldCount,
+      heldCount: type.value.heldCount,
+    };
   }
   const lineup: FinalLineupLot[] = [];
   for (const lot of type.value.lineup) {
@@ -134,9 +168,12 @@ export function createFinalNoticeRender({
   reads,
   onTitleMissing,
   now = Date.now,
+  timeZone = "UTC",
 }: Omit<LotNoticeRenderOptions, "frequencyButton" | "timeZone"> & {
   // Часы памяти о лотах; подменяет тест.
   now?: () => number;
+  // Пояс сообщества: время финала человек читает по нему.
+  timeZone?: string;
 }): (
   notice: FinalNotice,
   context: RenderContext,
@@ -159,6 +196,46 @@ export function createFinalNoticeRender({
     }
     const stop = await checkPlaceBids(reads, context);
     if (stop !== undefined) return stop;
+    if (notice.kind === "prebidding-ended") {
+      // Время финала — необязательная строка: не выставлено или не
+      // прочиталось — весть уходит без неё.
+      let finalAt: string | undefined;
+      if (notice.heldCount > 0 && reads.auctionFinalAt !== undefined) {
+        try {
+          finalAt = await reads.auctionFinalAt(
+            context.recipientId,
+            notice.auctionId,
+            context.requestId,
+          );
+        } catch (cause) {
+          onTitleMissing(cause, context.requestId);
+        }
+      }
+      return {
+        kind: "ready",
+        message: renderFinalNotice(notice, {
+          lots,
+          refused,
+          timeZone,
+          ...(finalAt === undefined ? {} : { finalAt }),
+        }),
+      };
+    }
+    if (notice.kind === "lot-sold-in-final") {
+      try {
+        lots.set(
+          notice.lotId,
+          await reads.lotInfo(
+            context.recipientId,
+            notice.lotId,
+            context.requestId,
+          ),
+        );
+      } catch (cause) {
+        if (isPermanentFailure(cause)) refused.add(notice.lotId);
+        onTitleMissing(cause, context.requestId);
+      }
+    }
     if (notice.kind === "final-lineup") {
       const { recipientId, requestId } = context;
       const at = now();
@@ -199,7 +276,38 @@ export function createFinalNoticeRender({
 export type FinalNoticeRenderInput = {
   lots: ReadonlyMap<string, LotInfo>;
   refused?: ReadonlySet<string>;
+  // Для вести о конце торгов: пояс и ориентировочное время финала.
+  timeZone?: string;
+  finalAt?: string;
 };
+
+// Момент по часам сообщества: «30.10 в 20:00». Непонятный момент — отсутствие
+// строки, а не «00.00».
+function localMoment(instant: string, timeZone: string): string | undefined {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    day: "2-digit",
+    month: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((p) => p.type === type)?.value;
+  const [day, month, hour, minute] = [
+    part("day"),
+    part("month"),
+    part("hour"),
+    part("minute"),
+  ];
+  return day === undefined ||
+    month === undefined ||
+    hour === undefined ||
+    minute === undefined
+    ? undefined
+    : `${day}.${month} в ${hour}:${minute}`;
+}
 
 // Строка «Объявлен состав финала» или «Твой лот в финале», пустая строка и
 // строки состава «• «Лот» — цена» в порядке финала; свой лот — с «лот за
@@ -208,10 +316,47 @@ export type FinalNoticeRenderInput = {
 // нет (решение владельца 19 октября 2026 года, PER-478).
 export function renderFinalNotice(
   notice: FinalNotice,
-  { lots, refused = new Set() }: FinalNoticeRenderInput,
+  {
+    lots,
+    refused = new Set(),
+    timeZone = "UTC",
+    finalAt,
+  }: FinalNoticeRenderInput,
 ): LotNoticeView {
   if (notice.kind === "final-started") {
     return { text: "Начался финал аукциона.", rows: [] };
+  }
+  if (notice.kind === "prebidding-ended") {
+    if (notice.heldCount === 0) {
+      return {
+        text: [
+          `Онлайн-торги закончились. Продано лотов: ${notice.soldCount}.`,
+          "",
+          "Финала не будет: итоги аукциона смотри в боте.",
+        ].join("\n"),
+        rows: [],
+      };
+    }
+    const when =
+      finalAt === undefined ? undefined : localMoment(finalAt, timeZone);
+    return {
+      text: [
+        `Онлайн-торги закончились. Продано лотов: ${notice.soldCount}. В финал идут: ${notice.heldCount}.`,
+        "",
+        ...(when === undefined ? [] : [`Финал ориентировочно ${when}.`]),
+        "Состав финала объявят отдельным сообщением, тогда же откроется раунд 2 прогнозов.",
+      ].join("\n"),
+      rows: [],
+    };
+  }
+  if (notice.kind === "lot-sold-in-final") {
+    const title = quoted(lots.get(notice.lotId)?.title, LINE_TITLE_LIMIT);
+    return {
+      text: `Лот${title === undefined ? "" : ` ${title}`} продан в финале за ${money(notice.price)}. Ты на него ставил.`,
+      rows: refused.has(notice.lotId)
+        ? []
+        : [[{ kind: "lot", lotId: notice.lotId, text: toLotLabel }]],
+    };
   }
   const own = new Set(notice.yourLotIds);
   const shown = shownLineup(notice);
@@ -232,6 +377,8 @@ export function renderFinalNotice(
       return own.has(lot.lotId) ? `${line}, лот за тобой` : line;
     }),
     ...(hidden > 0 ? [`…и ещё лотов: ${hidden}.`] : []),
+    "",
+    "Раунд 2 прогнозов открыт — он закроется, когда начнётся финал.",
   ].join("\n");
   const rows: LotNoticeButton[][] = notice.yourLotIds
     .slice(0, OWN_LOT_BUTTON_LIMIT)

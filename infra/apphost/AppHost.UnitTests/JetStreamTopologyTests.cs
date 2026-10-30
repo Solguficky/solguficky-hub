@@ -125,6 +125,39 @@ public class JetStreamTopologyTests
         topics.MaxAge.ShouldBe(TimeSpan.FromDays(180));
     }
 
+    /// <summary>
+    /// Открытые живые экраны бота хаба (PER-815) живут двое суток с последней
+    /// записи: запись старого пульта не копится, а второй рестарт подряд её
+    /// не теряет.
+    /// </summary>
+    [Fact]
+    public void KeyValueBuckets_HubBotLiveScreens_LiveTwoDays()
+    {
+        var screens = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "hub-bot-live-screens");
+
+        screens.MaxAge.ShouldBe(TimeSpan.FromDays(2));
+    }
+
+    /// <summary>
+    /// Состав зала помощника (ADR-070, дополнение 2026-10-29) нужен на время
+    /// одного события: двое суток с последней правки, а не окно стрима.
+    /// </summary>
+    [Fact]
+    public void KeyValueBuckets_FloorRoom_LivesTwoDays()
+    {
+        var room = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "hub-bot-floor-room");
+
+        room.MaxAge.ShouldBe(TimeSpan.FromDays(2));
+    }
+
+    [Fact]
+    public void KeyValueBuckets_AuctionBotLiveScreens_LiveTwoDays()
+    {
+        var screens = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "auction-bot-live-screens");
+
+        screens.MaxAge.ShouldBe(TimeSpan.FromDays(2));
+    }
+
     [Fact]
     public void ToConfig_Bucket_KeepsLatestStateOnDisk()
     {

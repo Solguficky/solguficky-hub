@@ -27,6 +27,7 @@ import type {
   AuctionAnnouncementRequest,
   AuctionAnnouncementResult,
 } from "./auction-announcements.js";
+import type { RoomMember } from "./floor-room.js";
 
 // Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
 // решают `rights` (RFC-016); те же права уходят смотрящим в Meetups и Auction,
@@ -593,7 +594,7 @@ export type ConsoleSort = {
 // Экраны под пультом (PER-802): «Розыгрыш» — момент, приз, фото и итог,
 // «Финал» — отбор лотов и время финала, «Ещё» — снятие с публикации,
 // удаление и отмена. Без раздела — сам пульт.
-export type ConsoleSection = "raffle" | "final" | "more";
+export type ConsoleSection = "raffle" | "final" | "more" | "payment";
 
 // Замороженный состав финала (PER-337): лоты в порядке выхода и лот, который
 // ведущий торгует сейчас. Активного лота нет между лотами и до первого.
@@ -658,7 +659,12 @@ export type LotSet = { lotSetId: string; name: string; lotIds: string[] };
 
 // Ставка текущего лота финала на пульте ведущего: сумма и имя, которое ставит
 // Auction. Имени нет, когда Auction его не назвал.
-export type FinalBid = { amount: LotAmount; name?: string };
+export type FinalBid = {
+  amount: LotAmount;
+  name?: string;
+  // Ставка зала или автоставки (PER-834); у онлайн-ставки человека нет.
+  origin?: "floor" | "proxy";
+};
 
 // Торги текущего лота финала: последние ставки, новые первыми, и имя лидера.
 // `lotId` — лот, чьи это ставки: принятая команда может сменить активный лот.
@@ -685,6 +691,12 @@ export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   // Читается тем же чтением, что `meetupHidden`; нет обоих — сходка
   // неизвестна, и строка говорит об этом.
   meetupPublished?: true;
+  // Задан ли текст «как оплатить и получить» (PER-814): строка пульта до и во
+  // время онлайн-торгов. Нет — текст не читался или чтение отказало.
+  paymentText?: "set" | "unset";
+  // Сам текст «как оплатить и получить» (PER-834): читается только для
+  // экрана «Оплата». Нет — не читался, отказало чтение или текста нет.
+  paymentInstructions?: string;
 };
 
 // Аукцион, у которого идут торги сообщества (PER-603, PER-618): слот один, и
@@ -898,7 +910,8 @@ export type AuctionConsoleCall = LotFormCall & { auctionId: string };
 // `opId` рождает край: у открытия недели — в кнопке подтверждения, у
 // остальных команд — на каждое нажатие и каждый ответ.
 export type AuctionConsoleRequest =
-  | (AuctionConsoleCall & { intent: "view-auction-console" })
+  // `payment` — экран «Оплата» (PER-834): к пульту дочитывается текст оплаты.
+  | (AuctionConsoleCall & { intent: "view-auction-console"; payment?: true })
   // Вопрос о сроках, если их ещё можно менять.
   | (AuctionConsoleCall & { intent: "ask-auction-week" })
   // Подтверждение открытия недели, если открывать можно и есть что.
@@ -1049,6 +1062,7 @@ export type AuctionConsoleRequest =
   // помещается, а порядок после заморозки не меняется.
   | (AuctionConsoleCall & { intent: "start-auction-final"; opId: string })
   | (AuctionConsoleCall & { intent: "start-final-lot"; opId: string })
+  | (AuctionConsoleCall & { intent: "prepare-final-open" })
   // Вопрос о следующей цене лота: вопрос называет текущую.
   | (AuctionConsoleCall & { intent: "ask-final-price"; position: number })
   // Цена приходит строкой, как её написал человек: разбор — дело юзкейса.
@@ -1095,8 +1109,21 @@ export type FloorBidsRequest =
       intent: "view-floor-bids";
       auctionId: string;
       page: number;
-      // Ответ на «Другой человек…»: люди, в чьём имени есть эта строка.
+      // Ответ на «Добавить человека…»: люди сообщества, в чьём нике есть эта
+      // строка (PER-816).
       search?: string;
+      // Правка состава зала: кнопки людей убирают их из состава.
+      edit?: true;
+    })
+  | (FloorCall & {
+      intent: "add-floor-member";
+      auctionId: string;
+      memberId: string;
+    })
+  | (FloorCall & {
+      intent: "remove-floor-member";
+      auctionId: string;
+      memberId: string;
     })
   | (FloorCall & { intent: "ask-floor-search"; auctionId: string })
   | (FloorCall & { intent: "prepare-floor-bid"; target: FloorBidTarget })
@@ -1293,13 +1320,6 @@ export type RemovalConfirm = {
 // списка, как велит integration.md, «Счета».
 export type InvoiceStatus = "awaiting-payment" | "paid" | "handed-over";
 
-// `unspecified` — победитель способ ещё не выбрал; это значение, а не пропуск.
-export type FulfillmentMethod =
-  | "unspecified"
-  | "pickup"
-  | "delivery"
-  | "digital";
-
 // Счёт, как его отдаёт Auction.
 export type Invoice = {
   invoiceId: string;
@@ -1309,7 +1329,6 @@ export type Invoice = {
   amount: LotAmount;
   // RFC 3339 в UTC: оплатить до этого мига.
   paymentDueAt: string;
-  fulfillment: FulfillmentMethod;
   status: InvoiceStatus;
 };
 
@@ -1596,6 +1615,15 @@ export type FloorLot = {
 export type FloorView = {
   auctionId: string;
   status: ConsoleAuctionStatus;
+  // Люди состава, у которых в аукционе ещё нет имени: ставить за них нельзя,
+  // пока человек не откроет бота и не выберет имя (ADR-070, дополнение
+  // 2026-10-29).
+  waiting: readonly RoomMember[];
+  // Найденные по нику в ответ на «Добавить человека…».
+  found?: readonly RoomMember[];
+  // Состав не прочитался: экран людей не показывается, и «Повторить» читает
+  // заново.
+  roomUnavailable?: true;
   // Нет — лот не открыт: до старта финала, между лотами и после.
   lot?: FloorLot;
   // По алфавиту имени: место человека на экране не меняется от ставок
@@ -1627,7 +1655,13 @@ export type FloorNote =
   | { kind: "removed-from-lot"; name?: string }
   // Ответа на ставку не было: она могла пройти, и лидера показывает экран.
   | { kind: "unanswered"; name?: string; price: LotAmount }
-  | { kind: "not-found"; search: string };
+  | { kind: "not-found"; search: string }
+  | { kind: "not-in-room" }
+  | { kind: "member-added"; name: string }
+  | { kind: "member-removed"; name: string }
+  | { kind: "member-already-in" }
+  | { kind: "members-unavailable" }
+  | { kind: "room-write-failed" };
 
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
 // кругу сообщества, который разворачивает Notifications. Списка получателей
@@ -1926,6 +1960,7 @@ export type ExecuteResult =
       page: number;
       note?: FloorNote;
       search?: string;
+      edit?: true;
       // Чтение после ставки отказало: экран — прочитанный до неё, и цена
       // могла устареть.
       stale?: true;
@@ -2256,11 +2291,14 @@ export type ExecuteResult =
     }
   // Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо
   // закрытие без продажи, если ставок нет. `opId` уедет в «Да».
+  | { kind: "final-open-confirm"; auctionId: string }
   | {
       kind: "final-close-confirm";
       auctionId: string;
       position: number;
       opId: string;
+      // Последний лот состава: после продажи аукцион завершается.
+      last?: true;
       title?: string;
       price?: LotAmount;
       leaderName?: string;

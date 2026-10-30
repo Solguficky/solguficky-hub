@@ -1,3 +1,4 @@
+import { shownInstant } from "../../core/format.js";
 import type { MeetupSchedule } from "./meetups/port.js";
 
 export type CommunityDay = { year: number; month: number; day: number };
@@ -104,4 +105,15 @@ export function communityLocalTime(
     hours: part("hour"),
     minutes: part("minute"),
   };
+}
+
+/// Местные дата и время для показа людям: полночь читается как 23:59
+/// предыдущего дня (`shownInstant`, PER-831). Для ввода времени и сходок
+/// остаётся `communityLocalTime`: что вводит организатор, бот показывает
+/// как раньше.
+export function communityShownTime(
+  instant: string,
+  timeZone: string,
+): MeetupSchedule {
+  return communityLocalTime(shownInstant(instant, timeZone), timeZone);
 }

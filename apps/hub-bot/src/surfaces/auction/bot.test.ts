@@ -99,6 +99,8 @@ function makeBot(
     presentation?: "rich" | "plain";
     // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку (PER-625).
     supportBotUsername?: string;
+    // Экран зала и стрим (PER-825).
+    hall?: Parameters<typeof createBot>[0]["hall"];
     // Обрыв соединения на первом вызове метода.
     dropOnce?: string;
     // Карточки финала (PER-336): поток и темп правок.
@@ -107,6 +109,9 @@ function makeBot(
     refuseWith?: Record<string, { code: number; description: string }>;
     // Чат медиа ботов (PER-774): промо-видео аукциона.
     media?: MediaChat;
+    // Отправка отвечает номером сообщения, как настоящий Telegram: нужна
+    // трансляции хода торгов (PER-826), которая правит своё сообщение.
+    numberedSends?: boolean;
   } = {},
 ) {
   const bot = createBot({
@@ -124,6 +129,7 @@ function makeBot(
       ? {}
       : { supportBotUsername: options.supportBotUsername }),
     ...(options.live === undefined ? {} : { live: options.live }),
+    ...(options.hall === undefined ? {} : { hall: options.hall }),
     ...(options.media === undefined ? {} : { media: options.media }),
     botInfo,
   });
@@ -178,6 +184,16 @@ function makeBot(
               index === 0 ? photoBlock : photoBlockAt(index),
             ),
           },
+        } as never,
+      });
+    }
+    if (options.numberedSends === true && method === "sendMessage") {
+      return Promise.resolve({
+        ok: true,
+        result: {
+          message_id: 100 + calls.length,
+          date: 0,
+          chat: privateChat,
         } as never,
       });
     }
@@ -281,6 +297,7 @@ function portsWith(
       getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
       getDisplayNames: async () => overrides.names ?? {},
       placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
+      withdrawProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
       // Корень аукциона (PER-644) читает его из тех же списков, что
@@ -302,9 +319,6 @@ function portsWith(
         throw new Error("not used");
       },
       listMyInvoices: async () => ({ invoices: [] }),
-      chooseFulfillment: async () => {
-        throw new Error("not used");
-      },
       getMyPredictions: async () => [],
       getPredictionResults: async () => ({ kind: "after-final" as const }),
       getDayChronicle: async () => {
@@ -387,6 +401,51 @@ function keyboardOf(payload: unknown): SentButton[][] {
 }
 
 describe("auction bot", () => {
+  it("opens the guest collection from menu and its card without Telegram", async () => {
+    const listMine = vi.fn(async () => [
+      {
+        grantId: "01929b7e-5c1d-7a3f-8e4b-0000000000b1",
+        auctionId,
+        grantedAt: "2026-10-28T12:00:00Z",
+        achievement: {
+          code: "first",
+          title: "Первая ачивка",
+          description: "За участие",
+          recipients: "many" as const,
+          manual: false,
+        },
+      },
+    ]);
+    const factory: PortsFactory = (requestId) => ({
+      ...portsWith()(requestId),
+      achievements: {
+        listMine,
+        getEvent: async () => [],
+        getImage: async () => {
+          throw new Error("not needed");
+        },
+      },
+    });
+    const { bot, calls } = makeBot(factory);
+    await bot.handleUpdate(lotPress({ data: entryCallback("menu") }));
+    const menu = calls
+      .flatMap((call) => keyboardOf(call.payload).flat())
+      .find((button) => button.text === "Ачивки");
+    expect(menu?.callback_data).toBeDefined();
+    await bot.handleUpdate(lotPress({ data: menu?.callback_data ?? "" }));
+    expect(listMine).toHaveBeenCalledWith(VIEWER_ID);
+    const item = calls
+      .flatMap((call) => keyboardOf(call.payload).flat())
+      .find((button) => button.text === "Первая ачивка");
+    expect(item?.callback_data).toBeDefined();
+    await bot.handleUpdate(lotPress({ data: item?.callback_data ?? "" }));
+    expect(JSON.stringify(calls)).toContain("За участие");
+    expect(
+      calls
+        .flatMap((call) => keyboardOf(call.payload).flat())
+        .some((button) => button.text === "‹ Ачивки"),
+    ).toBe(true);
+  });
   it("keeps completion across bot instances and permits reopening FAQ", async () => {
     let acknowledged = false;
     const ports: PortsFactory = (requestId) => ({
@@ -856,7 +915,7 @@ describe("auction bot", () => {
     });
     const results = buttonData(lastScreen(calls), "Итоги");
     await bot.handleUpdate(lotPress({ data: results }));
-    expect(lastScreen(calls).text).toContain("Итоги после финала.");
+    expect(lastScreen(calls).text).toContain("Итоги аукциона");
   });
 
   // Отменённый аукцион (PER-606; ADR-047, дополнение 2026-10-12) — прошедший,
@@ -1036,6 +1095,45 @@ describe("auction bot", () => {
     );
     await bot.handleUpdate(lotPress());
     expect(calls.at(-1)?.method).toBe("editMessageText");
+  });
+
+  // Стрим и экран финала (PER-825, PER-832): ряд ссылок в корне аукциона бота,
+  // а без настройки его нет; на карточке лота ссылок нет; экран проходит
+  // линтер при отправке.
+  it("sends the hall links in the auction root only when configured", async () => {
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    const rowsOf = async (data: string, configured?: typeof hall) => {
+      const { bot, calls } = makeBot(() => publicPorts("r"), {
+        ...(configured === undefined ? {} : { hall: configured }),
+      });
+      await bot.handleUpdate(lotPress({ data }));
+      return keyboardOf(calls.at(-1)?.payload).filter((row) =>
+        row.some((button) => button.url !== undefined),
+      );
+    };
+    const root = encodeAuctionCallback({ kind: "root", auctionId });
+    expect(await rowsOf(root)).toEqual([]);
+    const rows = await rowsOf(root, hall);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.map((button) => button.text)).toEqual([
+      "Стрим финала ↗",
+      "Экран финала ↗",
+    ]);
+    expect(rows[0]?.[0]?.url).toBe("https://stream.example.org/live");
+    expect(rows[0]?.[1]?.url).toMatch(
+      /^https:\/\/hall\.example\.org\/screen\/[^/]+$/,
+    );
+    // Карточка лота (кнопка по умолчанию) ссылок не несёт.
+    const { bot, calls } = makeBot(() => publicPorts("r"), { hall });
+    await bot.handleUpdate(lotPress());
+    expect(
+      keyboardOf(calls.at(-1)?.payload)
+        .flat()
+        .some((button) => button.url !== undefined),
+    ).toBe(false);
   });
 
   // `/start` при недоступном Identity: заявка не подана, и «Повторить»
@@ -2040,9 +2138,28 @@ describe("waiting", () => {
 // Нажатие кнопки в сообщении бота: текстовом, rich-карточке или сообщении-фото
 // от прежней версии бота.
 function lotPress(
-  options: { photo?: boolean; rich?: boolean; data?: string } = {},
+  options: {
+    photo?: boolean;
+    rich?: boolean;
+    data?: string;
+    back?: string;
+    messageId?: number;
+  } = {},
 ): Update {
-  const base = { message_id: 7, date: 0, chat: privateChat };
+  const base = {
+    message_id: options.messageId ?? 7,
+    date: 0,
+    chat: privateChat,
+    ...(options.back === undefined
+      ? {}
+      : {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "‹ Лоты", callback_data: options.back }],
+            ],
+          },
+        }),
+  };
   return {
     update_id: 3,
     callback_query: {
@@ -2336,6 +2453,77 @@ describe("bid leaf delivery", () => {
       text: expect.stringMatching(
         /^<b>Включить автоставку до 2\s000\s₽\?<\/b>/,
       ),
+    });
+  });
+
+  // Лот ждёт финала (PER-821, ADR-079): лимит спрашивается и подтверждается
+  // словами финала. Бот создан заново на каждом шаге: состояния у вопроса нет,
+  // шаг едет в кнопке.
+  it("asks and confirms the limit of a lot waiting for the final", async () => {
+    const held = portsWith({
+      lot: {
+        proxyEnabled: true,
+        status: {
+          kind: "held",
+          currentPrice: { minorUnits: 90_000, currency: "RUB" },
+        },
+      },
+    });
+    const asked = makeBot(held);
+    await asked.bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({
+          kind: "ask",
+          question: "proxy",
+          lotId,
+          page: 0,
+        }),
+        message: { message_id: 7, date: 0, chat: privateChat, text: "card" },
+      },
+    } as Update);
+    expect(
+      asked.calls.find((call) => call.method === "sendMessage")?.payload,
+    ).toMatchObject({
+      text: expect.stringContaining("Лот ждёт финала"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Отмена" }]],
+      },
+    });
+
+    const limitStep = encodeAuctionCallback({
+      kind: "question",
+      question: "proxy",
+      lotId,
+      page: 0,
+      addressee: from.id,
+    });
+    const confirmed = makeBot(held);
+    await confirmed.bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "2 000",
+        reply_to_message: {
+          ...questionMessage,
+          text: "Автоставка",
+          reply_markup: {
+            inline_keyboard: [[{ text: "Отмена", callback_data: limitStep }]],
+          },
+        },
+      },
+    } as Update);
+    expect(
+      confirmed.calls.find((call) => call.method === "sendMessage")?.payload,
+    ).toMatchObject({
+      text: expect.stringContaining("Лимит сработает в финале"),
     });
   });
 
@@ -3710,9 +3898,97 @@ describe("final lot card", () => {
       ...(options.refuseWith === undefined
         ? {}
         : { refuseWith: options.refuseWith }),
+      numberedSends: true,
     });
     return { bot, calls, stream };
   }
+
+  it("revives the old sold card after restarting the auction bot", async () => {
+    const stream = liveStream();
+    const nextId = "01929b7e-5c1d-7a3f-8e4b-0000000000b2";
+    const base = portsWith({
+      lot: {
+        ...liveLot(4, 1400),
+        status: { kind: "sold", winnerId: RIVAL, price: rub(1400) },
+      },
+    });
+    const ports: PortsFactory = (...args) => {
+      const p = base(...args);
+      return {
+        ...p,
+        auction: {
+          ...p.auction,
+          getAuction: async () => ({
+            auctionId,
+            stage: "in-final",
+            final: true,
+            lineup: { order: [lotId, nextId], activeLotId: nextId },
+          }),
+        },
+      };
+    };
+    const { bot, calls } = makeBot(ports, {
+      live: {
+        watches: stream.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({ [RIVAL]: "@jay" }) },
+      },
+    });
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+      }),
+    );
+    expect(stream.listeners.size).toBe(1);
+    expect(
+      lastScreen(calls)
+        .keyboard.flat()
+        .map((b) => b.text),
+    ).toContain("К текущему лоту");
+    stream.emit({ ...liveLot(1, 2000), lotId: nextId });
+    await flush();
+    expect(htmlOf(edits(calls).at(-1)?.payload)).toContain("Цена: 2 000 ₽");
+  });
+
+  it("answers a bid outage explicitly and recovers the auction exit from the old keyboard", async () => {
+    const base = portsWith();
+    const ports: PortsFactory = (...args) => {
+      const p = base(...args);
+      return {
+        ...p,
+        auction: {
+          ...p.auction,
+          getLot: async () => {
+            throw new ConnectError("offline", Code.Unavailable);
+          },
+        },
+      };
+    };
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+        back: encodeAuctionCallback({ kind: "feed", auctionId, page: 0 }),
+      }),
+    );
+    expect(lastScreen(calls).text).toContain(
+      "Аукцион недоступен, ставка не принята",
+    );
+    expect(lastScreen(calls).keyboard.flat()).toContainEqual({
+      text: "‹ Аукцион",
+      callback_data: encodeAuctionCallback({ kind: "root", auctionId }),
+    });
+  });
 
   it("keeps one button at the next price as the price moves", async () => {
     const { bot, calls, stream } = setup();
@@ -3731,6 +4007,79 @@ describe("final lot card", () => {
     expect(htmlOf(edited)).toContain("Цена: 1 400 ₽");
     expect(htmlOf(edited)).toContain("Лидер: @jay");
     expect(labels(edited)).toContain("Поставить 1 500 ₽");
+  });
+
+  // Трансляция хода торгов (PER-826): кнопка карточки присылает одно сообщение,
+  // дальше оно правится по потоку, а «Не следить» его останавливает.
+  const textOfCall = (call: { payload: unknown } | undefined) =>
+    (call?.payload as { text?: string } | undefined)?.text ?? "";
+
+  it("broadcasts the bidding in one message after the watch button", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({ kind: "watch-final", lotId, page: 0 }),
+      }),
+    );
+    // Поток отдаёт состояние подписчику, как только он открыт.
+    stream.emit(liveLot(1, 1200));
+    await flush();
+    const sent = calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        plain(String((call.payload as { text?: string }).text)).includes(
+          "Следующая цена",
+        ),
+    );
+    expect(sent).toHaveLength(1);
+    const first = sent[0]?.payload as {
+      text: string;
+      reply_markup: {
+        inline_keyboard: { text: string; callback_data: string }[][];
+      };
+    };
+    expect(plain(first.text)).toContain("<b>1 300 ₽</b>");
+    expect(plain(first.text)).toContain("лидирует @jay");
+    expect(first.reply_markup.inline_keyboard.flat()).toEqual([
+      { text: "Не следить", callback_data: "v1:bc:x" },
+    ]);
+    const sends = calls.filter((call) => call.method === "sendMessage").length;
+    const messageId = 101 + calls.indexOf(sent[0] as (typeof calls)[number]);
+
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    // Новых сообщений нет: правится то же, и только оно.
+    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
+      sends,
+    );
+    const broadcastEdit = calls.filter(
+      ({ method, payload }) =>
+        method === "editMessageText" &&
+        (payload as { message_id?: number }).message_id === messageId,
+    );
+    expect(broadcastEdit).toHaveLength(1);
+    expect(plain(textOfCall(broadcastEdit[0]))).toContain("<b>1 500 ₽</b>");
+
+    await bot.handleUpdate(lotPress({ data: "v1:bc:x", messageId }));
+    await flush();
+    const stopped = calls.filter(
+      ({ method, payload }) =>
+        method === "editMessageText" &&
+        (payload as { message_id?: number }).message_id === messageId,
+    );
+    expect(stopped).toHaveLength(2);
+    expect(textOfCall(stopped[1])).toBe("Трансляция остановлена");
+  });
+
+  it("sends no broadcast to somebody who did not press the watch button", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(lotPress({ rich: true }));
+    const sends = calls.filter((call) => call.method === "sendMessage").length;
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
+      sends,
+    );
   });
 
   it("names the ask of the auctioneer", async () => {
@@ -3890,7 +4239,7 @@ describe("final lot card", () => {
     );
     const shown = lastScreen(calls);
     expect(plain(shown.text)).toContain(
-      "Цену уже подняли: следующая ставка — 1 400 ₽",
+      "<h2>Твоя ставка не прошла — следующая цена 1 400 ₽</h2>",
     );
     expect(shown.keyboard.flat().map((b) => plain(b.text))).toContain(
       "Поставить 1 400 ₽",

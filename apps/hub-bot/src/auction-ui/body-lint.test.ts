@@ -143,6 +143,9 @@ const surface: AuctionSurface = {
           refusal: { kind: "display-name-not-chosen" },
         };
       },
+      async withdrawProxyLimit() {
+        return { kind: "accepted", lotVersion: 0 };
+      },
       async setProxyLimit() {
         return { kind: "accepted", lotVersion: 0 };
       },
@@ -170,9 +173,6 @@ const surface: AuctionSurface = {
       },
       async listMyInvoices() {
         return { invoices: [] };
-      },
-      async chooseFulfillment() {
-        throw new Error("not used");
       },
       async getMyPredictions() {
         return [];

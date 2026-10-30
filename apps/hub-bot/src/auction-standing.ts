@@ -96,6 +96,58 @@ export function ownProxyLine(lot: {
 }
 
 /**
+ * Строка о том, что лимит сработает в финале (PER-822, ADR-079, п. 3). Лоту,
+ * который ждёт финала, она обещает финал прямо. Лоту онлайн-недели участник
+ * отметки «в финал» не видит (она в пульте администратора), поэтому строка
+ * говорит условно. Живому финалу и прочим состояниям строки нет.
+ */
+export function finalLimitLine(lot: {
+  viewerProxyLimit: Money;
+  status: LotStatusView;
+}): string | undefined {
+  const { status } = lot;
+  if (status.kind === "held") {
+    return `Твой лимит до ${money(lot.viewerProxyLimit)} сработает в финале`;
+  }
+  return status.kind === "trading" && status.phase === "online"
+    ? "Если лот попадёт в финал, лимит сработает и там"
+    : undefined;
+}
+
+/**
+ * Строки своего лимита на карточке лота (PER-822): лоту в торгах — своя
+ * автоставка и условная строка про финал, лоту, который ждёт финала, — одна
+ * строка про финал. Лимита нет — строк нет. Чужих лимитов экран не знает.
+ */
+export function ownLimitLines(lot: {
+  viewerProxyLimit?: Money;
+  nextPrice?: Money;
+  standing?: LotStanding;
+  status: LotStatusView;
+}): string[] {
+  if (lot.viewerProxyLimit === undefined) return [];
+  const own = { ...lot, viewerProxyLimit: lot.viewerProxyLimit };
+  const { status } = lot;
+  // Лимит ниже цены лота в финале не сработает: обещать его нельзя.
+  if (status.kind === "held") {
+    return [
+      own.viewerProxyLimit.currency === status.currentPrice.currency &&
+      // Не-лидеру лимит, равный цене, ничего не поставит: перебить нужно выше.
+      (own.viewerProxyLimit.minorUnits < status.currentPrice.minorUnits ||
+        (own.viewerProxyLimit.minorUnits === status.currentPrice.minorUnits &&
+          lot.standing !== "leader"))
+        ? `Твой лимит до ${money(own.viewerProxyLimit)} не выше цены лота — в финале не сработает`
+        : (finalLimitLine(own) ?? ""),
+    ].filter((line) => line !== "");
+  }
+  const ownLine = ownProxyLine(own);
+  // Исчерпанный лимит уже назван исчерпанным: условной строки про финал
+  // рядом с ним нет, она бы ему противоречила.
+  const final = ownLine.includes("исчерпана") ? undefined : finalLimitLine(own);
+  return [ownLine, ...(final === undefined ? [] : [final])];
+}
+
+/**
  * Строка анти-снайпа на экране принятой ставки (PER-631, №107): «Торги
  * продлены до 11:03 (продление 3 из 3).» или, когда продления кончились,
  * «Продлений больше не будет: торги закроются в 11:03.» Строка не говорит, что
@@ -157,16 +209,19 @@ export function feedSummary(
     mine?: readonly FeedItem[];
     beforeTrading?: true;
     final?: { active?: FeedItem };
+    groups?: readonly { group: FeedGroupName; count: number }[];
   },
   options: MineOptions,
 ): string[] {
   if (feed.beforeTrading === true) return [beforeTradingLine];
   const mine = feed.mine ?? [];
+  const groups = groupsLine(feed.groups);
   // В живом финале сводка начинается с того, что идёт в зале (PER-639), а
   // «не лидируешь» не говорит: лидерство решает ведущий по лоту за лотом.
   if (feed.final !== undefined) {
     return [
       finalFeedLine(feed.final.active, options),
+      ...groups,
       ...(mine.length === 0 ? [] : [mineLines(mine, options)]),
     ];
   }
@@ -178,13 +233,39 @@ export function feedSummary(
   if (mine.length === 0) {
     return [
       "Ты пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.",
+      ...groups,
       ...happyLine,
     ];
   }
   return [
     "Здесь только твои лоты: где ты лидер и что ты купил. Все лоты аукциона — кнопками ниже.",
     mineLines(mine, options),
+    ...groups,
     ...happyLine,
+  ];
+}
+
+export type FeedGroupName = "trading" | "held" | "sold" | "unsold";
+
+const groupWords: Readonly<Record<FeedGroupName, string>> = {
+  trading: "на торгах",
+  held: "ждёт финала",
+  sold: "продан",
+  unsold: "не продан",
+};
+
+/**
+ * Группы списка (PER-813): кнопки лотов идут по состоянию в этом порядке, а
+ * строка называет, сколько лотов в каждой.
+ */
+function groupsLine(
+  groups: readonly { group: FeedGroupName; count: number }[] | undefined,
+): string[] {
+  if (groups === undefined || groups.length === 0) return [];
+  return [
+    `Лоты идут по группам: ${groups
+      .map((each) => `${groupWords[each.group]} — ${each.count}`)
+      .join(", ")}.`,
   ];
 }
 

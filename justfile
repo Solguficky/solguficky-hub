@@ -264,7 +264,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "160"
+APPHOST_TEST_THRESHOLD := "161"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -584,12 +584,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 1065. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 1069. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "731"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "334"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "732"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "337"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

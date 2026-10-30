@@ -1,4 +1,5 @@
 import { type FaqContent, readFaqContent } from "../../auction-faq.js";
+import { type HallLinks, readHallLinks } from "../../auction-hall.js";
 import {
   type Env,
   type Loaded,
@@ -13,6 +14,10 @@ export type HubConfig = {
   meetupsUrl: string;
   notificationsUrl: string;
   faq: FaqContent;
+  // Стрим и экран финала (PER-825, PER-832): кнопки-URL в корне аукциона и в
+  // «Расширениях» сходки. Нет адресов — нет кнопок.
+  hall: HallLinks;
+  achievementsUrl?: string;
   // Аукцион сходки (PER-307) — расширение, а не опора бота: без адреса Auction
   // карточка сходки обходится без ряда аукциона. В графе AppHost адрес
   // передаётся всегда; пустым он остаётся только у запуска вне графа.
@@ -26,8 +31,11 @@ export type HubConfig = {
 
 export function readHubConfig(env: Env): Loaded<HubConfig> {
   const read = reader(env);
+  const achievementsUrl = read("ACHIEVEMENTS_GRPC_URL");
   const faq = readFaqContent(env);
   if (!faq.ok) return faq;
+  const hall = readHallLinks(env);
+  if (!hall.ok) return { ok: false, error: hall.error };
   // Опечатка в имени бота аукциона дала бы администратору ссылку в чужой или
   // несуществующий бот, поэтому форма проверяется на старте, а не молча.
   const auctionBot = readBotUsername(env, "BOT_AUCTION_BOT_USERNAME");
@@ -44,6 +52,8 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
       notificationsUrl:
         read("NOTIFICATIONS_GRPC_URL") ?? "http://127.0.0.1:50053",
       faq: faq.content,
+      hall: hall.links,
+      ...(achievementsUrl === undefined ? {} : { achievementsUrl }),
       ...(auctionUrl === undefined ? {} : { auctionUrl }),
       ...(auctionBot.config === undefined
         ? {}

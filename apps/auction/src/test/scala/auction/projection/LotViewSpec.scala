@@ -194,11 +194,13 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       val held = folded(None, events.take(5))
       held.heldPrice shouldBe Some(StoredMoney(10500L, "RUB"))
       held.resumedSequence shouldBe None
+      held.resumedAt shouldBe None
 
       // После возврата цена удержания переживает переход `Held -> Trading`, а номер возврата его отделяет.
       val resumed = folded(None, events)
       resumed.heldPrice shouldBe Some(StoredMoney(10500L, "RUB"))
       resumed.resumedSequence shouldBe Some(6L)
+      resumed.resumedAt shouldBe Some(stored(6, LotEvent.LotResumed).occurredAt)
     }
 
     // ADR-072 (PER-658): итог снятия пишет событие, проекция его не пересчитывает, а только помечает и записывает.

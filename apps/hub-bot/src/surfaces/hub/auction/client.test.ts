@@ -2,6 +2,7 @@ import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import {
+  AuctionState_BreakSchema,
   AuctionState_DraftSchema,
   AuctionState_PrebiddingSchema,
   AuctionState_ScheduledSchema,
@@ -132,7 +133,6 @@ function adapter(rpc: {
   setPaymentInstructions?: Call;
   setPromoVideo?: Call;
   listMyInvoices?: Call;
-  chooseFulfillment?: Call;
   removeLot?: Call;
   getLotPhoto?: Call;
   addLotPhoto?: Call;
@@ -156,6 +156,7 @@ function adapter(rpc: {
     getDisplayNames: (rpc.getDisplayNames ?? notUsed) as never,
     listAuctionNames: (rpc.listAuctionNames ?? notUsed) as never,
     placeBid: (rpc.placeBid ?? notUsed) as never,
+    withdrawProxyLimit: notUsed,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getAuction: notUsed,
@@ -210,7 +211,6 @@ function adapter(rpc: {
     setPaymentInstructions: (rpc.setPaymentInstructions ?? notUsed) as never,
     setPromoVideo: (rpc.setPromoVideo ?? notUsed) as never,
     listMyInvoices: (rpc.listMyInvoices ?? notUsed) as never,
-    chooseFulfillment: (rpc.chooseFulfillment ?? notUsed) as never,
   });
 }
 
@@ -2463,6 +2463,55 @@ describe("auction adapter in the final", () => {
     expect(refused).toHaveBeenCalledOnce();
   });
 
+  it("marks the floor and the proxy bids of the latest bids", async () => {
+    const bid = (
+      rubles: number,
+      origin:
+        | { case: "manual"; value: { source: BidSource } }
+        | { case: "proxy"; value: Record<string, never> },
+    ) => ({
+      sequence: BigInt(rubles),
+      occurredAt: "2026-10-27T18:00:00Z",
+      kind: {
+        case: "bid" as const,
+        value: {
+          bidId: lotId,
+          participantId: "a",
+          amount: rub(rubles),
+          origin,
+        },
+      },
+    });
+    const read = adapter({
+      listLotHistory: async () =>
+        create(ListLotHistoryResponseSchema, {
+          entries: [
+            bid(100, { case: "manual", value: { source: BidSource.BOT } }),
+            bid(200, { case: "manual", value: { source: BidSource.FLOOR } }),
+            bid(300, { case: "proxy", value: {} }),
+          ],
+          nextPageToken: "",
+        }),
+      getDisplayNames: async () => ({ names: {} }),
+    });
+
+    const found = await read.recentBids(admin, {
+      auctionId,
+      lotId,
+      limit: 3,
+      extraIds: [],
+    });
+
+    expect(found).toMatchObject({
+      kind: "ok",
+      bids: [
+        { origin: "proxy" },
+        { origin: "floor" },
+        expect.not.objectContaining({ origin: expect.anything() }),
+      ],
+    });
+  });
+
   it("reads the latest bids across the pages, newest first, with their names", async () => {
     const bid = (rubles: number, participantId: string) => ({
       sequence: BigInt(rubles),
@@ -2540,7 +2589,10 @@ describe("lot info reader", () => {
   it("reads the title as the recipient with the right to bid", async () => {
     const getLot = vi.fn().mockResolvedValue({ card: { title: "Кружка" } });
     await expect(
-      createLotInfoReader({ getLot }).lotInfo(identityId, lotId),
+      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
+        identityId,
+        lotId,
+      ),
     ).resolves.toEqual({ title: "Кружка" });
     expect(getLot).toHaveBeenCalledWith(
       {
@@ -2565,7 +2617,10 @@ describe("lot info reader", () => {
       },
     });
     await expect(
-      createLotInfoReader({ getLot }).lotInfo(identityId, lotId),
+      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
+        identityId,
+        lotId,
+      ),
     ).resolves.toEqual({
       title: "Кружка",
       deadline: "2026-10-20T19:45:00Z",
@@ -2573,10 +2628,44 @@ describe("lot info reader", () => {
     });
   });
 
+  // Ориентировочное время финала для вести о конце торгов (PER-812): читается
+  // от имени получателя с правом ставок.
+  it("reads the estimated final time of an auction as the recipient", async () => {
+    const getAuction = vi.fn().mockResolvedValue({
+      auction: create(AuctionSnapshotSchema, {
+        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
+        status: {
+          case: "onBreak",
+          value: create(AuctionState_BreakSchema, {}),
+        },
+        finalAt: "2026-10-31T17:00:00Z",
+      }),
+    });
+    await expect(
+      createLotInfoReader({ getLot: vi.fn(), getAuction }).auctionFinalAt(
+        identityId,
+        "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
+      ),
+    ).resolves.toBe("2026-10-31T17:00:00Z");
+    expect(getAuction).toHaveBeenCalledWith(
+      {
+        viewer: expect.objectContaining({
+          identityId,
+          rights: [AccessRight.PLACE_BIDS],
+        }),
+        auctionId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
+      },
+      expect.anything(),
+    );
+  });
+
   it("gives an empty title to a lot without a card", async () => {
     const getLot = vi.fn().mockResolvedValue({});
     await expect(
-      createLotInfoReader({ getLot }).lotInfo(identityId, lotId),
+      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
+        identityId,
+        lotId,
+      ),
     ).resolves.toEqual({ title: "" });
   });
 });
@@ -2930,7 +3019,7 @@ describe("auction invoices adapter", () => {
     status: { case: status, value: {} },
   });
 
-  it("reads every invoice of the auction with its status and method", async () => {
+  it("reads every invoice of the auction with its status", async () => {
     const sent: unknown[] = [];
     const invoices = adapter({
       listAuctionInvoices: async (request) => {
@@ -2939,10 +3028,7 @@ describe("auction invoices adapter", () => {
           outcome: {
             case: "invoices",
             value: {
-              invoices: [
-                snapshot("awaitingPayment"),
-                { ...snapshot("handedOver"), fulfillment: 7 },
-              ],
+              invoices: [snapshot("awaitingPayment"), snapshot("handedOver")],
             },
           },
         };
@@ -2957,12 +3043,9 @@ describe("auction invoices adapter", () => {
           invoiceId,
           amount: { minorUnits: 150_000, currency: "RUB" },
           paymentDueAt: "2026-10-30T12:00:00Z",
-          fulfillment: "pickup",
           status: "awaiting-payment",
         }),
-        // Способ новее схемы — как невыбранный.
         expect.objectContaining({
-          fulfillment: "unspecified",
           status: "handed-over",
         }),
       ],

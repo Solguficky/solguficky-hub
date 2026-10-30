@@ -32,14 +32,12 @@ function auctionOf(
     getDisplayNames: notUsed,
     listLotHistory: notUsed,
     placeBid: notUsed,
+    withdrawProxyLimit: notUsed,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getAuction: async () => SUMMARY,
     getRaffle: async () => undefined,
     listMyInvoices: async () => ({ invoices: [] }),
-    chooseFulfillment: async () => {
-      throw new Error("not used");
-    },
     getMyPredictions: predictions,
     getPredictionResults: notUsed,
     getDayChronicle: notUsed,
@@ -71,14 +69,14 @@ const predictionsRow = (round: PredictionRoundView["round"]) => [
 
 // Вход в прогнозы стоит в корне аукциона своим рядом под лотами (PER-489):
 // лента после PER-644 — только список лотов.
-describe("root prediction results entry", () => {
+describe("root auction results entry", () => {
   it("offers results only after the auction is finished", async () => {
     const running = await rootWith([
       { round: "catalog", status: "closed", answers: [] },
       { round: "final", status: "not-open", answers: [] },
     ]);
     const actions = running.keyboard.flat().map((button) => button.action);
-    expect(actions).not.toContain("root.prediction-results");
+    expect(actions).not.toContain("root.results");
 
     const finished = await openRoot({
       auction: {
@@ -91,11 +89,14 @@ describe("root prediction results entry", () => {
       viewer: VIEWER,
       auctionId: AUCTION_ID,
     });
-    expect(finished.keyboard[1]).toEqual([
+    // После конца аукциона вкладка «Прогнозы» остаётся и тому, у кого нет
+    // ответов: в ней итоги (PER-813).
+    expect(finished.keyboard[1]).toEqual(predictionsRow("catalog"));
+    expect(finished.keyboard[2]).toEqual([
       {
-        action: "root.prediction-results",
+        action: "root.results",
         callbackData: encodeAuctionCallback({
-          kind: "prediction-results",
+          kind: "auction-results",
           auctionId: AUCTION_ID,
         }),
       },
@@ -127,9 +128,28 @@ describe("root prediction results entry", () => {
       keyboard: readonly (readonly { action: string }[])[];
     }) => body.keyboard.map((row) => row.map((button) => button.action));
 
-    expect(rows(await finishedWith([])).slice(0, 2)).toEqual([
+    const unreadable = openRoot({
+      auction: {
+        ...auctionOf(async () => {
+          throw new Error("permission denied");
+        }),
+        getAuction: async () => ({ ...SUMMARY, stage: "finished" }),
+        getRaffle: async () => ({
+          auctionId: AUCTION_ID,
+          status: "drawn",
+          closesAt: "2026-10-29T18:00:00Z",
+          commitment: "ab".repeat(32),
+          beaconRound: 1,
+          registered: false,
+          tickets: [],
+        }),
+      },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+    });
+    expect(rows(await unreadable).slice(0, 2)).toEqual([
       ["root.lots"],
-      ["root.raffle", "root.prediction-results"],
+      ["root.raffle", "root.results"],
     ]);
     expect(
       rows(
@@ -149,8 +169,31 @@ describe("root prediction results entry", () => {
     ).toEqual([
       ["root.lots"],
       ["root.raffle", "root.predictions"],
-      ["root.prediction-results"],
+      ["root.results"],
     ]);
+  });
+
+  // «Итоги» и «Мои счета» — одним рядом (PER-832): «Итоги» уходят из пары с
+  // розыгрышем и из своего ряда.
+  it("puts the results next to the invoices into one row", async () => {
+    const body = await openRoot({
+      auction: {
+        ...auctionOf(async () => []),
+        getAuction: async () => ({ ...SUMMARY, stage: "finished" }),
+        listMyInvoices: async () => ({
+          invoices: [{}] as unknown as never,
+        }),
+      },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+    });
+    const actions = body.keyboard.map((row) =>
+      row.map((button) => button.action),
+    );
+    expect(actions).toContainEqual(["root.results", "root.invoices"]);
+    expect(
+      actions.flat().filter((action) => action === "root.results"),
+    ).toHaveLength(1);
   });
 });
 
@@ -328,5 +371,65 @@ describe("root auction chronicle entry", () => {
         body.keyboard.flat().map((button) => button.callbackData),
       ).not.toContain(statistics);
     }
+  });
+});
+
+// «Ачивки» (PER-813): кнопка есть, только когда у аукциона есть ачивки;
+// пустой набор и недоступный Achievements её убирают, а сбой уходит в лог.
+describe("root achievements entry", () => {
+  const achievement = {
+    achievement: {
+      code: "owl",
+      title: "Сова",
+      description: "",
+      recipients: "one" as const,
+      manual: false,
+    },
+    holderIds: [],
+    erasedHolders: 0,
+  };
+  const rootWithAchievements = (
+    getEvent: () => Promise<readonly (typeof achievement)[]>,
+    reportFailure?: (cause: unknown) => void,
+  ) =>
+    openRoot({
+      auction: auctionOf(async () => []),
+      achievements: {
+        listMine: async () => [],
+        getEvent,
+        getImage: async () => {
+          throw new Error("not used");
+        },
+        ...(reportFailure === undefined ? {} : { reportFailure }),
+      },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+    });
+  const actions = (body: {
+    keyboard: readonly (readonly { action: string }[])[];
+  }) => body.keyboard.flat().map((button) => button.action);
+
+  it("offers the achievements when the auction has some", async () => {
+    expect(
+      actions(await rootWithAchievements(async () => [achievement])),
+    ).toContain("root.achievements");
+  });
+
+  it("hides the entry without achievements", async () => {
+    expect(actions(await rootWithAchievements(async () => []))).not.toContain(
+      "root.achievements",
+    );
+  });
+
+  it("hides the entry and reports the failure when Achievements is down", async () => {
+    const failures: unknown[] = [];
+    const body = await rootWithAchievements(
+      async () => {
+        throw new Error("ECONNREFUSED");
+      },
+      (cause) => failures.push(cause),
+    );
+    expect(actions(body)).not.toContain("root.achievements");
+    expect(failures).toHaveLength(1);
   });
 });

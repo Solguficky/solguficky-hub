@@ -7,7 +7,9 @@ import {
   InputFile,
 } from "grammy";
 import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
+import type { HallLinks } from "../../../auction-hall.js";
 import { promoUnavailableText } from "../../../auction-promo.js";
+import type { AchievementsPort } from "../../../auction-ui/index.js";
 import {
   type ApplicationQueue,
   type AuctionBlock,
@@ -17,6 +19,7 @@ import {
   type AuctionUpdate,
   encodeAuctionCallback,
   type FavoritesPort,
+  FinalBidReadUnavailable,
   isAuctionQuestion,
   type LotImagePort,
   type ProxyExplainerPort,
@@ -25,6 +28,15 @@ import {
   replacesAuctionQuestion,
   type Viewer,
 } from "../../../auction-ui/index.js";
+import {
+  type BroadcastStore,
+  createLiveBroadcasts,
+  type LiveBroadcasts,
+} from "../../../core/auction/broadcast.js";
+import {
+  BROADCAST_STOP_DATA,
+  createBroadcastApi,
+} from "../../../core/auction/broadcast-telegram.js";
 import {
   createLiveCards,
   type LiveCardEntry,
@@ -36,12 +48,14 @@ import {
 import {
   reportLiveConsoleFailure,
   reportLiveEditFailure,
+  reportLiveRestore,
 } from "../../../core/auction/live-failures.js";
 import {
   loadLotPhoto,
   richPhotoFileIds,
   richPhotoId,
 } from "../../../core/auction/lot-photos.js";
+import { auctionRootFrom } from "../../../core/auction/origin.js";
 import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -192,16 +206,15 @@ import { parseBroadcastPreview } from "./broadcast-input.js";
 import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
 import {
   createLiveConsoles,
-  type LiveConsoleEntry,
   type LiveConsoleRead,
   type LiveConsoles,
 } from "./live-console.js";
-import {
-  createLiveFloors,
-  type LiveFloorEntry,
-  type LiveFloors,
-} from "./live-floor.js";
-import type { LiveScreenRead } from "./live-screens.js";
+import { createLiveFloors, type LiveFloors } from "./live-floor.js";
+import type {
+  LiveScreenRead,
+  LiveScreenStore,
+  LiveScreenTarget,
+} from "./live-screens.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
@@ -339,6 +352,7 @@ import {
   launchScreen,
   lineupConfirmScreen,
   lineupOrderScreen,
+  openConfirmScreen,
   paymentTermAskErrorText,
   paymentTermQuestionText,
   raffleAskErrorText,
@@ -624,12 +638,16 @@ export type BotRuntime = {
   // Избранные лоты у Notifications (PER-495): порт дерева на каждый update.
   // Нет — карточка лота без кнопки избранного, а лента без «Избранного».
   favorites?: (meta?: RpcMetadata) => FavoritesPort;
+  achievements?: (meta?: RpcMetadata) => AchievementsPort;
   // Отметка «пояснение автоставки видено» у Notifications (PER-517). Нет —
   // вопрос лимита объясняет автоставку каждый раз.
   proxyExplainer?: (meta?: RpcMetadata) => ProxyExplainerPort;
   // Пояс, в котором человек читает дедлайн лота; тот же, что у Meetups.
   communityTimeZone?: string;
   faq?: FaqContent;
+  // Стрим и экран финала (PER-825, PER-832): кнопки-URL в корне аукциона и в
+  // «Расширениях» сходки. Нет адресов — нет кнопок.
+  hall?: HallLinks;
   // Память процесса: тесты подставляют свою, чтобы проверить рестарт.
   auctionParents?: AuctionParents;
   lotPhotos?: LotPhotos;
@@ -642,7 +660,17 @@ export type BotRuntime = {
     watches: AuctionWatches;
     limiter: EditLimiter;
     names: Pick<AuctionPort, "getDisplayNames">;
+    // Запись открытых пультов и «Ставок зала» вне процесса (PER-815): по
+    // хранилищу на экран. Нет — реестр живёт, пока жив процесс.
+    screens?: (kind: "console" | "floor") => LiveScreenStore;
+    // Паузы между повторами чтения при восстановлении; тест подменяет.
+    restorePauses?: readonly number[];
+    // Запись открытых трансляций хода торгов вне процесса (PER-826). Нет —
+    // трансляция живёт, пока жив процесс.
+    broadcasts?: BroadcastStore;
   };
+  // Часы бота, мс эпохи: время «Обновлено» в пульте финала (PER-815).
+  now?: () => number;
 };
 
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
@@ -1175,6 +1203,8 @@ type UpdateContext = ShellContext & {
   // карточку заново: без неё нажатие под карточкой её из реестра снимает.
   liveCards?: LiveCards;
   liveShown?: boolean;
+  // Трансляции хода торгов (PER-826): кнопка карточки финала запускает их.
+  liveBroadcasts?: LiveBroadcasts;
   // Открытые пульты ведущего (PER-566) и отметка, что этот update показал
   // пульт финала: без неё нажатие под пультом его из реестра снимает.
   liveConsoles?: LiveConsoles;
@@ -1239,15 +1269,40 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
           edit: (card, body) =>
             editLiveLotCard(bot.api, { card, body, runtime, lotPhotos }),
         });
+  const liveBroadcasts =
+    runtime.live === undefined
+      ? undefined
+      : createLiveBroadcasts({
+          watches: runtime.live.watches,
+          limiter: runtime.live.limiter,
+          names: runtime.live.names,
+          ...(runtime.live.broadcasts === undefined
+            ? {}
+            : { store: runtime.live.broadcasts }),
+          timeZone: runtime.communityTimeZone ?? "UTC",
+          api: createBroadcastApi({
+            api: bot.api,
+            mark: screenMark("bid-watch"),
+            report: (error) => reportLiveEditFailure(runtime.logger, error),
+          }),
+          onError: (cause) =>
+            reportLiveEditFailure(
+              runtime.logger,
+              cause instanceof Error ? cause.message : String(cause),
+              "unexpected",
+            ),
+        });
+  void liveBroadcasts?.restore();
   const liveConsoles =
     runtime.live === undefined
       ? undefined
       : createLiveConsoles({
           watches: runtime.live.watches,
           limiter: runtime.live.limiter,
-          read: (entry) => readLiveConsole(runtime, entry),
+          read: (target) => readLiveConsole(runtime, target),
           edit: (entry, screen) =>
             editLiveConsole(bot.api, runtime, entry, screen),
+          ...liveStoreOptions(runtime, "console"),
         });
   const liveFloors =
     runtime.live === undefined
@@ -1255,15 +1310,32 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       : createLiveFloors({
           watches: runtime.live.watches,
           limiter: runtime.live.limiter,
-          read: (entry) => readLiveFloor(runtime, entry),
+          read: (target) => readLiveFloor(runtime, target),
           edit: (entry, screen) =>
             editLiveConsole(bot.api, runtime, entry, screen),
+          ...liveStoreOptions(runtime, "floor"),
         });
+  // Экраны, открытые до рестарта (PER-815): запись из хранилища читается сразу,
+  // не дожидаясь поллера, — Telegram держит сообщения, а правка идёт по токену.
+  for (const [name, screens] of [
+    ["console", liveConsoles],
+    ["floor", liveFloors],
+  ] as const) {
+    void screens
+      ?.restore()
+      .then((outcomes) => {
+        for (const outcome of outcomes) {
+          reportLiveRestore(runtime.logger, name, outcome.kind);
+        }
+      })
+      .catch(() => {});
+  }
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
+    if (liveBroadcasts !== undefined) ctx.liveBroadcasts = liveBroadcasts;
     if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
     if (liveFloors !== undefined) ctx.liveFloors = liveFloors;
     await next();
@@ -1304,6 +1376,15 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       chatId,
       canOpenManagement(person) ? commandsFor(person) : undefined,
     );
+  });
+  // «Не следить» под сообщением трансляции (PER-826): действие над своим
+  // чатом, без личности и без дерева.
+  bot.callbackQuery(BROADCAST_STOP_DATA, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (chatId !== undefined) {
+      await liveBroadcasts?.stop(chatId, ctx.callbackQuery.message?.message_id);
+    }
+    await ctx.answerCallbackQuery().catch(() => undefined);
   });
   bot.on("callback_query:data", (ctx) =>
     handleCallback(ctx, runtime, questions, lotPhotos),
@@ -2977,6 +3058,7 @@ async function handleCallback(
       action.kind === "console-lineup-confirm" ||
       action.kind === "console-start-final" ||
       action.kind === "console-next-lot" ||
+      action.kind === "console-open-ask" ||
       action.kind === "console-ask" ||
       action.kind === "console-close" ||
       action.kind === "console-close-confirm" ||
@@ -3016,6 +3098,9 @@ async function handleCallback(
     if (
       action.kind === "console-floor" ||
       action.kind === "console-floor-search" ||
+      action.kind === "console-floor-edit" ||
+      action.kind === "console-floor-add" ||
+      action.kind === "console-floor-remove" ||
       action.kind === "console-floor-pick" ||
       action.kind === "console-floor-confirm" ||
       action.kind === "console-floor-leader"
@@ -7088,6 +7173,7 @@ async function openMeetupExtensions(
         meetup: result.meetup,
         auction: result.auction,
         manageable: canRunAuctions(person),
+        ...(runtime.hall === undefined ? {} : { hall: runtime.hall }),
       }),
     );
   } else {
@@ -8292,6 +8378,7 @@ async function handleConsoleCallback(
         | "console-lineup-confirm"
         | "console-start-final"
         | "console-next-lot"
+        | "console-open-ask"
         | "console-ask"
         | "console-close"
         | "console-close-confirm"
@@ -8351,6 +8438,7 @@ async function handleConsoleCallback(
         await runtime.dispatcher.execute({
           ...call,
           intent: "view-auction-console",
+          ...(action.section === "payment" ? { payment: true as const } : {}),
         }),
         action.page,
         action.sort,
@@ -8569,6 +8657,13 @@ async function handleConsoleCallback(
           ...call,
           intent: "start-final-lot",
           opId: createUuidV7(),
+        }),
+      );
+    case "console-open-ask":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-final-open",
         }),
       );
     case "console-ask":
@@ -8907,6 +9002,7 @@ async function renderConsoleResult(
         ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
         timeZone,
         today: communityToday(ctx),
+        updatedAt: (runtime.now ?? Date.now)(),
       };
       const sent = await showScreen(ctx, consoleScreen(view));
       // Пульт финала (PER-566): сообщение, в котором он оказался, правится
@@ -9234,6 +9330,9 @@ async function renderConsoleResult(
           ? "final ask requested"
           : "final ask asked again",
       );
+    case "final-open-confirm":
+      await showScreen(ctx, openConfirmScreen(result));
+      return handled("final lot open confirmation sent");
     case "final-close-confirm":
       await showScreen(ctx, closeConfirmScreen(result));
       return handled("final lot close confirmation sent");
@@ -11556,6 +11655,9 @@ async function handleFloorCallback(
       kind:
         | "console-floor"
         | "console-floor-search"
+        | "console-floor-edit"
+        | "console-floor-add"
+        | "console-floor-remove"
         | "console-floor-pick"
         | "console-floor-confirm"
         | "console-floor-leader";
@@ -11590,6 +11692,34 @@ async function handleFloorCallback(
           auctionId: tokenToUuid(action.auction),
         }),
       );
+    case "console-floor-edit":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-floor-bids",
+          auctionId: tokenToUuid(action.auction),
+          page: 0,
+          edit: true,
+        }),
+      );
+    case "console-floor-add":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "add-floor-member",
+          auctionId: tokenToUuid(action.auction),
+          memberId: tokenToUuid(action.member),
+        }),
+      );
+    case "console-floor-remove":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-floor-member",
+          auctionId: tokenToUuid(action.auction),
+          memberId: tokenToUuid(action.member),
+        }),
+      );
     // Лидер — на своём месте с пометкой (решение владельца 20.10.2026):
     // нажатие отвечает подсказкой, экран остаётся, Auction не зовётся.
     case "console-floor-leader":
@@ -11609,17 +11739,16 @@ async function handleFloorCallback(
         participantId: tokenToUuid(action.person),
         amount: { minorUnits: action.minorUnits, currency: lotCurrency },
       };
+      // Ставка без подтверждения (PER-816): защита от миссклика — явный состав
+      // зала, а ошибку исправляет снятие участника с лота. Старая кнопка «Да»
+      // ставит так же.
       return render(
-        await runtime.dispatcher.execute(
-          action.kind === "console-floor-pick"
-            ? { ...call, intent: "prepare-floor-bid", target }
-            : {
-                ...call,
-                intent: "place-floor-bid",
-                target,
-                opId: createUuidV7(),
-              },
-        ),
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "place-floor-bid",
+          target,
+          opId: createUuidV7(),
+        }),
       );
     }
     default: {
@@ -11656,6 +11785,7 @@ async function renderFloorResult(
         page: result.page,
         ...(result.note === undefined ? {} : { note: result.note }),
         ...(result.search === undefined ? {} : { search: result.search }),
+        ...(result.edit === true ? { edit: true } : {}),
         ...(result.stale === true ? { stale: true } : {}),
       };
       const sent = await showScreen(ctx, floorScreen(view));
@@ -11707,13 +11837,13 @@ async function renderFloorResult(
 // правами помощника, открывшего экран, с той же страницей людей.
 async function readLiveFloor(
   runtime: BotRuntime,
-  entry: LiveFloorEntry,
+  entry: LiveScreenTarget,
 ): Promise<LiveScreenRead<FloorScreenView>> {
   const result = await runtime.dispatcher.execute({
     identity: entry.person,
     auctionId: entry.auctionId,
     intent: "view-floor-bids",
-    page: entry.view.page,
+    page: entry.params.page,
     requestId: createUuidV7(),
     useCase: "manage_auction",
   });
@@ -11824,6 +11954,9 @@ async function handleAuctionCallback(
         // Личность уже разрешена этим update: шлюз её не перечитывает.
         identity: { resolveIdentity: () => Promise.resolve(resolved) },
         auction: ports.auction,
+        ...(runtime.achievements === undefined
+          ? {}
+          : { achievements: runtime.achievements(rpcCall(ctx, useCase)) }),
         operations: ports.operations,
         ...(runtime.favorites === undefined
           ? {}
@@ -11853,10 +11986,12 @@ async function handleAuctionCallback(
     // NOT_FOUND у `GetLot`, им начинаются карточка, хронология и экран сета.
     // Лента на аукцион, которого нет, отвечает пустой страницей, так что её
     // отказ — всегда сбой.
+    const failure =
+      cause instanceof FinalBidReadUnavailable ? cause.cause : cause;
     const parsed = parseAuctionCallback(treeData);
     const notFound =
-      cause instanceof ConnectError &&
-      cause.code === Code.NotFound &&
+      failure instanceof ConnectError &&
+      failure.code === Code.NotFound &&
       parsed.ok &&
       (parsed.intent.kind === "lot" ||
         parsed.intent.kind === "set" ||
@@ -11867,8 +12002,37 @@ async function handleAuctionCallback(
     // ответ ещё раз, а «Повторить» с шагом вопроса сработало бы как «Отмена».
     await showRefusal(
       ctx,
-      notFound ? "Лот не найден или больше недоступен." : unavailableText,
-      notFound || answer !== undefined ? exitToMeetups() : exitRetry(data),
+      notFound
+        ? "Лот не найден или больше недоступен."
+        : cause instanceof FinalBidReadUnavailable
+          ? cause.message
+          : unavailableText,
+      (() => {
+        const back = auctionRootFrom([
+          treeData,
+          ...(ctx.callbackQuery?.message?.reply_markup?.inline_keyboard.flatMap(
+            (row) =>
+              row.flatMap((button) =>
+                "callback_data" in button
+                  ? [auctionEntryOf(button.callback_data).data]
+                  : [],
+              ),
+          ) ?? []),
+        ]);
+        return back === undefined
+          ? notFound || answer !== undefined
+            ? exitToMeetups()
+            : exitRetry(data)
+          : withNav(
+              answer !== undefined || notFound
+                ? new InlineKeyboard()
+                : new InlineKeyboard().text(retryLabel, data),
+              {
+                name: "Аукцион",
+                data: back,
+              },
+            );
+      })(),
     );
     return {
       level: notFound ? "warn" : "error",
@@ -11878,10 +12042,12 @@ async function handleAuctionCallback(
       identity_id: person.identityId,
       error_category: notFound
         ? "visibility"
-        : cause instanceof ConnectError
-          ? grpcFailureCategory(Code[cause.code])
+        : failure instanceof ConnectError
+          ? grpcFailureCategory(Code[failure.code])
           : "unexpected",
-      ...(cause instanceof ConnectError ? { grpc_code: Code[cause.code] } : {}),
+      ...(failure instanceof ConnectError
+        ? { grpc_code: Code[failure.code] }
+        : {}),
       error: errorText(cause),
     };
   }
@@ -11945,6 +12111,7 @@ async function handleAuctionCallback(
     // же, что «Включить аукцион» (ADR-070, RFC-016).
     canManage,
     ...(runtime.mediaChat?.enabled === true ? { media: true } : {}),
+    ...(runtime.hall === undefined ? {} : { hall: runtime.hall }),
     ...(canAddLots === undefined ? {} : { canAddLots }),
     ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
@@ -11998,10 +12165,19 @@ async function handleAuctionCallback(
   // Ответ принят: результат приходит одним новым сообщением, а «Отмена»
   // вопроса снимается.
   if (answer !== undefined) ctx.fresh = true;
+  const achievementReads = runtime.achievements?.(rpcCall(ctx, useCase));
   const delivered = await deliverAuctionScreen(ctx, {
     view,
     lotPhotos,
-    image: ports.image,
+    image: {
+      ...ports.image,
+      ...(achievementReads === undefined
+        ? {}
+        : {
+            getAchievementImage: (code: string) =>
+              achievementReads.getImage(code),
+          }),
+    },
     viewer: viewerOf(person),
     logger: runtime.logger,
   });
@@ -12009,6 +12185,17 @@ async function handleAuctionCallback(
   // Карточка финала (PER-336): сообщение, в котором она оказалась, правится
   // дальше по потоку аукциона.
   const chatId = ctx.chat?.id;
+  if (ctx.liveBroadcasts !== undefined && chatId !== undefined) {
+    for (const block of result.body.blocks) {
+      if (block.kind === "lot" && block.watch === true) {
+        void ctx.liveBroadcasts.start({
+          chatId,
+          auctionId: block.auctionId,
+          viewer: viewerOf(person),
+        });
+      }
+    }
+  }
   if (ctx.liveCards !== undefined && chatId !== undefined) {
     const live = liveCardOf(result.body, viewerOf(person));
     if (delivered.messageId !== undefined) {
@@ -12213,12 +12400,27 @@ async function deliverAuctionScreen(
   }
 }
 
+// Хранилище и паузы восстановления живых экранов (PER-815); без хранилища
+// реестр живёт, пока жив процесс.
+function liveStoreOptions(
+  runtime: BotRuntime,
+  kind: "console" | "floor",
+): { store?: LiveScreenStore; restorePauses?: readonly number[] } {
+  const live = runtime.live;
+  return {
+    ...(live?.screens === undefined ? {} : { store: live.screens(kind) }),
+    ...(live?.restorePauses === undefined
+      ? {}
+      : { restorePauses: live.restorePauses }),
+  };
+}
+
 // Чтение пульта ведущего вне update (PER-566): тот же юзкейс, что у
 // «Обновить», правами ведущего, открывшего пульт. Страница и сортировка — те,
 // что он видит.
 async function readLiveConsole(
   runtime: BotRuntime,
-  entry: LiveConsoleEntry,
+  entry: LiveScreenTarget,
 ): Promise<LiveConsoleRead> {
   const result = await runtime.dispatcher.execute({
     identity: entry.person,
@@ -12233,12 +12435,13 @@ async function readLiveConsole(
         kind: "console",
         view: {
           console: result.console,
-          page: entry.view.page,
-          sort: entry.view.sort,
+          page: entry.params.page,
+          sort: entry.params.sort ?? defaultConsoleSort,
           // «Промо-видео» пульта ведущего (PER-802) живёт и в живой правке.
-          ...(entry.view.media === true ? { media: true } : {}),
+          ...(entry.params.media === true ? { media: true } : {}),
           timeZone: runtime.communityTimeZone ?? "UTC",
           today: (runtime.today ?? utcToday)(),
+          updatedAt: (runtime.now ?? Date.now)(),
         },
       };
     case "auction-console-refused":
@@ -12298,6 +12501,7 @@ async function editLiveLotCard(
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
     canManage: canRunAuctions(card.viewer),
+    ...(runtime.hall === undefined ? {} : { hall: runtime.hall }),
     ...(winnerUsername === undefined ? {} : { winnerUsername }),
   };
   const shown = auctionScreen(view);
@@ -14396,11 +14600,15 @@ function callbackUseCase(
     | "console-lineup-confirm"
     | "console-start-final"
     | "console-next-lot"
+    | "console-open-ask"
     | "console-ask"
     | "console-close"
     | "console-close-confirm"
     | "console-floor"
     | "console-floor-search"
+    | "console-floor-edit"
+    | "console-floor-add"
+    | "console-floor-remove"
     | "console-floor-pick"
     | "console-floor-confirm"
     | "console-floor-leader"
@@ -14639,11 +14847,15 @@ function callbackUseCase(
     case "console-lineup-confirm":
     case "console-start-final":
     case "console-next-lot":
+    case "console-open-ask":
     case "console-ask":
     case "console-close":
     case "console-close-confirm":
     case "console-floor":
     case "console-floor-search":
+    case "console-floor-edit":
+    case "console-floor-add":
+    case "console-floor-remove":
     case "console-floor-pick":
     case "console-floor-confirm":
     case "console-floor-leader":

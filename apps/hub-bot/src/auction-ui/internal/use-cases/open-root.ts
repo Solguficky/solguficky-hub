@@ -30,6 +30,7 @@ import { readRaffle } from "./open-feed.js";
 export async function openRoot(input: {
   auction: AuctionPort;
   favorites?: FavoritesPort;
+  achievements?: import("../../achievement-types.js").AchievementsPort;
   media?: true;
   viewer: Viewer;
   auctionId: string;
@@ -41,10 +42,23 @@ export async function openRoot(input: {
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
-  const [raffle, predictionRound, invoices] = await Promise.all([
+  const achievementsRead =
+    auction === undefined || input.achievements === undefined
+      ? Promise.resolve(false)
+      : input.achievements.getEvent(input.auctionId).then(
+          (rows) => rows.length > 0,
+          (cause) => {
+            // Сервис не ответил (PER-813): кнопки, за которой пусто или
+            // ошибка, нет. Сбой пишет в лог порт, корень не роняется.
+            input.achievements?.reportFailure?.(cause);
+            return false;
+          },
+        );
+  const [raffle, openRound, invoices, hasAchievements] = await Promise.all([
     raffleRead,
     predictionRead,
     invoicesRead,
+    achievementsRead,
   ]);
   if (auction === undefined) {
     return {
@@ -64,6 +78,13 @@ export async function openRoot(input: {
           },
         ]
       : [];
+  // После конца аукциона вкладка остаётся и тем, у кого нет ответов: в ней
+  // итоги прогнозов (PER-813).
+  const predictionRound =
+    openRound?.round ??
+    (openRound !== undefined && auction.stage === "finished"
+      ? ("catalog" as const)
+      : undefined);
   const predictionsButtons =
     predictionRound !== undefined
       ? [
@@ -81,9 +102,9 @@ export async function openRoot(input: {
     auction.stage === "finished"
       ? [
           {
-            action: "root.prediction-results" as const,
+            action: "root.results" as const,
             callbackData: encodeAuctionCallback({
-              kind: "prediction-results",
+              kind: "auction-results",
               auctionId: input.auctionId,
             }),
           },
@@ -94,8 +115,12 @@ export async function openRoot(input: {
   // «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему пары не нашлось, —
   // своим рядом.
   const hasPredictions = predictionsButtons.length > 0;
-  const paired = hasPredictions ? predictionsButtons : resultsButtons;
-  const rest = hasPredictions ? resultsButtons : [];
+  // «Итоги» и «Мои счета» — одним рядом (PER-832): со счетами «Итоги» уходят
+  // из пары с розыгрышем и из своего ряда в ряд счетов.
+  const resultsWithInvoices = invoices && resultsButtons.length > 0;
+  const ownResults = resultsWithInvoices ? [] : resultsButtons;
+  const paired = hasPredictions ? predictionsButtons : ownResults;
+  const rest = hasPredictions ? ownResults : [];
   const raffleAndPredictionRows = [[...raffleButtons, ...paired], rest].filter(
     (row) => row.length > 0,
   );
@@ -139,6 +164,20 @@ export async function openRoot(input: {
           : []),
       ],
       ...raffleAndPredictionRows,
+      ...(hasAchievements
+        ? [
+            [
+              {
+                action: "root.achievements" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "achievements",
+                  auctionId: input.auctionId,
+                  page: 0,
+                }),
+              },
+            ],
+          ]
+        : []),
       // Хроники дня (PER-725): сводка последних суток, пока идёт онлайн-неделя
       // — от открытия торгов до закрытия последнего лота по дедлайну. Читает её
       // только держатель `place_bids`: держатель одного `run_auctions`, которого
@@ -164,6 +203,7 @@ export async function openRoot(input: {
       ...(invoices
         ? [
             [
+              ...(resultsWithInvoices ? resultsButtons : []),
               {
                 action: "root.invoices" as const,
                 callbackData: encodeAuctionCallback({
@@ -200,12 +240,15 @@ async function predictionEntryRound(input: {
   auction: AuctionPort;
   viewer: Viewer;
   auctionId: string;
-}): Promise<PredictionRoundView["round"] | undefined> {
+}): Promise<{ round?: PredictionRoundView["round"] }> {
   const rounds = await input.auction.getMyPredictions({
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
   const open = rounds.find((round) => round.status === "open");
-  if (open !== undefined) return open.round;
-  return [...rounds].reverse().find((round) => round.answers.length > 0)?.round;
+  if (open !== undefined) return { round: open.round };
+  const answered = [...rounds]
+    .reverse()
+    .find((round) => round.answers.length > 0)?.round;
+  return answered === undefined ? {} : { round: answered };
 }

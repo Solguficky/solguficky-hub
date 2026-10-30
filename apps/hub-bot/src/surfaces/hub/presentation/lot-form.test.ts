@@ -333,6 +333,7 @@ function fakeAuction(
           getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
           getDisplayNames: async () => ({}),
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
+          withdrawProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
           chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
           getAuction: async () => undefined,
@@ -344,9 +345,6 @@ function fakeAuction(
             throw new Error("not used");
           },
           listMyInvoices: async () => ({ invoices: [] }),
-          chooseFulfillment: async () => {
-            throw new Error("not used");
-          },
           getMyPredictions: async () => [],
           getPredictionResults: async () => {
             throw new Error("not used");

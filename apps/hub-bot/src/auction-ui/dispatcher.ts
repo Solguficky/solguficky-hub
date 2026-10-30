@@ -1,4 +1,6 @@
+import type { AchievementsPort } from "./achievement-types.js";
 import type { AuctionIntent } from "./callback-data.js";
+import { openAchievements } from "./internal/use-cases/achievements.js";
 import { openAuctionChronicle } from "./internal/use-cases/auction-chronicle.js";
 import {
   answerQuestion,
@@ -6,16 +8,14 @@ import {
   cancelQuestion,
   chooseUsername,
   commitCommand,
+  commitWithdraw,
   confirmCommand,
+  confirmWithdraw,
   placeFinalBid,
 } from "./internal/use-cases/commands.js";
 import { openDayChronicle } from "./internal/use-cases/day-chronicle.js";
 import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
-import {
-  chooseFulfillment,
-  openInvoice,
-  openInvoices,
-} from "./internal/use-cases/invoices.js";
+import { openInvoice, openInvoices } from "./internal/use-cases/invoices.js";
 import {
   answerNameQuestion,
   askNameAlias,
@@ -24,11 +24,11 @@ import {
 } from "./internal/use-cases/name-settings.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
-import { openLot } from "./internal/use-cases/open-lot.js";
+import { openLot, watchFinal } from "./internal/use-cases/open-lot.js";
 import { openPromo } from "./internal/use-cases/open-promo.js";
+import { openAuctionResults } from "./internal/use-cases/open-results.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
 import { openSet } from "./internal/use-cases/open-set.js";
-import { openPredictionResults } from "./internal/use-cases/prediction-results.js";
 import {
   answerPredictionAlias,
   answerPredictionNumber,
@@ -69,6 +69,7 @@ export function dispatchAuctionIntent(input: {
   auction: AuctionPort;
   operations: OperationIdPort;
   favorites?: FavoritesPort;
+  achievements?: AchievementsPort;
   proxyExplainer?: ProxyExplainerPort;
   media?: true;
   viewer: Viewer;
@@ -90,9 +91,22 @@ export function dispatchAuctionIntent(input: {
     viewer: input.viewer,
     user: input.user,
   };
+  const achievements =
+    input.achievements === undefined
+      ? {}
+      : { achievements: input.achievements };
   switch (intent.kind) {
+    case "achievements":
+    case "achievement":
+      return openAchievements({
+        auction: input.auction,
+        ...achievements,
+        viewer: input.viewer,
+        intent,
+      });
     case "root":
       return openRoot({
+        ...achievements,
         auction: input.auction,
         ...favorites,
         ...media,
@@ -143,9 +157,13 @@ export function dispatchAuctionIntent(input: {
         page: intent.page,
       });
     case "confirm":
-      return confirmCommand(context, intent);
+      return intent.command === "withdraw"
+        ? confirmWithdraw(context, intent)
+        : confirmCommand(context, { ...intent, command: intent.command });
     case "commit":
-      return commitCommand(context, intent);
+      return intent.command === "withdraw"
+        ? commitWithdraw(context, intent)
+        : commitCommand(context, { ...intent, command: intent.command });
     case "final-bid":
       return placeFinalBid(context, intent);
     case "ask":
@@ -173,6 +191,14 @@ export function dispatchAuctionIntent(input: {
         page: intent.page,
         follow: intent.kind === "follow",
       });
+    case "watch-final":
+      return watchFinal({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
+      });
     case "favorites":
       return openFavorites({
         auction: input.auction,
@@ -183,8 +209,19 @@ export function dispatchAuctionIntent(input: {
           ? {}
           : { auctionId: intent.auctionId }),
       });
+    // Прежняя кнопка «Итоги» прогнозов (PER-813): итоги живут во вкладке
+    // «Прогнозы», старая кнопка и весть «К итогам» открывают её.
     case "prediction-results":
-      return openPredictionResults(context, intent.auctionId);
+      return openPrediction(context, {
+        auctionId: intent.auctionId,
+        round: "catalog",
+      });
+    case "auction-results":
+      return openAuctionResults({
+        auction: input.auction,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+      });
     case "day-chronicle":
       return openDayChronicle(context, intent.auctionId);
     case "auction-chronicle":
@@ -259,8 +296,6 @@ export function dispatchAuctionIntent(input: {
       return openInvoices(context, intent.auctionId);
     case "invoice":
       return openInvoice(context, intent.lotId, intent.invoiceId);
-    case "fulfillment":
-      return chooseFulfillment(context, intent);
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

@@ -1,3 +1,7 @@
+export type {
+  AchievementScreen,
+  AchievementsPort,
+} from "./achievement-types.js";
 // Публичная граница аукционного дерева. Сырые юзкейсы и диспетчер отсюда не
 // уходят: поверхность входит в аукцион только через `handleAuctionUpdate`, вход
 // на поверхность решает `decideEntry` (ADR-044, «Доступ как обязательный
@@ -33,6 +37,7 @@ export {
   dayNominations,
   duelMinChanges,
 } from "./day-nominations.js";
+export { FinalBidReadUnavailable } from "./final-bid-failure.js";
 export {
   type AuctionDenial,
   type AuctionResult,
@@ -71,8 +76,6 @@ export type {
   FavoritesPort,
   FinalLineupView,
   FollowOutcome,
-  FulfillmentMethod,
-  FulfillmentOutcome,
   IdentityPort,
   InvoiceStatus,
   LotCardView,
@@ -116,6 +119,7 @@ export type {
   TradingPhase,
   Viewer,
   WinnerInvoiceView,
+  WithdrawLimitRefusal,
 } from "./ports.js";
 export type {
   PredictionAnswerKind,

@@ -77,6 +77,7 @@ describe("renderEntryScreen", () => {
     const menu = renderEntryScreen({ kind: "menu" }, options);
     expect(menu.keyboard.flat().map((button) => button.text)).toEqual([
       "Аукционы",
+      "Ачивки",
       "Настройки",
       "Правила и FAQ",
     ]);
@@ -371,6 +372,66 @@ describe("renderEntryScreen", () => {
     expect(text).toContain("Победитель: Сыч*");
   });
 
+  // Стрим и экран финала (PER-832): на карточке лота ссылок нет даже при
+  // настроенных адресах, они в корне аукциона.
+  it("has no hall links on the lot card", () => {
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    expect(lotScreen({}, { ...options, hall }).keyboard).toEqual([
+      [{ text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" }],
+    ]);
+  });
+
+  // Ссылки корня: одним рядом над возвратом, только при настроенных адресах.
+  it("puts the stream and the screen of the final into one row of the root", () => {
+    const root = (render: RenderOptions) =>
+      renderEntryScreen(
+        {
+          kind: "auction",
+          body: {
+            blocks: [
+              {
+                kind: "root",
+                auctionId: "auc-1",
+                auction: { stage: "prebidding" },
+              } as unknown as AuctionBlock,
+            ],
+            keyboard: [],
+          },
+        },
+        render,
+      ).keyboard;
+    const back = [
+      { text: "‹ Аукционы", callback_data: entryCallback("auctions") },
+    ];
+    expect(root(options)).toEqual([back]);
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    expect(root({ ...options, hall })).toEqual([
+      [
+        { text: "Стрим финала ↗", url: "https://stream.example.org/live" },
+        {
+          text: "Экран финала ↗",
+          url: "https://hall.example.org/screen/auc-1",
+        },
+      ],
+      back,
+    ]);
+    expect(root({ ...options, hall: { screenUrl: hall.screenUrl } })).toEqual([
+      [
+        {
+          text: "Экран финала ↗",
+          url: "https://hall.example.org/screen/auc-1",
+        },
+      ],
+      back,
+    ]);
+  });
+
   // Последний ряд под лотом — возврат одной кнопкой: «Меню» нет (решение
   // владельца 10 октября 2026 года).
   it("puts the return to the feed alone into the last row of a lot", () => {
@@ -487,9 +548,24 @@ describe("renderEntryScreen", () => {
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
         "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
-        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n" +
+        "Если лот попадёт в финал, лимит сработает и там\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лоту, который ждёт финала, лимит обещает финал прямо (PER-822, ADR-079).
+  it("says the own limit will work in the final on a held lot", () => {
+    const screen = lotScreen(
+      {
+        card: { title: "Кружка", description: "" },
+        status: { kind: "held", currentPrice: rub(1200) },
+        viewerProxyLimit: rub(2000),
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toContain("сработает в финале");
+    expect(plain(screen.text)).not.toContain("Если лот попадёт");
   });
 
   // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81):
@@ -630,6 +706,27 @@ describe("renderEntryScreen", () => {
       ),
     );
     expect(text).toContain("Торги до: 9 января 2027, сб, 21:00");
+  });
+
+  // PER-831: дедлайн в полночь читается как 23:59 предыдущего дня.
+  it.each([
+    ["2026-10-30T21:00:00Z", "Торги до: 30 октября, пт, 23:59"],
+    ["2026-10-30T21:03:00Z", "Торги до: 31 октября, сб, 00:03"],
+    ["2026-10-30T10:30:00Z", "Торги до: 30 октября, пт, 13:30"],
+  ])("shows the deadline %s as it reads at midnight", (deadline, line) => {
+    const text = plain(
+      visible(
+        lotScreen({
+          status: {
+            kind: "trading",
+            currentPrice: rub(1),
+            deadline,
+            phase: "online",
+          },
+        }).text,
+      ),
+    );
+    expect(text).toContain(line);
   });
 
   it("formats kopecks only when there are some", () => {

@@ -19,7 +19,6 @@ import type {
   DayChronicleView,
   DisplayNameOutcome,
   FollowOutcome,
-  FulfillmentOutcome,
   LotHistoryEntryView,
   LotHistoryPage,
   LotPage,
@@ -40,6 +39,7 @@ import type {
   ResolvedIdentity,
   TelegramUser,
   Viewer,
+  WithdrawLimitRefusal,
 } from "../ports.js";
 import {
   type PredictionNomination,
@@ -78,6 +78,7 @@ export type AuctionContractApp = (
 type AuctionMethods = AuctionBotPorts["auction"];
 
 export type PortCall =
+  | { port: "achievements"; method: "getEvent"; request: string }
   | { port: "identity"; method: "resolveIdentity"; request: TelegramUser }
   | {
       port: "auction";
@@ -118,6 +119,11 @@ export type PortCall =
       port: "auction";
       method: "setProxyLimit";
       request: Parameters<AuctionMethods["setProxyLimit"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "withdrawProxyLimit";
+      request: Parameters<AuctionMethods["withdrawProxyLimit"]>[0];
     }
   | {
       port: "auction";
@@ -169,11 +175,6 @@ export type PortCall =
       method: "listMyInvoices";
       request: Parameters<AuctionMethods["listMyInvoices"]>[0];
     }
-  | {
-      port: "auction";
-      method: "chooseFulfillment";
-      request: Parameters<AuctionMethods["chooseFulfillment"]>[0];
-    }
   // Избранное (PER-495): отметки живут в Notifications, а не в Auction.
   | { port: "favorites"; method: "listFollowedLots"; request: Viewer }
   | {
@@ -188,6 +189,7 @@ export type PortCall =
 // Запрос того, чего в снимке нет, падает — так suite ловит приложение, которое
 // спрашивает не то, а не подсовывает ему правдоподобный ответ.
 export type ContractAuction = {
+  achievements?: readonly import("../achievement-types.js").EventAchievementView[];
   // Сам аукцион для его корня (PER-605). Нет — Auction его не отдаёт;
   // `unavailable` — `GetAuction` отказывает.
   summary?: AuctionSummaryView | "unavailable";
@@ -206,6 +208,7 @@ export type ContractAuction = {
   // намерении звать не должны, и шпион падает.
   bids?: readonly CommandOutcome<BidRefusal>[];
   limits?: readonly CommandOutcome<ProxyLimitRefusal>[];
+  withdrawals?: readonly CommandOutcome<WithdrawLimitRefusal>[];
   displayNames?: readonly DisplayNameOutcome[];
   // Лоты после принятой команды: следующее чтение лота отдаёт их.
   after?: readonly LotView[];
@@ -237,9 +240,6 @@ export type ContractAuction = {
   // Счета смотрящего и текст организатора (PER-322). Нет — `ListMyInvoices`
   // отказывает, как `unavailable`: корень тогда без «Моих счетов».
   invoices?: MyInvoicesView | "unavailable";
-  // Ответы выбора способа получения по порядку вызовов; принятый выбор
-  // следующее чтение счетов уже видит.
-  fulfillments?: readonly FulfillmentOutcome[];
   predictionResults?: PredictionResultsView;
   // Хроники дня (PER-725). Нет — чтение не ожидается.
   dayChronicle?: DayChronicleView;
@@ -535,6 +535,23 @@ const HELD_LOT: LotView = {
   status: { kind: "held", currentPrice: rub(900) },
 };
 
+// Удержанный лот, у которого автоставка включена (PER-821, ADR-079): карточка
+// несёт ряд «Автоставка», лимит сработает в финале.
+const HELD_PROXY_LOT: LotView = {
+  ...HELD_LOT,
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b4a",
+  card: { title: "Варежки", description: "" },
+  proxyEnabled: true,
+};
+
+// Удержанный лот со своим лимитом (PER-822): карточка называет лимит и ведёт
+// к его снятию.
+const HELD_LIMIT_LOT: LotView = {
+  ...HELD_PROXY_LOT,
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b4b",
+  viewerProxyLimit: rub(2000),
+};
+
 const DRAFT_LOT: LotView = {
   lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b42",
   auctionId: CONTRACT_AUCTION_ID,
@@ -547,7 +564,7 @@ const DRAFT_LOT: LotView = {
 // Лоты, которых нет в страницах ленты: тела ленты выше от них не зависят.
 const OFF_FEED_AUCTION: ContractAuction = {
   ...AUCTION,
-  lots: [...AUCTION.lots, HELD_LOT, DRAFT_LOT],
+  lots: [...AUCTION.lots, HELD_LOT, HELD_PROXY_LOT, HELD_LIMIT_LOT, DRAFT_LOT],
 };
 
 const EMPTY_AUCTION: ContractAuction = {
@@ -594,11 +611,12 @@ const PRE_TRADING_AUCTION: ContractAuction = {
   predictions: OPEN_PREDICTION_ROUNDS,
 };
 
-// В порядке создания — порядке `lotId` (PER-719).
+// В порядке создания — порядке `lotId` (PER-719); снятый лот за группами
+// (PER-813).
 const PRE_TRADING_ORDER = [
   TIERED_SCHEDULED_LOT,
-  PRE_TRADING_WITHDRAWN,
   PRE_TRADING_DRAFT,
+  PRE_TRADING_WITHDRAWN,
 ];
 
 const listCalls = (auctionId: string, tokens: readonly string[]): PortCall[] =>
@@ -681,14 +699,15 @@ const feedBackRow = (auctionId: string) => [
   },
 ];
 
-// Администратор лоты не упорядочивал: порядок создания — порядок `lotId`
-// (PER-719), а цена лот не двигает.
+// Администратор лоты не упорядочивал: внутри группы порядок создания — порядок
+// `lotId` (PER-719), а цена лот не двигает. Группы (PER-813): до торгов, на
+// торгах, продан, не продан, снят.
 const FEED_ORDER = [
+  SCHEDULED_LOT,
   CONTRACT_LOT,
   SOLD_LOT,
   UNSOLD_LOT,
   WITHDRAWN_LOT,
-  SCHEDULED_LOT,
 ];
 
 // Порядок и разделы администратора (PER-719): раздел из двух лотов, снятый лот
@@ -728,6 +747,11 @@ const FEED_BODY: AuctionScreenBody = {
       auctionId: CONTRACT_AUCTION_ID,
       page: 0,
       pageCount: 1,
+      groups: [
+        { group: "trading" as const, count: 1 },
+        { group: "sold" as const, count: 1 },
+        { group: "unsold" as const, count: 1 },
+      ],
       lots: FEED_ORDER.map((lot) => ({
         lotId: lot.lotId,
         ...(lot.card === undefined ? {} : { title: lot.card.title }),
@@ -793,6 +817,14 @@ const predictionReadCall = (auctionId: string): PortCall => ({
   port: "auction",
   method: "getMyPredictions",
   request: { viewer: CONTRACT_VIEWER, auctionId },
+});
+
+// Закрытый раунд читает итоги и показывает их во вкладке, когда они есть
+// (PER-813).
+const predictionResultsCall = (): PortCall => ({
+  port: "auction",
+  method: "getPredictionResults",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
 });
 
 const predictionSubmitCall = (
@@ -941,6 +973,10 @@ function predictionBody(
       | "stale-answer-removed"
       | "unanswered";
     staleNominations?: readonly PredictionNomination[];
+    results?: Extract<
+      AuctionScreenBody["blocks"][number],
+      { kind: "prediction" }
+    >["results"];
   } = {},
 ): AuctionScreenBody {
   return {
@@ -958,6 +994,7 @@ function predictionBody(
         ...(options.closesAt === undefined
           ? {}
           : { closesAt: options.closesAt }),
+        ...(options.results === undefined ? {} : { results: options.results }),
         ...(options.notice === undefined ? {} : { notice: options.notice }),
       },
     ],
@@ -1303,9 +1340,29 @@ const historyButton = (lotId: string, page: number) => ({
   callbackData: historyCallback(lotId, page, MAX_FEED_PAGE),
 });
 
+// «Следить за торгами» (PER-826) — свой ряд под ставкой на карточке живого финала.
+const watchButton = (lotId: string, page: number) => ({
+  action: "lot.watch" as const,
+  callbackData: encodeAuctionCallback({ kind: "watch-final", lotId, page }),
+});
+
 // Лот с итогом: «Обновить» под ним нет — без человека он уже не меняется.
-const settledKeyboard = (lotId: string, page: number) => [
+const settledKeyboard = (lotId: string, page: number, won = false) => [
   [historyButton(lotId, page)],
+  // «Мои счета» покупателю проданного лота (PER-813).
+  ...(won
+    ? [
+        [
+          {
+            action: "lot.invoices" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "invoices",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
+          },
+        ],
+      ]
+    : []),
   ...pagerRows(FEED_ORDER, lotId),
   backRow(page),
 ];
@@ -1779,6 +1836,31 @@ const chooseCall = (
   method: "chooseDisplayName",
   request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID, choice },
 });
+
+const withdrawCall = (lotId: string): PortCall => ({
+  port: "auction",
+  method: "withdrawProxyLimit",
+  request: { viewer: CONTRACT_VIEWER, lotId, opId: OP },
+});
+
+// Экран исхода снятия лимита: одно сообщение и «К лоту» (PER-822).
+function withdrawResultBody(
+  lotId: string,
+  result: Extract<CommandResult, { command: "withdraw" }>,
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "result",
+        result,
+        lotId,
+        auctionId: CONTRACT_AUCTION_ID,
+        title: "Варежки",
+      },
+    ],
+    keyboard: [[{ action: "result.lot", callbackData: lotCallback(lotId, 0) }]],
+  };
+}
 
 const LOT_CALL = getLotCall(CONTRACT_LOT.lotId);
 
@@ -2746,6 +2828,7 @@ const liveBody = (input: {
   // Сумма кнопки в копейках; нет — смотрящий лидирует.
   button?: number;
   finalBid?: FinalBidOutcome;
+  watch?: boolean;
 }): AuctionScreenBody => ({
   blocks: [
     {
@@ -2768,6 +2851,7 @@ const liveBody = (input: {
       ...(input.button === undefined ? { standing: "leader" as const } : {}),
       live: { page: 2 },
       ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
+      ...(input.watch === true ? { watch: true as const } : {}),
     },
   ],
   keyboard: [
@@ -2784,6 +2868,7 @@ const liveBody = (input: {
         ]),
     // В живом финале листания нет (PER-644): карточку правит поток, и в
     // ряду листания остаётся одна «Обновить».
+    [watchButton(CONTRACT_LOT.lotId, 2)],
     [historyButton(CONTRACT_LOT.lotId, 2)],
     refreshRow(CONTRACT_LOT.lotId, 2),
     backRow(2),
@@ -2797,6 +2882,24 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
     auction: LIVE_AUCTION,
     auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
     body: liveBody({ lot: LIVE_LOT, participantName: "@owl", button: 125000 }),
+  },
+  // «Следить за торгами» (PER-826): та же карточка, а трансляцию запускает
+  // оболочка по признаку `watch`.
+  {
+    intent: "final: watch",
+    callbackData: encodeAuctionCallback({
+      kind: "watch-final",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+    }),
+    auction: LIVE_AUCTION,
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    body: liveBody({
+      lot: LIVE_LOT,
+      participantName: "@owl",
+      button: 125000,
+      watch: true,
+    }),
   },
   // Одно нажатие: команда с суммой кнопки и `op_id` нажатия, затем карточка,
   // дочитанная до версии ответа, со строкой «принята».
@@ -3904,7 +4007,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
           following: true,
         },
       ],
-      keyboard: settledKeyboard(LOT_WON_BY_VIEWER.lotId, 0),
+      keyboard: settledKeyboard(LOT_WON_BY_VIEWER.lotId, 0, true),
     },
   },
   // У бота с избранным экран принятой ставки говорит, что лот уже там, —
@@ -4305,6 +4408,104 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [
       predictionReadCall(CONTRACT_AUCTION_ID),
       predictionSummaryCall,
+      predictionResultsCall(),
+    ],
+    body: predictionBody("catalog", "closed", [CATALOG_MONEY_ANSWER], {
+      closesAt: PREDICTION_CLOSES_AT,
+    }),
+  },
+  // Итоги прогнозов — во вкладке «Прогнозы» после подсчёта, отдельной кнопки
+  // нет (PER-813): свой ответ читается рядом с итогом.
+  {
+    intent: "predictions: counted results inside the closed round",
+    callbackData: callback({
+      kind: "prediction",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+    }),
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "closed", [CATALOG_MONEY_ANSWER]),
+      predictionResults: {
+        kind: "counted",
+        nominations: [
+          {
+            nomination: "catalog-total-sales",
+            value: { kind: "number", value: 3_000_000 },
+            winnerNames: [],
+            winnerCount: 2,
+            mine: { kind: "missed", deviation: 10_000 },
+          },
+          {
+            nomination: "final-total-bids",
+            value: { kind: "number", value: 99 },
+            winnerNames: [],
+            winnerCount: 0,
+          },
+        ],
+      },
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+      predictionResultsCall(),
+    ],
+    body: predictionBody("catalog", "closed", [CATALOG_MONEY_ANSWER], {
+      closesAt: PREDICTION_CLOSES_AT,
+      results: {
+        kind: "counted",
+        nominations: [
+          {
+            nomination: "catalog-total-sales",
+            value: { kind: "number", value: 3_000_000 },
+            winnerNames: [],
+            winnerCount: 2,
+            mine: { kind: "missed", deviation: 10_000 },
+          },
+        ],
+      },
+    }),
+  },
+  {
+    intent: "predictions: results counted by hand inside the closed round",
+    callbackData: callback({
+      kind: "prediction",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+    }),
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "closed", [CATALOG_MONEY_ANSWER]),
+      predictionResults: { kind: "by-hand" },
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+      predictionResultsCall(),
+    ],
+    body: predictionBody("catalog", "closed", [CATALOG_MONEY_ANSWER], {
+      closesAt: PREDICTION_CLOSES_AT,
+      results: { kind: "by-hand" },
+    }),
+  },
+  // Прежняя кнопка «Итоги» прогнозов и весть «К итогам» открывают ту же вкладку.
+  {
+    intent: "predictions: the old results button opens the tab",
+    callbackData: encodeAuctionCallback({
+      kind: "prediction-results",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "closed", [CATALOG_MONEY_ANSWER]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+      predictionResultsCall(),
     ],
     body: predictionBody("catalog", "closed", [CATALOG_MONEY_ANSWER], {
       closesAt: PREDICTION_CLOSES_AT,
@@ -4324,6 +4525,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [
       predictionReadCall(CONTRACT_AUCTION_ID),
       predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionResultsCall(),
     ],
     body: predictionBody("final", "closed", [FINAL_COUNT_ANSWER], {
       notice: "round-closed",
@@ -4355,6 +4557,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
         },
       ]),
       predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionResultsCall(),
     ],
     body: predictionBody("final", "closed", [FINAL_COUNT_ANSWER], {
       notice: "round-closed",
@@ -5101,42 +5304,16 @@ const FINISHED_SUMMARY: AuctionSummaryView = {
 
 const resultsCallback = () =>
   encodeAuctionCallback({
-    kind: "prediction-results",
+    kind: "auction-results",
     auctionId: CONTRACT_AUCTION_ID,
   });
 
-const resultsReadCall = (): PortCall => ({
-  port: "auction",
-  method: "getPredictionResults",
-  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
-});
-
-const resultsBackRow = [
+// Итоги завершённого аукциона (PER-813): корень несёт «Итоги», экран называет
+// проданные лоты, покупателей и цены. Прежняя кнопка «Итоги» прогнозов
+// открывает вкладку «Прогнозы» с итогами внутри.
+const AUCTION_RESULTS_CASES: readonly AuctionContractCase[] = [
   {
-    action: "prediction-results.back" as const,
-    callbackData: callback({ kind: "root", auctionId: CONTRACT_AUCTION_ID }),
-  },
-];
-
-const resultsBody = (
-  results: Extract<
-    AuctionScreenBody["blocks"][number],
-    { kind: "prediction-results" }
-  >["results"],
-): AuctionScreenBody => ({
-  blocks: [
-    {
-      kind: "prediction-results",
-      auctionId: CONTRACT_AUCTION_ID,
-      results,
-    },
-  ],
-  keyboard: [resultsBackRow],
-});
-
-const PREDICTION_RESULTS_CASES: readonly AuctionContractCase[] = [
-  {
-    intent: "root: finished auction offers prediction results",
+    intent: "root: finished auction offers the auction results",
     callbackData: rootCallback(CONTRACT_AUCTION_ID),
     auction: { ...AUCTION, summary: FINISHED_SUMMARY },
     auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
@@ -5153,99 +5330,12 @@ const PREDICTION_RESULTS_CASES: readonly AuctionContractCase[] = [
         rootPredictionsRow(CONTRACT_AUCTION_ID),
         [
           {
-            action: "root.prediction-results",
+            action: "root.results",
             callbackData: resultsCallback(),
           },
         ],
       ],
     },
-  },
-  {
-    intent: "prediction results: after the final",
-    callbackData: resultsCallback(),
-    auction: {
-      ...AUCTION,
-      summary: FINISHED_SUMMARY,
-      predictionResults: { kind: "after-final" },
-    },
-    auctionCalls: [resultsReadCall()],
-    body: resultsBody({ kind: "after-final" }),
-  },
-  {
-    intent: "prediction results: counted",
-    callbackData: resultsCallback(),
-    auction: {
-      ...AUCTION,
-      summary: FINISHED_SUMMARY,
-      predictionResults: {
-        kind: "counted",
-        nominations: [
-          {
-            nomination: "catalog-most-expensive-lot",
-            value: {
-              kind: "lots",
-              lotIds: [CONTRACT_LOT.lotId, SOLD_LOT.lotId],
-            },
-            winnerNames: ["Сова*"],
-            winnerCount: 1,
-            mine: { kind: "guessed" },
-          },
-          {
-            nomination: "catalog-total-sales",
-            value: { kind: "number", value: 3_000_000 },
-            winnerNames: [],
-            winnerCount: 2,
-            mine: { kind: "missed", deviation: 10_000 },
-          },
-        ],
-      },
-    },
-    auctionCalls: [
-      resultsReadCall(),
-      findLotCall(CONTRACT_LOT.lotId),
-      findLotCall(SOLD_LOT.lotId),
-    ],
-    body: resultsBody({
-      kind: "counted",
-      nominations: [
-        {
-          nomination: "catalog-most-expensive-lot",
-          value: { kind: "lots", titles: ["Кружка с совой", "Плакат"] },
-          winnerNames: ["Сова*"],
-          winnerCount: 1,
-          mine: { kind: "guessed" },
-        },
-        {
-          nomination: "catalog-total-sales",
-          value: { kind: "number", value: 3_000_000 },
-          winnerNames: [],
-          winnerCount: 2,
-          mine: { kind: "missed", deviation: 10_000 },
-        },
-      ],
-    }),
-  },
-  {
-    intent: "prediction results: by hand",
-    callbackData: resultsCallback(),
-    auction: {
-      ...AUCTION,
-      summary: FINISHED_SUMMARY,
-      predictionResults: { kind: "by-hand" },
-    },
-    auctionCalls: [resultsReadCall()],
-    body: resultsBody({ kind: "by-hand" }),
-  },
-  {
-    intent: "prediction results: cancelled",
-    callbackData: resultsCallback(),
-    auction: {
-      ...AUCTION,
-      summary: FINISHED_SUMMARY,
-      predictionResults: { kind: "cancelled" },
-    },
-    auctionCalls: [resultsReadCall()],
-    body: resultsBody({ kind: "cancelled" }),
   },
 ];
 
@@ -5423,40 +5513,11 @@ const invoicesCallback = encodeAuctionCallback({
 const invoiceCallback = (invoiceId: string) =>
   encodeAuctionCallback({ kind: "invoice", lotId: SOLD_LOT.lotId, invoiceId });
 
-const fulfillmentCallback = (method: "pickup" | "delivery" | "digital") =>
-  encodeAuctionCallback({
-    kind: "fulfillment",
-    lotId: SOLD_LOT.lotId,
-    invoiceId: INVOICE_ID,
-    method,
-  });
-
 const findSoldCall: PortCall = {
   port: "auction",
   method: "findLot",
   request: { viewer: CONTRACT_VIEWER, lotId: SOLD_LOT.lotId },
 };
-
-const choiceCall = (method: "pickup" | "delivery" | "digital"): PortCall => ({
-  port: "auction",
-  method: "chooseFulfillment",
-  request: {
-    viewer: CONTRACT_VIEWER,
-    invoiceId: INVOICE_ID,
-    method,
-    opId: CONTRACT_OP_IDS[0],
-  },
-});
-
-const fulfillmentRows = (["pickup", "delivery", "digital"] as const).map(
-  (method) => [
-    {
-      action: "invoice.fulfillment" as const,
-      method,
-      callbackData: fulfillmentCallback(method),
-    },
-  ],
-);
 
 const toInvoicesRow = [
   { action: "invoice.back" as const, callbackData: invoicesCallback },
@@ -5516,7 +5577,7 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
     },
   },
   {
-    intent: "my invoice: an invoice with the choice of fulfillment",
+    intent: "my invoice: an invoice with the organizer's text and no choice",
     callbackData: invoiceCallback(INVOICE_ID),
     auction: { ...AUCTION, invoices: MY_INVOICES },
     auctionCalls: [findSoldCall, invoicesCall(CONTRACT_AUCTION_ID)],
@@ -5529,7 +5590,7 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
           paymentInstructions: PAYMENT_TEXT,
         },
       ],
-      keyboard: [...fulfillmentRows, toInvoicesRow],
+      keyboard: [toInvoicesRow],
     },
   },
   {
@@ -5539,97 +5600,6 @@ const INVOICE_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [findSoldCall, invoicesCall(CONTRACT_AUCTION_ID)],
     body: {
       blocks: [{ kind: "invoice-missing", auctionId: CONTRACT_AUCTION_ID }],
-      keyboard: [toInvoicesRow],
-    },
-  },
-  {
-    intent: "fulfillment: the chosen method is shown on the invoice",
-    callbackData: fulfillmentCallback("delivery"),
-    auction: {
-      ...AUCTION,
-      invoices: MY_INVOICES,
-      fulfillments: [{ kind: "accepted" }],
-    },
-    auctionCalls: [
-      choiceCall("delivery"),
-      findSoldCall,
-      invoicesCall(CONTRACT_AUCTION_ID),
-    ],
-    body: {
-      blocks: [
-        {
-          kind: "invoice",
-          auctionId: CONTRACT_AUCTION_ID,
-          invoice: {
-            ...SOLD_INVOICE,
-            fulfillment: "delivery",
-            title: "Плакат",
-          },
-          paymentInstructions: PAYMENT_TEXT,
-          notice: "fulfillment-chosen",
-        },
-      ],
-      keyboard: [...fulfillmentRows, toInvoicesRow],
-    },
-  },
-  {
-    intent: "fulfillment: the chosen method shows while the read model lags",
-    callbackData: fulfillmentCallback("digital"),
-    auction: {
-      ...AUCTION,
-      invoices: MY_INVOICES,
-      fulfillments: [{ kind: "accepted" }],
-      lagging: true,
-    },
-    auctionCalls: [
-      choiceCall("digital"),
-      findSoldCall,
-      invoicesCall(CONTRACT_AUCTION_ID),
-    ],
-    body: {
-      blocks: [
-        {
-          kind: "invoice",
-          auctionId: CONTRACT_AUCTION_ID,
-          invoice: { ...SOLD_INVOICE, fulfillment: "digital", title: "Плакат" },
-          paymentInstructions: PAYMENT_TEXT,
-          notice: "fulfillment-chosen",
-        },
-      ],
-      keyboard: [...fulfillmentRows, toInvoicesRow],
-    },
-  },
-  {
-    intent: "fulfillment: a handed over lot keeps its method",
-    callbackData: fulfillmentCallback("pickup"),
-    auction: {
-      ...AUCTION,
-      invoices: {
-        invoices: [
-          { ...SOLD_INVOICE, status: "handed-over", fulfillment: "digital" },
-        ],
-      },
-      fulfillments: [{ kind: "refused", refusal: "fulfillment-frozen" }],
-    },
-    auctionCalls: [
-      choiceCall("pickup"),
-      findSoldCall,
-      invoicesCall(CONTRACT_AUCTION_ID),
-    ],
-    body: {
-      blocks: [
-        {
-          kind: "invoice",
-          auctionId: CONTRACT_AUCTION_ID,
-          invoice: {
-            ...SOLD_INVOICE,
-            status: "handed-over",
-            fulfillment: "digital",
-            title: "Плакат",
-          },
-          notice: "fulfillment-frozen",
-        },
-      ],
       keyboard: [toInvoicesRow],
     },
   },
@@ -5746,9 +5716,82 @@ const PROMO_CASES: readonly AuctionContractCase[] = [
 
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...SET_CASES,
+  ...([false, true] as const).map((populated): AuctionContractCase => {
+    const achievement = {
+      code: "first",
+      title: "Первая ачивка",
+      description: "За участие",
+      recipients: "many" as const,
+      manual: false,
+    };
+    const summary: AuctionSummaryView = {
+      auctionId: CONTRACT_AUCTION_ID,
+      stage: "finished",
+      final: true,
+    };
+    return {
+      intent: populated
+        ? "achievements: event set"
+        : "achievements: empty event set",
+      callbackData: callback({
+        kind: "achievements",
+        auctionId: CONTRACT_AUCTION_ID,
+        page: 0,
+      }),
+      auction: {
+        ...AUCTION,
+        summary,
+        achievements: populated
+          ? [{ achievement, holderIds: [], erasedHolders: 0 }]
+          : [],
+      },
+      auctionCalls: [
+        {
+          port: "auction",
+          method: "getAuction",
+          request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+        },
+        {
+          port: "achievements",
+          method: "getEvent",
+          request: CONTRACT_AUCTION_ID,
+        },
+      ],
+      body: {
+        blocks: [
+          {
+            kind: "achievements",
+            screen: {
+              scope: "event",
+              auctionId: CONTRACT_AUCTION_ID,
+              view: "list",
+              page: 0,
+              pages: 1,
+              back: callback({ kind: "root", auctionId: CONTRACT_AUCTION_ID }),
+              items: populated
+                ? [
+                    {
+                      title: achievement.title,
+                      callbackData: callback({
+                        kind: "achievement",
+                        auctionId: CONTRACT_AUCTION_ID,
+                        reference: "a7937b64b8ca",
+                        page: 0,
+                        holdersPage: 0,
+                      }),
+                    },
+                  ]
+                : [],
+            },
+          },
+        ],
+        keyboard: [],
+      },
+    };
+  }),
   ...ROOT_CASES,
   ...PROMO_CASES,
-  ...PREDICTION_RESULTS_CASES,
+  ...AUCTION_RESULTS_CASES,
   ...DAY_CHRONICLE_CASES,
   {
     intent: "feed",
@@ -5797,7 +5840,12 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           auctionId: CONTRACT_AUCTION_ID,
           page: 0,
           pageCount: 1,
-          lots: [WITHDRAWN_LOT, SOLD_LOT, UNSOLD_LOT].map(feedItemOfLot),
+          groups: [
+            { group: "trading" as const, count: 1 },
+            { group: "sold" as const, count: 1 },
+            { group: "unsold" as const, count: 1 },
+          ],
+          lots: [SOLD_LOT, UNSOLD_LOT, WITHDRAWN_LOT].map(feedItemOfLot),
           sections: [{ sectionId: 2, name: "Книги", lotCount: 2 }],
         },
       ],
@@ -5809,7 +5857,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
             callbackData: sectionCallback(CONTRACT_AUCTION_ID, 2),
           },
         ],
-        ...[WITHDRAWN_LOT, SOLD_LOT, UNSOLD_LOT].map((lot) => [
+        ...[SOLD_LOT, UNSOLD_LOT, WITHDRAWN_LOT].map((lot) => [
           {
             action: "feed.open-lot" as const,
             lotId: lot.lotId,
@@ -6159,6 +6207,197 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       keyboard: lotKeyboard(HELD_LOT.lotId, 0),
     },
   },
+  // Удержанный лот с автоставкой: ряд «Автоставка» — единственный ряд ставки,
+  // ставки и «Своей суммы» у удержания нет.
+  {
+    intent: "lot: held with proxy",
+    callbackData: lotCallback(HELD_PROXY_LOT.lotId, 0),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_PROXY_LOT.lotId), ...CARD_CALLS],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: HELD_PROXY_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 4,
+          card: { title: "Варежки", description: "" },
+          status: { kind: "held", currentPrice: rub(900) },
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.proxy" as const,
+            callbackData: callback({
+              kind: "ask",
+              question: "proxy",
+              lotId: HELD_PROXY_LOT.lotId,
+              page: 0,
+            }),
+          },
+        ],
+        ...lotKeyboard(HELD_PROXY_LOT.lotId, 0),
+      ],
+    },
+  },
+  // Лимит удержанного лота (PER-822, ADR-079): строка про финал, ряд
+  // «Автоставка» и «Снять лимит».
+  {
+    intent: "lot: held with own limit",
+    callbackData: lotCallback(HELD_LIMIT_LOT.lotId, 0),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_LIMIT_LOT.lotId), ...CARD_CALLS],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: HELD_LIMIT_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 4,
+          card: { title: "Варежки", description: "" },
+          status: { kind: "held", currentPrice: rub(900) },
+          viewerProxyLimit: rub(2000),
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.proxy" as const,
+            callbackData: callback({
+              kind: "ask",
+              question: "proxy",
+              lotId: HELD_LIMIT_LOT.lotId,
+              page: 0,
+            }),
+          },
+        ],
+        [
+          {
+            action: "lot.withdraw" as const,
+            callbackData: callback({
+              kind: "confirm",
+              command: "withdraw",
+              lotId: HELD_LIMIT_LOT.lotId,
+              amount: 200000,
+              page: 0,
+            }),
+          },
+        ],
+        ...lotKeyboard(HELD_LIMIT_LOT.lotId, 0),
+      ],
+    },
+  },
+  {
+    intent: "withdraw: confirm",
+    callbackData: callback({
+      kind: "confirm",
+      command: "withdraw",
+      lotId: HELD_LIMIT_LOT.lotId,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_LIMIT_LOT.lotId)],
+    body: {
+      blocks: [
+        {
+          kind: "confirm",
+          command: "withdraw",
+          lotId: HELD_LIMIT_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          title: "Варежки",
+          amount: rub(2000),
+          currentPrice: rub(900),
+          forFinal: true,
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "confirm.yes" as const,
+            callbackData: callback({
+              kind: "commit",
+              command: "withdraw",
+              lotId: HELD_LIMIT_LOT.lotId,
+              opId: OP,
+              amount: 200000,
+              page: 0,
+            }),
+          },
+          {
+            action: "confirm.no" as const,
+            callbackData: lotCallback(HELD_LIMIT_LOT.lotId, 0),
+          },
+        ],
+      ],
+    },
+  },
+  // Лимита уже нет: подтверждения нет, команда в Auction не уходит.
+  {
+    intent: "withdraw: confirm without a limit",
+    callbackData: callback({
+      kind: "confirm",
+      command: "withdraw",
+      lotId: HELD_PROXY_LOT.lotId,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_PROXY_LOT.lotId)],
+    body: withdrawResultBody(HELD_PROXY_LOT.lotId, {
+      command: "withdraw",
+      kind: "refused",
+      refusal: { kind: "no-active-limit" },
+    }),
+  },
+  {
+    intent: "withdraw: accepted",
+    callbackData: callback({
+      kind: "commit",
+      command: "withdraw",
+      lotId: HELD_LIMIT_LOT.lotId,
+      opId: OP,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: {
+      ...OFF_FEED_AUCTION,
+      withdrawals: [{ kind: "accepted", lotVersion: 0 }],
+    },
+    auctionCalls: [
+      getLotCall(HELD_LIMIT_LOT.lotId),
+      withdrawCall(HELD_LIMIT_LOT.lotId),
+    ],
+    body: withdrawResultBody(HELD_LIMIT_LOT.lotId, {
+      command: "withdraw",
+      kind: "withdrawn",
+    }),
+  },
+  {
+    intent: "withdraw: no limit left",
+    callbackData: callback({
+      kind: "commit",
+      command: "withdraw",
+      lotId: HELD_LIMIT_LOT.lotId,
+      opId: OP,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: {
+      ...OFF_FEED_AUCTION,
+      withdrawals: [{ kind: "refused", refusal: { kind: "no-active-limit" } }],
+    },
+    auctionCalls: [
+      getLotCall(HELD_LIMIT_LOT.lotId),
+      withdrawCall(HELD_LIMIT_LOT.lotId),
+    ],
+    body: withdrawResultBody(HELD_LIMIT_LOT.lotId, {
+      command: "withdraw",
+      kind: "refused",
+      refusal: { kind: "no-active-limit" },
+    }),
+  },
   // Лот без условий торгов сам не меняется: ни «Обновить», ни хронологии.
   {
     intent: "lot: draft",
@@ -6271,6 +6510,7 @@ export function spyPorts(
   // Очереди ответов команд и `op_id`: каждый вызов берёт следующий.
   const bids = [...(snapshot.bids ?? [])];
   const limits = [...(snapshot.limits ?? [])];
+  const withdrawals = [...(snapshot.withdrawals ?? [])];
   const displayNames = [...(snapshot.displayNames ?? [])];
   const follows = [...(snapshot.follows ?? [])];
   const registrations = [...(snapshot.registrations ?? [])];
@@ -6283,8 +6523,7 @@ export function spyPorts(
     typeof snapshot.predictions === "string"
       ? undefined
       : [...snapshot.predictions];
-  const fulfillments = [...(snapshot.fulfillments ?? [])];
-  let invoices = snapshot.invoices;
+  const invoices = snapshot.invoices;
   const { followed, explainer } = snapshot;
   const followCommand = (outcome: FollowOutcome | undefined) => {
     if (outcome === undefined) throw new Error("follow is not expected");
@@ -6298,6 +6537,26 @@ export function spyPorts(
     return outcome;
   };
   return {
+    ...(snapshot.achievements === undefined
+      ? {}
+      : {
+          achievements: {
+            async getEvent(auctionId: string) {
+              calls.push({
+                port: "achievements" as const,
+                method: "getEvent" as const,
+                request: auctionId,
+              });
+              return snapshot.achievements ?? [];
+            },
+            async listMine() {
+              throw new Error("collection is not expected");
+            },
+            async getImage() {
+              throw new Error("image is not expected");
+            },
+          },
+        }),
     ...(snapshot.media === undefined ? {} : { media: snapshot.media }),
     identity: {
       async resolveIdentity(request) {
@@ -6365,6 +6624,10 @@ export function spyPorts(
       async setProxyLimit(request) {
         calls.push({ port: "auction", method: "setProxyLimit", request });
         return settled(limits.shift());
+      },
+      async withdrawProxyLimit(request) {
+        calls.push({ port: "auction", method: "withdrawProxyLimit", request });
+        return settled(withdrawals.shift());
       },
       async chooseDisplayName(request) {
         calls.push({ port: "auction", method: "chooseDisplayName", request });
@@ -6455,28 +6718,6 @@ export function spyPorts(
           throw new Error("invoices unavailable");
         }
         return invoices;
-      },
-      async chooseFulfillment(request) {
-        calls.push({ port: "auction", method: "chooseFulfillment", request });
-        const outcome = fulfillments.shift();
-        if (outcome === undefined) throw new Error("choice is not expected");
-        // Отставшая read model (`lagging`) принятого выбора ещё не видит.
-        if (
-          outcome.kind === "accepted" &&
-          snapshot.lagging !== true &&
-          invoices !== undefined &&
-          invoices !== "unavailable"
-        ) {
-          invoices = {
-            ...invoices,
-            invoices: invoices.invoices.map((invoice) =>
-              invoice.invoiceId === request.invoiceId
-                ? { ...invoice, fulfillment: request.method }
-                : invoice,
-            ),
-          };
-        }
-        return outcome;
       },
     },
     operations: {

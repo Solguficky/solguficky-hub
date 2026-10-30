@@ -26,6 +26,26 @@ describe("readAuctionConfig", () => {
     });
   });
 
+  it("reads the hall addresses and refuses a wrong one by variable name", () => {
+    const result = readAuctionConfig({
+      BOT_HALL_SCREEN_URL: "https://hall.example.org/screen",
+      BOT_STREAM_URL: "https://stream.example.org/live",
+    });
+    expect(result.ok && result.config.hall).toEqual({
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    });
+    expect(
+      readAuctionConfig({
+        BOT_HALL_SCREEN_URL: "https://u:p@hall.example.org",
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        "BOT_HALL_SCREEN_URL must be an HTTPS URL without credentials, query or fragment",
+    });
+  });
+
   // Аукцион ленты бот больше не берёт из конфигурации: списки читаются из
   // Auction (PER-453), и забытая переменная старого развёртывания не мешает.
   it("ignores a stale auction id", () => {

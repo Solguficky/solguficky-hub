@@ -16,6 +16,9 @@ export function finalBidLabel(amount: Money, money: (m: Money) => string) {
   return `Поставить ${money(amount)}`;
 }
 
+/** Кнопка карточки финала, которая запускает трансляцию хода торгов (PER-826). */
+export const watchFinalLabel = "Следить за торгами";
+
 /**
  * Строка цены лота в торгах финала — одна (PER-639): цена, которую объявил
  * ведущий, пока она выше текущей — тогда она и есть следующая ставка, — иначе
@@ -63,6 +66,8 @@ export function finalBidLine(
   switch (outcome.kind) {
     case "accepted":
       return `Твоя ставка ${money(outcome.amount)} принята`;
+    case "accepted-unread":
+      return `Ставка ${money(outcome.amount)} принята: обнови карточку, чтобы узнать лидера`;
     case "unknown":
       return "Аукцион не ответил: ставка могла пройти, смотри лидера";
     case "price-changed":
@@ -101,3 +106,85 @@ export function finalBidLine(
     }
   }
 }
+
+// Исход читает актуальный снимок: принятую ставку уже могли перебить.
+export function finalBidHeadline(
+  block: LotBlock,
+  money: (m: Money) => string,
+): string | undefined {
+  const outcome = block.finalBid;
+  if (outcome === undefined) return undefined;
+  if (outcome.kind === "accepted") {
+    if (block.standing === "leader" || block.standing === "won")
+      return `Ты лидер: ставка ${money(outcome.amount)} принята`;
+    if (block.status.kind === "trading")
+      return `Твою ставку перебили — цена уже ${money(block.status.currentPrice)}`;
+    if (block.status.kind === "sold")
+      return `Твою ставку перебили — цена продажи ${money(block.status.price)}`;
+  }
+  if (outcome.kind === "price-changed")
+    return `Твоя ставка не прошла — следующая цена ${money(outcome.next)}`;
+  if (
+    outcome.kind === "refused" &&
+    outcome.refusal.kind === "bid-not-at-next-price"
+  )
+    return `Твоя ставка не прошла — следующая цена ${money(outcome.refusal.expected)}`;
+  if (
+    outcome.kind === "refused" &&
+    ["bid-below-minimum", "lot-not-open"].includes(outcome.refusal.kind)
+  ) {
+    const price =
+      block.status.kind === "trading"
+        ? block.status.currentPrice
+        : block.status.kind === "sold"
+          ? block.status.price
+          : undefined;
+    return price === undefined
+      ? `Твоя ставка не прошла: ${finalBidLine(outcome, money)}`
+      : `Твоя ставка не прошла — цена уже ${money(price)}`;
+  }
+  return finalBidLine(outcome, money);
+}
+
+/**
+ * Слова лимита автоставки лоту, который ждёт финала (PER-821, ADR-079):
+ * лимит сработает в финале по сетке цен, а остаток лимита, который не доходит
+ * до следующей цены сетки, не добирается (ADR-049). Общие у двух ботов.
+ */
+const gridRemainder = "Остаток лимита, не кратный шагу сетки, не добирается.";
+
+export const heldProxyQuestion = `Пришли лимит в рублях. Лот ждёт финала: лимит сработает там, и бот будет ставить за тебя по сетке цен финала. ${gridRemainder} Лимит видишь только ты.`;
+
+export function heldProxyConfirmation(
+  currentPrice: Money,
+  limit: Money,
+  money: (m: Money) => string,
+): string {
+  return `Цена сейчас ${money(currentPrice)}. Лимит сработает в финале: бот будет ставить за тебя по сетке цен, но не выше ${money(limit)}. ${gridRemainder}`;
+}
+
+export const heldProxyAccepted = `Лимит сработает в финале по сетке цен. ${gridRemainder}`;
+
+/**
+ * Слова снятия своего лимита (PER-822): общие у двух ботов. Лимит, поставленный
+ * на онлайн-неделе, переходит в финал сам (ADR-079, п. 3), поэтому подтверждение
+ * лоту, который ждёт финала, говорит про финал, а недельному — про торги.
+ */
+export const withdrawButtonLabel = "Снять лимит";
+
+export function withdrawQuestion(
+  limit: Money,
+  money: (m: Money) => string,
+): string {
+  return `Снять автоставку до ${money(limit)}?`;
+}
+
+export function withdrawNote(forFinal: boolean): string {
+  return forFinal
+    ? "Лимит не сработает в финале. Поставить его можно снова."
+    : "Бот перестанет ставить за тебя. Поставить лимит можно снова.";
+}
+
+export const withdrawnTitle = "Автоставка снята";
+export const noLimitTitle = "Лимита уже нет";
+export const noLimitDetail = "Автоставки на этом лоте нет.";

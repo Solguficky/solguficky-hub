@@ -8,6 +8,7 @@ import type {
   FavoritesPort,
   LotStatusView,
   LotView,
+  Money,
   StepWindowView,
   Viewer,
 } from "../../ports.js";
@@ -44,6 +45,27 @@ export async function openLot(input: {
   return showLot({ ...input, lot });
 }
 
+// «Следить за торгами» (PER-826): та же карточка, а трансляцию запускает
+// оболочка по признаку `watch`. Лот уже не в торгах финала — кнопка устарела,
+// и карточка без признака и есть ответ: трансляции за ним нет.
+export async function watchFinal(input: {
+  auction: AuctionPort;
+  favorites?: FavoritesPort;
+  viewer: Viewer;
+  lotId: string;
+  page: number;
+}): Promise<AuctionScreenBody> {
+  const lot = await input.auction.getLot({
+    viewer: input.viewer,
+    lotId: input.lotId,
+  });
+  return showLot({
+    ...input,
+    lot,
+    ...(isLive(lot.status) ? { watch: true } : {}),
+  });
+}
+
 // Карточка по уже прочитанному снимку. Исход команды онлайн-недели карточка не
 // несёт: он — свой экран (PER-472). Исключение — ставка финала `finalBid`
 // (PER-336): её исход — строка карточки, которая остаётся живой.
@@ -58,6 +80,8 @@ export async function showLot(input: {
   page: number;
   following?: boolean;
   finalBid?: FinalBidOutcome;
+  // Нажатие «Следить за торгами» (PER-826): оболочка запускает трансляцию.
+  watch?: boolean;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
   // Соседей в ленте читают параллельно имени и отметке и стартуют последними:
@@ -80,6 +104,7 @@ export async function showLot(input: {
     ...(participantName === undefined ? {} : { participantName }),
     ...(following === undefined ? {} : { following }),
     ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
+    ...(input.watch === true ? { watch: true } : {}),
   });
 }
 
@@ -116,6 +141,7 @@ function lotBody(input: {
   participantName?: string;
   following?: boolean;
   finalBid?: FinalBidOutcome;
+  watch?: boolean;
 }): AuctionScreenBody {
   const { lot, participantName, following } = input;
   const standing = standingOf(lot.status, input.viewer);
@@ -151,6 +177,9 @@ function lotBody(input: {
   // листания — «предыдущий, этот же, следующий» — над возвратом (решение
   // владельца по отзыву тестовой группы 19 октября 2026 года, PER-669).
   const lookRow = [...history, ...followButtons(lot, input.page, following)];
+  // «Следить за торгами» — своим рядом под ставкой: пары кнопок дизайн-код
+  // называет поимённо, и эта в них не входит.
+  const watchRow = watchButton(lot, input.page);
   // Лоты сета — содержимое карточки (ADR-073, п. 7): свой ряд между взглядом
   // на лот и листанием.
   const setRow: AuctionButton[] =
@@ -166,6 +195,20 @@ function lotBody(input: {
             }),
           },
         ];
+  // «Мои счета» — покупателю проданного лота (PER-813): счёт выставляет
+  // проекция на каждую продажу, и ведёт кнопка в тот же список, что корень.
+  const invoicesRow: AuctionButton[] =
+    standing === "won"
+      ? [
+          {
+            action: "lot.invoices",
+            callbackData: encodeAuctionCallback({
+              kind: "invoices",
+              auctionId: lot.auctionId,
+            }),
+          },
+        ]
+      : [];
   return {
     blocks: [
       {
@@ -175,14 +218,35 @@ function lotBody(input: {
           ? {}
           : { viewerProxyLimit: lot.viewerProxyLimit }),
         ...(following === undefined ? {} : { following }),
-        ...(isLive(lot.status) ? { live: { page: input.page } } : {}),
+        ...(isLive(lot.status) || input.neighbors.final !== undefined
+          ? { live: { page: input.page } }
+          : {}),
         ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
+        ...(input.watch === true ? { watch: true as const } : {}),
       },
     ],
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
+      ...withdrawRows(lot, input.page),
+      ...(input.neighbors.final?.activeLotId === undefined ||
+      input.neighbors.final.activeLotId === lot.lotId
+        ? []
+        : [
+            [
+              {
+                action: "lot.current" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "lot",
+                  lotId: input.neighbors.final.activeLotId,
+                  page: input.page,
+                }),
+              },
+            ],
+          ]),
+      ...(watchRow.length === 0 ? [] : [watchRow]),
       ...(lookRow.length === 0 ? [] : [lookRow]),
       ...(setRow.length === 0 ? [] : [setRow]),
+      ...(invoicesRow.length === 0 ? [] : [invoicesRow]),
       ...pagerRows(input.neighbors, refresh),
       [
         {
@@ -341,6 +405,23 @@ function pagerRows(
   return row.length === 0 ? [] : [row];
 }
 
+// «Следить за торгами» (PER-826) — только на карточке лота в торгах живого
+// финала: трансляция идёт за активным лотом, а до финала ходом торгов служит
+// сама карточка.
+function watchButton(lot: LotView, page: number): AuctionButton[] {
+  if (!isLive(lot.status)) return [];
+  return [
+    {
+      action: "lot.watch",
+      callbackData: encodeAuctionCallback({
+        kind: "watch-final",
+        lotId: lot.lotId,
+        page,
+      }),
+    },
+  ];
+}
+
 // Кнопка избранного стоит рядом со «Ставками»: это действие экрана, а не
 // навигация. Состояния нет — нет и кнопки. У закрытого лота «Добавить в
 // избранное» нет: следить за ним уже не за чем, а Notifications вычищает его
@@ -471,6 +552,8 @@ function bidRows(
   page: number,
 ): AuctionButton[][] {
   const { nextPrice, status } = lot;
+  if (status.kind === "held")
+    return heldRows(lot, status.currentPrice, viewer, page);
   if (
     status.kind !== "trading" ||
     nextPrice === undefined ||
@@ -526,6 +609,71 @@ function bidRows(
       ...(lot.proxyEnabled
         ? [{ action: "lot.proxy" as const, callbackData: ask("proxy") }]
         : []),
+    ],
+  ];
+}
+
+// Лот, который ждёт финала, принимает только лимит автоставки (PER-821,
+// ADR-079): он сработает в финале по сетке цен, а ставки и «Своей суммы» у
+// удержания нет. Лидеру удержания ряд тоже нужен — лимит лидера разрешён.
+// Ряд — тому, кто вправе ставить: хаб пускает в аукцион и держателя
+// `run-auctions` без права ставок, а его лимит Auction отклонил бы.
+function heldRows(
+  lot: LotView,
+  currentPrice: Money,
+  viewer: Viewer,
+  page: number,
+): AuctionButton[][] {
+  if (
+    !lot.proxyEnabled ||
+    !viewer.rights.includes("place-bids") ||
+    currentPrice.minorUnits > MAX_COMMAND_AMOUNT
+  ) {
+    return [];
+  }
+  return [
+    [
+      {
+        action: "lot.proxy",
+        callbackData: encodeAuctionCallback({
+          kind: "ask",
+          question: "proxy",
+          lotId: lot.lotId,
+          page,
+        }),
+      },
+    ],
+  ];
+}
+
+// «Снять лимит» (PER-822, ADR-079, п. 3): лимит онлайн-недели переходит в
+// финал сам, поэтому забытый лимит снимается с карточки — лота в торгах недели
+// и лота, который ждёт финала. Ряд тому, у кого лимит есть: чужих лимитов
+// снимок не несёт. Сумма в кнопке — лимит, который человек видит на карточке.
+function withdrawRows(lot: LotView, page: number): AuctionButton[][] {
+  const { status, viewerProxyLimit: limit } = lot;
+  if (
+    limit === undefined ||
+    limit.minorUnits > MAX_COMMAND_AMOUNT ||
+    !(
+      status.kind === "held" ||
+      (status.kind === "trading" && status.phase === "online")
+    )
+  ) {
+    return [];
+  }
+  return [
+    [
+      {
+        action: "lot.withdraw",
+        callbackData: encodeAuctionCallback({
+          kind: "confirm",
+          command: "withdraw",
+          lotId: lot.lotId,
+          amount: limit.minorUnits,
+          page,
+        }),
+      },
     ],
   ];
 }

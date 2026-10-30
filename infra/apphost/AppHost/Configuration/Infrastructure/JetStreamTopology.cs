@@ -107,12 +107,25 @@ internal static class JetStreamTopology
     /// Пары «человек ↔ тема» бота поддержки (ADR-068, п. 8) живут по тому же
     /// правилу владения, но не журнал доставки: срок жизни — 180 дней с
     /// последнего сообщения в теме, бот переписывает обе записи на каждом.
+    ///
+    /// Открытые пульт ведущего и «Ставки зала» бота хаба (PER-815, дополнение
+    /// ADR-030 от 2026-10-29) — тоже по правилу владения: по записи на чат и вид
+    /// экрана, срок — двое суток от последней записи, потому что экран живёт час
+    /// финала, а запись старого пульта копиться не должна.
+    ///
+    /// Состав зала помощника (ADR-070, дополнение 2026-10-29) — тоже не журнал
+    /// доставки: запись на аукцион живёт двое суток с последней правки состава,
+    /// и боту без bucket'а экран «Ставки зала» говорит «Состав зала не
+    /// прочитался», а процесс не падает.
     /// </remarks>
     public static readonly IReadOnlyList<KeyValueSpec> KeyValueBuckets =
     [
         new("hub-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
         new("auction-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
         new("support-bot-topics", TimeSpan.FromDays(180)),
+        new("hub-bot-live-screens", TimeSpan.FromDays(2)),
+        new("auction-bot-live-screens", TimeSpan.FromDays(2)),
+        new("hub-bot-floor-room", TimeSpan.FromDays(2)),
     ];
 
     public static IEnumerable<ConsumerSpec> Durables =>

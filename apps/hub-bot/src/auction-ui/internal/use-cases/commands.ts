@@ -3,7 +3,9 @@ import {
   type AuctionQuestion,
   encodeAuctionCallback,
   type PendingCommand,
+  type PlacedCommand,
 } from "../../callback-data.js";
+import { FinalBidReadUnavailable } from "../../final-bid-failure.js";
 import type {
   AuctionPort,
   BidRefusal,
@@ -63,9 +65,10 @@ function confirmBody(
   context: CommandContext,
   lot: LotView,
   pending: PendingCommand,
-  currentPrice: Money,
+  offered: Offered,
   page: number,
 ): AuctionScreenBody {
+  const { currentPrice } = offered;
   return {
     blocks: [
       {
@@ -76,6 +79,7 @@ function confirmBody(
         ...titled(lot),
         amount: { minorUnits: pending.amount, currency: currentPrice.currency },
         currentPrice,
+        ...(offered.forFinal ? { forFinal: true as const } : {}),
         ...firstProxyBid(lot, pending),
       },
     ],
@@ -98,10 +102,38 @@ function confirmBody(
   };
 }
 
+// Что лот принимает от бота сейчас: ставку и лимит онлайн-торгов и, у лота,
+// который ждёт финала, только лимит (PER-821, ADR-079): он сработает в финале
+// по сетке цен. Ставка удержанного лота — отказ `lot-on-hold`.
+type Offered = { currentPrice: Money; leaderId?: string; forFinal: boolean };
+
+function offeredFor(
+  lot: LotView,
+  command: AuctionCommand,
+): Offered | undefined {
+  const { status } = lot;
+  if (status.kind === "trading" && status.phase === "online") {
+    return {
+      currentPrice: status.currentPrice,
+      ...(status.leaderId === undefined ? {} : { leaderId: status.leaderId }),
+      forFinal: false,
+    };
+  }
+  if (status.kind === "held" && command === "proxy") {
+    return {
+      currentPrice: status.currentPrice,
+      ...(status.leaderId === undefined ? {} : { leaderId: status.leaderId }),
+      forFinal: true,
+    };
+  }
+  return undefined;
+}
+
 // Подтверждают только то, что предлагает карточка: ставку и лимит в
-// онлайн-торгах. Устаревшая кнопка или ответ на вопрос после смены состояния
-// получают карточку с отказом без похода в Auction с заведомо мёртвой
-// командой: удержанный лот называет цену, остальные — «торги не идут».
+// онлайн-торгах и лимит удержанного лота. Устаревшая кнопка или ответ на
+// вопрос после смены состояния получают карточку с отказом без похода в
+// Auction с заведомо мёртвой командой: удержанный лот называет цену, остальные
+// — «торги не идут».
 //
 // Имя спрашивается до подтверждения (PER-595): иначе первую ставку человек
 // подтверждал бы дважды — до выбора имени и после. `named` — имя уже известно:
@@ -114,20 +146,33 @@ async function confirmOrRefuse(
   named = false,
 ): Promise<AuctionScreenBody> {
   const { status } = lot;
-  if (status.kind !== "trading" || status.phase !== "online") {
+  const offered = offeredFor(lot, pending.command);
+  if (offered === undefined) {
     return resultBody(lot, page, notOffered(pending.command, lot));
   }
   const refusal =
-    pending.command === "bid"
+    pending.command === "bid" && status.kind === "trading"
       ? refusedBeforeConfirm(context.viewer, lot, status, pending.amount)
       : undefined;
   if (refusal !== undefined) {
     return resultBody(lot, page, { command: "bid", kind: "refused", refusal });
   }
-  if (!named && !(await nameChosen(context, lot, status))) {
+  // Лимит ниже цены удержанного лота Auction отклонил бы: отказ виден по
+  // снимку и приходит до «Да», как у ставки (PER-821).
+  if (offered.forFinal && pending.amount < offered.currentPrice.minorUnits) {
+    return resultBody(lot, page, {
+      command: "proxy",
+      kind: "refused",
+      refusal: {
+        kind: "proxy-below-current-price",
+        minLimit: offered.currentPrice,
+      },
+    });
+  }
+  if (!named && !(await nameChosen(context, lot, offered.leaderId))) {
     return nameChoiceBody(context, lot, pending, page);
   }
-  return confirmBody(context, lot, pending, status.currentPrice, page);
+  return confirmBody(context, lot, pending, offered, page);
 }
 
 // Выбрано ли имя в аукционе лота. Лидер и держатель лимита уже ставили, и
@@ -137,10 +182,10 @@ async function confirmOrRefuse(
 async function nameChosen(
   context: CommandContext,
   lot: LotView,
-  status: Extract<LotView["status"], { kind: "trading" }>,
+  leaderId: string | undefined,
 ): Promise<boolean> {
   if (
-    status.leaderId === context.viewer.identityId ||
+    leaderId === context.viewer.identityId ||
     lot.viewerProxyLimit !== undefined
   ) {
     return true;
@@ -177,7 +222,7 @@ function refusedBeforeConfirm(
 
 // Ветки одинаковы по форме, но разные по типу: `CommandResult` сужает отказ
 // по команде, и TypeScript собирает его только из литерала команды.
-function notOffered(command: AuctionCommand, lot: LotView): CommandResult {
+function notOffered(command: PlacedCommand, lot: LotView): CommandResult {
   if (command === "bid") {
     return lot.status.kind === "held"
       ? {
@@ -191,6 +236,109 @@ function notOffered(command: AuctionCommand, lot: LotView): CommandResult {
       : { command, kind: "refused", refusal: { kind: "lot-not-open" } };
   }
   return { command, kind: "refused", refusal: { kind: "lot-not-open" } };
+}
+
+// Снять свой лимит (PER-822): подтверждение показывает лимит, который лот
+// называет сейчас. Лимита нет — «лимита уже нет», без похода в Auction.
+export async function confirmWithdraw(
+  context: CommandContext,
+  intent: { lotId: string; page: number },
+): Promise<AuctionScreenBody> {
+  const lot = await readLot(context, intent.lotId);
+  const { status, viewerProxyLimit: limit } = lot;
+  if (
+    limit === undefined ||
+    (status.kind !== "trading" && status.kind !== "held")
+  ) {
+    return resultBody(lot, intent.page, noLimitResult);
+  }
+  return {
+    blocks: [
+      {
+        kind: "confirm",
+        command: "withdraw",
+        lotId: lot.lotId,
+        auctionId: lot.auctionId,
+        ...titled(lot),
+        amount: limit,
+        currentPrice: status.currentPrice,
+        ...(status.kind === "held" ? { forFinal: true as const } : {}),
+      },
+    ],
+    keyboard: [
+      [
+        {
+          action: "confirm.yes",
+          callbackData: encodeAuctionCallback({
+            kind: "commit",
+            command: "withdraw",
+            lotId: lot.lotId,
+            opId: context.operations.newOperationId(),
+            amount: limit.minorUnits,
+            page: intent.page,
+          }),
+        },
+        {
+          action: "confirm.no",
+          callbackData: lotCallback(lot.lotId, intent.page),
+        },
+      ],
+    ],
+  };
+}
+
+const noLimitResult: CommandResult = {
+  command: "withdraw",
+  kind: "refused",
+  refusal: { kind: "no-active-limit" },
+};
+
+// «Да» снятия: `op_id` рождён при показе подтверждения, повтор того же «Да»
+// несёт тот же ключ, и Auction второй команды не исполняет. Отказ один —
+// лимита уже нет — и для человека это исход, а не сбой.
+export async function commitWithdraw(
+  context: CommandContext,
+  intent: { lotId: string; opId: string; amount: number; page: number },
+): Promise<AuctionScreenBody> {
+  const lot = await readLot(context, intent.lotId);
+  // «Да» из устаревшего подтверждения: лимит с тех пор изменился. Снимать
+  // другой лимит, чем тот, что человек видел, нельзя — подтверждение
+  // показывается заново с нынешним.
+  if (
+    lot.viewerProxyLimit !== undefined &&
+    lot.viewerProxyLimit.minorUnits !== intent.amount
+  ) {
+    return confirmWithdraw(context, intent);
+  }
+  const outcome = await withOneRetry(() =>
+    context.auction.withdrawProxyLimit({
+      viewer: context.viewer,
+      lotId: intent.lotId,
+      opId: intent.opId,
+    }),
+  );
+  switch (outcome.kind) {
+    case "accepted":
+      return resultBody(lot, intent.page, {
+        command: "withdraw",
+        kind: "withdrawn",
+      });
+    case "refused":
+      return resultBody(lot, intent.page, {
+        command: "withdraw",
+        kind: "refused",
+        refusal: outcome.refusal,
+      });
+    case "unanswered":
+      return resultBody(lot, intent.page, {
+        command: "withdraw",
+        kind: "unknown",
+      });
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
 }
 
 export async function confirmCommand(
@@ -214,7 +362,7 @@ export async function withOneRetry<Outcome extends { kind: string }>(
 export async function commitCommand(
   context: CommandContext,
   intent: {
-    command: AuctionCommand;
+    command: PlacedCommand;
     lotId: string;
     opId: string;
     amount: number;
@@ -225,13 +373,13 @@ export async function commitCommand(
   // «Да» из устаревшего подтверждения: лот ушёл из онлайн-торгов — в финал,
   // в удержание или к итогу. Ставка финала — лист карточки финала, поэтому
   // команда не уходит, а карточка называет отказ по снимку.
-  const { status } = lot;
-  if (status.kind !== "trading" || status.phase !== "online") {
+  const offered = offeredFor(lot, intent.command);
+  if (offered === undefined) {
     return resultBody(lot, intent.page, notOffered(intent.command, lot));
   }
   const amount: Money = {
     minorUnits: intent.amount,
-    currency: status.currentPrice.currency,
+    currency: offered.currentPrice.currency,
   };
   const request = {
     viewer: context.viewer,
@@ -242,12 +390,17 @@ export async function commitCommand(
   // Notifications не задерживает ставку у дедлайна. Ставка кладёт лот в
   // избранное асинхронно, по факту из шины, поэтому чтение, начатое вместе с
   // командой, видит отметки до неё.
-  const followed = notFollowedYet(context, intent.lotId);
+  // Лимит удержанного лота события для Notifications не рождает и лот в
+  // избранное не кладёт: подсказки об этом на экране нет (PER-821).
+  const followed = offered.forFinal
+    ? Promise.resolve(false)
+    : notFollowedYet(context, intent.lotId);
   const settled = {
     context,
     lot,
     intent,
     amount,
+    forFinal: offered.forFinal,
     autoFollowNote: followed,
   };
   return intent.command === "bid"
@@ -277,7 +430,13 @@ export async function placeFinalBid(
   context: CommandContext,
   intent: { lotId: string; amount: number; page: number },
 ): Promise<AuctionScreenBody> {
-  return placeFinalBidOn(context, await readLot(context, intent.lotId), intent);
+  let lot: LotView;
+  try {
+    lot = await readLot(context, intent.lotId);
+  } catch (cause) {
+    throw new FinalBidReadUnavailable(cause);
+  }
+  return placeFinalBidOn(context, lot, intent);
 }
 
 // Ставка финала по уже прочитанному лоту: и нажатие «Поставить», и выбранное
@@ -295,7 +454,9 @@ async function placeFinalBidOn(
       page: intent.page,
       ...(finalBid === undefined ? {} : { finalBid }),
     });
-  if (status.kind !== "trading" || status.phase !== "live") return shown(lot);
+  if (status.kind === "trading" && status.phase !== "live") return shown(lot);
+  if (status.kind !== "trading")
+    return shown(lot, { kind: "refused", refusal: { kind: "lot-not-open" } });
   const amount: Money = {
     minorUnits: intent.amount,
     currency: status.currentPrice.currency,
@@ -309,22 +470,35 @@ async function placeFinalBidOn(
       opId,
     }),
   );
+  // После отправки недоступность чтения не означает отказ ставки. Хотя бы
+  // исход команды остаётся видимым на уже прочитанной карточке.
+  const reread = async (version?: number) => {
+    try {
+      return await context.auction.getLot({
+        viewer: context.viewer,
+        lotId: intent.lotId,
+        ...(version === undefined || version <= 0
+          ? {}
+          : { atLeastVersion: version }),
+      });
+    } catch {
+      return undefined;
+    }
+  };
   switch (outcome.kind) {
-    case "accepted":
+    case "accepted": {
       // Чтение отстаёт от команды: карточка дочитывает лот до версии ответа,
       // иначе принятая ставка стояла бы над прежней ценой.
+      const current = await reread(outcome.lotVersion);
       return shown(
-        await context.auction.getLot({
-          viewer: context.viewer,
-          lotId: intent.lotId,
-          ...(outcome.lotVersion > 0
-            ? { atLeastVersion: outcome.lotVersion }
-            : {}),
-        }),
-        { kind: "accepted", amount },
+        current ?? lot,
+        current === undefined
+          ? { kind: "accepted-unread", amount }
+          : { kind: "accepted", amount },
       );
+    }
     case "unanswered":
-      return shown(await readLot(context, intent.lotId), { kind: "unknown" });
+      return shown((await reread()) ?? lot, { kind: "unknown" });
     case "refused": {
       const { refusal } = outcome;
       if (refusal.kind === "display-name-not-chosen") {
@@ -335,10 +509,10 @@ async function placeFinalBidOn(
           intent.page,
         );
       }
-      return shown(
-        atLeastExpected(await readLot(context, intent.lotId), refusal),
-        { kind: "refused", refusal },
-      );
+      return shown(atLeastExpected((await reread()) ?? lot, refusal), {
+        kind: "refused",
+        refusal,
+      });
     }
     default: {
       const _exhaustive: never = outcome;
@@ -373,12 +547,13 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
     context: CommandContext;
     lot: LotView;
     intent: {
-      command: AuctionCommand;
+      command: PlacedCommand;
       lotId: string;
       amount: number;
       page: number;
     };
     amount: Money;
+    forFinal: boolean;
     autoFollowNote: Promise<boolean>;
   },
   outcome: CommandOutcome<Refusal>,
@@ -392,6 +567,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
       return acceptedBody(lot, intent, amount, outcome.lotVersion, {
         favorites: await settled.autoFollowNote,
         ...(extension === undefined ? {} : { extension }),
+        ...(settled.forFinal ? { forFinal: true as const } : {}),
       });
     }
     case "unanswered":
@@ -497,7 +673,7 @@ function acceptedBody(
   intent: { command: AuctionCommand; lotId: string; page: number },
   amount: Money,
   lotVersion: number,
-  notes: { favorites: boolean; extension?: BidExtension },
+  notes: { favorites: boolean; extension?: BidExtension; forFinal?: true },
 ): AuctionScreenBody {
   return {
     blocks: [
@@ -512,6 +688,7 @@ function acceptedBody(
         ...(notes.extension === undefined
           ? {}
           : { extension: notes.extension }),
+        ...(notes.forFinal === true ? { forFinal: true as const } : {}),
       },
     ],
     keyboard: [
@@ -745,13 +922,17 @@ function questionBody(
   context: CommandContext,
   lot: LotView,
   intent: QuestionIntent,
-  explained: boolean,
+  explainedBefore: boolean,
 ): AuctionScreenBody {
+  // Лимит удержанному лоту (PER-821): пример и «Как это работает» говорят о
+  // шагах онлайн-недели, а лимит сработает по сетке финала.
+  const forFinal = intent.question === "proxy" && lot.status.kind === "held";
+  const explained = explainedBefore && !forFinal;
   const current =
     intent.question === "bid"
       ? lot.nextPrice
       : intent.question === "proxy"
-        ? (lot.viewerProxyLimit ?? lot.nextPrice)
+        ? (lot.viewerProxyLimit ?? (forFinal ? undefined : lot.nextPrice))
         : undefined;
   return {
     blocks: [
@@ -766,10 +947,11 @@ function questionBody(
           ? { currentIsLimit: true }
           : {}),
         ...(explained ? { explainer: explainerOf(lot, context.viewer) } : {}),
+        ...(forFinal ? { forFinal: true as const } : {}),
       },
     ],
     keyboard: [
-      ...(intent.question === "proxy" && !explained
+      ...(intent.question === "proxy" && !explained && !forFinal
         ? [
             [
               {
@@ -861,11 +1043,11 @@ export async function answerQuestion(
     );
   }
   const command = intent.question;
-  const { status } = lot;
-  if (status.kind !== "trading" || status.phase !== "online") {
+  const offered = offeredFor(lot, command);
+  if (offered === undefined) {
     return resultBody(lot, intent.page, notOffered(command, lot));
   }
-  const amount = parseAmount(text, status.currentPrice.currency);
+  const amount = parseAmount(text, offered.currentPrice.currency);
   if (!amount.ok) {
     return answerRefusedBody(
       lot,

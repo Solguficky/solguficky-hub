@@ -40,6 +40,12 @@ object ScreenJson {
         val active = this.lot(auctionId, live.lot)
         active.set[JsonNode]("price", money(live.price))
         optional(active, "ask", live.ask.map(money))
+        // Следующая цена — главная цифра страницы; остальное — подпись к ней: шаг, время лота и база роста (PER-819).
+        active.set[JsonNode]("next", money(live.next))
+        active.set[JsonNode]("step", money(live.step))
+        optional(active, "started_at", live.startedAt.map(at => nodes.textNode(at.toString)))
+        optional(active, "start", live.startingPrice.map(money))
+        optional(active, "online_end", live.onlineEndPrice.map(money))
         optional(active, "leader", live.leader.map(nodes.textNode))
         val bids = active.putArray("bids")
         live.bids.foreach { bid =>
@@ -62,11 +68,13 @@ object ScreenJson {
         }
         root.set[JsonNode]("closed", node)
         optional(root, "next", next.map(this.lot(auctionId, _)))
-      case ScreenState.Finished(totals) =>
+      case ScreenState.Finished(sold, totals) =>
         root.put("phase", "finished")
+        root.set[JsonNode]("sold", this.sold(auctionId, sold))
         root.set[JsonNode]("totals", this.totals(totals))
-      case ScreenState.Cancelled(totals) =>
+      case ScreenState.Cancelled(sold, totals) =>
         root.put("phase", "cancelled")
+        root.set[JsonNode]("sold", this.sold(auctionId, sold))
         root.set[JsonNode]("totals", this.totals(totals))
     }
     mapper.writeValueAsString(root)
@@ -103,6 +111,21 @@ object ScreenJson {
       case BidChannel.Hall => "hall"
       case BidChannel.Online => "online"
     }
+
+  /** Проданные лоты итога: цена, покупатель по имени и база роста, как у активного лота. */
+  private def sold(auctionId: UUID, lots: List[ScreenSold]): com.fasterxml.jackson.databind.node.ArrayNode = {
+    val array = nodes.arrayNode()
+    lots.foreach { sold =>
+      val node = this.lot(auctionId, sold.lot)
+      node.set[JsonNode]("price", money(sold.price))
+      node.put("buyer", sold.buyer)
+      optional(node, "start", sold.startingPrice.map(money))
+      optional(node, "online_end", sold.onlineEndPrice.map(money))
+      node.put("in_final", sold.inFinal)
+      array.add(node)
+    }
+    array
+  }
 
   private def totals(value: Totals): ObjectNode = {
     val node = nodes.objectNode()
