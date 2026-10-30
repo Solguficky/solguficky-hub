@@ -24,9 +24,9 @@ import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import { openPromo } from "./internal/use-cases/open-promo.js";
+import { openAuctionResults } from "./internal/use-cases/open-results.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
 import { openSet } from "./internal/use-cases/open-set.js";
-import { openPredictionResults } from "./internal/use-cases/prediction-results.js";
 import {
   answerPredictionAlias,
   answerPredictionNumber,
@@ -195,8 +195,19 @@ export function dispatchAuctionIntent(input: {
           ? {}
           : { auctionId: intent.auctionId }),
       });
+    // Прежняя кнопка «Итоги» прогнозов (PER-813): итоги живут во вкладке
+    // «Прогнозы», старая кнопка и весть «К итогам» открывают её.
     case "prediction-results":
-      return openPredictionResults(context, intent.auctionId);
+      return openPrediction(context, {
+        auctionId: intent.auctionId,
+        round: "catalog",
+      });
+    case "auction-results":
+      return openAuctionResults({
+        auction: input.auction,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+      });
     case "day-chronicle":
       return openDayChronicle(context, intent.auctionId);
     case "auction-chronicle":

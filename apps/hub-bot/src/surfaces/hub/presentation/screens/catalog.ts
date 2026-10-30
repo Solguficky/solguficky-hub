@@ -313,12 +313,12 @@ export const screenCatalog = {
     parent: "lots",
     backName: "Лоты",
   },
-  // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
-  // корня аукциона и возврат туда же (PER-644).
-  "prediction-results": {
+  // Итоги завершённого аукциона (PER-813) — тело общего аукционного дерева,
+  // вход из корня аукциона и возврат туда же.
+  "auction-results": {
     class: "screen",
     nav: "tree",
-    title: "Итоги прогнозов",
+    title: "Итоги аукциона",
     parent: "auction-root",
     backName: "Итоги",
   },

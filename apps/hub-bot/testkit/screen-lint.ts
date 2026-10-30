@@ -3,9 +3,9 @@ import {
   dayChronicleButtonLabel,
 } from "../src/auction-day-chronicle.js";
 import { predictionButtonLabel } from "../src/auction-prediction.js";
-import { predictionResultsButtonLabel } from "../src/auction-prediction-results.js";
 import { promoButtonLabel } from "../src/auction-promo.js";
 import { raffleButtonLabel } from "../src/auction-raffle.js";
+import { auctionResultsButtonLabel } from "../src/auction-results.js";
 import {
   followLabel,
   lotNextLabel,
@@ -93,7 +93,7 @@ const auctionRootPairs = [
   // «🏷️ Лоты» и «🎬 Промо» — первым рядом (PER-798).
   `${lotsLabel}|${promoButtonLabel}`,
   `${raffleButtonLabel}|${predictionButtonLabel}`,
-  `${raffleButtonLabel}|${predictionResultsButtonLabel}`,
+  `${raffleButtonLabel}|${auctionResultsButtonLabel}`,
   `${dayChronicleButtonLabel}|${auctionChronicleButtonLabel}`,
 ];
 
