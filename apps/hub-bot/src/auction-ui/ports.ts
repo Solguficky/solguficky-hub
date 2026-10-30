@@ -523,7 +523,7 @@ export type WinnerInvoiceView = {
   lotId: string;
   amount: Money;
   // Момент RFC 3339 в UTC. Просрочка — не статус: счёт ждёт оплаты после него.
-  paymentDueAt: string;
+  paymentDueAt: string | undefined;
   status: InvoiceStatus;
 };
 

@@ -97,7 +97,11 @@ final class InvoicingHandler(
   override def process(envelope: EventEnvelope[StoredLotEvent]): Future[Done] =
     InvoicingHandler.sale(envelope) match {
       case None => Future.successful(Done)
-      case Some(sale) => termOf(sale.auction).flatMap(term => issue(sale.invoice, sale.terms(term)))
+      case Some(sale) =>
+        termOf(sale.auction).flatMap { term =>
+          val terms = sale.terms(term)
+          issue(sale.invoice, if (sale.auction.value.version == 5) terms.copy(paymentDueAt = None) else terms)
+        }
     }
 
   /**

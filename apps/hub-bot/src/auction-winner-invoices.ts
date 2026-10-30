@@ -14,7 +14,7 @@ export const invoiceMissingTitle = "Счёт не найден";
 
 const instructionsHeading = "<b>Как оплатить и получить</b>";
 const noInstructions =
-  "Как оплатить и получить, организатор ещё не написал. Загляни сюда позже.";
+  "Организатор добавит инструкцию по оплате не позже завершения аукциона. Она появится здесь.";
 
 export type InvoiceTextOptions = {
   // Момент RFC 3339 для чтения в поясе сообщества.
@@ -30,6 +30,8 @@ export function invoiceLabel(item: InvoiceItem | undefined): string {
 function statusLine(item: InvoiceItem, options: InvoiceTextOptions): string {
   switch (item.status) {
     case "awaiting-payment":
+      if (item.paymentDueAt === undefined)
+        return "срок оплаты начнётся после завершения аукциона";
       return `ждёт оплаты до ${options.moment(item.paymentDueAt)}`;
     case "paid":
       return "оплачен, ждёт выдачи";

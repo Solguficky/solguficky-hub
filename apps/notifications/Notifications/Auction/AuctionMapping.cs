@@ -200,7 +200,7 @@ public enum InvoiceStatus { AwaitingPayment, Paid }
 /// </summary>
 public sealed record InvoiceSnapshot(Guid InvoiceId, long Version, DateTimeOffset OccurredAt, InvoiceStatus Status,
     Guid WinnerId, Guid LotId, Guid AuctionId, long AmountMinorUnits, string AmountCurrency,
-    DateTimeOffset PaymentDueAt, bool Issued);
+    DateTimeOffset? PaymentDueAt, bool Issued);
 
 /// <summary>Факт счёта: конверт и снимок состояния после него.</summary>
 public sealed record AuctionInvoice(Guid EventId, InvoiceSnapshot Snapshot);
@@ -368,12 +368,14 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison("state amount is invalid");
         }
-        if (!Instant(state.PaymentDueAt, out var paymentDueAt))
+        var hasDue = !string.IsNullOrEmpty(state.PaymentDueAt);
+        var paymentDueAt = default(DateTimeOffset);
+        if (hasDue && !Instant(state.PaymentDueAt, out paymentDueAt))
         {
             return new AuctionDecoded.Poison("payment_due_at is not an RFC 3339 UTC instant");
         }
 
-        var expected = occasion == InvoiceEvent.OccasionOneofCase.InvoiceIssued
+        var expected = occasion is InvoiceEvent.OccasionOneofCase.InvoiceIssued or InvoiceEvent.OccasionOneofCase.InvoicePaymentDueChanged
             ? InvoiceState.StatusOneofCase.AwaitingPayment
             : InvoiceState.StatusOneofCase.Paid;
         if (state.StatusCase != expected)
@@ -387,8 +389,8 @@ public static class AuctionMapping
 
         return new AuctionDecoded.Invoice(new AuctionInvoice(eventId,
             new InvoiceSnapshot(invoiceId, message.Version, occurredAt, status, winnerId, lotId,
-                Guid.Parse(state.AuctionId), amount.MinorUnits, amount.Currency, paymentDueAt,
-                occasion == InvoiceEvent.OccasionOneofCase.InvoiceIssued)));
+                Guid.Parse(state.AuctionId), amount.MinorUnits, amount.Currency, hasDue ? paymentDueAt : null,
+                occasion is InvoiceEvent.OccasionOneofCase.InvoiceIssued or InvoiceEvent.OccasionOneofCase.InvoicePaymentDueChanged)));
     }
 
     private static AuctionDecoded DecodeAuction(string subject, AuctionEvent.OccasionOneofCase occasion,

@@ -925,7 +925,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         return NotificationFacts.TypeOf(kind) switch
         {
             NotificationFacts.InvoiceReminderType => NotificationFacts.InvoiceReminder(id, recipient, taskId,
-                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt, now),
+                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt ?? throw new InvalidOperationException("invoice payment has not started"), now),
             NotificationFacts.InvoiceDueReminderType => NotificationFacts.InvoiceDueReminder(id, recipient, taskId,
                 replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt, now),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),

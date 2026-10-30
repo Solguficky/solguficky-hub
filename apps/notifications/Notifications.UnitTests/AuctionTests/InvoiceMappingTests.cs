@@ -13,6 +13,24 @@ namespace Notifications.UnitTests.AuctionTests;
 public class InvoiceMappingTests
 {
     [Fact]
+    public void When_PaymentHasNotStarted_Expect_NoDeadline()
+    {
+        var message = EventFactory.Invoice(EventFactory.InvoiceOfSale(), EventFactory.NewId());
+        message.State.PaymentDueAt = "";
+        Decode(AuctionFeed.InvoiceIssuedSubject, message).Snapshot.PaymentDueAt.ShouldBeNull();
+    }
+
+    [Fact]
+    public void When_PaymentDeadlineStarts_Expect_ReminderAnchorAtTheChange()
+    {
+        var message = EventFactory.Invoice(EventFactory.InvoiceOfSale(), EventFactory.NewId(), version: 2);
+        message.InvoicePaymentDueChanged = new InvoicePaymentDueChanged();
+        var result = Decode(AuctionFeed.InvoicePaymentDueChangedSubject, message);
+        result.Snapshot.PaymentDueAt.ShouldNotBeNull();
+        result.Snapshot.Issued.ShouldBeTrue();
+    }
+
+    [Fact]
     public void When_InvoiceRaised_Expect_SnapshotWithWinnerAmountAndDeadline()
     {
         var invoiceId = EventFactory.InvoiceOfSale();

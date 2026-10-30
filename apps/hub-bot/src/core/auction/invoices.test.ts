@@ -1,5 +1,4 @@
 import { create } from "@bufbuild/protobuf";
-import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
 import {
   InvoiceState_AwaitingPaymentSchema,
@@ -28,6 +27,25 @@ const snapshot = (fields: Record<string, unknown> = {}) =>
   });
 
 describe("myInvoicesOf", () => {
+  it("keeps a purchased lot visible before its payment term starts", () => {
+    const result = myInvoicesOf(
+      create(ListMyInvoicesResponseSchema, {
+        invoices: [snapshot({ paymentDueAt: "" })],
+      }),
+    );
+    expect(result.invoices[0]?.paymentDueAt).toBeUndefined();
+    expect(result.invoices[0]?.status).toBe("awaiting-payment");
+  });
+
+  it("rejects a nonempty malformed payment deadline", () => {
+    expect(() =>
+      myInvoicesOf(
+        create(ListMyInvoicesResponseSchema, {
+          invoices: [snapshot({ paymentDueAt: "tomorrow" })],
+        }),
+      ),
+    ).toThrow();
+  });
   it("translates the invoices and the organizer's text", () => {
     expect(
       myInvoicesOf(

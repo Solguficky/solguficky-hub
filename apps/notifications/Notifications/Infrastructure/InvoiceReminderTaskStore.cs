@@ -211,7 +211,8 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
         var replica = await InvoiceReplicaStore.ReadLocked(work, task.InvoiceId, cancellationToken);
-        if (replica is null || replica.Status != InvoiceStatus.AwaitingPayment)
+        if (replica is null || replica.Status != InvoiceStatus.AwaitingPayment || replica.PaymentDueAt is null ||
+            task.DueAt != replica.PaymentDueAt - InvoiceReminderKinds.Lead(task.Kind))
         {
             var cancelled = await work.Execute(
                 CancelOneSql,

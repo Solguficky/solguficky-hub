@@ -1,0 +1,20 @@
+{
+  "eventId": "0190f2a0-0000-7000-8000-000000000001",
+  "occurredAt": "2026-10-01T09:00:00Z",
+  "event": {
+    "kind": "InvoiceIssued",
+    "invoiceIssued": {
+      "auctionId": "00000000-0000-0004-0000-000000000001",
+      "lotId": "0190f2a0-0000-7000-8000-00000000000b",
+      "winnerId": "00000000-0000-0001-0000-000000000001",
+      "amount": {
+        "minorUnits": 125000,
+        "currency": "RUB"
+      },
+      "paymentDueAt": null
+    },
+    "invoicePaid": null,
+    "invoiceHandedOver": null,
+    "fulfillmentChosen": null
+  }
+}

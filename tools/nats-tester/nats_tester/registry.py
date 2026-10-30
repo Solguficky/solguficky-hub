@@ -90,6 +90,7 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.lot_set_collected': auction_events_pb2.AuctionEvent,
     'events.auction.auction_published': auction_events_pb2.AuctionEvent,
     'events.auction.auction_hidden': auction_events_pb2.AuctionEvent,
+    'events.auction.invoice_payment_due_changed': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_issued': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_paid': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_handed_over': auction_events_pb2.InvoiceEvent,

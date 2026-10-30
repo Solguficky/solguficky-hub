@@ -46,6 +46,8 @@ public static class AuctionFeed
     /// Организатор подтвердил оплату (PER-308, PER-330): по этому факту
     /// снимаются несработавшие напоминания о счёте.
     /// </summary>
+    public const string InvoicePaymentDueChangedSubject = "events.auction.invoice_payment_due_changed";
+
     public const string InvoicePaidSubject = "events.auction.invoice_paid";
 
     /// <summary>
@@ -118,6 +120,7 @@ public static class AuctionFeed
         new Dictionary<string, InvoiceEvent.OccasionOneofCase>(StringComparer.Ordinal)
         {
             [InvoiceIssuedSubject] = InvoiceEvent.OccasionOneofCase.InvoiceIssued,
+            [InvoicePaymentDueChangedSubject] = InvoiceEvent.OccasionOneofCase.InvoicePaymentDueChanged,
             [InvoicePaidSubject] = InvoiceEvent.OccasionOneofCase.InvoicePaid,
         };
 }
