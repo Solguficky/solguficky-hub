@@ -3,7 +3,7 @@ import type {
   AuctionSummaryView,
 } from "../../../../auction-ui/index.js";
 import { marked, pictogram } from "../../../../core/pictograms.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import { type CommunityDay, communityShownTime } from "../../community-time.js";
 import { readableMoment } from "./kit.js";
 
 // Стадия аукциона словом — одна у его корня (PER-605) и у строки аукциона на
@@ -46,7 +46,7 @@ export function auctionStateLine(
   const lead = marked(pictogram.auction, "Аукцион:");
   return auction.stage === "prebidding" && auction.closesAt !== undefined
     ? `${lead} ${words} до ${readableMoment(
-        communityLocalTime(auction.closesAt, timeZone),
+        communityShownTime(auction.closesAt, timeZone),
         today,
       )}`
     : `${lead} ${words}`;

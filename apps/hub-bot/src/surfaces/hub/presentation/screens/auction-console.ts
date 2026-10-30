@@ -40,7 +40,11 @@ import type {
   WindowNote,
   WindowRef,
 } from "../../application/types.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import {
+  type CommunityDay,
+  communityLocalTime,
+  communityShownTime,
+} from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleAnnouncementData,
@@ -255,13 +259,13 @@ function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
       return week?.opensAt === undefined || week.closesAt === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(
-            `Сроки недели сохранены: с ${moment(week.opensAt, view)} до ${moment(week.closesAt, view)}`,
+            `Сроки недели сохранены: с ${moment(week.opensAt, view)} до ${deadline(week.closesAt, view)}`,
           );
     case "raffle-saved":
       return week?.raffleClosesAt === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(
-            `Регистрация в розыгрыше закроется ${moment(week.raffleClosesAt, view)}`,
+            `Регистрация в розыгрыше закроется ${deadline(week.raffleClosesAt, view)}`,
           );
     // Приз называет себя сам (PER-649): строка «Приз: …» идёт и в сводке.
     case "prize-saved":
@@ -317,7 +321,7 @@ export function tradingElsewhere(
     holder.meetupTitle !== undefined
       ? `у сходки «${holder.meetupTitle.replace(/\s+/g, " ").trim()}»`
       : holder.opensAt !== undefined && holder.closesAt !== undefined
-        ? `у аукциона с онлайн-неделей с ${localMoment(holder.opensAt, view)} до ${localMoment(holder.closesAt, view)}`
+        ? `у аукциона с онлайн-неделей с ${localMoment(holder.opensAt, view)} до ${deadline(holder.closesAt, view)}`
         : "у другого аукциона";
   return `Торги уже идут ${where}: открыть неделю можно, когда они закончатся`;
 }
@@ -340,6 +344,15 @@ export function finalToast(final: boolean): string {
 
 function moment(instant: string, view: ConsoleScreenView): string {
   return readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+}
+
+// Срок, на котором торги или приём кончаются: полночь читается как 23:59
+// предыдущего дня (PER-831).
+function deadline(
+  instant: string,
+  view: { timeZone: string; today: CommunityDay },
+): string {
+  return readableMoment(communityShownTime(instant, view.timeZone), view.today);
 }
 
 function finalLine(week: AuctionWeek): string {
@@ -371,11 +384,11 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
   if (week.raffleClosesAt === undefined) return "Розыгрыш: нет.";
   const raffle = view.console.raffle;
   if (raffle === undefined) {
-    return `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+    return `Розыгрыш: регистрация до ${deadline(week.raffleClosesAt, view)}.`;
   }
   switch (raffle.status) {
     case "open":
-      return `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+      return `Розыгрыш: регистрация до ${deadline(week.raffleClosesAt, view)}.`;
     case "closing":
     case "awaiting-beacon":
       return "Розыгрыш: регистрация закрыта, жеребьёвка идёт.";
@@ -499,7 +512,7 @@ function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
   if (week.opensAt === undefined || week.closesAt === undefined) {
     return "Сроки недели заданы не полностью.";
   }
-  return `Онлайн-неделя: с ${moment(week.opensAt, view)} до ${moment(week.closesAt, view)}.`;
+  return `Онлайн-неделя: с ${moment(week.opensAt, view)} до ${deadline(week.closesAt, view)}.`;
 }
 
 // Вход к скрытой сходке, где её публикуют (PER-801): цель словом, как
@@ -560,7 +573,7 @@ function statusLines(view: ConsoleScreenView): string[] {
       return [
         week?.closesAt === undefined
           ? "Идут онлайн-торги."
-          : `Идут онлайн-торги до ${moment(week.closesAt, view)}.`,
+          : `Идут онлайн-торги до ${deadline(week.closesAt, view)}.`,
         ...(week === undefined
           ? []
           : [
@@ -1051,7 +1064,7 @@ function checklistLines(view: ConsoleScreenView): string[] {
       ? `${checkNone} Розыгрыш не назначен.`
       : week.rafflePrize === undefined
         ? `${checkNo} Розыгрыш: приз не задан.`
-        : `${checkYes} Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}, приз есть.`,
+        : `${checkYes} Розыгрыш: регистрация до ${deadline(week.raffleClosesAt, view)}, приз есть.`,
     paymentTextCheck(console),
     console.hidden
       ? `${checkNo} Аукцион скрыт от участников: они его не видят, пока не опубликуешь.`
@@ -1570,7 +1583,7 @@ export function weekConfirmScreen(confirm: {
             : []),
           ...(closesAt === undefined
             ? []
-            : [`Торги закроются ${moment(closesAt, view)}.`]),
+            : [`Торги закроются ${deadline(closesAt, view)}.`]),
         ].join(" "),
       ),
       confirm.idle === 0
@@ -2174,7 +2187,9 @@ function spanLine(
 ): string {
   const local = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);
-  return `с ${local(window.from)} до ${local(window.until)}, шаг ${money(window.step)}`;
+  const until = (instant: string) =>
+    readableMoment(communityShownTime(instant, view.timeZone), view.today);
+  return `с ${local(window.from)} до ${until(window.until)}, шаг ${money(window.step)}`;
 }
 
 // Лоты окна, которых нет в реестре, Auction принимает молча (ADR-047,
@@ -2211,7 +2226,9 @@ export function windowNoteText(
     case "launched": {
       const local = (instant: string) =>
         readableMoment(communityLocalTime(instant, view.timeZone), view.today);
-      return `Окно запущено: с ${local(note.from)} до ${local(note.until)}, шаг ${money(note.step)}.`;
+      const until = (instant: string) =>
+        readableMoment(communityShownTime(instant, view.timeZone), view.today);
+      return `Окно запущено: с ${local(note.from)} до ${until(note.until)}, шаг ${money(note.step)}.`;
     }
     case "launch-closed":
       return "Запуск окна доступен только во время онлайн-торгов.";
@@ -2558,13 +2575,15 @@ export function launchScreen(view: {
   // Начало «сейчас» — момент, в который сервис решил команду, и назвать его
   // нечем: пульт пишет «сейчас».
   const from = draft.from === undefined ? "сейчас" : local(draft.from);
+  const until = readableMoment(
+    communityShownTime(draft.until, view.timeZone),
+    view.today,
+  );
   return {
     id: "step-window-launch",
     text: screenText(
       title,
-      escapeHtml(
-        `с ${from} до ${local(draft.until)}, шаг ${money(draft.step)}`,
-      ),
+      escapeHtml(`с ${from} до ${until}, шаг ${money(draft.step)}`),
       escapeHtml("Вкл — лот в окне, Выкл — шаг у лота обычный."),
       escapeHtml(`лотов ${selected.size} из ${lots.length}`),
       // Набор лотов едет в кнопке пульта битовой маской (PER-615): реестр

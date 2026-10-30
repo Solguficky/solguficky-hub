@@ -18,7 +18,7 @@ import {
   predictionSpec,
 } from "../../../../auction-ui/index.js";
 import { money, truncate } from "../../../../core/format.js";
-import { communityLocalTime } from "../../community-time.js";
+import { communityShownTime } from "../../community-time.js";
 import type { AuctionView } from "./auction.js";
 import { nameChoiceScreen } from "./auction-bid.js";
 import {
@@ -94,7 +94,7 @@ export function predictionScreen(
       ...predictionParagraphs(block, {
         moment: (instant) =>
           readableMoment(
-            communityLocalTime(instant, view.timeZone),
+            communityShownTime(instant, view.timeZone),
             view.today,
           ),
         money,

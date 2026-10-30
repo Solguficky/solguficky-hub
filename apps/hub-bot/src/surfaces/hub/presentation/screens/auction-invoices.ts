@@ -10,7 +10,7 @@ import type {
   PaymentTextAskError,
   PaymentTextNote,
 } from "../../application/types.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import { type CommunityDay, communityShownTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleInvoiceData,
@@ -63,7 +63,7 @@ function winnerOf(invoice: InvoiceRow): string {
 }
 
 function momentOf(at: string, clock: Clock): string {
-  return readableMoment(communityLocalTime(at, clock.timeZone), clock.today);
+  return readableMoment(communityShownTime(at, clock.timeZone), clock.today);
 }
 
 function statusText(invoice: InvoiceRow, clock: Clock): string {

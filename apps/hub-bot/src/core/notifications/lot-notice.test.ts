@@ -414,6 +414,22 @@ describe("renderLotNotice", () => {
     );
   });
 
+  // PER-831: полночь читается как 23:59, а 00:03 после анти-снайпа — как есть.
+  it("names a midnight deadline as 23:59 and keeps 00:03", () => {
+    const lotId = lotOf(1);
+    const outbid = (at: string) =>
+      renderLotNotice(
+        { kind: "lot-outbid", lotId, currentPrice: rub(950) },
+        {
+          lots: new Map([[lotId, lot("Кружка", { deadline: at })]]),
+          frequencyButton: false,
+          timeZone,
+        },
+      ).text;
+    expect(outbid("2026-10-30T21:00:00Z")).toContain("Торг до 23:59.");
+    expect(outbid("2026-10-30T21:03:00Z")).toContain("Торг до 00:03.");
+  });
+
   // Продление анти-снайпом двигает дедлайн, и сообщение говорит об этом.
   it("names the extended deadline of the outbid lot", () => {
     const lotId = lotOf(1);

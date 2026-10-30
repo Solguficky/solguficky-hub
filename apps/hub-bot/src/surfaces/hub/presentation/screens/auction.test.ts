@@ -423,6 +423,30 @@ describe("lot card in the hub shell", () => {
     expect(plain(screen.text)).toContain("Торги до: 9 января 2027, сб, 21:00");
   });
 
+  // PER-831: дедлайн в полночь читается как 23:59 предыдущего дня.
+  it.each([
+    ["2026-10-30T21:00:00Z", "Торги до: 30 октября, пт, 23:59"],
+    ["2026-10-30T21:03:00Z", "Торги до: 31 октября, сб, 00:03"],
+    ["2026-10-30T10:30:00Z", "Торги до: 30 октября, пт, 13:30"],
+  ])("shows the deadline %s as it reads at midnight", (deadline, line) => {
+    const { screen } = auctionScreen(
+      view(
+        [
+          lot({
+            status: {
+              kind: "trading",
+              currentPrice: rub(1),
+              deadline,
+              phase: "online",
+            },
+          }),
+        ],
+        "plain",
+      ),
+    );
+    expect(plain(screen.text)).toContain(line);
+  });
+
   // Карточка лота: статус первой группой, строки-поля без точки в конце.
   it.each([
     lot({ status: { kind: "draft" } }),

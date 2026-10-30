@@ -4,6 +4,7 @@ import type {
   AuctionTradingOpened,
   StepWindowAnnounced,
 } from "../../../gen/notifications/v1/notifications_pb.js";
+import { shownInstant } from "../format.js";
 import { marked, pictogram } from "../pictograms.js";
 import { localTime } from "./lot-notice.js";
 
@@ -159,7 +160,7 @@ export function renderAuctionAnnouncement(
   const meetup = notice.meetupTitle.trim();
   const of = meetup === "" ? "сходки" : `сходки «${meetup}»`;
   const opens = momentText(notice.opensAt, timeZone);
-  const closes = momentText(notice.closesAt, timeZone);
+  const closes = momentText(notice.closesAt, timeZone, true);
   if (notice.kind === "new-auction") {
     return {
       text: `Аукцион ${of} открыт: ${weekText(opens, closes)}.`,
@@ -201,9 +202,10 @@ function weekText(
 function momentText(
   instant: string | undefined,
   timeZone: string,
+  deadline = false,
 ): string | undefined {
   if (instant === undefined || instant === "") return undefined;
-  const date = new Date(instant);
+  const date = new Date(deadline ? shownInstant(instant, timeZone) : instant);
   if (Number.isNaN(date.getTime())) return undefined;
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
