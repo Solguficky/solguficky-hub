@@ -33,6 +33,7 @@ import {
   checkPlaceBids,
   createLotNoticeRender,
   type LotInfo,
+  type LotNoticeButton,
   type LotNoticeReads,
   type LotNoticeView,
   renderLotNotice,
@@ -353,8 +354,23 @@ export function renderNotification(
 }
 
 // Кнопки общего рендера — следы этой поверхности: лот — кнопка лота дерева,
-// частота — экран `/notifications`. У анонса без своих лотов и у старта финала
-// рядов нет, и клавиатура не уходит.
+// частота — экран `/notifications`, вход анонса финала — лента, корень аукциона
+// или раунд 2 прогнозов (PER-833).
+function traceButtonCallback(button: LotNoticeButton): string {
+  switch (button.kind) {
+    case "lot":
+      return traceLotCallback(button.lotId);
+    case "feed":
+      return traceFeedCallback(button.auctionId);
+    case "auction":
+      return traceRootCallback(button.auctionId);
+    case "predictions":
+      return `${tracePrefix}${encodeAuctionCallback({ kind: "prediction", auctionId: button.auctionId, round: "final" })}`;
+    case "frequency":
+      return traceNotifyCallback();
+  }
+}
+
 function traceMessage(view: LotNoticeView): NotificationMessage {
   return {
     text: view.text,
@@ -362,10 +378,7 @@ function traceMessage(view: LotNoticeView): NotificationMessage {
     rows: view.rows.map((row) =>
       row.map((button) => ({
         text: button.text,
-        callback_data:
-          button.kind === "lot"
-            ? traceLotCallback(button.lotId)
-            : traceNotifyCallback(),
+        callback_data: traceButtonCallback(button),
       })),
     ),
   };

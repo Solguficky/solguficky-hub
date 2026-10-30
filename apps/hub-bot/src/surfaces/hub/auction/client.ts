@@ -301,6 +301,12 @@ export type LotInfoReader = {
     auctionId: string,
     meta?: RpcMetadata,
   ): Promise<string | undefined>;
+  // Лот, который торгуется в живом финале, для кнопки вести о старте (PER-833).
+  finalActiveLot(
+    identityId: string,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<string | undefined>;
 };
 
 export function createLotInfoReader(
@@ -319,6 +325,18 @@ export function createLotInfoReader(
       return auction === undefined
         ? undefined
         : auctionSummaryViewOf(auction).finalAt;
+    },
+    async finalActiveLot(identityId, auctionId, meta) {
+      const { auction } = await rpc.getAuction(
+        {
+          viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+          auctionId,
+        },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      return auction === undefined
+        ? undefined
+        : auctionSummaryViewOf(auction).lineup?.activeLotId;
     },
     async lotInfo(identityId, lotId, meta) {
       const snapshot = await rpc.getLot(
