@@ -6,6 +6,7 @@ import {
   finalBidLabel,
   finalPriceLines,
   showsStep,
+  watchFinalLabel,
   withdrawButtonLabel,
 } from "../../../../auction-final.js";
 import { type HallLinks, hallButtons } from "../../../../auction-hall.js";
@@ -708,6 +709,7 @@ function feedLabel(
     case "name.return":
     case "lot.follow":
     case "lot.unfollow":
+    case "lot.watch":
     case "favorites.open-lot":
     case "favorites.prev":
     case "favorites.next":
@@ -946,6 +948,8 @@ function lotLabel(
       return followLabel;
     case "lot.unfollow":
       return unfollowLabel;
+    case "lot.watch":
+      return watchFinalLabel;
     case "lot.prev":
       return lotPrevLabel;
     case "lot.next":
@@ -1105,6 +1109,7 @@ function setLotLabelOf(
     case "lot.next":
     case "lot.follow":
     case "lot.unfollow":
+    case "lot.watch":
     case "feed.prev":
     case "feed.next":
     case "feed.back":
@@ -1358,6 +1363,7 @@ function historyLabel(button: AuctionButton): string {
     case "name.return":
     case "lot.follow":
     case "lot.unfollow":
+    case "lot.watch":
     case "favorites.open-lot":
     case "favorites.prev":
     case "favorites.next":

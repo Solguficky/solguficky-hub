@@ -17,6 +17,7 @@ import {
   noLimitDetail,
   noLimitTitle,
   showsStep,
+  watchFinalLabel,
   withdrawButtonLabel,
   withdrawNote,
   withdrawnTitle,
@@ -2154,6 +2155,8 @@ function renderButton(
       return text(followLabel);
     case "lot.unfollow":
       return text(unfollowLabel);
+    case "lot.watch":
+      return text(watchFinalLabel);
     case "lot.prev":
       return text(lotPrevLabel);
     case "lot.next":

@@ -24,7 +24,7 @@ import {
 } from "./internal/use-cases/name-settings.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
-import { openLot } from "./internal/use-cases/open-lot.js";
+import { openLot, watchFinal } from "./internal/use-cases/open-lot.js";
 import { openPromo } from "./internal/use-cases/open-promo.js";
 import { openAuctionResults } from "./internal/use-cases/open-results.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
@@ -190,6 +190,14 @@ export function dispatchAuctionIntent(input: {
         lotId: intent.lotId,
         page: intent.page,
         follow: intent.kind === "follow",
+      });
+    case "watch-final":
+      return watchFinal({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
       });
     case "favorites":
       return openFavorites({

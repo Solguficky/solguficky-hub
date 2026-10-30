@@ -1070,6 +1070,9 @@ export const screenCatalog = {
   // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
   hint: { class: "screen", nav: "exit" },
   notification: { class: "trace", nav: "free" },
+  // Трансляция хода торгов живого финала (PER-826): одно сообщение подписчика,
+  // которое бот правит на каждую ставку; одна кнопка «Не следить».
+  "bid-watch": { class: "trace", nav: "free" },
   // Файл материала (PER-644): подпись — название без разметки, под ним одна
   // кнопка «‹ Материалы».
   "material-file": { class: "trace", nav: "tree", parent: "materials" },

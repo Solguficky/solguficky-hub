@@ -1340,6 +1340,12 @@ const historyButton = (lotId: string, page: number) => ({
   callbackData: historyCallback(lotId, page, MAX_FEED_PAGE),
 });
 
+// «Следить за торгами» (PER-826) — свой ряд под ставкой на карточке живого финала.
+const watchButton = (lotId: string, page: number) => ({
+  action: "lot.watch" as const,
+  callbackData: encodeAuctionCallback({ kind: "watch-final", lotId, page }),
+});
+
 // Лот с итогом: «Обновить» под ним нет — без человека он уже не меняется.
 const settledKeyboard = (lotId: string, page: number, won = false) => [
   [historyButton(lotId, page)],
@@ -2822,6 +2828,7 @@ const liveBody = (input: {
   // Сумма кнопки в копейках; нет — смотрящий лидирует.
   button?: number;
   finalBid?: FinalBidOutcome;
+  watch?: boolean;
 }): AuctionScreenBody => ({
   blocks: [
     {
@@ -2844,6 +2851,7 @@ const liveBody = (input: {
       ...(input.button === undefined ? { standing: "leader" as const } : {}),
       live: { page: 2 },
       ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
+      ...(input.watch === true ? { watch: true as const } : {}),
     },
   ],
   keyboard: [
@@ -2860,6 +2868,7 @@ const liveBody = (input: {
         ]),
     // В живом финале листания нет (PER-644): карточку правит поток, и в
     // ряду листания остаётся одна «Обновить».
+    [watchButton(CONTRACT_LOT.lotId, 2)],
     [historyButton(CONTRACT_LOT.lotId, 2)],
     refreshRow(CONTRACT_LOT.lotId, 2),
     backRow(2),
@@ -2873,6 +2882,24 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
     auction: LIVE_AUCTION,
     auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
     body: liveBody({ lot: LIVE_LOT, participantName: "@owl", button: 125000 }),
+  },
+  // «Следить за торгами» (PER-826): та же карточка, а трансляцию запускает
+  // оболочка по признаку `watch`.
+  {
+    intent: "final: watch",
+    callbackData: encodeAuctionCallback({
+      kind: "watch-final",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+    }),
+    auction: LIVE_AUCTION,
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    body: liveBody({
+      lot: LIVE_LOT,
+      participantName: "@owl",
+      button: 125000,
+      watch: true,
+    }),
   },
   // Одно нажатие: команда с суммой кнопки и `op_id` нажатия, затем карточка,
   // дочитанная до версии ответа, со строкой «принята».

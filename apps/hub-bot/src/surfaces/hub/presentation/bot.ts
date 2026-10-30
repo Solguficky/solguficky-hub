@@ -29,6 +29,15 @@ import {
   type Viewer,
 } from "../../../auction-ui/index.js";
 import {
+  type BroadcastStore,
+  createLiveBroadcasts,
+  type LiveBroadcasts,
+} from "../../../core/auction/broadcast.js";
+import {
+  BROADCAST_STOP_DATA,
+  createBroadcastApi,
+} from "../../../core/auction/broadcast-telegram.js";
+import {
   createLiveCards,
   type LiveCardEntry,
   type LiveCards,
@@ -656,6 +665,9 @@ export type BotRuntime = {
     screens?: (kind: "console" | "floor") => LiveScreenStore;
     // Паузы между повторами чтения при восстановлении; тест подменяет.
     restorePauses?: readonly number[];
+    // Запись открытых трансляций хода торгов вне процесса (PER-826). Нет —
+    // трансляция живёт, пока жив процесс.
+    broadcasts?: BroadcastStore;
   };
   // Часы бота, мс эпохи: время «Обновлено» в пульте финала (PER-815).
   now?: () => number;
@@ -1191,6 +1203,8 @@ type UpdateContext = ShellContext & {
   // карточку заново: без неё нажатие под карточкой её из реестра снимает.
   liveCards?: LiveCards;
   liveShown?: boolean;
+  // Трансляции хода торгов (PER-826): кнопка карточки финала запускает их.
+  liveBroadcasts?: LiveBroadcasts;
   // Открытые пульты ведущего (PER-566) и отметка, что этот update показал
   // пульт финала: без неё нажатие под пультом его из реестра снимает.
   liveConsoles?: LiveConsoles;
@@ -1255,6 +1269,30 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
           edit: (card, body) =>
             editLiveLotCard(bot.api, { card, body, runtime, lotPhotos }),
         });
+  const liveBroadcasts =
+    runtime.live === undefined
+      ? undefined
+      : createLiveBroadcasts({
+          watches: runtime.live.watches,
+          limiter: runtime.live.limiter,
+          names: runtime.live.names,
+          ...(runtime.live.broadcasts === undefined
+            ? {}
+            : { store: runtime.live.broadcasts }),
+          timeZone: runtime.communityTimeZone ?? "UTC",
+          api: createBroadcastApi({
+            api: bot.api,
+            mark: screenMark("bid-watch"),
+            report: (error) => reportLiveEditFailure(runtime.logger, error),
+          }),
+          onError: (cause) =>
+            reportLiveEditFailure(
+              runtime.logger,
+              cause instanceof Error ? cause.message : String(cause),
+              "unexpected",
+            ),
+        });
+  void liveBroadcasts?.restore();
   const liveConsoles =
     runtime.live === undefined
       ? undefined
@@ -1297,6 +1335,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
+    if (liveBroadcasts !== undefined) ctx.liveBroadcasts = liveBroadcasts;
     if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
     if (liveFloors !== undefined) ctx.liveFloors = liveFloors;
     await next();
@@ -1337,6 +1376,15 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       chatId,
       canOpenManagement(person) ? commandsFor(person) : undefined,
     );
+  });
+  // «Не следить» под сообщением трансляции (PER-826): действие над своим
+  // чатом, без личности и без дерева.
+  bot.callbackQuery(BROADCAST_STOP_DATA, async (ctx) => {
+    const chatId = ctx.chat?.id;
+    if (chatId !== undefined) {
+      await liveBroadcasts?.stop(chatId, ctx.callbackQuery.message?.message_id);
+    }
+    await ctx.answerCallbackQuery().catch(() => undefined);
   });
   bot.on("callback_query:data", (ctx) =>
     handleCallback(ctx, runtime, questions, lotPhotos),
@@ -12136,6 +12184,17 @@ async function handleAuctionCallback(
   // Карточка финала (PER-336): сообщение, в котором она оказалась, правится
   // дальше по потоку аукциона.
   const chatId = ctx.chat?.id;
+  if (ctx.liveBroadcasts !== undefined && chatId !== undefined) {
+    for (const block of result.body.blocks) {
+      if (block.kind === "lot" && block.watch === true) {
+        void ctx.liveBroadcasts.start({
+          chatId,
+          auctionId: block.auctionId,
+          viewer: viewerOf(person),
+        });
+      }
+    }
+  }
   if (ctx.liveCards !== undefined && chatId !== undefined) {
     const live = liveCardOf(result.body, viewerOf(person));
     if (delivered.messageId !== undefined) {

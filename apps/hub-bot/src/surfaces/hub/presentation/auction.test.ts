@@ -2639,6 +2639,63 @@ describe("final lot card in the hub", () => {
     expect(auction.opIds).toHaveLength(0);
   });
 
+  // Трансляция хода торгов (PER-826): кнопка карточки присылает одно сообщение,
+  // дальше оно правится по потоку, а «Не следить» его останавливает.
+  it("broadcasts the bidding in one message after the watch button", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "watch-final", lotId, page: 0 })),
+    );
+    watch.emit(live(1, 1200));
+    await flush();
+    const sent = calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        plain(String((call.payload as { text?: string }).text)).includes(
+          "Следующая цена",
+        ),
+    );
+    expect(sent).toHaveLength(1);
+    const first = sent[0]?.payload as Shown;
+    expect(plain(first.text ?? "")).toContain("<b>1 300 ₽</b>");
+    expect(labels(first).flat()).toEqual(["Не следить"]);
+    const messageId = 101 + calls.indexOf(sent[0] as RecordedCall);
+
+    watch.emit(live(2, 1400));
+    await flush();
+    const edits = calls.filter(
+      (call) =>
+        call.method === "editMessageText" &&
+        (call.payload as { message_id?: number }).message_id === messageId,
+    );
+    expect(edits).toHaveLength(1);
+    expect(plain(((edits[0]?.payload ?? {}) as Shown).text ?? "")).toContain(
+      "<b>1 500 ₽</b>",
+    );
+
+    await bot.handleUpdate(press("v1:bc:x", { message_id: messageId }));
+    await flush();
+    const stopped = calls.filter(
+      (call) =>
+        call.method === "editMessageText" &&
+        (call.payload as { message_id?: number }).message_id === messageId,
+    );
+    expect(((stopped.at(-1)?.payload ?? {}) as Shown).text).toBe(
+      "Трансляция остановлена",
+    );
+  });
+
+  it("sends no broadcast to somebody who did not press the watch button", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(press(lotData));
+    const sends = calls.filter((call) => call.method === "sendMessage").length;
+    watch.emit(live(2, 1400));
+    await flush();
+    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
+      sends,
+    );
+  });
+
   it("stops editing once another screen takes the message", async () => {
     const { bot, calls, watch } = await setup();
     await bot.handleUpdate(press(lotData));
