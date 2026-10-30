@@ -15,6 +15,7 @@ export const watchStopLabel = "Не следить";
 export const watchStoppedLine = "Трансляция остановлена";
 export const watchFinishedLine = "Аукцион завершён";
 const waitingLine = "Ждём следующий лот";
+const unsoldLine = "Не продан";
 
 /** Кого бот называет лидером: имя из Auction, «ты» или «участник» без имени. */
 export type BroadcastLeader =
@@ -79,6 +80,9 @@ export function broadcastText(input: {
       foot,
     ].join("\n");
   }
+  if (status.kind === "unsold") {
+    return [...head, unsoldLine, "", waitingLine, "", foot].join("\n");
+  }
   return [...head, waitingLine, "", foot].join("\n");
 }
 
@@ -88,10 +92,12 @@ export function broadcastFinishedText(updatedAt: string): string {
 }
 
 function currentLine(price: Money, leader: BroadcastLeader): string {
+  // До первой ставки цена лота — стартовая, а не чья-то ставка.
+  if (leader.kind === "none") {
+    return `Стартовая цена ${formatMoney(price)} · ставок пока нет`;
+  }
   const base = `Текущая ставка ${formatMoney(price)}`;
   switch (leader.kind) {
-    case "none":
-      return `${base} · ставок пока нет`;
     case "viewer":
       return `${base} · лидируешь ты`;
     case "named":
