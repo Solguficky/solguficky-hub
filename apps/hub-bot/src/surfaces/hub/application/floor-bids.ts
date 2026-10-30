@@ -2,7 +2,7 @@ import type { LotView } from "../../../auction-ui/index.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type { AuctionConsoles, AuctionFailure } from "../auction/port.js";
 import type { CommunityAdministrator } from "../identity/port.js";
-import type { FloorRoomStore, RoomMember } from "./floor-room.js";
+import type { FloorRoomStore, FoundMember, RoomMember } from "./floor-room.js";
 import type {
   ExecuteResult,
   FloorBidsRequest,
@@ -75,7 +75,12 @@ export function createFloorBids(
   directory?: Pick<CommunityAdministrator, "community">,
 ) {
   type Read =
-    | { kind: "ok"; floor: FloorView }
+    | {
+        kind: "ok";
+        floor: FloorView;
+        // Имена в аукционе у всех, кто их выбрал, — не только у людей зала.
+        names: ReadonlyMap<string, string>;
+      }
     | { kind: "refused"; result: ExecuteResult };
 
   // Экран целиком: пульт даёт статус, состав и активный лот, имена аукциона —
@@ -140,6 +145,7 @@ export function createFloorBids(
     }
     return {
       kind: "ok",
+      names,
       floor: {
         auctionId: snapshot.auctionId,
         status: snapshot.status,
@@ -169,9 +175,10 @@ export function createFloorBids(
         ...edit,
       };
     }
-    // Поиск — по нику среди участников сообщества (PER-816): человека, которого
-    // в зале ещё нет, помощник находит и добавляет в состав.
-    const found = await members(request, { search });
+    // Поиск — по нику и по имени в аукционе среди участников сообщества
+    // (PER-816, PER-838): человека, которого в зале ещё нет, помощник находит
+    // и добавляет в состав.
+    const found = await members(request, current.names, { search });
     if (found.kind !== "ok") {
       return {
         kind: "floor-bids",
@@ -195,13 +202,16 @@ export function createFloorBids(
         };
   }
 
-  // Люди сообщества с кругом `member`, чей ник содержит строку. Список
-  // Identity отдаёт держателю права состава; без него поиска нет.
+  // Люди сообщества с кругом `member`, чей ник или имя в аукционе содержит
+  // строку без учёта регистра и `@`. Ник Identity обновляет на каждом
+  // `ResolveIdentity`, поэтому список отдаёт текущий, а не заведённый при
+  // первом входе. Список отдаётся держателю права состава; без него поиска нет.
   async function members(
     request: { identity: { identityId: string } } & FloorBidsRequest,
+    names: ReadonlyMap<string, string>,
     filter: { search?: string; id?: string } = {},
   ): Promise<
-    { kind: "ok"; members: readonly RoomMember[] } | { kind: "unavailable" }
+    { kind: "ok"; members: readonly FoundMember[] } | { kind: "unavailable" }
   > {
     if (directory === undefined) return { kind: "unavailable" };
     const listed = await directory.community(
@@ -210,17 +220,23 @@ export function createFloorBids(
       rpcMeta(request),
     );
     if (listed.kind !== "ok") return { kind: "unavailable" };
-    const needle = filter.search?.toLocaleLowerCase("ru");
+    const needle = filter.search?.replace(/^@+/, "").toLocaleLowerCase("ru");
     return {
       kind: "ok",
       members: listed.value.members
         .filter(
           (each) =>
             each.circle === "member" &&
-            each.telegramUsername !== undefined &&
+            (each.telegramUsername !== undefined ||
+              names.has(each.identityId)) &&
             (filter.id === undefined || each.identityId === filter.id) &&
             (needle === undefined ||
-              each.telegramUsername.toLocaleLowerCase("ru").includes(needle)),
+              (each.telegramUsername ?? "")
+                .toLocaleLowerCase("ru")
+                .includes(needle) ||
+              (names.get(each.identityId) ?? "")
+                .toLocaleLowerCase("ru")
+                .includes(needle)),
         )
         .slice(0, 16)
         .map((each) => ({
@@ -228,6 +244,9 @@ export function createFloorBids(
           ...(each.telegramUsername === undefined
             ? {}
             : { username: each.telegramUsername }),
+          ...(names.has(each.identityId)
+            ? { auctionName: names.get(each.identityId) as string }
+            : {}),
         })),
     };
   }
@@ -242,9 +261,9 @@ export function createFloorBids(
   async function add(
     request: Extract<FloorBidsRequest, { intent: "add-floor-member" }>,
   ): Promise<ExecuteResult> {
-    const all = await members(request, { id: request.memberId });
     const current = await read(request);
     if (current.kind === "refused") return current.result;
+    const all = await members(request, current.names, { id: request.memberId });
     const screen = (note: FloorNote): ExecuteResult => ({
       kind: "floor-bids",
       floor: current.floor,
@@ -264,7 +283,10 @@ export function createFloorBids(
         (each) => each.identityId === member.identityId,
       );
     if (already) return screen({ kind: "member-already-in" });
-    const written = await room.add(request.auctionId, member);
+    const written = await room.add(request.auctionId, {
+      identityId: member.identityId,
+      ...(member.username === undefined ? {} : { username: member.username }),
+    });
     if (written.kind !== "ok") return screen({ kind: "room-write-failed" });
     const after = await read(request);
     const floor = after.kind === "ok" ? after.floor : current.floor;
