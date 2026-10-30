@@ -1096,7 +1096,11 @@ export function createAuctionAdapter(
     // имён.
     async recentBids(person, read, meta) {
       const viewer = wireViewer(viewerOf(person));
-      let bids: { amount: Money; participantId: string }[] = [];
+      let bids: {
+        amount: Money;
+        participantId: string;
+        origin?: "floor" | "proxy";
+      }[] = [];
       try {
         let pageToken = "";
         for (let page = 0; page < historyPageLimit; page += 1) {
@@ -1112,7 +1116,13 @@ export function createAuctionAdapter(
             // запись снятия в последние ставки не идут.
             ...history.entries.flatMap((entry) =>
               entry.kind === "bid" && entry.removed !== true
-                ? [{ amount: entry.amount, participantId: entry.participantId }]
+                ? [
+                    {
+                      amount: entry.amount,
+                      participantId: entry.participantId,
+                      ...originMark(entry.origin),
+                    },
+                  ]
                 : [],
             ),
           ].slice(-read.limit);
@@ -2101,6 +2111,14 @@ function daySummaryResult(
       return _exhaustive;
     }
   }
+}
+
+// Пометка ставки в «Последних ставках» пульта (PER-834): зал и автоставка.
+function originMark(
+  origin: { kind: "manual"; source: "bot" | "floor" } | { kind: "proxy" },
+): { origin?: "floor" | "proxy" } {
+  if (origin.kind === "proxy") return { origin: "proxy" };
+  return origin.source === "floor" ? { origin: "floor" } : {};
 }
 
 function safeCount(value: bigint, field: string): number {

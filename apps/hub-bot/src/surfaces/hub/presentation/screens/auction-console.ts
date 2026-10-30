@@ -70,6 +70,7 @@ import {
   consoleNextLotData,
   consoleOpenAskData,
   consoleOpenData,
+  consolePaymentScreenData,
   consolePaymentTermData,
   consolePaymentTextData,
   consolePaymentTextRemoveData,
@@ -104,7 +105,9 @@ import { money, truncate } from "./auction.js";
 import { announcementLabel } from "./auction-announcement.js";
 import {
   invoicesLabel,
+  paymentLabel,
   paymentTextLabel,
+  paymentTextParagraph,
   paymentTextRemoveLabel,
 } from "./auction-invoices.js";
 import { promoVideoLabel } from "./auction-promo.js";
@@ -481,17 +484,35 @@ function paymentTextLines(console: AuctionConsoleView): string[] {
   }
 }
 
-// Снять текст можно, пока он задан: до дедлайна недели вход «Счетов» с этой
-// кнопкой ещё не открыт (PER-814).
-function paymentTextRemoveRow(
-  keyboard: InlineKeyboard,
-  console: AuctionConsoleView,
-) {
-  if (console.paymentText !== "set") return;
-  nextRow(keyboard).text(
-    paymentTextRemoveLabel,
-    consolePaymentTextRemoveData(uuidToToken(console.auctionId)),
-  );
+// «Оплата» (PER-834): текст победителям и срок счёта настраиваются с одного
+// экрана — вместо трёх входов в пульте и пары в «Счетах». Срок меняют, пока
+// неделя не открыта (PER-722); текст — всегда, снять его можно, пока он задан.
+function paymentScreen(view: ConsoleScreenView): ShownScreen {
+  const { console } = view;
+  const auction = uuidToToken(console.auctionId);
+  const keyboard = new InlineKeyboard();
+  nextRow(keyboard).text(paymentTextLabel, consolePaymentTextData(auction));
+  if (console.paymentInstructions !== undefined) {
+    nextRow(keyboard).text(
+      paymentTextRemoveLabel,
+      consolePaymentTextRemoveData(auction),
+    );
+  }
+  if (preparing(console) && console.week !== undefined) {
+    nextRow(keyboard).text("Срок оплаты", consolePaymentTermData(auction));
+  }
+  return {
+    id: "console-payment",
+    text: screenText(
+      paymentLabel,
+      console.week === undefined
+        ? undefined
+        : escapeHtml(paymentTermLines(console.week).join("\n")),
+      paymentTextParagraph(console.paymentInstructions),
+    ),
+    keyboard: withNav(keyboard, toConsole(console.auctionId)),
+    format: "HTML",
+  };
 }
 
 function paymentTermLines(week: AuctionWeek): string[] {
@@ -674,6 +695,14 @@ function lineupLines(console: AuctionConsoleView): string[] {
   });
 }
 
+// Ставка зала и автоставка в «Последних ставках» (PER-834): иначе все строки
+// читаются как онлайн-ставки людей.
+const bidOriginMark = {
+  online: "",
+  floor: " · зал",
+  proxy: " · авто",
+} as const;
+
 function tradingLines(console: AuctionConsoleView): string[] {
   const entry = activeLot(console);
   if (entry === undefined) {
@@ -697,7 +726,7 @@ function tradingLines(console: AuctionConsoleView): string[] {
           "Последние ставки:",
           ...trading.bids.map(
             (bid) =>
-              `${money(bid.amount)}${bid.name === undefined ? "" : ` — ${bid.name}`}`,
+              `${money(bid.amount)}${bid.name === undefined ? "" : ` — ${bid.name}`}${bidOriginMark[bid.origin ?? "online"]}`,
           ),
         ]),
   ];
@@ -977,6 +1006,8 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       return finalSectionScreen(view);
     case "more":
       return moreScreen(view);
+    case "payment":
+      return paymentScreen(view);
     case undefined:
       break;
     default: {
@@ -1127,10 +1158,7 @@ function preparationScreen(view: ConsoleScreenView): ShownScreen {
   finalTimeRow(keyboard, console);
   if (week !== undefined) {
     nextRow(keyboard).text("Счастливые часы", consoleWindowsData(auction));
-    nextRow(keyboard)
-      .text("Срок оплаты", consolePaymentTermData(auction))
-      .text(paymentTextLabel, consolePaymentTextData(auction));
-    paymentTextRemoveRow(keyboard, console);
+    nextRow(keyboard).text(paymentLabel, consolePaymentScreenData(auction));
     nextRow(keyboard).text(raffleLabel, consoleRaffleScreenData(auction));
   }
   if (console.hidden) {
@@ -1206,11 +1234,10 @@ function tradingScreen(view: ConsoleScreenView): ShownScreen {
   if (console.status !== "finished") {
     keyboard.text("Сводка дня", consoleDaySummaryData(auction));
   }
-  // Текст оплаты задают до дедлайна недели (PER-814); с дедлайна он среди
-  // «Счетов», где его читает и сводка.
+  // «Оплата» (PER-834) — до дедлайна недели (PER-814); с дедлайна она среди
+  // «Счетов», где её читает и сводка.
   if (console.status === "prebidding") {
-    nextRow(keyboard).text(paymentTextLabel, consolePaymentTextData(auction));
-    paymentTextRemoveRow(keyboard, console);
+    nextRow(keyboard).text(paymentLabel, consolePaymentScreenData(auction));
   }
   participantsRow(keyboard, view);
   if (raffleShown(console)) {

@@ -522,6 +522,14 @@ export const screenCatalog = {
     parent: "auction-console",
     backName: "Финал",
   },
+  // «Оплата» под пультом (PER-834): текст и срок оплаты на одном экране.
+  "console-payment": {
+    class: "screen",
+    nav: "tree",
+    title: "Оплата",
+    parent: "auction-console",
+    backName: "Оплата",
+  },
   // «Ещё» под пультом (PER-802): снятие с публикации, удаление и отмена.
   "console-more": {
     class: "screen",

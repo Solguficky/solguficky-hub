@@ -978,9 +978,11 @@ export function createAuctionConsole(
       lotId: active.lot.lotId,
       bids: bids.bids.map((bid) => {
         const name = bids.names[bid.participantId];
-        return name === undefined
-          ? { amount: bid.amount }
-          : { amount: bid.amount, name };
+        return {
+          amount: bid.amount,
+          ...(name === undefined ? {} : { name }),
+          ...(bid.origin === undefined ? {} : { origin: bid.origin }),
+        };
       }),
       ...(leaderName === undefined ? {} : { leaderName }),
     };
@@ -1059,6 +1061,34 @@ export function createAuctionConsole(
       kind: "auction-console",
       console: accepted(current.console),
       ...(note === undefined ? {} : { note }),
+    };
+  }
+
+  // Экран «Оплата» (PER-834): пульт и сам текст оплаты. Отказ чтения текста
+  // экран не роняет: он скажет, что текста нет, а кнопка «Изменить текст»
+  // заменяет его целиком.
+  async function viewPayment(
+    request: AuctionConsoleRequest,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    let text: string | undefined;
+    try {
+      const found = await consoles.listAuctionInvoices(
+        request.identity,
+        request.auctionId,
+        rpcMeta(request),
+      );
+      if (found.kind === "ok") text = found.paymentInstructions;
+    } catch {
+      text = undefined;
+    }
+    return {
+      kind: "auction-console",
+      console: {
+        ...current.console,
+        ...(text === undefined ? {} : { paymentInstructions: text }),
+      },
     };
   }
 
@@ -1453,20 +1483,18 @@ export function createAuctionConsole(
         ? { ...result, noteLot: request.lotId }
         : result;
     switch (marked.kind) {
+      // Отметка переключается на месте (PER-834): исхода-подтверждения нет,
+      // экран «Финал» перерисовывается с новой подписью кнопки лота.
       case "ok":
         return aboutLot(
-          await after(
-            request,
-            request.selected ? "marked" : "unmarked",
-            (console) => ({
-              ...console,
-              lots: console.lots.map((each) =>
-                each.lot.lotId === request.lotId
-                  ? { ...each, markedForFinal: request.selected }
-                  : each,
-              ),
-            }),
-          ),
+          await after(request, undefined, (console) => ({
+            ...console,
+            lots: console.lots.map((each) =>
+              each.lot.lotId === request.lotId
+                ? { ...each, markedForFinal: request.selected }
+                : each,
+            ),
+          })),
         );
       case "refused":
         return aboutLot(await after(request, marked.reason));
@@ -3099,7 +3127,9 @@ export function createAuctionConsole(
       case "close-final-lot":
         return closeLot(request);
       case "view-auction-console":
-        return after(request, undefined);
+        return request.payment === true
+          ? viewPayment(request)
+          : after(request, undefined);
       case "view-day-summary":
         return daySummary(request);
       case "ask-auction-week":

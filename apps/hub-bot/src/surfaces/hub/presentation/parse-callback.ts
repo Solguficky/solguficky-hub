@@ -1149,6 +1149,11 @@ export function consoleFinalScreenData(
   return `v1:ac:fl:${auction}:${page}:${consoleSortToken(sort)}`;
 }
 
+/** Экран «Оплата» под пультом (PER-834): текст и срок оплаты в одном месте. */
+export function consolePaymentScreenData(auction: string): string {
+  return `v1:ac:ps:${auction}`;
+}
+
 /** Экран «Ещё» под пультом (PER-802): снятие с публикации, удаление, отмена. */
 export function consoleMoreData(auction: string): string {
   return `v1:ac:es:${auction}`;
@@ -3216,13 +3221,19 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     }
     case "rs":
     case "es":
+    case "ps":
       return parts.length === 4
         ? {
             kind: "console-view",
             auction: auction.data,
             page: 0,
             sort: defaultConsoleSort,
-            section: parts[2] === "rs" ? "raffle" : "more",
+            section:
+              parts[2] === "rs"
+                ? "raffle"
+                : parts[2] === "ps"
+                  ? "payment"
+                  : "more",
           }
         : { kind: "malformed" };
     case "fl": {

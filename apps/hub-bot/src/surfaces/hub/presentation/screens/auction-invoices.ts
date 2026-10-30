@@ -17,8 +17,7 @@ import {
   consoleInvoiceMarkConfirmData,
   consoleInvoiceMarkData,
   consoleInvoicesData,
-  consolePaymentTextData,
-  consolePaymentTextRemoveData,
+  consolePaymentScreenData,
   consoleViewData,
 } from "../parse-callback.js";
 import {
@@ -108,13 +107,15 @@ function toInvoice(invoice: InvoiceRow): Parent {
 // Текст «Как оплатить и получить» (PER-322): один свободный текст на весь
 // аукцион, который победители читают в своих счетах. Деньги мимо бота, поэтому
 // реквизиты — просто слова организатора, без проверки и без формы.
-export const paymentTextLabel = "Текст оплаты";
-export const paymentTextRemoveLabel = "Убрать текст оплаты";
+// Вход «Оплата» (PER-834) ведёт на экран, где текст и срок настраиваются вместе.
+export const paymentLabel = "Оплата";
+export const paymentTextLabel = "Изменить текст";
+export const paymentTextRemoveLabel = "Убрать текст";
 const paymentTextHeading = "<b>Как оплатить и получить</b>";
 const noPaymentText =
   "Текста «Как оплатить и получить» ещё нет. Победители не видят, как оплатить и забрать лот.";
 
-function paymentTextParagraph(text: string | undefined): string {
+export function paymentTextParagraph(text: string | undefined): string {
   return text === undefined
     ? escapeHtml(noPaymentText)
     : `${paymentTextHeading}\n${escapeHtml(text)}`;
@@ -161,13 +162,7 @@ export function invoicesScreen(
     );
   }
   withPager(keyboard, page, (at) => consoleInvoicesData(auction, at));
-  nextRow(keyboard).text(paymentTextLabel, consolePaymentTextData(auction));
-  if (view.paymentInstructions !== undefined) {
-    nextRow(keyboard).text(
-      paymentTextRemoveLabel,
-      consolePaymentTextRemoveData(auction),
-    );
-  }
+  nextRow(keyboard).text(paymentLabel, consolePaymentScreenData(auction));
   const overdue = view.invoices.filter((invoice) => invoice.overdue).length;
   return {
     id: "invoices",
