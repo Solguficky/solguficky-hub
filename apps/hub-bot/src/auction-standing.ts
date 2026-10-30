@@ -132,8 +132,11 @@ export function ownLimitLines(lot: {
   if (status.kind === "held") {
     return [
       own.viewerProxyLimit.currency === status.currentPrice.currency &&
-      own.viewerProxyLimit.minorUnits < status.currentPrice.minorUnits
-        ? `Твой лимит до ${money(own.viewerProxyLimit)} ниже цены лота — в финале не сработает`
+      // Не-лидеру лимит, равный цене, ничего не поставит: перебить нужно выше.
+      (own.viewerProxyLimit.minorUnits < status.currentPrice.minorUnits ||
+        (own.viewerProxyLimit.minorUnits === status.currentPrice.minorUnits &&
+          lot.standing !== "leader"))
+        ? `Твой лимит до ${money(own.viewerProxyLimit)} не выше цены лота — в финале не сработает`
         : (finalLimitLine(own) ?? ""),
     ].filter((line) => line !== "");
   }
