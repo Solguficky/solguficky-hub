@@ -99,6 +99,12 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
             .foreach((lot, position) => insertLineup(connection, auctionId, lot, position))
           if (before.fold(List.empty[StoredLotSet])(_.sets) != after.sets)
             replaceSets(connection, auctionId, after.sets)
+          InvoicePaymentClock.record(
+            connection,
+            auctionId,
+            auction.entity.AuctionJournal.restoreAuction(after.stored),
+            events.map(_._2)
+          )
           AuctionChanges.announce(connection, auctionId)
         case Right(_) => ()
       }

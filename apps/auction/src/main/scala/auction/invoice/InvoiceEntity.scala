@@ -16,6 +16,7 @@ import org.apache.pekko.persistence.typed.scaladsl.Effect
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
 import org.apache.pekko.util.Timeout
 
+import java.time.Instant
 import java.time.Clock
 import java.util.UUID
 import scala.concurrent.Future
@@ -36,6 +37,8 @@ object InvoiceEntity {
   sealed trait Command
 
   final case class Issue(terms: InvoiceTerms, replyTo: ActorRef[Done]) extends Command
+
+  final case class ChangeDue(expected: Option[Instant], dueAt: Option[Instant], replyTo: ActorRef[Done]) extends Command
 
   final case class MarkPaid(opId: OpId, replyTo: ActorRef[Either[InvoiceRefusal, Done]]) extends Command
 
@@ -72,6 +75,12 @@ object InvoiceEntity {
                 Effect.persist(InvoiceJournal.store(newId(), clock.instant())(event)).thenReply(replyTo)(_ => Done)
               case None => Effect.reply(replyTo)(Done)
             }
+          case ChangeDue(expected, dueAt, replyTo) =>
+            Invoice.changeDue(state, expected, dueAt) match {
+              case Some(event) =>
+                Effect.persist(InvoiceJournal.store(newId(), clock.instant())(event)).thenReply(replyTo)(_ => Done)
+              case None => Effect.reply(replyTo)(Done)
+            }
           case MarkPaid(opId, replyTo) => answer(Invoice.markPaid(state, opId), replyTo)
           case MarkHandedOver(opId, replyTo) => answer(Invoice.markHandedOver(state, opId), replyTo)
           case ChooseFulfillment(viewer, method, opId, replyTo) =>
@@ -98,6 +107,9 @@ object InvoiceEntity {
  */
 trait InvoiceGateway {
   def issue(invoice: InvoiceId, terms: InvoiceTerms): Future[Done]
+
+  def changeDue(invoice: InvoiceId, expected: Option[Instant], dueAt: Option[Instant]): Future[Done] =
+    Future.failed(new IllegalStateException("payment clock is not wired"))
 
   def get(invoice: InvoiceId): Future[Invoice]
 
@@ -159,6 +171,9 @@ object InvoiceGateway {
 
       def issue(invoice: InvoiceId, terms: InvoiceTerms): Future[Done] =
         entity(invoice).ask(InvoiceEntity.Issue(terms, _))
+
+      override def changeDue(invoice: InvoiceId, expected: Option[Instant], dueAt: Option[Instant]): Future[Done] =
+        entity(invoice).ask(InvoiceEntity.ChangeDue(expected, dueAt, _))
 
       def get(invoice: InvoiceId): Future[Invoice] = entity(invoice).ask(InvoiceEntity.Get(_))
 

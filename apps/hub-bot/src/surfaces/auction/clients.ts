@@ -687,6 +687,18 @@ export function createDeliveryPorts(
         );
         return lotInfoOf(snapshot);
       },
+      async finalActiveLot(identityId, auctionId, requestId) {
+        const { auction: snapshot } = await auction.getAuction(
+          {
+            viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+            auctionId,
+          },
+          options(requestId),
+        );
+        return snapshot === undefined
+          ? undefined
+          : auctionSummaryViewOf(snapshot).lineup?.activeLotId;
+      },
       async auctionFinalAt(identityId, auctionId, requestId) {
         const { auction: snapshot } = await auction.getAuction(
           {

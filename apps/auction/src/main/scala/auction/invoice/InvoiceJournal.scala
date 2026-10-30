@@ -8,6 +8,7 @@ import auction.entity.StoredMoney
 import auction.lot.AuctionId
 import auction.lot.OpId
 import auction.lot.ParticipantId
+import com.fasterxml.jackson.annotation.JsonInclude
 
 import java.time.Instant
 import java.util.UUID
@@ -24,10 +25,12 @@ final case class StoredInvoiceIssued(
     lotId: UUID,
     winnerId: UUID,
     amount: StoredMoney,
-    paymentDueAt: Instant
+    paymentDueAt: Option[Instant]
 )
 
 /** Payload отметок оплаты и выдачи: `op_id` команды организатора. */
+final case class StoredPaymentDueChanged(dueAt: Option[Instant])
+
 final case class StoredInvoiceMark(opId: UUID)
 
 /** Payload `FulfillmentChosen`: способ — `Pickup`, `Delivery` или `Digital` — и `op_id` команды победителя. */
@@ -38,7 +41,8 @@ final case class StoredInvoiceEventBody(
     invoiceIssued: Option[StoredInvoiceIssued],
     invoicePaid: Option[StoredInvoiceMark],
     invoiceHandedOver: Option[StoredInvoiceMark],
-    fulfillmentChosen: Option[StoredFulfillmentChosen]
+    fulfillmentChosen: Option[StoredFulfillmentChosen],
+    @JsonInclude(JsonInclude.Include.NON_ABSENT) paymentDueChanged: Option[StoredPaymentDueChanged] = None
 )
 
 /** Строка журнала счёта. Счёт строки — её `persistence_id`. */
@@ -67,6 +71,8 @@ object InvoiceJournal {
             )
           )
         )
+      case InvoiceEvent.PaymentDueChanged(dueAt) =>
+        empty.copy(kind = "PaymentDueChanged", paymentDueChanged = Some(StoredPaymentDueChanged(dueAt)))
       case InvoiceEvent.InvoicePaid(opId) =>
         empty.copy(kind = "InvoicePaid", invoicePaid = Some(StoredInvoiceMark(opId.value)))
       case InvoiceEvent.InvoiceHandedOver(opId) =>
@@ -81,7 +87,7 @@ object InvoiceJournal {
   /** Ровно та секция, что названа `kind`. Иначе строка испорчена. */
   def restoreEvent(stored: StoredInvoiceEventBody): InvoiceEvent =
     stored match {
-      case StoredInvoiceEventBody("InvoiceIssued", Some(issued), None, None, None) =>
+      case StoredInvoiceEventBody("InvoiceIssued", Some(issued), None, None, None, None) =>
         InvoiceEvent.InvoiceIssued(
           InvoiceTerms(
             AuctionId(issued.auctionId),
@@ -91,12 +97,14 @@ object InvoiceJournal {
             issued.paymentDueAt
           )
         )
-      case StoredInvoiceEventBody("InvoicePaid", None, Some(mark), None, None) =>
+      case StoredInvoiceEventBody("InvoicePaid", None, Some(mark), None, None, None) =>
         InvoiceEvent.InvoicePaid(OpId(mark.opId))
-      case StoredInvoiceEventBody("InvoiceHandedOver", None, None, Some(mark), None) =>
+      case StoredInvoiceEventBody("InvoiceHandedOver", None, None, Some(mark), None, None) =>
         InvoiceEvent.InvoiceHandedOver(OpId(mark.opId))
-      case StoredInvoiceEventBody("FulfillmentChosen", None, None, None, Some(chosen)) =>
+      case StoredInvoiceEventBody("FulfillmentChosen", None, None, None, Some(chosen), None) =>
         InvoiceEvent.FulfillmentChosen(restoreMethod(chosen.method), OpId(chosen.opId))
+      case StoredInvoiceEventBody("PaymentDueChanged", None, None, None, None, Some(changed)) =>
+        InvoiceEvent.PaymentDueChanged(changed.dueAt)
       case other =>
         throw new JournalCorrupted(s"invoice event of kind ${other.kind} with sections that do not match it")
     }

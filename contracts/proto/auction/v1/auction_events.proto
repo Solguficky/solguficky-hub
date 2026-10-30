@@ -560,6 +560,7 @@ message InvoiceEvent {
     InvoiceIssued invoice_issued = 6;
     InvoicePaid invoice_paid = 7;
     InvoiceHandedOver invoice_handed_over = 8;
+    InvoicePaymentDueChanged invoice_payment_due_changed = 9;
   }
 }
 
@@ -590,9 +591,8 @@ message InvoiceState {
   // The amount to pay: the price of the sale, LotSale.price. It never changes.
   Money amount = 5;
 
-  // RFC 3339 instant in UTC: the payment is due by this moment. Set when the
-  // invoice is raised and never changed after. An invoice is overdue when it
-  // still awaits payment after this moment; overdue is not a status.
+  // RFC 3339 UTC deadline, or empty while the auction is still running.
+  // Payment starts after the entire auction, including its final, has ended.
   string payment_due_at = 6;
 
   // Where the invoice is. Exactly one is set. The path is one-way:
@@ -626,6 +626,9 @@ message InvoicePaid {}
 // The organizer recorded that the lot was handed over. Who recorded it is not
 // carried.
 message InvoiceHandedOver {}
+
+// The shared payment deadline was started or deferred. Read payment_due_at from state.
+message InvoicePaymentDueChanged {}
 
 // A recorded public fact about the raffle among participants of one auction: why
 // it changed and what is true about it now. The envelope is the one of LotEvent,

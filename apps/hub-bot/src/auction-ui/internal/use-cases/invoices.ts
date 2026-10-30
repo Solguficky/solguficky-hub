@@ -21,7 +21,7 @@ function ordered(
   return [...invoices].sort(
     (a, b) =>
       STATUS_ORDER[a.status] - STATUS_ORDER[b.status] ||
-      a.paymentDueAt.localeCompare(b.paymentDueAt) ||
+      (a.paymentDueAt ?? "").localeCompare(b.paymentDueAt ?? "") ||
       a.invoiceId.localeCompare(b.invoiceId),
   );
 }

@@ -121,6 +121,8 @@ export async function liveLot(input: {
   lot: LotView;
   page: number;
   following?: boolean;
+  // Ответ «цена ушла», который правка по потоку не должна стирать (PER-835).
+  finalBid?: FinalBidOutcome;
 }): Promise<AuctionScreenBody> {
   const participantName = await participantNameOf(input);
   return lotBody({
@@ -130,6 +132,7 @@ export async function liveLot(input: {
     neighbors: {},
     ...(participantName === undefined ? {} : { participantName }),
     ...(input.following === undefined ? {} : { following: input.following }),
+    ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
   });
 }
 

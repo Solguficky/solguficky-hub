@@ -3,6 +3,7 @@ import {
   favoritesEmpty,
   favoritesEmptyText,
   favoritesSummary,
+  feedSummary,
   finalFeedLabel,
   lotButtonTail,
   lotGroupPrefix,
@@ -110,5 +111,30 @@ describe("favorites of a finished auction", () => {
       "Аукцион закончен. Избранное этого аукциона больше не хранится.",
     );
     expect(favoritesEmptyText(undefined)).toBe(favoritesEmpty);
+  });
+});
+
+// Перерыв перед финалом (PER-833): лидер лота, который ждёт финала, видит его
+// в сводке своим, а «не лидируешь» остаётся тому, кто нигде не лидирует.
+describe("feed summary in the break before the final", () => {
+  const held: FeedItem = {
+    lotId: "lot-2",
+    title: "Ваза",
+    status: { kind: "held", currentPrice: rub(900), leaderId: "viewer" },
+    standing: "leader",
+  };
+
+  it("names the held lot of the leader instead of denying the leadership", () => {
+    const text = feedSummary({ lots: [held], mine: [held] }, mineOptions).join(
+      " ",
+    );
+    expect(text).toContain("Ваза — 1 200 ₽, ты лидер");
+    expect(text).not.toContain("не лидируешь");
+  });
+
+  it("keeps the denial for someone who leads nowhere", () => {
+    const { standing: _standing, ...other } = held;
+    const text = feedSummary({ lots: [other] }, mineOptions).join(" ");
+    expect(text).toContain("Ты пока не лидируешь");
   });
 });

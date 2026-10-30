@@ -1328,7 +1328,7 @@ export type Invoice = {
   winnerId: string;
   amount: LotAmount;
   // RFC 3339 в UTC: оплатить до этого мига.
-  paymentDueAt: string;
+  paymentDueAt: string | undefined;
   status: InvoiceStatus;
 };
 

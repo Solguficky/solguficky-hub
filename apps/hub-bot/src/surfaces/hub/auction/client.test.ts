@@ -3079,6 +3079,25 @@ describe("auction invoices adapter", () => {
     ).resolves.toEqual({ kind: "auction-not-found" });
   });
 
+  it("reads an invoice before its payment term starts", async () => {
+    const client = adapter({
+      listAuctionInvoices: async () => ({
+        outcome: {
+          case: "invoices",
+          value: {
+            invoices: [{ ...snapshot("awaitingPayment"), paymentDueAt: "" }],
+          },
+        },
+      }),
+    });
+    await expect(
+      client.listAuctionInvoices(admin, auctionId),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      invoices: [{ status: "awaiting-payment", paymentDueAt: undefined }],
+    });
+  });
+
   it("refuses an invoice without an amount or a readable due moment as a defect of the neighbour", async () => {
     const { amount: _, ...withoutAmount } = snapshot("paid");
     const read = (invoice: unknown) =>
@@ -3091,7 +3110,7 @@ describe("auction invoices adapter", () => {
       kind: "invalid",
     });
     await expect(
-      read({ ...snapshot("paid"), paymentDueAt: "" }),
+      read({ ...snapshot("paid"), paymentDueAt: "not-a-date" }),
     ).resolves.toMatchObject({ kind: "invalid" });
   });
 

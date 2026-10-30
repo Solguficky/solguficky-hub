@@ -285,13 +285,25 @@ export type LotNoticeReads = {
     auctionId: string,
     requestId?: string,
   ): Promise<string | undefined>;
+  // Лот, который сейчас торгуется в живом финале (PER-833); `undefined` —
+  // лота на торгах нет. Чтения может не быть: тогда кнопка ведёт в ленту.
+  finalActiveLot?(
+    identityId: string,
+    auctionId: string,
+    requestId?: string,
+  ): Promise<string | undefined>;
 };
 
 // Кнопка уведомления: лот открывает карточку, частота — экран частоты; оба
-// новым сообщением, уведомление остаётся в истории.
+// новым сообщением, уведомление остаётся в истории. Входы анонса финала
+// (PER-833) — раунд 2 прогнозов, корень аукциона и лента лотов тем же путём,
+// что их кнопки в дереве.
 export type LotNoticeButton =
   | { kind: "lot"; lotId: string; text: string }
-  | { kind: "frequency"; text: string };
+  | { kind: "frequency"; text: string }
+  | { kind: "predictions"; auctionId: string; text: string }
+  | { kind: "auction"; auctionId: string; text: string }
+  | { kind: "feed"; auctionId: string; text: string };
 
 // `format` — у вести о лоте текст в HTML: название жирным (№71 прогона
 // 14 октября 2026 года), экранированное здесь же. Анонс финала и окно

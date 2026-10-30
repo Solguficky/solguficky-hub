@@ -158,7 +158,7 @@ final class InvoiceViewHandler(serialization: Serialization)
           |   version)
           |VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?)
           |ON CONFLICT (invoice_id) DO UPDATE SET status = EXCLUDED.status, fulfillment = EXCLUDED.fulfillment,
-          |  version = EXCLUDED.version
+          |  payment_due_at = EXCLUDED.payment_due_at, version = EXCLUDED.version
           |WHERE auction_invoice.version < EXCLUDED.version""".stripMargin
       )
     ) { statement =>
@@ -168,7 +168,7 @@ final class InvoiceViewHandler(serialization: Serialization)
       statement.setString(4, view.terms.winner.value.toString)
       statement.setLong(5, view.terms.amount.minorUnits)
       statement.setString(6, view.terms.amount.currency.value)
-      statement.setTimestamp(7, Timestamp.from(view.terms.paymentDueAt))
+      statement.setTimestamp(7, view.terms.paymentDueAt.map(Timestamp.from).orNull)
       statement.setString(8, InvoiceJournal.statusName(view.status))
       statement.setString(9, view.fulfillment.map(InvoiceJournal.methodName).orNull)
       statement.setLong(10, version)
