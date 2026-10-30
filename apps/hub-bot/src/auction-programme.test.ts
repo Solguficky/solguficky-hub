@@ -211,6 +211,26 @@ const statusWeek: AuctionWeekFacts = {
 const line = (facts: Partial<AuctionWeekFacts>) =>
   auctionStatusLine({ ...statusWeek, ...facts }, statusOptions);
 
+describe("programmeParagraph at a midnight deadline", () => {
+  it("shows the week deadline at 00:00 as 23:59 of the previous day", () => {
+    const text = programmeParagraph(
+      root({ closesAt: "2026-10-30T21:00:00Z" }),
+      options,
+    );
+
+    expect(text).toContain("Онлайн-торги до [2026-10-30T20:59:00.000Z]");
+  });
+
+  it("keeps a deadline extended to 00:03 as it was", () => {
+    const text = programmeParagraph(
+      root({ closesAt: "2026-10-30T21:03:00Z" }),
+      options,
+    );
+
+    expect(text).toContain("Онлайн-торги до [2026-10-30T21:03:00Z]");
+  });
+});
+
 describe("auctionStatusLine", () => {
   it("names the day of the week, the running window and the raffle", () => {
     expect(

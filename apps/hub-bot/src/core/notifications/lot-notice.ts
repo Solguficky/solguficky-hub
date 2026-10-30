@@ -9,7 +9,12 @@ import {
   type RenderContext,
   type RenderResult,
 } from "../delivery/index.js";
-import { type FormattedMoney, money, truncate } from "../format.js";
+import {
+  type FormattedMoney,
+  money,
+  shownInstant,
+  truncate,
+} from "../format.js";
 import type { Logger } from "../logging.js";
 import { marked, pictogram } from "../pictograms.js";
 
@@ -647,12 +652,13 @@ function minutesText(estimatedMinutes: number): string {
 }
 
 // Момент RFC 3339 в местное время пояса: «22:45». Непонятный момент —
-// отсутствие времени, а не «00:00».
+// отсутствие времени, а не «00:00». Это время срока, поэтому полночь читается
+// как «23:59» (PER-831).
 export function localTime(
   instant: string,
   timeZone: string,
 ): string | undefined {
-  const date = new Date(instant);
+  const date = new Date(shownInstant(instant, timeZone));
   if (Number.isNaN(date.getTime())) return undefined;
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,

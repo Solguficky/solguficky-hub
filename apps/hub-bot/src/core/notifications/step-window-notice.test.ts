@@ -277,13 +277,14 @@ describe("renderStepWindowNotice", () => {
     expect(lines.at(-1)).toBe("…и ещё лотов: 3.");
   });
 
-  // Конец окна читается по часам сообщества, а не по часам сервера.
+  // Конец окна читается по часам сообщества, а не по часам сервера. Полночь
+  // читается как 23:59 (PER-831).
   it("names the end of the window in the community time zone", () => {
     const view = renderStepWindowNotice(notice(), {
       lots,
       timeZone: "Europe/Moscow",
     });
-    expect(view.text).toContain("до 00:00");
+    expect(view.text).toContain("до 23:59");
   });
 });
 

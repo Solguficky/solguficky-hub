@@ -140,7 +140,7 @@ import {
   supportBotLink,
   supportLabel,
 } from "../../core/entry.js";
-import { money, truncate } from "../../core/format.js";
+import { money, shownInstant, truncate } from "../../core/format.js";
 import {
   type AuctionNotificationSettings,
   auctionNotificationsExplanation,
@@ -1168,7 +1168,7 @@ function rootText(block: RootBlock, options: RenderOptions): string {
       ? undefined
       : auction.closesAt === undefined
         ? `Онлайн-торги — с ${day(auction.opensAt)}.`
-        : `Онлайн-торги — с ${day(auction.opensAt)} до ${day(auction.closesAt)}.`;
+        : `Онлайн-торги — с ${day(auction.opensAt)} до ${day(shownInstant(auction.closesAt, options.timeZone))}.`;
   return screenText(
     rootTitle,
     [
@@ -1265,7 +1265,7 @@ function renderLeaf(
             invoicesTitle,
             ...invoicesParagraphs(block, {
               moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
+                readableDeadline(instant, options.timeZone, options.now),
             }),
           ),
         };
@@ -1276,7 +1276,7 @@ function renderLeaf(
             invoiceTitle(block),
             ...invoiceParagraphs(block, {
               moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
+                readableDeadline(instant, options.timeZone, options.now),
             }),
           ),
         };
@@ -1315,7 +1315,7 @@ function renderLeaf(
       case "raffle": {
         const paragraphs = raffleParagraphs(block.raffle, {
           moment: (instant) =>
-            readableMoment(instant, options.timeZone, options.now),
+            readableDeadline(instant, options.timeZone, options.now),
         });
         // Приз с фото (PER-773) — rich-сообщение, фото над заголовком ставит
         // адаптер, как у карточки лота; в `plain` фото нет.
@@ -1338,7 +1338,7 @@ function renderLeaf(
             raffleRegisteredTitle,
             ...raffleRegisteredParagraphs(block.raffle, {
               moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
+                readableDeadline(instant, options.timeZone, options.now),
             }),
           ),
         };
@@ -1357,7 +1357,7 @@ function renderLeaf(
             predictionTitle,
             ...predictionParagraphs(block, {
               moment: (instant) =>
-                readableMoment(instant, options.timeZone, options.now),
+                readableDeadline(instant, options.timeZone, options.now),
               money,
             }),
           ),
@@ -1764,7 +1764,7 @@ function renderFavorites(
 // Цена и до какого момента идут торги: дедлайн есть только у онлайн-торгов.
 function favoriteState(status: LotStatusView, options: RenderOptions): string {
   return status.kind === "trading" && status.deadline !== undefined
-    ? `${priceLabel(status)}, торги до ${readableMoment(status.deadline, options.timeZone, options.now)}`
+    ? `${priceLabel(status)}, торги до ${readableDeadline(status.deadline, options.timeZone, options.now)}`
     : priceLabel(status);
 }
 
@@ -1917,7 +1917,7 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             : [
                 marked(
                   pictogram.deadline,
-                  `Торги до: ${readableMoment(status.deadline, options.timeZone, options.now)}`,
+                  `Торги до: ${readableDeadline(status.deadline, options.timeZone, options.now)}`,
                 ),
               ]),
         ],
@@ -1970,6 +1970,8 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
 function stepLines(block: LotBlock, options: RenderOptions): string[] {
   const at = (instant: string) =>
     readableMoment(instant, options.timeZone, options.now);
+  const atEnd = (instant: string) =>
+    readableDeadline(instant, options.timeZone, options.now);
   const active = block.activeWindow;
   const activeTerms =
     active === undefined
@@ -1991,7 +1993,7 @@ function stepLines(block: LotBlock, options: RenderOptions): string[] {
             ),
           ]
       : [
-          activeHappyHourLine(at(active.until), activeTerms),
+          activeHappyHourLine(atEnd(active.until), activeTerms),
           ...(block.baseStep === undefined
             ? []
             : [`Обычный шаг: ${money(block.baseStep)}`]),
@@ -2000,7 +2002,7 @@ function stepLines(block: LotBlock, options: RenderOptions): string[] {
     active !== undefined &&
     activeTerms !== undefined &&
     active.step === undefined
-      ? [activeHappyHourLine(at(active.until), activeTerms)]
+      ? [activeHappyHourLine(atEnd(active.until), activeTerms)]
       : [];
   const next = block.nextWindow;
   const nextTerms =
@@ -2014,9 +2016,13 @@ function stepLines(block: LotBlock, options: RenderOptions): string[] {
   // 21:00».
   const until =
     readableDay(next.from, options.timeZone, options.now) ===
-    readableDay(next.until, options.timeZone, options.now)
-      ? clockOf(next.until, options.timeZone)
-      : at(next.until);
+    readableDay(
+      shownInstant(next.until, options.timeZone),
+      options.timeZone,
+      options.now,
+    )
+      ? clockOf(shownInstant(next.until, options.timeZone), options.timeZone)
+      : atEnd(next.until);
   return [
     ...startOnly,
     ...current,
@@ -2359,6 +2365,16 @@ function priceLabel(status: LotStatusView): string {
 
 function shorten(title: string): string {
   return truncate(title, BUTTON_TITLE_LIMIT);
+}
+
+// Срок для чтения: полночь называется 23:59 предыдущего дня (PER-831). Начала
+// и события — `readableMoment`, они показываются как есть.
+export function readableDeadline(
+  instant: string,
+  timeZone: string,
+  now?: Date,
+): string {
+  return readableMoment(shownInstant(instant, timeZone), timeZone, now);
 }
 
 // Дата для чтения по дизайн-коду: «12 июня, сб, 19:04»; чужой год называется.

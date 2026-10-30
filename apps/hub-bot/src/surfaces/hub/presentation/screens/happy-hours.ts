@@ -18,7 +18,11 @@ import type {
   LotAmount,
   PeriodAskError,
 } from "../../application/types.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import {
+  type CommunityDay,
+  communityLocalTime,
+  communityShownTime,
+} from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consolePeriodAskData,
@@ -70,10 +74,14 @@ function moment(instant: string, view: Moments): string {
   return readableMoment(communityLocalTime(instant, view.timeZone), view.today);
 }
 
+function deadline(instant: string, view: Moments): string {
+  return readableMoment(communityShownTime(instant, view.timeZone), view.today);
+}
+
 /** «с 28 октября, ср, 18:00 до 22:00»: день один раз, если он один. */
 export function periodSpan(period: HappyHourPeriod, view: Moments): string {
   const from = communityLocalTime(period.from, view.timeZone);
-  const until = communityLocalTime(period.until, view.timeZone);
+  const until = communityShownTime(period.until, view.timeZone);
   const sameDay =
     from.year === until.year &&
     from.month === until.month &&
@@ -82,7 +90,7 @@ export function periodSpan(period: HappyHourPeriod, view: Moments): string {
   return `с ${moment(period.from, view)} до ${
     sameDay
       ? `${pad(until.hours)}:${pad(until.minutes)}`
-      : moment(period.until, view)
+      : deadline(period.until, view)
   }`;
 }
 

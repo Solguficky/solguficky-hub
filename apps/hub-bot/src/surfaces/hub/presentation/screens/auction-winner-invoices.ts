@@ -14,7 +14,7 @@ import {
   invoicesTitle,
   invoiceTitle,
 } from "../../../../auction-winner-invoices.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import { type CommunityDay, communityShownTime } from "../../community-time.js";
 import {
   nextRow,
   readableMoment,
@@ -34,7 +34,7 @@ type Keyboard = readonly (readonly AuctionButton[])[];
 type View = { timeZone: string; today: CommunityDay };
 
 const moment = (view: View) => (instant: string) =>
-  readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  readableMoment(communityShownTime(instant, view.timeZone), view.today);
 
 function dataOf(keyboard: Keyboard, action: AuctionButton["action"]): string {
   const button = keyboard.flat().find((each) => each.action === action);

@@ -74,7 +74,11 @@ import {
   pictogram,
   refreshLabel,
 } from "../../../../core/pictograms.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import {
+  type CommunityDay,
+  communityLocalTime,
+  communityShownTime,
+} from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
@@ -617,6 +621,8 @@ function rootScreen(
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  const deadline = (instant: string) =>
+    readableMoment(communityShownTime(instant, view.timeZone), view.today);
   // Блоки, как у карточки сходки (прогон 14.10, №65): статус, пустая строка,
   // поле «📅 Когда:» онлайн-торгов и строка финала под ним.
   const online =
@@ -624,7 +630,7 @@ function rootScreen(
       ? undefined
       : auction.closesAt === undefined
         ? `Когда: онлайн-торги с ${moment(auction.opensAt)}`
-        : `Когда: онлайн-торги с ${moment(auction.opensAt)} до ${moment(auction.closesAt)}`;
+        : `Когда: онлайн-торги с ${moment(auction.opensAt)} до ${deadline(auction.closesAt)}`;
   const fields = [
     ...(online === undefined
       ? []
@@ -1222,7 +1228,7 @@ function favoritesScreen(
 function favoriteState(status: LotStatusView, view: AuctionView): string {
   return status.kind === "trading" && status.deadline !== undefined
     ? `${priceLabel(status)}, торги до ${readableMoment(
-        communityLocalTime(status.deadline, view.timeZone),
+        communityShownTime(status.deadline, view.timeZone),
         view.today,
       )}`
     : priceLabel(status);
@@ -1472,7 +1478,7 @@ function statusGroups(
                 marked(
                   pictogram.deadline,
                   `Торги до: ${readableMoment(
-                    communityLocalTime(status.deadline, view.timeZone),
+                    communityShownTime(status.deadline, view.timeZone),
                     view.today,
                   )}`,
                 ),
@@ -1530,6 +1536,8 @@ function stepLines(
 ): string[] {
   const local = (instant: string) => communityLocalTime(instant, view.timeZone);
   const at = (instant: string) => readableMoment(local(instant), view.today);
+  const shown = (instant: string) =>
+    readableMoment(communityShownTime(instant, view.timeZone), view.today);
   const active = block.activeWindow;
   const activeTerms =
     active === undefined
@@ -1551,7 +1559,7 @@ function stepLines(
             ),
           ]
       : [
-          activeHappyHourLine(at(active.until), activeTerms),
+          activeHappyHourLine(shown(active.until), activeTerms),
           ...(block.baseStep === undefined
             ? []
             : [`Обычный шаг: ${money(block.baseStep)}`]),
@@ -1560,7 +1568,7 @@ function stepLines(
     active !== undefined &&
     activeTerms !== undefined &&
     active.step === undefined
-      ? [activeHappyHourLine(at(active.until), activeTerms)]
+      ? [activeHappyHourLine(shown(active.until), activeTerms)]
       : [];
   const next = block.nextWindow;
   const nextTerms =
@@ -1572,7 +1580,7 @@ function stepLines(
   }
   // Окно внутри одного дня называет день один раз.
   const from = local(next.from);
-  const until = local(next.until);
+  const until = communityShownTime(next.until, view.timeZone);
   const sameDay =
     from.year === until.year &&
     from.month === until.month &&
@@ -1582,7 +1590,7 @@ function stepLines(
     ...startOnly,
     ...current,
     `Счастливые часы: с ${at(next.from)} до ${
-      sameDay ? `${pad(until.hours)}:${pad(until.minutes)}` : at(next.until)
+      sameDay ? `${pad(until.hours)}:${pad(until.minutes)}` : shown(next.until)
     }, ${nextTerms}`,
   ];
 }
