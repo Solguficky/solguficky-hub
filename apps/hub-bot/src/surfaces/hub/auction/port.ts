@@ -645,7 +645,12 @@ export type DisplayNamesResult =
 export type FinalBidsResult =
   | {
       kind: "ok";
-      bids: readonly { amount: Money; participantId: string }[];
+      bids: readonly {
+        amount: Money;
+        participantId: string;
+        // Не онлайн-ставка человека (PER-834): ставка зала или автоставки.
+        origin?: "floor" | "proxy";
+      }[];
       names: Readonly<Record<string, string>>;
     }
   | AuctionFailure;

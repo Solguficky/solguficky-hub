@@ -594,7 +594,7 @@ export type ConsoleSort = {
 // Экраны под пультом (PER-802): «Розыгрыш» — момент, приз, фото и итог,
 // «Финал» — отбор лотов и время финала, «Ещё» — снятие с публикации,
 // удаление и отмена. Без раздела — сам пульт.
-export type ConsoleSection = "raffle" | "final" | "more";
+export type ConsoleSection = "raffle" | "final" | "more" | "payment";
 
 // Замороженный состав финала (PER-337): лоты в порядке выхода и лот, который
 // ведущий торгует сейчас. Активного лота нет между лотами и до первого.
@@ -659,7 +659,12 @@ export type LotSet = { lotSetId: string; name: string; lotIds: string[] };
 
 // Ставка текущего лота финала на пульте ведущего: сумма и имя, которое ставит
 // Auction. Имени нет, когда Auction его не назвал.
-export type FinalBid = { amount: LotAmount; name?: string };
+export type FinalBid = {
+  amount: LotAmount;
+  name?: string;
+  // Ставка зала или автоставки (PER-834); у онлайн-ставки человека нет.
+  origin?: "floor" | "proxy";
+};
 
 // Торги текущего лота финала: последние ставки, новые первыми, и имя лидера.
 // `lotId` — лот, чьи это ставки: принятая команда может сменить активный лот.
@@ -689,6 +694,9 @@ export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   // Задан ли текст «как оплатить и получить» (PER-814): строка пульта до и во
   // время онлайн-торгов. Нет — текст не читался или чтение отказало.
   paymentText?: "set" | "unset";
+  // Сам текст «как оплатить и получить» (PER-834): читается только для
+  // экрана «Оплата». Нет — не читался, отказало чтение или текста нет.
+  paymentInstructions?: string;
 };
 
 // Аукцион, у которого идут торги сообщества (PER-603, PER-618): слот один, и
@@ -902,7 +910,8 @@ export type AuctionConsoleCall = LotFormCall & { auctionId: string };
 // `opId` рождает край: у открытия недели — в кнопке подтверждения, у
 // остальных команд — на каждое нажатие и каждый ответ.
 export type AuctionConsoleRequest =
-  | (AuctionConsoleCall & { intent: "view-auction-console" })
+  // `payment` — экран «Оплата» (PER-834): к пульту дочитывается текст оплаты.
+  | (AuctionConsoleCall & { intent: "view-auction-console"; payment?: true })
   // Вопрос о сроках, если их ещё можно менять.
   | (AuctionConsoleCall & { intent: "ask-auction-week" })
   // Подтверждение открытия недели, если открывать можно и есть что.

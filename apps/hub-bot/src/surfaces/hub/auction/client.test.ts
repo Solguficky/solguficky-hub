@@ -2463,6 +2463,55 @@ describe("auction adapter in the final", () => {
     expect(refused).toHaveBeenCalledOnce();
   });
 
+  it("marks the floor and the proxy bids of the latest bids", async () => {
+    const bid = (
+      rubles: number,
+      origin:
+        | { case: "manual"; value: { source: BidSource } }
+        | { case: "proxy"; value: Record<string, never> },
+    ) => ({
+      sequence: BigInt(rubles),
+      occurredAt: "2026-10-27T18:00:00Z",
+      kind: {
+        case: "bid" as const,
+        value: {
+          bidId: lotId,
+          participantId: "a",
+          amount: rub(rubles),
+          origin,
+        },
+      },
+    });
+    const read = adapter({
+      listLotHistory: async () =>
+        create(ListLotHistoryResponseSchema, {
+          entries: [
+            bid(100, { case: "manual", value: { source: BidSource.BOT } }),
+            bid(200, { case: "manual", value: { source: BidSource.FLOOR } }),
+            bid(300, { case: "proxy", value: {} }),
+          ],
+          nextPageToken: "",
+        }),
+      getDisplayNames: async () => ({ names: {} }),
+    });
+
+    const found = await read.recentBids(admin, {
+      auctionId,
+      lotId,
+      limit: 3,
+      extraIds: [],
+    });
+
+    expect(found).toMatchObject({
+      kind: "ok",
+      bids: [
+        { origin: "proxy" },
+        { origin: "floor" },
+        expect.not.objectContaining({ origin: expect.anything() }),
+      ],
+    });
+  });
+
   it("reads the latest bids across the pages, newest first, with their names", async () => {
     const bid = (rubles: number, participantId: string) => ({
       sequence: BigInt(rubles),

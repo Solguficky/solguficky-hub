@@ -8438,6 +8438,7 @@ async function handleConsoleCallback(
         await runtime.dispatcher.execute({
           ...call,
           intent: "view-auction-console",
+          ...(action.section === "payment" ? { payment: true as const } : {}),
         }),
         action.page,
         action.sort,
