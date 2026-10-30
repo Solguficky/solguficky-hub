@@ -28,6 +28,41 @@ namespace Notifications.IntegrationTests.Scenarios;
 /// </remarks>
 public class InvoiceReminderTests
 {
+    [Fact]
+    public async Task When_PaymentTermDeferredAndStarted_Expect_OldTasksCancelledAndNewDeadlineCaptured()
+    {
+        await using var env = await BusScenario.Start(Sweeping);
+        var winner = await Person(env.Db, MemberHolding);
+        await env.Publish(IssuedSubject, env.Invoice(winner));
+        await Eventually(() => Task.FromResult(env.Tasks()), tasks => tasks.Count == 3);
+
+        var deferred = env.Invoice(winner);
+        deferred.Version = 2;
+        deferred.InvoicePaymentDueChanged = new global::Auction.V1.InvoicePaymentDueChanged();
+        deferred.State.PaymentDueAt = "";
+        await env.Publish(AuctionFeed.InvoicePaymentDueChangedSubject, deferred);
+        await Eventually(() => Task.FromResult(env.Tasks()), tasks => tasks.All(task => task.State == "cancelled"));
+
+        var due = DateTimeOffset.UtcNow.AddDays(3);
+        var started = env.Invoice(winner, due);
+        started.Version = 3;
+        started.InvoicePaymentDueChanged = new global::Auction.V1.InvoicePaymentDueChanged();
+        await env.Publish(AuctionFeed.InvoicePaymentDueChangedSubject, started);
+        var rescheduled = await Eventually(() => Task.FromResult(env.Tasks()),
+            tasks => tasks.Count(task => task.State == "scheduled") == 3);
+        rescheduled.Count(task => task.State == "cancelled").ShouldBe(3);
+        DueOf(rescheduled, InvoiceReminderProbe.HourBefore).ShouldBe(due.AddHours(-1), TimeSpan.FromMilliseconds(1));
+
+        using var connection = new NpgsqlConnection(env.Db.ConnectionString);
+        var captured = connection.Query<DateTime>(
+            "SELECT payment_due_at FROM invoice_reminder_task WHERE invoice_id = @Invoice AND state = 'scheduled'",
+            new { Invoice = Guid.Parse(env.InvoiceId) });
+        captured.ShouldAllBe(value => Math.Abs((value.ToUniversalTime() - due.UtcDateTime).TotalMilliseconds) < 1);
+
+        await env.Publish(AuctionFeed.InvoicePaymentDueChangedSubject, started);
+        env.Tasks().Count(task => task.State == "scheduled").ShouldBe(3);
+    }
+
     private const string IssuedSubject = "events.auction.invoice_issued";
     private const string PaidSubject = "events.auction.invoice_paid";
 

@@ -152,7 +152,7 @@ public sealed class InvoiceNotificationGrain(
         {
             creates.AddRange(kept);
         }
-        await tasks.Apply(invoiceId, creates, cancel, Reason(replica, settled, overdue), Now(), token);
+        await tasks.Apply(invoiceId, creates, cancel, replica?.PaymentDueAt, Reason(replica, settled, overdue), Now(), token);
 
         await Settle(invoiceId, token);
     }
