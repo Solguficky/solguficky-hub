@@ -46,33 +46,74 @@ const lot = (
 });
 
 describe("lot card in the hub shell", () => {
-  // Экран зала и стрим (PER-825): ряд ссылок над навигацией, только при
-  // настроенных адресах.
-  it("adds the hall links row to the lot card only when configured", () => {
-    const rows = (hall?: { screenUrl?: string; streamUrl?: string }) =>
-      auctionScreen({
-        ...view([lot({})]),
-        ...(hall === undefined ? {} : { hall }),
-      }).screen.keyboard.inline_keyboard.map((row) =>
-        row.map((button) => ("url" in button ? button.url : button.text)),
-      );
-    expect(
-      rows().some((row) => row.some((value) => value.startsWith("https:"))),
-    ).toBe(false);
-    expect(
-      rows({
+  // Стрим и экран финала (PER-832): на карточке лота ссылок нет, они в корне.
+  it("has no hall links on the lot card", () => {
+    const rows = auctionScreen({
+      ...view([lot({})]),
+      hall: {
+        screenUrl: "https://hall.example.org/screen",
+        streamUrl: "https://stream.example.org/live",
+      },
+    }).screen.keyboard.inline_keyboard;
+    expect(rows.some((row) => row.some((button) => "url" in button))).toBe(
+      false,
+    );
+  });
+
+  const rootView = (
+    hall?: { screenUrl?: string; streamUrl?: string },
+    keyboard: AuctionView["body"]["keyboard"] = [],
+  ): AuctionView => ({
+    ...view([
+      {
+        kind: "root",
+        auctionId,
+        auction: { stage: "prebidding" },
+      } as unknown as AuctionBlock,
+    ]),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId,
+          auction: { stage: "prebidding" },
+        } as unknown as AuctionBlock,
+      ],
+      keyboard,
+    },
+    ...(hall === undefined ? {} : { hall }),
+  });
+  const labels = (view: AuctionView) =>
+    auctionScreen(view).screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => button.text),
+    );
+
+  it("puts the stream and the screen of the final into one row of the root", () => {
+    expect(labels(rootView())).not.toContainEqual(
+      expect.arrayContaining(["Стрим финала ↗"]),
+    );
+    const rows = auctionScreen(
+      rootView({
         screenUrl: "https://hall.example.org/screen",
         streamUrl: "https://stream.example.org/live",
       }),
-    ).toEqual(
-      expect.arrayContaining([
-        [`https://hall.example.org/screen/${auctionId}`],
-        ["https://stream.example.org/live"],
-      ]),
-    );
-    expect(
-      rows({ screenUrl: "https://hall.example.org/screen" }),
-    ).toContainEqual([`https://hall.example.org/screen/${auctionId}`]);
+    ).screen.keyboard.inline_keyboard;
+    expect(rows.at(-2)).toEqual([
+      { text: "Стрим финала ↗", url: "https://stream.example.org/live" },
+      {
+        text: "Экран финала ↗",
+        url: `https://hall.example.org/screen/${auctionId}`,
+      },
+    ]);
+  });
+
+  it("puts the results and the invoices of a finished auction into one row", () => {
+    const keyboard = [
+      [{ action: "root.results", callbackData: "v1:auc:res:x" }],
+      [{ action: "root.invoices", callbackData: "v1:auc:inv:x" }],
+    ] as unknown as AuctionView["body"]["keyboard"];
+    const rows = labels(rootView(undefined, keyboard));
+    expect(rows).toContainEqual(["Итоги", "Мои счета"]);
   });
 
   it("attaches the achievement image to the rich card after loading it", () => {

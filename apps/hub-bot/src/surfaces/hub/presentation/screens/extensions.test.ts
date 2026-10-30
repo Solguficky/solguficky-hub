@@ -42,8 +42,8 @@ describe("extensions menu hall links", () => {
 
   it("shows the screen and the stream of an open auction", () => {
     expect(urls(open, hall)).toEqual([
-      `https://hall.example.org/screen/${auctionId}`,
       "https://stream.example.org/live",
+      `https://hall.example.org/screen/${auctionId}`,
     ]);
   });
 

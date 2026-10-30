@@ -261,7 +261,7 @@ export type RenderedScreen = {
 
 export type RenderOptions = {
   faq?: FaqContent;
-  // Экран зала и стрим (PER-825): ряды кнопок-URL под карточкой лота. Нет
+  // Стрим и экран финала (PER-825, PER-832): ряд кнопок-URL в корне. Нет
   // адресов — рядов нет.
   hall?: HallLinks;
   // Пояс, в котором человек читает дедлайн лота.
@@ -562,10 +562,16 @@ export function renderEntryScreen(
       // возвращают в корень сами (PER-644).
       if (body.id === "root") {
         const parent = screen.parent ?? "auctions";
+        const root = screen.body.blocks.find(
+          (block): block is RootBlock => block.kind === "root",
+        );
         return {
           ...body,
           keyboard: [
             ...body.keyboard,
+            ...(root === undefined || root.auction === undefined
+              ? []
+              : hallRow(options.hall, root.auctionId)),
             [
               {
                 text: `‹ ${listTexts[parent].backName}`,
@@ -919,22 +925,14 @@ function yearOf(instant: string, timeZone: string, now?: Date): string {
   return shown === year(now ?? new Date()) ? "" : ` ${shown}`;
 }
 
-// Ссылки на экран зала и стрим (PER-825) — каждая своим рядом под кнопками
-// карточки лота: пара кнопок вне дизайн-кода линтер не пускает. Без настройки
-// рядов нет.
+// Ссылки «Стрим финала ↗» и «Экран финала ↗» (PER-832) — одним рядом корня
+// аукциона над возвратом: у карточки лота их нет. Без настройки ряда нет.
 function hallRow(
-  keyboard: readonly (readonly TelegramButton[])[],
   hall: HallLinks | undefined,
   auctionId: string,
 ): readonly (readonly TelegramButton[])[] {
   const buttons = hallButtons(hall, auctionId);
-  // Последний ряд карточки — возврат (линтер, правило nav): ссылки встают
-  // над ним.
-  return [
-    ...keyboard.slice(0, -1),
-    ...buttons.map((button) => [button]),
-    ...keyboard.slice(-1),
-  ];
+  return buttons.length === 0 ? [] : [buttons];
 }
 
 function renderBody(
@@ -984,7 +982,7 @@ function renderBody(
   if (id === "lot" && lot !== undefined) {
     return {
       id,
-      keyboard: hallRow(keyboard, options.hall, lot.auctionId),
+      keyboard,
       ...renderCard(lot, options),
     };
   }

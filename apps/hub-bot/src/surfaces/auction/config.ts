@@ -13,7 +13,7 @@ import { type FaqContent, readFaqContent } from "./faq.js";
 export type AuctionConfig = {
   auctionUrl: string;
   faq: FaqContent;
-  // Экран зала и стрим (PER-825): кнопки-URL на карточке лота. Нет адресов —
+  // Стрим и экран финала (PER-825, PER-832): кнопки-URL в корне аукциона. Нет адресов —
   // нет кнопок.
   hall: HallLinks;
   achievementsUrl?: string;

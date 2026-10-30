@@ -192,8 +192,8 @@ export type AuctionView = {
    */
   media?: boolean;
   /**
-   * Экран зала и стрим (PER-825): кнопки-URL под карточкой лота. Нет поля —
-   * адресов в настройке нет, и кнопок нет.
+   * Стрим и экран финала (PER-825, PER-832): кнопки-URL одним рядом корня
+   * аукциона. Нет поля — адресов в настройке нет, и кнопок нет.
    */
   hall?: HallLinks;
   /**
@@ -591,7 +591,10 @@ function rootScreen(
     keyboard.text(predictionButtonLabel, predictions.callbackData);
     nextRow(keyboard);
   }
-  if (results !== undefined) {
+  // «Итоги» и «Мои счета» — одним рядом (PER-832): у завершённого аукциона,
+  // где есть счета, «Итоги» уходят из пары с розыгрышем в ряд счетов.
+  const resultsWithInvoices = results !== undefined && invoices !== undefined;
+  if (results !== undefined && !resultsWithInvoices) {
     keyboard.text(auctionResultsButtonLabel, results.callbackData);
   }
   nextRow(keyboard);
@@ -600,9 +603,14 @@ function rootScreen(
     keyboard.text(dayChronicleButtonLabel, dayChronicle.callbackData);
   }
   nextRow(keyboard);
-  // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
+  // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета; у
+  // завершённого аукциона с «Итогами» (PER-832).
   if (invoices !== undefined) {
-    nextRow(keyboard).text(invoicesButtonLabel, invoices.callbackData).row();
+    nextRow(keyboard);
+    if (results !== undefined) {
+      keyboard.text(auctionResultsButtonLabel, results.callbackData);
+    }
+    keyboard.text(invoicesButtonLabel, invoices.callbackData).row();
   }
   if (achievements !== undefined)
     nextRow(keyboard).text("Ачивки", achievements.callbackData).row();
@@ -618,6 +626,13 @@ function rootScreen(
   // (PER-802): сеты, объявление, промо-видео и ставки зала — в пульте.
   if (view.canManage === true) {
     nextRow(keyboard).text(consoleLabel, consoleViewData(token));
+  }
+  // «Стрим финала ↗» и «Экран финала ↗» (PER-832) — одним рядом над
+  // возвратом; без адресов кнопок нет.
+  const links = hallButtons(view.hall, root.auctionId);
+  if (links.length > 0) {
+    nextRow(keyboard);
+    for (const button of links) keyboard.url(button.text, button.url);
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);
@@ -793,14 +808,6 @@ function lotScreen(
     throw new Error("lot body without a way back to the feed");
   }
   editRow(keyboard, view, lot);
-  // Ссылки на экран зала и стрим (PER-825) — своими рядами под кнопками
-  // участника; в предпросмотре кнопок нет.
-  if (preview === undefined) {
-    for (const button of hallButtons(view.hall, lot.auctionId)) {
-      nextRow(keyboard);
-      keyboard.url(button.text, button.url);
-    }
-  }
   const title = truncate(lot.card?.title ?? untitled, titleLimit);
   // Пустое описание — та же заглушка, что у карточки сходки (дизайн-код,
   // «Карточка»; PER-594).

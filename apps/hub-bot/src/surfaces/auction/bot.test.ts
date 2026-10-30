@@ -1097,28 +1097,43 @@ describe("auction bot", () => {
     expect(calls.at(-1)?.method).toBe("editMessageText");
   });
 
-  // Экран зала и стрим (PER-825): ссылки под карточкой лота бота, а без
-  // настройки их нет; экран проходит линтер при отправке.
-  it("sends the hall links under the lot card only when configured", async () => {
+  // Стрим и экран финала (PER-825, PER-832): ряд ссылок в корне аукциона бота,
+  // а без настройки его нет; на карточке лота ссылок нет; экран проходит
+  // линтер при отправке.
+  it("sends the hall links in the auction root only when configured", async () => {
     const hall = {
       screenUrl: "https://hall.example.org/screen",
       streamUrl: "https://stream.example.org/live",
     };
-    const urlsOf = async (configured?: typeof hall) => {
+    const rowsOf = async (data: string, configured?: typeof hall) => {
       const { bot, calls } = makeBot(() => publicPorts("r"), {
         ...(configured === undefined ? {} : { hall: configured }),
       });
-      await bot.handleUpdate(lotPress());
-      return keyboardOf(calls.at(-1)?.payload)
-        .flat()
-        .filter((button) => button.url !== undefined)
-        .map((button) => button.url);
+      await bot.handleUpdate(lotPress({ data }));
+      return keyboardOf(calls.at(-1)?.payload).filter((row) =>
+        row.some((button) => button.url !== undefined),
+      );
     };
-    expect(await urlsOf()).toEqual([]);
-    const urls = await urlsOf(hall);
-    expect(urls).toHaveLength(2);
-    expect(urls[0]).toMatch(/^https:\/\/hall\.example\.org\/screen\/[^/]+$/);
-    expect(urls[1]).toBe("https://stream.example.org/live");
+    const root = encodeAuctionCallback({ kind: "root", auctionId });
+    expect(await rowsOf(root)).toEqual([]);
+    const rows = await rowsOf(root, hall);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.map((button) => button.text)).toEqual([
+      "Стрим финала ↗",
+      "Экран финала ↗",
+    ]);
+    expect(rows[0]?.[0]?.url).toBe("https://stream.example.org/live");
+    expect(rows[0]?.[1]?.url).toMatch(
+      /^https:\/\/hall\.example\.org\/screen\/[^/]+$/,
+    );
+    // Карточка лота (кнопка по умолчанию) ссылок не несёт.
+    const { bot, calls } = makeBot(() => publicPorts("r"), { hall });
+    await bot.handleUpdate(lotPress());
+    expect(
+      keyboardOf(calls.at(-1)?.payload)
+        .flat()
+        .some((button) => button.url !== undefined),
+    ).toBe(false);
   });
 
   // `/start` при недоступном Identity: заявка не подана, и «Повторить»

@@ -61,17 +61,18 @@ describe("hallButtons", () => {
 
   it("puts the auction id after the base", () => {
     expect(hallButtons({ screenUrl: links.screenUrl }, "a-1")).toEqual([
-      { text: "Экран зала ↗", url: "https://hall.example.org/screen/a-1" },
+      { text: "Экран финала ↗", url: "https://hall.example.org/screen/a-1" },
     ]);
   });
 
   it("shows the stream only when its address is set", () => {
     expect(hallButtons({ streamUrl: links.streamUrl }, "a-1")).toEqual([
-      { text: "Стрим ↗", url: "https://stream.example.org/live" },
+      { text: "Стрим финала ↗", url: "https://stream.example.org/live" },
     ]);
+    // Стрим — первым (PER-832).
     expect(hallButtons(links, "a-1").map((button) => button.text)).toEqual([
-      "Экран зала ↗",
-      "Стрим ↗",
+      "Стрим финала ↗",
+      "Экран финала ↗",
     ]);
   });
 });

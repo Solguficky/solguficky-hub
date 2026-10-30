@@ -172,6 +172,29 @@ describe("root auction results entry", () => {
       ["root.results"],
     ]);
   });
+
+  // «Итоги» и «Мои счета» — одним рядом (PER-832): «Итоги» уходят из пары с
+  // розыгрышем и из своего ряда.
+  it("puts the results next to the invoices into one row", async () => {
+    const body = await openRoot({
+      auction: {
+        ...auctionOf(async () => []),
+        getAuction: async () => ({ ...SUMMARY, stage: "finished" }),
+        listMyInvoices: async () => ({
+          invoices: [{}] as unknown as never,
+        }),
+      },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+    });
+    const actions = body.keyboard.map((row) =>
+      row.map((button) => button.action),
+    );
+    expect(actions).toContainEqual(["root.results", "root.invoices"]);
+    expect(
+      actions.flat().filter((action) => action === "root.results"),
+    ).toHaveLength(1);
+  });
 });
 
 describe("root predictions entry", () => {

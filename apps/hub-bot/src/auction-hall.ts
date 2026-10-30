@@ -1,5 +1,5 @@
-// Экран зала и стрим (PER-825, дополнение ADR-040 от 2026-10-29): кнопки-URL
-// на карточке лота и в «Расширениях» сходки. Адреса — конфигурация среды, как
+// Стрим и экран финала (PER-825, PER-832; дополнение ADR-040 от 2026-10-29):
+// кнопки-URL парой в корне аукциона и в «Расширениях» сходки. Адреса — конфигурация среды, как
 // ссылки FAQ; нет адреса — нет кнопки, и бот работает без неё.
 export type HallLinks = {
   // База страницы экрана зала: к ней через «/» дописывается `auction_id`.
@@ -13,8 +13,8 @@ export type HallLinksResult =
 
 const linkSign = " ↗";
 
-export const hallScreenLabel = `Экран зала${linkSign}`;
-export const hallStreamLabel = `Стрим${linkSign}`;
+export const hallScreenLabel = `Экран финала${linkSign}`;
+export const hallStreamLabel = `Стрим финала${linkSign}`;
 
 const URL_LIMIT = 2048;
 // К базе дописывается идентификатор аукциона (UUID с чертой и запасом): адрес
@@ -90,21 +90,21 @@ export function readHallLinks(
 
 export type HallButton = { text: string; url: string };
 
-// Кнопки-URL ряда: «Экран зала ↗» адресом аукциона и «Стрим ↗» — по одной в
-// ряд, как кнопки ссылок FAQ. Без настройки — пусто.
+// Кнопки-URL ряда: «Стрим финала ↗» и «Экран финала ↗» адресом аукциона — в
+// этом порядке, одним рядом. Без настройки кнопки нет.
 export function hallButtons(
   links: HallLinks | undefined,
   auctionId: string,
 ): HallButton[] {
   const buttons: HallButton[] = [];
+  if (links?.streamUrl !== undefined) {
+    buttons.push({ text: hallStreamLabel, url: links.streamUrl });
+  }
   if (links?.screenUrl !== undefined) {
     buttons.push({
       text: hallScreenLabel,
       url: `${links.screenUrl}/${encodeURIComponent(auctionId)}`,
     });
-  }
-  if (links?.streamUrl !== undefined) {
-    buttons.push({ text: hallStreamLabel, url: links.streamUrl });
   }
   return buttons;
 }
