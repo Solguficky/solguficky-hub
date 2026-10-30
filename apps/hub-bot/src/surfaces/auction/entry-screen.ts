@@ -11,6 +11,9 @@ import {
   finalBidHeadline,
   finalBidLabel,
   finalPriceLines,
+  heldProxyAccepted,
+  heldProxyConfirmation,
+  heldProxyQuestion,
   showsStep,
 } from "../../auction-final.js";
 import { type HallLinks, hallButtons } from "../../auction-hall.js";
@@ -1434,7 +1437,7 @@ function confirmText(
     : screenText(
         `Включить автоставку до ${money(block.amount)}?`,
         lotSubject(block.title),
-        `${proxyGap(block.currentPrice, block.amount, block.firstBid)}\nЛимит видишь только ты.`,
+        `${block.forFinal === true ? heldProxyConfirmation(block.currentPrice, block.amount, money) : proxyGap(block.currentPrice, block.amount, block.firstBid)}\nЛимит видишь только ты.`,
       );
 }
 
@@ -1462,7 +1465,9 @@ function acceptedText(
     : screenText(
         `Автоставка до ${money(block.amount)} включена`,
         lotSubject(block.title),
-        "Лимит видишь только ты.",
+        block.forFinal === true
+          ? `${heldProxyAccepted}\nЛимит видишь только ты.`
+          : "Лимит видишь только ты.",
         extension,
         note,
       );
@@ -1498,7 +1503,9 @@ function questionText(
           ? undefined
           : proxyExplainer(block.explainer),
         [
-          "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+          block.forFinal === true
+            ? heldProxyQuestion
+            : "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
           ...current(),
           // Подсказка уже несёт пример с ценой этого лота: второй, общий,
           // с ним расходится.
