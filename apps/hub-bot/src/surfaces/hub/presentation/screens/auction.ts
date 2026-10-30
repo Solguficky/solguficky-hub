@@ -7,6 +7,7 @@ import {
   finalPriceLines,
   showsStep,
 } from "../../../../auction-final.js";
+import { type HallLinks, hallButtons } from "../../../../auction-hall.js";
 import {
   activeHappyHourLine,
   happyHourTerms,
@@ -184,6 +185,11 @@ export type AuctionView = {
    * корне вход в промо-видео.
    */
   media?: boolean;
+  /**
+   * Экран зала и стрим (PER-825): кнопки-URL под карточкой лота. Нет поля —
+   * адресов в настройке нет, и кнопок нет.
+   */
+  hall?: HallLinks;
   /**
    * Принимает ли аукцион новые лоты: `false` — онлайн-неделя открыта, и ряда
    * «Добавить лот» в ленте нет (PER-468). Статус аукциона лента тела не несёт,
@@ -778,6 +784,14 @@ function lotScreen(
     throw new Error("lot body without a way back to the feed");
   }
   editRow(keyboard, view, lot);
+  // Ссылки на экран зала и стрим (PER-825) — своими рядами под кнопками
+  // участника; в предпросмотре кнопок нет.
+  if (preview === undefined) {
+    for (const button of hallButtons(view.hall, lot.auctionId)) {
+      nextRow(keyboard);
+      keyboard.url(button.text, button.url);
+    }
+  }
   const title = truncate(lot.card?.title ?? untitled, titleLimit);
   // Пустое описание — та же заглушка, что у карточки сходки (дизайн-код,
   // «Карточка»; PER-594).
