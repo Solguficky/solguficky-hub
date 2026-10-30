@@ -259,7 +259,8 @@ export const hubSurface: SurfaceDefinition = ({
                     ? {}
                     : {
                         screens: (kind) => liveScreens.screens(kind),
-                        broadcasts: liveScreens.broadcasts(),
+                        watchStore: liveScreens.watches(),
+                        legacyBroadcasts: liveScreens.legacyBroadcasts(),
                       }),
                   names: {
                     getDisplayNames: (request) =>

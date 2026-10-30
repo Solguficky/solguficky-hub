@@ -11,19 +11,18 @@ import {
   type Viewer,
 } from "../../auction-ui/index.js";
 import {
-  type BroadcastStore,
-  createLiveBroadcasts,
-} from "../../core/auction/broadcast.js";
-import {
-  BROADCAST_STOP_DATA,
-  createBroadcastApi,
-} from "../../core/auction/broadcast-telegram.js";
+  closeLegacyBroadcasts,
+  createLegacyBroadcastCloser,
+  LEGACY_BROADCAST_STOP_DATA,
+} from "../../core/auction/legacy-broadcasts.js";
+import type { LegacyBroadcastStore } from "../../core/auction/legacy-broadcasts-kv.js";
 import {
   createLiveCards,
   type LiveCardEntry,
   type LiveEditOutcome,
   liveCardOf,
   liveEditFailure,
+  type WatchStore,
 } from "../../core/auction/live-cards.js";
 import { reportLiveEditFailure } from "../../core/auction/live-failures.js";
 import {
@@ -111,9 +110,12 @@ export type BotOptions = {
     watches: AuctionWatches;
     limiter: EditLimiter;
     names: Pick<AuctionPort, "getDisplayNames">;
-    // Записи трансляций хода торгов (PER-826); нет — трансляция живёт, пока
+    // Записи карточек лота в слежении (PER-837); нет — слежение живёт, пока
     // жив процесс.
-    broadcasts?: BroadcastStore;
+    watchStore?: WatchStore;
+    // Записи отдельных сообщений трансляции прежней выкладки (PER-826): бот
+    // закрывает их один раз после старта.
+    legacyBroadcasts?: LegacyBroadcastStore;
   };
 };
 
@@ -149,6 +151,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       ? undefined
       : createLiveCards({
           ...options.live,
+          ...(options.live.watchStore === undefined
+            ? {}
+            : { store: options.live.watchStore }),
           edit: (card, body) =>
             editLiveCard(bot.api, {
               card,
@@ -157,32 +162,22 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
               logger,
             }),
         });
-  // Трансляция хода торгов (PER-826): подписка по кнопке карточки финала,
-  // правка одного сообщения на человека по потоку аукциона.
-  const broadcasts =
-    options.live === undefined
-      ? undefined
-      : createLiveBroadcasts({
-          watches: options.live.watches,
-          limiter: options.live.limiter,
-          names: options.live.names,
-          ...(options.live.broadcasts === undefined
-            ? {}
-            : { store: options.live.broadcasts }),
-          timeZone: options.timeZone,
-          api: createBroadcastApi({
-            api: bot.api,
-            mark: screenMark("bid-watch"),
-            report: (error) => reportLiveEditFailure(logger, error),
-          }),
-          onError: (cause) =>
-            reportLiveEditFailure(
-              logger,
-              cause instanceof Error ? cause.message : String(cause),
-              "unexpected",
-            ),
-        });
-  void broadcasts?.restore();
+  // Слежение, включённое до рестарта (PER-837): карточки читаются из записи и
+  // правятся дальше.
+  void liveCards?.restore();
+  // Отдельные сообщения трансляции прежней выкладки (PER-826): слежение
+  // переехало на карточку, и их правят один раз.
+  const legacyCloser = createLegacyBroadcastCloser({
+    api: bot.api,
+    mark: screenMark("bid-watch"),
+    report: (error) => reportLiveEditFailure(logger, error),
+  });
+  if (options.live?.legacyBroadcasts !== undefined) {
+    void closeLegacyBroadcasts({
+      store: options.live.legacyBroadcasts,
+      closer: legacyCloser,
+    }).catch(() => {});
+  }
   // Что показало сообщение: карточку финала реестр запоминает, другой экран в
   // том же сообщении её вытесняет (PER-336).
   const observe = (
@@ -193,17 +188,6 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     const chatId = ctx.chat?.id;
     if (liveCards === undefined || chatId === undefined) return;
     if (messageId === undefined) return;
-    if (outcome.screen.kind === "auction" && outcome.viewer !== undefined) {
-      for (const block of outcome.screen.body.blocks) {
-        if (block.kind === "lot" && block.watch === true) {
-          void broadcasts?.start({
-            chatId,
-            auctionId: block.auctionId,
-            viewer: outcome.viewer,
-          });
-        }
-      }
-    }
     liveCards.shown(
       chatId,
       messageId,
@@ -318,10 +302,13 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     }),
   );
 
-  // «Не следить» под сообщением трансляции (PER-826): действие над своим
-  // чатом, без дерева и без разрешения личности.
-  direct.callbackQuery(BROADCAST_STOP_DATA, async (ctx) => {
-    await broadcasts?.stop(ctx.chat.id, ctx.callbackQuery.message?.message_id);
+  // «Не следить» под сообщением трансляции прежней выкладки (PER-826): у
+  // сообщения нечем ходить в поток, и оно говорит, куда слежение переехало.
+  direct.callbackQuery(LEGACY_BROADCAST_STOP_DATA, async (ctx) => {
+    const messageId = ctx.callbackQuery.message?.message_id;
+    if (messageId !== undefined) {
+      await legacyCloser.close({ chatId: ctx.chat.id, messageId });
+    }
     await ctx.answerCallbackQuery().catch(() => undefined);
   });
 

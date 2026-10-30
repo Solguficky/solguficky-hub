@@ -45,9 +45,10 @@ export async function openLot(input: {
   return showLot({ ...input, lot });
 }
 
-// «Следить за торгами» (PER-826): та же карточка, а трансляцию запускает
-// оболочка по признаку `watch`. Лот уже не в торгах финала — кнопка устарела,
-// и карточка без признака и есть ответ: трансляции за ним нет.
+// «Следить за торгами» (PER-826, PER-837): та же карточка, но в слежении —
+// кнопка на ней уже «Не следить», а слежение включает оболочка по признаку
+// `watch`. Лот уже не в торгах финала — кнопка устарела, и карточка без
+// признака и есть ответ: следить за ним не за чем.
 export async function watchFinal(input: {
   auction: AuctionPort;
   favorites?: FavoritesPort;
@@ -66,6 +67,22 @@ export async function watchFinal(input: {
   });
 }
 
+// «Не следить» (PER-837): та же карточка без слежения, а выключает его
+// оболочка по признаку `unwatch`.
+export async function unwatchFinal(input: {
+  auction: AuctionPort;
+  favorites?: FavoritesPort;
+  viewer: Viewer;
+  lotId: string;
+  page: number;
+}): Promise<AuctionScreenBody> {
+  const lot = await input.auction.getLot({
+    viewer: input.viewer,
+    lotId: input.lotId,
+  });
+  return showLot({ ...input, lot, unwatch: true });
+}
+
 // Карточка по уже прочитанному снимку. Исход команды онлайн-недели карточка не
 // несёт: он — свой экран (PER-472). Исключение — ставка финала `finalBid`
 // (PER-336): её исход — строка карточки, которая остаётся живой.
@@ -80,8 +97,10 @@ export async function showLot(input: {
   page: number;
   following?: boolean;
   finalBid?: FinalBidOutcome;
-  // Нажатие «Следить за торгами» (PER-826): оболочка запускает трансляцию.
+  // Нажатие «Следить за торгами» (PER-826): оболочка включает слежение.
   watch?: boolean;
+  // Нажатие «Не следить» (PER-837): оболочка слежение выключает.
+  unwatch?: boolean;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
   // Соседей в ленте читают параллельно имени и отметке и стартуют последними:
@@ -105,6 +124,7 @@ export async function showLot(input: {
     ...(following === undefined ? {} : { following }),
     ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
     ...(input.watch === true ? { watch: true } : {}),
+    ...(input.unwatch === true ? { unwatch: true } : {}),
   });
 }
 
@@ -123,6 +143,10 @@ export async function liveLot(input: {
   following?: boolean;
   // Ответ «цена ушла», который правка по потоку не должна стирать (PER-835).
   finalBid?: FinalBidOutcome;
+  // Карточка в слежении (PER-837): на ней «Не следить», а в конце финала —
+  // «Аукцион завершён».
+  watching?: boolean;
+  ended?: boolean;
 }): Promise<AuctionScreenBody> {
   const participantName = await participantNameOf(input);
   return lotBody({
@@ -130,6 +154,8 @@ export async function liveLot(input: {
     viewer: input.viewer,
     page: input.page,
     neighbors: {},
+    ...(input.watching === true ? { watching: true } : {}),
+    ...(input.ended === true ? { ended: true } : {}),
     ...(participantName === undefined ? {} : { participantName }),
     ...(input.following === undefined ? {} : { following: input.following }),
     ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
@@ -145,6 +171,9 @@ function lotBody(input: {
   following?: boolean;
   finalBid?: FinalBidOutcome;
   watch?: boolean;
+  unwatch?: boolean;
+  watching?: boolean;
+  ended?: boolean;
 }): AuctionScreenBody {
   const { lot, participantName, following } = input;
   const standing = standingOf(lot.status, input.viewer);
@@ -182,7 +211,11 @@ function lotBody(input: {
   const lookRow = [...history, ...followButtons(lot, input.page, following)];
   // «Следить за торгами» — своим рядом под ставкой: пары кнопок дизайн-код
   // называет поимённо, и эта в них не входит.
-  const watchRow = watchButton(lot, input.page);
+  const watchRow = watchButton(
+    lot,
+    input.page,
+    input.watching === true || input.watch === true,
+  );
   // Лоты сета — содержимое карточки (ADR-073, п. 7): свой ряд между взглядом
   // на лот и листанием.
   const setRow: AuctionButton[] =
@@ -226,6 +259,11 @@ function lotBody(input: {
           : {}),
         ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
         ...(input.watch === true ? { watch: true as const } : {}),
+        ...(input.unwatch === true ? { unwatch: true as const } : {}),
+        ...(input.watching === true || input.watch === true
+          ? { watching: true as const }
+          : {}),
+        ...(input.ended === true ? { ended: true as const } : {}),
       },
     ],
     keyboard: [
@@ -409,15 +447,19 @@ function pagerRows(
 }
 
 // «Следить за торгами» (PER-826) — только на карточке лота в торгах живого
-// финала: трансляция идёт за активным лотом, а до финала ходом торгов служит
-// сама карточка.
-function watchButton(lot: LotView, page: number): AuctionButton[] {
+// финала: слежение идёт за активным лотом, а до финала ходом торгов служит
+// сама карточка. На карточке в слежении (PER-837) та же кнопка — «Не следить».
+function watchButton(
+  lot: LotView,
+  page: number,
+  watching: boolean,
+): AuctionButton[] {
   if (!isLive(lot.status)) return [];
   return [
     {
-      action: "lot.watch",
+      action: watching ? "lot.unwatch" : "lot.watch",
       callbackData: encodeAuctionCallback({
-        kind: "watch-final",
+        kind: watching ? "unwatch-final" : "watch-final",
         lotId: lot.lotId,
         page,
       }),
