@@ -115,8 +115,12 @@ export async function openRoot(input: {
   // «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему пары не нашлось, —
   // своим рядом.
   const hasPredictions = predictionsButtons.length > 0;
-  const paired = hasPredictions ? predictionsButtons : resultsButtons;
-  const rest = hasPredictions ? resultsButtons : [];
+  // «Итоги» и «Мои счета» — одним рядом (PER-832): со счетами «Итоги» уходят
+  // из пары с розыгрышем и из своего ряда в ряд счетов.
+  const resultsWithInvoices = invoices && resultsButtons.length > 0;
+  const ownResults = resultsWithInvoices ? [] : resultsButtons;
+  const paired = hasPredictions ? predictionsButtons : ownResults;
+  const rest = hasPredictions ? ownResults : [];
   const raffleAndPredictionRows = [[...raffleButtons, ...paired], rest].filter(
     (row) => row.length > 0,
   );
@@ -199,6 +203,7 @@ export async function openRoot(input: {
       ...(invoices
         ? [
             [
+              ...(resultsWithInvoices ? resultsButtons : []),
               {
                 action: "root.invoices" as const,
                 callbackData: encodeAuctionCallback({

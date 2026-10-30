@@ -40,7 +40,7 @@ export const toSettingsExtensions: Parent = {
   data: settingsExtensionsData,
 };
 
-// Стадии, пока идут торги (PER-825): только в них «Экран зала ↗» и «Стрим ↗»
+// Стадии, пока идут торги (PER-825): только в них «Стрим финала ↗» и «Экран финала ↗»
 // стоят в «Расширениях».
 const tradingStages: ReadonlySet<AuctionStageView> = new Set([
   "prebidding",
@@ -65,7 +65,7 @@ export function extensionsScreen(view: {
   // Нет — бот без Auction или человек, за которого Auction не зовут.
   auction?: MeetupAuctionView | undefined;
   manageable: boolean;
-  // Экран зала и стрим (PER-825). Нет — кнопок нет.
+  // Стрим и экран финала (PER-825). Нет — кнопок нет.
   hall?: HallLinks;
 }): ShownScreen {
   const { meetup, auction } = view;
@@ -83,9 +83,9 @@ export function extensionsScreen(view: {
     // узнать, и ссылки остаются.
     const stage = auction.auction?.stage;
     if (stage === undefined || tradingStages.has(stage)) {
-      for (const button of hallButtons(view.hall, auction.auctionId)) {
-        keyboard.url(button.text, button.url).row();
-      }
+      const links = hallButtons(view.hall, auction.auctionId);
+      for (const button of links) keyboard.url(button.text, button.url);
+      if (links.length > 0) keyboard.row();
     }
   } else if (auction?.kind === "unavailable") {
     line = "Аукцион сейчас не отвечает. Попробуй ещё раз.";

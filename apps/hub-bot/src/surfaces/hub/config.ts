@@ -14,7 +14,7 @@ export type HubConfig = {
   meetupsUrl: string;
   notificationsUrl: string;
   faq: FaqContent;
-  // Экран зала и стрим (PER-825): кнопки-URL на карточке лота и в
+  // Стрим и экран финала (PER-825, PER-832): кнопки-URL в корне аукциона и в
   // «Расширениях» сходки. Нет адресов — нет кнопок.
   hall: HallLinks;
   achievementsUrl?: string;

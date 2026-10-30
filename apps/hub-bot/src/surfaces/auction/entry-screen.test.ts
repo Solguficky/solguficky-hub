@@ -372,28 +372,63 @@ describe("renderEntryScreen", () => {
     expect(text).toContain("Победитель: Сыч*");
   });
 
-  // Экран зала и стрим (PER-825): ряд ссылок под карточкой лота, только при
-  // настроенных адресах.
-  it("adds the hall links row under the lot card only when configured", () => {
-    expect(lotScreen({}).keyboard).toEqual([
-      [{ text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" }],
-    ]);
+  // Стрим и экран финала (PER-832): на карточке лота ссылок нет даже при
+  // настроенных адресах, они в корне аукциона.
+  it("has no hall links on the lot card", () => {
     const hall = {
       screenUrl: "https://hall.example.org/screen",
       streamUrl: "https://stream.example.org/live",
     };
     expect(lotScreen({}, { ...options, hall }).keyboard).toEqual([
-      [{ text: "Экран зала ↗", url: "https://hall.example.org/screen/auc-1" }],
-      [{ text: "Стрим ↗", url: "https://stream.example.org/live" }],
       [{ text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" }],
     ]);
-    expect(
-      lotScreen(
-        {},
-        { ...options, hall: { screenUrl: hall.screenUrl } },
-      ).keyboard.at(-2),
-    ).toEqual([
-      { text: "Экран зала ↗", url: "https://hall.example.org/screen/auc-1" },
+  });
+
+  // Ссылки корня: одним рядом над возвратом, только при настроенных адресах.
+  it("puts the stream and the screen of the final into one row of the root", () => {
+    const root = (render: RenderOptions) =>
+      renderEntryScreen(
+        {
+          kind: "auction",
+          body: {
+            blocks: [
+              {
+                kind: "root",
+                auctionId: "auc-1",
+                auction: { stage: "prebidding" },
+              } as unknown as AuctionBlock,
+            ],
+            keyboard: [],
+          },
+        },
+        render,
+      ).keyboard;
+    const back = [
+      { text: "‹ Аукционы", callback_data: entryCallback("auctions") },
+    ];
+    expect(root(options)).toEqual([back]);
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    expect(root({ ...options, hall })).toEqual([
+      [
+        { text: "Стрим финала ↗", url: "https://stream.example.org/live" },
+        {
+          text: "Экран финала ↗",
+          url: "https://hall.example.org/screen/auc-1",
+        },
+      ],
+      back,
+    ]);
+    expect(root({ ...options, hall: { screenUrl: hall.screenUrl } })).toEqual([
+      [
+        {
+          text: "Экран финала ↗",
+          url: "https://hall.example.org/screen/auc-1",
+        },
+      ],
+      back,
     ]);
   });
 

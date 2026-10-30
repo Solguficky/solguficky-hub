@@ -2,6 +2,7 @@ import {
   auctionChronicleButtonLabel,
   dayChronicleButtonLabel,
 } from "../src/auction-day-chronicle.js";
+import { hallScreenLabel, hallStreamLabel } from "../src/auction-hall.js";
 import { predictionButtonLabel } from "../src/auction-prediction.js";
 import { promoButtonLabel } from "../src/auction-promo.js";
 import { raffleButtonLabel } from "../src/auction-raffle.js";
@@ -13,6 +14,7 @@ import {
   lotsLabel,
   unfollowLabel,
 } from "../src/auction-standing.js";
+import { invoicesButtonLabel } from "../src/auction-winner-invoices.js";
 import {
   adminLabel,
   admitLabel,
@@ -95,6 +97,10 @@ const auctionRootPairs = [
   `${raffleButtonLabel}|${predictionButtonLabel}`,
   `${raffleButtonLabel}|${auctionResultsButtonLabel}`,
   `${dayChronicleButtonLabel}|${auctionChronicleButtonLabel}`,
+  // «Итоги» и «Мои счета» завершённого аукциона — одним рядом (PER-832).
+  `${auctionResultsButtonLabel}|${invoicesButtonLabel}`,
+  // «Стрим финала ↗» и «Экран финала ↗» — ссылки одним рядом (PER-832).
+  `${hallStreamLabel}|${hallScreenLabel}`,
 ];
 
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —

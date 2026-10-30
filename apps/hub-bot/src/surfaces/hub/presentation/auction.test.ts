@@ -1074,16 +1074,17 @@ describe("auction root and the way back", () => {
     expect(data(lastScreen(calls), "‹ Аукцион")).toBe(rootData);
   });
 
-  // Экран зала и стрим (PER-825): ряд ссылок над навигацией карточки лота и
-  // в «Расширениях» сходки, а без настройки их нет.
-  it("shows the hall links on the lot card and in the extensions menu only when configured", async () => {
+  // Стрим и экран финала (PER-825, PER-832): ряд ссылок над навигацией корня
+  // аукциона и в «Расширениях» сходки, а без настройки их нет; на карточке
+  // лота их нет никогда.
+  it("shows the hall links in the auction root and in the extensions menu only when configured", async () => {
     const hall = {
       screenUrl: "https://hall.example.org/screen",
       streamUrl: "https://stream.example.org/live",
     };
     const bare = harness("member", fakeAuction({ existing: true }));
     await bare.bot.init();
-    await bare.bot.handleUpdate(press(lotData));
+    await bare.bot.handleUpdate(press(rootData));
     expect(JSON.stringify(labels(lastScreen(bare.calls)))).not.toContain("↗");
     await bare.bot.handleUpdate(press(extensionsData));
     expect(JSON.stringify(labels(lastScreen(bare.calls)))).not.toContain("↗");
@@ -1096,19 +1097,18 @@ describe("auction root and the way back", () => {
       { hall },
     );
     await bot.init();
-    await bot.handleUpdate(press(lotData));
-    const card = lastScreen(calls);
-    expect(labels(card).slice(-3)).toEqual([
-      ["Экран зала ↗"],
-      ["Стрим ↗"],
-      ["‹ Лоты"],
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls)).slice(-2)).toEqual([
+      ["Стрим финала ↗", "Экран финала ↗"],
+      ["‹ Сходки"],
     ]);
+    await bot.handleUpdate(press(lotData));
+    expect(JSON.stringify(labels(lastScreen(calls)))).not.toContain("↗");
     await bot.handleUpdate(press(extensionsData));
     const menu = lastScreen(calls);
     expect(labels(menu)).toEqual([
       ["🏷️ Аукцион"],
-      ["Экран зала ↗"],
-      ["Стрим ↗"],
+      ["Стрим финала ↗", "Экран финала ↗"],
       ["‹ Сходка"],
     ]);
   });
