@@ -669,4 +669,34 @@ describe("feed summary in the break before the final", () => {
     if (block?.kind !== "feed") throw new Error("feed block expected");
     expect(block.mine?.map((item) => item.lotId)).toEqual([heldLot.lotId]);
   });
+
+  // Состав объявлен, финал не начат (стадия «готовим финал»): ленты финала ещё
+  // нет, а лидерство на удержанных лотах считается.
+  it("counts it once the lineup is frozen and the final has not begun", async () => {
+    const heldLot: LotView = {
+      ...lot(1),
+      status: {
+        kind: "held",
+        currentPrice: { minorUnits: 35000, currency: "RUB" },
+        leaderId: VIEWER.identityId,
+      },
+    };
+    const body = await openFeed({
+      auction: {
+        ...oneServerPage([heldLot, lot(2)]),
+        getAuction: async () => ({
+          auctionId: AUCTION_ID,
+          stage: "lineup-frozen",
+          final: true,
+        }),
+      },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    expect(block.final).toBeUndefined();
+    expect(block.mine?.map((item) => item.lotId)).toEqual([heldLot.lotId]);
+  });
 });
