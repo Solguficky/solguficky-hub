@@ -190,7 +190,8 @@ describe("live bid broadcast", () => {
     const first = telegram.sent[0]?.text ?? "";
     expect(first).toContain("Следующая цена");
     expect(first).toContain("<b>1 750 ₽</b>");
-    expect(first).toContain("Текущая ставка 1 500 ₽ · ставок пока нет");
+    expect(first).toContain("Стартовая цена 1 500 ₽ · ставок пока нет");
+    expect(first).not.toContain("Текущая ставка");
     expect(first).toContain("Шаг: +250 ₽");
     expect(first).toContain("Обновлено в 19:05:09");
     // Название лота экранируется.
@@ -299,6 +300,27 @@ describe("live bid broadcast", () => {
     expect(feed.subscribers()).toBe(0);
     expect(store.records.size).toBe(0);
     expect(broadcasts.size()).toBe(0);
+  });
+
+  it("says a lot closed without a sale was not sold", async () => {
+    const { feed, telegram, limiter, broadcasts } = setup();
+    await broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer });
+    const trading = lot({ version: 1, price: 1500, next: 1750 });
+    feed.emit(stateOf(trading));
+    await flush();
+    const unsold: LotView = {
+      ...trading,
+      version: 2,
+      status: { kind: "unsold" },
+    };
+    feed.emit({ auctionId: AUCTION, finished: false, lineup: [unsold] });
+    await limiter.settle();
+    await flush();
+    const text = telegram.edits[0]?.text ?? "";
+    expect(text).toContain("Не продан");
+    expect(text.indexOf("Не продан")).toBeLessThan(
+      text.indexOf("Ждём следующий лот"),
+    );
   });
 
   it("stops on request: last edit, no more edits, record removed", async () => {

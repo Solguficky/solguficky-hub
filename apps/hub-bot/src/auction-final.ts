@@ -122,13 +122,20 @@ export function finalBidHeadline(
     if (block.status.kind === "sold")
       return `Твою ставку перебили — цена продажи ${money(block.status.price)}`;
   }
-  if (outcome.kind === "price-changed")
-    return `Твоя ставка не прошла — следующая цена ${money(outcome.next)}`;
-  if (
-    outcome.kind === "refused" &&
-    outcome.refusal.kind === "bid-not-at-next-price"
-  )
-    return `Твоя ставка не прошла — следующая цена ${money(outcome.refusal.expected)}`;
+  // Ответ «цена ушла» живёт на карточке, пока её правит поток (PER-835), и
+  // цена в нём могла уйти ещё раз: называется следующая цена снимка.
+  const moved =
+    outcome.kind === "price-changed"
+      ? outcome.next
+      : outcome.kind === "refused" &&
+          outcome.refusal.kind === "bid-not-at-next-price"
+        ? outcome.refusal.expected
+        : undefined;
+  if (moved !== undefined) {
+    if (block.standing === "leader" || block.standing === "won")
+      return undefined;
+    return `Твоя ставка не прошла — следующая цена ${money(block.nextPrice ?? moved)}`;
+  }
   if (
     outcome.kind === "refused" &&
     ["bid-below-minimum", "lot-not-open"].includes(outcome.refusal.kind)

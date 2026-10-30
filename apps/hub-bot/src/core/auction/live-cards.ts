@@ -2,6 +2,7 @@ import { GrammyError, HttpError } from "grammy";
 import {
   type AuctionPort,
   type AuctionScreenBody,
+  type FinalBidOutcome,
   type LotView,
   liveLot,
   type Money,
@@ -35,6 +36,10 @@ export type LiveCardEntry = {
   // Свой лимит смотрящего на том же лоте: поток лимитов не несёт, а без
   // строки лимит пропадал бы с карточки на первой правке.
   proxyLimit?: { lotId: string; amount: Money };
+  // Ответ «цена ушла» на нажатие участника (PER-835): правка по потоку на
+  // чужую ставку иначе стирала бы его с карточки, и проигравший гонку видел
+  // лишь мелькание. Живёт до следующего показа карточки этому чату.
+  priceMoved?: { lotId: string; outcome: FinalBidOutcome };
 };
 
 /**
@@ -68,6 +73,7 @@ export type LiveCardShown = {
   page?: number;
   following?: boolean;
   proxyLimit?: Money;
+  priceMoved?: FinalBidOutcome;
 };
 
 export type LiveCards = {
@@ -154,6 +160,9 @@ export function createLiveCards(options: {
         lot: shownLot,
         page: card.page,
         ...(following === undefined ? {} : { following }),
+        ...(card.priceMoved?.lotId === lot.lotId
+          ? { finalBid: card.priceMoved.outcome }
+          : {}),
       });
       if (!current(card, target)) return { kind: "done" };
       const outcome = await options.edit(card, body);
@@ -199,6 +208,9 @@ export function createLiveCards(options: {
     if (shown.proxyLimit !== undefined) {
       card.proxyLimit = { lotId: shown.lotId, amount: shown.proxyLimit };
     }
+    // Каждый показ заменяет прежний ответ: ставка, «Обновить» или другой лот.
+    if (shown.priceMoved === undefined) delete card.priceMoved;
+    else card.priceMoved = { lotId: shown.lotId, outcome: shown.priceMoved };
     const state = latest.get(card.chatId);
     const lot = state === undefined ? undefined : lotOf(card, state);
     if (
@@ -239,6 +251,9 @@ export function createLiveCards(options: {
         ...(shown.proxyLimit === undefined
           ? {}
           : { proxyLimit: { lotId: shown.lotId, amount: shown.proxyLimit } }),
+        ...(shown.priceMoved === undefined
+          ? {}
+          : { priceMoved: { lotId: shown.lotId, outcome: shown.priceMoved } }),
       };
       // Новая подписка — до снятия прежней: у аукциона с одним подписчиком
       // поток иначе закрылся бы и открылся заново.
@@ -289,9 +304,23 @@ export function liveCardOf(
       ...(block.viewerProxyLimit === undefined
         ? {}
         : { proxyLimit: block.viewerProxyLimit }),
+      ...(isPriceMoved(block.finalBid) ? { priceMoved: block.finalBid } : {}),
     };
   }
   return undefined;
+}
+
+// Только отказ «не по цене»: остальные исходы читаются по снимку или не нужны
+// после первой правки, а этот человек иначе не увидел бы вовсе.
+function isPriceMoved(
+  outcome: FinalBidOutcome | undefined,
+): outcome is FinalBidOutcome {
+  return (
+    outcome !== undefined &&
+    (outcome.kind === "price-changed" ||
+      (outcome.kind === "refused" &&
+        outcome.refusal.kind === "bid-not-at-next-price"))
+  );
 }
 
 function withProxyLimit(

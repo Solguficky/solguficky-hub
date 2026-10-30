@@ -53,6 +53,19 @@ describe("finalBidHeadline", () => {
     ).toBe("Твою ставку перебили — цена уже 1400 ₽");
   });
 
+  it("names the current next price for a price-moved reply that went stale", () => {
+    expect(
+      finalBidHeadline(
+        {
+          ...card,
+          nextPrice: { minorUnits: 150_000, currency: "RUB" },
+          finalBid: { kind: "price-changed", next: amount },
+        },
+        money,
+      ),
+    ).toBe("Твоя ставка не прошла — следующая цена 1500 ₽");
+  });
+
   it("names the sale price for a late rejected bid", () => {
     expect(
       finalBidHeadline(
