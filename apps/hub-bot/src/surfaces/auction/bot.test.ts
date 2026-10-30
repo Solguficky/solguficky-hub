@@ -99,6 +99,8 @@ function makeBot(
     presentation?: "rich" | "plain";
     // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку (PER-625).
     supportBotUsername?: string;
+    // Экран зала и стрим (PER-825).
+    hall?: Parameters<typeof createBot>[0]["hall"];
     // Обрыв соединения на первом вызове метода.
     dropOnce?: string;
     // Карточки финала (PER-336): поток и темп правок.
@@ -127,6 +129,7 @@ function makeBot(
       ? {}
       : { supportBotUsername: options.supportBotUsername }),
     ...(options.live === undefined ? {} : { live: options.live }),
+    ...(options.hall === undefined ? {} : { hall: options.hall }),
     ...(options.media === undefined ? {} : { media: options.media }),
     botInfo,
   });
@@ -911,7 +914,7 @@ describe("auction bot", () => {
     });
     const results = buttonData(lastScreen(calls), "Итоги");
     await bot.handleUpdate(lotPress({ data: results }));
-    expect(lastScreen(calls).text).toContain("Итоги после финала.");
+    expect(lastScreen(calls).text).toContain("Итоги аукциона");
   });
 
   // Отменённый аукцион (PER-606; ADR-047, дополнение 2026-10-12) — прошедший,
@@ -1091,6 +1094,30 @@ describe("auction bot", () => {
     );
     await bot.handleUpdate(lotPress());
     expect(calls.at(-1)?.method).toBe("editMessageText");
+  });
+
+  // Экран зала и стрим (PER-825): ссылки под карточкой лота бота, а без
+  // настройки их нет; экран проходит линтер при отправке.
+  it("sends the hall links under the lot card only when configured", async () => {
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    const urlsOf = async (configured?: typeof hall) => {
+      const { bot, calls } = makeBot(() => publicPorts("r"), {
+        ...(configured === undefined ? {} : { hall: configured }),
+      });
+      await bot.handleUpdate(lotPress());
+      return keyboardOf(calls.at(-1)?.payload)
+        .flat()
+        .filter((button) => button.url !== undefined)
+        .map((button) => button.url);
+    };
+    expect(await urlsOf()).toEqual([]);
+    const urls = await urlsOf(hall);
+    expect(urls).toHaveLength(2);
+    expect(urls[0]).toMatch(/^https:\/\/hall\.example\.org\/screen\/[^/]+$/);
+    expect(urls[1]).toBe("https://stream.example.org/live");
   });
 
   // `/start` при недоступном Identity: заявка не подана, и «Повторить»

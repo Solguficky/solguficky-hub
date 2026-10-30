@@ -24,9 +24,11 @@ hub-bot: ExecutableResource
   arg: dist/src/main.js
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
+  env: BOT_HALL_SCREEN_URL=https://hall.example.org/screen
   env: BOT_MEDIA_CHANNEL_ID=-1001234567890
   env: BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
   env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_STREAM_URL=https://stream.example.org/live
   env: BOT_SUPPORT_BOT_USERNAME=solguficky_support_bot
   env: BOT_SURFACE=hub
   env: BOT_TOKEN={hub-bot-token.value}

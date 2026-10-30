@@ -1,5 +1,6 @@
 import { type Bot, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
+import type { HallLinks } from "../../auction-hall.js";
 import { promoUnavailableText } from "../../auction-promo.js";
 import {
   type AuctionPort,
@@ -89,6 +90,8 @@ export type BotOptions = {
   ports: PortsFactory;
   logger: Logger;
   faq?: FaqContent;
+  // Экран зала и стрим (PER-825): кнопки-URL под карточкой лота.
+  hall?: HallLinks;
   // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку
   // «Написать в поддержку ↗» (PER-625, ADR-068). Нет — кнопки нет.
   supportBotUsername?: string;
@@ -133,6 +136,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ? {}
         : { presentation: options.presentation }),
       ...(options.faq === undefined ? {} : { faq: options.faq }),
+      ...(options.hall === undefined ? {} : { hall: options.hall }),
       ...(options.supportBotUsername === undefined
         ? {}
         : { supportBotUsername: options.supportBotUsername }),

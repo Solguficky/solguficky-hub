@@ -137,6 +137,8 @@ export type AuctionIntent =
   // псевдонима и его шаг с адресатом. `op_id` команды рождается на нажатии:
   // повторная регистрация возвращает ту же, второго билета не бывает.
   | { kind: "prediction-results"; auctionId: string }
+  // Итоги завершённого аукциона (PER-813): что продано, кому и за сколько.
+  | { kind: "auction-results"; auctionId: string }
   // Хроники дня (PER-725): номинации последних суток из корня аукциона.
   | { kind: "day-chronicle"; auctionId: string }
   // Статистика аукциона (PER-770): все торги из корня аукциона.
@@ -227,6 +229,7 @@ export type AuctionIntent =
 // у имени из настроек.
 const AUCTION_ACTION = {
   "prediction-results": "pi",
+  "auction-results": "ar",
   "day-chronicle": "dc",
   "auction-chronicle": "as",
   promo: "pv",
@@ -484,6 +487,7 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
           : [uuidToToken(intent.auctionId)]),
       ].join(":");
     case "prediction-results":
+    case "auction-results":
     case "day-chronicle":
     case "auction-chronicle":
     case "promo":

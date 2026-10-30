@@ -1773,6 +1773,14 @@ export function createAuctionConsole(
     }
   }
 
+  // Открытие лота необратимо, как продажа: торги по нему начинаются сразу
+  // (PER-816). Подтверждение ничего не читает: «Да» — прежняя кнопка открытия.
+  function prepareOpen(
+    request: Extract<AuctionConsoleRequest, { intent: "prepare-final-open" }>,
+  ): ExecuteResult {
+    return { kind: "final-open-confirm", auctionId: request.auctionId };
+  }
+
   // Открыть следующий лот состава. Пока лот торгуется, следующего Auction не
   // открывает: пульт называет это строкой, а не открывает второй.
   async function startNextLot(
@@ -1982,6 +1990,9 @@ export function createAuctionConsole(
       auctionId: request.auctionId,
       position: request.position,
       opId: request.opId,
+      ...(request.position === (console.lineup?.order.length ?? 0) - 1
+        ? { last: true as const }
+        : {}),
       ...titled(entry),
       ...(status.leaderId === undefined ? {} : { price: status.currentPrice }),
       ...(leaderName === undefined ? {} : { leaderName }),
@@ -3077,6 +3088,8 @@ export function createAuctionConsole(
         return startFinal(request);
       case "start-final-lot":
         return startNextLot(request);
+      case "prepare-final-open":
+        return prepareOpen(request);
       case "ask-final-price":
         return askPrice(request);
       case "advance-final-ask":

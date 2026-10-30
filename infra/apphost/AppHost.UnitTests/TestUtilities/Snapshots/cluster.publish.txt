@@ -63,9 +63,11 @@ auction-bot: ContainerResource
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
+  env: BOT_HALL_SCREEN_URL={bot-hall-screen-url.value}
   env: BOT_MEDIA_CHANNEL_ID={bot-media-channel-id.value}
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={auction-bot-service-token.value}
+  env: BOT_STREAM_URL={bot-stream-url.value}
   env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
   env: BOT_SURFACE=auction
   env: BOT_TOKEN={auction-bot-token.value}
@@ -80,7 +82,9 @@ auction-bot: ContainerResource
   relationship: Reference auction
   relationship: Reference auction-bot-service-token
   relationship: Reference auction-bot-token
+  relationship: Reference bot-hall-screen-url
   relationship: Reference bot-media-channel-id
+  relationship: Reference bot-stream-url
   relationship: Reference identity
   relationship: Reference nats
   relationship: Reference notifications
@@ -104,7 +108,11 @@ auction-raffle-draw: ParameterResource
   secret: False
 auction-service-token: ParameterResource
   secret: True
+bot-hall-screen-url: ParameterResource
+  secret: False
 bot-media-channel-id: ParameterResource
+  secret: False
+bot-stream-url: ParameterResource
   secret: False
 cloudflared: ContainerResource
   image: docker.io/cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
@@ -124,9 +132,11 @@ hub-bot: ContainerResource
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
+  env: BOT_HALL_SCREEN_URL={bot-hall-screen-url.value}
   env: BOT_MEDIA_CHANNEL_ID={bot-media-channel-id.value}
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_STREAM_URL={bot-stream-url.value}
   env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
   env: BOT_SURFACE=hub
   env: BOT_TOKEN={hub-bot-token.value}
@@ -141,7 +151,9 @@ hub-bot: ContainerResource
   waits: notifications WaitUntilHealthy
   relationship: Reference achievements
   relationship: Reference auction
+  relationship: Reference bot-hall-screen-url
   relationship: Reference bot-media-channel-id
+  relationship: Reference bot-stream-url
   relationship: Reference hub-bot-service-token
   relationship: Reference hub-bot-token
   relationship: Reference identity

@@ -157,16 +157,19 @@ export function feedSummary(
     mine?: readonly FeedItem[];
     beforeTrading?: true;
     final?: { active?: FeedItem };
+    groups?: readonly { group: FeedGroupName; count: number }[];
   },
   options: MineOptions,
 ): string[] {
   if (feed.beforeTrading === true) return [beforeTradingLine];
   const mine = feed.mine ?? [];
+  const groups = groupsLine(feed.groups);
   // В живом финале сводка начинается с того, что идёт в зале (PER-639), а
   // «не лидируешь» не говорит: лидерство решает ведущий по лоту за лотом.
   if (feed.final !== undefined) {
     return [
       finalFeedLine(feed.final.active, options),
+      ...groups,
       ...(mine.length === 0 ? [] : [mineLines(mine, options)]),
     ];
   }
@@ -178,13 +181,39 @@ export function feedSummary(
   if (mine.length === 0) {
     return [
       "Ты пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.",
+      ...groups,
       ...happyLine,
     ];
   }
   return [
     "Здесь только твои лоты: где ты лидер и что ты купил. Все лоты аукциона — кнопками ниже.",
     mineLines(mine, options),
+    ...groups,
     ...happyLine,
+  ];
+}
+
+export type FeedGroupName = "trading" | "held" | "sold" | "unsold";
+
+const groupWords: Readonly<Record<FeedGroupName, string>> = {
+  trading: "на торгах",
+  held: "ждёт финала",
+  sold: "продан",
+  unsold: "не продан",
+};
+
+/**
+ * Группы списка (PER-813): кнопки лотов идут по состоянию в этом порядке, а
+ * строка называет, сколько лотов в каждой.
+ */
+function groupsLine(
+  groups: readonly { group: FeedGroupName; count: number }[] | undefined,
+): string[] {
+  if (groups === undefined || groups.length === 0) return [];
+  return [
+    `Лоты идут по группам: ${groups
+      .map((each) => `${groupWords[each.group]} — ${each.count}`)
+      .join(", ")}.`,
   ];
 }
 

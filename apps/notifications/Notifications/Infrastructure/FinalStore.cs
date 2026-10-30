@@ -23,6 +23,22 @@ public static class FinalStore
         ON CONFLICT DO NOTHING;
         """;
 
+    private const string AddLotBidderSql = """
+        INSERT INTO lot_bidder (lot_id, bidder_id, first_at)
+        VALUES (@LotId, @BidderId, @Now)
+        ON CONFLICT DO NOTHING;
+        """;
+
+    private const string LotBiddersSql = """
+        SELECT bidder_id FROM lot_bidder WHERE lot_id = @LotId ORDER BY bidder_id;
+        """;
+
+    // Лот финала: его место в составе знает таблица хода финала. Лот, проданный
+    // в перерыве до старта финала, в неё не попадает.
+    private const string FinalLotPlaceSql = """
+        SELECT 1 FROM auction_final_lot WHERE lot_id = @LotId;
+        """;
+
     private const string HoldSql = """
         INSERT INTO lot_hold (lot_id, auction_id, leader_id, price_minor_units, price_currency, held_at)
         VALUES (@LotId, @AuctionId, @Leader, @MinorUnits, @Currency, @HeldAt)
@@ -82,16 +98,24 @@ public static class FinalStore
         WHERE auction_id = @AuctionId AND lot_id = @LotId AND activated_at IS NULL;
         """;
 
-    private const string ActivationsSql = """
-        SELECT activated_at FROM auction_final_lot
-        WHERE auction_id = @AuctionId AND activated_at IS NOT NULL
-        ORDER BY place;
-        """;
-
     public static Task<int> AddBidder(UnitOfWork work, Guid auctionId, Guid bidderId, DateTimeOffset now,
         CancellationToken cancellationToken) =>
         work.Execute(AddBidderSql, new { AuctionId = auctionId, BidderId = bidderId, Now = now.UtcDateTime },
             cancellationToken);
+
+    /// <summary>Ставивший на лот: адресат вести о продаже лота в финале (PER-812).</summary>
+    public static Task<int> AddLotBidder(UnitOfWork work, Guid lotId, Guid bidderId, DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        work.Execute(AddLotBidderSql, new { LotId = lotId, BidderId = bidderId, Now = now.UtcDateTime },
+            cancellationToken);
+
+    public static async Task<IReadOnlyList<Guid>> LotBidders(UnitOfWork work, Guid lotId,
+        CancellationToken cancellationToken) =>
+        (await work.Query<Guid>(LotBiddersSql, new { LotId = lotId }, cancellationToken)).ToArray();
+
+    /// <summary>Лот входит в ход финала, то есть финал уже брал состав в работу.</summary>
+    public static async Task<bool> IsFinalLot(UnitOfWork work, Guid lotId, CancellationToken cancellationToken) =>
+        (await work.Query<int>(FinalLotPlaceSql, new { LotId = lotId }, cancellationToken)).Count > 0;
 
     public static Task<int> Hold(UnitOfWork work, LotHold hold, CancellationToken cancellationToken) =>
         work.Execute(HoldSql, new
@@ -171,14 +195,6 @@ public static class FinalStore
             new { AuctionId = auctionId, LotId = activeLotId, ActivatedAt = activatedAt.UtcDateTime },
             cancellationToken);
         return tracked;
-    }
-
-    /// <summary>Моменты, когда лоты состава брали в работу, в порядке финала.</summary>
-    public static async Task<IReadOnlyList<DateTimeOffset>> Activations(UnitOfWork work, Guid auctionId,
-        CancellationToken cancellationToken)
-    {
-        var rows = await work.Query<DateTime>(ActivationsSql, new { AuctionId = auctionId }, cancellationToken);
-        return rows.Select(value => new DateTimeOffset(value.ToUniversalTime())).ToArray();
     }
 
     private sealed record Row(Guid LotId, Guid? Leader, long MinorUnits, string Currency);

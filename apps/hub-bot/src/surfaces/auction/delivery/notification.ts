@@ -129,6 +129,8 @@ function toContent(
       return lotNoticeOf(type);
     case "auctionFinalLineup":
     case "auctionFinalStarted":
+    case "auctionPrebiddingEnded":
+    case "auctionLotSoldInFinal":
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);

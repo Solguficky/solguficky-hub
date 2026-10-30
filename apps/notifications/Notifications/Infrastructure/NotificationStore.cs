@@ -269,6 +269,16 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         ORDER BY person.identity_id;
         """;
 
+    // Держатели права ставок для вестей финала (PER-812): без заблокированных.
+    // Настройку анонса финала читает вызывающий той же транзакцией.
+    private const string PlaceBidsHoldersSql = """
+        SELECT person.identity_id
+        FROM identity_replica AS person
+        WHERE NOT person.blocked
+            AND person.rights && @Rights
+        ORDER BY person.identity_id;
+        """;
+
     // Название сходки для вести: у аукциона своего названия нет, а карточка
     // реплики — единственное место, где оно есть без звонка в Meetups.
     private const string MeetupTitleSql = """
@@ -1230,6 +1240,15 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             notAfter,
             cancellationToken);
     }
+
+    /// <summary>
+    /// Все держатели права <c>place_bids</c>, кроме заблокированных: круг вестей
+    /// конца онлайн-торгов и финала (PER-812), а не только ведшие лот.
+    /// </summary>
+    internal static async Task<IReadOnlyList<Guid>> PlaceBidsHolders(UnitOfWork work,
+        CancellationToken cancellationToken) =>
+        await work.Query<Guid>(PlaceBidsHoldersSql, new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
+            cancellationToken);
 
     /// <summary>
     /// Снимает неотправленную весть о новом аукционе, который сняли с публикации

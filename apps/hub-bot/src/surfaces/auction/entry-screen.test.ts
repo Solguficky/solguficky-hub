@@ -372,6 +372,31 @@ describe("renderEntryScreen", () => {
     expect(text).toContain("Победитель: Сыч*");
   });
 
+  // Экран зала и стрим (PER-825): ряд ссылок под карточкой лота, только при
+  // настроенных адресах.
+  it("adds the hall links row under the lot card only when configured", () => {
+    expect(lotScreen({}).keyboard).toEqual([
+      [{ text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" }],
+    ]);
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    expect(lotScreen({}, { ...options, hall }).keyboard).toEqual([
+      [{ text: "Экран зала ↗", url: "https://hall.example.org/screen/auc-1" }],
+      [{ text: "Стрим ↗", url: "https://stream.example.org/live" }],
+      [{ text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" }],
+    ]);
+    expect(
+      lotScreen(
+        {},
+        { ...options, hall: { screenUrl: hall.screenUrl } },
+      ).keyboard.at(-2),
+    ).toEqual([
+      { text: "Экран зала ↗", url: "https://hall.example.org/screen/auc-1" },
+    ]);
+  });
+
   // Последний ряд под лотом — возврат одной кнопкой: «Меню» нет (решение
   // владельца 10 октября 2026 года).
   it("puts the return to the feed alone into the last row of a lot", () => {

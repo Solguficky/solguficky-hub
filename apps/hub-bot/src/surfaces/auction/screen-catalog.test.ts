@@ -1032,28 +1032,28 @@ const raffleRegisteredBody = (
   ],
 });
 
-const predictionResultsAuctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+const auctionResultsAuctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 
-const predictionResultsBody = (
-  results: Extract<
-    AuctionScreenBody["blocks"][number],
-    { kind: "prediction-results" }
-  >["results"],
+const auctionResultsBody = (
+  results: Omit<
+    Extract<AuctionScreenBody["blocks"][number], { kind: "auction-results" }>,
+    "kind" | "auctionId"
+  >,
 ): AuctionScreenBody => ({
   blocks: [
     {
-      kind: "prediction-results",
-      auctionId: predictionResultsAuctionId,
-      results,
+      kind: "auction-results",
+      auctionId: auctionResultsAuctionId,
+      ...results,
     },
   ],
   keyboard: [
     [
       {
-        action: "prediction-results.back",
+        action: "results.back",
         callbackData: encodeAuctionCallback({
           kind: "root",
-          auctionId: predictionResultsAuctionId,
+          auctionId: auctionResultsAuctionId,
         }),
       },
     ],
@@ -1070,7 +1070,7 @@ const auctionChronicleBody = (
   blocks: [
     {
       kind: "auction-chronicle",
-      auctionId: predictionResultsAuctionId,
+      auctionId: auctionResultsAuctionId,
       chronicle,
     },
   ],
@@ -1080,7 +1080,7 @@ const auctionChronicleBody = (
         action: "auction-chronicle.back",
         callbackData: encodeAuctionCallback({
           kind: "root",
-          auctionId: predictionResultsAuctionId,
+          auctionId: auctionResultsAuctionId,
         }),
       },
     ],
@@ -1095,7 +1095,7 @@ const dayChronicleBody = (
   >["chronicle"],
 ): AuctionScreenBody => ({
   blocks: [
-    { kind: "day-chronicle", auctionId: predictionResultsAuctionId, chronicle },
+    { kind: "day-chronicle", auctionId: auctionResultsAuctionId, chronicle },
   ],
   keyboard: [
     [
@@ -1103,7 +1103,7 @@ const dayChronicleBody = (
         action: "day-chronicle.back",
         callbackData: encodeAuctionCallback({
           kind: "root",
-          auctionId: predictionResultsAuctionId,
+          auctionId: auctionResultsAuctionId,
         }),
       },
     ],
@@ -1418,23 +1418,30 @@ const shown: readonly {
   {
     screen: {
       kind: "auction" as const,
-      body: predictionResultsBody({ kind: "after-final" }),
+      body: auctionResultsBody({ sold: [], unsoldCount: 0 }),
     },
   },
   {
     screen: {
       kind: "auction" as const,
-      body: predictionResultsBody({
-        kind: "counted",
-        nominations: [
+      body: auctionResultsBody({
+        sold: [
           {
-            nomination: "catalog-total-sales",
-            value: { kind: "number", value: 3_000_000 },
-            winnerNames: ["Сова*"],
-            winnerCount: 1,
-            mine: { kind: "missed", deviation: 10_000 },
+            lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d",
+            title: "Плакат",
+            price: { minorUnits: 300_000, currency: "RUB" },
+            winnerName: "Сыч*",
+            mine: false,
+          },
+          {
+            lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c",
+            price: { minorUnits: 120_000, currency: "RUB" },
+            mine: true,
           },
         ],
+        hiddenSold: 3,
+        unsoldCount: 1,
+        total: { minorUnits: 420_000, currency: "RUB" },
       }),
     },
   },
@@ -1489,7 +1496,7 @@ const shown: readonly {
       kind: "auction" as const,
       body: {
         blocks: [
-          { kind: "promo", auctionId: predictionResultsAuctionId, postId: 42 },
+          { kind: "promo", auctionId: auctionResultsAuctionId, postId: 42 },
         ],
         keyboard: [
           [
@@ -1497,7 +1504,7 @@ const shown: readonly {
               action: "promo.back",
               callbackData: encodeAuctionCallback({
                 kind: "root",
-                auctionId: predictionResultsAuctionId,
+                auctionId: auctionResultsAuctionId,
               }),
             },
           ],

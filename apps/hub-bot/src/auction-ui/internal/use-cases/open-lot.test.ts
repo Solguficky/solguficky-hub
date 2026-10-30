@@ -181,3 +181,34 @@ describe("lot preview", () => {
     expect(preview.blocks[0]).toMatchObject({ participantName: "Сова" });
   });
 });
+
+// «Мои счета» на карточке проданного лота (PER-813): только покупателю.
+describe("sold lot invoices entry", () => {
+  const soldTo = (winnerId: string): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Кружка", description: "" },
+    proxyEnabled: false,
+    status: { kind: "sold", winnerId, price: rub(1200) },
+  });
+  const actionsFor = async (winnerId: string) =>
+    (
+      await showLot({
+        auction,
+        viewer: VIEWER,
+        lot: soldTo(winnerId),
+        page: 0,
+      })
+    ).keyboard
+      .flat()
+      .map((button) => button.action);
+
+  it("gives the winner a way to the invoices", async () => {
+    expect(await actionsFor(VIEWER.identityId)).toContain("lot.invoices");
+  });
+
+  it("does not show the button to anyone else", async () => {
+    expect(await actionsFor(LEADER)).not.toContain("lot.invoices");
+  });
+});
