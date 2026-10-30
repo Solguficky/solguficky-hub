@@ -37,6 +37,27 @@ describe("finalBidHeadline", () => {
     );
   });
 
+  // PER-840: перебитие в той же команде — автоставка другого участника, и
+  // карточка называет её; перебитие позже прежнее слово не меняет.
+  it("names the proxy that overbid a bid in the same command", () => {
+    expect(
+      finalBidHeadline(
+        {
+          ...card,
+          finalBid: { kind: "accepted", amount, overtaken: true },
+          status: {
+            kind: "trading",
+            phase: "live",
+            currentPrice: { ...amount, minorUnits: 140000 },
+          },
+        },
+        money,
+      ),
+    ).toBe(
+      "Твою ставку перебила автоставка другого участника — цена уже 1400 ₽",
+    );
+  });
+
   it("names an overbid even when the command was accepted", () => {
     expect(
       finalBidHeadline(

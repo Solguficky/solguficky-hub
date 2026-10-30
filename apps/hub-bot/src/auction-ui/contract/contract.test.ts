@@ -229,6 +229,7 @@ describe("auction contract self-check", () => {
       "bid: name asked before the confirmation",
       "bid: name read refused, confirmation shown",
       "bid: accepted",
+      "bid: accepted, lead kept",
       "bid: accepted without a version",
       "bid: step refused to the leader before the confirmation",
       "bid: refused below the minimum",

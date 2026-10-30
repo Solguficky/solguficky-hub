@@ -15,6 +15,7 @@ import {
   extensionLine,
   nameSettingsParagraphs,
   nameSettingsTitle,
+  overtakenByProxyLine,
   proxyHintLead,
 } from "../../../../auction-standing.js";
 import {
@@ -142,6 +143,9 @@ export function acceptedScreen(
       ? screenText(
           `Ставка ${money(block.amount)} принята`,
           lotSubject(block.title),
+          block.overtaken === undefined
+            ? undefined
+            : overtakenByProxyLine(block.overtaken),
           extension,
           note,
         )

@@ -494,7 +494,15 @@ async function placeFinalBidOn(
         current ?? lot,
         current === undefined
           ? { kind: "accepted-unread", amount }
-          : { kind: "accepted", amount },
+          : {
+              kind: "accepted",
+              amount,
+              // Лидер после команды не ставивший: в одной команде лидерство
+              // забирает только автоставка (PER-840).
+              ...(overtakenOnCommand(current, context.viewer)
+                ? { overtaken: true as const }
+                : {}),
+            },
       );
     }
     case "unanswered":
@@ -563,9 +571,29 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   switch (outcome.kind) {
     case "accepted": {
       if (intent.command === "proxy") markExplainerSeen(context);
-      const extension = await extensionAfter(context, lot, outcome.lotVersion);
+      // Лот после команды читается один раз: и продление анти-снайпом, и
+      // автоставка, которая тут же перебила ручную ставку (PER-840).
+      let afterRead: Promise<LotView | undefined> | undefined;
+      const readAfter = () => {
+        afterRead ??= context.auction
+          .getLot({
+            viewer: context.viewer,
+            lotId: lot.lotId,
+            ...(outcome.lotVersion > 0
+              ? { atLeastVersion: outcome.lotVersion }
+              : {}),
+          })
+          .catch(() => undefined);
+        return afterRead;
+      };
+      const extension = await extensionAfter(lot, readAfter);
+      const overtaken =
+        intent.command === "bid" && !settled.forFinal
+          ? overtakenPrice(await readAfter(), context.viewer)
+          : undefined;
       return acceptedBody(lot, intent, amount, outcome.lotVersion, {
         favorites: await settled.autoFollowNote,
+        ...(overtaken === undefined ? {} : { overtaken }),
         ...(extension === undefined ? {} : { extension }),
         ...(settled.forFinal ? { forFinal: true as const } : {}),
       });
@@ -619,9 +647,8 @@ async function notFollowedYet(
 // не время, а счётчик продлений Auction. Сбой чтения строку убирает, а экран
 // принятой ставки не роняет: ставка уже принята.
 async function extensionAfter(
-  context: CommandContext,
   before: LotView,
-  lotVersion: number,
+  readAfter: () => Promise<LotView | undefined>,
 ): Promise<BidExtension | undefined> {
   const { status, antiSnipe } = before;
   if (
@@ -636,16 +663,8 @@ async function extensionAfter(
   if (status.extensionsUsed >= antiSnipe.maxExtensions) {
     return { kind: "exhausted", deadline: status.deadline };
   }
-  let after: LotView;
-  try {
-    after = await context.auction.getLot({
-      viewer: context.viewer,
-      lotId: before.lotId,
-      ...(lotVersion > 0 ? { atLeastVersion: lotVersion } : {}),
-    });
-  } catch {
-    return undefined;
-  }
+  const after = await readAfter();
+  if (after === undefined) return undefined;
   const next = after.status;
   if (
     next.kind !== "trading" ||
@@ -664,6 +683,26 @@ async function extensionAfter(
   };
 }
 
+// Ручную ставку в той же команде перебить может только автоставка другого
+// участника (PER-840): лот после команды ведёт не ставивший. Цена лота — то, что
+// называет экран. Лот не перечитался или лидерство осталось — нечего говорить.
+function overtakenPrice(
+  after: LotView | undefined,
+  viewer: Viewer,
+): Money | undefined {
+  if (after === undefined) return undefined;
+  const { status } = after;
+  return status.kind === "trading" &&
+    status.leaderId !== undefined &&
+    status.leaderId !== viewer.identityId
+    ? status.currentPrice
+    : undefined;
+}
+
+function overtakenOnCommand(after: LotView, viewer: Viewer): boolean {
+  return overtakenPrice(after, viewer) !== undefined;
+}
+
 // Версия 0 — Auction её не назвал: кнопка прежняя, карточка читает один раз.
 // Выходов два (PER-595): к лоту и к ленте его аукциона. `favorites` — лота
 // не было в избранном, и экран говорит, что ставка кладёт лот туда сама
@@ -673,7 +712,12 @@ function acceptedBody(
   intent: { command: AuctionCommand; lotId: string; page: number },
   amount: Money,
   lotVersion: number,
-  notes: { favorites: boolean; extension?: BidExtension; forFinal?: true },
+  notes: {
+    favorites: boolean;
+    extension?: BidExtension;
+    forFinal?: true;
+    overtaken?: Money;
+  },
 ): AuctionScreenBody {
   return {
     blocks: [
@@ -685,6 +729,9 @@ function acceptedBody(
         ...titled(lot),
         amount,
         ...(notes.favorites ? { favorites: true } : {}),
+        ...(notes.overtaken === undefined
+          ? {}
+          : { overtaken: notes.overtaken }),
         ...(notes.extension === undefined
           ? {}
           : { extension: notes.extension }),

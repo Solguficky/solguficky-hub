@@ -6,6 +6,7 @@ import {
 import type {
   AuctionPort,
   FavoritesPort,
+  LotHistoryEntryView,
   LotStatusView,
   LotView,
   Money,
@@ -18,6 +19,7 @@ import type {
   AuctionScreenBody,
   FinalBidOutcome,
 } from "../../screen.js";
+import { collectPages } from "./collect-pages.js";
 import { namesOf } from "./names.js";
 import { type LotNeighbors, readNeighbors } from "./neighbors.js";
 import { standingOf } from "./standing.js";
@@ -96,6 +98,9 @@ export async function showLot(input: {
       ? Promise.resolve<LotNeighbors>({})
       : readNeighbors({ auction: input.auction, viewer: input.viewer, lot }),
   ]);
+  // После остальных чтений: порядок вызовов Auction остаётся прежним, а
+  // хронология дописывается в его конец (PER-840).
+  const autoRaised = await autoRaisedOf(input.auction, input.viewer, lot);
   return lotBody({
     lot,
     viewer: input.viewer,
@@ -105,7 +110,45 @@ export async function showLot(input: {
     ...(following === undefined ? {} : { following }),
     ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
     ...(input.watch === true ? { watch: true } : {}),
+    ...(autoRaised ? { autoRaised: true as const } : {}),
   });
+}
+
+// Цену подняли автоставки (PER-840): последняя запись хронологии — ставка
+// прокси, а до неё были другие ставки. Первая ставка лота прокси «подъёмом»
+// не считается. Хронология нужна только лоту в торгах, который уже торговался;
+// сбой её чтения карточку не роняет, а строку убирает. Карточку финала правит
+// поток без чтения хронологии, поэтому её строка живёт до первой правки.
+async function autoRaisedOf(
+  auction: Pick<AuctionPort, "listLotHistory">,
+  viewer: Viewer,
+  lot: LotView,
+): Promise<boolean> {
+  if (lot.status.kind !== "trading" || lot.status.leaderId === undefined) {
+    return false;
+  }
+  try {
+    const entries = await collectPages<LotHistoryEntryView>({
+      what: "lot history",
+      maxItems: 2_000,
+      fetch: async (pageToken) => {
+        const page = await auction.listLotHistory({
+          viewer,
+          lotId: lot.lotId,
+          pageToken,
+        });
+        return { items: page.entries, nextPageToken: page.nextPageToken };
+      },
+    });
+    const last = entries.at(-1);
+    return (
+      last?.kind === "bid" &&
+      last.origin.kind === "proxy" &&
+      entries.some((entry) => entry.kind === "bid" && entry !== last)
+    );
+  } catch {
+    return false;
+  }
 }
 
 // Карточка финала по снимку из потока `WatchAuction` (PER-336): поверхность
@@ -145,6 +188,7 @@ function lotBody(input: {
   following?: boolean;
   finalBid?: FinalBidOutcome;
   watch?: boolean;
+  autoRaised?: boolean;
 }): AuctionScreenBody {
   const { lot, participantName, following } = input;
   const standing = standingOf(lot.status, input.viewer);
@@ -226,6 +270,7 @@ function lotBody(input: {
           : {}),
         ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
         ...(input.watch === true ? { watch: true as const } : {}),
+        ...(input.autoRaised === true ? { autoRaised: true as const } : {}),
       },
     ],
     keyboard: [

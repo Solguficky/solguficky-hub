@@ -166,6 +166,22 @@ export function extensionLine(
     : `Торги продлены до ${at} (продление ${extension.used} из ${extension.max}).`;
 }
 
+/**
+ * Автоставки в словах участника (PER-840), одни у двух ботов, онлайн-недели и
+ * финала: чем была перебита его ставка и почему цена выросла сама.
+ */
+export const autoRaisedLine =
+  "Цена выросла автоматически: сработали автоставки";
+
+export function overtakenByProxyLine(price: Money): string {
+  return `Тебя перебила автоставка другого участника, цена ${money(price)}.`;
+}
+
+/** Строки карточки о росте цены от автоставок: пусто, пока рост не доказан. */
+export function autoRaisedLines(lot: { autoRaised?: true }): string[] {
+  return lot.autoRaised === true ? [autoRaisedLine] : [];
+}
+
 /** Строка карточки проданного лота у покупателя: «✅ Твой лот». */
 export const ownLotLine = marked(pictogram.won, "Твой лот");
 

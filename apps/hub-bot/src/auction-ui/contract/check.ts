@@ -650,6 +650,14 @@ const feedCalls = (
 // имени и отметки, тем же чтением, что лента.
 const CARD_CALLS = feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]);
 
+// Карточка лота в торгах с лидером дописывает чтение хронологии (PER-840): в
+// снимке контракта хронология лота та же, что у экрана «Ставки».
+const CARD_HISTORY_CALLS: PortCall[] = ["", "h2"].map((pageToken) => ({
+  port: "auction",
+  method: "listLotHistory",
+  request: { viewer: CONTRACT_VIEWER, lotId: CONTRACT_LOT.lotId, pageToken },
+}));
+
 const getLotCall = (lotId: string, atLeastVersion?: number): PortCall => ({
   port: "auction",
   method: "getLot",
@@ -1693,13 +1701,18 @@ const acceptedBody = (
 const acceptedWith = (
   notes: Pick<
     Extract<AuctionScreenBody["blocks"][number], { kind: "accepted" }>,
-    "favorites" | "extension"
+    "favorites" | "extension" | "overtaken"
   >,
 ): AuctionScreenBody => {
   const body = acceptedBody("bid", 130000, 4);
   const [accepted] = body.blocks;
   if (accepted?.kind !== "accepted") throw new Error("no accepted block");
-  return { ...body, blocks: [{ ...accepted, ...notes }] };
+  // Лот после ставки в снимках контракта ведёт соперник: автоставка перебила
+  // ставку смотрящего (PER-840), если случай не называет иное.
+  return {
+    ...body,
+    blocks: [{ ...accepted, overtaken: rub(1200), ...notes }],
+  };
 };
 
 // Отметки избранного читаются до команды (PER-631, №108).
@@ -1950,7 +1963,28 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     intent: "bid: accepted",
     callbackData: commitCallback("bid", 130000),
     auction: { ...AUCTION, bids: [{ kind: "accepted", lotVersion: 4 }] },
-    auctionCalls: [LOT_CALL, bidCall(130000)],
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
+    body: acceptedWith({}),
+  },
+  // Ставка держит лидерство (PER-840): ручную ставку не перебила автоставка,
+  // и экран о ней молчит.
+  {
+    intent: "bid: accepted, lead kept",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      after: [LOT_AFTER_BID],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
     body: acceptedBody("bid", 130000, 4),
   },
   // Auction до PER-470 версии не называет: «К лоту» прежняя, без порога.
@@ -1958,9 +1992,9 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     intent: "bid: accepted without a version",
     callbackData: commitCallback("bid", 130000),
     auction: { ...AUCTION, bids: [{ kind: "accepted", lotVersion: 0 }] },
-    auctionCalls: [LOT_CALL, bidCall(130000)],
+    auctionCalls: [LOT_CALL, bidCall(130000), getLotCall(CONTRACT_LOT.lotId)],
     body: {
-      ...acceptedBody("bid", 130000, 4),
+      ...acceptedWith({}),
       keyboard: [
         [
           {
@@ -2055,7 +2089,12 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       bids: [{ kind: "unanswered" }, { kind: "accepted", lotVersion: 4 }],
       after: [LOT_AFTER_BID],
     },
-    auctionCalls: [LOT_CALL, bidCall(130000), bidCall(130000)],
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
     body: acceptedBody("bid", 130000, 4),
   },
   {
@@ -2206,7 +2245,12 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     intent: "bid: cancel the question",
     callbackData: questionCallback("bid"),
     auction: AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_CALLS],
+    auctionCalls: [
+      LOT_CALL,
+      namesCall(LEADER_ID),
+      ...CARD_CALLS,
+      ...CARD_HISTORY_CALLS,
+    ],
     body: {
       blocks: [
         {
@@ -2882,7 +2926,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
     intent: "final: card",
     callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
     auction: LIVE_AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_HISTORY_CALLS],
     body: liveBody({ lot: LIVE_LOT, participantName: "@owl", button: 125000 }),
   },
   // «Следить за торгами» (PER-826): та же карточка, а трансляцию запускает
@@ -2895,7 +2939,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       page: 2,
     }),
     auction: LIVE_AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_HISTORY_CALLS],
     body: liveBody({
       lot: LIVE_LOT,
       participantName: "@owl",
@@ -2919,6 +2963,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       bidCall(125000),
       getLotCall(CONTRACT_LOT.lotId, 4),
       namesCall(CONTRACT_VIEWER.identityId),
+      ...CARD_HISTORY_CALLS,
     ],
     body: liveBody({
       lot: LIVE_LOT_AFTER_BID,
@@ -2941,7 +2986,13 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
         },
       ],
     },
-    auctionCalls: [LOT_CALL, bidCall(125000), LOT_CALL, namesCall(LEADER_ID)],
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(125000),
+      LOT_CALL,
+      namesCall(LEADER_ID),
+      ...CARD_HISTORY_CALLS,
+    ],
     body: liveBody({
       lot: LIVE_LOT,
       participantName: "@owl",
@@ -2965,6 +3016,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       bidCall(125000),
       LOT_CALL,
       namesCall(LEADER_ID),
+      ...CARD_HISTORY_CALLS,
     ],
     body: liveBody({
       lot: LIVE_LOT,
@@ -3009,6 +3061,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       bidCall(125000),
       getLotCall(CONTRACT_LOT.lotId, 4),
       namesCall(CONTRACT_VIEWER.identityId),
+      ...CARD_HISTORY_CALLS,
     ],
     body: liveBody({
       lot: LIVE_LOT_AFTER_BID,
@@ -3035,6 +3088,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       LOT_CALL,
       chooseCall({ kind: "username", username: "owl_fan" }),
       namesCall(LEADER_ID),
+      ...CARD_HISTORY_CALLS,
     ],
     body: liveBody({
       lot: LIVE_LOT,
@@ -3062,6 +3116,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       LOT_CALL,
       chooseCall({ kind: "username", username: "owl_fan" }),
       namesCall(LEADER_ID),
+      ...CARD_HISTORY_CALLS,
     ],
     body: liveBody({ lot: LIVE_LOT, participantName: "@owl", button: 125000 }),
   },
@@ -3071,7 +3126,12 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
     intent: "final: stale button outside the final",
     callbackData: finalBidCallback(125000),
     auction: AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_CALLS],
+    auctionCalls: [
+      LOT_CALL,
+      namesCall(LEADER_ID),
+      ...CARD_CALLS,
+      ...CARD_HISTORY_CALLS,
+    ],
     body: TRADING_LOT_BODY,
   },
 ];
@@ -4023,7 +4083,12 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       followed: [],
       bids: [{ kind: "accepted", lotVersion: 4 }],
     },
-    auctionCalls: [LOT_CALL, FOLLOWED_CALL, bidCall(130000)],
+    auctionCalls: [
+      LOT_CALL,
+      FOLLOWED_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
     body: acceptedWith({ favorites: true }),
   },
   // Повторная ставка на лот из избранного подсказку не показывает.
@@ -4035,8 +4100,13 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       followed: [CONTRACT_LOT.lotId],
       bids: [{ kind: "accepted", lotVersion: 4 }],
     },
-    auctionCalls: [LOT_CALL, FOLLOWED_CALL, bidCall(130000)],
-    body: acceptedBody("bid", 130000, 4),
+    auctionCalls: [
+      LOT_CALL,
+      FOLLOWED_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
+    body: acceptedWith({}),
   },
   // Отметки не прочитались: подсказка остаётся — ставка всё равно положит
   // лот в избранное, и строка об этом дешевле молчания.
@@ -4048,7 +4118,12 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       followed: "unavailable",
       bids: [{ kind: "accepted", lotVersion: 4 }],
     },
-    auctionCalls: [LOT_CALL, FOLLOWED_CALL, bidCall(130000)],
+    auctionCalls: [
+      LOT_CALL,
+      FOLLOWED_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
     body: acceptedWith({ favorites: true }),
   },
   // Ставка в окне анти-снайпа продлила торги (PER-631, №107): лот
@@ -4102,7 +4177,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
     ],
-    body: acceptedBody("bid", 130000, 4),
+    body: acceptedWith({}),
   },
   // Продления кончились до ставки: дедлайн уже не сдвинется, и лот не
   // перечитывается.
@@ -4119,7 +4194,11 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       ],
       bids: [{ kind: "accepted", lotVersion: 4 }],
     },
-    auctionCalls: [LOT_CALL, bidCall(130000)],
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+    ],
     body: acceptedWith({
       extension: { kind: "exhausted", deadline: "2026-10-10T18:00:00Z" },
     }),
@@ -5946,6 +6025,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       getLotCall(CONTRACT_LOT.lotId),
       namesCall(LEADER_ID),
       ...CARD_CALLS,
+      ...CARD_HISTORY_CALLS,
     ],
     body: TRADING_LOT_BODY,
   },
@@ -5959,6 +6039,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       getLotCall(CONTRACT_LOT.lotId),
       namesCall(CONTRACT_VIEWER.identityId),
       ...CARD_CALLS,
+      ...CARD_HISTORY_CALLS,
     ],
     body: {
       blocks: [
@@ -5996,6 +6077,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       getLotCall(CONTRACT_LOT.lotId, 4),
       namesCall(LEADER_ID),
       ...CARD_CALLS,
+      ...CARD_HISTORY_CALLS,
     ],
     body: {
       blocks: [
@@ -6032,6 +6114,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       getLotCall(CONTRACT_LOT.lotId, 4),
       namesCall(LEADER_ID),
       ...CARD_CALLS,
+      ...CARD_HISTORY_CALLS,
     ],
     body: TRADING_LOT_BODY,
   },
