@@ -59,7 +59,7 @@ public class InvoiceReminderTests
             new { Invoice = Guid.Parse(env.InvoiceId) });
         captured.ShouldAllBe(value => Math.Abs((value.ToUniversalTime() - due.UtcDateTime).TotalMilliseconds) < 1);
 
-        await env.Publish(AuctionFeed.InvoicePaymentDueChangedSubject, started);
+        await env.Grain.ApplyReplica();
         env.Tasks().Count(task => task.State == "scheduled").ShouldBe(3);
     }
 
