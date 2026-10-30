@@ -1,8 +1,41 @@
 import { describe, expect, it, vi } from "vitest";
-import { createMemoryKv } from "../../../testkit/support.js";
 import type { BroadcastTarget } from "./broadcast.js";
 import { createBroadcastKvStore } from "./broadcast-kv.js";
 import type { LiveScreensKv } from "./live-kv-link.js";
+
+// KV в памяти: ядро не знает test kit поверхностей, поэтому своя фикстура.
+type MemoryKv = {
+  values: Map<string, string>;
+  get: (key: string) => Promise<{
+    operation: "PUT" | "DEL";
+    string: () => string;
+  } | null>;
+  put: (key: string, data: unknown) => Promise<number>;
+  delete: (key: string) => Promise<void>;
+};
+
+function createMemoryKv(fail: () => boolean = () => false): MemoryKv {
+  const values = new Map<string, string>();
+  return {
+    values,
+    get: async (key) => {
+      if (fail()) throw new Error("kv unavailable");
+      const value = values.get(key);
+      return value === undefined
+        ? null
+        : { operation: "PUT", string: () => value };
+    },
+    put: async (key, data) => {
+      if (fail()) throw new Error("kv unavailable");
+      values.set(key, String(data));
+      return values.size;
+    },
+    delete: async (key) => {
+      if (fail()) throw new Error("kv unavailable");
+      values.delete(key);
+    },
+  };
+}
 
 const target: BroadcastTarget = {
   chatId: 4242,
