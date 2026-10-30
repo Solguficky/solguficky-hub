@@ -332,7 +332,10 @@ export function finalFeedLabel(
 ): string | null {
   if (final.active?.lotId === item.lotId) return `▶ ${title} · на торгах`;
   if (item.status.kind === "held") {
-    return `${lotGroupPrefix(item)}${title} · в составе · ${money(item.status.currentPrice)}`;
+    // Предел подписи кнопки 64: ужимается название, а не цена в хвосте.
+    const prefix = lotGroupPrefix(item);
+    const tail = ` · в составе · ${money(item.status.currentPrice)}`;
+    return `${prefix}${truncate(title, Math.max(1, 64 - prefix.length - tail.length))}${tail}`;
   }
   return null;
 }
