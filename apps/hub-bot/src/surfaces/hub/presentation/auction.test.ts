@@ -943,7 +943,7 @@ describe("auction root and the way back", () => {
     expect(labels(lastScreen(calls)).flat()).not.toContain("Статистика");
   });
 
-  it("opens prediction results from a finished auction", async () => {
+  it("opens the auction results from a finished auction", async () => {
     const auction = fakeAuction({ existing: true, stage: "finished" });
     const { bot, calls } = harness("member", auction, {
       presentation: "plain",
@@ -955,7 +955,7 @@ describe("auction root and the way back", () => {
     const root = lastScreen(calls);
     expect(labels(root)).toContainEqual(["Итоги"]);
     await bot.handleUpdate(press(data(root, "Итоги") ?? ""));
-    expect(lastScreen(calls).text).toContain("Итоги после финала.");
+    expect(lastScreen(calls).text).toContain("Итоги аукциона");
   });
 
   // Программа недели (PER-724): абзац под сроками, текст общий с ботом
@@ -1072,6 +1072,45 @@ describe("auction root and the way back", () => {
     expect(labels(card).at(-1)).toEqual(["‹ Лоты"]);
     await bot.handleUpdate(press(data(card, "‹ Лоты") ?? ""));
     expect(data(lastScreen(calls), "‹ Аукцион")).toBe(rootData);
+  });
+
+  // Экран зала и стрим (PER-825): ряд ссылок над навигацией карточки лота и
+  // в «Расширениях» сходки, а без настройки их нет.
+  it("shows the hall links on the lot card and in the extensions menu only when configured", async () => {
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    const bare = harness("member", fakeAuction({ existing: true }));
+    await bare.bot.init();
+    await bare.bot.handleUpdate(press(lotData));
+    expect(JSON.stringify(labels(lastScreen(bare.calls)))).not.toContain("↗");
+    await bare.bot.handleUpdate(press(extensionsData));
+    expect(JSON.stringify(labels(lastScreen(bare.calls)))).not.toContain("↗");
+
+    // Ссылки в «Расширениях» стоят, пока идут торги: стадия фикстуры по
+    // умолчанию — «scheduled».
+    const { bot, calls } = harness(
+      "member",
+      fakeAuction({ existing: true, stage: "prebidding" }),
+      { hall },
+    );
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+    const card = lastScreen(calls);
+    expect(labels(card).slice(-3)).toEqual([
+      ["Экран зала ↗"],
+      ["Стрим ↗"],
+      ["‹ Лоты"],
+    ]);
+    await bot.handleUpdate(press(extensionsData));
+    const menu = lastScreen(calls);
+    expect(labels(menu)).toEqual([
+      ["🏷️ Аукцион"],
+      ["Экран зала ↗"],
+      ["Стрим ↗"],
+      ["‹ Сходка"],
+    ]);
   });
 
   // Сет лотов (ADR-073, п. 7): карточка лота сета ведёт к экрану сета, тот

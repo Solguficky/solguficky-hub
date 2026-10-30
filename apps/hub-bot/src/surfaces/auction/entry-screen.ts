@@ -22,6 +22,7 @@ import {
   withdrawnTitle,
   withdrawQuestion,
 } from "../../auction-final.js";
+import { type HallLinks, hallButtons } from "../../auction-hall.js";
 import {
   activeHappyHourLine,
   happyHourTerms,
@@ -35,11 +36,6 @@ import {
   predictionRoundTitle,
   predictionTitle,
 } from "../../auction-prediction.js";
-import {
-  predictionResultsButtonLabel,
-  predictionResultsParagraphs,
-  predictionResultsTitle,
-} from "../../auction-prediction-results.js";
 import {
   auctionStatusLine,
   programmeParagraph,
@@ -60,6 +56,11 @@ import {
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
+import {
+  auctionResultsButtonLabel,
+  auctionResultsParagraphs,
+  auctionResultsTitle,
+} from "../../auction-results.js";
 import {
   collectedLine,
   type SetLotOptions,
@@ -259,6 +260,9 @@ export type RenderedScreen = {
 
 export type RenderOptions = {
   faq?: FaqContent;
+  // Экран зала и стрим (PER-825): ряды кнопок-URL под карточкой лота. Нет
+  // адресов — рядов нет.
+  hall?: HallLinks;
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
   // Форма карточки лота; по умолчанию `rich`.
@@ -914,6 +918,24 @@ function yearOf(instant: string, timeZone: string, now?: Date): string {
   return shown === year(now ?? new Date()) ? "" : ` ${shown}`;
 }
 
+// Ссылки на экран зала и стрим (PER-825) — каждая своим рядом под кнопками
+// карточки лота: пара кнопок вне дизайн-кода линтер не пускает. Без настройки
+// рядов нет.
+function hallRow(
+  keyboard: readonly (readonly TelegramButton[])[],
+  hall: HallLinks | undefined,
+  auctionId: string,
+): readonly (readonly TelegramButton[])[] {
+  const buttons = hallButtons(hall, auctionId);
+  // Последний ряд карточки — возврат (линтер, правило nav): ссылки встают
+  // над ним.
+  return [
+    ...keyboard.slice(0, -1),
+    ...buttons.map((button) => [button]),
+    ...keyboard.slice(-1),
+  ];
+}
+
 function renderBody(
   body: AuctionScreenBody,
   options: RenderOptions,
@@ -959,7 +981,11 @@ function renderBody(
     (block): block is LotBlock => block.kind === "lot",
   );
   if (id === "lot" && lot !== undefined) {
-    return { id, keyboard, ...renderCard(lot, options) };
+    return {
+      id,
+      keyboard: hallRow(keyboard, options.hall, lot.auctionId),
+      ...renderCard(lot, options),
+    };
   }
   const history = body.blocks.find(
     (block): block is HistoryBlock => block.kind === "history",
@@ -1056,8 +1082,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "answer-refused":
       case "raffle-answer-refused":
         return "answer-refused";
-      case "prediction-results":
-        return "prediction-results";
+      case "auction-results":
+        return "auction-results";
       case "day-chronicle":
         return "day-chronicle";
       case "auction-chronicle":
@@ -1259,12 +1285,12 @@ function renderLeaf(
           text: screenText(invoiceMissingTitle, ...invoiceMissingParagraphs()),
         };
       // Розыгрыш среди участников (ADR-066): тексты общие с хабом.
-      case "prediction-results":
+      case "auction-results":
         return {
           format: "html",
           text: screenText(
-            predictionResultsTitle,
-            ...predictionResultsParagraphs(block, { money }),
+            auctionResultsTitle,
+            ...auctionResultsParagraphs(block, { money }),
           ),
         };
       // Хроники дня (PER-725): тексты общие с хабом.
@@ -2089,9 +2115,9 @@ function renderButton(
       return text("→");
     case "root.predictions":
       return text(predictionButtonLabel);
-    case "root.prediction-results":
-      return text(predictionResultsButtonLabel);
-    case "prediction-results.back":
+    case "root.results":
+      return text(auctionResultsButtonLabel);
+    case "results.back":
       return text("‹ Аукцион");
     case "root.achievements":
       return text("Ачивки");
@@ -2273,6 +2299,9 @@ function renderButton(
       }
       return text(predictionRoundTitle(parsed.intent.round));
     }
+    // «Мои счета» победителю на карточке проданного лота (PER-813).
+    case "lot.invoices":
+      return text(invoicesButtonLabel);
     case "prediction.back":
       return text(
         blocks.some((block) => block.kind === "prediction")

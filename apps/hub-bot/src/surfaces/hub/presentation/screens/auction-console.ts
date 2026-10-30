@@ -44,7 +44,6 @@ import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleAnnouncementData,
-  consoleAskData,
   consoleCancelConfirmData,
   consoleCancelData,
   consoleCloseConfirmData,
@@ -65,6 +64,7 @@ import {
   consoleMarkData,
   consoleMoreData,
   consoleNextLotData,
+  consoleOpenAskData,
   consoleOpenData,
   consolePaymentTermData,
   consolePaymentTextData,
@@ -594,12 +594,9 @@ function statusLines(view: ConsoleScreenView): string[] {
       ];
     case "final":
       return ["Идёт финал.", ...finalTimeLines(view.console, view)];
+    // Время финала после конца аукциона ничего не говорит (PER-816).
     case "finished":
-      return [
-        "Аукцион завершён.",
-        ...finalTimeLines(view.console, view),
-        ...raffleLines(view),
-      ];
+      return ["Аукцион завершён.", ...raffleLines(view)];
     case "cancelled":
       return ["Аукцион отменён: проданные лоты остались проданными."];
     default: {
@@ -705,25 +702,24 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
     position >= 0 &&
     entry.lot.status.kind === "trading"
   ) {
-    keyboard
-      .text("Поднять цену", consoleAskData(auction, position))
-      .row()
-      .text(
-        entry.lot.status.leaderId === undefined
-          ? "Закрыть без продажи"
+    // «Поднять цену» убрана (PER-816, решение владельца 29.10.2026): ведущий
+    // объявляет цену голосом, а ставку зала заносит помощник. На последнем
+    // лоте продажа ещё и завершает аукцион — это сказано на кнопке.
+    keyboard.text(
+      entry.lot.status.leaderId === undefined
+        ? "Закрыть без продажи"
+        : position === order.length - 1
+          ? "Продать и завершить аукцион"
           : "Продать",
-        consoleCloseData(auction, position),
-      );
+      consoleCloseData(auction, position),
+    );
   } else {
-    keyboard.text("Открыть следующий лот", consoleNextLotData(auction));
+    keyboard.text("Открыть следующий лот", consoleOpenAskData(auction));
   }
-  // «Ставки зала» помощника (PER-565) и сеты (PER-509) — из пульта ведущего,
-  // а не из корня аукциона (PER-802): в корне у администратора один вход.
+  // «Ставки зала» помощника (PER-565) — из пульта финала, а не из корня
+  // аукциона (PER-802). Сетов и промо-видео на экране финала нет (PER-816):
+  // это управление аукционом, а не финалом.
   nextRow(keyboard).text(floorLabel, floorData(auction));
-  nextRow(keyboard).text(lotSetsLabel, consoleSetsData(auction));
-  if (view.media === true) {
-    nextRow(keyboard).text(promoVideoLabel, consolePromoVideoData(auction));
-  }
   // Отмена доступна и ведущему (ADR-047, дополнение 2026-10-12), но в «Ещё»,
   // как на онлайн-этапе (PER-814): рядом с «Продать» её нажали бы случайно.
   moreRow(keyboard, console);
@@ -944,7 +940,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     // «Начать финал» посреди финала отвечает тем же исходом — там первый лот
     // уже открывали, и кнопки нет.
     if (view.note === "final-started" && noLotOpened(console)) {
-      keyboard.text("Открыть первый лот", consoleNextLotData(auction));
+      keyboard.text("Открыть первый лот", consoleOpenAskData(auction));
     }
     // Слот торгов занят (PER-606): исход ведёт и к идущему аукциону — в его
     // корень, а не в пульт: пульт чужого аукциона спросит своё право.
@@ -1189,11 +1185,14 @@ function tradingScreen(view: ConsoleScreenView): ShownScreen {
   }
   // «Торги» (PER-802): «Счастливые часы» — пока идёт неделя, в них же
   // запускается окно по ходу торгов (PER-615), и «Сводка дня» (PER-492).
+  // Завершённому аукциону «Сводка дня» не нужна (PER-816): итоги — в «Итогах».
   nextRow(keyboard);
   if (console.status === "prebidding") {
     keyboard.text("Счастливые часы", consoleWindowsData(auction));
   }
-  keyboard.text("Сводка дня", consoleDaySummaryData(auction));
+  if (console.status !== "finished") {
+    keyboard.text("Сводка дня", consoleDaySummaryData(auction));
+  }
   // Текст оплаты задают до дедлайна недели (PER-814); с дедлайна он среди
   // «Счетов», где его читает и сводка.
   if (console.status === "prebidding") {
@@ -1295,7 +1294,10 @@ function participantsRow(keyboard: InlineKeyboard, view: ConsoleScreenView) {
     console.status === "prebidding" ||
     console.status === "break" ||
     console.status === "lineup-frozen";
-  const promo = view.media === true && console.status !== "cancelled";
+  const promo =
+    view.media === true &&
+    console.status !== "cancelled" &&
+    console.status !== "finished";
   if (!announcement && !promo) return;
   nextRow(keyboard);
   if (announcement) {
@@ -1308,7 +1310,10 @@ function participantsRow(keyboard: InlineKeyboard, view: ConsoleScreenView) {
 // просмотра, и «Порядок» (PER-719), пока финал впереди.
 function feedRow(keyboard: InlineKeyboard, console: AuctionConsoleView) {
   const auction = uuidToToken(console.auctionId);
-  nextRow(keyboard).text(lotSetsLabel, consoleSetsData(auction));
+  // После конца аукциона сеты не нужны (PER-816).
+  if (console.status !== "finished") {
+    nextRow(keyboard).text(lotSetsLabel, consoleSetsData(auction));
+  }
   if (layoutEditable(console.status)) {
     keyboard.text(layoutLabel, consoleLayoutData(auction));
   }
@@ -1793,6 +1798,28 @@ export function cancelConfirmScreen(confirm: {
 }
 
 /**
+ * Подтверждение открытия лота финала (PER-816): торги по нему начинаются
+ * сразу, и нажатие по ошибке стоило бы ведущему темпа. «Да» — прежняя кнопка
+ * открытия, поэтому исход тот же.
+ */
+export function openConfirmScreen(confirm: { auctionId: string }): ShownScreen {
+  const auction = uuidToToken(confirm.auctionId);
+  return {
+    id: "final-open-confirm",
+    text: screenText(
+      "Открыть следующий лот?",
+      escapeHtml("Торги по нему начнутся сразу."),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, открыть",
+      yesData: consoleNextLotData(auction),
+      noData: consoleViewData(auction),
+    }),
+    format: "HTML",
+  };
+}
+
+/**
  * Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо,
  * без ставок, закрытие без продажи. Ключ закрытия рождён здесь и едет в «Да»:
  * повторное нажатие той же кнопки Auction примет как повтор, и второй
@@ -1807,6 +1834,7 @@ export function closeConfirmScreen(confirm: {
   leaderName?: string | undefined;
   leaderUsername?: string | undefined;
   changed?: true | undefined;
+  last?: true | undefined;
 }): ShownScreen {
   const auction = uuidToToken(confirm.auctionId);
   const title = truncate(confirm.title ?? untitled, titleLimit);
@@ -1829,9 +1857,17 @@ export function closeConfirmScreen(confirm: {
           : `Продажа за ${money(confirm.price)}${buyer}.`,
       ),
       escapeHtml("Отменить закрытие нельзя: торги по лоту закончатся."),
+      confirm.last === true
+        ? escapeHtml("Это последний лот: после него аукцион завершится.")
+        : undefined,
     ),
     keyboard: confirmKeyboard({
-      yes: confirm.price === undefined ? "Да, закрыть" : "Да, продать",
+      yes:
+        confirm.price === undefined
+          ? "Да, закрыть"
+          : confirm.last === true
+            ? "Да, продать и завершить"
+            : "Да, продать",
       yesData: consoleCloseConfirmData(
         auction,
         confirm.position,

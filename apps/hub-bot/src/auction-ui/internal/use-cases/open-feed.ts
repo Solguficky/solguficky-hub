@@ -19,6 +19,58 @@ export const FEED_PAGE_SIZE = 8;
 
 const MAX_FEED_LOTS = FEED_PAGE_SIZE * (MAX_FEED_PAGE + 1);
 
+// Группы ленты (PER-813, решение владельца): лоты идут не вперемешку, а по
+// состоянию — на торгах, ждёт финала, продан, не продан. Лот до торгов и снятый
+// лот группами не названы: первый стоит перед торгами, второй — в конце.
+export type FeedGroup = "trading" | "held" | "sold" | "unsold";
+
+const GROUP_ORDER: readonly FeedGroup[] = ["trading", "held", "sold", "unsold"];
+
+export function feedGroupOf(status: LotStatusView): FeedGroup | undefined {
+  switch (status.kind) {
+    case "trading":
+    case "held":
+    case "sold":
+    case "unsold":
+      return status.kind;
+    case "draft":
+    case "scheduled":
+    case "withdrawn":
+      return undefined;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+// Место группы в ленте: лоты до торгов стоят перед группами, снятые — после.
+function groupRank(status: LotStatusView): number {
+  if (status.kind === "withdrawn") return GROUP_ORDER.length + 1;
+  const group = feedGroupOf(status);
+  return group === undefined ? -1 : GROUP_ORDER.indexOf(group);
+}
+
+// Устойчиво: внутри группы остаётся прежний порядок — администратора или зала.
+function byGroup(lots: readonly LotView[]): LotView[] {
+  return lots
+    .map((lot, index) => ({ lot, index, rank: groupRank(lot.status) }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.lot);
+}
+
+// Сколько лотов в каждой группе списка, в порядке групп; пустые не называются.
+export function feedGroupCounts(
+  lots: readonly LotView[],
+): { group: FeedGroup; count: number }[] {
+  return GROUP_ORDER.flatMap((group) => {
+    const count = lots.filter(
+      (lot) => feedGroupOf(lot.status) === group,
+    ).length;
+    return count === 0 ? [] : [{ group, count }];
+  });
+}
+
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
 //
 // Страница за пределом ленты — кнопка устаревшего экрана: лоты сняли, пока
@@ -117,6 +169,7 @@ export async function openFeed(input: {
         pageCount,
         lots: shown.map((lot) => feedItemOf(lot, input.viewer)),
         ...withMine(mineOf(ordered, input.viewer)),
+        ...groupsOf(section !== undefined ? section.lots : loaded),
         ...(beforeTrading(loaded) ? { beforeTrading: true as const } : {}),
         ...(shownSections.length > 0
           ? {
@@ -169,6 +222,15 @@ export async function openFeed(input: {
       ],
     ],
   };
+}
+
+// Группы списка блока: у экрана раздела — группы раздела, у ленты — всего
+// аукциона, а не только лотов вне разделов. Одна группа на весь список не называется: делить нечего.
+function groupsOf(lots: readonly LotView[]): {
+  groups?: { group: FeedGroup; count: number }[];
+} {
+  const groups = feedGroupCounts(lots);
+  return groups.length < 2 ? {} : { groups };
 }
 
 // Кнопка «Розыгрыш» стоит, только пока розыгрыш есть: Auction отдаёт его с
@@ -320,12 +382,12 @@ export function arrangeFeed(
     .map((section) => ({
       sectionId: section.sectionId,
       name: section.name,
-      lots: take(section.lotIds),
+      lots: byGroup(take(section.lotIds)),
     }))
     .filter((section) => section.lots.length > 0);
   const ordered = take(layout?.lotIds ?? []);
   const unordered = byCreation(lots.filter((lot) => !placed.has(lot.lotId)));
-  return { sections, rest: [...ordered, ...unordered] };
+  return { sections, rest: byGroup([...ordered, ...unordered]) };
 }
 
 // Лента одним списком: разделы по порядку, затем общий список. Его берут
@@ -372,6 +434,8 @@ export function orderForFeed(
 // платформы одна, поэтому сравниваются минимальные единицы.
 function sortForFeed(lots: readonly LotView[]): LotView[] {
   return [...lots].sort((a, b) => {
+    const rank = groupRank(a.status) - groupRank(b.status);
+    if (rank !== 0) return rank;
     const priceA = feedPriceOf(a.status)?.minorUnits;
     const priceB = feedPriceOf(b.status)?.minorUnits;
     if (priceA !== priceB) {

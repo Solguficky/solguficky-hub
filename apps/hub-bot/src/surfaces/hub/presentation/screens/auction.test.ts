@@ -46,6 +46,35 @@ const lot = (
 });
 
 describe("lot card in the hub shell", () => {
+  // Экран зала и стрим (PER-825): ряд ссылок над навигацией, только при
+  // настроенных адресах.
+  it("adds the hall links row to the lot card only when configured", () => {
+    const rows = (hall?: { screenUrl?: string; streamUrl?: string }) =>
+      auctionScreen({
+        ...view([lot({})]),
+        ...(hall === undefined ? {} : { hall }),
+      }).screen.keyboard.inline_keyboard.map((row) =>
+        row.map((button) => ("url" in button ? button.url : button.text)),
+      );
+    expect(
+      rows().some((row) => row.some((value) => value.startsWith("https:"))),
+    ).toBe(false);
+    expect(
+      rows({
+        screenUrl: "https://hall.example.org/screen",
+        streamUrl: "https://stream.example.org/live",
+      }),
+    ).toEqual(
+      expect.arrayContaining([
+        [`https://hall.example.org/screen/${auctionId}`],
+        ["https://stream.example.org/live"],
+      ]),
+    );
+    expect(
+      rows({ screenUrl: "https://hall.example.org/screen" }),
+    ).toContainEqual([`https://hall.example.org/screen/${auctionId}`]);
+  });
+
   it("attaches the achievement image to the rich card after loading it", () => {
     const block: AuctionBlock = {
       kind: "achievements",

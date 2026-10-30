@@ -2,6 +2,7 @@ import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import {
+  AuctionState_BreakSchema,
   AuctionState_DraftSchema,
   AuctionState_PrebiddingSchema,
   AuctionState_ScheduledSchema,
@@ -2539,7 +2540,10 @@ describe("lot info reader", () => {
   it("reads the title as the recipient with the right to bid", async () => {
     const getLot = vi.fn().mockResolvedValue({ card: { title: "Кружка" } });
     await expect(
-      createLotInfoReader({ getLot }).lotInfo(identityId, lotId),
+      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
+        identityId,
+        lotId,
+      ),
     ).resolves.toEqual({ title: "Кружка" });
     expect(getLot).toHaveBeenCalledWith(
       {
@@ -2564,7 +2568,10 @@ describe("lot info reader", () => {
       },
     });
     await expect(
-      createLotInfoReader({ getLot }).lotInfo(identityId, lotId),
+      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
+        identityId,
+        lotId,
+      ),
     ).resolves.toEqual({
       title: "Кружка",
       deadline: "2026-10-20T19:45:00Z",
@@ -2572,10 +2579,44 @@ describe("lot info reader", () => {
     });
   });
 
+  // Ориентировочное время финала для вести о конце торгов (PER-812): читается
+  // от имени получателя с правом ставок.
+  it("reads the estimated final time of an auction as the recipient", async () => {
+    const getAuction = vi.fn().mockResolvedValue({
+      auction: create(AuctionSnapshotSchema, {
+        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
+        status: {
+          case: "onBreak",
+          value: create(AuctionState_BreakSchema, {}),
+        },
+        finalAt: "2026-10-31T17:00:00Z",
+      }),
+    });
+    await expect(
+      createLotInfoReader({ getLot: vi.fn(), getAuction }).auctionFinalAt(
+        identityId,
+        "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
+      ),
+    ).resolves.toBe("2026-10-31T17:00:00Z");
+    expect(getAuction).toHaveBeenCalledWith(
+      {
+        viewer: expect.objectContaining({
+          identityId,
+          rights: [AccessRight.PLACE_BIDS],
+        }),
+        auctionId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
+      },
+      expect.anything(),
+    );
+  });
+
   it("gives an empty title to a lot without a card", async () => {
     const getLot = vi.fn().mockResolvedValue({});
     await expect(
-      createLotInfoReader({ getLot }).lotInfo(identityId, lotId),
+      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
+        identityId,
+        lotId,
+      ),
     ).resolves.toEqual({ title: "" });
   });
 });

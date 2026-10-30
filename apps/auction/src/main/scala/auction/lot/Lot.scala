@@ -755,10 +755,13 @@ object Lot {
    * Прокси-перебивание (П-02) на состоянии после применения `BidPlaced` или `ProxyLimitSet`.
    *
    * Серия автоставок сворачивается в одно событие с итоговой ценой: обе ветки сразу дают конечную точку `min(max
-   * лидера, второй максимум + шаг)`, и после неё выше `floor` остаётся только лимит лидера — повторный пересчёт ничего
-   * не находит. Сильнее тот, чей максимум больше, при равных — чей лимит записан раньше (`setSeq`, П-07), и сравнение
-   * идёт с лидером, а не только между соперниками. Ручная ставка лидера главнее его старого лимита: база — `max(L.max,
-   * f)`. Производная ставка может быть ниже порога П-01 (Т-22): лимит исчерпан, но `target > f` держит И-01.
+   * победителя, второй максимум + шаг)`, и после неё выше `floor` остаётся только лимит победителя — повторный пересчёт
+   * ничего не находит. Сильнее тот, чей максимум больше, при равных — чей лимит записан раньше (`setSeq`, П-07), и
+   * сравнение идёт с лидером, а не только между соперниками. Второй максимум — самый большой из всех остальных лимитов,
+   * а не только лимита лидера или одного соперника: в торгах лимиты появляются по одному, и выше цены остаётся не
+   * больше одного чужого, но лимиты удержания копятся без пересчёта, и возврат (`ResumeLot`) разбирает их все этим
+   * одним вызовом (PER-700). Ручная ставка лидера главнее его старого лимита: база — `max(L.max, f)`. Производная
+   * ставка может быть ниже порога П-01 (Т-22): лимит исчерпан, но `target > f` держит И-01.
    *
    * Цена на шаг выше насыщается на `Long.MaxValue`: лимит — ввод участника, и у самого большого из них сумма с шагом
    * переполнила бы `Long` в отрицательную, а пересчёт молча не нашёл бы ставки.
@@ -786,10 +789,7 @@ object Lot {
       else price.copy(minorUnits = price.minorUnits + step)
     }
     val reaches = (amount: Money) => if (opening(trading)) !(amount < f) else amount > f
-    val contender = trading.proxyLimits.toList
-      .filter((who, limit) => !trading.leader.contains(who) && reaches(limit.max))
-      .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
-      .headOption
+    val (contender, runnerUp) = rivals(trading, reaches)
     val leading = trading.leader.flatMap(leader => trading.proxyLimits.get(leader).map(leader -> _))
     contender.flatMap { (rival, c) =>
       leading match {
@@ -797,13 +797,30 @@ object Lot {
           val target = lesser(l.max, stepAbove(c.max))
           Option.when(target > f)(proxyBid(bidId, leader, target, trading.leader))
         case _ if opening(trading) =>
-          Some(proxyBid(bidId, rival, f, trading.leader))
+          val target = runnerUp.filter(_ > f).fold(f)(second => lesser(c.max, stepAbove(second)))
+          Some(proxyBid(bidId, rival, target, trading.leader))
         case _ =>
-          val base = leading.fold(f)((_, l) => greater(l.max, f))
+          val base = (leading.map((_, l) => l.max) ++ runnerUp).foldLeft(f)(greater)
           val target = lesser(c.max, stepAbove(base))
           Option.when(target > f)(proxyBid(bidId, rival, target, trading.leader))
       }
     }
+  }
+
+  /**
+   * Соперники лидера по лимитам: тот, кто может взять лот, и второй максимум среди остальных нелидеров. В торгах лимиты
+   * появляются по одному и второго выше цены нет; в удержании они копятся, и возврат разбирает их одним пересчётом, где
+   * второй максимум входит в цену победителя наравне с лимитом лидера.
+   */
+  private def rivals(
+      trading: TradingState,
+      reaches: Money => Boolean
+  ): (Option[(ParticipantId, ProxyLimit)], Option[Money]) = {
+    val others = trading.proxyLimits.toList
+      .filter((who, _) => !trading.leader.contains(who))
+      .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
+    val contender = others.headOption.filter((_, limit) => reaches(limit.max))
+    (contender, others.drop(1).headOption.map((_, limit) => limit.max))
   }
 
   /**
@@ -824,10 +841,7 @@ object Lot {
       ask.fold(if (opening(trading)) !(amount < f) else amount > f)(threshold => !(amount < threshold))
     val stepAbove = (price: Money) => saturatedPlus(price, baseStep(trading, price))
     val onGrid = (target: Money) => StepPolicy.gridFloor(trading.config.stepPolicy, f, target).filter(reaches)
-    val contender = trading.proxyLimits.toList
-      .filter((who, limit) => !trading.leader.contains(who) && reaches(limit.max))
-      .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
-      .headOption
+    val (contender, runnerUp) = rivals(trading, reaches)
     val leading = trading.leader.flatMap(leader => trading.proxyLimits.get(leader).map(leader -> _))
     contender.flatMap { (rival, c) =>
       leading match {
@@ -836,7 +850,8 @@ object Lot {
         case _ =>
           val price = trading.currentPrice
           val next =
-            if (opening(trading)) price else stepAbove(leading.fold(price)((_, l) => greater(l.max, price)))
+            if (opening(trading)) runnerUp.filter(_ > price).fold(price)(stepAbove)
+            else stepAbove((leading.map((_, l) => l.max) ++ runnerUp).foldLeft(price)(greater))
           onGrid(lesser(c.max, ask.fold(next)(greater(_, next)))).map(proxyBid(bidId, rival, _, trading.leader))
       }
     }

@@ -5,7 +5,10 @@ import type {
   LotAdministration,
   MeetupAuctions,
 } from "../auction/port.js";
-import type { ParticipantUsernameResolver } from "../identity/port.js";
+import type {
+  CommunityAdministrator,
+  ParticipantUsernameResolver,
+} from "../identity/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import {
@@ -16,6 +19,7 @@ import { createAuctionConsole } from "./auction-console.js";
 import { createAuctionInvoices } from "./auction-invoices.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createFloorBids } from "./floor-bids.js";
+import { createMemoryRoom, type FloorRoomStore } from "./floor-room.js";
 import { createHappyHours } from "./happy-hours.js";
 import { createLotForm } from "./lot-form.js";
 import { createLotLayout } from "./lot-layout.js";
@@ -53,6 +57,10 @@ export function createDispatcher(
     // Настоящий аккаунт победителя для пульта (PER-648): его отдаёт Identity
     // по праву ведущего.
     usernames?: ParticipantUsernameResolver;
+    // Состав зала (PER-816): bucket KV; нет — в памяти процесса.
+    room?: FloorRoomStore;
+    // Список участников сообщества для поиска людей зала; нет — без поиска.
+    members?: Pick<CommunityAdministrator, "community">;
     // Приём объявления аукциона (PER-765) — Notifications; нет — пульт без
     // «Объявления».
     announcements?: AuctionAnnouncements;
@@ -79,7 +87,13 @@ export function createDispatcher(
   // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
   // пускает право вести аукцион.
   const floorBids =
-    consoles === undefined ? undefined : createFloorBids(consoles.auctions);
+    consoles === undefined
+      ? undefined
+      : createFloorBids(
+          consoles.auctions,
+          consoles.room ?? createMemoryRoom(),
+          consoles.members,
+        );
   // Снятие участника с лота (PER-659) — тот же порт: команды администратора
   // пускает право вести аукцион.
   const participantRemoval =
@@ -364,6 +378,7 @@ export function createDispatcher(
         case "freeze-final-lineup":
         case "start-auction-final":
         case "start-final-lot":
+        case "prepare-final-open":
         case "ask-final-price":
         case "advance-final-ask":
         case "prepare-final-close":
@@ -386,6 +401,8 @@ export function createDispatcher(
         case "ask-floor-search":
         case "prepare-floor-bid":
         case "place-floor-bid":
+        case "add-floor-member":
+        case "remove-floor-member":
           return floorBids === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : floorBids(request);

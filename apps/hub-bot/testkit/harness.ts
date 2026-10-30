@@ -218,6 +218,7 @@ export type HarnessOptions = Partial<
     | "communityTimeZone"
     | "auctionBotUsername"
     | "supportBotUsername"
+    | "hall"
     | "build"
     | "files"
     | "favorites"

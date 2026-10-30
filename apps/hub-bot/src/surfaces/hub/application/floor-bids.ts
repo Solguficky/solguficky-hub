@@ -1,6 +1,8 @@
 import type { LotView } from "../../../auction-ui/index.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type { AuctionConsoles, AuctionFailure } from "../auction/port.js";
+import type { CommunityAdministrator } from "../identity/port.js";
+import type { FloorRoomStore, RoomMember } from "./floor-room.js";
 import type {
   ExecuteResult,
   FloorBidsRequest,
@@ -12,10 +14,12 @@ import type {
 } from "./types.js";
 
 // «Ставки зала» помощника ведущего (PER-565, ADR-070 пп. 4–6): текущий лот
-// финала, его цена и лидер и люди зала — все, кто выбрал имя в аукционе, —
-// кнопками с объявленной ценой. Своего состояния нет: каждое нажатие читает
-// аукцион заново, а лот, человек и цена едут в кнопке. Право решает Auction:
-// чтение пульта и ставку зала он пускает держателю `run_auctions`.
+// финала, его цена и лидер и люди зала кнопками с объявленной ценой. Людей
+// зала с 29.10.2026 набирает помощник сам (PER-816): ставка уходит нажатием на
+// человека из состава, без подтверждения, а ошибку исправляет снятие
+// участника с лота. Состав — в `FloorRoomStore`, имена — из списка имён
+// аукциона. Право решает Auction: чтение пульта и ставку зала он пускает
+// держателю `run_auctions`.
 
 function failed(failure: AuctionFailure): ExecuteResult {
   return failure.kind === "invalid"
@@ -65,7 +69,11 @@ function floorLotOf(lot: LotView, names: ReadonlyMap<string, string>) {
   return floor;
 }
 
-export function createFloorBids(consoles: AuctionConsoles) {
+export function createFloorBids(
+  consoles: AuctionConsoles,
+  room: FloorRoomStore,
+  directory?: Pick<CommunityAdministrator, "community">,
+) {
   type Read =
     | { kind: "ok"; floor: FloorView }
     | { kind: "refused"; result: ExecuteResult };
@@ -76,7 +84,7 @@ export function createFloorBids(consoles: AuctionConsoles) {
   async function read(
     request: FloorBidsRequest & { auctionId: string },
   ): Promise<Read> {
-    const [found, listed] = await Promise.all([
+    const [found, listed, stored] = await Promise.all([
       consoles.getAuctionConsole(
         request.identity,
         request.auctionId,
@@ -87,6 +95,7 @@ export function createFloorBids(consoles: AuctionConsoles) {
         request.auctionId,
         rpcMeta(request),
       ),
+      room.read(request.auctionId),
     ]);
     if (found.kind !== "ok") {
       switch (found.kind) {
@@ -102,13 +111,18 @@ export function createFloorBids(consoles: AuctionConsoles) {
     if (listed.kind !== "ok") {
       return { kind: "refused", result: failed(listed) };
     }
-    const people = listed.names
+    // Имена — у всех, кто выбрал их в аукционе; людьми зала становятся только
+    // те, кого помощник внёс в состав.
+    const named = listed.names
       .filter((each) => each.name !== "")
-      .map((each) => ({ participantId: each.participantId, name: each.name }))
+      .map((each) => ({ participantId: each.participantId, name: each.name }));
+    const names = new Map(named.map((each) => [each.participantId, each.name]));
+    const members = stored.kind === "ok" ? stored.members : [];
+    const inRoom = new Set(members.map((each) => each.identityId));
+    const people = named
+      .filter((each) => inRoom.has(each.participantId))
       .sort(byName);
-    const names = new Map(
-      people.map((each) => [each.participantId, each.name]),
-    );
+    const waiting = members.filter((each) => !names.has(each.identityId));
     const snapshot = found.console;
     const active =
       snapshot.status === "final" ? snapshot.lineup?.activeLotId : undefined;
@@ -131,6 +145,8 @@ export function createFloorBids(consoles: AuctionConsoles) {
         status: snapshot.status,
         ...(lot === undefined ? {} : { lot }),
         people,
+        waiting,
+        ...(stored.kind === "ok" ? {} : { roomUnavailable: true as const }),
         versions: Object.fromEntries(
           snapshot.lots.map((each) => [each.lot.lotId, each.lot.version]),
         ),
@@ -143,15 +159,28 @@ export function createFloorBids(consoles: AuctionConsoles) {
   ): Promise<ExecuteResult> {
     const current = await read(request);
     if (current.kind === "refused") return current.result;
+    const edit = request.edit === true ? { edit: true as const } : {};
     const search = request.search?.trim();
     if (search === undefined || search === "") {
-      return { kind: "floor-bids", floor: current.floor, page: request.page };
+      return {
+        kind: "floor-bids",
+        floor: current.floor,
+        page: request.page,
+        ...edit,
+      };
     }
-    const needle = search.toLocaleLowerCase("ru");
-    const people = current.floor.people.filter((each) =>
-      each.name.toLocaleLowerCase("ru").includes(needle),
-    );
-    return people.length === 0
+    // Поиск — по нику среди участников сообщества (PER-816): человека, которого
+    // в зале ещё нет, помощник находит и добавляет в состав.
+    const found = await members(request, { search });
+    if (found.kind !== "ok") {
+      return {
+        kind: "floor-bids",
+        floor: current.floor,
+        page: 0,
+        note: { kind: "members-unavailable" },
+      };
+    }
+    return found.members.length === 0
       ? {
           kind: "floor-bids",
           floor: current.floor,
@@ -160,10 +189,130 @@ export function createFloorBids(consoles: AuctionConsoles) {
         }
       : {
           kind: "floor-bids",
-          floor: { ...current.floor, people },
-          page: request.page,
+          floor: { ...current.floor, found: found.members },
+          page: 0,
           search,
         };
+  }
+
+  // Люди сообщества с кругом `member`, чей ник содержит строку. Список
+  // Identity отдаёт держателю права состава; без него поиска нет.
+  async function members(
+    request: { identity: { identityId: string } } & FloorBidsRequest,
+    filter: { search?: string; id?: string } = {},
+  ): Promise<
+    { kind: "ok"; members: readonly RoomMember[] } | { kind: "unavailable" }
+  > {
+    if (directory === undefined) return { kind: "unavailable" };
+    const listed = await directory.community(
+      { identityId: request.identity.identityId },
+      "members",
+      rpcMeta(request),
+    );
+    if (listed.kind !== "ok") return { kind: "unavailable" };
+    const needle = filter.search?.toLocaleLowerCase("ru");
+    return {
+      kind: "ok",
+      members: listed.value.members
+        .filter(
+          (each) =>
+            each.circle === "member" &&
+            each.telegramUsername !== undefined &&
+            (filter.id === undefined || each.identityId === filter.id) &&
+            (needle === undefined ||
+              each.telegramUsername.toLocaleLowerCase("ru").includes(needle)),
+        )
+        .slice(0, 16)
+        .map((each) => ({
+          identityId: each.identityId,
+          ...(each.telegramUsername === undefined
+            ? {}
+            : { username: each.telegramUsername }),
+        })),
+    };
+  }
+
+  const label = (member: RoomMember, floor: FloorView) =>
+    floor.people.find((each) => each.participantId === member.identityId)
+      ?.name ??
+    (member.username === undefined ? "Участник" : `@${member.username}`);
+
+  // Добавить человека в состав: Identity подтверждает, что он участник
+  // сообщества, а ник берётся оттуда же, не из кнопки.
+  async function add(
+    request: Extract<FloorBidsRequest, { intent: "add-floor-member" }>,
+  ): Promise<ExecuteResult> {
+    const all = await members(request, { id: request.memberId });
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const screen = (note: FloorNote): ExecuteResult => ({
+      kind: "floor-bids",
+      floor: current.floor,
+      page: 0,
+      note,
+    });
+    if (all.kind !== "ok") return screen({ kind: "members-unavailable" });
+    const member = all.members.find(
+      (each) => each.identityId === request.memberId,
+    );
+    if (member === undefined) return screen({ kind: "cannot-bid" });
+    const already =
+      current.floor.people.some(
+        (each) => each.participantId === member.identityId,
+      ) ||
+      current.floor.waiting.some(
+        (each) => each.identityId === member.identityId,
+      );
+    if (already) return screen({ kind: "member-already-in" });
+    const written = await room.add(request.auctionId, member);
+    if (written.kind !== "ok") return screen({ kind: "room-write-failed" });
+    const after = await read(request);
+    const floor = after.kind === "ok" ? after.floor : current.floor;
+    return {
+      kind: "floor-bids",
+      floor,
+      page: 0,
+      note: { kind: "member-added", name: label(member, floor) },
+    };
+  }
+
+  async function removeMember(
+    request: Extract<FloorBidsRequest, { intent: "remove-floor-member" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const member = [
+      ...current.floor.people.map((each) => ({
+        identityId: each.participantId,
+      })),
+      ...current.floor.waiting,
+    ].find((each) => each.identityId === request.memberId);
+    const written = await room.remove(request.auctionId, request.memberId);
+    if (written.kind !== "ok") {
+      return {
+        kind: "floor-bids",
+        floor: current.floor,
+        page: 0,
+        edit: true,
+        note: { kind: "room-write-failed" },
+      };
+    }
+    const after = await read(request);
+    const floor = after.kind === "ok" ? after.floor : current.floor;
+    return {
+      kind: "floor-bids",
+      floor,
+      page: 0,
+      edit: true,
+      ...(member === undefined
+        ? {}
+        : {
+            note: {
+              kind: "member-removed" as const,
+              name: label(member, current.floor),
+            },
+          }),
+    };
   }
 
   // Аукцион кнопки человека — у лота: в 64 байта рядом с лотом, человеком и
@@ -261,7 +410,15 @@ export function createFloorBids(consoles: AuctionConsoles) {
     const person = floor.people.find(
       (each) => each.participantId === request.target.participantId,
     );
-    if (person === undefined) return screen({ kind: "cannot-bid" });
+    if (person === undefined) {
+      // Человек в составе без имени в аукционе: ставка за него невозможна,
+      // пока он не выберет имя. Вне состава — устаревший экран.
+      return floor.waiting.some(
+        (each) => each.identityId === request.target.participantId,
+      )
+        ? screen({ kind: "name-not-chosen" })
+        : screen({ kind: "not-in-room" });
+    }
     if (
       status.leaderId === person.participantId &&
       next.minorUnits === amount.minorUnits
@@ -440,6 +597,10 @@ export function createFloorBids(consoles: AuctionConsoles) {
         return view(request);
       case "ask-floor-search":
         return { kind: "floor-search-ask", auctionId: request.auctionId };
+      case "add-floor-member":
+        return add(request);
+      case "remove-floor-member":
+        return removeMember(request);
       case "prepare-floor-bid":
         return prepare(request);
       case "place-floor-bid":

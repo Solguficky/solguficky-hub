@@ -167,6 +167,20 @@ function lotBody(input: {
             }),
           },
         ];
+  // «Мои счета» — покупателю проданного лота (PER-813): счёт выставляет
+  // проекция на каждую продажу, и ведёт кнопка в тот же список, что корень.
+  const invoicesRow: AuctionButton[] =
+    standing === "won"
+      ? [
+          {
+            action: "lot.invoices",
+            callbackData: encodeAuctionCallback({
+              kind: "invoices",
+              auctionId: lot.auctionId,
+            }),
+          },
+        ]
+      : [];
   return {
     blocks: [
       {
@@ -202,6 +216,7 @@ function lotBody(input: {
           ]),
       ...(lookRow.length === 0 ? [] : [lookRow]),
       ...(setRow.length === 0 ? [] : [setRow]),
+      ...(invoicesRow.length === 0 ? [] : [invoicesRow]),
       ...pagerRows(input.neighbors, refresh),
       [
         {

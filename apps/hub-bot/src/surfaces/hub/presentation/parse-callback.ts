@@ -629,6 +629,7 @@ type PlainAction =
   // нуля: токен лота рядом с аукционом и ключом в 64 байта не помещается.
   | { kind: "console-start-final"; auction: string }
   | { kind: "console-next-lot"; auction: string }
+  | { kind: "console-open-ask"; auction: string }
   | { kind: "console-ask"; auction: string; position: number }
   | { kind: "console-close"; auction: string; position: number }
   // «Да» подтверждения закрытия: ключ рождён, когда подтверждение показано.
@@ -645,6 +646,9 @@ type PlainAction =
   // человек и цена рядом с аукционом в 64 байта не помещаются.
   | { kind: "console-floor"; auction: string; page: number }
   | { kind: "console-floor-search"; auction: string }
+  | { kind: "console-floor-edit"; auction: string }
+  | { kind: "console-floor-add"; auction: string; member: string }
+  | { kind: "console-floor-remove"; auction: string; member: string }
   | {
       kind: "console-floor-pick";
       lot: string;
@@ -1993,6 +1997,11 @@ export function consoleNextLotData(auction: string): string {
   return `v1:ac:n:${auction}`;
 }
 
+/** Подтверждение открытия лота финала (PER-816). */
+export function consoleOpenAskData(auction: string): string {
+  return `v1:ac:go:${auction}`;
+}
+
 /** «Поднять цену» лота финала с номером `position` в составе. */
 export function consoleAskData(auction: string, position: number): string {
   return `v1:ac:a:${auction}:${position}`;
@@ -2028,9 +2037,24 @@ export function floorData(auction: string, page = 0): string {
   return page === 0 ? `v1:ac:b:${auction}` : `v1:ac:b:${auction}:${page}`;
 }
 
-/** «Другой человек…»: вопрос об имени. */
+/** «Добавить человека…»: вопрос о нике (PER-816). */
 export function floorSearchData(auction: string): string {
   return `v1:ac:bs:${auction}`;
+}
+
+/** «Состав»: правка состава зала, кнопки людей убирают их (PER-816). */
+export function floorEditData(auction: string): string {
+  return `v1:ac:be:${auction}`;
+}
+
+/** Найденный по нику — в состав зала. */
+export function floorAddData(auction: string, member: string): string {
+  return `v1:ac:ba:${auction}:${member}`;
+}
+
+/** Человек состава — из состава. */
+export function floorRemoveData(auction: string, member: string): string {
+  return `v1:ac:bd:${auction}:${member}`;
 }
 
 /** Кнопка лидера: ставка за него не нужна, Auction её не видит. */
@@ -2762,6 +2786,22 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-floor-search", auction: auction.data }
         : { kind: "malformed" };
+    case "be":
+      return parts.length === 4
+        ? { kind: "console-floor-edit", auction: auction.data }
+        : { kind: "malformed" };
+    case "ba":
+    case "bd": {
+      const member = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && member.success
+        ? {
+            kind:
+              parts[2] === "ba" ? "console-floor-add" : "console-floor-remove",
+            auction: auction.data,
+            member: member.data,
+          }
+        : { kind: "malformed" };
+    }
     case "bl":
       return parts.length === 4
         ? { kind: "console-floor-leader", auction: auction.data }
@@ -3335,6 +3375,10 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "n":
       return parts.length === 4
         ? { kind: "console-next-lot", auction: auction.data }
+        : { kind: "malformed" };
+    case "go":
+      return parts.length === 4
+        ? { kind: "console-open-ask", auction: auction.data }
         : { kind: "malformed" };
     case "a":
     case "c": {

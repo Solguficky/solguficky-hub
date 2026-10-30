@@ -90,6 +90,27 @@ public static class LotReplicaStore
             PriceCurrency = snapshot.CurrentPrice?.Currency,
         }, cancellationToken) > 0;
 
+    private const string StatusCountsSql = """
+        SELECT status, count(*)::int AS Count
+        FROM lot_replica
+        WHERE lot_id = ANY(@LotIds)
+        GROUP BY status;
+        """;
+
+    /// <summary>
+    /// Сколько лотов названного набора в каком положении по реплике; лота, чьей
+    /// реплики ещё нет, в счёте нет (PER-812).
+    /// </summary>
+    public static async Task<IReadOnlyDictionary<LotStatus, int>> StatusCounts(UnitOfWork work,
+        IReadOnlyList<Guid> lotIds, CancellationToken cancellationToken)
+    {
+        var rows = await work.Query<StatusCountRow>(StatusCountsSql, new { LotIds = lotIds.ToArray() },
+            cancellationToken);
+        return rows.ToDictionary(row => FromStorage(row.Status), row => row.Count);
+    }
+
+    private sealed record StatusCountRow(string Status, int Count);
+
     public static async Task<LotReplica?> Read(UnitOfWork work, Guid lotId, CancellationToken cancellationToken)
     {
         var rows = await work.Query<Row>(ReadSql, new { LotId = lotId }, cancellationToken);

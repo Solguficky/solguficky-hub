@@ -35,6 +35,7 @@ internal static class AuctionBotSetup
             environment,
             SupportBotLink.Local(configuration),
             BotMediaChannel.Local(configuration),
+            BotHallLinks.Local(configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.AuctionBot));
     }
 
@@ -52,6 +53,7 @@ internal static class AuctionBotSetup
                 TelegramEnvironment.Production,
                 SupportBotLink.Published(context.Builder),
                 BotMediaChannel.Published(context.Builder),
+                BotHallLinks.Published(context.Builder),
                 context.Builder.AddContainer(AppHostNames.Resources.AuctionBot, AppHostNames.Resources.HubBot))
             .AsClusterWorkload(Cluster);
 
@@ -60,6 +62,7 @@ internal static class AuctionBotSetup
         TelegramEnvironment environment,
         SupportBotLink? support,
         BotMediaChannel? media,
+        BotHallLinks? hall,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
@@ -70,6 +73,9 @@ internal static class AuctionBotSetup
         // Гостю объявление со своим фото доставляет этот бот копией поста того
         // же канала, что у бота хаба (дополнение ADR-057 от 2026-10-27).
         media?.ChannelId(bot);
+
+        // Экран зала и стрим: кнопки-ссылки под карточкой лота (PER-825).
+        hall?.Urls(bot);
 
         var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
 

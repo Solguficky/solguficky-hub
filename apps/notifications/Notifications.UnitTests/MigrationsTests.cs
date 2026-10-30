@@ -92,6 +92,7 @@ public class MigrationsTests
             "step_window_announced",
             "broadcast_audience",
             "step_window_terms",
+            "auction_final_audience",
         ]);
 
         var main = names.IndexOf("orleans_main");

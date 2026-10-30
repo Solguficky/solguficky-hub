@@ -11,7 +11,8 @@ namespace Notifications.IntegrationTests.Scenarios;
 
 /// <summary>
 /// Анонс состава и старта финала (PER-477) через настоящие JetStream, PostgreSQL
-/// и composition root. Круг — те, кто хоть раз вёл лот этого аукциона.
+/// и composition root. Круг — все держатели права ставок (PER-812), а не только
+/// те, кто вёл лот этого аукциона.
 /// </summary>
 public class AuctionFinalTests
 {
@@ -20,6 +21,13 @@ public class AuctionFinalTests
     private const string StartedSubject = "events.auction.final_started";
     private const string ActivatedSubject = "events.auction.final_lot_activated";
     private const string FinishedSubject = "events.auction.auction_finished";
+    private const string EndedSubject = "events.auction.prebidding_ended";
+
+    // Человек без права ставок: вестей финала не получает.
+    private static readonly Holding WithoutBids = new("member", [], ["access_hub"]);
+
+    private static async Task<string> Holder(IsolatedDatabase db, Holding? holding = null) =>
+        (await Person(db, holding ?? MemberHolding)).ToString();
 
     /// <summary>
     /// Лидер лота состава получает один анонс со своим лотом, участник без
@@ -34,7 +42,8 @@ public class AuctionFinalTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var auction = EventFactory.AuctionOfMeetup();
         var meetup = EventFactory.NewId();
-        var (leader, bidder, stranger) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId());
+        var (leader, bidder, idle) = (await Holder(db), await Holder(db), await Holder(db));
+        var stranger = await Holder(db, WithoutBids);
         var (first, second, sold) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId());
 
         await nats.Publish(AuctionFeed.BidPlacedSubject, EventFactory.Bid(first, leader: leader, auction: auction));
@@ -46,11 +55,13 @@ public class AuctionFinalTests
         var lineup = EventFactory.LineupFrozen(auction, meetup, second, first);
         await nats.Publish(LineupSubject, lineup);
 
-        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 3);
         var facts = published.Select(entry => entry.Fact).ToList();
         facts.ShouldAllBe(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionFinalLineup);
         facts.ShouldAllBe(fact => fact.Cause.AuctionEventId == lineup.EventId);
-        facts.Select(fact => fact.RecipientId).ShouldBe(new[] { leader, bidder }, ignoreOrder: true);
+        // Весть получает и тот, кто ставок не делал; без права ставок — никто.
+        facts.Select(fact => fact.RecipientId).ShouldBe(new[] { leader, bidder, idle }, ignoreOrder: true);
+        facts.ShouldNotContain(fact => fact.RecipientId == stranger);
 
         var own = facts.Single(fact => fact.RecipientId == leader).AuctionFinalLineup;
         own.AuctionId.ShouldBe(auction);
@@ -59,11 +70,12 @@ public class AuctionFinalTests
         own.Lineup.Select(lot => lot.Price.MinorUnits).ShouldBe(new long[] { 70000, 50000 });
         own.YourLotIds.ShouldBe(new[] { second, first });
         facts.Single(fact => fact.RecipientId == bidder).AuctionFinalLineup.YourLotIds.ShouldBeEmpty();
+        facts.Single(fact => fact.RecipientId == idle).AuctionFinalLineup.YourLotIds.ShouldBeEmpty();
 
         await nats.Publish(LineupSubject, lineup, messageId: Guid.NewGuid().ToString());
         await Eventually(() => Task.FromResult(silo.Service<AuctionTelemetry>().Total("duplicate")), count => count == 1);
-        (await nats.PublishedFacts()).Count.ShouldBe(2);
-        (await Count(db, "notification")).ShouldBe(2);
+        (await nats.PublishedFacts()).Count.ShouldBe(3);
+        (await Count(db, "notification")).ShouldBe(3);
     }
 
     /// <summary>
@@ -77,7 +89,7 @@ public class AuctionFinalTests
         await using var nats = await NatsUnderTest.Start();
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var auction = EventFactory.AuctionOfMeetup();
-        var (leader, lot) = (EventFactory.NewId(), EventFactory.NewId());
+        var (leader, lot) = (await Holder(db), EventFactory.NewId());
 
         await nats.Publish(AuctionFeed.BidPlacedSubject, EventFactory.Bid(lot, leader: leader, auction: auction));
         // Срок ожидания считается от заморозки: она только что случилась.
@@ -106,7 +118,7 @@ public class AuctionFinalTests
         await using var nats = await NatsUnderTest.Start();
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var auction = EventFactory.AuctionOfMeetup();
-        var (leader, known, lost) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId());
+        var (leader, known, lost) = (await Holder(db), EventFactory.NewId(), EventFactory.NewId());
 
         await nats.Publish(HeldSubject, EventFactory.HeldForFinal(known, auction: auction, leader: leader));
         await nats.Publish(LineupSubject, EventFactory.LineupFrozen(auction, EventFactory.NewId(), known, lost));
@@ -136,7 +148,7 @@ public class AuctionFinalTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var auction = EventFactory.AuctionOfMeetup();
         var meetup = EventFactory.NewId();
-        var (leader, bidder, lot) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId());
+        var (leader, bidder, lot) = (await Holder(db), await Holder(db), EventFactory.NewId());
 
         await nats.Publish(AuctionFeed.BidPlacedSubject, EventFactory.Bid(lot, leader: leader, auction: auction));
         await nats.Publish(AuctionFeed.BidPlacedSubject,
@@ -157,8 +169,11 @@ public class AuctionFinalTests
         var next = facts.Single(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionFinalLotNext);
         next.RecipientId.ShouldBe(leader);
         next.AuctionFinalLotNext.LotId.ShouldBe(lot);
-        // Пока не прошёл ни один лот, оценка длительности — запасная.
-        next.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(FinalEstimate.FallbackMinutes);
+        // Старт финала: лот ещё не идёт, свой лот первый из одного; времени не обещают.
+        next.AuctionFinalLotNext.ActiveLotId.ShouldBeEmpty();
+        next.AuctionFinalLotNext.Place.ShouldBe(1u);
+        next.AuctionFinalLotNext.LineupSize.ShouldBe(1u);
+        next.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(0);
 
         await nats.Publish(FinishedSubject, EventFactory.AuctionFinished(auction, meetup));
         await Eventually(() => Count(db, "auction_bidder"), count => count == 0);
@@ -178,7 +193,7 @@ public class AuctionFinalTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var auction = EventFactory.AuctionOfMeetup();
         var meetup = EventFactory.NewId();
-        var (silenced, bidder, lot) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId());
+        var (silenced, bidder, lot) = (await Holder(db), await Holder(db), EventFactory.NewId());
         await SetFinalAnnouncements(db, silenced, enabled: false);
         await SetFinalAnnouncements(db, bidder, enabled: true);
 
@@ -212,7 +227,7 @@ public class AuctionFinalTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var auction = EventFactory.AuctionOfMeetup();
         var meetup = EventFactory.NewId();
-        var (firstLeader, secondLeader) = (EventFactory.NewId(), EventFactory.NewId());
+        var (firstLeader, secondLeader) = (await Holder(db), await Holder(db));
         var (first, second) = (EventFactory.NewId(), EventFactory.NewId());
 
         await nats.Publish(HeldSubject, EventFactory.HeldForFinal(first, auction: auction, leader: firstLeader));
@@ -225,8 +240,11 @@ public class AuctionFinalTests
         fact.TypeCase.ShouldBe(Notification.TypeOneofCase.AuctionFinalLotNext);
         fact.RecipientId.ShouldBe(secondLeader);
         fact.AuctionFinalLotNext.LotId.ShouldBe(second);
-        // Пока не прошёл ни один лот, оценка длительности — запасная.
-        fact.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(FinalEstimate.FallbackMinutes);
+        // Называется идущий сейчас лот и место своего лота; времени не обещают.
+        fact.AuctionFinalLotNext.ActiveLotId.ShouldBe(first);
+        fact.AuctionFinalLotNext.Place.ShouldBe(2u);
+        fact.AuctionFinalLotNext.LineupSize.ShouldBe(2u);
+        fact.AuctionFinalLotNext.EstimatedMinutes.ShouldBe(0);
     }
 
     [Theory]
@@ -246,5 +264,105 @@ public class AuctionFinalTests
 
         var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
         published.Single().Subject.ShouldBe(subject);
+    }
+
+    /// <summary>
+    /// Конец онлайн-торгов с лотами на удержании (PER-812): весть получают все
+    /// держатели права ставок, и не делавший ставок тоже; без права и выключивший
+    /// анонс финала — нет. Число проданных и удержанных лотов считает реплика.
+    /// </summary>
+    [Fact]
+    public async Task When_PrebiddingEndsIntoBreak_Expect_FactToEveryBidsHolderWithCounts()
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var auction = EventFactory.AuctionOfMeetup();
+        var meetup = EventFactory.NewId();
+        var (bidder, idle, silenced) = (await Holder(db), await Holder(db), await Holder(db));
+        var stranger = await Holder(db, WithoutBids);
+        await SetFinalAnnouncements(db, silenced, enabled: false);
+        var (soldLot, heldLot) = (EventFactory.NewId(), EventFactory.NewId());
+
+        await nats.Publish(AuctionFeed.LotSoldSubject, EventFactory.Sold(soldLot, winner: EventFactory.NewId()));
+        await nats.Publish(HeldSubject, EventFactory.HeldForFinal(heldLot, auction: auction, leader: bidder));
+        await nats.Publish(EndedSubject, EventFactory.PrebiddingBreak(auction, meetup, soldLot, heldLot));
+
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count(entry =>
+            entry.Fact.TypeCase == Notification.TypeOneofCase.AuctionPrebiddingEnded) == 2);
+        var facts = published.Select(entry => entry.Fact)
+            .Where(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionPrebiddingEnded)
+            .ToList();
+        facts.Select(fact => fact.RecipientId).ShouldBe(new[] { bidder, idle }, ignoreOrder: true);
+        facts.ShouldNotContain(fact => fact.RecipientId == stranger || fact.RecipientId == silenced);
+        facts.ShouldAllBe(fact => fact.AuctionPrebiddingEnded.AuctionId == auction
+            && fact.AuctionPrebiddingEnded.MeetupId == meetup
+            && fact.AuctionPrebiddingEnded.SoldCount == 1 && fact.AuctionPrebiddingEnded.HeldCount == 1);
+    }
+
+    /// <summary>
+    /// Каталог без удержанных лотов кончает аукцион тем же фактом: финала не
+    /// будет, и об этом тоже узнают все держатели права ставок (PER-812).
+    /// </summary>
+    [Fact]
+    public async Task When_PrebiddingEndsWithoutHeldLots_Expect_FactWithNoFinal()
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var auction = EventFactory.AuctionOfMeetup();
+        var holder = await Holder(db);
+        var soldLot = EventFactory.NewId();
+
+        await nats.Publish(AuctionFeed.LotSoldSubject, EventFactory.Sold(soldLot, winner: EventFactory.NewId()));
+        await nats.Publish(EndedSubject, EventFactory.PrebiddingFinished(auction, EventFactory.NewId(), soldLot));
+
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count(entry =>
+            entry.Fact.TypeCase == Notification.TypeOneofCase.AuctionPrebiddingEnded) == 1);
+        var fact = published.Select(entry => entry.Fact)
+            .Single(entry => entry.TypeCase == Notification.TypeOneofCase.AuctionPrebiddingEnded);
+        fact.RecipientId.ShouldBe(holder);
+        fact.AuctionPrebiddingEnded.SoldCount.ShouldBe(1u);
+        fact.AuctionPrebiddingEnded.HeldCount.ShouldBe(0u);
+    }
+
+    /// <summary>
+    /// Лот финала продан: узнают все, кто на него ставил, кроме победителя —
+    /// ему приходит покупка; выключивший анонс финала и лот вне финала вести
+    /// не дают (PER-812).
+    /// </summary>
+    [Fact]
+    public async Task When_FinalLotSold_Expect_FactToItsBiddersExceptWinner()
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var auction = EventFactory.AuctionOfMeetup();
+        var meetup = EventFactory.NewId();
+        var (loser, other, winner, silenced) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId(),
+            EventFactory.NewId());
+        await SetFinalAnnouncements(db, silenced, enabled: false);
+        var (finalLot, onlineLot) = (EventFactory.NewId(), EventFactory.NewId());
+
+        foreach (var leader in new[] { loser, other, silenced, winner })
+        {
+            await nats.Publish(AuctionFeed.BidPlacedSubject, EventFactory.Bid(finalLot, leader: leader, auction: auction));
+        }
+        await nats.Publish(AuctionFeed.BidPlacedSubject, EventFactory.Bid(onlineLot, leader: loser, auction: auction));
+        await nats.Publish(ActivatedSubject, EventFactory.FinalLotActivated(auction, meetup, finalLot, finalLot));
+        await nats.Publish(AuctionFeed.LotSoldSubject, EventFactory.Sold(onlineLot, winner: winner));
+        await nats.Publish(AuctionFeed.LotSoldSubject, EventFactory.Sold(finalLot, winner: winner));
+
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count(entry =>
+            entry.Fact.TypeCase == Notification.TypeOneofCase.AuctionLotSoldInFinal) == 2);
+        var sold = published.Select(entry => entry.Fact)
+            .Where(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionLotSoldInFinal)
+            .ToList();
+        sold.Select(fact => fact.RecipientId).ShouldBe(new[] { loser, other }, ignoreOrder: true);
+        sold.ShouldAllBe(fact => fact.AuctionLotSoldInFinal.LotId == finalLot);
+        // Победитель получает покупки обоих лотов, но не весть о проигранном.
+        published.Select(entry => entry.Fact)
+            .Count(fact => fact.TypeCase == Notification.TypeOneofCase.LotPurchased && fact.RecipientId == winner)
+            .ShouldBe(2);
     }
 }

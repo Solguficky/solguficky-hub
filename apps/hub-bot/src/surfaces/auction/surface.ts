@@ -129,6 +129,7 @@ export const auctionSurface: SurfaceDefinition = ({
           }),
     ...(mediaChat === undefined ? {} : { media: mediaChat }),
     faq: auction.faq,
+    hall: auction.hall,
     logger,
     ...(auction.supportBotUsername === undefined
       ? {}

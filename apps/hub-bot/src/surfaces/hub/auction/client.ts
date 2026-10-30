@@ -295,13 +295,31 @@ export type LotInfoReader = {
     lotId: string,
     meta?: RpcMetadata,
   ): Promise<LotInfo>;
+  // Ориентировочное время финала для вести о конце торгов (PER-812).
+  auctionFinalAt(
+    identityId: string,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<string | undefined>;
 };
 
 export function createLotInfoReader(
-  rpc: Pick<AuctionRpc, "getLot">,
+  rpc: Pick<AuctionRpc, "getLot" | "getAuction">,
   timeoutMs = 3_000,
 ): LotInfoReader {
   return {
+    async auctionFinalAt(identityId, auctionId, meta) {
+      const { auction } = await rpc.getAuction(
+        {
+          viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+          auctionId,
+        },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      return auction === undefined
+        ? undefined
+        : auctionSummaryViewOf(auction).finalAt;
+    },
     async lotInfo(identityId, lotId, meta) {
       const snapshot = await rpc.getLot(
         {
