@@ -2629,7 +2629,7 @@ describe("final lot card in the hub", () => {
         (call.payload as { message_id?: number }).message_id === messageId,
     );
     expect(edits).toHaveLength(1);
-    expect(plain((edits[0]?.payload as Shown).text ?? "")).toContain(
+    expect(plain(((edits[0]?.payload ?? {}) as Shown).text ?? "")).toContain(
       "<b>1 500 ₽</b>",
     );
 
@@ -2640,7 +2640,7 @@ describe("final lot card in the hub", () => {
         call.method === "editMessageText" &&
         (call.payload as { message_id?: number }).message_id === messageId,
     );
-    expect((stopped.at(-1)?.payload as Shown).text).toBe(
+    expect(((stopped.at(-1)?.payload ?? {}) as Shown).text).toBe(
       "Трансляция остановлена",
     );
   });

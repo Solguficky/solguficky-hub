@@ -3896,6 +3896,9 @@ describe("final lot card", () => {
 
   // Трансляция хода торгов (PER-826): кнопка карточки присылает одно сообщение,
   // дальше оно правится по потоку, а «Не следить» его останавливает.
+  const textOfCall = (call: { payload: unknown } | undefined) =>
+    (call?.payload as { text?: string } | undefined)?.text ?? "";
+
   it("broadcasts the bidding in one message after the watch button", async () => {
     const { bot, calls, stream } = setup();
     await bot.handleUpdate(
@@ -3926,7 +3929,7 @@ describe("final lot card", () => {
       { text: "Не следить", callback_data: "v1:bc:x" },
     ]);
     const sends = calls.filter((call) => call.method === "sendMessage").length;
-    const messageId = 101 + calls.findIndex((call) => call === sent[0]);
+    const messageId = 101 + calls.indexOf(sent[0] as (typeof calls)[number]);
 
     stream.emit(liveLot(2, 1400));
     await flush();
@@ -3940,9 +3943,7 @@ describe("final lot card", () => {
         (payload as { message_id?: number }).message_id === messageId,
     );
     expect(broadcastEdit).toHaveLength(1);
-    expect(
-      plain((broadcastEdit[0]?.payload as { text: string }).text),
-    ).toContain("<b>1 500 ₽</b>");
+    expect(plain(textOfCall(broadcastEdit[0]))).toContain("<b>1 500 ₽</b>");
 
     await bot.handleUpdate(press("v1:bc:x"));
     await flush();
@@ -3952,9 +3953,7 @@ describe("final lot card", () => {
         (payload as { message_id?: number }).message_id === messageId,
     );
     expect(stopped).toHaveLength(2);
-    expect((stopped[1]?.payload as { text: string }).text).toBe(
-      "Трансляция остановлена",
-    );
+    expect(textOfCall(stopped[1])).toBe("Трансляция остановлена");
   });
 
   it("sends no broadcast to somebody who did not press the watch button", async () => {
