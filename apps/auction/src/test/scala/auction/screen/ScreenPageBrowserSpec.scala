@@ -188,8 +188,8 @@ final class ScreenPageBrowserSpec
       .hasAttribute("data-status", value, LocatorAssertions.HasAttributeOptions().setTimeout(within.toMillis.toDouble))
 
   /**
-   * Цифры текущей ставки на экране: разделители разрядов и знак валюты зависят от локали, сумма — нет. Главная цифра
-   * `.price` с PER-819 — следующая цена, текущая ставка — `.current-price`.
+   * Цифры текущей ставки на экране: разделители разрядов и знак валюты зависят от локали, сумма — нет. С PER-839
+   * главная цифра `.price` — снова текущая ставка, и она же несёт `.current-price`.
    */
   private def digits(page: Page): String = page.locator(".current-price").textContent().replaceAll("\\D", "")
 

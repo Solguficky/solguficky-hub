@@ -39,6 +39,7 @@ import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.Future
@@ -238,6 +239,16 @@ final class ScreenRoutesSpec
         mediaType.subType shouldBe "javascript"
         responseAs[String] should include("export function silenceLimit")
       }
+    }
+
+    "serve the bundled fonts and let the page load them from its own origin" in {
+      Get("/screen/assets/unbounded-latin.woff2") ~> routeOf() ~> check {
+        status shouldBe StatusCodes.OK
+        responseAs[Array[Byte]].take(4).toSeq shouldBe "wOF2".getBytes(StandardCharsets.US_ASCII).toSeq
+        header("Content-Security-Policy").map(_.value).getOrElse("") should include("font-src 'self'")
+      }
+      // Лицензия лежит рядом со шрифтами, но в список файлов страницы не входит.
+      Get("/screen/assets/OFL-Unbounded.txt") ~> routeOf() ~> check(status shouldBe StatusCodes.NotFound)
     }
 
     "answer not found for a resource outside the asset list" in {

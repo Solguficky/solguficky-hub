@@ -1,14 +1,90 @@
-/* Экран зала читается с расстояния: крупный кегль от ширины окна, контраст, никаких элементов управления. */
+/*
+ * Экран зала «Граф Гуфовский» (PER-839): викторианский Хэллоуин в образе стримера — монокль, усы, цилиндр.
+ * Сцена — кадр 16:9, вписанный в окно; размеры внутри — в cqw от его ширины, поэтому экран любой формы читается
+ * одинаково с расстояния. Никаких элементов управления. Шрифты — свои файлы рядом, лицензии OFL в licenses/.
+ */
+
+@font-face {
+  font-family: "Manrope";
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("manrope-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Manrope";
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("manrope-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1E00-1E9F, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113;
+}
+
+@font-face {
+  font-family: "Manrope";
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("manrope-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2212, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Ruslan Display";
+  font-display: swap;
+  src: url("ruslan-display-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Ruslan Display";
+  font-display: swap;
+  src: url("ruslan-display-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+2000-206F;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  font-weight: 800;
+  font-display: swap;
+  src: url("unbounded-cyrillic.woff2") format("woff2");
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  font-weight: 800;
+  font-display: swap;
+  src: url("unbounded-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1E00-1E9F, U+2020, U+20A0-20AB, U+20AD-20C4, U+2113;
+}
+
+@font-face {
+  font-family: "Unbounded";
+  font-weight: 800;
+  font-display: swap;
+  src: url("unbounded-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+20AC, U+2122, U+2212, U+FEFF, U+FFFD;
+}
 
 :root {
-  --bg: #0f1115;
-  --fg: #f4f4f5;
-  --muted: #a1a1aa;
-  --accent: #facc15;
-  --hall: #38bdf8;
-  --online: #a78bfa;
+  --night: #0e0713;
+  --plum: #3a1d4a;
+  --plum-deep: #1a0d22;
+  --ink: #0b0610;
+  --bone: #f5e9d8;
+  --brass: #c9a24a;
+  --ember: #ff9a2e;
+  --paper-ink: #2a1620;
+  --paper-muted: #7a4a5a;
+  --seal: #a3201d;
+  --seal-light: #c9302c;
+  --hall: #8fd3ff;
+  --online: #e3b4ff;
   --alert-bg: #b91c1c;
   --alert-fg: #ffffff;
+  --text: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --figure: "Unbounded", "Manrope", system-ui, sans-serif;
+  --ornament: "Ruslan Display", Georgia, serif;
   color-scheme: dark;
 }
 
@@ -19,140 +95,336 @@
 html,
 body {
   margin: 0;
-  min-height: 100%;
+  height: 100%;
 }
 
 body {
-  background: var(--bg);
-  color: var(--fg);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  font-size: clamp(16px, 2.2vw, 40px);
-  line-height: 1.25;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--night);
+  color: var(--bone);
+  font-family: var(--text);
+  line-height: 1.2;
   cursor: none;
 }
 
+/* Сцена 16:9 по меньшей стороне окна; фон за её краями тот же, поэтому поля не видны. */
 main {
-  padding: 3vh 4vw;
+  position: relative;
+  width: min(100vw, calc(100vh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  container-type: inline-size;
+  background: radial-gradient(ellipse at 30% 45%, var(--plum), var(--plum-deep) 60%, var(--night));
+  font-size: 2cqw;
 }
 
 .banner {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: 10;
   padding: 0.6em 4vw;
   background: var(--alert-bg);
   color: var(--alert-fg);
-  font-weight: 700;
-  font-size: 1.3em;
+  font-weight: 800;
+  font-size: clamp(16px, 2.4vw, 44px);
 }
 
 .message {
-  margin: 30vh 0 0;
-  text-align: center;
-  font-size: 2.4em;
-  color: var(--muted);
-}
-
-.card {
+  position: absolute;
+  inset: 0;
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
-  gap: 4vw;
-  align-items: start;
+  place-items: center;
+  margin: 0;
+  font-size: 3cqw;
+  color: var(--brass);
 }
 
-.card:not(:has(.photo)) {
-  grid-template-columns: minmax(0, 1fr);
+/* --- Персонаж: глаз-монокль, усы и образ, который меняется с каждой ставкой ------------------------------- */
+
+.mascot {
+  display: block;
 }
 
-.photo {
+.mascot .look {
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
+.mascot.fresh .look {
+  animation: look-pop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1);
+}
+
+@keyframes look-pop {
+  from {
+    transform: translateY(-14px) scale(0.6);
+    opacity: 0;
+  }
+}
+
+.stache {
+  fill: var(--bone);
+  transform-origin: 50% 40%;
+}
+
+.stache.fresh {
+  animation: twitch 0.6s ease-in-out;
+}
+
+@keyframes twitch {
+  25% {
+    transform: rotate(-6deg) scaleX(1.06);
+  }
+  50% {
+    transform: rotate(5deg);
+  }
+  75% {
+    transform: rotate(-3deg);
+  }
+}
+
+/* --- Монокль с фото лота ---------------------------------------------------------------------------------- */
+
+.lens {
+  position: absolute;
+  left: 4cqw;
+  top: 5cqw;
+  width: 42cqw;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 1.6cqw solid var(--ink);
+  box-shadow:
+    0 0 0 0.4cqw var(--brass),
+    0 2cqw 5cqw #000a;
+  overflow: hidden;
+  background: var(--plum-deep);
+}
+
+.lens .photo,
+.lens .mascot {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  max-height: 80vh;
-  object-fit: contain;
-  border-radius: 0.4em;
+  height: 100%;
+  object-fit: cover;
 }
 
-.title {
-  margin: 0 0 0.3em;
-  font-size: 2em;
-  line-height: 1.1;
+.lens .mascot {
+  inset: 12%;
+  width: 76%;
+  height: 76%;
 }
 
-.price {
-  font-size: clamp(64px, 11vw, 260px);
+.lens::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: linear-gradient(120deg, transparent 30%, #ffffff55 45%, transparent 60%);
+  transform: translateX(-120%);
+}
+
+.lens.fresh::after {
+  animation: glint 1s ease-out;
+}
+
+@keyframes glint {
+  to {
+    transform: translateX(120%);
+  }
+}
+
+.chain {
+  position: absolute;
+  left: 25cqw;
+  top: 47cqw;
+  width: 0.35cqw;
+  height: 10cqw;
+  background: repeating-linear-gradient(var(--brass) 0 0.6cqw, transparent 0.6cqw 1cqw);
+}
+
+/* Персонаж выглядывает из-за оправы: образ меняется с каждой ставкой. */
+.guest {
+  position: absolute;
+  left: 35cqw;
+  top: 33cqw;
+  width: 13cqw;
+  filter: drop-shadow(0 0.8cqw 1.2cqw #000a);
+}
+
+/* --- Правая колонка ---------------------------------------------------------------------------------------- */
+
+.side {
+  position: absolute;
+  left: 51cqw;
+  right: 4cqw;
+  top: 4cqw;
+  bottom: 4cqw;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 1.2cqw;
+  min-width: 0;
+}
+
+.side.settled {
+  grid-template-rows: auto 1fr auto;
+}
+
+.lot-title {
+  margin: 0;
   font-weight: 800;
-  line-height: 1;
-  color: var(--accent);
-  font-variant-numeric: tabular-nums;
+  font-size: 2.9cqw;
+  line-height: 1.12;
+  text-wrap: balance;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.label {
-  font-size: 1.2em;
-  color: var(--muted);
-}
-
-.current {
-  margin: 0.4em 0 0;
-  font-size: 1.4em;
-  color: var(--muted);
-}
-
-.current-price {
-  color: var(--fg);
-  font-variant-numeric: tabular-nums;
-}
-
-.facts {
+.chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.3em 2em;
-  margin: 0.6em 0 0;
+  gap: 1cqw;
+  margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 1.2em;
+  font-size: 1.7cqw;
 }
 
-.fact-label {
+.chip {
+  border: 0.15cqw solid #c9a24a88;
+  border-radius: 3cqw;
+  padding: 0.3cqw 1.2cqw;
+  white-space: nowrap;
+}
+
+.chip-label {
+  color: var(--brass);
   margin-right: 0.5em;
-  color: var(--muted);
 }
 
-.fact-value,
+.chip.ask {
+  border-color: var(--ember);
+  background: #ff9a2e22;
+  font-weight: 800;
+}
+
+.chip-value,
 .elapsed {
   font-variant-numeric: tabular-nums;
 }
 
-.ask,
-.leader,
-.outcome,
-.next,
-.finale {
-  margin: 0.4em 0 0;
-  font-size: 1.4em;
+.lead {
+  align-self: center;
 }
 
-.outcome {
-  font-size: 2.2em;
+.label {
+  font-size: 1.4cqw;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+
+.price {
+  font-family: var(--figure);
+  font-weight: 800;
+  font-size: 9.2cqw;
+  line-height: 0.95;
+  color: var(--ember);
+  text-shadow: 0 0 3cqw #ff6a0066;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.price.fresh {
+  animation: ember 0.8s ease-out;
+}
+
+@keyframes ember {
+  0% {
+    text-shadow: 0 0 6cqw #ffb36b;
+    transform: scale(1.05);
+  }
+}
+
+.lead .stache {
+  display: block;
+  width: 16cqw;
+  margin: 0.8cqw 0;
+}
+
+.leader {
+  font-size: 3.2cqw;
+  font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leader.none {
+  color: var(--brass);
+  font-weight: 600;
+}
+
+.channel {
+  font-size: 0.45em;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-left: 0.6em;
   font-weight: 700;
-  color: var(--accent);
+  vertical-align: middle;
 }
 
-.next,
-.finale {
-  color: var(--muted);
+.channel.hall {
+  color: var(--hall);
 }
 
+.channel.online {
+  color: var(--online);
+}
+
+/* Три ставки перед лидером — визитные карточки. */
 .bids {
-  margin: 1em 0 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1cqw;
+  margin: 0;
   padding: 0;
   list-style: none;
 }
 
 .bid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 1em;
-  padding: 0.25em 0;
-  border-top: 1px solid #27272a;
+  gap: 0.2cqw;
+  min-width: 0;
+  padding: 0.8cqw 1cqw;
+  border-radius: 0.4cqw;
+  background: var(--bone);
+  color: var(--paper-ink);
+  font-size: 1.5cqw;
+  box-shadow: 0 0.6cqw 1.4cqw #0008;
+  transform: rotate(-1.5deg);
+}
+
+.bid:nth-child(2) {
+  transform: rotate(1deg);
+}
+
+.bid:nth-child(3) {
+  transform: rotate(-0.5deg);
+}
+
+.bid.fresh {
+  animation: deal 0.5s ease-out;
+}
+
+@keyframes deal {
+  from {
+    transform: translate(6cqw, -4cqw) rotate(12deg);
+    opacity: 0;
+  }
 }
 
 .bid-name {
@@ -162,79 +434,223 @@ main {
 }
 
 .bid-amount {
+  font-weight: 800;
+  font-size: 1.3em;
   font-variant-numeric: tabular-nums;
 }
 
 .bid-channel {
-  min-width: 4.5em;
-  text-align: right;
+  color: var(--paper-muted);
 }
 
-.bid-channel.hall {
-  color: var(--hall);
+/* --- Перерыв ----------------------------------------------------------------------------------------------- */
+
+.seal {
+  position: absolute;
+  left: 31cqw;
+  top: 31cqw;
+  z-index: 3;
+  width: 18cqw;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: grid;
+  place-content: center;
+  text-align: center;
+  background: radial-gradient(circle at 40% 35%, var(--seal-light), #7a1212 70%);
+  box-shadow:
+    0 1cqw 2cqw #000a,
+    inset 0 0 0 0.8cqw var(--seal);
+  color: #ffd9c9;
+  font-family: var(--ornament);
+  font-size: 2.2cqw;
+  line-height: 1;
+  transform: rotate(-12deg);
 }
 
-.bid-channel.online {
-  color: var(--online);
+.seal.fresh {
+  animation: seal 0.6s cubic-bezier(0.2, 1.5, 0.4, 1) both;
 }
 
-.lineup {
-  font-size: 1.4em;
+.seal.muted {
+  background: radial-gradient(circle at 40% 35%, #6b6470, #2f2a33 70%);
+  box-shadow:
+    0 1cqw 2cqw #000a,
+    inset 0 0 0 0.8cqw #4a434f;
+  color: var(--bone);
+}
+
+.seal .stache {
+  display: block;
+  width: 10cqw;
+  margin: 0.6cqw auto 0;
+  fill: #ffd9c955;
+}
+
+@keyframes seal {
+  from {
+    transform: scale(2) rotate(-30deg);
+    opacity: 0;
+  }
+}
+
+.outcome {
+  font-size: 3.4cqw;
+  font-weight: 800;
+  color: var(--brass);
+}
+
+.next {
+  display: grid;
+  grid-template-columns: 14cqw minmax(0, 1fr);
+  gap: 1.8cqw;
+  align-items: center;
+  font-size: 2.2cqw;
+  font-weight: 700;
+}
+
+.next-lens {
+  position: relative;
+  width: 14cqw;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 0.7cqw solid var(--ink);
+  box-shadow: 0 0 0 0.25cqw var(--brass);
+  background: var(--plum-deep);
+}
+
+.next-lens .photo,
+.next-lens .mascot {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.next-label {
+  display: block;
+  color: var(--brass);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 0.7em;
+}
+
+/* --- Итог, анонс и состав ---------------------------------------------------------------------------------- */
+
+.grand {
+  position: absolute;
+  left: 4cqw;
+  top: 0;
+  bottom: 0;
+  width: 39cqw;
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 0.8cqw;
+}
+
+.grand .mascot {
+  width: 12cqw;
+}
+
+.title {
+  margin: 0;
+  font-family: var(--ornament);
+  font-weight: 400;
+  font-size: 3cqw;
+  line-height: 1.1;
+  color: var(--bone);
+}
+
+.grand .price {
+  font-size: 6.6cqw;
+  white-space: normal;
+}
+
+.grand .stache {
+  width: 14cqw;
 }
 
 .totals {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.4em 1.5em;
-  font-size: 1.6em;
-}
-
-.totals dt {
-  color: var(--muted);
-}
-
-.totals dd {
   margin: 0;
+  font-size: 1.8cqw;
+  color: var(--bone);
 }
 
-/* Итог: проданные лоты строками, цена справа, рост под ней. */
+/* Гостевая книга: кто что забрал и за сколько. */
+.ledger {
+  position: absolute;
+  left: 46cqw;
+  right: 4cqw;
+  top: 4.5cqw;
+  bottom: 4.5cqw;
+  display: grid;
+  align-content: start;
+  gap: 0.2cqw;
+  padding: 2cqw 2.4cqw;
+  border-radius: 0.6cqw;
+  background: var(--bone);
+  color: var(--paper-ink);
+  box-shadow: 0 2cqw 4cqw #000a;
+  overflow: hidden;
+}
+
+.ledger-title {
+  margin: 0 0 1cqw;
+  font-family: var(--ornament);
+  font-weight: 400;
+  font-size: 2.3cqw;
+}
+
 .sold {
-  margin: 0 0 1em;
+  display: grid;
+  gap: 0;
+  margin: 0;
   padding: 0;
   list-style: none;
-  font-size: 1.3em;
+  font-size: 1.6cqw;
+}
+
+/* Длинный итог — в две колонки и мельче, чтобы весь список влез без прокрутки. */
+.sold.many {
+  grid-template-columns: 1fr 1fr;
+  column-gap: 2cqw;
+  font-size: 1.2cqw;
 }
 
 .sold-lot {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 1em;
+  grid-template-columns: 2.6em minmax(0, 1fr) auto;
+  gap: 0.8em;
   align-items: center;
   padding: 0.4em 0;
-  border-top: 1px solid #27272a;
-}
-
-.sold-lot:not(:has(.sold-photo)) {
-  grid-template-columns: minmax(0, 1fr) auto;
+  border-top: 0.12cqw dashed #2a162055;
 }
 
 .sold-photo {
-  width: 3em;
-  height: 3em;
+  width: 2.6em;
+  height: 2.6em;
+  border-radius: 50%;
+  border: 0.2em solid var(--ink);
   object-fit: cover;
-  border-radius: 0.3em;
+  background: var(--plum);
+}
+
+.sold-text {
+  min-width: 0;
 }
 
 .sold-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-weight: 700;
 }
 
-.sold-buyer,
-.sold-growth {
-  color: var(--muted);
-  font-size: 0.8em;
+.sold-buyer {
+  color: var(--paper-muted);
+  font-size: 0.85em;
 }
 
 .sold-price {
@@ -243,9 +659,131 @@ main {
 }
 
 .sold-amount {
-  color: var(--accent);
-  font-weight: 700;
+  color: #b8501a;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
+}
+
+.sold-growth {
+  color: var(--paper-muted);
+  font-size: 0.75em;
+}
+
+.ledger-empty {
+  color: var(--paper-muted);
+  font-size: 1.8cqw;
+}
+
+.center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 1.4cqw;
+  text-align: center;
+}
+
+.center .mascot {
+  width: 16cqw;
+}
+
+.finale {
+  margin: 0;
+  font-size: 2.4cqw;
+  color: var(--brass);
+}
+
+.lineup {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1.6cqw 2.4cqw;
+  max-width: 84cqw;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 1.6cqw;
+}
+
+.lineup li {
+  display: grid;
+  justify-items: center;
+  gap: 0.6cqw;
+  width: 13cqw;
+  text-align: center;
+}
+
+.lineup .next-lens {
+  width: 9cqw;
+}
+
+/* --- Хэллоуин: туман и летучая мышь ------------------------------------------------------------------------ */
+
+.fog {
+  position: absolute;
+  left: -20%;
+  right: -20%;
+  bottom: -4cqw;
+  height: 16cqw;
+  background:
+    radial-gradient(ellipse at 30% 60%, #ffffff22, transparent 60%),
+    radial-gradient(ellipse at 75% 70%, #ffffff1a, transparent 55%);
+  filter: blur(1.4cqw);
+  animation: drift 14s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes drift {
+  to {
+    transform: translateX(8%);
+  }
+}
+
+.bat {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  width: 7cqw;
+  fill: #000;
+  opacity: 0;
+  pointer-events: none;
+  animation: bat-fly 2.4s ease-in;
+}
+
+.bat path {
+  transform-origin: 50% 50%;
+  animation: flap 0.18s ease-in-out infinite alternate;
+}
+
+@keyframes bat-fly {
+  0% {
+    transform: translate(-10cqw, 30cqw) scale(0.6) rotate(-10deg);
+    opacity: 0.85;
+  }
+  50% {
+    transform: translate(45cqw, 8cqw) scale(1) rotate(6deg);
+    opacity: 0.85;
+  }
+  100% {
+    transform: translate(110cqw, -10cqw) scale(0.7) rotate(-6deg);
+    opacity: 0;
+  }
+}
+
+@keyframes flap {
+  to {
+    transform: scaleY(0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+  }
 }
 
 /* Связь потеряна: последний снимок остаётся, но цена и лидер не выдаются за актуальные. */
@@ -254,7 +792,6 @@ body[data-status="stale"] main {
   filter: grayscale(1);
 }
 
-body[data-status="stale"] .price,
-body[data-status="stale"] .current-price {
+body[data-status="stale"] .price {
   text-decoration: line-through;
 }
