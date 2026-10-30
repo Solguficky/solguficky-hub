@@ -11,7 +11,7 @@ import type { LiveScreenStore } from "./presentation/live-screens.js";
 import { createLiveScreenKvStore } from "./presentation/live-screens-kv.js";
 
 // Хранилище открытых живых экранов хаба (PER-815): соединение с bucket'ом
-// общее с трансляцией хода торгов (`core/auction/live-kv-link.ts`), здесь —
+// общее со слежением за торгами (`core/auction/live-kv-link.ts`), здесь —
 // записи пульта и «Ставок зала». Отказ шины значит «экраны живут как раньше».
 export type LiveScreensNats = {
   screens(kind: "console" | "floor"): LiveScreenStore;
