@@ -254,6 +254,7 @@ describe("auction contract self-check", () => {
       "proxy: accepted, mark unavailable",
       "proxy: refused below the current price",
       "final: card",
+      "final: watch",
       "final: bid accepted",
       "final: bid at a price that moved",
       "final: bid unanswered twice",

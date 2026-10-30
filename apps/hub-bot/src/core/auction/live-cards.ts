@@ -307,7 +307,7 @@ function withProxyLimit(
 // процесс, а не на смотрящего. Кэш держит и вызов в полёте: на залпе все
 // карточки аукциона спрашивают одного нового лидера разом, и вызов уходит
 // один. Отказ и ответ без имени не кэшируются: следующая правка спросит снова.
-function cachedNames(
+export function cachedNames(
   port: Pick<AuctionPort, "getDisplayNames">,
 ): Pick<AuctionPort, "getDisplayNames"> {
   const known = new Map<string, Promise<string | undefined>>();

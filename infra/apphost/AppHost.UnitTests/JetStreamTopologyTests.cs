@@ -151,6 +151,14 @@ public class JetStreamTopologyTests
     }
 
     [Fact]
+    public void KeyValueBuckets_AuctionBotLiveScreens_LiveTwoDays()
+    {
+        var screens = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "auction-bot-live-screens");
+
+        screens.MaxAge.ShouldBe(TimeSpan.FromDays(2));
+    }
+
+    [Fact]
     public void ToConfig_Bucket_KeepsLatestStateOnDisk()
     {
         var config = JetStreamTopology.ToConfig(JetStreamTopology.KeyValueBuckets[0]);

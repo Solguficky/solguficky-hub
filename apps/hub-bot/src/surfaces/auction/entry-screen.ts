@@ -15,6 +15,7 @@ import {
   heldProxyConfirmation,
   heldProxyQuestion,
   showsStep,
+  watchFinalLabel,
 } from "../../auction-final.js";
 import { type HallLinks, hallButtons } from "../../auction-hall.js";
 import {
@@ -2139,6 +2140,8 @@ function renderButton(
       return text(followLabel);
     case "lot.unfollow":
       return text(unfollowLabel);
+    case "lot.watch":
+      return text(watchFinalLabel);
     case "lot.prev":
       return text(lotPrevLabel);
     case "lot.next":

@@ -9,6 +9,13 @@
 // важна цена сейчас, а не путь к ней. Очередь — по времени, когда сообщение
 // стало ждать: горячая карточка, которую правят на каждой ставке, не отнимает
 // очередь у остальных.
+//
+// Фоновая полоса (PER-826): трансляция хода торгов правит сообщение каждого
+// подписчика на каждую ставку, и их десятки. Её правки идут после остальных и
+// стартуют, только пока своих стартов в окне меньше `BACKGROUND_SLOTS` из 25:
+// у карточки финала и пульта всегда остаётся запас, и трансляция их не
+// задерживает. Считаются именно её старты, а не все: иначе пятнадцать правок
+// карточек в секунду оставили бы десять свободных мест без дела.
 
 export type EditOutcome =
   | { kind: "done" }
@@ -33,8 +40,16 @@ const realClock: Clock = {
 };
 
 export type EditLimiter = {
-  /** Правка сообщения `key` в чате `chatId`; вытесняет ждущую правку того же. */
-  submit(chatId: number, key: string, task: EditTask): void;
+  /**
+   * Правка сообщения `key` в чате `chatId`; вытесняет ждущую правку того же.
+   * `background` — фоновая полоса: правка уступает очередь остальным.
+   */
+  submit(
+    chatId: number,
+    key: string,
+    task: EditTask,
+    lane?: "background",
+  ): void;
   /** Снять ждущую правку: сообщения больше нет или оно уже не живое. */
   drop(key: string): void;
   /** Сколько сообщений ждёт правки. */
@@ -45,14 +60,22 @@ export type EditLimiter = {
 // Ниже 30 в секунду на бота: тот же лимит делят ответы на нажатия и доставка
 // уведомлений, которые лимитер не видит.
 export const EDITS_PER_SECOND = 25;
+// Сколько правок в окне может занять фоновая полоса, пока остальные ждут.
+export const BACKGROUND_SLOTS = 15;
 export const CHAT_INTERVAL_MS = 1_000;
 const WINDOW_MS = 1_000;
 
-type Waiting = { chatId: number; task: EditTask; since: number };
+type Waiting = {
+  chatId: number;
+  task: EditTask;
+  since: number;
+  background: boolean;
+};
 
 export function createEditLimiter(
   options: {
     perSecond?: number;
+    backgroundSlots?: number;
     chatIntervalMs?: number;
     clock?: Clock;
     // Правка бросила — не `429` и не известный отказ: пишет поверхность.
@@ -60,6 +83,10 @@ export function createEditLimiter(
   } = {},
 ): EditLimiter {
   const perSecond = options.perSecond ?? EDITS_PER_SECOND;
+  const backgroundSlots = Math.min(
+    options.backgroundSlots ?? BACKGROUND_SLOTS,
+    perSecond,
+  );
   const chatIntervalMs = options.chatIntervalMs ?? CHAT_INTERVAL_MS;
   const clock = options.clock ?? realClock;
   const waiting = new Map<string, Waiting>();
@@ -68,6 +95,8 @@ export function createEditLimiter(
   const chatFree = new Map<number, number>();
   // Моменты начала правок за последнее окно.
   let starts: number[] = [];
+  // Из них — старты фоновой полосы.
+  let backgroundStarts: number[] = [];
   let pausedUntil = 0;
   let cancelWake: (() => void) | undefined;
   let wakeAt = Number.POSITIVE_INFINITY;
@@ -91,6 +120,7 @@ export function createEditLimiter(
     waiting.delete(key);
     inFlight.add(key);
     starts.push(now);
+    if (entry.background) backgroundStarts.push(now);
     chatFree.set(entry.chatId, now + chatIntervalMs);
     void entry
       .task()
@@ -112,6 +142,7 @@ export function createEditLimiter(
     if (closed) return;
     const now = clock.now();
     starts = starts.filter((at) => at > now - WINDOW_MS);
+    backgroundStarts = backgroundStarts.filter((at) => at > now - WINDOW_MS);
     for (const [chatId, at] of chatFree) {
       if (at <= now) chatFree.delete(chatId);
     }
@@ -122,10 +153,18 @@ export function createEditLimiter(
     let next = Number.POSITIVE_INFINITY;
     const queue = [...waiting.entries()]
       .filter(([key]) => !inFlight.has(key))
-      .sort(([, a], [, b]) => a.since - b.since);
+      .sort(
+        ([, a], [, b]) =>
+          Number(a.background) - Number(b.background) || a.since - b.since,
+      );
     for (const [key, entry] of queue) {
       if (starts.length >= perSecond) {
         next = Math.min(next, (starts[0] ?? now) + WINDOW_MS);
+        break;
+      }
+      if (entry.background && backgroundStarts.length >= backgroundSlots) {
+        next = Math.min(next, (backgroundStarts[0] ?? now) + WINDOW_MS);
+        // Остальные в очереди — тоже фоновые: передние уже обслужены.
         break;
       }
       const free = chatFree.get(entry.chatId) ?? 0;
@@ -139,13 +178,14 @@ export function createEditLimiter(
   };
 
   return {
-    submit(chatId, key, task) {
+    submit(chatId, key, task, lane) {
       if (closed) return;
       const prior = waiting.get(key);
       waiting.set(key, {
         chatId,
         task,
         since: prior?.since ?? clock.now(),
+        background: lane === "background",
       });
       pump();
     },
