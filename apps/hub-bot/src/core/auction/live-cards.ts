@@ -18,6 +18,13 @@ import type { AuctionWatches, AuctionWatchState } from "./watch.js";
 // между лотами показывает итог своего лота из состава. Рестарт память теряет:
 // карточки замирают, но их кнопка работает — нажатие ставит или отказывает с
 // новой ценой и снова оживляет карточку.
+//
+// Карточка в слежении (PER-837, дополнение ADR-030 от 2026-10-30) — та же
+// карточка, которую участник включил кнопкой «Следить за торгами»: запись о
+// ней лежит ещё и в хранилище вне процесса, новый процесс читает её,
+// подписывается на поток заново и правит то же сообщение, а в конце финала
+// карточка пишет «Аукцион завершён». Правки слежения идут фоновой полосой
+// лимитера: десятки следящих не задерживают пульт и ставки.
 
 /** Открытая карточка: где она и с чем её открыли. */
 export type LiveCardEntry = {
@@ -41,6 +48,29 @@ export type LiveCardEntry = {
   // чужую ставку иначе стирала бы его с карточки, и проигравший гонку видел
   // лишь мелькание. Живёт до следующего показа карточки этому чату.
   priceMoved?: { lotId: string; outcome: FinalBidOutcome };
+  // Карточка в слежении: запись о ней лежит в хранилище, а на карточке стоит
+  // «Не следить».
+  watching?: true;
+  // Финал кончился, и последняя правка карточки в пути: поток закрылся, а
+  // правку это не отменяет.
+  ending?: true;
+};
+
+/** Карточка в слежении так, как она переживает рестарт процесса. */
+export type WatchTarget = {
+  chatId: number;
+  messageId: number;
+  auctionId: string;
+  lotId: string;
+  page: number;
+  viewer: Viewer;
+};
+
+/** Запись слежений по одной на чат. Методы не бросают. */
+export type WatchStore = {
+  save(target: WatchTarget): Promise<void>;
+  remove(chatId: number): Promise<void>;
+  list(): Promise<readonly WatchTarget[]>;
 };
 
 /**
@@ -75,6 +105,10 @@ export type LiveCardShown = {
   following?: boolean;
   proxyLimit?: Money;
   priceMoved?: FinalBidOutcome;
+  // Нажатие «Следить за торгами» или «Не следить» (PER-837).
+  watch?: "start" | "stop";
+  // Показанная карточка стоит в слежении: на ней «Не следить».
+  watching?: boolean;
 };
 
 export type LiveCards = {
@@ -89,6 +123,11 @@ export type LiveCards = {
     messageId: number,
     card: LiveCardShown | undefined,
   ): boolean;
+  /**
+   * Читает записи слежений после старта и продолжает правкой тех же карточек.
+   * Ответ — сколько записей прочитано.
+   */
+  restore(): Promise<number>;
   size(): number;
   close(): void;
 };
@@ -107,6 +146,8 @@ export function createLiveCards(options: {
   // Имена участников правами карточки; отказ гасит `liveLot`, как у карточки.
   names: Pick<AuctionPort, "getDisplayNames">;
   edit: LiveCardEdit;
+  // Хранилище слежений; без него слежение живёт, пока жив процесс.
+  store?: WatchStore;
   limit?: number;
 }): LiveCards {
   const limit = options.limit ?? LIVE_CARDS_LIMIT;
@@ -117,7 +158,32 @@ export function createLiveCards(options: {
   const keyOf = (card: { chatId: number; messageId: number }) =>
     `${card.chatId}:${card.messageId}`;
 
-  const forget = (chatId: number) => {
+  // Сообщения, слежение за которыми снято раньше, чем их прочитало
+  // восстановление: запись, прочитанная до снятия, их не оживляет.
+  const released = new Set<string>();
+  // Лот, под которым лежит запись карточки: запись правится, когда карточка
+  // перешла на другой.
+  const saved = new Map<number, string>();
+
+  const targetOf = (card: LiveCardEntry): WatchTarget => ({
+    chatId: card.chatId,
+    messageId: card.messageId,
+    auctionId: card.auctionId,
+    lotId: card.lotId,
+    page: card.page,
+    viewer: card.viewer,
+  });
+
+  const persist = (card: LiveCardEntry) => {
+    if (card.watching !== true || options.store === undefined) return;
+    if (saved.get(card.chatId) === card.lotId) return;
+    saved.set(card.chatId, card.lotId);
+    void options.store.save(targetOf(card));
+  };
+
+  // `keepRecord` — на месте карточки встаёт другая: её запись перепишет
+  // ключ чата, а снятие шло бы с ней наперегонки.
+  const forget = (chatId: number, keepRecord = false) => {
     const card = cards.get(chatId);
     if (card === undefined) return;
     cards.delete(chatId);
@@ -125,6 +191,11 @@ export function createLiveCards(options: {
     options.limiter.drop(keyOf(card));
     unsubscribe.get(chatId)?.();
     unsubscribe.delete(chatId);
+    saved.delete(chatId);
+    if (card.watching === true && !keepRecord) {
+      released.add(keyOf(card));
+      void options.store?.remove(chatId);
+    }
   };
 
   // Правка ещё нужна: карточку не сменили и не показали новее, пока правка
@@ -151,9 +222,10 @@ export function createLiveCards(options: {
     if (card.priceMoved?.lotId !== lot.lotId) delete card.priceMoved;
     card.lotId = lot.lotId;
     card.version = lot.version;
+    persist(card);
     const target = { lotId: lot.lotId, version: lot.version };
     const shownLot = withProxyLimit(lot, card.proxyLimit);
-    options.limiter.submit(chatId, keyOf(card), async () => {
+    const edit = async (): Promise<EditOutcome> => {
       if (!current(card, target)) return { kind: "done" };
       const following =
         card.following?.lotId === lot.lotId ? card.following.value : undefined;
@@ -166,6 +238,8 @@ export function createLiveCards(options: {
         ...(card.priceMoved?.lotId === lot.lotId
           ? { finalBid: card.priceMoved.outcome }
           : {}),
+        ...(card.watching === true ? { watching: true } : {}),
+        ...(card.ending === true ? { ended: true } : {}),
       });
       if (!current(card, target)) return { kind: "done" };
       const outcome = await options.edit(card, body);
@@ -174,13 +248,28 @@ export function createLiveCards(options: {
           if (cards.get(chatId) === card) forget(chatId);
           return { kind: "done" };
         case "failed":
-          // Цена не дошла: следующее состояние потока правит заново.
+          // Цена не дошла: следующее состояние потока правит заново, а после
+          // конца финала следующего не будет.
           if (current(card, target)) card.version = 0;
+          if (card.ending === true && cards.get(chatId) === card) {
+            forget(chatId);
+          }
           return { kind: "done" };
+        case "retry-after":
+          return outcome;
         default:
+          // Последняя правка слежения ушла: карточку больше никто не ведёт.
+          if (card.ending === true && cards.get(chatId) === card) {
+            forget(chatId);
+          }
           return outcome;
       }
-    });
+    };
+    if (card.watching === true) {
+      options.limiter.submit(chatId, keyOf(card), edit, "background");
+    } else {
+      options.limiter.submit(chatId, keyOf(card), edit);
+    }
   };
 
   const onState = (chatId: number, state: AuctionWatchState) => {
@@ -188,6 +277,17 @@ export function createLiveCards(options: {
     if (card === undefined) return;
     latest.set(chatId, state);
     const lot = lotOf(card, state);
+    // Конец финала у слежения: последняя правка пишет «Аукцион завершён», а
+    // потом карточку никто не ведёт. Показать нечего — запись просто снимается.
+    if (state.finished && card.watching === true) {
+      if (lot === undefined) {
+        forget(chatId);
+        return;
+      }
+      card.ending = true;
+      schedule(card, lot);
+      return;
+    }
     // Лота нет ни в торгах, ни в составе — показать нечего, карточка ждёт.
     if (lot === undefined) return;
     // Версия лота растёт с каждым его фактом: поток, отставший от чтения по
@@ -214,19 +314,73 @@ export function createLiveCards(options: {
     // Каждый показ заменяет прежний ответ: ставка, «Обновить» или другой лот.
     if (shown.priceMoved === undefined) delete card.priceMoved;
     else card.priceMoved = { lotId: shown.lotId, outcome: shown.priceMoved };
+    applyWatch(card, shown);
     const state = latest.get(card.chatId);
     const lot = state === undefined ? undefined : lotOf(card, state);
+    // Карточка в слежении, а показ принёс её без «Не следить» — ответ на
+    // ставку или «Обновить» рисует дерево, которое о слежении не знает:
+    // правка возвращает кнопку, даже если цена та же.
+    const unmarked = card.watching === true && shown.watching !== true;
     if (
       lot !== undefined &&
-      (lot.lotId !== shown.lotId || lot.version > shown.version)
+      (lot.lotId !== shown.lotId ||
+        lot.version > shown.version ||
+        (unmarked && lot.version === shown.version))
     ) {
       schedule(card, lot);
+    }
+  };
+
+  // Нажатие включило слежение: запись следует за карточкой.
+  const applyWatch = (card: LiveCardEntry, shown: LiveCardShown) => {
+    if (shown.watch === "start" && card.watching !== true) {
+      card.watching = true;
+      released.delete(keyOf(card));
+      persist(card);
+    }
+  };
+
+  // Новая подписка — до снятия прежней: у аукциона с одним подписчиком поток
+  // иначе закрылся бы и открылся заново. `keepRecord` — запись прежней карточки
+  // перепишет запись новой, и снятие шло бы с ней наперегонки.
+  const open = (card: LiveCardEntry, keepRecord = false) => {
+    const { chatId } = card;
+    const leave = options.watches.subscribe(
+      card.auctionId,
+      card.viewer,
+      (state) => onState(chatId, state),
+      () => {
+        // Поток кончился с последним состоянием финала: правка слежения уже
+        // в очереди и сама снимет карточку.
+        if (card.ending === true) return;
+        if (cards.get(chatId) === card) forget(chatId);
+      },
+    );
+    forget(chatId, keepRecord);
+    cards.set(chatId, card);
+    unsubscribe.set(chatId, leave);
+    while (cards.size > limit) {
+      const oldest = cards.keys().next().value;
+      if (oldest === undefined) break;
+      forget(oldest);
     }
   };
 
   return {
     shown(chatId, messageId, shown) {
       const prior = cards.get(chatId);
+      // «Не следить»: карточка перестаёт правиться вовсе — замирает, как после
+      // рестарта, а следующее нажатие под ней оживляет её без слежения.
+      if (shown?.watch === "stop") {
+        if (prior?.messageId === messageId) forget(chatId);
+        // Реестр карточки не помнит (рестарт, вытеснение): запись о ней всё
+        // равно снимается, иначе слежение ожило бы на следующем старте.
+        else if (prior === undefined) {
+          released.add(`${chatId}:${messageId}`);
+          void options.store?.remove(chatId);
+        }
+        return false;
+      }
       const same =
         prior !== undefined &&
         prior.messageId === messageId &&
@@ -260,23 +414,25 @@ export function createLiveCards(options: {
       };
       // Новая подписка — до снятия прежней: у аукциона с одним подписчиком
       // поток иначе закрылся бы и открылся заново.
-      const leave = options.watches.subscribe(
-        card.auctionId,
-        card.viewer,
-        (state) => onState(chatId, state),
-        () => {
-          if (cards.get(chatId) === card) forget(chatId);
-        },
-      );
-      forget(chatId);
-      cards.set(chatId, card);
-      unsubscribe.set(chatId, leave);
-      while (cards.size > limit) {
-        const oldest = cards.keys().next().value;
-        if (oldest === undefined) break;
-        forget(oldest);
-      }
+      open(card, shown.watch === "start");
+      applyWatch(card, shown);
       return true;
+    },
+    async restore() {
+      const targets = (await options.store?.list()) ?? [];
+      for (const target of targets) {
+        // Нажатие нового процесса, успевшее раньше, свежее записи, а снятое
+        // слежение не оживает.
+        if (cards.has(target.chatId)) continue;
+        if (released.has(`${target.chatId}:${target.messageId}`)) {
+          void options.store?.remove(target.chatId);
+          continue;
+        }
+        // Версия 0: первое состояние потока перерисует карточку.
+        open({ ...target, version: 0, watching: true });
+        saved.set(target.chatId, target.lotId);
+      }
+      return targets.length;
     },
     size: () => cards.size,
     close() {
@@ -302,6 +458,12 @@ export function liveCardOf(
       version: block.version,
       viewer,
       live: block.live !== undefined,
+      ...(block.watch === true
+        ? { watch: "start" as const }
+        : block.unwatch === true
+          ? { watch: "stop" as const }
+          : {}),
+      ...(block.watching === true ? { watching: true } : {}),
       ...(block.live === undefined ? {} : { page: block.live.page }),
       ...(block.following === undefined ? {} : { following: block.following }),
       ...(block.viewerProxyLimit === undefined
