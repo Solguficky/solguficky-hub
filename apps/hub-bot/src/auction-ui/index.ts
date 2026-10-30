@@ -119,6 +119,7 @@ export type {
   TradingPhase,
   Viewer,
   WinnerInvoiceView,
+  WithdrawLimitRefusal,
 } from "./ports.js";
 export type {
   PredictionAnswerKind,

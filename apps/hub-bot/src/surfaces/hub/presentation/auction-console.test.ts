@@ -1382,6 +1382,7 @@ function fakeAuction(
                 .map((each) => [each.participantId, each.name]),
             ),
           placeBid: notUsed,
+          withdrawProxyLimit: notUsed,
           setProxyLimit: notUsed,
           chooseDisplayName: notUsed,
           getAuction: async () => ({

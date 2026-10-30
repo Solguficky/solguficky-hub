@@ -162,9 +162,33 @@ describe("lot card in the hub shell", () => {
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
         "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
-        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n" +
+        "Если лот попадёт в финал, лимит сработает и там\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лоту, который ждёт финала, лимит обещает финал, а лимит ниже цены лота — нет
+  // (PER-822).
+  it("promises the final to a limit of a held lot only when it covers the price", () => {
+    const held = (limit: number) =>
+      plain(
+        auctionScreen(
+          view(
+            [
+              lot({
+                card: { title: "Кружка", description: "" },
+                status: { kind: "held", currentPrice: rub(1200) },
+                viewerProxyLimit: rub(limit),
+              }),
+            ],
+            "plain",
+          ),
+        ).screen.text,
+      );
+    expect(held(2000)).toContain("сработает в финале");
+    expect(held(900)).toContain("в финале не сработает");
+    expect(held(900)).not.toContain("сработает в финале");
   });
 
   // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81).

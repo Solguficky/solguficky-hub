@@ -3,6 +3,11 @@ import {
   heldProxyAccepted,
   heldProxyConfirmation,
   heldProxyQuestion,
+  noLimitDetail,
+  noLimitTitle,
+  withdrawNote,
+  withdrawnTitle,
+  withdrawQuestion,
 } from "../../../../auction-final.js";
 import {
   autoFollowNote,
@@ -73,6 +78,22 @@ export function confirmScreen(
   keyboard: readonly (readonly AuctionButton[])[],
   money: (amount: Money) => string,
 ): ShownScreen {
+  if (block.command === "withdraw") {
+    return {
+      id: "withdraw-confirm",
+      text: screenText(
+        withdrawQuestion(block.amount, money),
+        lotSubject(block.title),
+        withdrawNote(block.forFinal === true),
+      ),
+      keyboard: confirmKeyboard({
+        yes: "Да, снять автоставку",
+        yesData: dataOf(keyboard, "confirm.yes"),
+        noData: dataOf(keyboard, "confirm.no"),
+      }),
+      format: "HTML",
+    };
+  }
   const bid = block.command === "bid";
   return {
     id: bid ? "bid-confirm" : "proxy-confirm",
@@ -430,8 +451,11 @@ function resultOutcome(
       detail: "Проверь цену на карточке: команда могла пройти.",
     };
   }
+  if (result.kind === "withdrawn") return { title: withdrawnTitle };
   const { refusal } = result;
   switch (refusal.kind) {
+    case "no-active-limit":
+      return { title: noLimitTitle, detail: noLimitDetail };
     case "lot-not-open":
       return { title: "Торги по лоту не идут" };
     case "lot-on-hold":

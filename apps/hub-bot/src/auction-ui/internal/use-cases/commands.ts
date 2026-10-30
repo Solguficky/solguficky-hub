@@ -3,6 +3,7 @@ import {
   type AuctionQuestion,
   encodeAuctionCallback,
   type PendingCommand,
+  type PlacedCommand,
 } from "../../callback-data.js";
 import { FinalBidReadUnavailable } from "../../final-bid-failure.js";
 import type {
@@ -221,7 +222,7 @@ function refusedBeforeConfirm(
 
 // Ветки одинаковы по форме, но разные по типу: `CommandResult` сужает отказ
 // по команде, и TypeScript собирает его только из литерала команды.
-function notOffered(command: AuctionCommand, lot: LotView): CommandResult {
+function notOffered(command: PlacedCommand, lot: LotView): CommandResult {
   if (command === "bid") {
     return lot.status.kind === "held"
       ? {
@@ -235,6 +236,109 @@ function notOffered(command: AuctionCommand, lot: LotView): CommandResult {
       : { command, kind: "refused", refusal: { kind: "lot-not-open" } };
   }
   return { command, kind: "refused", refusal: { kind: "lot-not-open" } };
+}
+
+// Снять свой лимит (PER-822): подтверждение показывает лимит, который лот
+// называет сейчас. Лимита нет — «лимита уже нет», без похода в Auction.
+export async function confirmWithdraw(
+  context: CommandContext,
+  intent: { lotId: string; page: number },
+): Promise<AuctionScreenBody> {
+  const lot = await readLot(context, intent.lotId);
+  const { status, viewerProxyLimit: limit } = lot;
+  if (
+    limit === undefined ||
+    (status.kind !== "trading" && status.kind !== "held")
+  ) {
+    return resultBody(lot, intent.page, noLimitResult);
+  }
+  return {
+    blocks: [
+      {
+        kind: "confirm",
+        command: "withdraw",
+        lotId: lot.lotId,
+        auctionId: lot.auctionId,
+        ...titled(lot),
+        amount: limit,
+        currentPrice: status.currentPrice,
+        ...(status.kind === "held" ? { forFinal: true as const } : {}),
+      },
+    ],
+    keyboard: [
+      [
+        {
+          action: "confirm.yes",
+          callbackData: encodeAuctionCallback({
+            kind: "commit",
+            command: "withdraw",
+            lotId: lot.lotId,
+            opId: context.operations.newOperationId(),
+            amount: limit.minorUnits,
+            page: intent.page,
+          }),
+        },
+        {
+          action: "confirm.no",
+          callbackData: lotCallback(lot.lotId, intent.page),
+        },
+      ],
+    ],
+  };
+}
+
+const noLimitResult: CommandResult = {
+  command: "withdraw",
+  kind: "refused",
+  refusal: { kind: "no-active-limit" },
+};
+
+// «Да» снятия: `op_id` рождён при показе подтверждения, повтор того же «Да»
+// несёт тот же ключ, и Auction второй команды не исполняет. Отказ один —
+// лимита уже нет — и для человека это исход, а не сбой.
+export async function commitWithdraw(
+  context: CommandContext,
+  intent: { lotId: string; opId: string; amount: number; page: number },
+): Promise<AuctionScreenBody> {
+  const lot = await readLot(context, intent.lotId);
+  // «Да» из устаревшего подтверждения: лимит с тех пор изменился. Снимать
+  // другой лимит, чем тот, что человек видел, нельзя — подтверждение
+  // показывается заново с нынешним.
+  if (
+    lot.viewerProxyLimit !== undefined &&
+    lot.viewerProxyLimit.minorUnits !== intent.amount
+  ) {
+    return confirmWithdraw(context, intent);
+  }
+  const outcome = await withOneRetry(() =>
+    context.auction.withdrawProxyLimit({
+      viewer: context.viewer,
+      lotId: intent.lotId,
+      opId: intent.opId,
+    }),
+  );
+  switch (outcome.kind) {
+    case "accepted":
+      return resultBody(lot, intent.page, {
+        command: "withdraw",
+        kind: "withdrawn",
+      });
+    case "refused":
+      return resultBody(lot, intent.page, {
+        command: "withdraw",
+        kind: "refused",
+        refusal: outcome.refusal,
+      });
+    case "unanswered":
+      return resultBody(lot, intent.page, {
+        command: "withdraw",
+        kind: "unknown",
+      });
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
 }
 
 export async function confirmCommand(
@@ -258,7 +362,7 @@ export async function withOneRetry<Outcome extends { kind: string }>(
 export async function commitCommand(
   context: CommandContext,
   intent: {
-    command: AuctionCommand;
+    command: PlacedCommand;
     lotId: string;
     opId: string;
     amount: number;
@@ -443,7 +547,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
     context: CommandContext;
     lot: LotView;
     intent: {
-      command: AuctionCommand;
+      command: PlacedCommand;
       lotId: string;
       amount: number;
       page: number;

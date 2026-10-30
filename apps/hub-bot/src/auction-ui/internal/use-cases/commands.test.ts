@@ -712,3 +712,137 @@ describe("proxy limit of a lot waiting for the final", () => {
     });
   });
 });
+
+describe("withdraw the own proxy limit (PER-822)", () => {
+  const WITH_LIMIT = {
+    ...CONTRACT_LOT,
+    viewerProxyLimit: { minorUnits: 200000, currency: "RUB" },
+  };
+  const withLimit = (
+    extra: Partial<ContractAuction> = {},
+  ): ContractAuction => ({
+    ...AUCTION,
+    lots: [WITH_LIMIT],
+    ...extra,
+  });
+  const confirmData = (lotId: string) =>
+    encodeAuctionCallback({
+      kind: "confirm",
+      command: "withdraw",
+      lotId,
+      amount: 200000,
+      page: 0,
+    });
+  const withdrawCalls = (calls: readonly PortCall[]) =>
+    calls.filter((call) => call.method === "withdrawProxyLimit");
+
+  const yesOf = async (ports: ReturnType<typeof spyPorts>) => {
+    const confirm = await press(ports, confirmData(WITH_LIMIT.lotId));
+    if (confirm.kind !== "screen") throw new Error("no confirmation");
+    const yes = confirm.body.keyboard[0]?.[0];
+    if (yes?.action !== "confirm.yes") throw new Error("no yes button");
+    return yes.callbackData;
+  };
+
+  it("sends the same op_id on a repeated «Да» and names the result", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      withLimit({
+        withdrawals: [
+          { kind: "accepted", lotVersion: 0 },
+          { kind: "accepted", lotVersion: 0 },
+        ],
+      }),
+    );
+    const yes = await yesOf(ports);
+    const first = await press(ports, yes);
+    await press(ports, yes);
+    expect(
+      withdrawCalls(calls).map((call) =>
+        call.method === "withdrawProxyLimit" ? call.request.opId : undefined,
+      ),
+    ).toEqual([CONTRACT_OP_IDS[0], CONTRACT_OP_IDS[0]]);
+    if (first.kind !== "screen") throw new Error("no screen");
+    expect(first.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: { command: "withdraw", kind: "withdrawn" },
+    });
+  });
+
+  it("shows «no limit» as a value when the server has none", async () => {
+    const ports = spyPorts(
+      [],
+      withLimit({
+        withdrawals: [
+          { kind: "refused", refusal: { kind: "no-active-limit" } },
+        ],
+      }),
+    );
+    const result = await press(ports, await yesOf(ports));
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: {
+        command: "withdraw",
+        kind: "refused",
+        refusal: { kind: "no-active-limit" },
+      },
+    });
+  });
+
+  it("retries once with the same op_id when the first call had no answer", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      withLimit({
+        withdrawals: [
+          { kind: "unanswered" },
+          { kind: "accepted", lotVersion: 0 },
+        ],
+      }),
+    );
+    await press(ports, await yesOf(ports));
+    const opIds = withdrawCalls(calls).map((call) =>
+      call.method === "withdrawProxyLimit" ? call.request.opId : undefined,
+    );
+    expect(opIds).toHaveLength(2);
+    expect(opIds[0]).toBe(opIds[1]);
+  });
+
+  it("shows the confirmation again when the limit changed since it was shown", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      withLimit({ withdrawals: [{ kind: "accepted", lotVersion: 0 }] }),
+    );
+    const stale = encodeAuctionCallback({
+      kind: "commit",
+      command: "withdraw",
+      lotId: WITH_LIMIT.lotId,
+      opId: CONTRACT_OP_IDS[0],
+      amount: 150000,
+      page: 0,
+    });
+    const result = await press(ports, stale);
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(withdrawCalls(calls)).toEqual([]);
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "confirm",
+      command: "withdraw",
+      amount: { minorUnits: 200000 },
+    });
+  });
+
+  it("does not call Auction when the lot shows no own limit", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(calls, AUCTION);
+    const result = await press(ports, confirmData(CONTRACT_LOT.lotId));
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(withdrawCalls(calls)).toEqual([]);
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: { command: "withdraw", kind: "refused" },
+    });
+  });
+});

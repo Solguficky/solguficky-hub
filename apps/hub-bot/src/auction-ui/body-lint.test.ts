@@ -143,6 +143,9 @@ const surface: AuctionSurface = {
           refusal: { kind: "display-name-not-chosen" },
         };
       },
+      async withdrawProxyLimit() {
+        return { kind: "accepted", lotVersion: 0 };
+      },
       async setProxyLimit() {
         return { kind: "accepted", lotVersion: 0 };
       },

@@ -704,7 +704,7 @@ const history = (entries: boolean): AuctionScreenBody => ({
 });
 
 // Лист ставки (PER-317): подтверждения, вопросы и выбор имени.
-const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
+const confirm = (command: "bid" | "proxy" | "withdraw"): AuctionScreenBody => ({
   blocks: [
     {
       kind: "confirm",
@@ -1400,6 +1400,7 @@ const shown: readonly {
   { screen: { kind: "auction", body: setScreen }, presentation: "plain" },
   { screen: { kind: "auction", body: confirm("bid") } },
   { screen: { kind: "auction", body: confirm("proxy") } },
+  { screen: { kind: "auction", body: confirm("withdraw") } },
   { screen: { kind: "auction", body: accepted("bid", true) } },
   { screen: { kind: "auction", body: accepted("proxy", false) } },
   { screen: { kind: "auction", body: commandResult(true) } },

@@ -309,6 +309,7 @@ function fakeAuction(
             );
           },
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
+          withdrawProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
           chooseDisplayName: async () => {
             const refusal = options.nameless?.aliasRefusal;

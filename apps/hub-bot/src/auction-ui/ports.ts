@@ -407,6 +407,13 @@ export interface AuctionPort {
     max: Money;
     opId: string;
   }): Promise<CommandOutcome<ProxyLimitRefusal>>;
+  // Снять свой лимит (PER-822). Auction версии лота в ответе не называет:
+  // `lotVersion` принятой команды — 0.
+  withdrawProxyLimit(request: {
+    viewer: Viewer;
+    lotId: string;
+    opId: string;
+  }): Promise<CommandOutcome<WithdrawLimitRefusal>>;
   chooseDisplayName(request: {
     viewer: Viewer;
     auctionId: string;
@@ -692,6 +699,10 @@ export type ProxyLimitRefusal =
   | { kind: "currency-mismatch" }
   | { kind: "display-name-not-chosen" }
   | { kind: "removed-from-lot" };
+
+// Лимита, который можно снять, у смотрящего на лоте нет: снят раньше или не
+// ставился (PER-822). Для человека это не сбой, а «лимита уже нет».
+export type WithdrawLimitRefusal = { kind: "no-active-limit" };
 
 // Исход команды с `op_id`. `unanswered` — ответа не было вовсе: дедлайн вызова
 // истёк или связь оборвалась. Только его пакет повторяет, и тем же `op_id`:

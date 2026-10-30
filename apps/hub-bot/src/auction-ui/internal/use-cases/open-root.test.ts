@@ -32,6 +32,7 @@ function auctionOf(
     getDisplayNames: notUsed,
     listLotHistory: notUsed,
     placeBid: notUsed,
+    withdrawProxyLimit: notUsed,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getAuction: async () => SUMMARY,

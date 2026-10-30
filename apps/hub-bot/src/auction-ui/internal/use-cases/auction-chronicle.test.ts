@@ -50,6 +50,7 @@ function open(chronicle: AuctionChronicleView) {
     getDisplayNames: notUsed,
     listLotHistory: notUsed,
     placeBid: notUsed,
+    withdrawProxyLimit: notUsed,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getAuction: notUsed,

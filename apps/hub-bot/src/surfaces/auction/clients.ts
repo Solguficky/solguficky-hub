@@ -34,6 +34,7 @@ import {
   limitOutcomeOf,
   ownDisplayNameOf,
   unansweredOn,
+  withdrawOutcomeOf,
 } from "../../core/auction/commands.js";
 import {
   auctionChronicleOf,
@@ -113,6 +114,7 @@ export type AuctionRpc = Pick<
   | "getDisplayNames"
   | "placeBid"
   | "setProxyLimit"
+  | "withdrawProxyLimit"
   | "chooseDisplayName"
   | "getAuction"
   | "getRaffle"
@@ -356,6 +358,20 @@ export function createPorts(
                   viewer: wireViewer(request.viewer),
                   lotId: request.lotId,
                   max: wireMoney(request.max),
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
+            ),
+          );
+        },
+        withdrawProxyLimit(request) {
+          return unansweredOn(async () =>
+            withdrawOutcomeOf(
+              await auction.withdrawProxyLimit(
+                {
+                  viewer: wireViewer(request.viewer),
+                  lotId: request.lotId,
                   opId: request.opId,
                 },
                 callOptions(timeoutMs),

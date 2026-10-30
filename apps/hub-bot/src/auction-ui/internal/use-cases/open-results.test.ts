@@ -40,6 +40,7 @@ function auctionOf(
     listLotHistory: refuse,
     placeBid: refuse,
     setProxyLimit: refuse,
+    withdrawProxyLimit: refuse,
     chooseDisplayName: refuse,
     getAuction: async () => undefined,
     getRaffle: async () => undefined,

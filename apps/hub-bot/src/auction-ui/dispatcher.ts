@@ -8,7 +8,9 @@ import {
   cancelQuestion,
   chooseUsername,
   commitCommand,
+  commitWithdraw,
   confirmCommand,
+  confirmWithdraw,
   placeFinalBid,
 } from "./internal/use-cases/commands.js";
 import { openDayChronicle } from "./internal/use-cases/day-chronicle.js";
@@ -155,9 +157,13 @@ export function dispatchAuctionIntent(input: {
         page: intent.page,
       });
     case "confirm":
-      return confirmCommand(context, intent);
+      return intent.command === "withdraw"
+        ? confirmWithdraw(context, intent)
+        : confirmCommand(context, { ...intent, command: intent.command });
     case "commit":
-      return commitCommand(context, intent);
+      return intent.command === "withdraw"
+        ? commitWithdraw(context, intent)
+        : commitCommand(context, { ...intent, command: intent.command });
     case "final-bid":
       return placeFinalBid(context, intent);
     case "ask":
