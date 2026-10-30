@@ -16,6 +16,7 @@ public enum AuctionOutcome
     FinalLotNext, LeadRestored, LotSetCollected,
     Announcement, AnnouncementWithdrawn, StandingRecorded,
     InvoiceReplicated, InvoiceStale,
+    TradingEnded,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -64,6 +65,9 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             // Ручная ставка, перебитая той же командой, тоже участие: человек
             // ставил, а лидерство он потерял уже чужой автоставкой.
             await FinalStore.AddBidder(work, bid.AuctionId, bid.Leader, now, cancellationToken);
+
+            // Ставивший на лот узнает, что лот продан в финале (PER-812).
+            await FinalStore.AddLotBidder(work, bid.LotId, bid.Leader, now, cancellationToken);
         }
 
         var created = new Dictionary<string, int>();
@@ -198,6 +202,26 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
                 AuctionFacts.AuctionCancelledType, AuctionFacts.AuctionCauseKind, cancelled.EventId.ToString(), now,
                 notAfter, cancellationToken,
                 await NotificationStore.DeliverySurface(work, sale.Winner, cancellationToken));
+        }
+
+        // Лот продан в финале: об этом узнают все, кто на него ставил, кроме
+        // победителя — ему уже пришла покупка (PER-812). Выключатель анонса
+        // финала гасит и эту весть.
+        if (ended is null && await FinalStore.IsFinalLot(work, sale.LotId, cancellationToken))
+        {
+            var bidders = (await FinalStore.LotBidders(work, sale.LotId, cancellationToken))
+                .Where(bidder => bidder != sale.Winner)
+                .ToArray();
+            var silenced = await FinalStore.Silenced(work, bidders, cancellationToken);
+            var inFinal = 0;
+            foreach (var bidder in bidders.Where(bidder => !silenced.Contains(bidder)))
+            {
+                inFinal += await NotificationStore.AddAddressed(work,
+                    AuctionFacts.LotSoldInFinal(Guid.CreateVersion7(now), bidder, sale, now, notAfter),
+                    AuctionFacts.LotSoldInFinalType, AuctionFacts.CauseKind, sale.EventId.ToString(), now, notAfter,
+                    cancellationToken, await NotificationStore.DeliverySurface(work, bidder, cancellationToken));
+            }
+            created[AuctionFacts.LotSoldInFinalType] = inFinal;
         }
 
         // Торги кончились, и окна со строками лота закрываются сейчас, а не по
@@ -346,15 +370,12 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         }
         var lineup = final.Lineup.Where(held.ContainsKey).Select(lot => held[lot]).ToArray();
 
-        // Лидер лота стал им ставкой, но ставка могла прийти раньше, чем круг
-        // завёлся: лидер состава в анонс попадает в любом случае.
-        var bidders = (await FinalStore.Bidders(work, final.AuctionId, cancellationToken))
-            .Union(lineup.Select(lot => lot.Leader).OfType<Guid>())
-            .ToArray();
-        // Выключивший анонс финала (PER-539) не получает ни состава, ни старта:
-        // настройку читает та же транзакция, что пишет факты.
-        var silenced = await FinalStore.Silenced(work, bidders, cancellationToken);
-        var audience = bidders.Where(recipient => !silenced.Contains(recipient)).ToArray();
+        // Состав и старт идут всем держателям права ставок, а не только ведшим
+        // лот (PER-812); лидер состава попадает в круг в любом случае. Выключивший
+        // анонс финала (PER-539) не получает ни состава, ни старта: настройку
+        // читает та же транзакция, что пишет факты.
+        var audience = await FinalAudience(work, lineup.Select(lot => lot.Leader).OfType<Guid>(),
+            cancellationToken);
 
         var notAfter = now + options.Value.StaleAfter;
         var type = lineupFrozen ? AuctionFacts.FinalLineupType : AuctionFacts.FinalStartedType;
@@ -379,7 +400,7 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         var nextCreated = 0;
         if (!lineupFrozen && final.Lineup.Count > 0)
         {
-            nextCreated = await AnnounceNext(work, final.AuctionId, final.Lineup[0], final.EventId, now,
+            nextCreated = await AnnounceNext(work, final.Lineup[0], null, final.Lineup, final.EventId, now,
                 cancellationToken);
         }
 
@@ -409,8 +430,8 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await FinalStore.TrackLot(work, activated.AuctionId, activated.ActiveLotId, activated.Lineup,
             activated.OccurredAt, cancellationToken);
 
-        var created = await AnnounceNext(work, activated.AuctionId, NextLot(activated), activated.EventId, now,
-            cancellationToken);
+        var created = await AnnounceNext(work, NextLot(activated), activated.ActiveLotId, activated.Lineup,
+            activated.EventId, now, cancellationToken);
 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.FinalLotNext,
@@ -432,11 +453,12 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
     }
 
     /// <summary>
-    /// Сообщает лидеру следующего лота, что его лот идёт следом, и сколько он
-    /// примерно протянет. Выключатель анонса финала гасит и его (PER-539).
+    /// Сообщает лидеру следующего лота, какой лот идёт сейчас и каким по счёту
+    /// стоит его лот. Времени не обещает: длительность лота знает только
+    /// ведущий (PER-812). Выключатель анонса финала гасит и эту весть (PER-539).
     /// </summary>
-    private async Task<int> AnnounceNext(UnitOfWork work, Guid auctionId, Guid? nextLotId, Guid eventId,
-        DateTimeOffset now, CancellationToken cancellationToken)
+    private async Task<int> AnnounceNext(UnitOfWork work, Guid? nextLotId, Guid? activeLotId,
+        IReadOnlyList<Guid> lineup, Guid eventId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         if (nextLotId is not { } lotId)
         {
@@ -456,13 +478,81 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             return 0;
         }
 
-        var activations = await FinalStore.Activations(work, auctionId, cancellationToken);
         var notAfter = now + options.Value.StaleAfter;
-        var notification = AuctionFacts.FinalLotNext(Guid.CreateVersion7(now), leader, lotId,
-            FinalEstimate.Minutes(activations), eventId, now, notAfter);
+        var notification = AuctionFacts.FinalLotNext(Guid.CreateVersion7(now), leader, lotId, activeLotId,
+            lineup.ToList().IndexOf(lotId) + 1, lineup.Count, eventId, now, notAfter);
         return await NotificationStore.AddAddressed(work, notification, AuctionFacts.FinalLotNextType,
             AuctionFacts.AuctionCauseKind, eventId.ToString(), now, notAfter, cancellationToken,
             await NotificationStore.DeliverySurface(work, leader, cancellationToken));
+    }
+
+    // Круг вестей финала: держатели права ставок и те, кому нужно сообщить о
+    // своём лоте, без выключивших анонс финала.
+    private static async Task<Guid[]> FinalAudience(UnitOfWork work, IEnumerable<Guid> extra,
+        CancellationToken cancellationToken)
+    {
+        var recipients = (await NotificationStore.PlaceBidsHolders(work, cancellationToken))
+            .Union(extra)
+            .ToArray();
+        var silenced = await FinalStore.Silenced(work, recipients, cancellationToken);
+        return recipients.Where(recipient => !silenced.Contains(recipient)).ToArray();
+    }
+
+    /// <summary>
+    /// Конец онлайн-торгов с финалом впереди (PER-812): весть всем держателям
+    /// права ставок — сколько лотов продано и сколько ждёт финала. Удержание
+    /// последнего лота может прийти позже этого факта: пока реплика лота реестра
+    /// не догнала и срок ожидания не вышел, весть откатывается целиком.
+    /// </summary>
+    public async Task<AuctionApplication> Apply(AuctionTradingEnded ended, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, ended.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        await AuctionEndStore.LockShared(work, ended.AuctionId, cancellationToken);
+        if (await AuctionEndStore.Read(work, ended.AuctionId, cancellationToken) is not null)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AuctionEnded, new Dictionary<string, int>());
+        }
+
+        var counts = await LotReplicaStore.StatusCounts(work, ended.Registry, cancellationToken);
+        int Count(LotStatus status) => counts.TryGetValue(status, out var count) ? count : 0;
+        var settled = Count(LotStatus.Held) + Count(LotStatus.Sold) + Count(LotStatus.Unsold)
+            + Count(LotStatus.Withdrawn);
+        if (settled < ended.Registry.Count && now - ended.OccurredAt < options.Value.FinalLineupWait)
+        {
+            return new AuctionApplication(AuctionOutcome.LineupPending, new Dictionary<string, int>());
+        }
+
+        // Снимок «перерыв» значит, что удержан хотя бы один лот: если реплика
+        // удержания не догнала и срок ожидания вышел, ноль не должен прозвучать
+        // как «финала не будет».
+        var created = await AnnounceTradingEnd(work, ended, Count(LotStatus.Sold), Math.Max(Count(LotStatus.Held), 1),
+            now, cancellationToken);
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.TradingEnded,
+            new Dictionary<string, int> { [AuctionFacts.PrebiddingEndedType] = created });
+    }
+
+    private async Task<int> AnnounceTradingEnd(UnitOfWork work, AuctionTradingEnded ended, int sold, int held,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var notAfter = now + options.Value.StaleAfter;
+        var created = 0;
+        foreach (var recipient in await FinalAudience(work, [], cancellationToken))
+        {
+            created += await NotificationStore.AddAddressed(work,
+                AuctionFacts.PrebiddingEnded(Guid.CreateVersion7(now), recipient, ended, sold, held, now, notAfter),
+                AuctionFacts.PrebiddingEndedType, AuctionFacts.AuctionCauseKind, ended.EventId.ToString(), now,
+                notAfter, cancellationToken,
+                await NotificationStore.DeliverySurface(work, recipient, cancellationToken));
+        }
+        return created;
     }
 
     /// <summary>
@@ -481,6 +571,21 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, closed.EventId, now, cancellationToken) == 0)
         {
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        // Каталог без удержанных лотов: весть «финала не будет» считает проданные
+        // по реплике, а факты последних лотов могут прийти позже факта аукциона.
+        // Пока реплики реестра не догнали и срок ожидания не вышел, конец
+        // откатывается целиком и ждёт в потоке (PER-812).
+        if (closed is { End: AuctionEnd.Finished, FromPrebidding: true } && closed.Registry.Count > 0)
+        {
+            var counts = await LotReplicaStore.StatusCounts(work, closed.Registry, cancellationToken);
+            var settled = counts.Where(entry => entry.Key is LotStatus.Held or LotStatus.Sold or LotStatus.Unsold
+                or LotStatus.Withdrawn).Sum(entry => entry.Value);
+            if (settled < closed.Registry.Count && now - closed.OccurredAt < options.Value.FinalLineupWait)
+            {
+                return new AuctionApplication(AuctionOutcome.LineupPending, new Dictionary<string, int>());
+            }
         }
 
         // Порядок держит ручную отметку: удаление реплики ждёт отметку в полёте,
@@ -525,6 +630,19 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         if (closed.End != AuctionEnd.Cancelled)
         {
+            // Каталог без удержанных лотов кончает аукцион тем же prebidding_ended:
+            // финала не будет, и об этом тоже узнают все (PER-812).
+            if (closed is { End: AuctionEnd.Finished, FromPrebidding: true })
+            {
+                var sold = lots.Count(lot => lot.Status == LotStatus.Sold);
+                var told = await AnnounceTradingEnd(work,
+                    new AuctionTradingEnded(closed.EventId, closed.AuctionId, closed.MeetupId, closed.Version,
+                        closed.OccurredAt, closed.Registry),
+                    sold, 0, now, cancellationToken);
+                await work.Commit(cancellationToken);
+                return new AuctionApplication(AuctionOutcome.TradingEnded,
+                    new Dictionary<string, int> { [AuctionFacts.PrebiddingEndedType] = told });
+            }
             await work.Commit(cancellationToken);
             return new AuctionApplication(AuctionOutcome.AuctionForgotten, new Dictionary<string, int>());
         }

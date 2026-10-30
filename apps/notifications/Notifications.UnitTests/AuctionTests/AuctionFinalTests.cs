@@ -79,15 +79,65 @@ public class AuctionFinalTests
         closed.AuctionId.ShouldBe(Guid.Parse(auction));
     }
 
-    /// <summary>Каталог с удержанными лотами ведёт к перерыву, а не к концу: круг ещё нужен.</summary>
+    /// <summary>
+    /// Каталог с удержанными лотами ведёт к перерыву, а не к концу: круг ещё
+    /// нужен, а весть о конце онлайн-торгов уходит всем (PER-812).
+    /// </summary>
     [Fact]
-    public void When_PrebiddingEndsIntoBreak_Expect_Ignored()
+    public void When_PrebiddingEndsIntoBreak_Expect_TradingEndedWithRegistry()
     {
+        var lots = new[] { EventFactory.NewId(), EventFactory.NewId() };
         var message = EventFactory.AuctionFinished(EventFactory.AuctionOfMeetup(), EventFactory.NewId());
         message.State.OnBreak = new AuctionState.Types.Break();
+        message.State.LotIds.AddRange(lots);
         message.PrebiddingEnded = new PrebiddingEnded();
+
+        var ended = AuctionMapping.Decode("events.auction.prebidding_ended", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.TradingEnded>().Value;
+
+        ended.Registry.ShouldBe(lots.Select(Guid.Parse).ToArray());
+    }
+
+    [Fact]
+    public void When_PrebiddingEndsIntoBreakWithRepeatedLot_Expect_Poison()
+    {
+        var lot = EventFactory.NewId();
+        var message = EventFactory.AuctionFinished(EventFactory.AuctionOfMeetup(), EventFactory.NewId());
+        message.State.OnBreak = new AuctionState.Types.Break();
+        message.State.LotIds.AddRange([lot, lot]);
+        message.PrebiddingEnded = new PrebiddingEnded();
+
         AuctionMapping.Decode("events.auction.prebidding_ended", EventFactory.Bytes(message))
-            .ShouldBeOfType<AuctionDecoded.Ignored>();
+            .ShouldBeOfType<AuctionDecoded.Poison>();
+    }
+
+    /// <summary>Конец торгов без финала помечен: весть о нём тоже уходит, а конец после финала — нет.</summary>
+    [Fact]
+    public void When_PrebiddingEndsFinished_Expect_ClosedFromPrebidding()
+    {
+        var message = EventFactory.PrebiddingFinished(EventFactory.AuctionOfMeetup(), EventFactory.NewId());
+
+        AuctionMapping.Decode("events.auction.prebidding_ended", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Closed>().Value.FromPrebidding.ShouldBeTrue();
+        AuctionMapping.Decode("events.auction.auction_finished",
+                EventFactory.Bytes(EventFactory.AuctionFinished(EventFactory.AuctionOfMeetup(), EventFactory.NewId())))
+            .ShouldBeOfType<AuctionDecoded.Closed>().Value.FromPrebidding.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void When_TradingEndFactBuilt_Expect_CountsAndCause()
+    {
+        var ended = new AuctionTradingEnded(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), 3,
+            EventFactory.Committed, []);
+
+        var notification = AuctionFacts.PrebiddingEnded(Guid.CreateVersion7(), Guid.CreateVersion7(), ended, 4, 2,
+            EventFactory.Committed, EventFactory.Committed.AddHours(1));
+
+        notification.AuctionPrebiddingEnded.AuctionId.ShouldBe(ended.AuctionId.ToString());
+        notification.AuctionPrebiddingEnded.MeetupId.ShouldBe(ended.MeetupId.ToString());
+        notification.AuctionPrebiddingEnded.SoldCount.ShouldBe(4u);
+        notification.AuctionPrebiddingEnded.HeldCount.ShouldBe(2u);
+        notification.Cause.AuctionEventId.ShouldBe(ended.EventId.ToString());
     }
 
     [Fact]
@@ -180,4 +230,18 @@ public class AuctionFinalTests
 
     private static AuctionFinal Decode(string subject, AuctionEvent message) =>
         AuctionMapping.Decode(subject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Final>().Value;
+
+    [Fact]
+    public void When_LotSoldInFinalFactBuilt_Expect_LotAndPriceWithSaleCause()
+    {
+        var sale = new AuctionSale(Guid.CreateVersion7(), Guid.CreateVersion7(), Guid.CreateVersion7(), 5,
+            EventFactory.Committed, Guid.CreateVersion7(), new Money { MinorUnits = 90000, Currency = "RUB" }, null);
+
+        var notification = AuctionFacts.LotSoldInFinal(Guid.CreateVersion7(), Guid.CreateVersion7(), sale,
+            EventFactory.Committed, EventFactory.Committed.AddHours(1));
+
+        notification.AuctionLotSoldInFinal.LotId.ShouldBe(sale.LotId.ToString());
+        notification.AuctionLotSoldInFinal.Price.MinorUnits.ShouldBe(90000);
+        notification.Cause.AuctionLotEventId.ShouldBe(sale.EventId.ToString());
+    }
 }

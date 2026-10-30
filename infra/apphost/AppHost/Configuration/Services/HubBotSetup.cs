@@ -38,6 +38,7 @@ internal static class HubBotSetup
             TelegramEnvironment.Resolve(context.Builder.Configuration),
             SupportBotLink.Local(context.Builder.Configuration),
             BotMediaChannel.Local(context.Builder.Configuration),
+            BotHallLinks.Local(context.Builder.Configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.HubBot));
 
     /// <summary>
@@ -51,6 +52,7 @@ internal static class HubBotSetup
                 TelegramEnvironment.Production,
                 SupportBotLink.Published(context.Builder),
                 BotMediaChannel.Published(context.Builder),
+                BotHallLinks.Published(context.Builder),
                 context.Builder.AddDockerfile(
                     AppHostNames.Resources.HubBot,
                     RepositoryPaths.Root(context.Builder),
@@ -63,6 +65,7 @@ internal static class HubBotSetup
         TelegramEnvironment environment,
         SupportBotLink? support,
         BotMediaChannel? media,
+        BotHallLinks? hall,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
@@ -84,6 +87,9 @@ internal static class HubBotSetup
 
         // Своё фото объявления — пост канала медиа (дополнение ADR-057 от 2026-10-27).
         media?.ChannelId(bot);
+
+        // Экран зала и стрим: кнопки-ссылки под карточкой лота (PER-825).
+        hall?.Urls(bot);
 
         return bot
             // Один пакет на три бота (ADR-064, п. 18): поверхность — параметр

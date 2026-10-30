@@ -33,6 +33,15 @@ export type PredictionResultsLine = {
   mine?: PredictionOwnResult;
 };
 
+// Проданный лот в итогах аукциона (PER-813). `mine` — смотрящий купил лот.
+export type AuctionResultLot = {
+  lotId: string;
+  title?: string;
+  price: Money;
+  winnerName?: string;
+  mine: boolean;
+};
+
 // Каноническое тело аукционного экрана (ADR-044, «Один аукцион, две оболочки»).
 // Одинаково в обоих ботах: приложение оборачивает его в свою оболочку —
 // `HubScreen` или `AuctionEntryScreen` — и только затем переводит в Telegram
@@ -118,6 +127,13 @@ export type AuctionBlock =
       // не торговался — все готовятся, запланированы или сняты. Сводка тогда
       // не говорит о лидерстве. Нет — торги идут, прошли или лотов нет.
       beforeTrading?: true;
+      // Группы списка (PER-813): лоты идут по состоянию — на торгах, ждёт
+      // финала, продан, не продан, — и блок называет, сколько лотов в каждой.
+      // Нет — в списке одна группа или ни одной.
+      groups?: readonly {
+        group: "trading" | "held" | "sold" | "unsold";
+        count: number;
+      }[];
       // Идёт живой финал (PER-639): лот, который ведущий торгует сейчас, — нет
       // его между лотами. Кнопки тогда стоят в порядке зала: активный лот,
       // оставшиеся лоты состава по порядку выхода, затем остальные по цене:
@@ -314,16 +330,17 @@ export type AuctionBlock =
       entries: readonly HistoryItem[];
     }
   | {
-      kind: "prediction-results";
+      // Итоги завершённого аукциона для участника (PER-813): проданные лоты с
+      // ценой и покупателем и число лотов без продажи. Имя покупателя — подсказка:
+      // нет его — Auction имя не отдал, и идентификатор на экран не выходит.
+      kind: "auction-results";
       auctionId: string;
-      results:
-        | { kind: "after-final" }
-        | { kind: "by-hand" }
-        | { kind: "cancelled" }
-        | {
-            kind: "counted";
-            nominations: readonly PredictionResultsLine[];
-          };
+      sold: readonly AuctionResultLot[];
+      // Проданные лоты, которых экран не показал: предел длины сообщения.
+      hiddenSold?: number;
+      unsoldCount: number;
+      // Сумма продаж; нет — ничего не продано.
+      total?: Money;
     }
   | {
       // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов, который
@@ -452,6 +469,12 @@ export type AuctionBlock =
       // (ADR-067, дополнение 2026-10-24).
       closesAt?: string;
       currency?: string;
+      // Итоги раунда (PER-813): во вкладке «Прогнозы» после подсчёта, а не
+      // отдельным экраном. Нет — итогов ещё нет или их не прочитать.
+      results?:
+        | { kind: "by-hand" }
+        | { kind: "cancelled" }
+        | { kind: "counted"; nominations: readonly PredictionResultsLine[] };
       notice?:
         | "lot-not-in-round"
         | "round-closed"
@@ -606,8 +629,10 @@ export type AuctionButton =
         | "root.achievements"
         | "root.lots"
         | "root.predictions"
-        | "root.prediction-results"
         | "root.day-chronicle"
+        // Итоги завершённого аукциона (PER-813): вход из корня и возврат.
+        | "root.results"
+        | "results.back"
         | "root.raffle"
         | "root.favorites"
         // Промо-видео (PER-774): вход из корня и возврат в корень из-под видео.
@@ -627,6 +652,8 @@ export type AuctionButton =
         | "lot.bid-custom"
         | "lot.proxy"
         | "lot.history"
+        // «Мои счета» победителя на карточке проданного лота (PER-813).
+        | "lot.invoices"
         // Лоты сета — экран сета с карточки лота сета (ADR-073, п. 7).
         | "lot.set"
         // Возврат с экрана сета — карточка лота, с которой он открыт.
@@ -668,7 +695,6 @@ export type AuctionButton =
         | "raffle.proof"
         | "raffle.back"
         | "raffle.return"
-        | "prediction-results.back"
         | "day-chronicle.back"
         | "auction-chronicle.back"
         // Имя из настроек: возврат на экран имени с исхода.

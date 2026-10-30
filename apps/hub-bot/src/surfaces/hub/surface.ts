@@ -47,6 +47,7 @@ import {
   logBodyMissing,
 } from "./delivery/access-request.js";
 import { decodeNotification } from "./delivery/notification.js";
+import { createFloorRoomBus } from "./floor-room-bus.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createLiveScreensNats } from "./live-screens-nats.js";
 import { createMeetupsClient } from "./meetups/client.js";
@@ -158,6 +159,9 @@ export const hubSurface: SurfaceDefinition = ({
             : String(failure.cause)),
       }),
   });
+  // Состав зала помощника (PER-816): bucket KV, соединение открывается при
+  // первом обращении к экрану «Ставки зала».
+  const floorRoom = createFloorRoomBus(config.natsUrl);
   const dispatcher = createDispatcher(
     meetups,
     notifications,
@@ -170,6 +174,8 @@ export const hubSurface: SurfaceDefinition = ({
           auctions: auction,
           timeZone: communityTimeZone,
           usernames: identity,
+          room: floorRoom.store,
+          members: identity,
           // Приём объявления аукциона (PER-765) — Notifications.
           announcements: notifications.announcements,
           media: mediaChat.enabled,
@@ -225,6 +231,7 @@ export const hubSurface: SurfaceDefinition = ({
     presentation: config.presentation,
     environment,
     faq: hub.faq,
+    hall: hub.hall,
     today,
     build,
     mediaChat,
@@ -300,6 +307,12 @@ export const hubSurface: SurfaceDefinition = ({
               lotId,
               requestId === undefined ? undefined : rpcMeta({ requestId }),
             ),
+          auctionFinalAt: (identityId, auctionId, requestId) =>
+            auction.auctionFinalAt(
+              identityId,
+              auctionId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
         };
   const renderLot = createLotNoticeRender({
     reads: noticeReads,
@@ -312,6 +325,7 @@ export const hubSurface: SurfaceDefinition = ({
   const renderFinal = createFinalNoticeRender({
     reads: noticeReads,
     onTitleMissing: logMissingTitle(logger),
+    timeZone: communityTimeZone,
   });
   // Начало окна «Счастливых часов» (PER-616) — тот же общий рендер и те же
   // чтения, что у бота аукциона: право получателя у Identity, названия лотов
@@ -466,6 +480,7 @@ export const hubSurface: SurfaceDefinition = ({
             }),
         }),
       close() {
+        void floorRoom.close();
         releaseReport.close();
         limiter.close();
         watches?.close();

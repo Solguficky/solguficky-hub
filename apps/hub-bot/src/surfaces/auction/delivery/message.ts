@@ -204,7 +204,11 @@ export function createRenderMessage(
     frequencyButton,
     timeZone,
   });
-  const renderFinal = createFinalNoticeRender({ reads, onTitleMissing });
+  const renderFinal = createFinalNoticeRender({
+    reads,
+    onTitleMissing,
+    timeZone,
+  });
   // Начало окна «Счастливых часов» (PER-616) — тот же общий рендер и те же
   // чтения, что у бота хаба: право получателя у Identity, названия лотов окна
   // у Auction.

@@ -48,17 +48,18 @@ export async function openRoot(input: {
       : input.achievements.getEvent(input.auctionId).then(
           (rows) => rows.length > 0,
           (cause) => {
+            // Сервис не ответил (PER-813): кнопки, за которой пусто или
+            // ошибка, нет. Сбой пишет в лог порт, корень не роняется.
             input.achievements?.reportFailure?.(cause);
-            return true;
+            return false;
           },
         );
-  const [raffle, predictionRound, invoices, hasAchievements] =
-    await Promise.all([
-      raffleRead,
-      predictionRead,
-      invoicesRead,
-      achievementsRead,
-    ]);
+  const [raffle, openRound, invoices, hasAchievements] = await Promise.all([
+    raffleRead,
+    predictionRead,
+    invoicesRead,
+    achievementsRead,
+  ]);
   if (auction === undefined) {
     return {
       blocks: [{ kind: "root", auctionId: input.auctionId }],
@@ -77,6 +78,13 @@ export async function openRoot(input: {
           },
         ]
       : [];
+  // После конца аукциона вкладка остаётся и тем, у кого нет ответов: в ней
+  // итоги прогнозов (PER-813).
+  const predictionRound =
+    openRound?.round ??
+    (openRound !== undefined && auction.stage === "finished"
+      ? ("catalog" as const)
+      : undefined);
   const predictionsButtons =
     predictionRound !== undefined
       ? [
@@ -94,9 +102,9 @@ export async function openRoot(input: {
     auction.stage === "finished"
       ? [
           {
-            action: "root.prediction-results" as const,
+            action: "root.results" as const,
             callbackData: encodeAuctionCallback({
-              kind: "prediction-results",
+              kind: "auction-results",
               auctionId: input.auctionId,
             }),
           },
@@ -227,12 +235,15 @@ async function predictionEntryRound(input: {
   auction: AuctionPort;
   viewer: Viewer;
   auctionId: string;
-}): Promise<PredictionRoundView["round"] | undefined> {
+}): Promise<{ round?: PredictionRoundView["round"] }> {
   const rounds = await input.auction.getMyPredictions({
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
   const open = rounds.find((round) => round.status === "open");
-  if (open !== undefined) return open.round;
-  return [...rounds].reverse().find((round) => round.answers.length > 0)?.round;
+  if (open !== undefined) return { round: open.round };
+  const answered = [...rounds]
+    .reverse()
+    .find((round) => round.answers.length > 0)?.round;
+  return answered === undefined ? {} : { round: answered };
 }
