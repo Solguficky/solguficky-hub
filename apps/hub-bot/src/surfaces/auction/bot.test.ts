@@ -107,6 +107,9 @@ function makeBot(
     refuseWith?: Record<string, { code: number; description: string }>;
     // Чат медиа ботов (PER-774): промо-видео аукциона.
     media?: MediaChat;
+    // Отправка отвечает номером сообщения, как настоящий Telegram: нужна
+    // трансляции хода торгов (PER-826), которая правит своё сообщение.
+    numberedSends?: boolean;
   } = {},
 ) {
   const bot = createBot({
@@ -178,6 +181,16 @@ function makeBot(
               index === 0 ? photoBlock : photoBlockAt(index),
             ),
           },
+        } as never,
+      });
+    }
+    if (options.numberedSends === true && method === "sendMessage") {
+      return Promise.resolve({
+        ok: true,
+        result: {
+          message_id: 100 + calls.length,
+          date: 0,
+          chat: privateChat,
         } as never,
       });
     }
@@ -3770,6 +3783,7 @@ describe("final lot card", () => {
       ...(options.refuseWith === undefined
         ? {}
         : { refuseWith: options.refuseWith }),
+      numberedSends: true,
     });
     return { bot, calls, stream };
   }
@@ -3878,6 +3892,80 @@ describe("final lot card", () => {
     expect(htmlOf(edited)).toContain("Цена: 1 400 ₽");
     expect(htmlOf(edited)).toContain("Лидер: @jay");
     expect(labels(edited)).toContain("Поставить 1 500 ₽");
+  });
+
+  // Трансляция хода торгов (PER-826): кнопка карточки присылает одно сообщение,
+  // дальше оно правится по потоку, а «Не следить» его останавливает.
+  it("broadcasts the bidding in one message after the watch button", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({ kind: "watch-final", lotId, page: 0 }),
+      }),
+    );
+    // Поток отдаёт состояние подписчику, как только он открыт.
+    stream.emit(liveLot(1, 1200));
+    await flush();
+    const sent = calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        plain(String((call.payload as { text?: string }).text)).includes(
+          "Следующая цена",
+        ),
+    );
+    expect(sent).toHaveLength(1);
+    const first = sent[0]?.payload as {
+      text: string;
+      reply_markup: {
+        inline_keyboard: { text: string; callback_data: string }[][];
+      };
+    };
+    expect(plain(first.text)).toContain("<b>1 300 ₽</b>");
+    expect(plain(first.text)).toContain("лидирует @jay");
+    expect(first.reply_markup.inline_keyboard.flat()).toEqual([
+      { text: "Не следить", callback_data: "v1:bc:x" },
+    ]);
+    const sends = calls.filter((call) => call.method === "sendMessage").length;
+    const messageId = 101 + calls.findIndex((call) => call === sent[0]);
+
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    // Новых сообщений нет: правится то же, и только оно.
+    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
+      sends,
+    );
+    const broadcastEdit = calls.filter(
+      ({ method, payload }) =>
+        method === "editMessageText" &&
+        (payload as { message_id?: number }).message_id === messageId,
+    );
+    expect(broadcastEdit).toHaveLength(1);
+    expect(
+      plain((broadcastEdit[0]?.payload as { text: string }).text),
+    ).toContain("<b>1 500 ₽</b>");
+
+    await bot.handleUpdate(press("v1:bc:x"));
+    await flush();
+    const stopped = calls.filter(
+      ({ method, payload }) =>
+        method === "editMessageText" &&
+        (payload as { message_id?: number }).message_id === messageId,
+    );
+    expect(stopped).toHaveLength(2);
+    expect((stopped[1]?.payload as { text: string }).text).toBe(
+      "Трансляция остановлена",
+    );
+  });
+
+  it("sends no broadcast to somebody who did not press the watch button", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(lotPress({ rich: true }));
+    const sends = calls.filter((call) => call.method === "sendMessage").length;
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
+      sends,
+    );
   });
 
   it("names the ask of the auctioneer", async () => {

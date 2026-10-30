@@ -250,7 +250,10 @@ export const hubSurface: SurfaceDefinition = ({
                   limiter,
                   ...(liveScreens === undefined
                     ? {}
-                    : { screens: (kind) => liveScreens.screens(kind) }),
+                    : {
+                        screens: (kind) => liveScreens.screens(kind),
+                        broadcasts: liveScreens.broadcasts(),
+                      }),
                   names: {
                     getDisplayNames: (request) =>
                       auction

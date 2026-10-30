@@ -12,6 +12,7 @@ import {
   finalBidLabel,
   finalPriceLines,
   showsStep,
+  watchFinalLabel,
 } from "../../auction-final.js";
 import {
   activeHappyHourLine,
@@ -2106,6 +2107,8 @@ function renderButton(
       return text(followLabel);
     case "lot.unfollow":
       return text(unfollowLabel);
+    case "lot.watch":
+      return text(watchFinalLabel);
     case "lot.prev":
       return text(lotPrevLabel);
     case "lot.next":

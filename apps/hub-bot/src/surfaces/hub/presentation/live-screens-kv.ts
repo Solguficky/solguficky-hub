@@ -1,5 +1,8 @@
-import type { KV } from "@nats-io/kv";
 import { z } from "zod";
+import {
+  type LiveScreensKv,
+  liveScreensBucket,
+} from "../../../core/auction/live-kv-link.js";
 import type { Person } from "../application/types.js";
 import type { LiveScreenStore, LiveScreenTarget } from "./live-screens.js";
 
@@ -9,10 +12,7 @@ import type { LiveScreenStore, LiveScreenTarget } from "./live-screens.js";
 // последней записи ключа: экран живёт час финала, а запись старого пульта не
 // должна копиться.
 
-export const liveScreensBucket = (service: string): string =>
-  `${service}-live-screens`;
-
-export type LiveScreensKv = Pick<KV, "get" | "put" | "delete" | "keys">;
+export { type LiveScreensKv, liveScreensBucket };
 
 // Права в записи — не источник допуска: Auction проверяет их при каждом чтении
 // и подписке, а незнакомое право адаптер дерева отбрасывает.

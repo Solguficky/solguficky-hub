@@ -119,6 +119,7 @@ internal static class JetStreamTopology
         new("auction-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
         new("support-bot-topics", TimeSpan.FromDays(180)),
         new("hub-bot-live-screens", TimeSpan.FromDays(2)),
+        new("auction-bot-live-screens", TimeSpan.FromDays(2)),
     ];
 
     public static IEnumerable<ConsumerSpec> Durables =>

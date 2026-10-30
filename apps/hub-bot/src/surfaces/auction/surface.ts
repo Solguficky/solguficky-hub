@@ -1,8 +1,10 @@
 import { reportAchievementsFailure } from "../../core/achievements/failures.js";
+import { createBroadcastStore } from "../../core/auction/broadcast-kv.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
 } from "../../core/auction/live-failures.js";
+import { createLiveKvLink } from "../../core/auction/live-kv-link.js";
 import { createAuctionWatches } from "../../core/auction/watch.js";
 import { createEditLimiter } from "../../core/bot/edit-limiter.js";
 import {
@@ -17,6 +19,7 @@ import {
   logMissingAnnouncementPhoto,
 } from "../../core/notifications/organizer-announcement.js";
 import type { SurfaceDefinition } from "../../core/process.js";
+import { serviceNames } from "../../core/service.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createBot } from "./bot.js";
 import { createClients } from "./clients.js";
@@ -108,6 +111,14 @@ export const auctionSurface: SurfaceDefinition = ({
         "unexpected",
       ),
   });
+  // Трансляция хода торгов (PER-826): запись открытых сообщений лежит в
+  // bucket'е, который объявляет платформа; нет шины или bucket'а — трансляция
+  // живёт, пока жив процесс.
+  const liveLink = createLiveKvLink({
+    url: config.natsUrl,
+    service: serviceNames.auction,
+    logger,
+  });
   // Чат медиа ботов (PER-775): своё фото или видео объявления (PER-776) и
   // промо-видео аукциона (PER-774). Без `BOT_MEDIA_CHANNEL_ID` его нет.
   const mediaChat =
@@ -137,6 +148,7 @@ export const auctionSurface: SurfaceDefinition = ({
     live: {
       watches,
       limiter,
+      broadcasts: createBroadcastStore(liveLink, logger),
       // Имена правки вне update: свой `request_id` у каждого чтения.
       names: {
         getDisplayNames: (request) =>
@@ -187,6 +199,7 @@ export const auctionSurface: SurfaceDefinition = ({
       close() {
         limiter.close();
         watches.close();
+        void liveLink.close();
         clients.close();
       },
     },
