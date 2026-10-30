@@ -646,3 +646,27 @@ describe("feed groups", () => {
     expect(block.groups).toBeUndefined();
   });
 });
+
+// Перерыв перед финалом (PER-833): лидер лота, который ждёт финала, видит его
+// среди своих лотов сводки.
+describe("feed summary in the break before the final", () => {
+  it("counts the leadership on a lot that awaits the final", async () => {
+    const heldLot: LotView = {
+      ...lot(1),
+      status: {
+        kind: "held",
+        currentPrice: { minorUnits: 90000, currency: "RUB" },
+        leaderId: VIEWER.identityId,
+      },
+    };
+    const body = await openFeed({
+      auction: oneServerPage([heldLot]),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    expect(block.mine?.map((item) => item.lotId)).toEqual([heldLot.lotId]);
+  });
+});

@@ -17,6 +17,7 @@ import type {
 } from "../../../core/notifications/invoice-notice.js";
 import type {
   LotNotice,
+  LotNoticeButton,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
 import { renderLotSetNotice } from "../../../core/notifications/lot-set-notice.js";
@@ -468,10 +469,30 @@ export function renderNotification(
   }
 }
 
+// Намерение дерева за кнопкой вести (PER-833): лот, лента, корень аукциона и
+// раунд 2 прогнозов — те же кнопки, что в дереве.
+function noticeIntent(
+  button: Exclude<LotNoticeButton, { kind: "frequency" }>,
+): Parameters<typeof encodeAuctionCallback>[0] {
+  switch (button.kind) {
+    case "lot":
+      return { kind: "lot", lotId: button.lotId, page: 0 };
+    case "feed":
+      return { kind: "feed", auctionId: button.auctionId, page: 0 };
+    case "auction":
+      return { kind: "root", auctionId: button.auctionId };
+    case "predictions":
+      return {
+        kind: "prediction",
+        auctionId: button.auctionId,
+        round: "final",
+      };
+  }
+}
+
 // Кнопки общего рендера — следы хаба: лот — кнопка лота аукционного дерева,
 // частота — «Аукцион» в «Настройки» → «Расширения» (PER-605). Карточка и
-// экран приходят новым сообщением, уведомление остаётся в истории. У анонса
-// финала без своих лотов и у старта финала рядов нет — и клавиатуры тоже.
+// экран приходят новым сообщением, уведомление остаётся в истории.
 function lotKeyboard(view: LotNoticeView): InlineKeyboard | undefined {
   if (view.rows.length === 0) return undefined;
   return InlineKeyboard.from(
@@ -480,9 +501,9 @@ function lotKeyboard(view: LotNoticeView): InlineKeyboard | undefined {
         InlineKeyboard.text(
           button.text,
           traceCallback(
-            button.kind === "lot"
-              ? `v1:${encodeAuctionCallback({ kind: "lot", lotId: button.lotId, page: 0 }).slice(3)}`
-              : "v1:notify:outbid",
+            button.kind === "frequency"
+              ? "v1:notify:outbid"
+              : `v1:${encodeAuctionCallback(noticeIntent(button)).slice(3)}`,
           ),
         ),
       ),
