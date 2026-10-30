@@ -219,6 +219,18 @@ message Notification {
     // off, as it does auction_published. A window that already ended, a lot
     // that left trading and an ended auction produce no fact.
     StepWindowAnnounced step_window_announced = 40;
+
+    // The online trading of an auction ended: every lot is closed or held.
+    // Sent to every holder of the auction right, not only to those who bid.
+    // One fact per person and auction, delivered by the bot of their circle.
+    // The final announcement switch of the auction notification preferences
+    // turns it off with the other messages of the final.
+    AuctionPrebiddingEnded auction_prebidding_ended = 41;
+
+    // A lot of the live final was sold. Sent to everyone who bid on that lot
+    // and did not win it, and to nobody else. One fact per person and lot. The
+    // final announcement switch turns it off.
+    AuctionLotSoldInFinal auction_lot_sold_in_final = 42;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -496,8 +508,48 @@ message AuctionFinalLotNext {
   string lot_id = 1;
 
   // How many minutes the lot is expected to take, rounded down. It is an
-  // estimate and not a promise.
+  // estimate and not a promise. Zero means unknown: a producer no longer
+  // invents the number, and a channel must not render zero as a duration.
   int32 estimated_minutes = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the lot the auctioneer trades
+  // now. Empty when the final just started and no lot is active yet.
+  string active_lot_id = 3;
+
+  // The place of lot_id in the lineup of the final, counted from 1. Zero when
+  // the producer predates this field.
+  uint32 place = 4;
+
+  // How many lots the lineup of the final has. Zero when the producer predates
+  // this field.
+  uint32 lineup_size = 5;
+}
+
+// The online trading of an auction ended. Which lots were sold and which wait
+// for the final is told by counts: the titles are read by the channel.
+message AuctionPrebiddingEnded {
+  // Canonical lowercase UUID with hyphens, as in AuctionFinalLineup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // How many lots of the auction were sold by now.
+  uint32 sold_count = 3;
+
+  // How many lots are held for the final. Zero means the auction has no final
+  // and finished with this fact.
+  uint32 held_count = 4;
+}
+
+// A lot of the live final was sold to someone; the recipient bid on it and did
+// not win it: the buyer gets lot_purchased instead, never both.
+message AuctionLotSoldInFinal {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price the lot was sold for.
+  auction.v1.Money price = 2;
 }
 
 // The result of the draw as the recipient sees it. The recipient won when

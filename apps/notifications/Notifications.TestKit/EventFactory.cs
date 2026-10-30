@@ -612,6 +612,20 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Онлайн-торги кончились, удержанные лоты ждут финала (PER-812): снимок
+    /// <c>on_break</c> и реестр лотов.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent PrebiddingBreak(string auction, string meetup,
+        params string[] registry)
+    {
+        var message = AuctionFact(auction, meetup, 12);
+        message.State.LotIds.AddRange(registry);
+        message.State.OnBreak = new global::Auction.V1.AuctionState.Types.Break();
+        message.PrebiddingEnded = new global::Auction.V1.PrebiddingEnded();
+        return message;
+    }
+
     /// <summary>Аукцион отменён после старта торгов (PER-601): снимок <c>cancelled</c> и реестр.</summary>
     public static global::Auction.V1.AuctionEvent AuctionCancelled(string auction, string meetup,
         params string[] registry)

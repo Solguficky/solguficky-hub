@@ -157,7 +157,15 @@ public enum AuctionEnd { Finished, Cancelled, Discarded }
 /// аукцион чистит избранное, не задевая лоты нового рождения.
 /// </summary>
 public sealed record AuctionClosed(Guid EventId, Guid AuctionId, Guid MeetupId, long Version, DateTimeOffset OccurredAt,
-    AuctionEnd End, IReadOnlyList<Guid> Registry);
+    AuctionEnd End, IReadOnlyList<Guid> Registry, bool FromPrebidding = false);
+
+/// <summary>
+/// Онлайн-торги кончились, и аукцион ждёт финала (PER-812): каждый лот закрыт
+/// или удержан, а состав ещё не объявлен. Реестр — лоты из снимка: по нему
+/// считается, что продано и что удержано.
+/// </summary>
+public sealed record AuctionTradingEnded(Guid EventId, Guid AuctionId, Guid MeetupId, long Version,
+    DateTimeOffset OccurredAt, IReadOnlyList<Guid> Registry);
 
 /// <summary>
 /// Повод вести о новом аукционе (PER-646): публикация, снятие с публикации и
@@ -206,6 +214,7 @@ public abstract record AuctionDecoded
     public sealed record Final(AuctionFinal Value) : AuctionDecoded;
     public sealed record FinalLotActivated(AuctionFinalLotActivated Value) : AuctionDecoded;
     public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
+    public sealed record TradingEnded(AuctionTradingEnded Value) : AuctionDecoded;
     public sealed record Announcement(AuctionAnnouncement Value) : AuctionDecoded;
     public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
     public sealed record LotSet(CollectedLotSet Value) : AuctionDecoded;
@@ -403,6 +412,9 @@ public static class AuctionMapping
         {
             switch (occasion)
             {
+                case AuctionEvent.OccasionOneofCase.PrebiddingEnded
+                    when state.StatusCase == AuctionState.StatusOneofCase.OnBreak:
+                    return DecodeTradingEnded(message, state, eventId, auctionId, occurredAt);
                 case AuctionEvent.OccasionOneofCase.PrebiddingEnded:
                     return new AuctionDecoded.Ignored();
                 case AuctionEvent.OccasionOneofCase.AuctionFinished or AuctionEvent.OccasionOneofCase.AuctionCancelled
@@ -468,7 +480,7 @@ public static class AuctionMapping
                 registry.Add(lotId);
             }
             return new AuctionDecoded.Closed(new AuctionClosed(eventId, auctionId, meetupId, message.Version, occurredAt,
-                ended, registry));
+                ended, registry, occasion == AuctionEvent.OccasionOneofCase.PrebiddingEnded));
         }
         var (order, final) = occasion == AuctionEvent.OccasionOneofCase.FinalLineupFrozen
             ? (state.LineupFrozen?.Order, FinalOccasion.LineupFrozen)
@@ -515,6 +527,26 @@ public static class AuctionMapping
         }
         return new AuctionDecoded.Final(new AuctionFinal(eventId, auctionId, meetupId, message.Version, occurredAt,
             final, lineup));
+    }
+
+    private static AuctionDecoded DecodeTradingEnded(AuctionEvent message, AuctionState state, Guid eventId,
+        Guid auctionId, DateTimeOffset occurredAt)
+    {
+        if (!Id(state.MeetupId, out var meetupId))
+        {
+            return new AuctionDecoded.Poison("meetup_id is not a canonical UUIDv7");
+        }
+        var registry = new List<Guid>(state.LotIds.Count);
+        foreach (var lot in state.LotIds)
+        {
+            if (!Id(lot, out var lotId) || registry.Contains(lotId))
+            {
+                return new AuctionDecoded.Poison("registry lot id is invalid or repeated");
+            }
+            registry.Add(lotId);
+        }
+        return new AuctionDecoded.TradingEnded(new AuctionTradingEnded(eventId, auctionId, meetupId, message.Version,
+            occurredAt, registry));
     }
 
     // Порядок состава: лоты в порядке финала, без повторов.
