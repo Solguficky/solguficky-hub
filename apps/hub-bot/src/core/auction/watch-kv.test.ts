@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import type { BroadcastTarget } from "./broadcast.js";
-import { createBroadcastKvStore } from "./broadcast-kv.js";
+import type { WatchTarget } from "./live-cards.js";
 import type { LiveScreensKv } from "./live-kv-link.js";
+import { createWatchKvStore } from "./watch-kv.js";
 
 // KV в памяти: ядро не знает test kit поверхностей, поэтому своя фикстура.
 type MemoryKv = {
@@ -37,10 +37,12 @@ function createMemoryKv(fail: () => boolean = () => false): MemoryKv {
   };
 }
 
-const target: BroadcastTarget = {
+const target: WatchTarget = {
   chatId: 4242,
   messageId: 9,
   auctionId: "0192f0aa-0000-7000-8000-000000000001",
+  lotId: "0192f0aa-0000-7000-8000-000000000002",
+  page: 2,
   viewer: { identityId: "id-1", rights: ["place-bids"] },
 };
 
@@ -60,24 +62,24 @@ function withKeys(kv: ReturnType<typeof createMemoryKv>): LiveScreensKv {
   } as unknown as LiveScreensKv;
 }
 
-describe("broadcast record store", () => {
+describe("watch record store", () => {
   it("keeps one record per chat under its own key", async () => {
     const kv = createMemoryKv();
-    const store = createBroadcastKvStore({
+    const store = createWatchKvStore({
       kv: withKeys(kv),
       onError: () => {},
     });
     await store.save(target);
     await store.save({ ...target, messageId: 10 });
 
-    expect([...kv.values.keys()]).toEqual(["broadcast.4242"]);
+    expect([...kv.values.keys()]).toEqual(["watch.4242"]);
     await expect(store.list()).resolves.toEqual([{ ...target, messageId: 10 }]);
   });
 
   it("does not pick up the records of the console and the floor", async () => {
     const kv = createMemoryKv();
     await kv.put("console.4242", JSON.stringify({ ...target, person: {} }));
-    const store = createBroadcastKvStore({
+    const store = createWatchKvStore({
       kv: withKeys(kv),
       onError: () => {},
     });
@@ -88,7 +90,7 @@ describe("broadcast record store", () => {
 
   it("removes the record", async () => {
     const kv = createMemoryKv();
-    const store = createBroadcastKvStore({
+    const store = createWatchKvStore({
       kv: withKeys(kv),
       onError: () => {},
     });
@@ -100,10 +102,10 @@ describe("broadcast record store", () => {
 
   it("treats a record of another shape or under another key as absent", async () => {
     const kv = createMemoryKv();
-    await kv.put("broadcast.1", "not json");
-    await kv.put("broadcast.2", JSON.stringify({ chatId: 2 }));
-    await kv.put("broadcast.3", JSON.stringify({ ...target, chatId: 4 }));
-    const store = createBroadcastKvStore({
+    await kv.put("watch.1", "not json");
+    await kv.put("watch.2", JSON.stringify({ chatId: 2 }));
+    await kv.put("watch.3", JSON.stringify({ ...target, chatId: 4 }));
+    const store = createWatchKvStore({
       kv: withKeys(kv),
       onError: () => {},
     });
@@ -113,7 +115,7 @@ describe("broadcast record store", () => {
 
   it("does not throw when the bucket is unavailable", async () => {
     const onError = vi.fn();
-    const store = createBroadcastKvStore({
+    const store = createWatchKvStore({
       kv: withKeys(createMemoryKv(() => true)),
       onError,
     });

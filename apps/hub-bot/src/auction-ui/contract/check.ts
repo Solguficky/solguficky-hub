@@ -1350,11 +1350,26 @@ const historyButton = (lotId: string, page: number) => ({
   callbackData: historyCallback(lotId, page, MAX_FEED_PAGE),
 });
 
-// «Следить за торгами» (PER-826) — свой ряд под ставкой на карточке живого финала.
-const watchButton = (lotId: string, page: number) => ({
-  action: "lot.watch" as const,
-  callbackData: encodeAuctionCallback({ kind: "watch-final", lotId, page }),
-});
+// «Следить за торгами» (PER-826) — свой ряд под ставкой на карточке живого
+// финала; на карточке в слежении (PER-837) та же кнопка — «Не следить».
+const watchButton = (lotId: string, page: number, watching = false) =>
+  watching
+    ? {
+        action: "lot.unwatch" as const,
+        callbackData: encodeAuctionCallback({
+          kind: "unwatch-final",
+          lotId,
+          page,
+        }),
+      }
+    : {
+        action: "lot.watch" as const,
+        callbackData: encodeAuctionCallback({
+          kind: "watch-final",
+          lotId,
+          page,
+        }),
+      };
 
 // Лот с итогом: «Обновить» под ним нет — без человека он уже не меняется.
 const settledKeyboard = (lotId: string, page: number, won = false) => [
@@ -3002,6 +3017,7 @@ const liveBody = (input: {
   button?: number;
   finalBid?: FinalBidOutcome;
   watch?: boolean;
+  unwatch?: boolean;
 }): AuctionScreenBody => ({
   blocks: [
     {
@@ -3025,6 +3041,8 @@ const liveBody = (input: {
       live: { page: 2 },
       ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
       ...(input.watch === true ? { watch: true as const } : {}),
+      ...(input.unwatch === true ? { unwatch: true as const } : {}),
+      ...(input.watch === true ? { watching: true as const } : {}),
     },
   ],
   keyboard: [
@@ -3041,7 +3059,7 @@ const liveBody = (input: {
         ]),
     // В живом финале листания нет (PER-644): карточку правит поток, и в
     // ряду листания остаётся одна «Обновить».
-    [watchButton(CONTRACT_LOT.lotId, 2)],
+    [watchButton(CONTRACT_LOT.lotId, 2, input.watch === true)],
     [historyButton(CONTRACT_LOT.lotId, 2)],
     refreshRow(CONTRACT_LOT.lotId, 2),
     backRow(2),
@@ -3056,8 +3074,8 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_HISTORY_CALLS],
     body: liveBody({ lot: LIVE_LOT, participantName: "@owl", button: 125000 }),
   },
-  // «Следить за торгами» (PER-826): та же карточка, а трансляцию запускает
-  // оболочка по признаку `watch`.
+  // «Следить за торгами» (PER-826, PER-837): та же карточка с «Не следить»,
+  // а слежение включает оболочка по признаку `watch`.
   {
     intent: "final: watch",
     callbackData: encodeAuctionCallback({
@@ -3072,6 +3090,24 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       participantName: "@owl",
       button: 125000,
       watch: true,
+    }),
+  },
+  // «Не следить» (PER-837): та же карточка с «Следить за торгами», а слежение
+  // выключает оболочка по признаку `unwatch`.
+  {
+    intent: "final: unwatch",
+    callbackData: encodeAuctionCallback({
+      kind: "unwatch-final",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+    }),
+    auction: LIVE_AUCTION,
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    body: liveBody({
+      lot: LIVE_LOT,
+      participantName: "@owl",
+      button: 125000,
+      unwatch: true,
     }),
   },
   // Одно нажатие: команда с суммой кнопки и `op_id` нажатия, затем карточка,

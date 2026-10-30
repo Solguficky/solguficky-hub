@@ -2,10 +2,12 @@ import { InlineKeyboard } from "grammy";
 import { achievementScreen } from "../../../../achievement-screen.js";
 import { dayChronicleButtonLabel } from "../../../../auction-day-chronicle.js";
 import {
+  auctionEndedLine,
   finalBidHeadline,
   finalBidLabel,
   finalPriceLines,
   showsStep,
+  unwatchFinalLabel,
   watchFinalLabel,
   withdrawButtonLabel,
 } from "../../../../auction-final.js";
@@ -733,6 +735,7 @@ function feedLabel(
     case "lot.follow":
     case "lot.unfollow":
     case "lot.watch":
+    case "lot.unwatch":
     case "favorites.open-lot":
     case "favorites.prev":
     case "favorites.next":
@@ -828,7 +831,8 @@ function lotScreen(
   const images = lotPhotoKeys(lot.lotId, lot.card);
   // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026
   // года, «Показ фото лота»); несколько — каруселью (PER-721).
-  const result = finalBidHeadline(lot, money);
+  const result =
+    lot.ended === true ? auctionEndedLine : finalBidHeadline(lot, money);
   const text = rich
     ? [
         richPhotoBlock(photos.map((photo) => photo.id)),
@@ -965,6 +969,8 @@ function lotLabel(
       return unfollowLabel;
     case "lot.watch":
       return watchFinalLabel;
+    case "lot.unwatch":
+      return unwatchFinalLabel;
     case "lot.prev":
       return lotPrevLabel;
     case "lot.next":
@@ -1125,6 +1131,7 @@ function setLotLabelOf(
     case "lot.follow":
     case "lot.unfollow":
     case "lot.watch":
+    case "lot.unwatch":
     case "feed.prev":
     case "feed.next":
     case "feed.back":
@@ -1379,6 +1386,7 @@ function historyLabel(button: AuctionButton): string {
     case "lot.follow":
     case "lot.unfollow":
     case "lot.watch":
+    case "lot.unwatch":
     case "favorites.open-lot":
     case "favorites.prev":
     case "favorites.next":

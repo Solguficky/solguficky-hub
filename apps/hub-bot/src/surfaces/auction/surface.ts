@@ -1,11 +1,12 @@
 import { reportAchievementsFailure } from "../../core/achievements/failures.js";
-import { createBroadcastStore } from "../../core/auction/broadcast-kv.js";
+import { createLegacyBroadcastStore } from "../../core/auction/legacy-broadcasts-kv.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
 } from "../../core/auction/live-failures.js";
 import { createLiveKvLink } from "../../core/auction/live-kv-link.js";
 import { createAuctionWatches } from "../../core/auction/watch.js";
+import { createWatchStore } from "../../core/auction/watch-kv.js";
 import { createEditLimiter } from "../../core/bot/edit-limiter.js";
 import {
   createDeliverNotification,
@@ -149,7 +150,8 @@ export const auctionSurface: SurfaceDefinition = ({
     live: {
       watches,
       limiter,
-      broadcasts: createBroadcastStore(liveLink, logger),
+      watchStore: createWatchStore(liveLink, logger),
+      legacyBroadcasts: createLegacyBroadcastStore(liveLink, logger),
       // Имена правки вне update: свой `request_id` у каждого чтения.
       names: {
         getDisplayNames: (request) =>

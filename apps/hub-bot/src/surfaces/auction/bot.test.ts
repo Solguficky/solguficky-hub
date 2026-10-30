@@ -4009,69 +4009,103 @@ describe("final lot card", () => {
     expect(labels(edited)).toContain("Поставить 1 500 ₽");
   });
 
-  // Трансляция хода торгов (PER-826): кнопка карточки присылает одно сообщение,
-  // дальше оно правится по потоку, а «Не следить» его останавливает.
-  const textOfCall = (call: { payload: unknown } | undefined) =>
-    (call?.payload as { text?: string } | undefined)?.text ?? "";
+  // Слежение (PER-826, PER-837): «Следить за торгами» не присылает сообщения,
+  // а включает слежение на самой карточке, «Не следить» его выключает.
+  const watchPress = (kind: "watch-final" | "unwatch-final") =>
+    lotPress({
+      rich: true,
+      data: encodeAuctionCallback({ kind, lotId, page: 0 }),
+    });
 
-  it("broadcasts the bidding in one message after the watch button", async () => {
+  it("turns the card itself into a follow after the watch button", async () => {
     const { bot, calls, stream } = setup();
-    await bot.handleUpdate(
-      lotPress({
-        data: encodeAuctionCallback({ kind: "watch-final", lotId, page: 0 }),
-      }),
+    await bot.handleUpdate(watchPress("watch-final"));
+    // Отдельного сообщения нет: карточка осталась на месте с «Не следить».
+    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
+      0,
     );
+    expect(labels(edits(calls).at(-1)?.payload)).toContain("Не следить");
+    expect(labels(edits(calls).at(-1)?.payload)).not.toContain(
+      "Следить за торгами",
+    );
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    const edited = edits(calls).at(-1)?.payload;
+    expect(htmlOf(edited)).toContain("Цена: 1 400 ₽");
+    expect(htmlOf(edited)).toContain("Лидер: @jay");
+    expect(labels(edited)).toContain("Не следить");
+  });
+
+  it("keeps the unfollow button after a bid from the card in the follow", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(watchPress("watch-final"));
     // Поток отдаёт состояние подписчику, как только он открыт.
     stream.emit(liveLot(1, 1200));
     await flush();
-    const sent = calls.filter(
-      (call) =>
-        call.method === "sendMessage" &&
-        plain(String((call.payload as { text?: string }).text)).includes(
-          "Следующая цена",
-        ),
+    await bot.handleUpdate(
+      lotPress({
+        rich: true,
+        data: encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+      }),
     );
-    expect(sent).toHaveLength(1);
-    const first = sent[0]?.payload as {
-      text: string;
-      reply_markup: {
-        inline_keyboard: { text: string; callback_data: string }[][];
-      };
-    };
-    expect(plain(first.text)).toContain("<b>1 300 ₽</b>");
-    expect(plain(first.text)).toContain("лидирует @jay");
-    expect(first.reply_markup.inline_keyboard.flat()).toEqual([
-      { text: "Не следить", callback_data: "v1:bc:x" },
-    ]);
-    const sends = calls.filter((call) => call.method === "sendMessage").length;
-    const messageId = 101 + calls.indexOf(sent[0] as (typeof calls)[number]);
-
-    stream.emit(liveLot(2, 1400));
     await flush();
-    // Новых сообщений нет: правится то же, и только оно.
-    expect(calls.filter((call) => call.method === "sendMessage")).toHaveLength(
-      sends,
-    );
-    const broadcastEdit = calls.filter(
-      ({ method, payload }) =>
-        method === "editMessageText" &&
-        (payload as { message_id?: number }).message_id === messageId,
-    );
-    expect(broadcastEdit).toHaveLength(1);
-    expect(plain(textOfCall(broadcastEdit[0]))).toContain("<b>1 500 ₽</b>");
-
-    await bot.handleUpdate(lotPress({ data: "v1:bc:x", messageId }));
-    await flush();
-    const stopped = calls.filter(
-      ({ method, payload }) =>
-        method === "editMessageText" &&
-        (payload as { message_id?: number }).message_id === messageId,
-    );
-    expect(stopped).toHaveLength(2);
-    expect(textOfCall(stopped[1])).toBe("Трансляция остановлена");
+    expect(stream.listeners.size).toBe(1);
+    expect(labels(edits(calls).at(-1)?.payload)).toContain("Не следить");
   });
 
-  it("sends no broadcast to somebody who did not press the watch button", async () => {
+  it("stops editing the card after the unfollow button", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(watchPress("watch-final"));
+    await bot.handleUpdate(watchPress("unwatch-final"));
+    expect(labels(edits(calls).at(-1)?.payload)).toContain(
+      "Следить за торгами",
+    );
+    const before = edits(calls).length;
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    expect(edits(calls)).toHaveLength(before);
+    expect(stream.listeners.size).toBe(0);
+  });
+
+  it("writes that the auction is over on the card in the follow", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(watchPress("watch-final"));
+    const sold = {
+      ...liveLot(5, 1500),
+      status: { kind: "sold" as const, winnerId: RIVAL, price: rub(1500) },
+    };
+    for (const listener of [...stream.listeners]) {
+      listener({
+        auctionId,
+        finished: true,
+        lineup: [sold],
+      });
+    }
+    await flush();
+    expect(htmlOf(edits(calls).at(-1)?.payload)).toContain("Аукцион завершён");
+  });
+
+  it("closes the message of the old broadcast with a pointer to the card", async () => {
+    const { bot, calls } = setup();
+    await bot.handleUpdate(lotPress({ data: "v1:bc:x", messageId: 55 }));
+    await flush();
+    const closed = calls.find(
+      ({ method, payload }) =>
+        method === "editMessageText" &&
+        (payload as { message_id?: number }).message_id === 55,
+    );
+    expect(textOfCall(closed)).toContain("перенесена на карточку лота");
+  });
+
+  const textOfCall = (call: { payload: unknown } | undefined) =>
+    (call?.payload as { text?: string } | undefined)?.text ?? "";
+
+  it("sends no extra message to somebody who did not press the watch button", async () => {
     const { bot, calls, stream } = setup();
     await bot.handleUpdate(lotPress({ rich: true }));
     const sends = calls.filter((call) => call.method === "sendMessage").length;

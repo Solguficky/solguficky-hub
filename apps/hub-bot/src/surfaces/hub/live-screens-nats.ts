@@ -1,7 +1,11 @@
-import type { BroadcastStore } from "../../core/auction/broadcast.js";
-import { createBroadcastStore } from "../../core/auction/broadcast-kv.js";
+import {
+  createLegacyBroadcastStore,
+  type LegacyBroadcastStore,
+} from "../../core/auction/legacy-broadcasts-kv.js";
+import type { WatchStore } from "../../core/auction/live-cards.js";
 import { reportLiveStoreFailure } from "../../core/auction/live-failures.js";
 import { createLiveKvLink } from "../../core/auction/live-kv-link.js";
+import { createWatchStore } from "../../core/auction/watch-kv.js";
 import type { Logger } from "../../core/logging.js";
 import type { LiveScreenStore } from "./presentation/live-screens.js";
 import { createLiveScreenKvStore } from "./presentation/live-screens-kv.js";
@@ -11,8 +15,10 @@ import { createLiveScreenKvStore } from "./presentation/live-screens-kv.js";
 // записи пульта и «Ставок зала». Отказ шины значит «экраны живут как раньше».
 export type LiveScreensNats = {
   screens(kind: "console" | "floor"): LiveScreenStore;
-  // Трансляции хода торгов (PER-826) делят с пультом соединение и bucket.
-  broadcasts(): BroadcastStore;
+  // Карточки лота в слежении (PER-837) делят с пультом соединение и bucket.
+  watches(): WatchStore;
+  // Записи трансляции прежней выкладки (PER-826): читаются один раз и снимаются.
+  legacyBroadcasts(): LegacyBroadcastStore;
   close(): Promise<void>;
 };
 
@@ -49,7 +55,8 @@ export function createLiveScreensNats(options: {
 
   return {
     screens: store,
-    broadcasts: () => createBroadcastStore(link, logger),
+    watches: () => createWatchStore(link, logger),
+    legacyBroadcasts: () => createLegacyBroadcastStore(link, logger),
     close: () => link.close(),
   };
 }
