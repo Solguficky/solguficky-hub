@@ -40,6 +40,7 @@ import {
   historyLine,
   leaderLine,
   lotButtonTail,
+  lotGroupPrefix,
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
@@ -697,7 +698,7 @@ function feedLabel(
       // пересматривает ADR-073, п. 7): отметка съедала название, и одинаковые
       // лоты сета нельзя было различить. Сет называет карточка лота.
       return finalLabel === null
-        ? lotButton(item, title)
+        ? lotButton(item, title, lotGroupPrefix(item))
         : buttonText(finalLabel);
     }
     case "feed.prev":
@@ -1244,10 +1245,10 @@ function favoriteState(status: LotStatusView, view: AuctionView): string {
 // Кнопка лота ленты и избранного: название, обрезанное под хвост с ценой,
 // отметкой лидера (прогон 14.10, №83) и, в ленте, отметкой сета, в пределе
 // подписи.
-function lotButton(item: FeedItem, title: string): string {
+function lotButton(item: FeedItem, title: string, prefix = ""): string {
   const tail = lotButtonTail(item, priceLabel(item.status));
   return buttonText(
-    `${truncate(title, Math.max(1, BUTTON_LIMIT - tail.length))}${tail}`,
+    `${prefix}${truncate(title, Math.max(1, BUTTON_LIMIT - prefix.length - tail.length))}${tail}`,
   );
 }
 
