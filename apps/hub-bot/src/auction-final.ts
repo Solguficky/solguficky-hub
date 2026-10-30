@@ -131,6 +131,8 @@ export function finalBidHeadline(
   if (outcome.kind === "accepted") {
     if (block.standing === "leader" || block.standing === "won")
       return `Ты лидер: ставка ${money(outcome.amount)} принята`;
+    if (block.status.kind === "trading" && outcome.overtaken === true)
+      return `Твою ставку перебила автоставка другого участника — цена уже ${money(block.status.currentPrice)}`;
     if (block.status.kind === "trading")
       return `Твою ставку перебили — цена уже ${money(block.status.currentPrice)}`;
     if (block.status.kind === "sold")

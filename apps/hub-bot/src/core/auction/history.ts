@@ -100,3 +100,49 @@ function sourceOf(source: BidSource): "bot" | "floor" {
       throw new Error(`history bid with bid source ${source}`);
   }
 }
+
+// Чем перебита ставка получателя вести «перебили» (PER-840): хронология
+// отдаёт источник ставки, а сама весть его не несёт. Ставка находится по цене
+// из вести среди ставок не получателя. Две подходящие (после снятия участника
+// цена могла повториться) или ни одной (запись ушла за предел чтения) —
+// ответа нет: весть остаётся нейтральной, как до этой правки. Хронология идёт
+// по возрастанию, и нужная ставка стоит ближе к концу: предел страниц у лота с
+// очень длинной историей даёт тот же нейтральный ответ.
+export function outbidOriginOf(
+  entries: readonly LotHistoryEntryView[],
+  minorUnits: number,
+  recipientId: string,
+): "proxy" | "manual" | undefined {
+  const matching = entries.filter(
+    (entry) =>
+      entry.kind === "bid" &&
+      entry.removed !== true &&
+      entry.participantId !== recipientId &&
+      entry.amount.minorUnits === minorUnits,
+  );
+  const [only] = matching;
+  if (matching.length !== 1 || only?.kind !== "bid") return undefined;
+  return only.origin.kind === "proxy" ? "proxy" : "manual";
+}
+
+// Страниц хронологии, которые весть готова прочитать: перебитие приходит на
+// живой лот, а не на лот с тысячей ставок, и долгое чтение задержало бы доставку.
+const OUTBID_HISTORY_PAGES = 20;
+
+export async function readOutbidOrigin(
+  readPage: (pageToken: string) => Promise<ListLotHistoryResponse>,
+  minorUnits: number,
+  recipientId: string,
+): Promise<"proxy" | "manual" | undefined> {
+  const entries: LotHistoryEntryView[] = [];
+  let pageToken = "";
+  for (let pages = 0; pages < OUTBID_HISTORY_PAGES; pages += 1) {
+    const page = historyPageOf(await readPage(pageToken));
+    entries.push(...page.entries);
+    if (page.nextPageToken === "") {
+      return outbidOriginOf(entries, minorUnits, recipientId);
+    }
+    pageToken = page.nextPageToken;
+  }
+  return undefined;
+}

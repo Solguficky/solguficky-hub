@@ -310,6 +310,13 @@ export const hubSurface: SurfaceDefinition = ({
               lotId,
               requestId === undefined ? undefined : rpcMeta({ requestId }),
             ),
+          outbidOrigin: (identityId, lotId, minorUnits, requestId) =>
+            auction.outbidOrigin(
+              identityId,
+              lotId,
+              minorUnits,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
           finalActiveLot: (identityId, auctionId, requestId) =>
             auction.finalActiveLot(
               identityId,

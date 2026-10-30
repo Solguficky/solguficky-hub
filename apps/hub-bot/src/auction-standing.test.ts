@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  autoRaisedLine,
+  autoRaisedLines,
   favoritesEmpty,
   favoritesEmptyText,
   favoritesSummary,
@@ -7,6 +9,7 @@ import {
   finalFeedLabel,
   lotButtonTail,
   lotGroupPrefix,
+  overtakenByProxyLine,
 } from "./auction-standing.js";
 import type { FeedItem } from "./auction-ui/index.js";
 import { money } from "./core/format.js";
@@ -136,5 +139,19 @@ describe("feed summary in the break before the final", () => {
     const { standing: _standing, ...other } = held;
     const text = feedSummary({ lots: [other] }, mineOptions).join(" ");
     expect(text).toContain("Ты пока не лидируешь");
+  });
+});
+
+// PER-840: слова об автоставках одни у двух ботов, онлайн-недели и финала.
+describe("proxy wording", () => {
+  it("names the proxy that overtook a manual bid with the price", () => {
+    expect(
+      overtakenByProxyLine({ minorUnits: 120000, currency: "RUB" }),
+    ).toContain("Тебя перебила автоставка другого участника, цена 1");
+  });
+
+  it("says the price rose automatically only for a flagged card", () => {
+    expect(autoRaisedLines({ autoRaised: true })).toEqual([autoRaisedLine]);
+    expect(autoRaisedLines({})).toEqual([]);
   });
 });
