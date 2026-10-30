@@ -499,7 +499,8 @@ async function placeFinalBidOn(
               amount,
               // Лидер после команды не ставивший: в одной команде лидерство
               // забирает только автоставка (PER-840).
-              ...(overtakenOnCommand(current, context.viewer)
+              ...(outcome.lotVersion > 0 &&
+              overtakenOnCommand(current, context.viewer)
                 ? { overtaken: true as const }
                 : {}),
             },
@@ -587,8 +588,10 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
         return afterRead;
       };
       const extension = await extensionAfter(lot, readAfter);
+      // Версия 0 — Auction её не назвал: чтение может показать лот до ставки,
+      // и «перебила автоставка» было бы ложью.
       const overtaken =
-        intent.command === "bid" && !settled.forFinal
+        intent.command === "bid" && !settled.forFinal && outcome.lotVersion > 0
           ? overtakenPrice(await readAfter(), context.viewer)
           : undefined;
       return acceptedBody(lot, intent, amount, outcome.lotVersion, {

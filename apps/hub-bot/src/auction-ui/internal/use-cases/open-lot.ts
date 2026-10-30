@@ -143,8 +143,12 @@ async function autoRaisedOf(
     const last = entries.at(-1);
     return (
       last?.kind === "bid" &&
+      last.removed !== true &&
       last.origin.kind === "proxy" &&
-      entries.some((entry) => entry.kind === "bid" && entry !== last)
+      entries.some(
+        (entry) =>
+          entry.kind === "bid" && entry !== last && entry.removed !== true,
+      )
     );
   } catch {
     return false;

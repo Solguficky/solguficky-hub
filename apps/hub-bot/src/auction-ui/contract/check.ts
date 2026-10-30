@@ -1992,9 +1992,9 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     intent: "bid: accepted without a version",
     callbackData: commitCallback("bid", 130000),
     auction: { ...AUCTION, bids: [{ kind: "accepted", lotVersion: 0 }] },
-    auctionCalls: [LOT_CALL, bidCall(130000), getLotCall(CONTRACT_LOT.lotId)],
+    auctionCalls: [LOT_CALL, bidCall(130000)],
     body: {
-      ...acceptedWith({}),
+      ...acceptedBody("bid", 130000, 4),
       keyboard: [
         [
           {
