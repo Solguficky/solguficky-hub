@@ -26,7 +26,8 @@ function winnerInvoiceOf(snapshot: InvoiceSnapshot): WinnerInvoiceView {
   const status = statusOf(snapshot);
   if (
     snapshot.amount === undefined ||
-    Number.isNaN(Date.parse(snapshot.paymentDueAt)) ||
+    (snapshot.paymentDueAt !== "" &&
+      Number.isNaN(Date.parse(snapshot.paymentDueAt))) ||
     status === undefined
   ) {
     throw new Error("auction invoice without an amount, a status or a due");
@@ -35,7 +36,7 @@ function winnerInvoiceOf(snapshot: InvoiceSnapshot): WinnerInvoiceView {
     invoiceId: snapshot.id,
     lotId: snapshot.lotId,
     amount: moneyOf(snapshot.amount),
-    paymentDueAt: snapshot.paymentDueAt,
+    paymentDueAt: snapshot.paymentDueAt || undefined,
     status,
   };
 }

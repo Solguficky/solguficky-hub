@@ -35,7 +35,7 @@ final class SlickInvoiceViews(database: Database)(using ExecutionContext) extend
       LotId(UUID.fromString(row.<<)),
       ParticipantId(UUID.fromString(row.<<)),
       Money(row.<<, CurrencyCode(row.<<)),
-      row.<<[Timestamp].toInstant
+      row.<<?[Timestamp].map(_.toInstant)
     )
     InvoiceView(id, terms, InvoiceJournal.restoreStatus(row.<<), row.<<?[String].map(InvoiceJournal.restoreMethod))
   }

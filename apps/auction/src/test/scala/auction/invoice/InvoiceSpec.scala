@@ -28,9 +28,27 @@ final class InvoiceSpec extends AnyWordSpec with Matchers {
 
   "an invoice" should {
 
+    "keeps a purchased lot visible without starting its payment term" in {
+      val pending = terms.copy(paymentDueAt = None)
+      Invoice.apply(Invoice.initial, InvoiceEvent.InvoiceIssued(pending)) shouldBe
+        Invoice.Issued(pending, InvoiceStatus.AwaitingPayment, None, Map.empty)
+    }
+
+    "defers an existing unpaid invoice and starts a shared deadline exactly once" in {
+      val deferred = Invoice.changeDue(issued, terms.paymentDueAt, None).get
+      val waiting = Invoice.apply(issued, deferred)
+      val due = Some(soldAt.plus(Duration.ofDays(2)))
+      Invoice.changeDue(waiting, None, due) shouldBe Some(InvoiceEvent.PaymentDueChanged(due))
+      val started = Invoice.apply(waiting, InvoiceEvent.PaymentDueChanged(due))
+      Invoice.changeDue(started, due, due) shouldBe None
+      // Старый запрос, выбранный до старта срока, не откатит новый срок в ожидание.
+      Invoice.changeDue(started, terms.paymentDueAt, None) shouldBe None
+      Invoice.changeDue(paid, terms.paymentDueAt, None) shouldBe None
+    }
+
     "is issued once per sale with the price of the sale and the term counted from the sale" in {
       terms.amount shouldBe money(125000)
-      terms.paymentDueAt shouldBe Instant.parse("2026-10-15T21:00:00Z")
+      terms.paymentDueAt shouldBe Some(Instant.parse("2026-10-15T21:00:00Z"))
       Invoice.issue(Invoice.initial, terms) shouldBe Some(InvoiceEvent.InvoiceIssued(terms))
       Invoice.issue(issued, terms) shouldBe None
       Invoice.issue(issued, terms.copy(amount = money(1))) shouldBe None
@@ -41,7 +59,7 @@ final class InvoiceSpec extends AnyWordSpec with Matchers {
       val precise = Instant.parse("2026-10-08T21:00:00.123456789Z")
       InvoiceTerms
         .ofSale(auctionId(1), LotId(uuid(11)), winner, money(1), precise, Duration.ofDays(1))
-        .paymentDueAt shouldBe Instant.parse("2026-10-09T21:00:00.123456Z")
+        .paymentDueAt shouldBe Some(Instant.parse("2026-10-09T21:00:00.123456Z"))
     }
 
     "derives one id from the winning bid, and another id from another bid" in {

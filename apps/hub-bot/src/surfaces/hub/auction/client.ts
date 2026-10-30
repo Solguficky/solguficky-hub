@@ -3020,7 +3020,11 @@ function invoicesResult(
 // не роняет экран на сроке.
 function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
   if (snapshot.amount === undefined) return undefined;
-  if (Number.isNaN(Date.parse(snapshot.paymentDueAt))) return undefined;
+  if (
+    snapshot.paymentDueAt !== "" &&
+    Number.isNaN(Date.parse(snapshot.paymentDueAt))
+  )
+    return undefined;
   const status =
     snapshot.status.case === "awaitingPayment"
       ? "awaiting-payment"
@@ -3036,7 +3040,7 @@ function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
     lotId: snapshot.lotId,
     winnerId: snapshot.winnerId,
     amount: moneyOf(snapshot.amount),
-    paymentDueAt: snapshot.paymentDueAt,
+    paymentDueAt: snapshot.paymentDueAt || undefined,
     status,
   };
 }

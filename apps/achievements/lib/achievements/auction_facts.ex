@@ -59,6 +59,7 @@ defmodule Achievements.AuctionFacts do
     },
     InvoiceEvent => %{
       invoice_issued: :ignored,
+      invoice_payment_due_changed: :ignored,
       invoice_paid: :invoice_paid,
       invoice_handed_over: :ignored
     },

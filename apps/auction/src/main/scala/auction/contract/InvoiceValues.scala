@@ -20,7 +20,7 @@ object InvoiceValues {
       lotId = view.terms.lot.value.toString,
       winnerId = view.terms.winner.value.toString,
       amount = Some(LotValues.money(view.terms.amount)),
-      paymentDueAt = LotValues.instant(view.terms.paymentDueAt),
+      paymentDueAt = view.terms.paymentDueAt.fold("")(LotValues.instant),
       status = view.status match {
         case InvoiceStatus.AwaitingPayment =>
           bus.InvoiceState.Status.AwaitingPayment(bus.InvoiceState.AwaitingPayment())
@@ -36,7 +36,7 @@ object InvoiceValues {
       lotId = view.terms.lot.value.toString,
       winnerId = view.terms.winner.value.toString,
       amount = Some(LotValues.money(view.terms.amount)),
-      paymentDueAt = LotValues.instant(view.terms.paymentDueAt),
+      paymentDueAt = view.terms.paymentDueAt.fold("")(LotValues.instant),
       fulfillment = view.fulfillment.fold(model.FulfillmentMethod.FULFILLMENT_METHOD_UNSPECIFIED)(method),
       status = view.status match {
         case InvoiceStatus.AwaitingPayment =>

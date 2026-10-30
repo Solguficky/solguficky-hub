@@ -3274,8 +3274,8 @@ message InvoiceSnapshot {
   // The amount to pay: the price of the sale.
   Money amount = 5;
 
-  // RFC 3339 instant in UTC: the payment is due by this moment. An invoice is
-  // overdue when it still awaits payment after it.
+  // RFC 3339 UTC deadline, or empty while the auction is still running.
+  // Payment starts after the entire auction, including its final, has ended.
   string payment_due_at = 6;
 
   // How the winner receives the lot. UNSPECIFIED is a real value: the winner has

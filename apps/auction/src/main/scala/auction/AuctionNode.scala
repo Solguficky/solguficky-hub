@@ -281,6 +281,7 @@ object AuctionNode {
       metrics,
       () => InvoicingHandler(auction => auctions.get(auction).map(InvoicingHandler.termOf), invoices.issue)
     )
+    auction.projection.InvoicePaymentClock.start(system, invoices)
     metrics.watchBacklog(InvoicingProjection.Name, InvoicingProjection.backlog(system, backlogTimeout))
   }
 

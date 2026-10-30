@@ -42,18 +42,21 @@ enum FulfillmentMethod {
 }
 
 /**
- * Неизменные условия счёта: аукцион и лот продажи, победитель, сумма — цена продажи — и момент, до которого счёт ждёт
- * оплаты. Всё задаётся при выставлении и дальше не меняется.
+ * Условия счёта: аукцион и лот продажи, победитель, сумма — цена продажи — и момент, до которого счёт ждёт оплаты. Срок
+ * отсутствует до завершения аукциона; сумма и адресат неизменны.
  */
 final case class InvoiceTerms(
     auction: AuctionId,
     lot: LotId,
     winner: ParticipantId,
     amount: Money,
-    paymentDueAt: Instant
+    paymentDueAt: Option[Instant]
 )
 
 object InvoiceTerms {
+
+  def apply(auction: AuctionId, lot: LotId, winner: ParticipantId, amount: Money, paymentDueAt: Instant): InvoiceTerms =
+    new InvoiceTerms(auction, lot, winner, amount, Some(paymentDueAt))
 
   /**
    * Условия счёта по продаже: срок оплаты отсчитывается от момента продажи `LotSold.at` и обрезается до микросекунд —
@@ -94,6 +97,7 @@ enum InvoiceAction {
 
 enum InvoiceEvent {
   case InvoiceIssued(terms: InvoiceTerms)
+  case PaymentDueChanged(dueAt: Option[Instant])
   case InvoicePaid(opId: OpId)
   case InvoiceHandedOver(opId: OpId)
 
@@ -135,6 +139,14 @@ object Invoice {
     state match {
       case Initial => Some(InvoiceEvent.InvoiceIssued(terms))
       case Issued(_, _, _, _) => None
+    }
+
+  /** Общий срок применяется только к неоплаченным счетам и идемпотентен. */
+  def changeDue(state: Invoice, expected: Option[Instant], dueAt: Option[Instant]): Option[InvoiceEvent] =
+    state match {
+      case Issued(terms, InvoiceStatus.AwaitingPayment, _, _) if terms.paymentDueAt == expected && expected != dueAt =>
+        Some(InvoiceEvent.PaymentDueChanged(dueAt))
+      case _ => None
     }
 
   /**
@@ -200,6 +212,8 @@ object Invoice {
     (state, event) match {
       case (Initial, InvoiceEvent.InvoiceIssued(terms)) =>
         Issued(terms, InvoiceStatus.AwaitingPayment, None, Map.empty)
+      case (invoice: Issued, InvoiceEvent.PaymentDueChanged(dueAt)) =>
+        invoice.copy(terms = invoice.terms.copy(paymentDueAt = dueAt))
       case (invoice: Issued, InvoiceEvent.InvoicePaid(opId)) =>
         invoice.copy(status = InvoiceStatus.Paid, seen = invoice.seen + (opId -> InvoiceAction.MarkPaid))
       case (invoice: Issued, InvoiceEvent.InvoiceHandedOver(opId)) =>
