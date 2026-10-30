@@ -6783,6 +6783,53 @@ describe("floor bids of the assistant", () => {
     ).toContain(newcomerId);
   });
 
+  it("finds a person by the current nick and by the name in the auction, ignoring case and @", async () => {
+    const renamedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3497";
+    communityMembers = [
+      ...communityMembers,
+      communityMember(renamedId, "fresh_nick"),
+    ];
+    const auction = running({
+      people: [...people, { participantId: newcomerId, name: "Фантомас" }],
+    });
+    const { bot, calls } = await open(auction);
+
+    // Ник сменили в Telegram: Identity отдаёт текущий.
+    await bot.handleUpdate(press(dataOf(last(calls), "Добавить человека…")));
+    await bot.handleUpdate(answer(calls, { text: "@FRESH" }));
+    expect(labels(last(calls)).map((row) => row.map(spaced))).toEqual([
+      ["@fresh_nick"],
+      ["‹ Ставки зала"],
+    ]);
+
+    // Псевдоним в этом аукционе: кнопка несёт и ник, и имя.
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Ставки зала")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Добавить человека…")));
+    await bot.handleUpdate(answer(calls, { text: "@фантом" }));
+    const found = last(calls);
+    expect(labels(found).map((row) => row.map(spaced))).toEqual([
+      ["@newcomer_n · Фантомас"],
+      ["‹ Ставки зала"],
+    ]);
+    await bot.handleUpdate(press(dataOf(found, "@newcomer_n · Фантомас")));
+    expect(plain(last(calls))).toContain("в зале.");
+    const room = await currentRoom.read(auctionId);
+    expect(room.kind === "ok" && room.members).toContainEqual({
+      identityId: newcomerId,
+      username: "newcomer_n",
+    });
+  });
+
+  it("does not find a guest by the name in the auction", async () => {
+    const auction = running({
+      people: [...people, { participantId: guestId, name: "Тень" }],
+    });
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(dataOf(last(calls), "Добавить человека…")));
+    await bot.handleUpdate(answer(calls, { text: "тень" }));
+    expect(plain(last(calls))).toContain("Никого не нашлось по «тень».");
+  });
+
   it("finds nobody among guests and says when everyone found is in the room", async () => {
     const { bot, calls } = await open(running());
     await bot.handleUpdate(press(dataOf(last(calls), "Добавить человека…")));

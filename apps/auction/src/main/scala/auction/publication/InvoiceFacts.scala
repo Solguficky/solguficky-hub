@@ -38,6 +38,12 @@ object InvoiceFacts {
     event match {
       case InvoiceEvent.InvoiceIssued(_) =>
         Some("invoice_issued" -> bus.InvoiceEvent.Occasion.InvoiceIssued(bus.InvoiceIssued()))
+      case InvoiceEvent.PaymentDueChanged(_) =>
+        Some(
+          "invoice_payment_due_changed" -> bus.InvoiceEvent.Occasion.InvoicePaymentDueChanged(
+            bus.InvoicePaymentDueChanged()
+          )
+        )
       case InvoiceEvent.InvoicePaid(_) =>
         Some("invoice_paid" -> bus.InvoiceEvent.Occasion.InvoicePaid(bus.InvoicePaid()))
       case InvoiceEvent.InvoiceHandedOver(_) =>

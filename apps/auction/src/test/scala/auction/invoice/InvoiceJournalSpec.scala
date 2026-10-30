@@ -43,7 +43,22 @@ final class InvoiceJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
   "invoice journal" should {
 
+    "reads a pending invoice and both payment deadline transitions after serialization" in {
+      List(
+        InvoiceEvent.InvoiceIssued(terms.copy(paymentDueAt = None)),
+        InvoiceEvent.PaymentDueChanged(None),
+        InvoiceEvent.PaymentDueChanged(terms.paymentDueAt)
+      ).foreach { event =>
+        val stored = InvoiceJournal.store(uuid(1), decidedAt)(event)
+        val restored = read(kit.system, write(kit.system, stored)).asInstanceOf[StoredInvoiceEvent]
+        InvoiceJournal.restoreEvent(restored.event) shouldBe event
+      }
+    }
+
     "keeps the stored form of every invoice event equal to its golden file and read the golden file back" in {
+      keepsGolden("invoice-issued-pending", InvoiceEvent.InvoiceIssued(terms.copy(paymentDueAt = None)))
+      keepsGolden("invoice-payment-started", InvoiceEvent.PaymentDueChanged(terms.paymentDueAt))
+      keepsGolden("invoice-payment-deferred", InvoiceEvent.PaymentDueChanged(None))
       keepsGolden("invoice-issued", InvoiceEvent.InvoiceIssued(terms))
       keepsGolden("invoice-paid", InvoiceEvent.InvoicePaid(op(2)))
       keepsGolden("invoice-handed-over", InvoiceEvent.InvoiceHandedOver(op(3)))

@@ -301,6 +301,12 @@ export type LotInfoReader = {
     auctionId: string,
     meta?: RpcMetadata,
   ): Promise<string | undefined>;
+  // Лот, который торгуется в живом финале, для кнопки вести о старте (PER-833).
+  finalActiveLot(
+    identityId: string,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<string | undefined>;
 };
 
 export function createLotInfoReader(
@@ -319,6 +325,18 @@ export function createLotInfoReader(
       return auction === undefined
         ? undefined
         : auctionSummaryViewOf(auction).finalAt;
+    },
+    async finalActiveLot(identityId, auctionId, meta) {
+      const { auction } = await rpc.getAuction(
+        {
+          viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+          auctionId,
+        },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      return auction === undefined
+        ? undefined
+        : auctionSummaryViewOf(auction).lineup?.activeLotId;
     },
     async lotInfo(identityId, lotId, meta) {
       const snapshot = await rpc.getLot(
@@ -3020,7 +3038,11 @@ function invoicesResult(
 // не роняет экран на сроке.
 function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
   if (snapshot.amount === undefined) return undefined;
-  if (Number.isNaN(Date.parse(snapshot.paymentDueAt))) return undefined;
+  if (
+    snapshot.paymentDueAt !== "" &&
+    Number.isNaN(Date.parse(snapshot.paymentDueAt))
+  )
+    return undefined;
   const status =
     snapshot.status.case === "awaitingPayment"
       ? "awaiting-payment"
@@ -3036,7 +3058,7 @@ function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
     lotId: snapshot.lotId,
     winnerId: snapshot.winnerId,
     amount: moneyOf(snapshot.amount),
-    paymentDueAt: snapshot.paymentDueAt,
+    paymentDueAt: snapshot.paymentDueAt || undefined,
     status,
   };
 }

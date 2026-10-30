@@ -7,6 +7,19 @@ import {
 export const predictionButtonLabel = "Прогнозы";
 export const predictionTitle = "Прогнозы аукциона";
 
+/**
+ * Заголовок выбора лота (PER-836): страница названа словом, чтобы «1 из 2» не
+ * читалось как номер вопроса; у единственной страницы заголовок без номера.
+ */
+export function predictionLotsTitle(at: {
+  page: number;
+  pageCount: number;
+}): string {
+  return at.pageCount === 1
+    ? "Выбрать лот"
+    : `Выбрать лот · страница ${at.page + 1} из ${at.pageCount}`;
+}
+
 export function predictionRoundTitle(round: "catalog" | "final"): string {
   return round === "catalog" ? "Раунд 1 · Каталог" : "Раунд 2 · Финал";
 }

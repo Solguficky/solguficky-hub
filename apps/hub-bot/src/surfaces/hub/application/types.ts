@@ -27,7 +27,7 @@ import type {
   AuctionAnnouncementRequest,
   AuctionAnnouncementResult,
 } from "./auction-announcements.js";
-import type { RoomMember } from "./floor-room.js";
+import type { FoundMember, RoomMember } from "./floor-room.js";
 
 // Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
 // решают `rights` (RFC-016); те же права уходят смотрящим в Meetups и Auction,
@@ -1328,7 +1328,7 @@ export type Invoice = {
   winnerId: string;
   amount: LotAmount;
   // RFC 3339 в UTC: оплатить до этого мига.
-  paymentDueAt: string;
+  paymentDueAt: string | undefined;
   status: InvoiceStatus;
 };
 
@@ -1620,7 +1620,7 @@ export type FloorView = {
   // 2026-10-29).
   waiting: readonly RoomMember[];
   // Найденные по нику в ответ на «Добавить человека…».
-  found?: readonly RoomMember[];
+  found?: readonly FoundMember[];
   // Состав не прочитался: экран людей не показывается, и «Повторить» читает
   // заново.
   roomUnavailable?: true;

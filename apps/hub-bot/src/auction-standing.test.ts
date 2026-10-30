@@ -3,9 +3,13 @@ import {
   favoritesEmpty,
   favoritesEmptyText,
   favoritesSummary,
+  feedSummary,
+  finalFeedLabel,
   lotButtonTail,
+  lotGroupPrefix,
 } from "./auction-standing.js";
 import type { FeedItem } from "./auction-ui/index.js";
+import { money } from "./core/format.js";
 
 const rub = (rubles: number) => ({
   minorUnits: rubles * 100,
@@ -23,6 +27,44 @@ const mineOptions = {
   title: (each: FeedItem) => each.title ?? "",
   price: () => "1 200 ₽",
 };
+
+describe("finalFeedLabel", () => {
+  it("shortens the title, not the price, to fit the button", () => {
+    const item: FeedItem = {
+      lotId: "lot-1",
+      status: { kind: "held", currentPrice: rub(1000) },
+    };
+    const label = finalFeedLabel(item, {}, "Я".repeat(60)) ?? "";
+    expect(label.length).toBeLessThanOrEqual(64);
+    expect(label.startsWith("🏁 ")).toBe(true);
+    expect(label.endsWith(` · в составе · ${money(rub(1000))}`)).toBe(true);
+  });
+});
+
+describe("lotGroupPrefix", () => {
+  const withStatus = (status: FeedItem["status"]): FeedItem => ({
+    lotId: "lot-1",
+    status,
+  });
+
+  it("gives every group of the list its own sign", () => {
+    expect(
+      [
+        { kind: "trading", currentPrice: rub(1200) },
+        { kind: "held", currentPrice: rub(400) },
+        { kind: "sold", winnerId: "w", price: rub(900) },
+        { kind: "unsold" },
+      ].map((status) =>
+        lotGroupPrefix(withStatus(status as FeedItem["status"])),
+      ),
+    ).toEqual(["🔥 ", "🏁 ", "🤝 ", "💤 "]);
+  });
+
+  it("leaves lots outside the groups without a sign", () => {
+    expect(lotGroupPrefix(withStatus({ kind: "draft" }))).toBe("");
+    expect(lotGroupPrefix(withStatus({ kind: "withdrawn" }))).toBe("");
+  });
+});
 
 describe("lotButtonTail", () => {
   // Прогон 14.10, №83: лидер видит себя и на кнопке ленты — словом.
@@ -69,5 +111,30 @@ describe("favorites of a finished auction", () => {
       "Аукцион закончен. Избранное этого аукциона больше не хранится.",
     );
     expect(favoritesEmptyText(undefined)).toBe(favoritesEmpty);
+  });
+});
+
+// Перерыв перед финалом (PER-833): лидер лота, который ждёт финала, видит его
+// в сводке своим, а «не лидируешь» остаётся тому, кто нигде не лидирует.
+describe("feed summary in the break before the final", () => {
+  const held: FeedItem = {
+    lotId: "lot-2",
+    title: "Ваза",
+    status: { kind: "held", currentPrice: rub(900), leaderId: "viewer" },
+    standing: "leader",
+  };
+
+  it("names the held lot of the leader instead of denying the leadership", () => {
+    const text = feedSummary({ lots: [held], mine: [held] }, mineOptions).join(
+      " ",
+    );
+    expect(text).toContain("Ваза — 1 200 ₽, ты лидер");
+    expect(text).not.toContain("не лидируешь");
+  });
+
+  it("keeps the denial for someone who leads nowhere", () => {
+    const { standing: _standing, ...other } = held;
+    const text = feedSummary({ lots: [other] }, mineOptions).join(" ");
+    expect(text).toContain("Ты пока не лидируешь");
   });
 });

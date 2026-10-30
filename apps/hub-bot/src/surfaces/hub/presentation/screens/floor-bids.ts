@@ -169,6 +169,17 @@ function pairs<T>(all: readonly T[]): T[][] {
   return rows;
 }
 
+// Ник и имя в аукционе: помощник знает человека по любому из них (PER-838).
+const foundLabel = (member: {
+  username?: string;
+  auctionName?: string;
+}): string =>
+  member.username === undefined
+    ? (member.auctionName ?? memberName(member))
+    : member.auctionName === undefined
+      ? memberName(member)
+      : `${memberName(member)} · ${member.auctionName}`;
+
 const memberName = (member: { username?: string }): string =>
   member.username === undefined ? "Участник" : `@${member.username}`;
 
@@ -205,7 +216,7 @@ export function floorScreen(view: FloorScreenView): ShownScreen {
       nextRow(keyboard);
       for (const member of row) {
         keyboard.text(
-          buttonText(memberName(member)),
+          buttonText(foundLabel(member)),
           floorAddData(auction, uuidToToken(member.identityId)),
         );
       }

@@ -5,6 +5,7 @@ import {
   type RenderResult,
 } from "../delivery/index.js";
 import { money, truncate } from "../format.js";
+import { marked, pictogram } from "../pictograms.js";
 import {
   canonical,
   checkPlaceBids,
@@ -221,6 +222,18 @@ export function createFinalNoticeRender({
         }),
       };
     }
+    let activeLotId: string | undefined;
+    if (notice.kind === "final-started" && reads.finalActiveLot !== undefined) {
+      try {
+        activeLotId = await reads.finalActiveLot(
+          context.recipientId,
+          notice.auctionId,
+          context.requestId,
+        );
+      } catch (cause) {
+        onTitleMissing(cause, context.requestId);
+      }
+    }
     if (notice.kind === "lot-sold-in-final") {
       try {
         lots.set(
@@ -268,13 +281,19 @@ export function createFinalNoticeRender({
     }
     return {
       kind: "ready",
-      message: renderFinalNotice(notice, { lots, refused }),
+      message: renderFinalNotice(notice, {
+        lots,
+        refused,
+        ...(activeLotId === undefined ? {} : { activeLotId }),
+      }),
     };
   };
 }
 
 export type FinalNoticeRenderInput = {
   lots: ReadonlyMap<string, LotInfo>;
+  // Для вести о старте финала: лот, который торгуется сейчас.
+  activeLotId?: string;
   refused?: ReadonlySet<string>;
   // Для вести о конце торгов: пояс и ориентировочное время финала.
   timeZone?: string;
@@ -312,8 +331,9 @@ function localMoment(instant: string, timeZone: string): string | undefined {
 // Строка «Объявлен состав финала» или «Твой лот в финале», пустая строка и
 // строки состава «• «Лот» — цена» в порядке финала; свой лот — с «лот за
 // тобой», как в сводке. Под составом — ряд на каждый свой лот с его названием:
-// карточка приходит новым сообщением. У простого анонса и старта финала кнопок
-// нет (решение владельца 19 октября 2026 года, PER-478).
+// карточка приходит новым сообщением. Кроме них под составом — «Прогнозы» и
+// «Аукцион», под стартом финала — кнопка к идущему лоту (PER-833; пересматривает
+// решение владельца 19 октября 2026 года «кнопок нет», PER-478).
 export function renderFinalNotice(
   notice: FinalNotice,
   {
@@ -321,10 +341,26 @@ export function renderFinalNotice(
     refused = new Set(),
     timeZone = "UTC",
     finalAt,
+    activeLotId,
   }: FinalNoticeRenderInput,
 ): LotNoticeView {
   if (notice.kind === "final-started") {
-    return { text: "Начался финал аукциона.", rows: [] };
+    // Кнопка к лоту, который торгуется; лота ещё нет или чтение его не отдало —
+    // лента, где идущий лот стоит первым (PER-639).
+    return {
+      text: "Начался финал аукциона.",
+      rows: [
+        [
+          activeLotId === undefined
+            ? {
+                kind: "feed",
+                auctionId: notice.auctionId,
+                text: marked(pictogram.auction, "Лоты"),
+              }
+            : { kind: "lot", lotId: activeLotId, text: "К текущему лоту" },
+        ],
+      ],
+    };
   }
   if (notice.kind === "prebidding-ended") {
     if (notice.heldCount === 0) {
@@ -396,5 +432,15 @@ export function renderFinalNotice(
         },
       ];
     });
+  // Под своими лотами — вход в раунд 2 прогнозов и в аукцион (PER-833). После
+  // старта финала раунд закрыт, и кнопка прогнозов отвечает об этом.
+  rows.push([
+    { kind: "predictions", auctionId: notice.auctionId, text: "Прогнозы" },
+    {
+      kind: "auction",
+      auctionId: notice.auctionId,
+      text: marked(pictogram.auction, "Аукцион"),
+    },
+  ]);
   return { text, rows };
 }

@@ -3,6 +3,7 @@ import {
   admitLabel,
   confirmNoLabel,
   confirmYesPrefix,
+  lotGroupSigns,
   marked,
   pictogram,
   pictogramWords,
@@ -487,7 +488,7 @@ function strayPictogram(text: string): string | undefined {
   const match = leadingSign.exec(text);
   if (match === null) return undefined;
   const [, sign = "", rest = ""] = match;
-  if (serviceSigns.has(sign)) return undefined;
+  if (serviceSigns.has(sign) || lotGroupSigns.has(sign)) return undefined;
   const words = signWords[sign];
   if (words === undefined) return `эмодзи «${sign}» вне словаря`;
   return words.some((word) => rest.startsWith(word))

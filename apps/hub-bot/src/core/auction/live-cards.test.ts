@@ -245,6 +245,64 @@ describe("live cards", () => {
     expect(nameCalls).toEqual([["leader"]]);
   });
 
+  // PER-835: проигравший гонку на одну цену видел ответ «цена ушла» лишь до
+  // следующей правки по потоку, и она его стирала.
+  it("keeps the price-moved reply while the stream edits the card", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    const moved = { kind: "price-changed" as const, next: rub(1400) };
+    cards.shown(7, 70, { ...opened, priceMoved: moved });
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    expect(
+      lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toEqual(moved);
+    // Новый показ карточки без ответа его снимает.
+    cards.shown(7, 70, { ...opened, version: 2 });
+    stream.emit(live(LOT_A, 3, 1400));
+    await flush();
+    expect(
+      lotOf(edits[1]?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toBeUndefined();
+  });
+
+  it("drops the price-moved reply when the card moves to another lot", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    const moved = { kind: "price-changed" as const, next: rub(1400) };
+    cards.shown(7, 70, { ...opened, priceMoved: moved });
+    stream.emit(live(LOT_B, 1, 500));
+    await flush();
+    stream.emit(live(LOT_A, 5, 1500));
+    await flush();
+    expect(
+      lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toBeUndefined();
+    expect(
+      lotOf(edits[1]?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toBeUndefined();
+  });
+
+  it("takes the price-moved reply of the card body", () => {
+    const body: AuctionScreenBody = {
+      blocks: [
+        {
+          kind: "lot",
+          auctionId: AUCTION_ID,
+          lotId: LOT_A,
+          version: 2,
+          live: { page: 1 },
+          finalBid: {
+            kind: "refused",
+            refusal: { kind: "bid-not-at-next-price", expected: rub(1400) },
+          },
+        } as unknown as AuctionBlock,
+      ],
+      keyboard: [],
+    };
+    expect(liveCardOf(body, VIEWER)?.priceMoved).toMatchObject({
+      kind: "refused",
+    });
+  });
+
   it("keeps the own proxy limit on the lot it was opened on", async () => {
     const { stream, edits, cards, lotOf } = setup();
     cards.shown(7, 70, { ...opened, proxyLimit: rub(2000) });

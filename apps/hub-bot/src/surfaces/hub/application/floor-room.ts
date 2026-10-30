@@ -10,6 +10,9 @@ import { z } from "zod";
 /** Человек состава: личность Identity и ник, по которому его нашли. */
 export type RoomMember = { identityId: string; username?: string };
 
+// Найденный поиском: имя в аукционе — подсказка кнопке, в состав не пишется.
+export type FoundMember = RoomMember & { auctionName?: string };
+
 export type RoomRead =
   | { kind: "ok"; members: readonly RoomMember[] }
   | { kind: "unavailable"; cause?: unknown };

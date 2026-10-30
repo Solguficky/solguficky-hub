@@ -26,7 +26,7 @@ import { collectPages } from "./collect-pages.js";
 import { type CommandContext, withOneRetry } from "./commands.js";
 import { feedItemOf } from "./standing.js";
 
-const LOT_PAGE_SIZE = 7;
+const LOT_PAGE_SIZE = 12;
 const MAX_PREDICTION_LOTS = 8_000;
 const MAX_PREDICTION_VALUE = BigInt(Number.MAX_SAFE_INTEGER);
 

@@ -7,6 +7,7 @@ import {
   AuctionPrebiddingEndedSchema,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import { money } from "../format.js";
+import { marked, pictogram } from "../pictograms.js";
 import {
   createFinalNoticeRender,
   type FinalNotice,
@@ -50,6 +51,11 @@ const lineup = (
 const p1 = money(rub(1_000));
 const p2 = money(rub(2_000));
 
+// Входы под составом (PER-833): раунд 2 прогнозов и аукцион.
+const entryRow = [
+  { kind: "predictions", auctionId, text: "Прогнозы" },
+  { kind: "auction", auctionId, text: marked(pictogram.auction, "Аукцион") },
+];
 const context = { recipientId: lot(42), requestId: "r-1" };
 
 describe("finalNoticeOf", () => {
@@ -145,7 +151,7 @@ describe("renderFinalNotice", () => {
         "Раунд 2 прогнозов открыт — он закроется, когда начнётся финал.",
       ].join("\n"),
     );
-    expect(view.rows).toEqual([]);
+    expect(view.rows).toEqual([entryRow]);
   });
 
   it("marks the recipient's lot and gives a row to its card", () => {
@@ -157,6 +163,7 @@ describe("renderFinalNotice", () => {
     expect(view.text).not.toContain(`грибов» — ${p1}, лот за тобой`);
     expect(view.rows).toEqual([
       [{ kind: "lot", lotId: lot(2), text: "Кружка" }],
+      entryRow,
     ]);
   });
 
@@ -165,13 +172,45 @@ describe("renderFinalNotice", () => {
     expect(view.text.split("\n")[0]).toBe(
       "Твои лоты в финале аукциона. Состав финала:",
     );
-    expect(view.rows).toHaveLength(2);
+    expect(view.rows).toHaveLength(3);
   });
 
-  it("announces the started final without a button", () => {
+  // Старт финала ведёт к лоту, который торгуется (PER-833); лота нет — в ленту.
+  it("leads from the started final to the active lot or to the feed", () => {
     expect(
-      renderFinalNotice({ kind: "final-started", auctionId }, { lots }),
-    ).toEqual({ text: "Начался финал аукциона.", rows: [] });
+      renderFinalNotice(
+        { kind: "final-started", auctionId },
+        { lots, activeLotId: lot(2) },
+      ),
+    ).toEqual({
+      text: "Начался финал аукциона.",
+      rows: [[{ kind: "lot", lotId: lot(2), text: "К текущему лоту" }]],
+    });
+    expect(
+      renderFinalNotice({ kind: "final-started", auctionId }, { lots }).rows,
+    ).toEqual([
+      [{ kind: "feed", auctionId, text: marked(pictogram.auction, "Лоты") }],
+    ]);
+  });
+
+  it("reads the active lot as the recipient for the started final", async () => {
+    const finalActiveLot = vi.fn().mockResolvedValue(lot(3));
+    const render = createFinalNoticeRender({
+      reads: {
+        holdsPlaceBids: async () => true,
+        lotInfo: async () => ({ title: "" }),
+        finalActiveLot,
+      },
+      onTitleMissing: vi.fn(),
+    });
+    const result = await render({ kind: "final-started", auctionId }, context);
+    expect(finalActiveLot).toHaveBeenCalledWith(lot(42), auctionId, "r-1");
+    expect(result).toMatchObject({
+      kind: "ready",
+      message: {
+        rows: [[{ kind: "lot", lotId: lot(3), text: "К текущему лоту" }]],
+      },
+    });
   });
 
   // Без названия строка остаётся с ценой, а кнопка — «К лоту»; лот, который
@@ -184,6 +223,7 @@ describe("renderFinalNotice", () => {
     expect(view.text).toContain(`• Лот — ${p2}, лот за тобой`);
     expect(view.rows).toEqual([
       [{ kind: "lot", lotId: lot(2), text: "К лоту" }],
+      entryRow,
     ]);
   });
 
@@ -354,7 +394,10 @@ describe("createFinalNoticeRender", () => {
       onTitleMissing,
     });
     const result = await render(lineup([lot(2)]), context);
-    expect(result).toMatchObject({ kind: "ready", message: { rows: [] } });
+    expect(result).toMatchObject({
+      kind: "ready",
+      message: { rows: [entryRow] },
+    });
     expect(onTitleMissing).toHaveBeenCalledWith(permanent, "r-1");
   });
 });

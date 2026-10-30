@@ -68,6 +68,8 @@ function momentOf(at: string, clock: Clock): string {
 function statusText(invoice: InvoiceRow, clock: Clock): string {
   switch (invoice.status) {
     case "awaiting-payment":
+      if (invoice.paymentDueAt === undefined)
+        return "срок оплаты начнётся после завершения аукциона";
       return invoice.overdue
         ? `просрочен, срок был ${momentOf(invoice.paymentDueAt, clock)}`
         : `ждёт оплаты до ${momentOf(invoice.paymentDueAt, clock)}`;

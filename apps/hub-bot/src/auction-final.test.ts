@@ -53,6 +53,49 @@ describe("finalBidHeadline", () => {
     ).toBe("Твою ставку перебили — цена уже 1400 ₽");
   });
 
+  it("names the current next price for a price-moved reply that went stale", () => {
+    expect(
+      finalBidHeadline(
+        {
+          ...card,
+          nextPrice: { minorUnits: 150_000, currency: "RUB" },
+          finalBid: { kind: "price-changed", next: amount },
+        },
+        money,
+      ),
+    ).toBe("Твоя ставка не прошла — следующая цена 1500 ₽");
+  });
+
+  it("does not go below the price the refusal named", () => {
+    expect(
+      finalBidHeadline(
+        {
+          ...card,
+          nextPrice: { minorUnits: 120_000, currency: "RUB" },
+          finalBid: { kind: "price-changed", next: amount },
+        },
+        money,
+      ),
+    ).toBe("Твоя ставка не прошла — следующая цена 1300 ₽");
+  });
+
+  it("says nothing about a price that moved once the lot closed or the viewer leads", () => {
+    const moved = { kind: "price-changed" as const, next: amount };
+    expect(
+      finalBidHeadline(
+        {
+          ...card,
+          status: { kind: "unsold" },
+          finalBid: moved,
+        },
+        money,
+      ),
+    ).toBeUndefined();
+    expect(
+      finalBidHeadline({ ...card, standing: "leader", finalBid: moved }, money),
+    ).toBeUndefined();
+  });
+
   it("names the sale price for a late rejected bid", () => {
     expect(
       finalBidHeadline(

@@ -30,6 +30,7 @@ import {
 } from "../../auction-happy-hours.js";
 import {
   predictionButtonLabel,
+  predictionLotsTitle,
   predictionNameChoiceText,
   predictionNumberQuestionText,
   predictionParagraphs,
@@ -86,6 +87,7 @@ import {
   historyLine,
   leaderLine,
   lotButtonTail,
+  lotGroupPrefix,
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
@@ -1371,7 +1373,7 @@ function renderLeaf(
         return {
           format: "html",
           text: screenText(
-            paged("Выбрать лот", block),
+            predictionLotsTitle(block),
             `${nomination.number} · ${escapeHtml(nomination.question)}`,
             current,
             block.lots.length === 0
@@ -2089,7 +2091,7 @@ function renderButton(
       )?.final;
       const label =
         (final === undefined ? null : finalFeedLabel(item, final, title)) ??
-        `${title}${lotButtonTail(item, priceLabel(item.status))}`;
+        `${lotGroupPrefix(item)}${title}${lotButtonTail(item, priceLabel(item.status))}`;
       // Сет в подписи ленты не называется (решение владельца 24.10.2026,
       // пересматривает ADR-073, п. 7): сет называет карточка лота.
       return text(label);
