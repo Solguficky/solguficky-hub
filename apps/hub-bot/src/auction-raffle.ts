@@ -26,6 +26,9 @@ export const TICKETS_SHOWN = 40;
 export type RaffleTextOptions = {
   // Момент RFC 3339 для чтения в поясе сообщества.
   moment: (instant: string) => string;
+  // Момент состоявшейся жеребьёвки — событие, а не срок: полночь здесь не
+  // сдвигается (PER-831). Не задан — читается как `moment`.
+  eventMoment?: (instant: string) => string;
 };
 
 // Экран исхода регистрации (прогон 14.10, №69): заголовок — исход, под ним
@@ -302,7 +305,9 @@ function winnerLine(raffle: RaffleView): string {
 // нет строки: экран итога прежней формы момента не выдумывает.
 function drawnAtLine(raffle: RaffleView, options: RaffleTextOptions): string[] {
   if (raffle.drawnAt === undefined) return [];
-  const moment = escapeHtml(options.moment(raffle.drawnAt));
+  const moment = escapeHtml(
+    (options.eventMoment ?? options.moment)(raffle.drawnAt),
+  );
   return [
     raffle.drawnByHand === true ? `Итог: ${moment}` : `Жеребьёвка: ${moment}`,
   ];

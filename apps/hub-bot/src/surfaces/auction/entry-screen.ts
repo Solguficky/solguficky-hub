@@ -1316,6 +1316,8 @@ function renderLeaf(
         const paragraphs = raffleParagraphs(block.raffle, {
           moment: (instant) =>
             readableDeadline(instant, options.timeZone, options.now),
+          eventMoment: (instant) =>
+            readableMoment(instant, options.timeZone, options.now),
         });
         // Приз с фото (PER-773) — rich-сообщение, фото над заголовком ставит
         // адаптер, как у карточки лота; в `plain` фото нет.

@@ -90,6 +90,15 @@ describe("shared raffle result text", () => {
     ]);
   });
 
+  it("reads the draw moment through the event formatter when the shell gives one", () => {
+    expect(
+      raffleParagraphs(drawnRaffle({ drawnAt: "2026-10-13T22:51:00Z" }), {
+        moment: () => "срок",
+        eventMoment: () => "событие",
+      }),
+    ).toContain("Жеребьёвка: событие");
+  });
+
   it("shows no draw moment before the draw", () => {
     for (const status of [
       "open",
