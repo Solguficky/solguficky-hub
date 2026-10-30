@@ -107,6 +107,20 @@ export function finalBidLine(
   }
 }
 
+/**
+ * Цена, которую назвал ответ «цена ушла»: исход `price-changed` или отказ
+ * «не по цене». Прочие исходы — `undefined`.
+ */
+export function priceMovedTo(outcome: FinalBidOutcome): Money | undefined {
+  if (outcome.kind === "price-changed") return outcome.next;
+  if (
+    outcome.kind === "refused" &&
+    outcome.refusal.kind === "bid-not-at-next-price"
+  )
+    return outcome.refusal.expected;
+  return undefined;
+}
+
 // Исход читает актуальный снимок: принятую ставку уже могли перебить.
 export function finalBidHeadline(
   block: LotBlock,
@@ -124,17 +138,23 @@ export function finalBidHeadline(
   }
   // Ответ «цена ушла» живёт на карточке, пока её правит поток (PER-835), и
   // цена в нём могла уйти ещё раз: называется следующая цена снимка.
-  const moved =
-    outcome.kind === "price-changed"
-      ? outcome.next
-      : outcome.kind === "refused" &&
-          outcome.refusal.kind === "bid-not-at-next-price"
-        ? outcome.refusal.expected
-        : undefined;
+  const moved = priceMovedTo(outcome);
   if (moved !== undefined) {
-    if (block.standing === "leader" || block.standing === "won")
+    // Лот закрыт или человек уже лидер: «следующей цены» больше нет.
+    if (
+      block.status.kind !== "trading" ||
+      block.standing === "leader" ||
+      block.standing === "won"
+    )
       return undefined;
-    return `Твоя ставка не прошла — следующая цена ${money(block.nextPrice ?? moved)}`;
+    // Не ниже цены, которую назвал отказ: кнопка уже предлагает её, даже если
+    // чтение отстаёт, и строка с кнопкой не должны расходиться.
+    const next =
+      block.nextPrice !== undefined &&
+      block.nextPrice.minorUnits > moved.minorUnits
+        ? block.nextPrice
+        : moved;
+    return `Твоя ставка не прошла — следующая цена ${money(next)}`;
   }
   if (
     outcome.kind === "refused" &&

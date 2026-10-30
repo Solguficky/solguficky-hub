@@ -1,4 +1,5 @@
 import { GrammyError, HttpError } from "grammy";
+import { priceMovedTo } from "../../auction-final.js";
 import {
   type AuctionPort,
   type AuctionScreenBody,
@@ -146,6 +147,8 @@ export function createLiveCards(options: {
 
   const schedule = (card: LiveCardEntry, lot: LotView) => {
     const { chatId } = card;
+    // Ответ принадлежит лоту, на котором дан: уйдя с него, карточка его теряет.
+    if (card.priceMoved?.lotId !== lot.lotId) delete card.priceMoved;
     card.lotId = lot.lotId;
     card.version = lot.version;
     const target = { lotId: lot.lotId, version: lot.version };
@@ -304,23 +307,13 @@ export function liveCardOf(
       ...(block.viewerProxyLimit === undefined
         ? {}
         : { proxyLimit: block.viewerProxyLimit }),
-      ...(isPriceMoved(block.finalBid) ? { priceMoved: block.finalBid } : {}),
+      ...(block.finalBid !== undefined &&
+      priceMovedTo(block.finalBid) !== undefined
+        ? { priceMoved: block.finalBid }
+        : {}),
     };
   }
   return undefined;
-}
-
-// Только отказ «не по цене»: остальные исходы читаются по снимку или не нужны
-// после первой правки, а этот человек иначе не увидел бы вовсе.
-function isPriceMoved(
-  outcome: FinalBidOutcome | undefined,
-): outcome is FinalBidOutcome {
-  return (
-    outcome !== undefined &&
-    (outcome.kind === "price-changed" ||
-      (outcome.kind === "refused" &&
-        outcome.refusal.kind === "bid-not-at-next-price"))
-  );
 }
 
 function withProxyLimit(

@@ -265,6 +265,22 @@ describe("live cards", () => {
     ).toBeUndefined();
   });
 
+  it("drops the price-moved reply when the card moves to another lot", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    const moved = { kind: "price-changed" as const, next: rub(1400) };
+    cards.shown(7, 70, { ...opened, priceMoved: moved });
+    stream.emit(live(LOT_B, 1, 500));
+    await flush();
+    stream.emit(live(LOT_A, 5, 1500));
+    await flush();
+    expect(
+      lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toBeUndefined();
+    expect(
+      lotOf(edits[1]?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toBeUndefined();
+  });
+
   it("takes the price-moved reply of the card body", () => {
     const body: AuctionScreenBody = {
       blocks: [
