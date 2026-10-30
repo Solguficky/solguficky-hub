@@ -210,6 +210,24 @@ describe("edit limiter", () => {
       expect(edits.filter((e) => e.chatId < 100)).toHaveLength(15);
     });
 
+    it("keeps the background moving while the foreground uses fifteen slots", async () => {
+      const time = manualClock();
+      const limiter = createEditLimiter({ clock: time.clock });
+      const { edits, task } = recorder(time.now);
+      for (let second = 0; second < 3; second += 1) {
+        for (let chat = 1; chat <= 15; chat += 1) {
+          limiter.submit(chat, `${chat}:1`, task(chat, second));
+        }
+        for (let chat = 101; chat <= 110; chat += 1) {
+          limiter.submit(chat, `bc:${chat}`, task(chat, second), "background");
+        }
+        await time.advance(1_000);
+      }
+      const background = edits.filter((e) => e.chatId > 100);
+      // Десять свободных мест в секунду не простаивают.
+      expect(background.length).toBeGreaterThanOrEqual(25);
+    });
+
     it("serves the foreground first when both wait", async () => {
       const time = manualClock();
       const limiter = createEditLimiter({

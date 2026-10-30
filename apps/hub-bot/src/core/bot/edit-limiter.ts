@@ -12,8 +12,10 @@
 //
 // Фоновая полоса (PER-826): трансляция хода торгов правит сообщение каждого
 // подписчика на каждую ставку, и их десятки. Её правки идут после остальных и
-// стартуют, только пока в окне занято меньше `BACKGROUND_SLOTS` из 25: у
-// карточки финала и пульта всегда остаётся запас, и трансляция их не задерживает.
+// стартуют, только пока своих стартов в окне меньше `BACKGROUND_SLOTS` из 25:
+// у карточки финала и пульта всегда остаётся запас, и трансляция их не
+// задерживает. Считаются именно её старты, а не все: иначе пятнадцать правок
+// карточек в секунду оставили бы десять свободных мест без дела.
 
 export type EditOutcome =
   | { kind: "done" }
@@ -93,6 +95,8 @@ export function createEditLimiter(
   const chatFree = new Map<number, number>();
   // Моменты начала правок за последнее окно.
   let starts: number[] = [];
+  // Из них — старты фоновой полосы.
+  let backgroundStarts: number[] = [];
   let pausedUntil = 0;
   let cancelWake: (() => void) | undefined;
   let wakeAt = Number.POSITIVE_INFINITY;
@@ -116,6 +120,7 @@ export function createEditLimiter(
     waiting.delete(key);
     inFlight.add(key);
     starts.push(now);
+    if (entry.background) backgroundStarts.push(now);
     chatFree.set(entry.chatId, now + chatIntervalMs);
     void entry
       .task()
@@ -137,6 +142,7 @@ export function createEditLimiter(
     if (closed) return;
     const now = clock.now();
     starts = starts.filter((at) => at > now - WINDOW_MS);
+    backgroundStarts = backgroundStarts.filter((at) => at > now - WINDOW_MS);
     for (const [chatId, at] of chatFree) {
       if (at <= now) chatFree.delete(chatId);
     }
@@ -152,8 +158,13 @@ export function createEditLimiter(
           Number(a.background) - Number(b.background) || a.since - b.since,
       );
     for (const [key, entry] of queue) {
-      if (starts.length >= (entry.background ? backgroundSlots : perSecond)) {
+      if (starts.length >= perSecond) {
         next = Math.min(next, (starts[0] ?? now) + WINDOW_MS);
+        break;
+      }
+      if (entry.background && backgroundStarts.length >= backgroundSlots) {
+        next = Math.min(next, (backgroundStarts[0] ?? now) + WINDOW_MS);
+        // Остальные в очереди — тоже фоновые: передние уже обслужены.
         break;
       }
       const free = chatFree.get(entry.chatId) ?? 0;

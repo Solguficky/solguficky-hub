@@ -2633,7 +2633,7 @@ describe("final lot card in the hub", () => {
       "<b>1 500 ₽</b>",
     );
 
-    await bot.handleUpdate(press("v1:bc:x"));
+    await bot.handleUpdate(press("v1:bc:x", { message_id: messageId }));
     await flush();
     const stopped = calls.filter(
       (call) =>

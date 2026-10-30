@@ -11,8 +11,6 @@ import { money as formatMoney } from "./core/format.js";
 // несёт, а на экране зала её даёт состояние лота внутри Auction. «К концу
 // онлайн-торгов» и время лота — по той же причине.
 
-export const watchStartedLine =
-  "Слежу за торгами: сообщение правится на каждую ставку";
 export const watchStopLabel = "Не следить";
 export const watchStoppedLine = "Трансляция остановлена";
 export const watchFinishedLine = "Аукцион завершён";

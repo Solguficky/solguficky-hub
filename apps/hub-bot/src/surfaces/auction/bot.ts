@@ -317,7 +317,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   // «Не следить» под сообщением трансляции (PER-826): действие над своим
   // чатом, без дерева и без разрешения личности.
   direct.callbackQuery(BROADCAST_STOP_DATA, async (ctx) => {
-    await broadcasts?.stop(ctx.chat.id);
+    await broadcasts?.stop(ctx.chat.id, ctx.callbackQuery.message?.message_id);
     await ctx.answerCallbackQuery().catch(() => undefined);
   });
 

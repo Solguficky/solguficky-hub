@@ -74,6 +74,10 @@ function fakeWatches() {
     emit(state: AuctionWatchState) {
       for (const each of [...listeners.values()]) each.listener(state);
     },
+    // Поток закрылся сам, как после последнего состояния финала.
+    end() {
+      for (const each of [...listeners.values()]) each.ended?.();
+    },
     subscribers: () => listeners.size,
     subscriptions: () => subscriptions,
   };
@@ -114,7 +118,11 @@ function memoryStore() {
 
 function fakeApi(outcome: () => LiveEditOutcome = () => ({ kind: "done" })) {
   const sent: { chatId: number; text: string }[] = [];
-  const edits: { target: BroadcastTarget; text: string; final: boolean }[] = [];
+  const edits: {
+    target: { chatId: number; messageId: number };
+    text: string;
+    final: boolean;
+  }[] = [];
   let id = 500;
   const api: BroadcastApi = {
     send: async (input) => {
@@ -382,5 +390,122 @@ describe("live bid broadcast", () => {
     await flush();
     expect(broadcasts.size()).toBe(0);
     expect(feed.subscribers()).toBe(0);
+  });
+
+  // Поток закрывается сразу после последнего состояния финала: правка с
+  // концом финала не должна пропасть вместе с подпиской.
+  it("still delivers the end of the auction when the stream closes right after it", async () => {
+    const { feed, telegram, limiter, store, broadcasts } = setup();
+    await broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer });
+    const trading = lot({ version: 1, price: 1500, next: 1750 });
+    feed.emit(stateOf(trading));
+    await flush();
+    feed.emit(stateOf(trading, true));
+    feed.end();
+    await limiter.settle();
+    await flush();
+    expect(telegram.edits.at(-1)).toMatchObject({
+      text: expect.stringContaining("Аукцион завершён"),
+      final: true,
+    });
+    expect(store.records.size).toBe(0);
+    expect(broadcasts.size()).toBe(0);
+  });
+
+  it("closes the message when the stream ends without the end of the final", async () => {
+    const { feed, telegram, store, broadcasts } = setup();
+    await broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer });
+    feed.emit(stateOf(lot({ version: 1, price: 1500, next: 1750 })));
+    await flush();
+    feed.end();
+    await flush();
+    expect(telegram.edits.at(-1)).toMatchObject({
+      text: "Трансляция остановлена",
+      final: true,
+    });
+    expect(store.records.size).toBe(0);
+  });
+
+  it("sends nothing when the final is over before the first message", async () => {
+    const { feed, telegram, broadcasts } = setup();
+    await broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer });
+    feed.emit(stateOf(undefined, true));
+    await flush();
+    expect(telegram.sent).toHaveLength(0);
+    expect(broadcasts.size()).toBe(0);
+  });
+
+  it("opens one broadcast for two presses in a row", async () => {
+    const { feed, telegram, broadcasts } = setup();
+    await Promise.all([
+      broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer }),
+      broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer }),
+    ]);
+    feed.emit(stateOf(lot({ version: 1, price: 1500, next: 1750 })));
+    await flush();
+    expect(telegram.sent).toHaveLength(1);
+    expect(feed.subscribers()).toBe(1);
+  });
+
+  it("closes a message that was still on its way when the broadcast was stopped", async () => {
+    const feed = fakeWatches();
+    const limiter = immediateLimiter();
+    const edits: { messageId: number; text: string }[] = [];
+    let release: (id: number) => void = () => {};
+    const broadcasts = createLiveBroadcasts({
+      watches: feed.watches,
+      limiter: limiter.limiter,
+      names: { getDisplayNames: async () => ({}) },
+      api: {
+        send: () => new Promise<number>((resolve) => (release = resolve)),
+        edit: async (target, input) => {
+          edits.push({ messageId: target.messageId, text: input.text });
+          return { kind: "done" };
+        },
+      },
+      timeZone: "UTC",
+    });
+    await broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer });
+    feed.emit(stateOf(lot({ version: 1, price: 1500, next: 1750 })));
+    await flush();
+    await broadcasts.stop(7);
+    release(900);
+    await flush();
+    expect(edits).toEqual([{ messageId: 900, text: "Трансляция остановлена" }]);
+  });
+
+  describe("stop under a message the registry does not lead", () => {
+    it("closes an old message and leaves the live broadcast alone", async () => {
+      const { feed, telegram, broadcasts } = setup();
+      await broadcasts.start({ chatId: 7, auctionId: AUCTION, viewer });
+      feed.emit(stateOf(lot({ version: 1, price: 1500, next: 1750 })));
+      await flush();
+      await broadcasts.stop(7, 12);
+      expect(telegram.edits).toHaveLength(1);
+      expect(telegram.edits[0]).toMatchObject({
+        target: { messageId: 12 },
+        text: "Трансляция остановлена",
+      });
+      expect(broadcasts.size()).toBe(1);
+    });
+
+    it("stops a message of a previous process and keeps restore from reviving it", async () => {
+      const seed: BroadcastTarget = {
+        chatId: 7,
+        messageId: 321,
+        auctionId: AUCTION,
+        viewer,
+      };
+      const { telegram, store, broadcasts } = setup({ seed });
+      // Нажали раньше, чем восстановление прочитало запись.
+      await broadcasts.stop(7, 321);
+      expect(telegram.edits[0]).toMatchObject({
+        target: { messageId: 321 },
+        text: "Трансляция остановлена",
+      });
+      expect(store.records.size).toBe(0);
+      expect(await broadcasts.restore()).toBe(0);
+      expect(broadcasts.size()).toBe(0);
+    });
   });
 });

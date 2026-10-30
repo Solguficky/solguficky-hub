@@ -2100,10 +2100,11 @@ function lotPress(
     rich?: boolean;
     data?: string;
     back?: string;
+    messageId?: number;
   } = {},
 ): Update {
   const base = {
-    message_id: 7,
+    message_id: options.messageId ?? 7,
     date: 0,
     chat: privateChat,
     ...(options.back === undefined
@@ -3945,7 +3946,7 @@ describe("final lot card", () => {
     expect(broadcastEdit).toHaveLength(1);
     expect(plain(textOfCall(broadcastEdit[0]))).toContain("<b>1 500 ₽</b>");
 
-    await bot.handleUpdate(press("v1:bc:x"));
+    await bot.handleUpdate(lotPress({ data: "v1:bc:x", messageId }));
     await flush();
     const stopped = calls.filter(
       ({ method, payload }) =>

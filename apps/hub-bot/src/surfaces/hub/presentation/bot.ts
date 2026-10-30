@@ -1376,7 +1376,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   // чатом, без личности и без дерева.
   bot.callbackQuery(BROADCAST_STOP_DATA, async (ctx) => {
     const chatId = ctx.chat?.id;
-    if (chatId !== undefined) await liveBroadcasts?.stop(chatId);
+    if (chatId !== undefined) {
+      await liveBroadcasts?.stop(chatId, ctx.callbackQuery.message?.message_id);
+    }
     await ctx.answerCallbackQuery().catch(() => undefined);
   });
   bot.on("callback_query:data", (ctx) =>

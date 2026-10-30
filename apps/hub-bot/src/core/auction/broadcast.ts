@@ -5,7 +5,7 @@ import {
   watchStoppedLine,
 } from "../../auction-broadcast.js";
 import type { AuctionPort, LotView, Viewer } from "../../auction-ui/index.js";
-import type { EditLimiter } from "../bot/edit-limiter.js";
+import type { EditLimiter, EditOutcome } from "../bot/edit-limiter.js";
 import { cachedNames, type LiveEditOutcome } from "./live-cards.js";
 import type { AuctionWatches, AuctionWatchState } from "./watch.js";
 
@@ -39,7 +39,7 @@ export type BroadcastApi = {
   send(input: { chatId: number; text: string }): Promise<number | undefined>;
   /** Правка без звука; `final` — кнопку «Не следить» снять. */
   edit(
-    target: BroadcastTarget,
+    target: { chatId: number; messageId: number },
     input: { text: string; final: boolean },
   ): Promise<LiveEditOutcome>;
 };
@@ -54,8 +54,13 @@ export type LiveBroadcasts = {
     auctionId: string;
     viewer: Viewer;
   }): Promise<void>;
-  /** «Не следить»: трансляция снимается, сообщение получает последнюю правку. */
-  stop(chatId: number): Promise<void>;
+  /**
+   * «Не следить»: трансляция снимается, сообщение получает последнюю правку.
+   * `pressed` — сообщение, под которым нажали: если это не то, что ведёт
+   * реестр (сообщение давно мертво, вытеснено или процесс только встал), оно
+   * получает правку независимо от реестра, а живая трансляция не страдает.
+   */
+  stop(chatId: number, pressed?: number): Promise<void>;
   /** Читает записи хранилища после старта и продолжает правкой тех же сообщений. */
   restore(): Promise<number>;
   size(): number;
@@ -97,6 +102,8 @@ export function createLiveBroadcasts(options: {
   const now = options.now ?? (() => new Date());
   const entries = new Map<number, Entry>();
   const sending = new Set<Entry>();
+  // Сообщения, остановленные кнопкой раньше, чем их прочитало восстановление.
+  const stopped = new Set<string>();
   const keyOf = (entry: Entry) => `bc:${entry.chatId}:${entry.messageId}`;
   const clock = () =>
     new Intl.DateTimeFormat("ru-RU", {
@@ -113,6 +120,29 @@ export function createLiveBroadcasts(options: {
     options.limiter.drop(keyOf(entry));
     entry.leave();
     void options.store?.remove(entry.chatId);
+  };
+
+  // Последняя правка сообщения, которое больше никто не ведёт. Идёт тем же
+  // лимитером под ключом сообщения: правка в полёте не перепишет её, а `429`
+  // повторит ту же правку.
+  const closeMessage = (chatId: number, messageId: number) => {
+    options.limiter.submit(
+      chatId,
+      `bc:${chatId}:${messageId}`,
+      async (): Promise<EditOutcome> => {
+        try {
+          const outcome = await options.api.edit(
+            { chatId, messageId },
+            { text: watchStoppedLine, final: true },
+          );
+          // Сообщения нет или правка не прошла: повторять нечего.
+          return outcome.kind === "retry-after" ? outcome : { kind: "done" };
+        } catch (cause) {
+          options.onError?.(cause);
+          return { kind: "done" };
+        }
+      },
+    );
   };
 
   const lotOf = (entry: Entry): LotView | undefined => {
@@ -194,8 +224,10 @@ export function createLiveBroadcasts(options: {
             forget(entry);
             return { kind: "done" };
           case "failed":
-            // Правка не дошла: следующее состояние потока правит заново.
+            // Правка не дошла: следующее состояние потока правит заново, а
+            // после конца финала следующего не будет.
             entry.lastText = undefined;
+            if (finished) forget(entry);
             return { kind: "done" };
           case "retry-after":
             return outcome;
@@ -218,15 +250,27 @@ export function createLiveBroadcasts(options: {
       schedule(entry);
       return;
     }
+    // Торги кончились до первого сообщения: показывать нечего.
+    if (state.finished) {
+      forget(entry);
+      return;
+    }
     if (sending.has(entry)) return;
     sending.add(entry);
     try {
       const text = await textOf(entry);
+      // Чтение имён заняло время, трансляцию могли снять: сообщения нет.
+      if (entries.get(entry.chatId) !== entry) return;
       const messageId = await options.api.send({
         chatId: entry.chatId,
         text,
       });
-      if (entries.get(entry.chatId) !== entry) return;
+      if (entries.get(entry.chatId) !== entry) {
+        // Трансляцию сняли или вытеснили, пока сообщение было в пути: оно
+        // ушло, и без правки осталось бы мёртвым с живой кнопкой.
+        if (messageId !== undefined) closeMessage(entry.chatId, messageId);
+        return;
+      }
       if (messageId === undefined) {
         forget(entry);
         return;
@@ -239,8 +283,14 @@ export function createLiveBroadcasts(options: {
         auctionId: entry.auctionId,
         viewer: entry.viewer,
       });
+      // Запись не должна пережить трансляцию, снятую за время записи.
+      if (entries.get(entry.chatId) !== entry) {
+        if (!entries.has(entry.chatId))
+          void options.store?.remove(entry.chatId);
+        return;
+      }
       // Состояние, пришедшее за время отправки, правит сообщение.
-      if (entry.latest !== state || state.finished) schedule(entry);
+      if (entry.latest !== state) schedule(entry);
     } catch (cause) {
       options.onError?.(cause);
       forget(entry);
@@ -273,9 +323,20 @@ export function createLiveBroadcasts(options: {
       (state) => {
         void onState(entry, state);
       },
-      () => forget(entry),
+      () => {
+        // Поток кончился с последним состоянием финала: его правка уже в
+        // очереди и сама снимет трансляцию.
+        if (entry.latest?.finished === true && entry.messageId !== undefined) {
+          return;
+        }
+        const { messageId } = entry;
+        forget(entry);
+        if (messageId !== undefined) closeMessage(entry.chatId, messageId);
+      },
     );
     const prior = entries.get(input.chatId);
+    // Заново открытый чат встаёт в конец очереди вытеснения.
+    entries.delete(input.chatId);
     entries.set(input.chatId, entry);
     if (prior !== undefined) {
       options.limiter.drop(keyOf(prior));
@@ -288,23 +349,34 @@ export function createLiveBroadcasts(options: {
     }
   };
 
-  const stop = async (chatId: number) => {
+  const stop = async (chatId: number, pressed?: number) => {
     const entry = entries.get(chatId);
-    if (entry === undefined) return;
-    const { messageId } = entry;
-    forget(entry);
-    if (messageId === undefined) return;
-    await options.api
-      .edit(
-        {
-          chatId,
-          messageId,
-          auctionId: entry.auctionId,
-          viewer: entry.viewer,
-        },
-        { text: watchStoppedLine, final: true },
-      )
-      .catch(() => undefined);
+    if (
+      entry !== undefined &&
+      (pressed === undefined ||
+        entry.messageId === pressed ||
+        entry.messageId === undefined)
+    ) {
+      const { messageId } = entry;
+      forget(entry);
+      if (messageId !== undefined) closeMessage(chatId, messageId);
+      return;
+    }
+    if (pressed === undefined) return;
+    // Нажали под сообщением, которого реестр не ведёт: его правят сами, а
+    // запись о нём снимается, чтобы восстановление не подняло его снова.
+    stopped.add(`${chatId}:${pressed}`);
+    closeMessage(chatId, pressed);
+    if (entry === undefined) {
+      const records = (await options.store?.list()) ?? [];
+      if (
+        records.some(
+          (each) => each.chatId === chatId && each.messageId === pressed,
+        )
+      ) {
+        await options.store?.remove(chatId);
+      }
+    }
   };
 
   return {
@@ -312,8 +384,13 @@ export function createLiveBroadcasts(options: {
       const prior = entries.get(input.chatId);
       // Та же трансляция уже идёт: второго сообщения нет.
       if (prior !== undefined && prior.auctionId === input.auctionId) return;
-      await stop(input.chatId);
+      // Прежнюю снимают и новую открывают без пауз между ними: два нажатия
+      // подряд не должны открыть две трансляции на один чат.
+      if (prior !== undefined) forget(prior);
       open(input);
+      if (prior?.messageId !== undefined) {
+        closeMessage(prior.chatId, prior.messageId);
+      }
     },
     stop,
     async restore() {
@@ -321,6 +398,10 @@ export function createLiveBroadcasts(options: {
       for (const target of targets) {
         // Нажатие нового процесса, успевшее раньше, свежее записи.
         if (entries.has(target.chatId)) continue;
+        if (stopped.has(`${target.chatId}:${target.messageId}`)) {
+          void options.store?.remove(target.chatId);
+          continue;
+        }
         open(target);
       }
       return targets.length;
