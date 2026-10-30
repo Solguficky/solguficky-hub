@@ -25,6 +25,17 @@ const banner = document.getElementById("banner");
 let current = initial;
 let clock = null;
 
+// Туман живёт поверх сцен и не пересоздаётся: каждый снимок рисует заново только сцену, и его движение не дёргается.
+const mist = document.createElement("div");
+mist.className = "fog";
+const stage = document.createElement("div");
+stage.className = "stage";
+main.replaceChildren(mist, stage);
+
+function show(...nodes) {
+  stage.replaceChildren(...nodes);
+}
+
 /**
  * Снимок неожиданной формы не должен останавливать цикл подключения: отрисовка, которая упала, оставляет экран в
  * «Подключении», а следующий снимок рисуется заново.
@@ -35,7 +46,7 @@ function apply(next) {
     render(current);
   } catch (error) {
     console.error("screen: state is not drawable", error);
-    main.replaceChildren(message("Подключение…"));
+    show(message("Подключение…"));
   }
 }
 
@@ -117,15 +128,15 @@ function render(state) {
   banner.textContent = state.status === "stale" ? "Нет связи — данные могут быть устаревшими" : "";
   if (state.status === "missing") {
     shown = null;
-    main.replaceChildren(message("Аукцион не найден"));
+    show(message("Аукцион не найден"));
     return;
   }
   if (state.view === null) {
-    main.replaceChildren(message("Подключение…"));
+    show(message("Подключение…"));
     return;
   }
   const now = moment(state.view);
-  main.replaceChildren(...phase(state.view, change(shown, now)));
+  show(...phase(state.view, change(shown, now)));
   shown = now;
   const elapsed = main.querySelector(".elapsed[data-started]");
   if (elapsed !== null) {
@@ -137,34 +148,36 @@ function render(state) {
   }
 }
 
-/** Отпечаток снимка для сравнения: фаза, лот на экране и цена лота в торгах. */
+/** Отпечаток снимка для сравнения: фаза, лот на экране, цена и лидер лота в торгах. */
 function moment(view) {
   switch (view.phase) {
     case "lot":
-      return { phase: view.phase, lot: view.lot.id, price: view.lot.price.amount };
+      return { phase: view.phase, lot: view.lot.id, price: view.lot.price.amount, leader: view.lot.leader };
     case "between":
-      return { phase: view.phase, lot: view.closed.id, price: null };
+      return { phase: view.phase, lot: view.closed.id, price: null, leader: null };
     default:
-      return { phase: view.phase, lot: null, price: null };
+      return { phase: view.phase, lot: null, price: null, leader: null };
   }
 }
 
 /**
- * `bid` — тот же лот с новой ценой: перебитие, и экран отыгрывает его. `scene` — новая фаза или новый лот: печать
- * перерыва и появление сцены. Первый снимок после открытия страницы — не событие: экран просто рисуется.
+ * `bid` — перебитие того же лота: цена выросла, или первая ставка дала лидера по стартовой цене. Снижение цены
+ * (снятие участника) перебитием не считается. `scene` — новая фаза или новый лот: печать перерыва. Первый снимок после
+ * открытия страницы — не событие: экран просто рисуется.
  */
 function change(before, now) {
   if (before === null) return { bid: false, scene: false };
   const sameLot = before.phase === now.phase && before.lot === now.lot;
-  return { bid: sameLot && now.phase === "lot" && before.price !== now.price, scene: !sameLot };
+  const raised = now.price > before.price || (now.price === before.price && before.leader === null && now.leader !== null);
+  return { bid: sameLot && now.phase === "lot" && raised, scene: !sameLot };
 }
 
 function phase(view, change) {
   switch (view.phase) {
     case "upcoming":
-      return [fog(), centered(lookFor(0), heading("Аукцион"), line("finale", view.final ? finalAt(view) : "Торги идут онлайн"))];
+      return [centered(mascot(0, ""), heading("Аукцион"), line("finale", view.final ? finalAt(view) : "Торги идут онлайн"))];
     case "lineup":
-      return [fog(), centered(lookFor(0), heading("Состав финала"), lineup(view.lineup), line("finale", finalAt(view)))];
+      return [centered(mascot(0, ""), heading("Состав финала"), lineup(view.lineup), line("finale", finalAt(view)))];
     case "lot":
       return live(view.lot, change);
     case "between":
@@ -216,24 +229,20 @@ function live(lot, change) {
     stache(fresh),
   );
   const leader = el("div", hasLeader ? "leader" : "leader none", hasLeader ? lot.leader : "Ставок пока нет");
-  const top = lot.bids[0];
-  if (hasLeader && top !== undefined && top.amount.amount === lot.price.amount) leader.append(channel(top.channel));
+  if (leaderBid(lot)) leader.append(channel(lot.bids[0].channel));
   lead.append(leader);
-  side.append(lead, bids(before(lot), change.bid));
+  side.append(lead, bids(lot.bids.slice(leaderBid(lot) ? 1 : 0).slice(0, 3), change.bid));
 
-  const scene = [fog(), lens(lot, `lens${fresh}`), el("div", "chain"), guest(lot.price.amount, change.bid), side];
-  if (change.bid) scene.push(bat());
-  return scene;
+  return [lens(lot, `lens${fresh}`), el("div", "chain"), guest(lot, change.bid), side, ...(change.bid ? [bat()] : [])];
 }
 
 /**
- * Ставки перед лидером: поток несёт последние ставки сверху, и первая из них — ставка лидера, если цену дала она.
- * Прокси-ставка или снятый участник могут дать цену без такой строки, тогда в карточки идут три первые.
+ * Первая из последних ставок — ставка лидера, если её сделал лидер и она дала цену: тогда её канал идёт к имени
+ * лидера, а в карточки — три ставки после неё. Прокси-ставка или снятый участник могут дать цену без такой строки.
  */
-function before(lot) {
+function leaderBid(lot) {
   const top = lot.bids[0];
-  const leaderFirst = top !== undefined && lot.leader !== null && top.amount.amount === lot.price.amount;
-  return lot.bids.slice(leaderFirst ? 1 : 0).slice(0, 3);
+  return top !== undefined && lot.leader !== null && top.name === lot.leader && top.amount.amount === lot.price.amount;
 }
 
 function chip(label, value, cls = "") {
@@ -242,8 +251,12 @@ function chip(label, value, cls = "") {
   return item;
 }
 
+function channelName(value) {
+  return value === "hall" ? "зал" : "онлайн";
+}
+
 function channel(value) {
-  return el("span", `channel ${value === "hall" ? "hall" : "online"}`, value === "hall" ? "зал" : "онлайн");
+  return el("span", `channel ${value === "hall" ? "hall" : "online"}`, channelName(value));
 }
 
 function bids(list, fresh) {
@@ -253,7 +266,7 @@ function bids(list, fresh) {
     item.append(
       el("span", "bid-name", bid.name),
       el("span", "bid-amount", money(bid.amount)),
-      el("span", "bid-channel", bid.channel === "hall" ? "зал" : "онлайн"),
+      el("span", "bid-channel", channelName(bid.channel)),
     );
     items.append(item);
   });
@@ -285,7 +298,7 @@ function between(closed, next, change) {
   } else {
     side.append(el("div"));
   }
-  return [fog(), lens(closed, "lens"), el("div", "chain"), seal, side];
+  return [lens(closed, "lens"), el("div", "chain"), seal, side];
 }
 
 function sealText(outcome) {
@@ -302,36 +315,43 @@ function sealText(outcome) {
 /** Итог: слева общая сумма, справа гостевая книга — кто что забрал и за сколько, с ростом к стартовой. */
 function summary(title, sold, totals) {
   const grand = el("div", "grand");
-  grand.append(
-    mascot(0, ""),
-    heading(title),
-    el("div", "label", "Собрано"),
-    el("div", "price", sums(totals.all)),
-    stache(""),
-    totalsLine(totals),
-  );
+  grand.append(mascot(0, ""), heading(title), el("div", "label", "Собрано"));
+  // Валюта суммы приходит только с продажами: без них суммы нет, и экран не выдумывает «0 ₽» в чужой валюте.
+  if (totals.all.count > 0) grand.append(el("div", "price", sums(totals.all)), stache(""));
+  grand.append(totalsLine(totals));
   const ledger = el("div", "ledger");
   ledger.append(el("h2", "ledger-title", "Кто что забрал"));
   const list = sold ?? [];
   if (list.length === 0) ledger.append(el("p", "ledger-empty", "Ничего не продано"));
   else ledger.append(soldLots(list));
-  return [fog(), grand, ledger];
+  return [grand, ledger];
 }
 
 /** «3 лота · онлайн 2 на 4 000 ₽ · в финале 1 на 6 500 ₽»: сумм по валютам может быть несколько. */
 function totalsLine(value) {
-  const parts = [value.all.count === 0 ? "ничего не продано" : `${value.all.count} ${lots(value.all.count)}`];
+  const parts = [`${value.all.count} ${lots(value.all.count)}`];
   if (value.online.count > 0) parts.push(`онлайн ${value.online.count} на ${sums(value.online)}`);
   if (value.final.count > 0) parts.push(`в финале ${value.final.count} на ${sums(value.final)}`);
   return el("p", "totals", parts.join(" · "));
 }
 
 function sums(sales) {
-  return sales.count === 0 ? money({ amount: 0, currency: "RUB" }) : sales.sums.map(money).join(" + ");
+  return sales.sums.map(money).join(" + ");
+}
+
+/**
+ * Книга вмещает весь итог без прокрутки: до семи лотов — одной колонкой, дальше — двумя и тремя всё мельче. Самый
+ * плотный вид прячет рост, чтобы строка осталась в одну высоту.
+ */
+function density(count) {
+  if (count <= 7) return "sold";
+  if (count <= 18) return "sold many";
+  if (count <= 24) return "sold many dense";
+  return "sold crowd";
 }
 
 function soldLots(list) {
-  const items = el("ol", list.length > 9 ? "sold many" : "sold");
+  const items = el("ol", density(list.length));
   for (const lot of list) {
     const item = el("li", "sold-lot");
     item.append(ownImage(lot.image, "sold-photo") ?? el("span", "sold-photo"));
@@ -343,7 +363,7 @@ function soldLots(list) {
     const fromStart = growthText(lot.price, lot.start);
     if (fromStart !== null) price.append(el("span", "sold-growth", `к стартовой ${fromStart}`));
     const fromOnline = growthText(lot.price, lot.online_end);
-    if (fromOnline !== null) price.append(el("span", "sold-growth", `к онлайн-торгам ${fromOnline}`));
+    if (fromOnline !== null) price.append(el("span", "sold-growth", `к концу онлайн-торгов ${fromOnline}`));
     item.append(text, price);
     items.append(item);
   }
@@ -361,7 +381,8 @@ function growthText(price, base) {
 }
 
 function lineup(lots) {
-  const items = el("ol", "lineup");
+  // Длинный состав — мельче, чтобы заголовок и время финала остались на сцене.
+  const items = el("ol", lots.length > 10 ? "lineup dense" : "lineup");
   for (const lot of lots) {
     const item = el("li");
     item.append(smallLens(lot), el("span", "", lot.title ?? "Лот без названия"));
@@ -403,9 +424,9 @@ function ownImage(image, cls) {
   return node;
 }
 
-function guest(amount, fresh) {
+function guest(lot, fresh) {
   const node = el("div", "guest");
-  node.append(mascot(lookOf(amount), fresh ? " fresh" : ""));
+  node.append(mascot(lookOf(lot.price.amount, lot.step?.amount), fresh ? " fresh" : ""));
   return node;
 }
 
@@ -417,15 +438,12 @@ function centered(...children) {
 
 /**
  * Образ Гуфовского меняется с каждой ставкой (PER-839): его выбирает сама цена, поэтому все экраны зала в один момент
- * показывают один и тот же образ, а повторный снимок той же цены образ не меняет.
+ * показывают один и тот же образ, а повторный снимок той же цены образ не меняет. Номер цены на сетке шага растёт на
+ * единицу с каждой ставкой финала, поэтому соседние ставки получают разные образы; без шага образ берёт цена целиком.
  */
-function lookOf(amount) {
-  const hash = Math.imul(Math.floor(amount / 100), 2654435761) >>> 0;
-  return hash % LOOKS.length;
-}
-
-function lookFor(index) {
-  return mascot(index, "");
+function lookOf(amount, step) {
+  const position = step > 0 ? Math.floor(amount / step) : Math.floor(amount / 100);
+  return ((position % LOOKS.length) + LOOKS.length) % LOOKS.length;
 }
 
 // Векторы — постоянная разметка страницы, а не данные потока: ввод людей в неё не попадает.
@@ -464,10 +482,6 @@ function mascot(look, fresh) {
 
 function stache(fresh) {
   return svg(`stache${fresh}`, "0 0 100 36", `<path d="${STACHE}"/>`);
-}
-
-function fog() {
-  return el("div", "fog");
 }
 
 function bat() {

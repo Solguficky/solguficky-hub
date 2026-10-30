@@ -241,14 +241,19 @@ final class ScreenRoutesSpec
       }
     }
 
-    "serve the bundled fonts and let the page load them from its own origin" in {
-      Get("/screen/assets/unbounded-latin.woff2") ~> routeOf() ~> check {
-        status shouldBe StatusCodes.OK
-        responseAs[Array[Byte]].take(4).toSeq shouldBe "wOF2".getBytes(StandardCharsets.US_ASCII).toSeq
-        header("Content-Security-Policy").map(_.value).getOrElse("") should include("font-src 'self'")
+    "serve every font the stylesheet names and let the page load it from its own origin" in {
+      // Список шрифтов берётся из самой таблицы стилей: опечатка в имени файла или в списке отдаваемых файлов
+      // откатила бы экран на системный шрифт молча, без ошибки на странице.
+      val css = Get("/screen/assets/screen.css") ~> routeOf() ~> check(responseAs[String])
+      val fonts = """url\("([^"]+)"\)""".r.findAllMatchIn(css).map(_.group(1)).toList.distinct
+      fonts should have size 8
+      fonts.foreach { font =>
+        Get(s"/screen/assets/$font") ~> routeOf() ~> check {
+          withClue(font)(status shouldBe StatusCodes.OK)
+          responseAs[Array[Byte]].take(4).toSeq shouldBe "wOF2".getBytes(StandardCharsets.US_ASCII).toSeq
+          header("Content-Security-Policy").map(_.value).getOrElse("") should include("font-src 'self'")
+        }
       }
-      // Лицензия лежит рядом со шрифтами, но в список файлов страницы не входит.
-      Get("/screen/assets/OFL-Unbounded.txt") ~> routeOf() ~> check(status shouldBe StatusCodes.NotFound)
     }
 
     "answer not found for a resource outside the asset list" in {

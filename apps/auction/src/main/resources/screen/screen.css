@@ -120,6 +120,12 @@ main {
   font-size: 2cqw;
 }
 
+/* Сцена рисуется заново на каждый снимок, туман рядом с ней остаётся. */
+.stage {
+  position: absolute;
+  inset: 0;
+}
+
 .banner {
   position: fixed;
   inset: 0 0 auto;
@@ -159,7 +165,6 @@ main {
 @keyframes look-pop {
   from {
     transform: translateY(-14px) scale(0.6);
-    opacity: 0;
   }
 }
 
@@ -423,7 +428,6 @@ main {
 @keyframes deal {
   from {
     transform: translate(6cqw, -4cqw) rotate(12deg);
-    opacity: 0;
   }
 }
 
@@ -489,7 +493,6 @@ main {
 @keyframes seal {
   from {
     transform: scale(2) rotate(-30deg);
-    opacity: 0;
   }
 }
 
@@ -612,11 +615,25 @@ main {
   font-size: 1.6cqw;
 }
 
-/* Длинный итог — в две колонки и мельче, чтобы весь список влез без прокрутки. */
+/* Длинный итог — в две и три колонки и мельче, чтобы весь список влез без прокрутки (`density` в screen.js). */
 .sold.many {
   grid-template-columns: 1fr 1fr;
   column-gap: 2cqw;
-  font-size: 1.2cqw;
+  font-size: 1.25cqw;
+}
+
+.sold.many.dense {
+  font-size: 0.95cqw;
+}
+
+.sold.crowd {
+  grid-template-columns: 1fr 1fr 1fr;
+  column-gap: 1.6cqw;
+  font-size: 0.85cqw;
+}
+
+.sold.crowd .sold-growth {
+  display: none;
 }
 
 .sold-lot {
@@ -718,6 +735,23 @@ main {
   width: 9cqw;
 }
 
+.lineup.dense {
+  gap: 1cqw 1.4cqw;
+  font-size: 1.2cqw;
+}
+
+.lineup.dense li {
+  width: 9cqw;
+}
+
+.lineup.dense .next-lens {
+  width: 6cqw;
+}
+
+.center:has(.lineup.dense) .mascot {
+  display: none;
+}
+
 /* --- Хэллоуин: туман и летучая мышь ------------------------------------------------------------------------ */
 
 .fog {
@@ -792,6 +826,6 @@ body[data-status="stale"] main {
   filter: grayscale(1);
 }
 
-body[data-status="stale"] .price {
+body[data-status="stale"] .current-price {
   text-decoration: line-through;
 }
