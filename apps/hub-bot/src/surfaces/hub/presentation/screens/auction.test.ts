@@ -589,7 +589,7 @@ describe("feed and history in the hub shell", () => {
         .flat()
         .filter((button) => !/^(‹ |←$|→$)/.test(button.text))
         .map((button) => plain(button.text)),
-    ).toEqual(["Носки · старт 500 ₽", "Лот без названия · не продан"]);
+    ).toEqual(["Носки · старт 500 ₽", "💤 Лот без названия · не продан"]);
   });
 
   // Перенос строки в названии не плодит строк сводки: вторая выглядела бы
@@ -1250,8 +1250,8 @@ describe("live final in the hub shell", () => {
     expect(plain(screen.text)).not.toContain("не лидируешь");
     expect(labels(screen).slice(0, 3)).toEqual([
       "▶ Футболка · на торгах",
-      "Ваза · в составе · 400 ₽",
-      "Кружка · продан за 900 ₽",
+      "🏁 Ваза · в составе · 400 ₽",
+      "🤝 Кружка · продан за 900 ₽",
     ]);
   });
 
@@ -1265,8 +1265,8 @@ describe("live final in the hub shell", () => {
     const screen = feedOf();
     expect(plain(screen.text)).toContain("Ты пока не лидируешь");
     expect(labels(screen).slice(0, 2)).toEqual([
-      "Футболка · 1 200 ₽",
-      "Ваза · 400 ₽",
+      "🔥 Футболка · 1 200 ₽",
+      "🏁 Ваза · 400 ₽",
     ]);
   });
 

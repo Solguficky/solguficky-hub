@@ -352,6 +352,8 @@ export const screenCatalog = {
     nav: "tree",
     title: "Выбрать лот",
     parent: "predictions",
+    // До двенадцати лотов страницы, «Очистить», стрелки и возврат (PER-836).
+    maxRows: 15,
   },
   "prediction-name-choice": {
     class: "screen",

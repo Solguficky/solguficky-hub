@@ -70,6 +70,15 @@ export const pictogram = {
   history: "🗂",
   /** Промо-видео аукциона в корне аукциона обоих ботов (PER-774). */
   promo: "🎬",
+  /**
+   * Группы лотов в списке «Лоты» (PER-836): значок стоит в начале кнопки
+   * лота, перед названием организатора, — на торгах, ждёт финала или в
+   * составе, продан, не продан.
+   */
+  lotTrading: "🔥",
+  lotHeld: "🏁",
+  lotSold: "🤝",
+  lotUnsold: "💤",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -126,7 +135,21 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.photo]: ["Фото"],
   [pictogram.history]: ["Архив", "Прошедшие"],
   [pictogram.promo]: ["Промо"],
+  // Знак группы лота стоит перед названием лота организатора, а не перед
+  // словом бота: слов у него нет.
+  [pictogram.lotTrading]: [],
+  [pictogram.lotHeld]: [],
+  [pictogram.lotSold]: [],
+  [pictogram.lotUnsold]: [],
 };
+
+/** Знаки групп лотов: линтер пропускает их перед любым названием лота. */
+export const lotGroupSigns: ReadonlySet<string> = new Set([
+  pictogram.lotTrading,
+  pictogram.lotHeld,
+  pictogram.lotSold,
+  pictogram.lotUnsold,
+]);
 
 /**
  * Один знак на раздел во всех ботах, тот же, что в тексте (решение владельца

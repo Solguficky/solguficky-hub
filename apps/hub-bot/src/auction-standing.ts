@@ -292,6 +292,34 @@ export function finalFeedLine(
   return `Идёт финал: сейчас «${options.title(active)}»${price}${ask}.`;
 }
 
+/** Значок группы лота в ленте (PER-836); у лота вне групп его нет. */
+export function lotGroupSign(status: LotStatusView): string | undefined {
+  switch (status.kind) {
+    case "trading":
+      return pictogram.lotTrading;
+    case "held":
+      return pictogram.lotHeld;
+    case "sold":
+      return pictogram.lotSold;
+    case "unsold":
+      return pictogram.lotUnsold;
+    case "draft":
+    case "scheduled":
+    case "withdrawn":
+      return undefined;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Знак группы лота и пробел впереди подписи кнопки ленты; у лота вне групп пусто. */
+export function lotGroupPrefix(item: FeedItem): string {
+  const sign = lotGroupSign(item.status);
+  return sign === undefined ? "" : `${sign} `;
+}
+
 /**
  * Подпись кнопки лота в ленте финала (PER-639): лот на торгах выделен, лоты
  * состава, которые ждут очереди, помечены — так они видны отдельно от
@@ -304,7 +332,7 @@ export function finalFeedLabel(
 ): string | null {
   if (final.active?.lotId === item.lotId) return `▶ ${title} · на торгах`;
   if (item.status.kind === "held") {
-    return `${title} · в составе · ${money(item.status.currentPrice)}`;
+    return `${lotGroupPrefix(item)}${title} · в составе · ${money(item.status.currentPrice)}`;
   }
   return null;
 }

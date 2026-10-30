@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import {
+  predictionLotsTitle,
   predictionNameChoiceText,
   predictionNumberQuestionText,
   predictionParagraphs,
@@ -26,7 +27,6 @@ import {
   escapeHtml,
   nextRow,
   type Parent,
-  pagedTitle,
   readableMoment,
   screenText,
   withNav,
@@ -113,6 +113,7 @@ export function predictionLotsScreen(
   const items = new Map<string, FeedItem>(
     block.lots.map((item) => [item.lotId, item]),
   );
+  let previousPage = false;
   for (const row of keyboard) {
     for (const button of row) {
       switch (button.action) {
@@ -127,11 +128,14 @@ export function predictionLotsScreen(
           nextRow(rows).text(label, button.callbackData);
           break;
         }
+        // Стрелки стоят своим рядом: без него первая встала бы рядом с
+        // последним лотом списка (PER-836).
         case "feed.prev":
-          rows.text("←", button.callbackData);
+          nextRow(rows).text("←", button.callbackData);
           break;
         case "feed.next":
-          rows.text("→", button.callbackData);
+          if (previousPage) rows.text("→", button.callbackData);
+          else nextRow(rows).text("→", button.callbackData);
           break;
         case "prediction.clear":
           nextRow(rows).text("Очистить", button.callbackData);
@@ -143,6 +147,7 @@ export function predictionLotsScreen(
             `action ${button.action} in prediction lot selection`,
           );
       }
+      previousPage = button.action === "feed.prev";
     }
   }
   const nomination = predictionSpec(block.nomination);
@@ -153,11 +158,7 @@ export function predictionLotsScreen(
   return {
     id: "prediction-lots",
     text: screenText(
-      pagedTitle("Выбрать лот", {
-        items: block.lots,
-        page: block.page,
-        pageCount: block.pageCount,
-      }),
+      predictionLotsTitle(block),
       `${nomination.number} · ${escapeHtml(nomination.question)}`,
       current,
       block.lots.length === 0

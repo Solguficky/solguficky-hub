@@ -907,8 +907,10 @@ const PREDICTION_LOTS = [
   WITHDRAWN_LOT,
 ] as const;
 
+// Десять лотов к трём кандидатам каталога дают тринадцать: страница выбора лота
+// вмещает двенадцать (PER-836), и вторая страница нужна.
 const EXTRA_PREDICTION_LOTS: readonly LotView[] = Array.from(
-  { length: 5 },
+  { length: 10 },
   (_, index): LotView => ({
     lotId: `01929b7e-5c1d-7a3f-8e4b-${String(index + 10).padStart(12, "0")}`,
     auctionId: CONTRACT_AUCTION_ID,
