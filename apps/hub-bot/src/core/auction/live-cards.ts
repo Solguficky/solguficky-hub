@@ -373,6 +373,12 @@ export function createLiveCards(options: {
       // рестарта, а следующее нажатие под ней оживляет её без слежения.
       if (shown?.watch === "stop") {
         if (prior?.messageId === messageId) forget(chatId);
+        // Реестр карточки не помнит (рестарт, вытеснение): запись о ней всё
+        // равно снимается, иначе слежение ожило бы на следующем старте.
+        else if (prior === undefined) {
+          released.add(`${chatId}:${messageId}`);
+          void options.store?.remove(chatId);
+        }
         return false;
       }
       const same =

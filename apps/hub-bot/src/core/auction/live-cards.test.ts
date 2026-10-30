@@ -560,6 +560,23 @@ describe("cards in the follow", () => {
     expect(edits).toHaveLength(0);
   });
 
+  it("drops the record on the unfollow button even when the registry lost the card", async () => {
+    const { records, store } = memoryStore([
+      {
+        chatId: 7,
+        messageId: 70,
+        auctionId: AUCTION_ID,
+        lotId: LOT_A,
+        page: 2,
+        viewer: VIEWER,
+      },
+    ]);
+    const { cards } = setup({ kind: "done" }, store);
+    expect(cards.shown(7, 70, { ...opened, watch: "stop" })).toBe(false);
+    await flush();
+    expect(records.size).toBe(0);
+  });
+
   it("drops the record when another screen takes the message", async () => {
     const { records, store } = memoryStore();
     const { cards } = setup({ kind: "done" }, store);
