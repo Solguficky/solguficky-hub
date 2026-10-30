@@ -17,6 +17,7 @@ import type {
   StepTierView,
   StepWindowView,
   WinnerInvoiceView,
+  WithdrawLimitRefusal,
 } from "./ports.js";
 import type {
   PredictionNomination,
@@ -542,7 +543,14 @@ export type CommandResult =
   | { command: "proxy"; kind: "refused"; refusal: ProxyLimitRefusal }
   // Ответа Auction не дождались и после повтора тем же `op_id`: команда могла
   // пройти. Карточка, перечитанная следом, показывает, что вышло.
-  | { command: AuctionCommand; kind: "unknown" };
+  | { command: AuctionCommand; kind: "unknown" }
+  // Снятие лимита (PER-822): снят, либо снимать нечего — «лимита уже нет».
+  | { command: "withdraw"; kind: "withdrawn" }
+  | {
+      command: "withdraw";
+      kind: "refused";
+      refusal: WithdrawLimitRefusal;
+    };
 
 // Исход ставки финала одним нажатием (ADR-049): принята, отказ с ценой или
 // ответа не было и после повтора тем же `op_id`. Отказ `bid-not-at-next-price`
@@ -626,6 +634,8 @@ export type AuctionButton =
         | "lot.refresh"
         | "lot.bid-custom"
         | "lot.proxy"
+        // Снять свой лимит (PER-822).
+        | "lot.withdraw"
         | "lot.history"
         // Лоты сета — экран сета с карточки лота сета (ADR-073, п. 7).
         | "lot.set"

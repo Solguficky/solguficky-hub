@@ -48,6 +48,9 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     placeBid: async () => {
       throw new Error("not used");
     },
+    withdrawProxyLimit: async () => {
+      throw new Error("not used");
+    },
     setProxyLimit: async () => {
       throw new Error("not used");
     },

@@ -488,9 +488,24 @@ describe("renderEntryScreen", () => {
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
         "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
-        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n" +
+        "Если лот попадёт в финал, лимит сработает и там\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лоту, который ждёт финала, лимит обещает финал прямо (PER-822, ADR-079).
+  it("says the own limit will work in the final on a held lot", () => {
+    const screen = lotScreen(
+      {
+        card: { title: "Кружка", description: "" },
+        status: { kind: "held", currentPrice: rub(1200) },
+        viewerProxyLimit: rub(2000),
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toContain("сработает в финале");
+    expect(plain(screen.text)).not.toContain("Если лот попадёт");
   });
 
   // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81):

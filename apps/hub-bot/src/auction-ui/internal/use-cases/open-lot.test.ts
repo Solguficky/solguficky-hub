@@ -34,6 +34,9 @@ const auction: AuctionPort = {
   placeBid: async () => {
     throw new Error("not used");
   },
+  withdrawProxyLimit: async () => {
+    throw new Error("not used");
+  },
   setProxyLimit: async () => {
     throw new Error("not used");
   },
@@ -234,5 +237,48 @@ describe("proxy row of a lot waiting for the final", () => {
         held({ status: { kind: "sold", winnerId: LEADER, price: rub(900) } }),
       ),
     ).toEqual([]);
+  });
+});
+
+// «Снять лимит» (PER-822): ряд только у лота с лимитом смотрящего, в торгах
+// недели и в удержании.
+describe("withdraw row", () => {
+  const lot = (status: LotView["status"], limit?: boolean): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Шарф", description: "" },
+    proxyEnabled: true,
+    ...(limit === false ? {} : { viewerProxyLimit: rub(2000) }),
+    status,
+  });
+  const online: LotView["status"] = {
+    kind: "trading",
+    currentPrice: rub(900),
+    phase: "online",
+  };
+  const live: LotView["status"] = {
+    kind: "trading",
+    currentPrice: rub(900),
+    phase: "live",
+  };
+  const held: LotView["status"] = { kind: "held", currentPrice: rub(900) };
+  const hasWithdraw = async (view: LotView) => {
+    const body = await showLot({ auction, viewer: VIEWER, lot: view, page: 0 });
+    return body.keyboard.flat().some((b) => b.action === "lot.withdraw");
+  };
+
+  it("is shown for an own limit online and on hold", async () => {
+    expect(await hasWithdraw(lot(online))).toBe(true);
+    expect(await hasWithdraw(lot(held))).toBe(true);
+  });
+
+  it("is absent without an own limit (a rival's limit never reaches the card)", async () => {
+    expect(await hasWithdraw(lot(online, false))).toBe(false);
+    expect(await hasWithdraw(lot(held, false))).toBe(false);
+  });
+
+  it("is absent in the live final", async () => {
+    expect(await hasWithdraw(lot(live))).toBe(false);
   });
 });

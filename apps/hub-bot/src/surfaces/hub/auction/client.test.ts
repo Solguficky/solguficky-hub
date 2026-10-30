@@ -155,6 +155,7 @@ function adapter(rpc: {
     getDisplayNames: (rpc.getDisplayNames ?? notUsed) as never,
     listAuctionNames: (rpc.listAuctionNames ?? notUsed) as never,
     placeBid: (rpc.placeBid ?? notUsed) as never,
+    withdrawProxyLimit: notUsed,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getAuction: notUsed,

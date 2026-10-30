@@ -6,6 +6,7 @@ import {
   finalBidLabel,
   finalPriceLines,
   showsStep,
+  withdrawButtonLabel,
 } from "../../../../auction-final.js";
 import {
   activeHappyHourLine,
@@ -40,8 +41,8 @@ import {
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
+  ownLimitLines,
   ownLotLine,
-  ownProxyLine,
   stepBidLabel,
   struckHistoryLine,
   tradingPriceLine,
@@ -683,6 +684,7 @@ function feedLabel(
     case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
+    case "lot.withdraw":
     case "lot.history":
     case "lot.back":
     case "history.prev":
@@ -922,6 +924,8 @@ function lotLabel(
       return "Своя сумма";
     case "lot.proxy":
       return "Автоставка";
+    case "lot.withdraw":
+      return withdrawButtonLabel;
     case "lot.follow":
       return followLabel;
     case "lot.unfollow":
@@ -1076,6 +1080,7 @@ function setLotLabelOf(
     case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
+    case "lot.withdraw":
     case "lot.current":
     case "lot.refresh":
     case "lot.history":
@@ -1318,6 +1323,7 @@ function historyLabel(button: AuctionButton): string {
     case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
+    case "lot.withdraw":
     case "lot.history":
     case "lot.back":
     case "history.back":
@@ -1421,14 +1427,7 @@ function statusGroups(
         // Свой лимит смотрящего: чужих Auction не отдаёт. Исчерпанный лимит
         // так и назван (PER-631, №81), в живом финале — без совета поднять
         // его (PER-713).
-        ...(block.viewerProxyLimit === undefined
-          ? []
-          : [
-              ownProxyLine({
-                ...block,
-                viewerProxyLimit: block.viewerProxyLimit,
-              }),
-            ]),
+        ...ownLimitLines(block),
       ];
       return [
         [
@@ -1468,6 +1467,8 @@ function statusGroups(
             leaderLine(status.leaderId, participantName, block.standing),
           ),
         ],
+        // Свой лимит лоту, который ждёт финала (PER-822).
+        ...(block.viewerProxyLimit === undefined ? [] : [ownLimitLines(block)]),
       ];
     // Покупатель видит, что лот его (PER-595).
     case "sold":

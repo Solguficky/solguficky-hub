@@ -108,6 +108,10 @@ function ports(
         kind: "accepted" as const,
         lotVersion: 0,
       })),
+      withdrawProxyLimit: vi.fn(async () => ({
+        kind: "accepted" as const,
+        lotVersion: 0,
+      })),
       setProxyLimit: vi.fn(async () => ({
         kind: "accepted" as const,
         lotVersion: 0,

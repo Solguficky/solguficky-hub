@@ -96,6 +96,55 @@ export function ownProxyLine(lot: {
 }
 
 /**
+ * Строка о том, что лимит сработает в финале (PER-822, ADR-079, п. 3). Лоту,
+ * который ждёт финала, она обещает финал прямо. Лоту онлайн-недели участник
+ * отметки «в финал» не видит (она в пульте администратора), поэтому строка
+ * говорит условно. Живому финалу и прочим состояниям строки нет.
+ */
+export function finalLimitLine(lot: {
+  viewerProxyLimit: Money;
+  status: LotStatusView;
+}): string | undefined {
+  const { status } = lot;
+  if (status.kind === "held") {
+    return `Твой лимит до ${money(lot.viewerProxyLimit)} сработает в финале`;
+  }
+  return status.kind === "trading" && status.phase === "online"
+    ? "Если лот попадёт в финал, лимит сработает и там"
+    : undefined;
+}
+
+/**
+ * Строки своего лимита на карточке лота (PER-822): лоту в торгах — своя
+ * автоставка и условная строка про финал, лоту, который ждёт финала, — одна
+ * строка про финал. Лимита нет — строк нет. Чужих лимитов экран не знает.
+ */
+export function ownLimitLines(lot: {
+  viewerProxyLimit?: Money;
+  nextPrice?: Money;
+  standing?: LotStanding;
+  status: LotStatusView;
+}): string[] {
+  if (lot.viewerProxyLimit === undefined) return [];
+  const own = { ...lot, viewerProxyLimit: lot.viewerProxyLimit };
+  const { status } = lot;
+  // Лимит ниже цены лота в финале не сработает: обещать его нельзя.
+  if (status.kind === "held") {
+    return [
+      own.viewerProxyLimit.currency === status.currentPrice.currency &&
+      own.viewerProxyLimit.minorUnits < status.currentPrice.minorUnits
+        ? `Твой лимит до ${money(own.viewerProxyLimit)} ниже цены лота — в финале не сработает`
+        : (finalLimitLine(own) ?? ""),
+    ].filter((line) => line !== "");
+  }
+  const ownLine = ownProxyLine(own);
+  // Исчерпанный лимит уже назван исчерпанным: условной строки про финал
+  // рядом с ним нет, она бы ему противоречила.
+  const final = ownLine.includes("исчерпана") ? undefined : finalLimitLine(own);
+  return [ownLine, ...(final === undefined ? [] : [final])];
+}
+
+/**
  * Строка анти-снайпа на экране принятой ставки (PER-631, №107): «Торги
  * продлены до 11:03 (продление 3 из 3).» или, когда продления кончились,
  * «Продлений больше не будет: торги закроются в 11:03.» Строка не говорит, что

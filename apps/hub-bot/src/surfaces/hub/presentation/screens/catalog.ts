@@ -892,6 +892,13 @@ export const screenCatalog = {
     title: "Включить автоставку",
     irreversible: true,
   },
+  // Снять свой лимит (PER-822): подтверждение с вопросом-заголовком; поставить
+  // лимит можно снова, поэтому «необратимого» в нём нет.
+  "withdraw-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Снять автоставку",
+  },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
   // Отказ команды и непринятый ответ — кадры исхода (PER-472): исход в

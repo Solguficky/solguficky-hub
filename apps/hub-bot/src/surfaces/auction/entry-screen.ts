@@ -14,7 +14,13 @@ import {
   heldProxyAccepted,
   heldProxyConfirmation,
   heldProxyQuestion,
+  noLimitDetail,
+  noLimitTitle,
   showsStep,
+  withdrawButtonLabel,
+  withdrawNote,
+  withdrawnTitle,
+  withdrawQuestion,
 } from "../../auction-final.js";
 import {
   activeHappyHourLine,
@@ -83,8 +89,8 @@ import {
   lotsLabel,
   nameSettingsParagraphs,
   nameSettingsTitle,
+  ownLimitLines,
   ownLotLine,
-  ownProxyLine,
   proxyHintLead,
   stepBidLabel,
   struckHistoryLine,
@@ -1034,7 +1040,11 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "follow-refused":
         return "follow-refused";
       case "confirm":
-        return block.command === "bid" ? "bid-confirm" : "proxy-confirm";
+        return block.command === "bid"
+          ? "bid-confirm"
+          : block.command === "withdraw"
+            ? "withdraw-confirm"
+            : "proxy-confirm";
       case "accepted":
         return block.command === "bid" ? "bid-accepted" : "proxy-accepted";
       case "question":
@@ -1153,7 +1163,9 @@ function rootText(block: RootBlock, options: RenderOptions): string {
 }
 
 function isConfirm(id: ScreenId): boolean {
-  return id === "bid-confirm" || id === "proxy-confirm";
+  return (
+    id === "bid-confirm" || id === "proxy-confirm" || id === "withdraw-confirm"
+  );
 }
 type HistoryBlock = Extract<AuctionBlock, { kind: "history" }>;
 type FeedBlock = Extract<AuctionBlock, { kind: "feed" }>;
@@ -1402,6 +1414,13 @@ function renderLeaf(
 function confirmText(
   block: Extract<AuctionBlock, { kind: "confirm" }>,
 ): string {
+  if (block.command === "withdraw") {
+    return screenText(
+      withdrawQuestion(block.amount, money),
+      lotSubject(block.title),
+      withdrawNote(block.forFinal === true),
+    );
+  }
   return block.command === "bid"
     ? screenText(
         `Поставить ${money(block.amount)}?`,
@@ -1601,8 +1620,11 @@ export function resultOutcome(result: CommandResult): Outcome {
       detail: "Проверь цену на карточке: команда могла пройти.",
     };
   }
+  if (result.kind === "withdrawn") return { title: withdrawnTitle };
   const { refusal } = result;
   switch (refusal.kind) {
+    case "no-active-limit":
+      return { title: noLimitTitle, detail: noLimitDetail };
     case "lot-not-open":
       return { title: "Торги по лоту не идут" };
     case "lot-on-hold":
@@ -1848,7 +1870,7 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
         ...(showsStep(block) ? stepLines(block, options) : []),
-        ...proxyLine(block),
+        ...ownLimitLines(block),
       ];
       return [
         [
@@ -1885,6 +1907,8 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             leaderLine(status.leaderId, participantName, block.standing),
           ),
         ],
+        // Свой лимит лоту, который ждёт финала (PER-822).
+        ...(block.viewerProxyLimit === undefined ? [] : [ownLimitLines(block)]),
       ];
     // Покупатель видит, что лот его (PER-595).
     case "sold":
@@ -1984,15 +2008,6 @@ function regularStart(block: LotBlock): Money | undefined {
 function clockOf(instant: string, timeZone: string): string {
   const parts = dateParts(instant, timeZone);
   return `${parts("hour")}:${parts("minute")}`;
-}
-
-// Свой лимит смотрящего: чужих Auction не отдаёт, и строка говорит, что этот
-// виден только ему; исчерпанный лимит так и назван (PER-631, №81), в живом
-// финале — без совета поднять его (PER-713).
-function proxyLine(block: LotBlock): string[] {
-  return block.viewerProxyLimit === undefined
-    ? []
-    : [ownProxyLine({ ...block, viewerProxyLimit: block.viewerProxyLimit })];
 }
 
 // Описание — единственная часть карточки произвольной длины, поэтому под лимит
@@ -2142,8 +2157,15 @@ function renderButton(
       return text("Своя сумма");
     case "lot.proxy":
       return text("Автоставка");
+    case "lot.withdraw":
+      return text(withdrawButtonLabel);
     case "confirm.yes":
-      return { ...text(confirmLabel(blocks)), style: "danger" };
+      // Красное «Да» — у трат денег; снятие лимита ничего не тратит (PER-822).
+      return blocks.some(
+        (block) => block.kind === "confirm" && block.command === "withdraw",
+      )
+        ? text(confirmLabel(blocks))
+        : { ...text(confirmLabel(blocks)), style: "danger" };
     case "confirm.no":
       return text(confirmNoLabel);
     case "question.cancel":
@@ -2276,7 +2298,9 @@ function confirmLabel(blocks: readonly AuctionBlock[]): string {
   if (confirm?.kind !== "confirm") return confirmYesLabel("подтвердить");
   return confirm.command === "bid"
     ? confirmYesLabel("поставить")
-    : confirmYesLabel("включить автоставку");
+    : confirm.command === "withdraw"
+      ? confirmYesLabel("снять автоставку")
+      : confirmYesLabel("включить автоставку");
 }
 
 function priceLabel(status: LotStatusView): string {

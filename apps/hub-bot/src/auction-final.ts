@@ -161,3 +161,27 @@ export function heldProxyConfirmation(
 }
 
 export const heldProxyAccepted = `Лимит сработает в финале по сетке цен. ${gridRemainder}`;
+
+/**
+ * Слова снятия своего лимита (PER-822): общие у двух ботов. Лимит, поставленный
+ * на онлайн-неделе, переходит в финал сам (ADR-079, п. 3), поэтому подтверждение
+ * лоту, который ждёт финала, говорит про финал, а недельному — про торги.
+ */
+export const withdrawButtonLabel = "Снять лимит";
+
+export function withdrawQuestion(
+  limit: Money,
+  money: (m: Money) => string,
+): string {
+  return `Снять автоставку до ${money(limit)}?`;
+}
+
+export function withdrawNote(forFinal: boolean): string {
+  return forFinal
+    ? "Лимит не сработает в финале. Поставить его можно снова."
+    : "Бот перестанет ставить за тебя. Поставить лимит можно снова.";
+}
+
+export const withdrawnTitle = "Автоставка снята";
+export const noLimitTitle = "Лимита уже нет";
+export const noLimitDetail = "Автоставки на этом лоте нет.";

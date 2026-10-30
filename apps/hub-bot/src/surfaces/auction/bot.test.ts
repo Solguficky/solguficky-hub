@@ -281,6 +281,7 @@ function portsWith(
       getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
       getDisplayNames: async () => overrides.names ?? {},
       placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
+      withdrawProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
       // Корень аукциона (PER-644) читает его из тех же списков, что

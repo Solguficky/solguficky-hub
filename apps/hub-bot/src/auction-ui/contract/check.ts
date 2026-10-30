@@ -39,6 +39,7 @@ import type {
   ResolvedIdentity,
   TelegramUser,
   Viewer,
+  WithdrawLimitRefusal,
 } from "../ports.js";
 import {
   type PredictionNomination,
@@ -118,6 +119,11 @@ export type PortCall =
       port: "auction";
       method: "setProxyLimit";
       request: Parameters<AuctionMethods["setProxyLimit"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "withdrawProxyLimit";
+      request: Parameters<AuctionMethods["withdrawProxyLimit"]>[0];
     }
   | {
       port: "auction";
@@ -202,6 +208,7 @@ export type ContractAuction = {
   // намерении звать не должны, и шпион падает.
   bids?: readonly CommandOutcome<BidRefusal>[];
   limits?: readonly CommandOutcome<ProxyLimitRefusal>[];
+  withdrawals?: readonly CommandOutcome<WithdrawLimitRefusal>[];
   displayNames?: readonly DisplayNameOutcome[];
   // Лоты после принятой команды: следующее чтение лота отдаёт их.
   after?: readonly LotView[];
@@ -537,6 +544,14 @@ const HELD_PROXY_LOT: LotView = {
   proxyEnabled: true,
 };
 
+// Удержанный лот со своим лимитом (PER-822): карточка называет лимит и ведёт
+// к его снятию.
+const HELD_LIMIT_LOT: LotView = {
+  ...HELD_PROXY_LOT,
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b4b",
+  viewerProxyLimit: rub(2000),
+};
+
 const DRAFT_LOT: LotView = {
   lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b42",
   auctionId: CONTRACT_AUCTION_ID,
@@ -549,7 +564,7 @@ const DRAFT_LOT: LotView = {
 // Лоты, которых нет в страницах ленты: тела ленты выше от них не зависят.
 const OFF_FEED_AUCTION: ContractAuction = {
   ...AUCTION,
-  lots: [...AUCTION.lots, HELD_LOT, HELD_PROXY_LOT, DRAFT_LOT],
+  lots: [...AUCTION.lots, HELD_LOT, HELD_PROXY_LOT, HELD_LIMIT_LOT, DRAFT_LOT],
 };
 
 const EMPTY_AUCTION: ContractAuction = {
@@ -1781,6 +1796,31 @@ const chooseCall = (
   method: "chooseDisplayName",
   request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID, choice },
 });
+
+const withdrawCall = (lotId: string): PortCall => ({
+  port: "auction",
+  method: "withdrawProxyLimit",
+  request: { viewer: CONTRACT_VIEWER, lotId, opId: OP },
+});
+
+// Экран исхода снятия лимита: одно сообщение и «К лоту» (PER-822).
+function withdrawResultBody(
+  lotId: string,
+  result: Extract<CommandResult, { command: "withdraw" }>,
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "result",
+        result,
+        lotId,
+        auctionId: CONTRACT_AUCTION_ID,
+        title: "Варежки",
+      },
+    ],
+    keyboard: [[{ action: "result.lot", callbackData: lotCallback(lotId, 0) }]],
+  };
+}
 
 const LOT_CALL = getLotCall(CONTRACT_LOT.lotId);
 
@@ -6148,6 +6188,163 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       ],
     },
   },
+  // Лимит удержанного лота (PER-822, ADR-079): строка про финал, ряд
+  // «Автоставка» и «Снять лимит».
+  {
+    intent: "lot: held with own limit",
+    callbackData: lotCallback(HELD_LIMIT_LOT.lotId, 0),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_LIMIT_LOT.lotId), ...CARD_CALLS],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: HELD_LIMIT_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          version: 4,
+          card: { title: "Варежки", description: "" },
+          status: { kind: "held", currentPrice: rub(900) },
+          viewerProxyLimit: rub(2000),
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.proxy" as const,
+            callbackData: callback({
+              kind: "ask",
+              question: "proxy",
+              lotId: HELD_LIMIT_LOT.lotId,
+              page: 0,
+            }),
+          },
+        ],
+        [
+          {
+            action: "lot.withdraw" as const,
+            callbackData: callback({
+              kind: "confirm",
+              command: "withdraw",
+              lotId: HELD_LIMIT_LOT.lotId,
+              amount: 200000,
+              page: 0,
+            }),
+          },
+        ],
+        ...lotKeyboard(HELD_LIMIT_LOT.lotId, 0),
+      ],
+    },
+  },
+  {
+    intent: "withdraw: confirm",
+    callbackData: callback({
+      kind: "confirm",
+      command: "withdraw",
+      lotId: HELD_LIMIT_LOT.lotId,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_LIMIT_LOT.lotId)],
+    body: {
+      blocks: [
+        {
+          kind: "confirm",
+          command: "withdraw",
+          lotId: HELD_LIMIT_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          title: "Варежки",
+          amount: rub(2000),
+          currentPrice: rub(900),
+          forFinal: true,
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "confirm.yes" as const,
+            callbackData: callback({
+              kind: "commit",
+              command: "withdraw",
+              lotId: HELD_LIMIT_LOT.lotId,
+              opId: OP,
+              amount: 200000,
+              page: 0,
+            }),
+          },
+          {
+            action: "confirm.no" as const,
+            callbackData: lotCallback(HELD_LIMIT_LOT.lotId, 0),
+          },
+        ],
+      ],
+    },
+  },
+  // Лимита уже нет: подтверждения нет, команда в Auction не уходит.
+  {
+    intent: "withdraw: confirm without a limit",
+    callbackData: callback({
+      kind: "confirm",
+      command: "withdraw",
+      lotId: HELD_PROXY_LOT.lotId,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: OFF_FEED_AUCTION,
+    auctionCalls: [getLotCall(HELD_PROXY_LOT.lotId)],
+    body: withdrawResultBody(HELD_PROXY_LOT.lotId, {
+      command: "withdraw",
+      kind: "refused",
+      refusal: { kind: "no-active-limit" },
+    }),
+  },
+  {
+    intent: "withdraw: accepted",
+    callbackData: callback({
+      kind: "commit",
+      command: "withdraw",
+      lotId: HELD_LIMIT_LOT.lotId,
+      opId: OP,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: {
+      ...OFF_FEED_AUCTION,
+      withdrawals: [{ kind: "accepted", lotVersion: 0 }],
+    },
+    auctionCalls: [
+      getLotCall(HELD_LIMIT_LOT.lotId),
+      withdrawCall(HELD_LIMIT_LOT.lotId),
+    ],
+    body: withdrawResultBody(HELD_LIMIT_LOT.lotId, {
+      command: "withdraw",
+      kind: "withdrawn",
+    }),
+  },
+  {
+    intent: "withdraw: no limit left",
+    callbackData: callback({
+      kind: "commit",
+      command: "withdraw",
+      lotId: HELD_LIMIT_LOT.lotId,
+      opId: OP,
+      amount: 200000,
+      page: 0,
+    }),
+    auction: {
+      ...OFF_FEED_AUCTION,
+      withdrawals: [{ kind: "refused", refusal: { kind: "no-active-limit" } }],
+    },
+    auctionCalls: [
+      getLotCall(HELD_LIMIT_LOT.lotId),
+      withdrawCall(HELD_LIMIT_LOT.lotId),
+    ],
+    body: withdrawResultBody(HELD_LIMIT_LOT.lotId, {
+      command: "withdraw",
+      kind: "refused",
+      refusal: { kind: "no-active-limit" },
+    }),
+  },
   // Лот без условий торгов сам не меняется: ни «Обновить», ни хронологии.
   {
     intent: "lot: draft",
@@ -6260,6 +6457,7 @@ export function spyPorts(
   // Очереди ответов команд и `op_id`: каждый вызов берёт следующий.
   const bids = [...(snapshot.bids ?? [])];
   const limits = [...(snapshot.limits ?? [])];
+  const withdrawals = [...(snapshot.withdrawals ?? [])];
   const displayNames = [...(snapshot.displayNames ?? [])];
   const follows = [...(snapshot.follows ?? [])];
   const registrations = [...(snapshot.registrations ?? [])];
@@ -6373,6 +6571,10 @@ export function spyPorts(
       async setProxyLimit(request) {
         calls.push({ port: "auction", method: "setProxyLimit", request });
         return settled(limits.shift());
+      },
+      async withdrawProxyLimit(request) {
+        calls.push({ port: "auction", method: "withdrawProxyLimit", request });
+        return settled(withdrawals.shift());
       },
       async chooseDisplayName(request) {
         calls.push({ port: "auction", method: "chooseDisplayName", request });

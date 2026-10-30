@@ -184,6 +184,7 @@ function lotBody(input: {
     ],
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
+      ...withdrawRows(lot, input.page),
       ...(input.neighbors.final?.activeLotId === undefined ||
       input.neighbors.final.activeLotId === lot.lotId
         ? []
@@ -576,6 +577,38 @@ function heldRows(
           kind: "ask",
           question: "proxy",
           lotId: lot.lotId,
+          page,
+        }),
+      },
+    ],
+  ];
+}
+
+// «Снять лимит» (PER-822, ADR-079, п. 3): лимит онлайн-недели переходит в
+// финал сам, поэтому забытый лимит снимается с карточки — лота в торгах недели
+// и лота, который ждёт финала. Ряд тому, у кого лимит есть: чужих лимитов
+// снимок не несёт. Сумма в кнопке — лимит, который человек видит на карточке.
+function withdrawRows(lot: LotView, page: number): AuctionButton[][] {
+  const { status, viewerProxyLimit: limit } = lot;
+  if (
+    limit === undefined ||
+    limit.minorUnits > MAX_COMMAND_AMOUNT ||
+    !(
+      status.kind === "held" ||
+      (status.kind === "trading" && status.phase === "online")
+    )
+  ) {
+    return [];
+  }
+  return [
+    [
+      {
+        action: "lot.withdraw",
+        callbackData: encodeAuctionCallback({
+          kind: "confirm",
+          command: "withdraw",
+          lotId: lot.lotId,
+          amount: limit.minorUnits,
           page,
         }),
       },

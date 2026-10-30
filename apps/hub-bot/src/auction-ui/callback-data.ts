@@ -60,14 +60,21 @@ const MAX_BYTES = 64;
 // Кнопка лота после принятой команды несёт третий аргумент — версию лота из
 // ответа Auction в base36 (PER-470): карточка дочитывает лот до неё, потому что
 // чтение отстаёт от команды. У остальных кнопок лота хвоста нет.
-export type AuctionCommand = "bid" | "proxy";
+//
+// `withdraw` (PER-822) — снять свой лимит: сумма в его `confirm` и `commit` —
+// лимит, который человек видел на карточке. Имени он не требует, поэтому
+// отложенной командой не бывает.
+export type AuctionCommand = "bid" | "proxy" | "withdraw";
+
+// Команды, у которых есть сумма-намерение и шаг выбора имени.
+export type PlacedCommand = Exclude<AuctionCommand, "withdraw">;
 
 // Команда, отложенная до выбора имени: её вид и сумма.
 // `final` — ставка, начатая кнопкой «Поставить» карточки финала (PER-713):
 // после выбора имени она уходит сразу, без подтверждения. Ставка онлайн-недели
 // ждёт своего «Да», даже если лот за это время вышел в финал.
 export type PendingCommand = {
-  command: AuctionCommand;
+  command: PlacedCommand;
   amount: number;
   final?: true;
 };
@@ -340,11 +347,16 @@ function versionOf(raw: string): number | undefined {
   return Number.isSafeInteger(value) ? value : undefined;
 }
 
-const COMMAND_CODE: Record<AuctionCommand, string> = { bid: "b", proxy: "x" };
+const COMMAND_CODE: Record<AuctionCommand, string> = {
+  bid: "b",
+  proxy: "x",
+  withdraw: "w",
+};
 
 function commandOf(code: string | undefined): AuctionCommand | undefined {
   if (code === "b") return "bid";
   if (code === "x") return "proxy";
+  if (code === "w") return "withdraw";
   return undefined;
 }
 
@@ -365,7 +377,9 @@ function pendingOf(raw: string | undefined): PendingCommand | undefined {
   if (amount === undefined) return undefined;
   if (code === FINAL_BID_CODE) return { command: "bid", amount, final: true };
   const command = commandOf(code);
-  return command === undefined ? undefined : { command, amount };
+  return command === undefined || command === "withdraw"
+    ? undefined
+    : { command, amount };
 }
 
 const QUESTION_CODE: Record<AuctionQuestion, string> = {
@@ -854,7 +868,7 @@ function commandAction(
     }
     return accept({ kind: "final-bid", lotId, amount, page });
   }
-  if (action === "cb" || action === "cx") {
+  if (action === "cb" || action === "cx" || action === "cw") {
     const [rawAmount, rawPage, ...rest] = more;
     const command = commandOf(action.slice(1));
     const amount = amountOf(rawAmount);
@@ -870,7 +884,7 @@ function commandAction(
     }
     return accept({ kind: "confirm", command, lotId, amount, page });
   }
-  if (action === "b" || action === "x") {
+  if (action === "b" || action === "x" || action === "w") {
     const [rawOp, rawAmount, rawPage, ...rest] = more;
     const command = commandOf(action);
     const opId = rawOp === undefined ? undefined : tokenToUuid(rawOp);

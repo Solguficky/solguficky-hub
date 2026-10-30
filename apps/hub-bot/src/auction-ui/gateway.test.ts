@@ -84,6 +84,9 @@ function surfaceFor(
           calls.auction += 1;
           return { kind: "accepted", lotVersion: 0 };
         },
+        async withdrawProxyLimit() {
+          return { kind: "accepted", lotVersion: 0 };
+        },
         async setProxyLimit() {
           calls.auction += 1;
           return { kind: "accepted", lotVersion: 0 };
