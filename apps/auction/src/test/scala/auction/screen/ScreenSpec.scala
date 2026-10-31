@@ -21,7 +21,9 @@ import auction.lot.Money
 import auction.lot.ParticipantId
 import auction.lot.Phase
 import auction.lot.WithdrawnReason
+import auction.prediction.Nomination
 import auction.projection.LotSnapshotView
+import auction.results.NominationValue
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -340,6 +342,26 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       json should include(""""start":{"amount":300,"currency":"RUB"}""")
       json should include(""""online_end":{"amount":600,"currency":"RUB"}""")
       json should include(""""in_final":true""")
+    }
+
+    "carry the prediction results of a finished auction by nomination with the names of who guessed" in {
+      val finished = ScreenState.Finished(Nil, Totals(Sales(0, Nil), Sales(0, Nil), Sales(0, Nil)))
+      val json = ScreenJson.render(
+        auctionId,
+        finished,
+        List(
+          ScreenNomination(Nomination.MostExpensiveLot, NominationValue.Lots(Set(first)), 2, List("@a", "*Сова")),
+          ScreenNomination(Nomination.TotalBids, NominationValue.Number(57), 0, Nil)
+        )
+      )
+
+      json should include(
+        """"predictions":[{"nomination":"catalog-most-expensive-lot","lots":["%s"],"number":null,"winners":2,"names":["@a","*Сова"]},"""
+          .format(first.value)
+      )
+      json should include(""""nomination":"catalog-total-bids","lots":null,"number":57,"winners":0,"names":[]""")
+      // Без итогов раздел — пустой список, а не пропущенный ключ.
+      ScreenJson.render(auctionId, finished) should include(""""predictions":[]""")
     }
 
     "say the final time is unknown before the lineup freezes" in {
