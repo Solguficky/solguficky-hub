@@ -11,11 +11,13 @@ import {
   type AnnouncementApi,
   type AnnouncementButtonKind,
   announcementButtonData,
+  announcementTextLimit,
   checkAnnouncementText,
   createAnnouncementPhotos,
   organizerAnnouncementOf,
   renderOrganizerAnnouncement,
   sendOrganizerAnnouncement,
+  telegramCaptionLimit,
   wireAnnouncementButton,
   wireAnnouncementPhoto,
   wireAnnouncementPost,
@@ -147,14 +149,24 @@ describe("announcement button", () => {
 });
 
 describe("checkAnnouncementText", () => {
-  it("keeps a text up to the photo caption limit and refuses longer", () => {
-    expect(checkAnnouncementText(` ${"а".repeat(1024)} `)).toEqual({
+  it("keeps a text up to a Telegram message and refuses longer", () => {
+    expect(
+      checkAnnouncementText(` ${"а".repeat(announcementTextLimit)} `),
+    ).toEqual({
       kind: "ok",
-      text: "а".repeat(1024),
+      text: "а".repeat(announcementTextLimit),
     });
-    expect(checkAnnouncementText("а".repeat(1025))).toEqual({
+    expect(
+      checkAnnouncementText("а".repeat(announcementTextLimit + 1)),
+    ).toEqual({
       kind: "too-long",
     });
+    expect(checkAnnouncementText("а".repeat(telegramCaptionLimit + 1))).toEqual(
+      {
+        kind: "ok",
+        text: "а".repeat(telegramCaptionLimit + 1),
+      },
+    );
     expect(checkAnnouncementText("  ")).toEqual({ kind: "empty" });
     expect(checkAnnouncementText("а\u0000б")).toEqual({ kind: "nul" });
   });
@@ -298,6 +310,39 @@ describe("sendOrganizerAnnouncement", () => {
     expect(load).toHaveBeenCalledOnce();
   });
 
+  it("sends a long text as a message after the photo, not as a caption", async () => {
+    const text = "а".repeat(telegramCaptionLimit + 1);
+    const telegram = api();
+    const markup = {
+      inline_keyboard: [[{ text: "К лоту", callback_data: "x" }]],
+    };
+
+    expect(
+      await sendOrganizerAnnouncement(
+        telegram,
+        1,
+        { text, photo: { lotId, photoId } },
+        {
+          photos: createAnnouncementPhotos(
+            async () => bytes,
+            () => {},
+          ),
+          viewerId: "viewer",
+          markup,
+          mark: { tag: "notification" },
+        },
+      ),
+    ).toEqual({ messageId: 5, withPhoto: true, withPost: false });
+    expect(telegram.sendPhoto.mock.calls[0]?.[2]).toEqual({
+      tag: "notification",
+    });
+    expect(telegram.sendMessage).toHaveBeenCalledWith(1, text, {
+      tag: "notification",
+      reply_markup: markup,
+      link_preview_options: { is_disabled: true },
+    });
+  });
+
   it("copies the media chat post with the text as its caption and the button (PER-776)", async () => {
     const telegram = api();
     const warn = vi.fn();
@@ -327,6 +372,42 @@ describe("sendOrganizerAnnouncement", () => {
     });
     expect(telegram.sendMessage).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("copies a long post without a caption and sends the text after it", async () => {
+    const text = "а".repeat(telegramCaptionLimit + 1);
+    const telegram = api();
+    const media = createMediaChat({
+      channelId: -1001,
+      logger: { warn: vi.fn() },
+    });
+    const markup = {
+      inline_keyboard: [[{ text: "К лоту", callback_data: "x" }]],
+    };
+
+    expect(
+      await sendOrganizerAnnouncement(
+        telegram,
+        1,
+        { text, post: 42 },
+        {
+          photos: createAnnouncementPhotos(vi.fn(), vi.fn()),
+          media,
+          viewerId: "viewer",
+          markup,
+          mark: { tag: "notification" },
+        },
+      ),
+    ).toEqual({ messageId: 5, withPhoto: false, withPost: true });
+    expect(telegram.copyMessage).toHaveBeenCalledWith(1, -1001, 42, {
+      tag: "notification",
+      caption: "",
+    });
+    expect(telegram.sendMessage).toHaveBeenCalledWith(1, text, {
+      tag: "notification",
+      reply_markup: markup,
+      link_preview_options: { is_disabled: true },
+    });
   });
 
   it("sends the text alone and records the refusal when the post is gone", async () => {
