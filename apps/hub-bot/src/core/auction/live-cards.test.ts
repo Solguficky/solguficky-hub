@@ -359,6 +359,36 @@ describe("live cards", () => {
     ).toEqual(rub(2000));
   });
 
+  it("redraws the live card after a snapshot arrives for an accepted limit", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, opened);
+    cards.proxyLimitSet({ chatId: 7, lotId: LOT_A, amount: rub(2000) });
+    await flush();
+    expect(edits).toHaveLength(0);
+
+    stream.emit(live(LOT_A, 1, 1200));
+    await flush();
+    expect(
+      lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.viewerProxyLimit,
+    ).toEqual(rub(2000));
+  });
+
+  it("keeps an accepted limit when the card is on another lot", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, opened);
+    stream.emit(live(LOT_B, 1, 500));
+    await flush();
+    cards.proxyLimitSet({ chatId: 7, lotId: LOT_A, amount: rub(2000) });
+    await flush();
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })
+        ?.viewerProxyLimit,
+    ).toEqual(rub(2000));
+  });
+
   // Между лотами человек жмёт «Обновить» или «В избранное» на проданном
   // лоте: тело без пометки `live`, но финал идёт, и карточка остаётся живой.
   it("keeps the card when the same message shows a settled lot of its auction", async () => {

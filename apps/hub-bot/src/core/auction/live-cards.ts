@@ -482,11 +482,17 @@ export function createLiveCards(options: {
     watching: (chatId) => cards.get(chatId)?.watching === true,
     proxyLimitSet({ chatId, lotId, amount }) {
       const card = cards.get(chatId);
-      if (card === undefined || card.lotId !== lotId) return;
+      if (card === undefined) return;
       card.proxyLimit = { lotId, amount };
       const state = latest.get(chatId);
-      const lot = state === undefined ? undefined : lotOf(card, state);
-      if (lot !== undefined) schedule(card, lot);
+      if (state !== undefined && card.lotId === lotId) {
+        const lot = lotOf(card, state);
+        if (lot !== undefined) {
+          schedule(card, lot);
+          return;
+        }
+      }
+      if (card.lotId === lotId) card.version = 0;
     },
     size: () => cards.size,
     close() {
