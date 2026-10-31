@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import type { LotStatusView } from "../../../../auction-ui/index.js";
 import { refreshLabel } from "../../../../core/pictograms.js";
+import { announceable } from "../../application/auction-announcements.js";
 import {
   acceptsLots,
   activeLot,
@@ -1324,16 +1325,12 @@ function finalTimeRow(keyboard: InlineKeyboard, console: AuctionConsoleView) {
 }
 
 // «Участникам» (PER-802): объявление аукциона (PER-765), пока участники видят
-// аукцион и он не кончился, и промо-видео (PER-774), пока у бота есть чат
-// медиа и аукцион не отменён.
+// аукцион — в том числе после его конца, и промо-видео (PER-774), пока у бота
+// есть чат медиа и аукцион не отменён.
 function participantsRow(keyboard: InlineKeyboard, view: ConsoleScreenView) {
   const { console } = view;
   const auction = uuidToToken(console.auctionId);
-  const announcement =
-    (console.status === "scheduled" && !console.hidden) ||
-    console.status === "prebidding" ||
-    console.status === "break" ||
-    console.status === "lineup-frozen";
+  const announcement = announceable(console);
   const promo =
     view.media === true &&
     console.status !== "cancelled" &&

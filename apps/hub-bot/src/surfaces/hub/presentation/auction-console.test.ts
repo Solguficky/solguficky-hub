@@ -3332,8 +3332,8 @@ describe("the raffle line of the console", () => {
     );
   });
 
-  // Пульт завершённого аукциона (PER-816): только нужное — счета, розыгрыш,
-  // итоги; управлять уже нечем.
+  // Пульт завершённого аукциона (PER-816): счета, розыгрыш, итоги и
+  // объявление; торговать уже нечем.
   it("keeps the controls of a running auction off the console of a finished one", async () => {
     const auction = fakeAuction({
       status: "finished",
@@ -3361,6 +3361,7 @@ describe("the raffle line of the console", () => {
     }
     expect(buttons).toContain("Счета");
     expect(buttons).toContain("Розыгрыш");
+    expect(buttons).toContain("Объявление");
   });
 });
 
@@ -9357,6 +9358,34 @@ describe("auction announcement", () => {
 
     expect(plain(last(calls))).toContain("Текст длиннее 1024 знаков");
     expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Объявление"]]);
+  });
+
+  it("opens and sends the announcement from the console of a finished auction", async () => {
+    const auction = fakeAuction({
+      status: "finished",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const notices = announcements(7);
+    const calls: RecordedCall[] = [];
+    const step = async (update: Update) => {
+      const fresh = bot(auction, notices, calls);
+      await fresh.init();
+      await fresh.handleUpdate(update);
+    };
+    await step(press(consoleData));
+    expect(labels(last(calls)).flat()).toContain("Объявление");
+
+    await step(press(dataOf(last(calls), "Объявление")));
+    expect(labels(last(calls)).flat()).toContain("Своё объявление");
+
+    await step(press(dataOf(last(calls), "Своё объявление")));
+    const text = "Как оплатить и забрать лоты.";
+    await step(answer(calls, { text }));
+    await step(pressUnder(dataOf(last(calls), "К аукциону"), last(calls)));
+    await step(pressSend(calls, "✔️ Да, отправить 7"));
+    expect(plain(last(calls))).toContain("Объявление принято");
+    expect(notices.accepted[0]?.command).toMatchObject({ meetupId, text });
   });
 
   it("offers no announcement for a hidden auction before the week", async () => {
