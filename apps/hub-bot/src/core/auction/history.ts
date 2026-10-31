@@ -4,10 +4,12 @@ import type {
   HistoryRemoval,
   ListLotHistoryResponse,
 } from "../../../gen/auction/v1/auction_service_pb.js";
-import type {
-  BidOriginView,
-  LotHistoryEntryView,
-  LotHistoryPage,
+import {
+  type BidOriginView,
+  type LotHistoryEntryView,
+  type LotHistoryPage,
+  outbidOriginOf,
+  readOutbidOrigin as readOriginFromPages,
 } from "../../auction-ui/index.js";
 import { moneyOf } from "./snapshot.js";
 
@@ -99,4 +101,20 @@ function sourceOf(source: BidSource): "bot" | "floor" {
     default:
       throw new Error(`history bid with bid source ${source}`);
   }
+}
+
+export { outbidOriginOf };
+
+// Страница proto переводится тем же `historyPageOf`, что хронология экрана,
+// а доказательство источника — тем же `readOutbidOrigin`, что ответ на ставку.
+export async function readOutbidOrigin(
+  readPage: (pageToken: string) => Promise<ListLotHistoryResponse>,
+  minorUnits: number,
+  recipientId: string,
+): Promise<"proxy" | "manual" | undefined> {
+  return readOriginFromPages(
+    async (pageToken) => historyPageOf(await readPage(pageToken)),
+    minorUnits,
+    recipientId,
+  );
 }

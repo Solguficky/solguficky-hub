@@ -41,7 +41,7 @@ import {
   dayChronicleOf,
 } from "../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
-import { historyPageOf } from "../../core/auction/history.js";
+import { historyPageOf, readOutbidOrigin } from "../../core/auction/history.js";
 import { myInvoicesOf } from "../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../core/auction/prediction-results.js";
 import {
@@ -687,6 +687,20 @@ export function createDeliveryPorts(
         );
         return lotInfoOf(snapshot);
       },
+      outbidOrigin: (identityId, lotId, minorUnits, requestId) =>
+        readOutbidOrigin(
+          (pageToken) =>
+            auction.listLotHistory(
+              {
+                viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+                lotId,
+                pageToken,
+              },
+              options(requestId),
+            ),
+          minorUnits,
+          identityId,
+        ),
       async finalActiveLot(identityId, auctionId, requestId) {
         const { auction: snapshot } = await auction.getAuction(
           {

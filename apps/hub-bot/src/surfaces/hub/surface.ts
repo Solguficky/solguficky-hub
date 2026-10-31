@@ -259,7 +259,8 @@ export const hubSurface: SurfaceDefinition = ({
                     ? {}
                     : {
                         screens: (kind) => liveScreens.screens(kind),
-                        broadcasts: liveScreens.broadcasts(),
+                        watchStore: liveScreens.watches(),
+                        legacyBroadcasts: liveScreens.legacyBroadcasts(),
                       }),
                   names: {
                     getDisplayNames: (request) =>
@@ -308,6 +309,13 @@ export const hubSurface: SurfaceDefinition = ({
             auction.lotInfo(
               identityId,
               lotId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+          outbidOrigin: (identityId, lotId, minorUnits, requestId) =>
+            auction.outbidOrigin(
+              identityId,
+              lotId,
+              minorUnits,
               requestId === undefined ? undefined : rpcMeta({ requestId }),
             ),
           finalActiveLot: (identityId, auctionId, requestId) =>

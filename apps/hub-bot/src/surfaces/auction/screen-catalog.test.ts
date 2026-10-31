@@ -4,10 +4,6 @@ import {
   inspectCatalog,
   type ScreenEntry,
 } from "../../../testkit/screen-lint.js";
-import {
-  broadcastFinishedText,
-  broadcastText,
-} from "../../auction-broadcast.js";
 import type {
   AuctionScreenBody,
   PredictionAnswer,
@@ -15,7 +11,7 @@ import type {
   RaffleView,
 } from "../../auction-ui/index.js";
 import { encodeAuctionCallback } from "../../auction-ui/index.js";
-import { createBroadcastApi } from "../../core/auction/broadcast-telegram.js";
+import { createLegacyBroadcastCloser } from "../../core/auction/legacy-broadcasts.js";
 import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
 import { notificationMarkup, renderNotification } from "./delivery/message.js";
@@ -1725,19 +1721,12 @@ const notifications = [
   };
 });
 
-// Трансляция хода торгов (PER-826): первое сообщение и правка, собранные тем
-// же адаптером, что отправляет их боту.
+// Сообщение трансляции прежней выкладки (PER-826), которое бот правит один раз
+// и говорит, куда слежение переехало (PER-837).
 const bidWatch = await (async () => {
   const sent: { method: string; payload: unknown }[] = [];
-  const api = createBroadcastApi({
+  const closer = createLegacyBroadcastCloser({
     api: {
-      sendMessage: async (chatId: number, text: string, other?: object) => {
-        sent.push({
-          method: "sendMessage",
-          payload: { chat_id: chatId, text, ...other },
-        });
-        return { message_id: 1 };
-      },
       editMessageText: async (
         chatId: number,
         messageId: number,
@@ -1754,24 +1743,7 @@ const bidWatch = await (async () => {
     mark: screenMark("bid-watch"),
     report: () => {},
   });
-  const text = broadcastText({
-    lot: undefined,
-    leader: { kind: "none" },
-    winner: { kind: "none" },
-    updatedAt: "19:05:09",
-  });
-  const target = {
-    chatId: 42,
-    messageId: 1,
-    auctionId: "a",
-    viewer: { identityId: "i", rights: [] },
-  };
-  await api.send({ chatId: 42, text });
-  await api.edit(target, { text, final: false });
-  await api.edit(target, {
-    text: broadcastFinishedText("19:05:09"),
-    final: true,
-  });
+  await closer.close({ chatId: 42, messageId: 1 });
   return sent;
 })();
 

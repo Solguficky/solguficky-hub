@@ -56,9 +56,10 @@ const MAX_BYTES = 64;
 //   Подтверждения нет (ADR-049): сумма — ожидаемая цена, и устаревшая кнопка
 //   получает отказ с новой ценой, а не чужую ставку. `op_id` рождается на
 //   нажатии: два нажатия — два намерения, и второе Auction отклонит.
-// - `wf` — «Следить за торгами» карточки финала (PER-826): лот и страница.
-//   Карточка остаётся на месте, а трансляцию хода торгов запускает оболочка
-//   новым сообщением.
+// - `wf` — «Следить за торгами» карточки финала (PER-826, PER-837): лот и
+//   страница. Карточка остаётся на месте и сама становится слежением: оболочка
+//   запоминает её и правит по потоку, переживая рестарт.
+// - `nw` — «Не следить» на карточке в слежении (PER-837): лот и страница.
 //
 // Кнопка лота после принятой команды несёт третий аргумент — версию лота из
 // ответа Auction в base36 (PER-470): карточка дочитывает лот до неё, потому что
@@ -136,6 +137,7 @@ export type AuctionIntent =
   | { kind: "follow"; lotId: string; page: number }
   | { kind: "unfollow"; lotId: string; page: number }
   | { kind: "watch-final"; lotId: string; page: number }
+  | { kind: "unwatch-final"; lotId: string; page: number }
   // Список избранного. `auctionId` — лента, из корня которой список открыт:
   // туда ведёт возврат. Нет — список открыт из меню оболочки.
   | { kind: "favorites"; page: number; auctionId?: string }
@@ -491,6 +493,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       return `${prefix}:uf:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
     case "watch-final":
       return `${prefix}:wf:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
+    case "unwatch-final":
+      return `${prefix}:nw:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
     // Страница стоит первой: у списка из меню аукциона хвоста нет.
     case "favorites":
       return [
@@ -646,6 +650,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
       return { ok: true, intent: { kind: "unfollow", lotId: id, page } };
     case "wf":
       return { ok: true, intent: { kind: "watch-final", lotId: id, page } };
+    case "nw":
+      return { ok: true, intent: { kind: "unwatch-final", lotId: id, page } };
     case "xe":
       return { ok: true, intent: { kind: "explain", lotId: id, page } };
     case "hist": {

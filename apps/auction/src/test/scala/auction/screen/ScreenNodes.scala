@@ -24,8 +24,15 @@ import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.lot.PlaceBid
 import auction.lot.ScheduleLotRejected
+import auction.naming.DisplayNameCommands
 import auction.persistence.DatabaseSettings
+import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickLotViews
+import auction.persistence.SlickPredictionStore
+import auction.persistence.SlickResultsOutcomes
+import auction.persistence.SlickResultsStore
+import auction.results.ResultNames
+import auction.results.ResultsForecasts
 import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
 import com.typesafe.config.Config
@@ -124,6 +131,22 @@ trait ScreenNodes { self: Suite & Matchers & ScalaFutures & Eventually & Postgre
       val clock = Clock.systemUTC()
       val sharding = AuctionNode.join(kit.system)
       AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
+      // Итог экрана читает ResultsEntity, как production: готовый аукцион должен иметь доступный путь чтения игры.
+      val displayNames = DisplayNameCommands(SlickDisplayNameStore(kit.system))
+      val resultNames: ResultNames = new ResultNames {
+        def names(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, String]] =
+          displayNames.names(auction, participants).map(_.map((participant, name) => participant -> name.text))
+      }
+      AuctionNode.registerResults(
+        sharding,
+        clock,
+        UuidV7.generator(clock),
+        SlickResultsOutcomes(kit.system),
+        ResultsForecasts.of(SlickPredictionStore(kit.system)),
+        resultNames,
+        SlickResultsStore(kit.system),
+        10.seconds
+      )
       AuctionNode.registerAuctions(kit.system, sharding, clock, UuidV7.generator(clock), 10.seconds)
       AuctionNode.startProjection(
         kit.system,

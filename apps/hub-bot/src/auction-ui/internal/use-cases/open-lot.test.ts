@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AuctionPort,
   FavoritesPort,
+  LotHistoryEntryView,
   LotView,
   Viewer,
 } from "../../ports.js";
@@ -190,6 +191,52 @@ describe("lot preview", () => {
   });
 });
 
+describe("showLot", () => {
+  const live = (leaderId: string | undefined): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Шарф", description: "" },
+    nextPrice: rub(1000),
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: rub(900),
+      ...(leaderId === undefined ? {} : { leaderId }),
+      phase: "live",
+    },
+  });
+
+  const actionRows = async (lot: LotView, viewer: Viewer = VIEWER) => {
+    const body = await showLot({ auction, viewer, lot, page: 0 });
+    return body.keyboard
+      .filter((row) =>
+        row.some(
+          (button) =>
+            button.action === "lot.bid-final" || button.action === "lot.proxy",
+        ),
+      )
+      .map((row) => row.map((button) => button.action));
+  };
+
+  it("puts auto-bid below the next-price button and offers it to the leader", async () => {
+    expect(await actionRows(live(LEADER))).toEqual([
+      ["lot.bid-final"],
+      ["lot.proxy"],
+    ]);
+    expect(await actionRows(live(VIEWER.identityId))).toEqual([["lot.proxy"]]);
+  });
+
+  it("only offers auto-bid when enabled and the viewer may bid", async () => {
+    expect(await actionRows({ ...live(LEADER), proxyEnabled: false })).toEqual([
+      ["lot.bid-final"],
+    ]);
+    expect(
+      await actionRows(live(LEADER), { ...VIEWER, rights: [] as const }),
+    ).toEqual([["lot.bid-final"]]);
+  });
+});
+
 // Ряд «Автоставка» лота, который ждёт финала (PER-821, ADR-079).
 describe("proxy row of a lot waiting for the final", () => {
   const held = (over: Partial<LotView> = {}): LotView => ({
@@ -311,5 +358,72 @@ describe("sold lot invoices entry", () => {
 
   it("does not show the button to anyone else", async () => {
     expect(await actionsFor(LEADER)).not.toContain("lot.invoices");
+  });
+});
+
+// PER-840: карточка называет рост цены от автоставок, когда последняя ставка
+// хронологии — прокси после чужой ставки. Первая ставка лота прокси «подъёмом»
+// не считается, а сбой чтения хронологии строку убирает.
+describe("price raised by proxies", () => {
+  const trading = lots.find(
+    ([name]) => name === "trading online",
+  )?.[1] as LotView;
+  const bid = (
+    sequence: number,
+    origin: "proxy" | "manual",
+  ): LotHistoryEntryView => ({
+    kind: "bid",
+    sequence,
+    occurredAt: "2026-10-20T15:00:00Z",
+    bidId: `bid-${sequence}`,
+    participantId: LEADER,
+    amount: rub(1000 + sequence * 100),
+    origin:
+      origin === "proxy"
+        ? { kind: "proxy" }
+        : { kind: "manual", source: "bot" },
+  });
+  const cardWith = async (
+    listLotHistory: AuctionPort["listLotHistory"],
+  ): Promise<boolean | undefined> => {
+    const body = await showLot({
+      auction: { ...auction, listLotHistory },
+      favorites,
+      viewer: VIEWER,
+      lot: trading,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    return block?.kind === "lot" ? block.autoRaised === true : undefined;
+  };
+  const history =
+    (...entries: LotHistoryEntryView[]) =>
+    async () => ({
+      entries,
+      nextPageToken: "",
+    });
+
+  it("is flagged when the last bid is a proxy after another bid", async () => {
+    expect(await cardWith(history(bid(1, "manual"), bid(2, "proxy")))).toBe(
+      true,
+    );
+  });
+
+  it("is not flagged when the last bid is manual", async () => {
+    expect(await cardWith(history(bid(1, "proxy"), bid(2, "manual")))).toBe(
+      false,
+    );
+  });
+
+  it("is not flagged for a lone first proxy bid", async () => {
+    expect(await cardWith(history(bid(1, "proxy")))).toBe(false);
+  });
+
+  it("drops the line when the history is unreadable", async () => {
+    expect(
+      await cardWith(async () => {
+        throw new Error("unavailable");
+      }),
+    ).toBe(false);
   });
 });

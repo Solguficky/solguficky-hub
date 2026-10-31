@@ -39,6 +39,7 @@ import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.Future
@@ -237,6 +238,21 @@ final class ScreenRoutesSpec
         status shouldBe StatusCodes.OK
         mediaType.subType shouldBe "javascript"
         responseAs[String] should include("export function silenceLimit")
+      }
+    }
+
+    "serve every font the stylesheet names and let the page load it from its own origin" in {
+      // Список шрифтов берётся из самой таблицы стилей: опечатка в имени файла или в списке отдаваемых файлов
+      // откатила бы экран на системный шрифт молча, без ошибки на странице.
+      val css = Get("/screen/assets/screen.css") ~> routeOf() ~> check(responseAs[String])
+      val fonts = """url\("([^"]+)"\)""".r.findAllMatchIn(css).map(_.group(1)).toList.distinct
+      fonts should have size 6
+      fonts.foreach { font =>
+        Get(s"/screen/assets/$font") ~> routeOf() ~> check {
+          withClue(font)(status shouldBe StatusCodes.OK)
+          responseAs[Array[Byte]].take(4).toSeq shouldBe "wOF2".getBytes(StandardCharsets.US_ASCII).toSeq
+          header("Content-Security-Policy").map(_.value).getOrElse("") should include("font-src 'self'")
+        }
       }
     }
 

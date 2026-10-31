@@ -8,15 +8,20 @@ import {
 } from "../../auction-day-chronicle.js";
 import { renderFaqText } from "../../auction-faq.js";
 import {
+  auctionEndedLine,
   finalBidHeadline,
   finalBidLabel,
   finalPriceLines,
   heldProxyAccepted,
   heldProxyConfirmation,
   heldProxyQuestion,
+  liveProxyAccepted,
+  liveProxyConfirmation,
+  liveProxyQuestion,
   noLimitDetail,
   noLimitTitle,
   showsStep,
+  unwatchFinalLabel,
   watchFinalLabel,
   withdrawButtonLabel,
   withdrawNote,
@@ -74,6 +79,7 @@ import {
 } from "../../auction-set.js";
 import {
   autoFollowNote,
+  autoRaisedLines,
   awaitsFirstBid,
   currentValueLine,
   extensionLine,
@@ -93,6 +99,7 @@ import {
   lotsLabel,
   nameSettingsParagraphs,
   nameSettingsTitle,
+  overtakenByProxyLine,
   ownLimitLines,
   ownLotLine,
   proxyHintLead,
@@ -1459,7 +1466,7 @@ function confirmText(
     : screenText(
         `Включить автоставку до ${money(block.amount)}?`,
         lotSubject(block.title),
-        `${block.forFinal === true ? heldProxyConfirmation(block.currentPrice, block.amount, money) : proxyGap(block.currentPrice, block.amount, block.firstBid)}\nЛимит видишь только ты.`,
+        `${block.liveFinal === true ? liveProxyConfirmation({ currentPrice: block.currentPrice, nextPrice: block.nextPrice, limit: block.amount, viewerIsLeader: block.liveFinalLeader === true, money }) : block.forFinal === true ? heldProxyConfirmation(block.currentPrice, block.amount, money) : proxyGap(block.currentPrice, block.amount, block.firstBid)}\nЛимит видишь только ты.`,
       );
 }
 
@@ -1481,15 +1488,20 @@ function acceptedText(
     ? screenText(
         `Ставка ${money(block.amount)} принята`,
         lotSubject(block.title),
+        block.overtaken === undefined
+          ? undefined
+          : overtakenByProxyLine(block.overtaken),
         extension,
         note,
       )
     : screenText(
         `Автоставка до ${money(block.amount)} включена`,
         lotSubject(block.title),
-        block.forFinal === true
-          ? `${heldProxyAccepted}\nЛимит видишь только ты.`
-          : "Лимит видишь только ты.",
+        block.liveFinal === true
+          ? `${liveProxyAccepted}\nЛимит видишь только ты.`
+          : block.forFinal === true
+            ? `${heldProxyAccepted}\nЛимит видишь только ты.`
+            : "Лимит видишь только ты.",
         extension,
         note,
       );
@@ -1508,6 +1520,9 @@ function questionText(
         : {
             amount: money(block.current),
             limit: block.currentIsLimit === true,
+            ...(block.liveFinal === true && block.currentIsLimit !== true
+              ? { floor: true }
+              : {}),
           },
     );
   switch (block.question) {
@@ -1525,13 +1540,17 @@ function questionText(
           ? undefined
           : proxyExplainer(block.explainer),
         [
-          block.forFinal === true
-            ? heldProxyQuestion
-            : "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+          block.liveFinal === true
+            ? liveProxyQuestion
+            : block.forFinal === true
+              ? heldProxyQuestion
+              : "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
           ...current(),
           // Подсказка уже несёт пример с ценой этого лота: второй, общий,
           // с ним расходится.
-          ...(block.explainer === undefined ? ["Например: 3 000"] : []),
+          ...(block.explainer === undefined && block.liveFinal !== true
+            ? ["Например: 3 000"]
+            : []),
         ].join("\n"),
       );
     case "alias":
@@ -1685,7 +1704,7 @@ export function resultOutcome(result: CommandResult): Outcome {
       return { title: "Лот торгуется в другой валюте" };
     case "proxy-below-current-price":
       return {
-        title: "Лимит ниже текущей цены",
+        title: "Лимит ниже допустимой цены",
         detail: `Нужно от ${money(refusal.minLimit)}.`,
       };
     case "proxy-disabled":
@@ -1824,7 +1843,8 @@ function renderCard(
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
   // Исход ставки финала — своей группой под статусом и ценой (PER-336).
   const groups = [...statusGroups(block, options), ...setGroups(block)];
-  const result = finalBidHeadline(block, money);
+  const result =
+    block.ended === true ? auctionEndedLine : finalBidHeadline(block, money);
   const rich = (options.presentation ?? "rich") === "rich";
   // Пустое описание — та же заглушка, что у карточки сходки хаба (дизайн-код,
   // «Карточка»; PER-594).
@@ -1899,6 +1919,7 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
         ...(showsStep(block) ? stepLines(block, options) : []),
+        ...autoRaisedLines(block),
         ...ownLimitLines(block),
       ];
       return [
@@ -2165,6 +2186,8 @@ function renderButton(
       return text(unfollowLabel);
     case "lot.watch":
       return text(watchFinalLabel);
+    case "lot.unwatch":
+      return text(unwatchFinalLabel);
     case "lot.prev":
       return text(lotPrevLabel);
     case "lot.next":

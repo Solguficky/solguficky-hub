@@ -14,7 +14,12 @@ import auction.naming.ChooseResult
 import auction.naming.ChosenName
 import auction.naming.DisplayNameStore
 import auction.naming.StoredName
+import auction.prediction.Nomination
+import auction.results.NominationValue
 import auction.watch.ChangeRegistry
+import ch.qos.logback.classic.Logger as LogbackLogger
+import ch.qos.logback.classic.spi.ILoggingEvent
+import ch.qos.logback.core.read.ListAppender
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.stream.Materializer
@@ -29,11 +34,13 @@ import org.scalatest.time.Millis
 import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
+import org.slf4j.LoggerFactory
 
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.jdk.CollectionConverters.*
 
 /**
  * Снимок экрана зала читается один раз на повод и аукцион (PER-695): число чтений не зависит от числа потоков, а
@@ -152,6 +159,56 @@ final class ScreenFeedSpec extends AnyWordSpec with Matchers with ScalaFutures w
 
       streams.foreach(_.cancel())
       eventually(changes.subscriptions(auctionId) shouldBe 0)
+    }
+
+    "keep the finished hall feed open and retry predictions after a failed read" in {
+      val views = Views(Some(readingIn(AuctionState.Draft)))
+      val changes = ChangeRegistry()
+      val reads = AtomicInteger(0)
+      val predictions = new ScreenPredictions {
+        def read(id: UUID): Future[List[ScreenNomination]] =
+          if (reads.incrementAndGet() == 1) Future.failed(IllegalStateException("private failure detail"))
+          else Future.successful(List(ScreenNomination(Nomination.TotalSales, NominationValue.Number(10000), 0, Nil)))
+      }
+      val feed = ScreenFeed(views, NoNames, Visible, changes, StreamLimit(100), predictions)
+      val logger = eventually {
+        LoggerFactory.getLogger(classOf[ScreenFeed]) match {
+          case found: LogbackLogger => found
+          case _ => fail("slf4j has not settled on logback")
+        }
+      }
+      val appender = new ListAppender[ILoggingEvent]()
+      appender.start()
+      logger.addAppender(appender)
+      try {
+        val streams = Vector.fill(2)(streamOf(feed))
+        streams.foreach(_.pull().futureValue shouldBe defined)
+
+        views.current = Some(readingIn(AuctionState.Finished(AuctionFixtures.config(), LotFixtures.op(9))))
+        changes.changed(auctionId)
+        val empty = streams.map(_.pull().futureValue.getOrElse(fail("the feed died on a prediction read failure")))
+        empty.foreach { json =>
+          json should include("\"phase\":\"finished\"")
+          json should include("\"predictions\":[]")
+          json should not include "catalog-total-sales"
+        }
+
+        changes.changed(auctionId)
+        val recovered = streams.map(_.pull().futureValue.getOrElse(fail("the feed died before the retry")))
+        recovered.foreach(_ should include("\"nomination\":\"catalog-total-sales\""))
+        reads.get() shouldBe 2
+        val recorded = appender.list.asScala.toList
+        recorded should have size 1
+        val frame = recorded.head.getArgumentArray.head.toString
+        frame should include("operation=auction.screen.snapshot")
+        frame should include("error=java.lang.IllegalStateException")
+        frame should include("stack=")
+        frame should not include "private failure detail"
+        streams.foreach(_.cancel())
+      } finally {
+        logger.detachAppender(appender)
+        appender.stop()
+      }
     }
   }
 }
