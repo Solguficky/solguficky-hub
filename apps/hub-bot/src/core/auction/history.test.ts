@@ -9,7 +9,7 @@ const bid = (
   sequence: number,
   participantId: string,
   rubles: number,
-  origin: "proxy" | "manual",
+  origin: "proxy" | "manual" | "floor",
   removed = false,
 ): LotHistoryEntryView => ({
   kind: "bid",
@@ -19,7 +19,9 @@ const bid = (
   participantId,
   amount: { minorUnits: rubles * 100, currency: "RUB" },
   origin:
-    origin === "proxy" ? { kind: "proxy" } : { kind: "manual", source: "bot" },
+    origin === "proxy"
+      ? { kind: "proxy" }
+      : { kind: "manual", source: origin === "floor" ? "floor" : "bot" },
   ...(removed ? { removed: true as const } : {}),
 });
 
@@ -38,6 +40,14 @@ describe("outbidOriginOf", () => {
     const entries = [
       bid(1, recipient, 900, "manual"),
       bid(2, rival, 950, "manual"),
+    ];
+    expect(outbidOriginOf(entries, 95_000, recipient)).toBe("manual");
+  });
+
+  it("returns manual for a rival floor bid", () => {
+    const entries = [
+      bid(1, recipient, 900, "manual"),
+      bid(2, rival, 950, "floor"),
     ];
     expect(outbidOriginOf(entries, 95_000, recipient)).toBe("manual");
   });

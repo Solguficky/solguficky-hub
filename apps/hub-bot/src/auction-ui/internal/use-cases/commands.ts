@@ -6,6 +6,7 @@ import {
   type PlacedCommand,
 } from "../../callback-data.js";
 import { FinalBidReadUnavailable } from "../../final-bid-failure.js";
+import { readOutbidOrigin } from "../../outbid-origin.js";
 import type {
   AuctionPort,
   BidRefusal,
@@ -497,10 +498,12 @@ async function placeFinalBidOn(
           : {
               kind: "accepted",
               amount,
-              // Лидер после команды не ставивший: в одной команде лидерство
-              // забирает только автоставка (PER-840).
               ...(outcome.lotVersion > 0 &&
-              overtakenOnCommand(current, context.viewer)
+              (await overtakenOnCommand(
+                current,
+                context.viewer,
+                context.auction,
+              ))
                 ? { overtaken: true as const }
                 : {}),
             },
@@ -573,7 +576,8 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
     case "accepted": {
       if (intent.command === "proxy") markExplainerSeen(context);
       // Лот после команды читается один раз: и продление анти-снайпом, и
-      // автоставка, которая тут же перебила ручную ставку (PER-840).
+      // смена лидера, после которой происхождение ищется в хронологии
+      // (PER-840).
       let afterRead: Promise<LotView | undefined> | undefined;
       const readAfter = () => {
         afterRead ??= context.auction
@@ -592,7 +596,11 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
       // и «перебила автоставка» было бы ложью.
       const overtaken =
         intent.command === "bid" && !settled.forFinal && outcome.lotVersion > 0
-          ? overtakenPrice(await readAfter(), context.viewer)
+          ? await overtakenPrice(
+              await readAfter(),
+              context.viewer,
+              context.auction,
+            )
           : undefined;
       return acceptedBody(lot, intent, amount, outcome.lotVersion, {
         favorites: await settled.autoFollowNote,
@@ -686,24 +694,50 @@ async function extensionAfter(
   };
 }
 
-// Ручную ставку в той же команде перебить может только автоставка другого
-// участника (PER-840): лот после команды ведёт не ставивший. Цена лота — то, что
-// называет экран. Лот не перечитался или лидерство осталось — нечего говорить.
-function overtakenPrice(
+// Ручную ставку называем перебитой автоставкой, только когда хронология
+// доказывает ровно одну чужую несненую ставку по новой цене и она прокси —
+// тот же разбор, что у вести «перебили» (PER-840). Лидер после команды не
+// ставивший сам по себе не доказательство: в окне перечитки это может быть
+// чужая ручная или ставка зала. Лот не перечитался, лидерство осталось,
+// чтение хронологии отказало или происхождение неоднозначно — нейтральный
+// ответ, без слова «автоставка».
+async function overtakenPrice(
   after: LotView | undefined,
   viewer: Viewer,
-): Money | undefined {
+  auction: AuctionPort,
+): Promise<Money | undefined> {
   if (after === undefined) return undefined;
   const { status } = after;
-  return status.kind === "trading" &&
-    status.leaderId !== undefined &&
-    status.leaderId !== viewer.identityId
-    ? status.currentPrice
-    : undefined;
+  if (
+    status.kind !== "trading" ||
+    status.leaderId === undefined ||
+    status.leaderId === viewer.identityId
+  ) {
+    return undefined;
+  }
+  try {
+    const origin = await readOutbidOrigin(
+      (pageToken) =>
+        auction.listLotHistory({
+          viewer,
+          lotId: after.lotId,
+          pageToken,
+        }),
+      status.currentPrice.minorUnits,
+      viewer.identityId,
+    );
+    return origin === "proxy" ? status.currentPrice : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
-function overtakenOnCommand(after: LotView, viewer: Viewer): boolean {
-  return overtakenPrice(after, viewer) !== undefined;
+async function overtakenOnCommand(
+  after: LotView,
+  viewer: Viewer,
+  auction: AuctionPort,
+): Promise<boolean> {
+  return (await overtakenPrice(after, viewer, auction)) !== undefined;
 }
 
 // Версия 0 — Auction её не назвал: кнопка прежняя, карточка читает один раз.

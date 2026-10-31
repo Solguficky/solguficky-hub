@@ -50,6 +50,9 @@ export {
   type SurfaceEntry,
 } from "./gateway.js";
 export { liveLot, previewLot } from "./internal/use-cases/open-lot.js";
+// Доказательство источника перебития (PER-840): ответ на ставку и весть
+// читают хронологию одним разбором.
+export { outbidOriginOf, readOutbidOrigin } from "./outbid-origin.js";
 export type {
   AccessRequest,
   AccessRequestAnswer,

@@ -1707,11 +1707,9 @@ const acceptedWith = (
   const body = acceptedBody("bid", 130000, 4);
   const [accepted] = body.blocks;
   if (accepted?.kind !== "accepted") throw new Error("no accepted block");
-  // Лот после ставки в снимках контракта ведёт соперник: автоставка перебила
-  // ставку смотрящего (PER-840), если случай не называет иное.
   return {
     ...body,
-    blocks: [{ ...accepted, overtaken: rub(1200), ...notes }],
+    blocks: [{ ...accepted, ...notes }],
   };
 };
 
@@ -1967,6 +1965,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       LOT_CALL,
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
+      ...CARD_HISTORY_CALLS,
     ],
     body: acceptedWith({}),
   },
@@ -1986,6 +1985,134 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       getLotCall(CONTRACT_LOT.lotId, 4),
     ],
     body: acceptedBody("bid", 130000, 4),
+  },
+  // Лидер после команды не ставивший — ещё не автоставка: хронология должна
+  // доказать ровно одну чужую прокси-ставку по новой цене (PER-840).
+  {
+    intent: "bid: accepted, overtaken by a proven proxy",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      history: {
+        [CONTRACT_LOT.lotId]: {
+          "": {
+            entries: [
+              {
+                kind: "bid",
+                sequence: 1,
+                occurredAt: "2026-10-30T18:00:00Z",
+                bidId: "01929b7e-5c1d-7a3f-8e4b-000000000201",
+                participantId: CONTRACT_VIEWER.identityId,
+                amount: rub(1150),
+                origin: { kind: "manual", source: "bot" },
+              },
+              {
+                kind: "bid",
+                sequence: 2,
+                occurredAt: "2026-10-30T18:00:01Z",
+                bidId: "01929b7e-5c1d-7a3f-8e4b-000000000202",
+                participantId: LEADER_ID,
+                amount: rub(1200),
+                origin: { kind: "proxy" },
+              },
+            ],
+            nextPageToken: "",
+          },
+        },
+      },
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      ...historyCalls(CONTRACT_LOT.lotId, [""]),
+    ],
+    body: acceptedWith({ overtaken: rub(1200) }),
+  },
+  {
+    intent: "bid: accepted, overtaken by a floor bid",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      history: {
+        [CONTRACT_LOT.lotId]: {
+          "": {
+            entries: [
+              {
+                kind: "bid",
+                sequence: 1,
+                occurredAt: "2026-10-30T18:00:00Z",
+                bidId: "01929b7e-5c1d-7a3f-8e4b-000000000201",
+                participantId: CONTRACT_VIEWER.identityId,
+                amount: rub(1150),
+                origin: { kind: "manual", source: "bot" },
+              },
+              {
+                kind: "bid",
+                sequence: 2,
+                occurredAt: "2026-10-30T18:00:01Z",
+                bidId: "01929b7e-5c1d-7a3f-8e4b-000000000202",
+                participantId: LEADER_ID,
+                amount: rub(1200),
+                origin: { kind: "manual", source: "floor" },
+              },
+            ],
+            nextPageToken: "",
+          },
+        },
+      },
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      ...historyCalls(CONTRACT_LOT.lotId, [""]),
+    ],
+    body: acceptedWith({}),
+  },
+  {
+    intent: "bid: accepted, overtaken origin ambiguous",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      history: {
+        [CONTRACT_LOT.lotId]: {
+          "": {
+            entries: [
+              {
+                kind: "bid",
+                sequence: 1,
+                occurredAt: "2026-10-30T18:00:00Z",
+                bidId: "01929b7e-5c1d-7a3f-8e4b-000000000201",
+                participantId: LEADER_ID,
+                amount: rub(1200),
+                origin: { kind: "proxy" },
+              },
+              {
+                kind: "bid",
+                sequence: 2,
+                occurredAt: "2026-10-30T18:00:01Z",
+                bidId: "01929b7e-5c1d-7a3f-8e4b-000000000202",
+                participantId: RIVAL_ID,
+                amount: rub(1200),
+                origin: { kind: "manual", source: "bot" },
+              },
+            ],
+            nextPageToken: "",
+          },
+        },
+      },
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(130000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      ...historyCalls(CONTRACT_LOT.lotId, [""]),
+    ],
+    body: acceptedWith({}),
   },
   // Auction до PER-470 версии не называет: «К лоту» прежняя, без порога.
   {
@@ -4088,6 +4215,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       FOLLOWED_CALL,
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
+      ...CARD_HISTORY_CALLS,
     ],
     body: acceptedWith({ favorites: true }),
   },
@@ -4105,6 +4233,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       FOLLOWED_CALL,
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
+      ...CARD_HISTORY_CALLS,
     ],
     body: acceptedWith({}),
   },
@@ -4123,6 +4252,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       FOLLOWED_CALL,
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
+      ...CARD_HISTORY_CALLS,
     ],
     body: acceptedWith({ favorites: true }),
   },
@@ -4151,6 +4281,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       LOT_CALL,
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
+      ...CARD_HISTORY_CALLS,
     ],
     body: acceptedWith({
       extension: {
@@ -4176,6 +4307,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       LOT_CALL,
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
+      ...CARD_HISTORY_CALLS,
     ],
     body: acceptedWith({}),
   },
@@ -4198,6 +4330,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       LOT_CALL,
       bidCall(130000),
       getLotCall(CONTRACT_LOT.lotId, 4),
+      ...CARD_HISTORY_CALLS,
     ],
     body: acceptedWith({
       extension: { kind: "exhausted", deadline: "2026-10-10T18:00:00Z" },
