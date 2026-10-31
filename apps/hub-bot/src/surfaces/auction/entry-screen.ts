@@ -8,6 +8,7 @@ import {
 } from "../../auction-day-chronicle.js";
 import { renderFaqText } from "../../auction-faq.js";
 import {
+  auctionEndedLine,
   finalBidHeadline,
   finalBidLabel,
   finalPriceLines,
@@ -17,6 +18,7 @@ import {
   noLimitDetail,
   noLimitTitle,
   showsStep,
+  unwatchFinalLabel,
   watchFinalLabel,
   withdrawButtonLabel,
   withdrawNote,
@@ -1829,7 +1831,8 @@ function renderCard(
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
   // Исход ставки финала — своей группой под статусом и ценой (PER-336).
   const groups = [...statusGroups(block, options), ...setGroups(block)];
-  const result = finalBidHeadline(block, money);
+  const result =
+    block.ended === true ? auctionEndedLine : finalBidHeadline(block, money);
   const rich = (options.presentation ?? "rich") === "rich";
   // Пустое описание — та же заглушка, что у карточки сходки хаба (дизайн-код,
   // «Карточка»; PER-594).
@@ -2171,6 +2174,8 @@ function renderButton(
       return text(unfollowLabel);
     case "lot.watch":
       return text(watchFinalLabel);
+    case "lot.unwatch":
+      return text(unwatchFinalLabel);
     case "lot.prev":
       return text(lotPrevLabel);
     case "lot.next":

@@ -1,22 +1,24 @@
 import { z } from "zod";
 import type { Viewer } from "../../auction-ui/index.js";
 import type { Logger } from "../logging.js";
-import type { BroadcastStore, BroadcastTarget } from "./broadcast.js";
+import type { WatchStore, WatchTarget } from "./live-cards.js";
 import { reportLiveStoreFailure } from "./live-failures.js";
 import type { LiveKvLink, LiveScreensKv } from "./live-kv-link.js";
 
-// Запись открытых трансляций хода торгов в JetStream KV (PER-826): по одной на
-// чат, ключ `broadcast.<чат>` в том же bucket'е, что пульт и «Ставки зала»
-// хаба (PER-815). Срок записи — двое суток от последней записи ключа, как у
-// них: трансляция живёт час финала. Права в записи не источник допуска:
-// Auction проверяет их при каждой подписке на поток.
+// Запись карточек лота в слежении в JetStream KV (PER-837): по одной на чат,
+// ключ `watch.<чат>` в том же bucket'е, что пульт и «Ставки зала» хаба
+// (PER-815). Срок записи — двое суток от последней записи ключа: слежение
+// живёт час финала. Права в записи не источник допуска: Auction проверяет их
+// при каждой подписке на поток.
 
-const KIND = "broadcast";
+const KIND = "watch";
 
 const RecordSchema = z.object({
   chatId: z.number().int(),
   messageId: z.number().int(),
   auctionId: z.string().min(1),
+  lotId: z.string().min(1),
+  page: z.number().int().min(0),
   viewer: z.object({
     identityId: z.string().min(1),
     rights: z.array(z.string()),
@@ -25,7 +27,7 @@ const RecordSchema = z.object({
 
 const keyOf = (chatId: number) => `${KIND}.${chatId}`;
 
-function parse(raw: string): BroadcastTarget | undefined {
+function parse(raw: string): WatchTarget | undefined {
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -44,14 +46,14 @@ function parse(raw: string): BroadcastTarget | undefined {
 }
 
 /**
- * Хранилище трансляций. Методы не бросают: bucket — общее хранилище и может
- * быть недоступен, а трансляция тогда живёт, как без него, и отказ уходит в
+ * Хранилище слежений. Методы не бросают: bucket — общее хранилище и может
+ * быть недоступен, а слежение тогда живёт, как без него, и отказ уходит в
  * лог. Нечитаемая запись считается отсутствующей и из списка выпадает.
  */
-export function createBroadcastKvStore(options: {
+export function createWatchKvStore(options: {
   kv: LiveScreensKv;
   onError: (operation: "save" | "remove" | "list", cause: unknown) => void;
-}): BroadcastStore {
+}): WatchStore {
   const { kv, onError } = options;
   return {
     async save(target) {
@@ -70,7 +72,7 @@ export function createBroadcastKvStore(options: {
     },
     async list() {
       try {
-        const targets: BroadcastTarget[] = [];
+        const targets: WatchTarget[] = [];
         for await (const key of await kv.keys(`${KIND}.>`)) {
           const entry = await kv.get(key);
           if (entry === null || entry.operation !== "PUT") continue;
@@ -89,18 +91,15 @@ export function createBroadcastKvStore(options: {
 }
 
 /** Хранилище поверх ленивого соединения: нет bucket'а — записей нет. */
-export function createBroadcastStore(
-  link: LiveKvLink,
-  logger: Logger,
-): BroadcastStore {
+export function createWatchStore(link: LiveKvLink, logger: Logger): WatchStore {
   const lazy = async <T>(
-    use: (store: BroadcastStore) => Promise<T>,
+    use: (store: WatchStore) => Promise<T>,
     fallback: T,
   ): Promise<T> => {
     const kv = await link.kv();
     if (kv === undefined) return fallback;
     return use(
-      createBroadcastKvStore({
+      createWatchKvStore({
         kv,
         onError: (operation, cause) =>
           reportLiveStoreFailure(logger, operation, cause),

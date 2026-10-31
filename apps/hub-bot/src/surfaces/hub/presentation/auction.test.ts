@@ -2639,49 +2639,105 @@ describe("final lot card in the hub", () => {
     expect(auction.opIds).toHaveLength(0);
   });
 
-  // Трансляция хода торгов (PER-826): кнопка карточки присылает одно сообщение,
-  // дальше оно правится по потоку, а «Не следить» его останавливает.
-  it("broadcasts the bidding in one message after the watch button", async () => {
+  // Слежение (PER-826, PER-837): «Следить за торгами» не присылает сообщения,
+  // а включает слежение на самой карточке, «Не следить» его выключает.
+  it("turns the card itself into a follow after the watch button", async () => {
     const { bot, calls, watch } = await setup();
     await bot.handleUpdate(
       press(encodeAuctionCallback({ kind: "watch-final", lotId, page: 0 })),
     );
-    watch.emit(live(1, 1200));
-    await flush();
-    const sent = calls.filter(
-      (call) =>
-        call.method === "sendMessage" &&
-        plain(String((call.payload as { text?: string }).text)).includes(
-          "Следующая цена",
-        ),
-    );
-    expect(sent).toHaveLength(1);
-    const first = sent[0]?.payload as Shown;
-    expect(plain(first.text ?? "")).toContain("<b>1 300 ₽</b>");
-    expect(labels(first).flat()).toEqual(["Не следить"]);
-    const messageId = 101 + calls.indexOf(sent[0] as RecordedCall);
-
+    // Отдельного сообщения нет: карточка осталась на месте с «Не следить».
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "sendMessage" &&
+          plain(String((call.payload as { text?: string }).text)).includes(
+            "Следующая цена",
+          ),
+      ),
+    ).toHaveLength(0);
+    expect(labels(lastScreen(calls)).flat()).toContain("Не следить");
     watch.emit(live(2, 1400));
     await flush();
-    const edits = calls.filter(
-      (call) =>
-        call.method === "editMessageText" &&
-        (call.payload as { message_id?: number }).message_id === messageId,
-    );
-    expect(edits).toHaveLength(1);
-    expect(plain(((edits[0]?.payload ?? {}) as Shown).text ?? "")).toContain(
-      "<b>1 500 ₽</b>",
-    );
+    const edited = liveEdits(calls).at(-1)?.payload as Shown;
+    expect(plain(edited.text ?? "")).toContain("Цена: 1 400 ₽");
+    expect(labels(edited).flat()).toContain("Не следить");
+  });
 
-    await bot.handleUpdate(press("v1:bc:x", { message_id: messageId }));
+  it("keeps the accepted line on a followed card after the stream refreshes", async () => {
+    const mine = (version: number, price: number): LotView => ({
+      ...live(version, price),
+      status: {
+        kind: "trading",
+        currentPrice: rub(price),
+        leaderId: identityId,
+        phase: "live",
+      },
+    });
+    const watch = stream();
+    const auction = fakeAuction({ existing: true, lot: mine(1, 1200) });
+    const run = harness("member", auction, {
+      presentation: "plain",
+      live: {
+        watches: watch.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({ [identityId]: "@me" }) },
+      },
+    });
+    await run.bot.init();
+    const { bot, calls } = run;
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "watch-final", lotId, page: 0 })),
+    );
+    watch.emit(mine(1, 1200));
     await flush();
-    const stopped = calls.filter(
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+      ),
+    );
+    await flush();
+    expect(plain(lastScreen(calls).text ?? "")).toMatch(/принята/);
+    expect(labels(lastScreen(calls)).flat()).toContain("Не следить");
+    watch.emit(mine(3, 1300));
+    await flush();
+    const edited = liveEdits(calls).at(-1)?.payload as Shown;
+    expect(plain(edited.text ?? "")).toMatch(/принята/);
+    expect(labels(edited).flat()).toContain("Не следить");
+  });
+
+  it("stops editing the card after the unfollow button", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "watch-final", lotId, page: 0 })),
+    );
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "unwatch-final", lotId, page: 0 })),
+    );
+    expect(labels(lastScreen(calls)).flat()).toContain("Следить за торгами");
+    expect(watch.listeners.size).toBe(0);
+    const before = liveEdits(calls).length;
+    watch.emit(live(2, 1400));
+    await flush();
+    expect(liveEdits(calls)).toHaveLength(before);
+  });
+
+  it("closes the message of the old broadcast with a pointer to the card", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(press("v1:bc:x", { message_id: 55 }));
+    await flush();
+    const closed = calls.find(
       (call) =>
         call.method === "editMessageText" &&
-        (call.payload as { message_id?: number }).message_id === messageId,
+        (call.payload as { message_id?: number }).message_id === 55,
     );
-    expect(((stopped.at(-1)?.payload ?? {}) as Shown).text).toBe(
-      "Трансляция остановлена",
+    expect(((closed?.payload ?? {}) as Shown).text).toContain(
+      "перенесена на карточку лота",
     );
   });
 

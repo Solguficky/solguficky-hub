@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type {
-  AuctionBlock,
-  AuctionScreenBody,
-  LotView,
-  Viewer,
+import {
+  type AuctionBlock,
+  type AuctionScreenBody,
+  encodeAuctionCallback,
+  type LotView,
+  type Viewer,
 } from "../../auction-ui/index.js";
 import type { EditLimiter } from "../bot/edit-limiter.js";
 import {
   createLiveCards,
+  keepWatching,
   type LiveCardEntry,
   type LiveEditOutcome,
   liveCardOf,
+  type WatchStore,
+  type WatchTarget,
 } from "./live-cards.js";
 import type { AuctionWatches, AuctionWatchState } from "./watch.js";
 
@@ -105,13 +109,17 @@ const flush = async () => {
   for (let i = 0; i < 20; i += 1) await Promise.resolve();
 };
 
-function setup(outcome: LiveEditOutcome = { kind: "done" }) {
+function setup(
+  outcome: LiveEditOutcome = { kind: "done" },
+  store?: WatchStore,
+) {
   const stream = manualWatches();
   const edits: { card: LiveCardEntry; body: AuctionScreenBody }[] = [];
   const nameCalls: string[][] = [];
   const cards = createLiveCards({
     watches: stream.watches,
     limiter: immediate,
+    ...(store === undefined ? {} : { store }),
     names: {
       async getDisplayNames(request) {
         nameCalls.push([...request.participantIds]);
@@ -279,6 +287,24 @@ describe("live cards", () => {
     expect(
       lotOf(edits[1]?.body ?? { blocks: [], keyboard: [] })?.finalBid,
     ).toBeUndefined();
+  });
+
+  it("takes the accepted bid of the card body", () => {
+    const accepted = { kind: "accepted" as const, amount: rub(1250) };
+    const body: AuctionScreenBody = {
+      blocks: [
+        {
+          kind: "lot",
+          auctionId: AUCTION_ID,
+          lotId: LOT_A,
+          version: 2,
+          live: { page: 1 },
+          finalBid: accepted,
+        } as unknown as AuctionBlock,
+      ],
+      keyboard: [],
+    };
+    expect(liveCardOf(body, VIEWER)?.priceMoved).toEqual(accepted);
   });
 
   it("takes the price-moved reply of the card body", () => {
@@ -490,5 +516,276 @@ describe("live card of a body", () => {
     expect(liveCardOf({ blocks: [block], keyboard: [] }, undefined)).toBe(
       undefined,
     );
+  });
+});
+
+// Карточка в слежении (PER-837): та же карточка, запись о которой переживает
+// рестарт, а в конце финала она пишет «Аукцион завершён».
+describe("cards in the follow", () => {
+  function memoryStore(initial: WatchTarget[] = []) {
+    const records = new Map(initial.map((each) => [each.chatId, each]));
+    const store: WatchStore = {
+      async save(target) {
+        records.set(target.chatId, target);
+      },
+      async remove(chatId) {
+        records.delete(chatId);
+      },
+      async list() {
+        return [...records.values()];
+      },
+    };
+    return { records, store };
+  }
+  const start = { ...opened, watch: "start" as const, watching: true };
+
+  it("saves the card on the watch button and draws the unfollow button", async () => {
+    const { records, store } = memoryStore();
+    const { stream, edits, cards, lotOf } = setup({ kind: "done" }, store);
+    cards.shown(7, 70, start);
+    expect(cards.watching(7)).toBe(true);
+    await flush();
+    expect(records.get(7)).toMatchObject({
+      messageId: 70,
+      auctionId: AUCTION_ID,
+      lotId: LOT_A,
+      page: 2,
+    });
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    const body = edits[0]?.body ?? { blocks: [], keyboard: [] };
+    expect(lotOf(body)?.watching).toBe(true);
+    expect(body.keyboard.flat().map((b) => b.action)).toContain("lot.unwatch");
+  });
+
+  it("follows the next lot and keeps the record under it", async () => {
+    const { records, store } = memoryStore();
+    const { stream, cards } = setup({ kind: "done" }, store);
+    cards.shown(7, 70, start);
+    stream.emit(live(LOT_B, 1, 500), [sold(LOT_A, 3), live(LOT_B, 1, 500)]);
+    await flush();
+    expect(records.get(7)?.lotId).toBe(LOT_B);
+  });
+
+  it("keeps the accepted bid line after a stream refresh of a followed card", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, start);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    const accepted = { kind: "accepted" as const, amount: rub(1300) };
+    cards.shown(7, 70, { ...opened, version: 2, priceMoved: accepted });
+    await flush();
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toEqual(accepted);
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.watching,
+    ).toBe(true);
+    stream.emit(live(LOT_A, 3, 1400));
+    await flush();
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toEqual(accepted);
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.watching,
+    ).toBe(true);
+  });
+
+  it("stops the follow when unfollow arrives from another message of the chat", async () => {
+    const { records, store } = memoryStore();
+    const { stream, edits, cards } = setup({ kind: "done" }, store);
+    cards.shown(7, 70, start);
+    await flush();
+    expect(cards.shown(7, 71, { ...opened, watch: "stop" })).toBe(false);
+    await flush();
+    expect(records.size).toBe(0);
+    expect(cards.watching(7)).toBe(false);
+    expect(stream.subscribers()).toBe(0);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    expect(edits).toHaveLength(0);
+  });
+
+  it("does not revive a follow that was stopped while save was in flight", async () => {
+    let releaseSave: () => void = () => {};
+    const { records, store } = memoryStore();
+    const delayed: WatchStore = {
+      save: (target) =>
+        new Promise((resolve) => {
+          releaseSave = () => {
+            void store.save(target).then(resolve);
+          };
+        }),
+      remove: (chatId) => store.remove(chatId),
+      list: () => store.list(),
+    };
+    const { cards } = setup({ kind: "done" }, delayed);
+    cards.shown(7, 70, start);
+    expect(cards.shown(7, 70, { ...opened, watch: "stop" })).toBe(false);
+    releaseSave();
+    await flush();
+    expect(records.size).toBe(0);
+    expect(cards.watching(7)).toBe(false);
+  });
+
+  it("turns the watch button into unfollow on a followed card body", () => {
+    const body: AuctionScreenBody = {
+      blocks: [
+        {
+          kind: "lot",
+          auctionId: AUCTION_ID,
+          lotId: LOT_A,
+          version: 2,
+          status: live(LOT_A, 2, 1300).status,
+          live: { page: 2 },
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.watch",
+            callbackData: encodeAuctionCallback({
+              kind: "watch-final",
+              lotId: LOT_A,
+              page: 2,
+            }),
+          },
+        ],
+      ],
+    };
+    const kept = keepWatching(body);
+    expect(kept.blocks[0]).toMatchObject({ watching: true });
+    expect(kept.keyboard[0]?.[0]?.action).toBe("lot.unwatch");
+    expect(
+      keepWatching({
+        ...body,
+        blocks: [{ ...body.blocks[0], unwatch: true } as AuctionBlock],
+      }).blocks[0],
+    ).not.toMatchObject({ watching: true });
+  });
+
+  it("stops editing and drops the record on the unfollow button", async () => {
+    const { records, store } = memoryStore();
+    const { stream, edits, cards } = setup({ kind: "done" }, store);
+    cards.shown(7, 70, start);
+    await flush();
+    expect(cards.shown(7, 70, { ...opened, watch: "stop" })).toBe(false);
+    await flush();
+    expect(records.size).toBe(0);
+    expect(stream.subscribers()).toBe(0);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    expect(edits).toHaveLength(0);
+  });
+
+  it("drops the record on the unfollow button even when the registry lost the card", async () => {
+    const { records, store } = memoryStore([
+      {
+        chatId: 7,
+        messageId: 70,
+        auctionId: AUCTION_ID,
+        lotId: LOT_A,
+        page: 2,
+        viewer: VIEWER,
+      },
+    ]);
+    const { cards } = setup({ kind: "done" }, store);
+    expect(cards.shown(7, 70, { ...opened, watch: "stop" })).toBe(false);
+    await flush();
+    expect(records.size).toBe(0);
+  });
+
+  it("drops the record when another screen takes the message", async () => {
+    const { records, store } = memoryStore();
+    const { cards } = setup({ kind: "done" }, store);
+    cards.shown(7, 70, start);
+    await flush();
+    cards.shown(7, 70, undefined);
+    await flush();
+    expect(records.size).toBe(0);
+  });
+
+  it("restores the card after a restart and edits the same message", async () => {
+    const { records, store } = memoryStore([
+      {
+        chatId: 7,
+        messageId: 70,
+        auctionId: AUCTION_ID,
+        lotId: LOT_A,
+        page: 2,
+        viewer: VIEWER,
+      },
+    ]);
+    const { stream, edits, cards, lotOf } = setup({ kind: "done" }, store);
+    await expect(cards.restore()).resolves.toBe(1);
+    expect(stream.viewers).toEqual([VIEWER]);
+    // Версия карточки неизвестна: первое состояние потока перерисует её.
+    stream.emit(live(LOT_A, 1, 1200));
+    await flush();
+    expect(edits).toHaveLength(1);
+    expect(edits[0]?.card).toMatchObject({ chatId: 7, messageId: 70 });
+    expect(
+      lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.watching,
+    ).toBe(true);
+    expect(records.has(7)).toBe(true);
+  });
+
+  it("does not revive a follow that was switched off before the restore read it", async () => {
+    const stale: WatchTarget = {
+      chatId: 7,
+      messageId: 70,
+      auctionId: AUCTION_ID,
+      lotId: LOT_A,
+      page: 2,
+      viewer: VIEWER,
+    };
+    const { store } = memoryStore();
+    const { stream, cards } = setup(
+      { kind: "done" },
+      { ...store, list: async () => [stale] },
+    );
+    cards.shown(7, 70, start);
+    cards.shown(7, 70, { ...opened, watch: "stop" });
+    await cards.restore();
+    expect(stream.subscribers()).toBe(0);
+  });
+
+  it("writes that the auction is over on the last edit and lets the card go", async () => {
+    const { records, store } = memoryStore();
+    const { stream, edits, cards, lotOf } = setup({ kind: "done" }, store);
+    cards.shown(7, 70, start);
+    stream.emit(undefined, [sold(LOT_A, 5)], true);
+    // Поток закрывается сразу за последним состоянием: правку это не отменяет.
+    stream.end();
+    await flush();
+    expect(edits).toHaveLength(1);
+    expect(lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.ended).toBe(
+      true,
+    );
+    expect(records.size).toBe(0);
+    expect(cards.size()).toBe(0);
+  });
+
+  it("carries the follow flags from the shown card", () => {
+    const block: Extract<AuctionBlock, { kind: "lot" }> = {
+      kind: "lot",
+      lotId: LOT_A,
+      auctionId: AUCTION_ID,
+      version: 4,
+      status: live(LOT_A, 4, 1200).status,
+      live: { page: 3 },
+      watch: true,
+      watching: true,
+    };
+    expect(liveCardOf({ blocks: [block], keyboard: [] }, VIEWER)).toMatchObject(
+      { watch: "start", watching: true },
+    );
+    const { watch: _watch, watching: _watching, ...plain } = block;
+    expect(
+      liveCardOf(
+        { blocks: [{ ...plain, unwatch: true }], keyboard: [] },
+        VIEWER,
+      ),
+    ).toMatchObject({ watch: "stop" });
   });
 });
