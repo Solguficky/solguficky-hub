@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { finalBidHeadline, finalBidLine } from "./auction-final.js";
+import {
+  finalBidHeadline,
+  finalBidLine,
+  liveProxyAccepted,
+  liveProxyConfirmation,
+} from "./auction-final.js";
 import type { AuctionBlock, Money } from "./auction-ui/index.js";
 
 const money = (amount: Money) => `${amount.minorUnits / 100} ₽`;
@@ -142,5 +147,54 @@ describe("finalBidHeadline", () => {
         money,
       ),
     ).toBe("Ставка 1300 ₽ принята: обнови карточку, чтобы узнать лидера");
+  });
+});
+
+describe("final auction copy", () => {
+  const currentPrice = { minorUnits: 100_000, currency: "RUB" };
+  const nextPrice = { minorUnits: 110_000, currency: "RUB" };
+  const limit = { minorUnits: 115_000, currency: "RUB" };
+
+  it("explains immediate recalculation without promising its price or leader", () => {
+    const text = liveProxyConfirmation({
+      currentPrice,
+      nextPrice,
+      limit,
+      viewerIsLeader: false,
+      money,
+    });
+    expect(text).toContain("Auction сразу пересчитает автоставки");
+    expect(text).toContain("итоговая цена и лидер зависят от других лимитов");
+    expect(text).not.toContain("бот поставит");
+  });
+
+  it("does not place an auto-bid against the viewer who leads", () => {
+    expect(
+      liveProxyConfirmation({
+        currentPrice,
+        nextPrice,
+        limit,
+        viewerIsLeader: true,
+        money,
+      }),
+    ).toContain("бот не ставит против тебя");
+  });
+
+  it("states that a limit below the next grid price cannot place it", () => {
+    const text = liveProxyConfirmation({
+      currentPrice,
+      nextPrice,
+      limit: { minorUnits: 105_000, currency: "RUB" },
+      viewerIsLeader: false,
+      money,
+    });
+    expect(text).toContain("Лимита не хватает на следующую цену сетки");
+    expect(text).not.toContain("ждать соперника");
+  });
+
+  it("does not promise that an accepted limit has already placed its owner's bid", () => {
+    expect(liveProxyAccepted).toContain("Auction сразу пересчитал автоставки");
+    expect(liveProxyAccepted).toContain("цена и лидер могут измениться");
+    expect(liveProxyAccepted).not.toContain("ставка уже ушла");
   });
 });

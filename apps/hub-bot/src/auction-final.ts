@@ -198,6 +198,33 @@ export function heldProxyConfirmation(
 
 export const heldProxyAccepted = `Лимит сработает в финале по сетке цен. ${gridRemainder}`;
 
+/** Слова автоставки на живой карточке финала (PER-823), общие у двух ботов. */
+export const liveProxyQuestion = `Пришли лимит в рублях. Он задаёт верхнюю границу автоставки. Если лимит покрывает следующую цену сетки, Auction сразу пересчитает автоставки; цена и лидер могут измениться из-за лимитов остальных участников. Лидер не ставит против себя: его автоставка ответит, если соперник перебьёт. Если лимита не хватает до следующей цены, твоя автоставка её не поставит. Дальше бот отвечает по сетке, но не выше лимита. ${gridRemainder} Лимит видишь только ты.`;
+
+export function liveProxyConfirmation(input: {
+  currentPrice: Money;
+  nextPrice: Money | undefined;
+  limit: Money;
+  viewerIsLeader: boolean;
+  money: (m: Money) => string;
+}): string {
+  const { currentPrice, nextPrice, limit, viewerIsLeader, money } = input;
+  const next =
+    nextPrice === undefined
+      ? undefined
+      : `Следующая цена сетки — ${money(nextPrice)}.`;
+  const action = viewerIsLeader
+    ? "Ты лидер: бот не ставит против тебя; автоставка ответит, если соперник перебьёт."
+    : nextPrice !== undefined && nextPrice.minorUnits <= limit.minorUnits
+      ? "Лимита хватает на следующую цену сетки. Auction сразу пересчитает автоставки; итоговая цена и лидер зависят от других лимитов."
+      : nextPrice === undefined
+        ? "Auction пересчитает автоставки по актуальному состоянию лота."
+        : "Лимита не хватает на следующую цену сетки: твоя автоставка её не поставит.";
+  return `Цена сейчас ${money(currentPrice)}. ${next ?? "Следующая цена сетки пока не пришла в снимке."} ${action} Дальше бот будет отвечать по сетке, но не выше ${money(limit)}. ${gridRemainder}`;
+}
+
+export const liveProxyAccepted = `Лимит принят. Auction сразу пересчитал автоставки по сетке; цена и лидер могут измениться с учётом лимитов остальных участников. Дальше бот отвечает по сетке, но не выше лимита. ${gridRemainder}`;
+
 /**
  * Слова снятия своего лимита (PER-822): общие у двух ботов. Лимит, поставленный
  * на онлайн-неделе, переходит в финал сам (ADR-079, п. 3), поэтому подтверждение

@@ -15,6 +15,9 @@ import {
   heldProxyAccepted,
   heldProxyConfirmation,
   heldProxyQuestion,
+  liveProxyAccepted,
+  liveProxyConfirmation,
+  liveProxyQuestion,
   noLimitDetail,
   noLimitTitle,
   showsStep,
@@ -1463,7 +1466,7 @@ function confirmText(
     : screenText(
         `Включить автоставку до ${money(block.amount)}?`,
         lotSubject(block.title),
-        `${block.forFinal === true ? heldProxyConfirmation(block.currentPrice, block.amount, money) : proxyGap(block.currentPrice, block.amount, block.firstBid)}\nЛимит видишь только ты.`,
+        `${block.liveFinal === true ? liveProxyConfirmation({ currentPrice: block.currentPrice, nextPrice: block.nextPrice, limit: block.amount, viewerIsLeader: block.liveFinalLeader === true, money }) : block.forFinal === true ? heldProxyConfirmation(block.currentPrice, block.amount, money) : proxyGap(block.currentPrice, block.amount, block.firstBid)}\nЛимит видишь только ты.`,
       );
 }
 
@@ -1494,9 +1497,11 @@ function acceptedText(
     : screenText(
         `Автоставка до ${money(block.amount)} включена`,
         lotSubject(block.title),
-        block.forFinal === true
-          ? `${heldProxyAccepted}\nЛимит видишь только ты.`
-          : "Лимит видишь только ты.",
+        block.liveFinal === true
+          ? `${liveProxyAccepted}\nЛимит видишь только ты.`
+          : block.forFinal === true
+            ? `${heldProxyAccepted}\nЛимит видишь только ты.`
+            : "Лимит видишь только ты.",
         extension,
         note,
       );
@@ -1515,6 +1520,9 @@ function questionText(
         : {
             amount: money(block.current),
             limit: block.currentIsLimit === true,
+            ...(block.liveFinal === true && block.currentIsLimit !== true
+              ? { floor: true }
+              : {}),
           },
     );
   switch (block.question) {
@@ -1532,13 +1540,17 @@ function questionText(
           ? undefined
           : proxyExplainer(block.explainer),
         [
-          block.forFinal === true
-            ? heldProxyQuestion
-            : "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+          block.liveFinal === true
+            ? liveProxyQuestion
+            : block.forFinal === true
+              ? heldProxyQuestion
+              : "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
           ...current(),
           // Подсказка уже несёт пример с ценой этого лота: второй, общий,
           // с ним расходится.
-          ...(block.explainer === undefined ? ["Например: 3 000"] : []),
+          ...(block.explainer === undefined && block.liveFinal !== true
+            ? ["Например: 3 000"]
+            : []),
         ].join("\n"),
       );
     case "alias":
@@ -1692,7 +1704,7 @@ export function resultOutcome(result: CommandResult): Outcome {
       return { title: "Лот торгуется в другой валюте" };
     case "proxy-below-current-price":
       return {
-        title: "Лимит ниже текущей цены",
+        title: "Лимит ниже допустимой цены",
         detail: `Нужно от ${money(refusal.minLimit)}.`,
       };
     case "proxy-disabled":

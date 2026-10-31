@@ -81,7 +81,17 @@ function confirmBody(
         amount: { minorUnits: pending.amount, currency: currentPrice.currency },
         currentPrice,
         ...(offered.forFinal ? { forFinal: true as const } : {}),
-        ...firstProxyBid(lot, pending),
+        ...(offered.liveFinal
+          ? {
+              liveFinal: true as const,
+              ...(lot.nextPrice === undefined
+                ? {}
+                : { nextPrice: lot.nextPrice }),
+              ...(offered.leaderId === context.viewer.identityId
+                ? { liveFinalLeader: true as const }
+                : {}),
+            }
+          : firstProxyBid({ lot, pending })),
       },
     ],
     keyboard: [
@@ -106,7 +116,12 @@ function confirmBody(
 // Что лот принимает от бота сейчас: ставку и лимит онлайн-торгов и, у лота,
 // который ждёт финала, только лимит (PER-821, ADR-079): он сработает в финале
 // по сетке цен. Ставка удержанного лота — отказ `lot-on-hold`.
-type Offered = { currentPrice: Money; leaderId?: string; forFinal: boolean };
+type Offered = {
+  currentPrice: Money;
+  leaderId?: string;
+  forFinal: boolean;
+  liveFinal: boolean;
+};
 
 function offeredFor(
   lot: LotView,
@@ -118,6 +133,7 @@ function offeredFor(
       currentPrice: status.currentPrice,
       ...(status.leaderId === undefined ? {} : { leaderId: status.leaderId }),
       forFinal: false,
+      liveFinal: false,
     };
   }
   if (status.kind === "held" && command === "proxy") {
@@ -125,6 +141,19 @@ function offeredFor(
       currentPrice: status.currentPrice,
       ...(status.leaderId === undefined ? {} : { leaderId: status.leaderId }),
       forFinal: true,
+      liveFinal: false,
+    };
+  }
+  if (
+    status.kind === "trading" &&
+    status.phase === "live" &&
+    command === "proxy"
+  ) {
+    return {
+      currentPrice: status.currentPrice,
+      ...(status.leaderId === undefined ? {} : { leaderId: status.leaderId }),
+      forFinal: false,
+      liveFinal: true,
     };
   }
   return undefined;
@@ -158,15 +187,17 @@ async function confirmOrRefuse(
   if (refusal !== undefined) {
     return resultBody(lot, page, { command: "bid", kind: "refused", refusal });
   }
-  // Лимит ниже цены удержанного лота Auction отклонил бы: отказ виден по
-  // снимку и приходит до «Да», как у ставки (PER-821).
-  if (offered.forFinal && pending.amount < offered.currentPrice.minorUnits) {
+  const minimumProxyLimit = minimumProxyLimitOf(lot) ?? offered.currentPrice;
+  if (
+    (offered.forFinal || offered.liveFinal) &&
+    pending.amount < minimumProxyLimit.minorUnits
+  ) {
     return resultBody(lot, page, {
       command: "proxy",
       kind: "refused",
       refusal: {
         kind: "proxy-below-current-price",
-        minLimit: offered.currentPrice,
+        minLimit: minimumProxyLimit,
       },
     });
   }
@@ -402,6 +433,7 @@ export async function commitCommand(
     intent,
     amount,
     forFinal: offered.forFinal,
+    liveFinal: offered.liveFinal,
     autoFollowNote: followed,
   };
   return intent.command === "bid"
@@ -566,6 +598,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
     };
     amount: Money;
     forFinal: boolean;
+    liveFinal: boolean;
     autoFollowNote: Promise<boolean>;
   },
   outcome: CommandOutcome<Refusal>,
@@ -607,6 +640,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
         ...(overtaken === undefined ? {} : { overtaken }),
         ...(extension === undefined ? {} : { extension }),
         ...(settled.forFinal ? { forFinal: true as const } : {}),
+        ...(settled.liveFinal ? { liveFinal: true as const } : {}),
       });
     }
     case "unanswered":
@@ -754,6 +788,7 @@ function acceptedBody(
     extension?: BidExtension;
     forFinal?: true;
     overtaken?: Money;
+    liveFinal?: true;
   },
 ): AuctionScreenBody {
   return {
@@ -773,6 +808,7 @@ function acceptedBody(
           ? {}
           : { extension: notes.extension }),
         ...(notes.forFinal === true ? { forFinal: true as const } : {}),
+        ...(notes.liveFinal === true ? { liveFinal: true as const } : {}),
       },
     ],
     keyboard: [
@@ -949,17 +985,19 @@ async function explainerShown(
   }
 }
 
-// У лота без лидера автоставка сразу ставит порог `nextPrice` — стартовую
-// цену (П-01): лимит, равный ей, не «ничего», а первая ставка.
-function firstProxyBid(
-  lot: LotView,
-  pending: PendingCommand,
-): { firstBid?: Money } {
+// В онлайне без лидера автоставка сразу ставит порог `nextPrice` — стартовую
+// цену (П-01). В живом финале цена зависит от скрытых лимитов, поэтому экран
+// описывает пересчёт, а не обещает конкретную ставку.
+function firstProxyBid(input: { lot: LotView; pending: PendingCommand }): {
+  firstBid?: Money;
+} {
+  const { lot, pending } = input;
   const { status } = lot;
   const firstBid = lot.nextPrice;
   if (
     pending.command !== "proxy" ||
     status.kind !== "trading" ||
+    status.phase !== "online" ||
     status.leaderId !== undefined ||
     firstBid === undefined ||
     firstBid.minorUnits > pending.amount
@@ -1000,6 +1038,20 @@ function proxyExample(lot: LotView, viewer: Viewer): ProxyExample | undefined {
   return { currentPrice, step, limit, firstBid };
 }
 
+function minimumProxyLimitOf(lot: LotView): Money | undefined {
+  const { status } = lot;
+  if (status.kind === "held") return status.currentPrice;
+  if (status.kind !== "trading") return undefined;
+  if (
+    status.phase === "live" &&
+    status.ask !== undefined &&
+    status.ask.minorUnits > status.currentPrice.minorUnits
+  ) {
+    return status.ask;
+  }
+  return status.currentPrice;
+}
+
 // Вопрос с `force_reply`. Шаг и адресат едут в «Отмене»: ответ вернёт их в
 // `reply_to_message`, и вопрос переживёт рестарт процесса.
 function questionBody(
@@ -1008,15 +1060,24 @@ function questionBody(
   intent: QuestionIntent,
   explainedBefore: boolean,
 ): AuctionScreenBody {
-  // Лимит удержанному лоту (PER-821): пример и «Как это работает» говорят о
-  // шагах онлайн-недели, а лимит сработает по сетке финала.
+  // Лимит удержанному лоту (PER-821) и живому финалу (PER-823) объясняется
+  // своим текстом, без примера и кнопки пояснения для онлайн-недели.
   const forFinal = intent.question === "proxy" && lot.status.kind === "held";
-  const explained = explainedBefore && !forFinal;
+  const liveFinal =
+    intent.question === "proxy" &&
+    lot.status.kind === "trading" &&
+    lot.status.phase === "live";
+  const explained = explainedBefore && !forFinal && !liveFinal;
   const current =
     intent.question === "bid"
       ? lot.nextPrice
       : intent.question === "proxy"
-        ? (lot.viewerProxyLimit ?? (forFinal ? undefined : lot.nextPrice))
+        ? (lot.viewerProxyLimit ??
+          (forFinal
+            ? undefined
+            : liveFinal
+              ? minimumProxyLimitOf(lot)
+              : lot.nextPrice))
         : undefined;
   return {
     blocks: [
@@ -1032,10 +1093,11 @@ function questionBody(
           : {}),
         ...(explained ? { explainer: explainerOf(lot, context.viewer) } : {}),
         ...(forFinal ? { forFinal: true as const } : {}),
+        ...(liveFinal ? { liveFinal: true as const } : {}),
       },
     ],
     keyboard: [
-      ...(intent.question === "proxy" && !explained && !forFinal
+      ...(intent.question === "proxy" && !explained && !forFinal && !liveFinal
         ? [
             [
               {

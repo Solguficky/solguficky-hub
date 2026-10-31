@@ -637,9 +637,9 @@ function isLive(status: LotStatusView): boolean {
 // поэтому рядов ставки у такого лота нет вовсе, а не вопрос, на который любой
 // ответ отказ. Лимит предлагается лоту, который его принимает.
 //
-// В живом финале кнопка одна — «Поставить N» на следующую цену (ADR-049):
-// своей суммы нет, а лимит участник ставит до финала. Лидеру кнопки нет —
-// против себя он не ставит, и Auction отказал бы.
+// В живом финале у не-лидера есть «Поставить N» на следующую цену (ADR-049)
+// и, когда лимиты включены, отдельный ряд «Автоставка» (PER-823). Своей суммы
+// нет; лидер не ставит ручную ставку против себя, но может задать лимит.
 function bidRows(
   lot: LotView,
   viewer: Viewer,
@@ -656,9 +656,9 @@ function bidRows(
     return [];
   }
   if (status.phase === "live") {
-    if (status.leaderId === viewer.identityId) return [];
-    return [
-      [
+    const rows: AuctionButton[][] = [];
+    if (status.leaderId !== viewer.identityId) {
+      rows.push([
         {
           action: "lot.bid-final",
           amount: nextPrice,
@@ -669,8 +669,22 @@ function bidRows(
             page,
           }),
         },
-      ],
-    ];
+      ]);
+    }
+    if (lot.proxyEnabled && viewer.rights.includes("place-bids")) {
+      rows.push([
+        {
+          action: "lot.proxy",
+          callbackData: encodeAuctionCallback({
+            kind: "ask",
+            question: "proxy",
+            lotId: lot.lotId,
+            page,
+          }),
+        },
+      ]);
+    }
+    return rows;
   }
   const ask = (question: "bid" | "proxy") =>
     encodeAuctionCallback({ kind: "ask", question, lotId: lot.lotId, page });

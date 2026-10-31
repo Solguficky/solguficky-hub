@@ -218,6 +218,21 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ? liveCardOf(outcome.screen.body, outcome.viewer)
         : undefined,
     );
+    if (outcome.screen.kind === "auction") {
+      for (const block of outcome.screen.body.blocks) {
+        if (
+          block.kind === "accepted" &&
+          block.command === "proxy" &&
+          block.liveFinal === true
+        ) {
+          liveCards.proxyLimitSet({
+            chatId,
+            lotId: block.lotId,
+            amount: block.amount,
+          });
+        }
+      }
+    }
   };
 
   // Только личный чат: в группе бот аукциона молчит.

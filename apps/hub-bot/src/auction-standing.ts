@@ -65,8 +65,8 @@ export function stepBidLabel(amount: Money, firstBid: boolean): string {
 /**
  * Свой лимит на карточке. Лимит ниже порога следующей ставки у не-лидера
  * больше ничего не сделает (PER-631, №81): строка говорит, что он исчерпан.
- * В живом финале (PER-713) кнопки «Автоставка» нет, поэтому поднять лимит
- * строка не советует, а лидеру, который поставил выше своего лимита рукой,
+ * В живом финале (PER-823) строка сообщает об исчерпанном лимите, а автоставка
+ * меняется отдельным рядом. Лидеру, который поставил выше своего лимита рукой,
  * лимит ниже текущей цены тоже показан исчерпанным, а не действующим.
  * Онлайн-неделя показывает лимит лидера как раньше.
  */
@@ -462,14 +462,12 @@ export function nameSettingsParagraphs(
 
 /** Подпись текущего значения в вопросе суммы и лимита (PER-595). */
 export function currentValueLine(
-  current: { amount: string; limit: boolean } | undefined,
+  current: { amount: string; limit: boolean; floor?: boolean } | undefined,
 ): string[] {
   if (current === undefined) return [];
-  return [
-    current.limit
-      ? `Твой лимит сейчас: ${current.amount}`
-      : `Минимальная ставка: ${current.amount}`,
-  ];
+  if (current.limit) return [`Твой лимит сейчас: ${current.amount}`];
+  if (current.floor === true) return [`Лимит от: ${current.amount}`];
+  return [`Минимальная ставка: ${current.amount}`];
 }
 
 /** Начало пояснения автоставки голосом помощника (PER-517, PER-595). */
