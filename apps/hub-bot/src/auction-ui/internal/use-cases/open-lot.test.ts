@@ -191,6 +191,52 @@ describe("lot preview", () => {
   });
 });
 
+describe("showLot", () => {
+  const live = (leaderId: string | undefined): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Шарф", description: "" },
+    nextPrice: rub(1000),
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: rub(900),
+      ...(leaderId === undefined ? {} : { leaderId }),
+      phase: "live",
+    },
+  });
+
+  const actionRows = async (lot: LotView, viewer: Viewer = VIEWER) => {
+    const body = await showLot({ auction, viewer, lot, page: 0 });
+    return body.keyboard
+      .filter((row) =>
+        row.some(
+          (button) =>
+            button.action === "lot.bid-final" || button.action === "lot.proxy",
+        ),
+      )
+      .map((row) => row.map((button) => button.action));
+  };
+
+  it("puts auto-bid below the next-price button and offers it to the leader", async () => {
+    expect(await actionRows(live(LEADER))).toEqual([
+      ["lot.bid-final"],
+      ["lot.proxy"],
+    ]);
+    expect(await actionRows(live(VIEWER.identityId))).toEqual([["lot.proxy"]]);
+  });
+
+  it("only offers auto-bid when enabled and the viewer may bid", async () => {
+    expect(await actionRows({ ...live(LEADER), proxyEnabled: false })).toEqual([
+      ["lot.bid-final"],
+    ]);
+    expect(
+      await actionRows(live(LEADER), { ...VIEWER, rights: [] as const }),
+    ).toEqual([["lot.bid-final"]]);
+  });
+});
+
 // Ряд «Автоставка» лота, который ждёт финала (PER-821, ADR-079).
 describe("proxy row of a lot waiting for the final", () => {
   const held = (over: Partial<LotView> = {}): LotView => ({

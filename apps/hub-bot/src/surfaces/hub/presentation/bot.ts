@@ -12126,6 +12126,15 @@ async function handleAuctionCallback(
       shown.screen,
       answer?.replyId,
     );
+    // Вопрос автоставки не занимает сообщение живой карточки. Оставляем её в
+    // реестре: поток должен обновить карточку после принятого лимита (PER-823).
+    if (
+      result.body.blocks.some(
+        (block) => block.kind === "question" && block.liveFinal === true,
+      )
+    ) {
+      ctx.liveShown = true;
+    }
     return {
       level: "info",
       message: "auction question asked",
@@ -12192,6 +12201,19 @@ async function handleAuctionCallback(
       const kept = ctx.liveCards.shown(chatId, delivered.messageId, live);
       if (delivered.messageId === ctx.callbackQuery?.message?.message_id) {
         ctx.liveShown = kept;
+      }
+    }
+    for (const block of result.body.blocks) {
+      if (
+        block.kind === "accepted" &&
+        block.command === "proxy" &&
+        block.liveFinal === true
+      ) {
+        ctx.liveCards.proxyLimitSet({
+          chatId,
+          lotId: block.lotId,
+          amount: block.amount,
+        });
       }
     }
   }

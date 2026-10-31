@@ -344,6 +344,21 @@ describe("live cards", () => {
     ).toBeUndefined();
   });
 
+  it("redraws the live card when a proxy limit is accepted", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, opened);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    cards.proxyLimitSet({ chatId: 7, lotId: LOT_A, amount: rub(2000) });
+    await flush();
+
+    expect(edits).toHaveLength(2);
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })
+        ?.viewerProxyLimit,
+    ).toEqual(rub(2000));
+  });
+
   // Между лотами человек жмёт «Обновить» или «В избранное» на проданном
   // лоте: тело без пометки `live`, но финал идёт, и карточка остаётся живой.
   it("keeps the card when the same message shows a settled lot of its auction", async () => {

@@ -134,6 +134,11 @@ export type LiveCards = {
   restore(): Promise<number>;
   /** Чат уже в слежении: ответ ставки и «Обновить» должны оставить «Не следить». */
   watching(chatId: number): boolean;
+  /**
+   * WatchAuction не несёт принятого лимита: кэширует его у открытой карточки
+   * и перерисовывает её из последнего состояния потока.
+   */
+  proxyLimitSet(input: { chatId: number; lotId: string; amount: Money }): void;
   size(): number;
   close(): void;
 };
@@ -475,6 +480,14 @@ export function createLiveCards(options: {
       return targets.length;
     },
     watching: (chatId) => cards.get(chatId)?.watching === true,
+    proxyLimitSet({ chatId, lotId, amount }) {
+      const card = cards.get(chatId);
+      if (card === undefined || card.lotId !== lotId) return;
+      card.proxyLimit = { lotId, amount };
+      const state = latest.get(chatId);
+      const lot = state === undefined ? undefined : lotOf(card, state);
+      if (lot !== undefined) schedule(card, lot);
+    },
     size: () => cards.size,
     close() {
       for (const chatId of [...cards.keys()]) forget(chatId);

@@ -4009,6 +4009,71 @@ describe("final lot card", () => {
     expect(labels(edited)).toContain("Поставить 1 500 ₽");
   });
 
+  it("keeps the live card subscribed and redraws it after an accepted limit", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(lotPress({ rich: true }));
+    stream.emit(liveLot(1, 1200));
+    await flush();
+    const card = lastScreen(calls);
+    const proxy = buttonData(card, "Автоставка");
+
+    await bot.handleUpdate(lotPress({ data: proxy, rich: true }));
+    expect(stream.listeners.size).toBe(1);
+    const question = lastScreen(calls);
+    expect(plain(question.text)).toContain(
+      "Если лимит покрывает следующую цену сетки",
+    );
+    expect(plain(question.text)).toContain(
+      "Остаток лимита, не кратный шагу сетки, не добирается.",
+    );
+    const questionCallIndex = calls.findLastIndex(
+      (call) => call.method === "sendMessage",
+    );
+    if (questionCallIndex < 0) throw new Error("no limit question");
+    const questionId = 101 + questionCallIndex;
+
+    await bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 30,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "1 500",
+        reply_to_message: {
+          message_id: questionId,
+          date: 0,
+          chat: privateChat,
+          from: { id: 1, is_bot: true, first_name: "stub" },
+          text: question.text,
+          reply_markup: { inline_keyboard: question.keyboard },
+        },
+      },
+    } as Update);
+    const confirmation = lastScreen(calls);
+    expect(plain(confirmation.text)).toContain(
+      "Auction сразу пересчитает автоставки",
+    );
+    expect(plain(confirmation.text)).toContain(
+      "итоговая цена и лидер зависят от других лимитов",
+    );
+    expect(plain(confirmation.text)).not.toContain("бот поставит 1 300 ₽");
+    const confirmationCallIndex = calls.findLastIndex(
+      (call) => call.method === "sendMessage",
+    );
+    if (confirmationCallIndex < 0) throw new Error("no limit confirmation");
+    const yes = buttonData(confirmation, "✔️ Да, включить автоставку");
+
+    await bot.handleUpdate(
+      lotPress({ data: yes, messageId: 101 + confirmationCallIndex }),
+    );
+    await flush();
+
+    expect(stream.listeners.size).toBe(1);
+    const edit = edits(calls).at(-1)?.payload;
+    expect(htmlOf(edit)).toContain("Твоя автоставка: до 1 500 ₽");
+  });
+
   // Слежение (PER-826, PER-837): «Следить за торгами» не присылает сообщения,
   // а включает слежение на самой карточке, «Не следить» его выключает.
   const watchPress = (kind: "watch-final" | "unwatch-final") =>

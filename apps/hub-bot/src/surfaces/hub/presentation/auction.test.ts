@@ -2549,6 +2549,30 @@ describe("final lot card in the hub", () => {
         (call.payload as { message_id?: number }).message_id === 9,
     );
 
+  const replyToQuestion = (
+    text: string,
+    questionId: number,
+    question: Shown,
+  ): Update =>
+    ({
+      update_id: 5,
+      message: {
+        message_id: 30,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text,
+        reply_to_message: {
+          message_id: questionId,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+          from: { id: 1, is_bot: true, first_name: "hub" },
+          text: question.text,
+          reply_markup: question.reply_markup,
+        },
+      },
+    }) as Update;
+
   it("keeps one button at the next price as the price moves", async () => {
     const { bot, calls, watch } = await setup();
     await bot.handleUpdate(press(lotData));
@@ -2563,6 +2587,66 @@ describe("final lot card in the hub", () => {
     expect(plain(edited.text ?? "")).toContain("Цена: 1 400 ₽");
     expect(plain(edited.text ?? "")).toContain("Лидер: @jay");
     expect(labels(edited)[0]?.map(plain)).toEqual(["Поставить 1 500 ₽"]);
+  });
+
+  it("keeps the live card subscribed and redraws it after accepting an auto-bid", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(press(lotData));
+    watch.emit(live(1, 1200));
+    await flush();
+    const card = lastScreen(calls);
+    const proxy = data(card, "Автоставка");
+    if (proxy === undefined) throw new Error("no auto-bid button");
+
+    await bot.handleUpdate(press(proxy, { reply_markup: card.reply_markup }));
+    expect(watch.listeners.size).toBe(1);
+    const question = lastScreen(calls);
+    expect(plain(question.text ?? "")).toContain(
+      "Если лимит покрывает следующую цену сетки",
+    );
+    expect(plain(question.text ?? "")).toContain(
+      "Остаток лимита, не кратный шагу сетки, не добирается.",
+    );
+
+    const questionIndex = calls.findLastIndex(
+      (call) => call.method === "sendMessage",
+    );
+    if (questionIndex < 0) throw new Error("no question message");
+    await bot.handleUpdate(
+      replyToQuestion("1 500", 101 + questionIndex, question),
+    );
+    const confirmation = lastScreen(calls);
+    expect(plain(confirmation.text ?? "")).toContain(
+      "Auction сразу пересчитает автоставки",
+    );
+    expect(plain(confirmation.text ?? "")).toContain(
+      "итоговая цена и лидер зависят от других лимитов",
+    );
+    expect(plain(confirmation.text ?? "")).not.toContain(
+      "бот поставит 1 300 ₽",
+    );
+    const confirmIndex = calls.findLastIndex(
+      (call) => call.method === "sendMessage",
+    );
+    const yes =
+      confirmation.reply_markup?.inline_keyboard[0]?.[0]?.callback_data;
+    if (yes === undefined || confirmIndex < 0) {
+      throw new Error("no auto-bid confirmation");
+    }
+
+    await bot.handleUpdate(
+      press(yes, {
+        message_id: 101 + confirmIndex,
+        text: confirmation.text,
+        reply_markup: confirmation.reply_markup,
+      }),
+    );
+    await flush();
+
+    expect(watch.listeners.size).toBe(1);
+    const edited = liveEdits(calls).at(-1)?.payload as Shown | undefined;
+    expect(edited).toBeDefined();
+    expect(plain(edited?.text ?? "")).toContain("Твоя автоставка: до 1 500 ₽");
   });
 
   it("revives an old sold card on the first click after a process restart", async () => {

@@ -260,10 +260,9 @@ describe("lot card in the hub shell", () => {
     );
   });
 
-  // В живом финале кнопки «Автоставка» нет (PER-713): исчерпанный лимит не
-  // советует его поднять, а лимит лидера ниже текущей цены не показан
-  // действующим.
-  it("names an exhausted own limit in the live final without advising to raise it", () => {
+  // В живом финале исчерпанный лимит сообщает отдельная строка карточки;
+  // доступ к автоставке находится в своём ряду (PER-823).
+  it("names an exhausted own limit in the live final", () => {
     const course = (standing?: "leader") =>
       plain(
         auctionScreen(
@@ -895,6 +894,37 @@ describe("bid sheet in the hub shell", () => {
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
     ).toEqual([["‹ Лот"]]);
+  });
+
+  it("names the allowed floor when a live-final limit is below the announced ask", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "result",
+            result: {
+              command: "proxy",
+              kind: "refused",
+              refusal: {
+                kind: "proxy-below-current-price",
+                minLimit: rub(1200),
+              },
+            },
+            lotId: "lot-1",
+            auctionId: auctionId,
+            title: "Кружка",
+          },
+        ],
+        keyboard: [
+          [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+
+    expect(plain(screen.text)).toBe(
+      "<b>Лимит ниже допустимой цены</b>\n\n<b>Кружка</b>\n\nНужно от 1 200 ₽.",
+    );
   });
 
   it("names five times the next price when a bid is above the ceiling", () => {
