@@ -60,7 +60,8 @@ final class ScreenFeed(
     names: DisplayNameStore,
     standings: MeetupStandings,
     changes: AuctionChanges,
-    val limit: StreamLimit
+    val limit: StreamLimit,
+    predictions: ScreenPredictions = ScreenPredictions.none
 )(using ExecutionContext, Materializer) {
 
   /** Снимки аукционов, общие для их потоков; ключ живёт, пока у аукциона есть хоть один подписчик. */
@@ -140,10 +141,15 @@ final class ScreenFeed(
     views.read(auctionId).flatMap {
       case None => Future.successful(None)
       case Some(reading) =>
-        names.find(AuctionId(auctionId), reading.participants).map { found =>
+        names.find(AuctionId(auctionId), reading.participants).flatMap { found =>
           val name = (participant: auction.lot.ParticipantId) =>
             DisplayNameRules.render(participant, found.get(participant).map(_.name)).text
-          Some(ScreenJson.render(auctionId, Screen.of(reading, name)))
+          Screen.of(reading, name) match {
+            // Итоги прогнозов есть только у завершённого аукциона (ADR-067, п. 4): отменённый их не получает.
+            case finished: ScreenState.Finished =>
+              predictions.read(auctionId).map(found => Some(ScreenJson.render(auctionId, finished, found)))
+            case state => Future.successful(Some(ScreenJson.render(auctionId, state)))
+          }
         }
     }
 

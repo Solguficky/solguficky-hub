@@ -246,7 +246,7 @@ final class ScreenRoutesSpec
       // откатила бы экран на системный шрифт молча, без ошибки на странице.
       val css = Get("/screen/assets/screen.css") ~> routeOf() ~> check(responseAs[String])
       val fonts = """url\("([^"]+)"\)""".r.findAllMatchIn(css).map(_.group(1)).toList.distinct
-      fonts should have size 8
+      fonts should have size 6
       fonts.foreach { font =>
         Get(s"/screen/assets/$font") ~> routeOf() ~> check {
           withClue(font)(status shouldBe StatusCodes.OK)

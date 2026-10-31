@@ -1,6 +1,8 @@
 package auction.screen
 
 import auction.lot.Money
+import auction.prediction.Nomination
+import auction.results.NominationValue
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.JsonNodeFactory
@@ -20,7 +22,8 @@ object ScreenJson {
   private val nodes = JsonNodeFactory.instance
   private val mapper = ObjectMapper()
 
-  def render(auctionId: UUID, state: ScreenState): String = {
+  /** `predictions` — итоги прогнозов: поле `predictions` несёт только итог завершённого аукциона (PER-839). */
+  def render(auctionId: UUID, state: ScreenState, predictions: List[ScreenNomination] = Nil): String = {
     val root = nodes.objectNode()
     root.put("schema", Schema)
     state match {
@@ -72,6 +75,7 @@ object ScreenJson {
         root.put("phase", "finished")
         root.set[JsonNode]("sold", this.sold(auctionId, sold))
         root.set[JsonNode]("totals", this.totals(totals))
+        root.set[JsonNode]("predictions", this.predictions(predictions))
       case ScreenState.Cancelled(sold, totals) =>
         root.put("phase", "cancelled")
         root.set[JsonNode]("sold", this.sold(auctionId, sold))
@@ -126,6 +130,46 @@ object ScreenJson {
     }
     array
   }
+
+  /**
+   * Итоги прогнозов: номинация именем, общим с ботами, итоговое значение — лоты (`lots`, идентификаторы) или число
+   * (`number`: сумма — в минорных единицах валюты продаж, ставки — штуками), число угадавших и их имена.
+   */
+  private def predictions(list: List[ScreenNomination]): com.fasterxml.jackson.databind.node.ArrayNode = {
+    val array = nodes.arrayNode()
+    list.foreach { nomination =>
+      val node = array.addObject()
+      node.put("nomination", nominationName(nomination.nomination))
+      nomination.value match {
+        case NominationValue.Lots(lots) =>
+          val ids = node.putArray("lots")
+          lots.toList.map(_.value.toString).sorted.foreach(ids.add)
+          node.putNull("number")
+        case NominationValue.Number(value) =>
+          node.putNull("lots")
+          node.put("number", value)
+      }
+      node.put("winners", nomination.winners)
+      val names = node.putArray("names")
+      nomination.names.foreach(names.add)
+    }
+    array
+  }
+
+  /** Имена номинаций — те же, что у ботов (`prediction-spec.ts` пакета ботов). */
+  private def nominationName(nomination: Nomination): String =
+    nomination match {
+      case Nomination.MostExpensiveLot => "catalog-most-expensive-lot"
+      case Nomination.TotalSales => "catalog-total-sales"
+      case Nomination.MostBidsLot => "catalog-most-bids-lot"
+      case Nomination.BiggestGrowthLot => "catalog-biggest-growth-lot"
+      case Nomination.MostBiddersLot => "catalog-most-bidders-lot"
+      case Nomination.TotalBids => "catalog-total-bids"
+      case Nomination.FinalMostExpensiveLot => "final-most-expensive-lot"
+      case Nomination.FinalTotalSales => "final-total-sales"
+      case Nomination.FinalBiggestGrowthLot => "final-biggest-growth-lot"
+      case Nomination.FinalTotalBids => "final-total-bids"
+    }
 
   private def totals(value: Totals): ObjectNode = {
     val node = nodes.objectNode()

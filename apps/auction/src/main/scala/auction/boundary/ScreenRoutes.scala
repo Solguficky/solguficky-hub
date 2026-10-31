@@ -52,8 +52,6 @@ object ScreenRoutes {
     "manrope-cyrillic.woff2",
     "manrope-latin.woff2",
     "manrope-latin-ext.woff2",
-    "ruslan-display-cyrillic.woff2",
-    "ruslan-display-latin.woff2",
     "unbounded-cyrillic.woff2",
     "unbounded-latin.woff2",
     "unbounded-latin-ext.woff2"

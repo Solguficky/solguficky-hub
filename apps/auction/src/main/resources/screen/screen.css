@@ -29,20 +29,6 @@
 }
 
 @font-face {
-  font-family: "Ruslan Display";
-  font-display: swap;
-  src: url("ruslan-display-cyrillic.woff2") format("woff2");
-  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
-}
-
-@font-face {
-  font-family: "Ruslan Display";
-  font-display: swap;
-  src: url("ruslan-display-latin.woff2") format("woff2");
-  unicode-range: U+0000-00FF, U+2000-206F;
-}
-
-@font-face {
   font-family: "Unbounded";
   font-weight: 800;
   font-display: swap;
@@ -84,7 +70,7 @@
   --alert-fg: #ffffff;
   --text: "Manrope", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --figure: "Unbounded", "Manrope", system-ui, sans-serif;
-  --ornament: "Ruslan Display", Georgia, serif;
+  --heading: "Unbounded", "Manrope", system-ui, sans-serif;
   color-scheme: dark;
 }
 
@@ -465,8 +451,9 @@ main {
     0 1cqw 2cqw #000a,
     inset 0 0 0 0.8cqw var(--seal);
   color: #ffd9c9;
-  font-family: var(--ornament);
-  font-size: 2.2cqw;
+  font-family: var(--heading);
+  font-weight: 800;
+  font-size: 1.7cqw;
   line-height: 1;
   transform: rotate(-12deg);
 }
@@ -559,9 +546,9 @@ main {
 
 .title {
   margin: 0;
-  font-family: var(--ornament);
-  font-weight: 400;
-  font-size: 3cqw;
+  font-family: var(--heading);
+  font-weight: 800;
+  font-size: 2.6cqw;
   line-height: 1.1;
   color: var(--bone);
 }
@@ -599,11 +586,111 @@ main {
   overflow: hidden;
 }
 
+/* Страницы правой половины итога сменяют друг друга; невидимая не перехватывает места и не читается. */
+.leaf {
+  transition:
+    opacity 0.8s ease,
+    visibility 0.8s;
+}
+
+.leaf:not(.shown) {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* «Пророки аукциона»: тёмная доска с латунной рамкой и карточки номинаций, как разложенные карты. */
+.prophets {
+  position: absolute;
+  left: 46cqw;
+  right: 4cqw;
+  top: 4.5cqw;
+  bottom: 4.5cqw;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  gap: 1cqw;
+  padding: 2cqw 2.4cqw;
+  border-radius: 0.6cqw;
+  background: radial-gradient(ellipse at 50% 0%, #2c1538, var(--ink) 75%);
+  box-shadow:
+    inset 0 0 0 0.25cqw var(--brass),
+    0 2cqw 4cqw #000a;
+  overflow: hidden;
+}
+
+.prophets .ledger-title {
+  margin: 0;
+  color: var(--brass);
+}
+
+.prophecies {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-content: start;
+  gap: 1cqw;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 1.45cqw;
+}
+
+/* До десяти номинаций — мельче, чтобы все карточки встали без прокрутки. */
+.prophecies.many {
+  font-size: 1.3cqw;
+  gap: 0.8cqw;
+}
+
+.prophecy {
+  display: grid;
+  gap: 0.3em;
+  min-width: 0;
+  padding: 0.7em 0.9em;
+  border-radius: 0.4cqw;
+  border: 0.12cqw solid #c9a24a66;
+  background: #ffffff0d;
+}
+
+.prophecy.final {
+  border-color: var(--ember);
+  background: #ff9a2e14;
+}
+
+.prophecy-question {
+  color: var(--brass);
+  font-size: 0.8em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.prophecy.final .prophecy-question {
+  color: var(--ember);
+}
+
+.prophecy-answer {
+  font-weight: 800;
+  font-size: 1.15em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.prophecy-seers {
+  color: var(--bone);
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prophecy-seers.none {
+  color: #a59cae;
+}
+
 .ledger-title {
   margin: 0 0 1cqw;
-  font-family: var(--ornament);
-  font-weight: 400;
-  font-size: 2.3cqw;
+  font-family: var(--heading);
+  font-weight: 800;
+  font-size: 2cqw;
 }
 
 .sold {

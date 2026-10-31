@@ -146,6 +146,27 @@ function render(state) {
     tick();
     clock = setInterval(tick, 1000);
   }
+  // Итог с прогнозами листает правую половину сам: «Кто что забрал» и «Пророки аукциона» по очереди. Таймер листания
+  // свой: новый снимок того же итога его не сбрасывает, иначе частые снимки не дали бы странице смениться.
+  const count = main.querySelectorAll(".leaf").length;
+  if (count > 1 && leafTimer === null) leafTimer = setInterval(() => turnLeaf(1), LEAF_MS);
+  if (count <= 1 && leafTimer !== null) {
+    clearInterval(leafTimer);
+    leafTimer = null;
+  }
+  turnLeaf(0);
+}
+
+/** Сколько держится страница итога; номер страницы переживает новый снимок, и лист не прыгает на первую. */
+const LEAF_MS = 12000;
+let leaf = 0;
+let leafTimer = null;
+
+function turnLeaf(step) {
+  const leaves = main.querySelectorAll(".leaf");
+  if (leaves.length === 0) return;
+  leaf = (leaf + step) % leaves.length;
+  leaves.forEach((node, index) => node.classList.toggle("shown", index === leaf));
 }
 
 /** Отпечаток снимка для сравнения: фаза, лот на экране, цена и лидер лота в торгах. */
@@ -183,9 +204,9 @@ function phase(view, change) {
     case "between":
       return between(view.closed, view.next, change);
     case "finished":
-      return summary("Аукцион завершён", view.sold, view.totals);
+      return summary("Аукцион завершён", view.sold, view.totals, view.predictions ?? []);
     case "cancelled":
-      return summary("Аукцион отменён", view.sold, view.totals);
+      return summary("Аукцион отменён", view.sold, view.totals, []);
     default:
       return [message("Подключение…")];
   }
@@ -312,19 +333,82 @@ function sealText(outcome) {
   }
 }
 
-/** Итог: слева общая сумма, справа гостевая книга — кто что забрал и за сколько, с ростом к стартовой. */
-function summary(title, sold, totals) {
+/**
+ * Итог: слева общая сумма, справа гостевая книга — кто что забрал и за сколько, с ростом к стартовой, — а когда игра
+ * прогнозов подсчитана, ещё и «Пророки аукциона»; две страницы справа сменяют друг друга (`render`).
+ */
+function summary(title, sold, totals, predictions) {
   const grand = el("div", "grand");
   grand.append(mascot(0, ""), heading(title), el("div", "label", "Собрано"));
   // Валюта суммы приходит только с продажами: без них суммы нет, и экран не выдумывает «0 ₽» в чужой валюте.
   if (totals.all.count > 0) grand.append(el("div", "price", sums(totals.all)), stache(""));
   grand.append(totalsLine(totals));
-  const ledger = el("div", "ledger");
+  const ledger = el("div", "ledger leaf");
   ledger.append(el("h2", "ledger-title", "Кто что забрал"));
   const list = sold ?? [];
   if (list.length === 0) ledger.append(el("p", "ledger-empty", "Ничего не продано"));
   else ledger.append(soldLots(list));
-  return [grand, ledger];
+  if (predictions.length === 0) return [grand, ledger];
+  const currency = totals.all.sums[0]?.currency ?? "RUB";
+  return [grand, ledger, prophets(predictions, list, currency)];
+}
+
+/** Номинации ADR-067 короткими подписями экрана, в порядке игры; ключи — имена номинаций потока. */
+const NOMINATIONS = {
+  "catalog-most-expensive-lot": "Самый дорогой лот",
+  "catalog-total-sales": "Сколько соберём",
+  "catalog-most-bids-lot": "Больше всего ставок",
+  "catalog-biggest-growth-lot": "Сильнее всех вырос",
+  "catalog-most-bidders-lot": "Больше всего участников",
+  "catalog-total-bids": "Сколько ставок",
+  "final-most-expensive-lot": "Самый дорогой в финале",
+  "final-total-sales": "Сколько соберёт финал",
+  "final-biggest-growth-lot": "Сильнее всех вырос в финале",
+  "final-total-bids": "Сколько ставок в финале",
+};
+
+/**
+ * «Пророки аукциона» (PER-839): карточка на каждую разыгранную номинацию — вопрос, итоговое значение и кто угадал.
+ * Лот называется по проданным лотам итога; суммы — в валюте продаж, ставки — штуками.
+ */
+function prophets(predictions, sold, currency) {
+  const page = el("div", "prophets leaf");
+  page.append(el("h2", "ledger-title", "Пророки аукциона"));
+  const cards = el("ol", predictions.length > 6 ? "prophecies many" : "prophecies");
+  const titles = new Map(sold.map((lot) => [lot.id, lot.title ?? "Лот без названия"]));
+  for (const item of predictions) {
+    const card = el("li", item.nomination.startsWith("final-") ? "prophecy final" : "prophecy");
+    card.append(el("div", "prophecy-question", NOMINATIONS[item.nomination] ?? item.nomination));
+    card.append(el("div", "prophecy-answer", answerText(item, titles, currency)));
+    card.append(el("div", item.winners > 0 ? "prophecy-seers" : "prophecy-seers none", seersText(item)));
+    cards.append(card);
+  }
+  page.append(cards);
+  return page;
+}
+
+function answerText(item, titles, currency) {
+  if (Array.isArray(item.lots)) return item.lots.map((id) => titles.get(id) ?? "лот вне итога").join(", ");
+  if (item.nomination.endsWith("total-sales")) return money({ amount: item.number, currency });
+  return `${item.number} ${bidsWord(item.number)}`;
+}
+
+/** Угадавшие по именам: трое и «ещё N», чтобы карточка держала одну высоту; имя стёртого по запросу — только числом. */
+function seersText(item) {
+  if (item.winners === 0) return "никто не угадал";
+  const shown = item.names.slice(0, 3);
+  const rest = item.winners - shown.length;
+  if (shown.length === 0) return `угадали: ${item.winners}`;
+  return `угадали: ${shown.join(", ")}${rest > 0 ? ` и ещё ${rest}` : ""}`;
+}
+
+function bidsWord(count) {
+  const tens = count % 100;
+  const ones = count % 10;
+  if (tens >= 11 && tens <= 14) return "ставок";
+  if (ones === 1) return "ставка";
+  if (ones >= 2 && ones <= 4) return "ставки";
+  return "ставок";
 }
 
 /** «3 лота · онлайн 2 на 4 000 ₽ · в финале 1 на 6 500 ₽»: сумм по валютам может быть несколько. */
