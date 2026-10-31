@@ -63,7 +63,7 @@ final class ScreenPredictionsSpec extends AnyWordSpec with Matchers with ScalaFu
         ScreenPredictions.of(gateway(Future.successful(view))).read(auction).futureValue shouldBe Nil
     }
 
-    "propagate a failed read so the screen can reconnect and retry" in {
+    "leave a failed gateway read as a failed Future" in {
       val failure = RuntimeException("ask timed out")
       ScreenPredictions.of(gateway(Future.failed(failure))).read(auction).failed.futureValue shouldBe failure
       val thrown = IllegalStateException("not started")

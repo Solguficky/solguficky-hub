@@ -161,7 +161,7 @@ final class ScreenFeedSpec extends AnyWordSpec with Matchers with ScalaFutures w
       eventually(changes.subscriptions(auctionId) shouldBe 0)
     }
 
-    "retry finished prediction results on reconnect after a failed read without another auction change" in {
+    "keep the finished hall feed open and retry predictions after a failed read" in {
       val views = Views(Some(readingIn(AuctionState.Draft)))
       val changes = ChangeRegistry()
       val reads = AtomicInteger(0)
@@ -186,23 +186,25 @@ final class ScreenFeedSpec extends AnyWordSpec with Matchers with ScalaFutures w
 
         views.current = Some(readingIn(AuctionState.Finished(AuctionFixtures.config(), LotFixtures.op(9))))
         changes.changed(auctionId)
-        streams.foreach(_.pull().futureValue shouldBe empty)
+        val empty = streams.map(_.pull().futureValue.getOrElse(fail("the feed died on a prediction read failure")))
+        empty.foreach { json =>
+          json should include("\"phase\":\"finished\"")
+          json should include("\"predictions\":[]")
+          json should not include "catalog-total-sales"
+        }
 
-        // Потерянный итог не кешируется: новое подключение само перечитывает его без changes.changed.
-        val reconnected = streamOf(feed)
-        try {
-          reconnected.pull().futureValue.getOrElse(fail("no recovered result")) should include(
-            "\"nomination\":\"catalog-total-sales\""
-          )
-          reads.get() shouldBe 2
-          val recorded = appender.list.asScala.toList
-          recorded should have size 1
-          val frame = recorded.head.getArgumentArray.head.toString
-          frame should include("operation=auction.screen.snapshot")
-          frame should include("error=java.lang.IllegalStateException")
-          frame should include("stack=")
-          frame should not include "private failure detail"
-        } finally reconnected.cancel()
+        changes.changed(auctionId)
+        val recovered = streams.map(_.pull().futureValue.getOrElse(fail("the feed died before the retry")))
+        recovered.foreach(_ should include("\"nomination\":\"catalog-total-sales\""))
+        reads.get() shouldBe 2
+        val recorded = appender.list.asScala.toList
+        recorded should have size 1
+        val frame = recorded.head.getArgumentArray.head.toString
+        frame should include("operation=auction.screen.snapshot")
+        frame should include("error=java.lang.IllegalStateException")
+        frame should include("stack=")
+        frame should not include "private failure detail"
+        streams.foreach(_.cancel())
       } finally {
         logger.detachAppender(appender)
         appender.stop()

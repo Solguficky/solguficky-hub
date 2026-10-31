@@ -28,6 +28,7 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.*
 import scala.util.Failure
+import scala.util.control.NonFatal
 
 /**
  * Предел одновременных потоков экрана (ADR-040, дополнение 2026-10-19): ссылка открытая, и торги важнее табло. Место
@@ -153,7 +154,14 @@ final class ScreenFeed(
           Screen.of(reading, name) match {
             // Итоги прогнозов есть только у завершённого аукциона (ADR-067, п. 4): отменённый их не получает.
             case finished: ScreenState.Finished =>
-              predictions.read(auctionId).map(found => Some(ScreenJson.render(auctionId, finished, found)))
+              val startedAt = System.nanoTime()
+              predictions
+                .read(auctionId)
+                .recover { case NonFatal(cause) =>
+                  ScreenFeed.logSnapshotFailure(startedAt, cause)
+                  Nil
+                }
+                .map(found => Some(ScreenJson.render(auctionId, finished, found)))
             case state => Future.successful(Some(ScreenJson.render(auctionId, state)))
           }
         }
@@ -174,21 +182,8 @@ final class ScreenFeed(
       .mapAsync(1) { _ =>
         val startedAt = System.nanoTime()
         snapshot(auctionId).andThen { case Failure(cause) =>
-          // Общий снимок обслуживает все SSE-потоки: здесь отказ записывается один раз и закрывает их для повтора.
-          ScreenFeed.logger.error(
-            "screen snapshot failed",
-            StructuredArguments.entries(
-              OperationFrame
-                .of(
-                  "auction.screen.snapshot",
-                  StatusCodes.InternalServerError,
-                  (System.nanoTime() - startedAt) / 1000,
-                  None,
-                  Some(cause)
-                )
-                .asJava
-            )
-          )
+          // Отказ read model или имён закрывает общий снимок: иначе зал держал бы поток без состояния.
+          ScreenFeed.logSnapshotFailure(startedAt, cause)
         }
       }
       .takeWhile(_.isDefined)
@@ -246,6 +241,22 @@ final class ScreenFeed(
 object ScreenFeed {
 
   private val logger = LoggerFactory.getLogger(classOf[ScreenFeed])
+
+  private def logSnapshotFailure(startedAt: Long, cause: Throwable): Unit =
+    logger.error(
+      "screen snapshot failed",
+      StructuredArguments.entries(
+        OperationFrame
+          .of(
+            "auction.screen.snapshot",
+            StatusCodes.InternalServerError,
+            (System.nanoTime() - startedAt) / 1000,
+            None,
+            Some(cause)
+          )
+          .asJava
+      )
+    )
 
   /** Сообщение проходит, только если отличается от предыдущего отправленного. */
   private val changed: Flow[String, String, NotUsed] =
