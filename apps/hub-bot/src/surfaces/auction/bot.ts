@@ -18,6 +18,7 @@ import {
 import type { LegacyBroadcastStore } from "../../core/auction/legacy-broadcasts-kv.js";
 import {
   createLiveCards,
+  keepWatching,
   type LiveCardEntry,
   type LiveEditOutcome,
   liveCardOf,
@@ -180,6 +181,28 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   }
   // Что показало сообщение: карточку финала реестр запоминает, другой экран в
   // том же сообщении её вытесняет (PER-336).
+  const retainFollow = (
+    ctx: UpdateContext,
+    outcome: RouteOutcome,
+  ): RouteOutcome => {
+    const chatId = ctx.chat?.id;
+    if (
+      liveCards === undefined ||
+      chatId === undefined ||
+      outcome.screen.kind !== "auction" ||
+      !liveCards.watching(chatId)
+    ) {
+      return outcome;
+    }
+    return {
+      ...outcome,
+      screen: {
+        ...outcome.screen,
+        body: keepWatching(outcome.screen.body),
+      },
+    };
+  };
+
   const observe = (
     ctx: UpdateContext,
     messageId: number | undefined,
@@ -214,7 +237,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     waiting.begin();
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
-      const outcome = await input.route(ports);
+      const outcome = retainFollow(ctx, await input.route(ports));
       // Команда бросает открытые вопросы чата (дизайн-код, «Вопросы»).
       await dropQuestions(ctx, questions);
       const shown = await deliver(ctx, {
@@ -351,6 +374,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ]);
         if (back !== undefined) outcome.screen = { ...outcome.screen, back };
       }
+      outcome = retainFollow(ctx, outcome);
       const screen = render(outcome.screen);
       // Подтверждение выбора уходит ответом на нажатие до показа экрана:
       // показ ответил бы на нажатие сам, без текста.
@@ -493,12 +517,15 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
       const { text } = ctx.message;
-      outcome = await routeAuctionReply({
-        ports,
-        user: userOf(ctx.from),
-        data: data.callback_data,
-        ...(text === undefined ? {} : { text }),
-      });
+      outcome = retainFollow(
+        ctx,
+        await routeAuctionReply({
+          ports,
+          user: userOf(ctx.from),
+          data: data.callback_data,
+          ...(text === undefined ? {} : { text }),
+        }),
+      );
       const screen = render(outcome.screen);
       if (screen.asks === true) {
         // Отвергнутый ответ: новый вопрос с причиной, прежний — после него.

@@ -36,6 +36,7 @@ import {
 import type { LegacyBroadcastStore } from "../../../core/auction/legacy-broadcasts-kv.js";
 import {
   createLiveCards,
+  keepWatching,
   type LiveCardEntry,
   type LiveCards,
   type LiveEditOutcome,
@@ -12082,9 +12083,15 @@ async function handleAuctionCallback(
     }
   }
   const canManage = canRunAuctions(person);
+  const shownBody =
+    ctx.liveCards !== undefined &&
+    ctx.chat?.id !== undefined &&
+    ctx.liveCards.watching(ctx.chat.id)
+      ? keepWatching(result.body)
+      : result.body;
   // Статус нужен только ряду «Добавить лот»; читается он у пульта, который
   // Auction отдаёт держателю права вести аукцион.
-  const feedAuctionId = canManage ? feedAuctionOf(result.body) : undefined;
+  const feedAuctionId = canManage ? feedAuctionOf(shownBody) : undefined;
   const canAddLots =
     feedAuctionId === undefined
       ? undefined
@@ -12092,11 +12099,11 @@ async function handleAuctionCallback(
   const winnerUsername = await soldWinnerUsername(
     runtime,
     viewerOf(person),
-    result.body,
+    shownBody,
   );
   const view: AuctionView = {
-    body: result.body,
-    rootParent: rootParentOf(ctx, result.body, entry),
+    body: shownBody,
+    rootParent: rootParentOf(ctx, shownBody, entry),
     entry,
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
@@ -12180,7 +12187,7 @@ async function handleAuctionCallback(
   // дальше по потоку аукциона.
   const chatId = ctx.chat?.id;
   if (ctx.liveCards !== undefined && chatId !== undefined) {
-    const live = liveCardOf(result.body, viewerOf(person));
+    const live = liveCardOf(shownBody, viewerOf(person));
     if (delivered.messageId !== undefined) {
       const kept = ctx.liveCards.shown(chatId, delivered.messageId, live);
       if (delivered.messageId === ctx.callbackQuery?.message?.message_id) {

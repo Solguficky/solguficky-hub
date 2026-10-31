@@ -4058,6 +4058,40 @@ describe("final lot card", () => {
     expect(labels(edits(calls).at(-1)?.payload)).toContain("Не следить");
   });
 
+  it("keeps the accepted line on a followed card after the stream refreshes", async () => {
+    const mine = (version: number, price: number): LotView => ({
+      ...liveLot(version, price),
+      status: {
+        kind: "trading",
+        currentPrice: rub(price),
+        leaderId: VIEWER_ID,
+        phase: "live",
+      },
+    });
+    const { bot, calls, stream } = setup({ lot: mine(1, 1200) });
+    await bot.handleUpdate(watchPress("watch-final"));
+    stream.emit(mine(1, 1200));
+    await flush();
+    await bot.handleUpdate(
+      lotPress({
+        rich: true,
+        data: encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+      }),
+    );
+    await flush();
+    expect(htmlOf(edits(calls).at(-1)?.payload)).toMatch(/принята/);
+    expect(labels(edits(calls).at(-1)?.payload)).toContain("Не следить");
+    stream.emit(mine(3, 1300));
+    await flush();
+    expect(htmlOf(edits(calls).at(-1)?.payload)).toMatch(/принята/);
+    expect(labels(edits(calls).at(-1)?.payload)).toContain("Не следить");
+  });
+
   it("stops editing the card after the unfollow button", async () => {
     const { bot, calls, stream } = setup();
     await bot.handleUpdate(watchPress("watch-final"));

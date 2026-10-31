@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
-import type {
-  AuctionBlock,
-  AuctionScreenBody,
-  LotView,
-  Viewer,
+import {
+  type AuctionBlock,
+  type AuctionScreenBody,
+  encodeAuctionCallback,
+  type LotView,
+  type Viewer,
 } from "../../auction-ui/index.js";
 import type { EditLimiter } from "../bot/edit-limiter.js";
 import {
   createLiveCards,
+  keepWatching,
   type LiveCardEntry,
   type LiveEditOutcome,
   liveCardOf,
@@ -287,6 +289,24 @@ describe("live cards", () => {
     ).toBeUndefined();
   });
 
+  it("takes the accepted bid of the card body", () => {
+    const accepted = { kind: "accepted" as const, amount: rub(1250) };
+    const body: AuctionScreenBody = {
+      blocks: [
+        {
+          kind: "lot",
+          auctionId: AUCTION_ID,
+          lotId: LOT_A,
+          version: 2,
+          live: { page: 1 },
+          finalBid: accepted,
+        } as unknown as AuctionBlock,
+      ],
+      keyboard: [],
+    };
+    expect(liveCardOf(body, VIEWER)?.priceMoved).toEqual(accepted);
+  });
+
   it("takes the price-moved reply of the card body", () => {
     const body: AuctionScreenBody = {
       blocks: [
@@ -523,6 +543,7 @@ describe("cards in the follow", () => {
     const { records, store } = memoryStore();
     const { stream, edits, cards, lotOf } = setup({ kind: "done" }, store);
     cards.shown(7, 70, start);
+    expect(cards.watching(7)).toBe(true);
     await flush();
     expect(records.get(7)).toMatchObject({
       messageId: 70,
@@ -544,6 +565,103 @@ describe("cards in the follow", () => {
     stream.emit(live(LOT_B, 1, 500), [sold(LOT_A, 3), live(LOT_B, 1, 500)]);
     await flush();
     expect(records.get(7)?.lotId).toBe(LOT_B);
+  });
+
+  it("keeps the accepted bid line after a stream refresh of a followed card", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, start);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    const accepted = { kind: "accepted" as const, amount: rub(1300) };
+    cards.shown(7, 70, { ...opened, version: 2, priceMoved: accepted });
+    await flush();
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toEqual(accepted);
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.watching,
+    ).toBe(true);
+    stream.emit(live(LOT_A, 3, 1400));
+    await flush();
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.finalBid,
+    ).toEqual(accepted);
+    expect(
+      lotOf(edits.at(-1)?.body ?? { blocks: [], keyboard: [] })?.watching,
+    ).toBe(true);
+  });
+
+  it("stops the follow when unfollow arrives from another message of the chat", async () => {
+    const { records, store } = memoryStore();
+    const { stream, edits, cards } = setup({ kind: "done" }, store);
+    cards.shown(7, 70, start);
+    await flush();
+    expect(cards.shown(7, 71, { ...opened, watch: "stop" })).toBe(false);
+    await flush();
+    expect(records.size).toBe(0);
+    expect(cards.watching(7)).toBe(false);
+    expect(stream.subscribers()).toBe(0);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    expect(edits).toHaveLength(0);
+  });
+
+  it("does not revive a follow that was stopped while save was in flight", async () => {
+    let releaseSave: () => void = () => {};
+    const { records, store } = memoryStore();
+    const delayed: WatchStore = {
+      save: (target) =>
+        new Promise((resolve) => {
+          releaseSave = () => {
+            void store.save(target).then(resolve);
+          };
+        }),
+      remove: (chatId) => store.remove(chatId),
+      list: () => store.list(),
+    };
+    const { cards } = setup({ kind: "done" }, delayed);
+    cards.shown(7, 70, start);
+    expect(cards.shown(7, 70, { ...opened, watch: "stop" })).toBe(false);
+    releaseSave();
+    await flush();
+    expect(records.size).toBe(0);
+    expect(cards.watching(7)).toBe(false);
+  });
+
+  it("turns the watch button into unfollow on a followed card body", () => {
+    const body: AuctionScreenBody = {
+      blocks: [
+        {
+          kind: "lot",
+          auctionId: AUCTION_ID,
+          lotId: LOT_A,
+          version: 2,
+          status: live(LOT_A, 2, 1300).status,
+          live: { page: 2 },
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.watch",
+            callbackData: encodeAuctionCallback({
+              kind: "watch-final",
+              lotId: LOT_A,
+              page: 2,
+            }),
+          },
+        ],
+      ],
+    };
+    const kept = keepWatching(body);
+    expect(kept.blocks[0]).toMatchObject({ watching: true });
+    expect(kept.keyboard[0]?.[0]?.action).toBe("lot.unwatch");
+    expect(
+      keepWatching({
+        ...body,
+        blocks: [{ ...body.blocks[0], unwatch: true } as AuctionBlock],
+      }).blocks[0],
+    ).not.toMatchObject({ watching: true });
   });
 
   it("stops editing and drops the record on the unfollow button", async () => {
