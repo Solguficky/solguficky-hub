@@ -206,6 +206,9 @@ export function questionScreen(
         : {
             amount: money(block.current),
             limit: block.currentIsLimit === true,
+            ...(block.liveFinal === true && block.currentIsLimit !== true
+              ? { floor: true }
+              : {}),
           },
     );
   const text = (() => {

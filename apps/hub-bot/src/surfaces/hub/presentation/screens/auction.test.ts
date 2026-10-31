@@ -863,6 +863,33 @@ describe("bid sheet in the hub shell", () => {
     ).toEqual([["Как это работает"], ["Отмена"]]);
   });
 
+  it("names the accepted live-final floor, not the next grid price", () => {
+    const { screen } = sheet({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: auctionId,
+      current: rub(1000),
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Лимит от: 1 000 ₽");
+    expect(plain(screen.text)).not.toContain("Минимальная ставка");
+  });
+
+  it("names the own live-final limit instead of the floor", () => {
+    const { screen } = sheet({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: auctionId,
+      current: rub(1500),
+      currentIsLimit: true,
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Твой лимит сейчас: 1 500 ₽");
+    expect(plain(screen.text)).not.toContain("Лимит от:");
+  });
+
   // Отказ команды — свой экран исхода (PER-472), тексты — как у бота
   // аукциона.
   it("shows a refused command as its own outcome screen", () => {

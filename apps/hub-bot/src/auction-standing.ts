@@ -462,14 +462,12 @@ export function nameSettingsParagraphs(
 
 /** Подпись текущего значения в вопросе суммы и лимита (PER-595). */
 export function currentValueLine(
-  current: { amount: string; limit: boolean } | undefined,
+  current: { amount: string; limit: boolean; floor?: boolean } | undefined,
 ): string[] {
   if (current === undefined) return [];
-  return [
-    current.limit
-      ? `Твой лимит сейчас: ${current.amount}`
-      : `Минимальная ставка: ${current.amount}`,
-  ];
+  if (current.limit) return [`Твой лимит сейчас: ${current.amount}`];
+  if (current.floor === true) return [`Лимит от: ${current.amount}`];
+  return [`Минимальная ставка: ${current.amount}`];
 }
 
 /** Начало пояснения автоставки голосом помощника (PER-517, PER-595). */

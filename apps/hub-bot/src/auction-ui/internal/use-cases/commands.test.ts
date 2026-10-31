@@ -767,12 +767,66 @@ describe("handleAuctionUpdate", () => {
       kind: "question",
       question: "proxy",
       liveFinal: true,
-      current: { minorUnits: 110_000, currency: "RUB" },
+      current: { minorUnits: 100_000, currency: "RUB" },
     });
+    expect(result.body.blocks[0]).not.toHaveProperty("currentIsLimit");
     expect(result.body.blocks[0]).not.toHaveProperty("explainer");
     expect(result.body.keyboard.flat().map((button) => button.action)).toEqual([
       "question.cancel",
     ]);
+  });
+
+  it("asks for a live-final limit from the announced ask, not the next grid price", async () => {
+    const current = live();
+    if (current.status.kind !== "trading") {
+      throw new Error("lot is not trading");
+    }
+    const lot: LotView = {
+      ...current,
+      nextPrice: { minorUnits: 130_000, currency: "RUB" },
+      status: {
+        ...current.status,
+        ask: { minorUnits: 120_000, currency: "RUB" },
+      },
+    };
+    const result = await press(
+      ports([], lot),
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: lot.lotId,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no question");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "question",
+      liveFinal: true,
+      current: { minorUnits: 120_000, currency: "RUB" },
+    });
+    expect(result.body.blocks[0]).not.toHaveProperty("currentIsLimit");
+  });
+
+  it("shows the own live-final limit as the current value", async () => {
+    const result = await press(
+      ports([], {
+        ...live(),
+        viewerProxyLimit: { minorUnits: 150_000, currency: "RUB" },
+      }),
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: CONTRACT_LOT.lotId,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no question");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "question",
+      liveFinal: true,
+      current: { minorUnits: 150_000, currency: "RUB" },
+      currentIsLimit: true,
+    });
   });
 
   it("refuses a live-final limit below the current price before sending it", async () => {

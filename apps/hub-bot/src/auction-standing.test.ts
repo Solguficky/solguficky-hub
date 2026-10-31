@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   autoRaisedLine,
   autoRaisedLines,
+  currentValueLine,
   favoritesEmpty,
   favoritesEmptyText,
   favoritesSummary,
@@ -139,6 +140,20 @@ describe("feed summary in the break before the final", () => {
     const { standing: _standing, ...other } = held;
     const text = feedSummary({ lots: [other] }, mineOptions).join(" ");
     expect(text).toContain("Ты пока не лидируешь");
+  });
+});
+
+describe("currentValueLine", () => {
+  it("names the bid floor, the own limit, or the accepted live-final floor", () => {
+    expect(currentValueLine({ amount: "1 250 ₽", limit: false })).toEqual([
+      "Минимальная ставка: 1 250 ₽",
+    ]);
+    expect(currentValueLine({ amount: "3 000 ₽", limit: true })).toEqual([
+      "Твой лимит сейчас: 3 000 ₽",
+    ]);
+    expect(
+      currentValueLine({ amount: "1 000 ₽", limit: false, floor: true }),
+    ).toEqual(["Лимит от: 1 000 ₽"]);
   });
 });
 

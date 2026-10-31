@@ -948,6 +948,33 @@ describe("bid sheet screens", () => {
     expect(screen.text).not.toContain("Например: цена сейчас");
   });
 
+  it("names the accepted live-final floor, not the next grid price", () => {
+    const screen = body({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      current: rub(1000),
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Лимит от: 1 000 ₽");
+    expect(plain(screen.text)).not.toContain("Минимальная ставка");
+  });
+
+  it("names the own live-final limit instead of the floor", () => {
+    const screen = body({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      current: rub(1500),
+      currentIsLimit: true,
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Твой лимит сейчас: 1 500 ₽");
+    expect(plain(screen.text)).not.toContain("Лимит от:");
+  });
+
   // Непринятый ответ — свой экран (PER-472): причина в заголовке, над
   // «К лоту» — «Ввести заново».
   it("shows a refused answer as its own screen with a retry", () => {

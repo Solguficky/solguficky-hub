@@ -1520,6 +1520,9 @@ function questionText(
         : {
             amount: money(block.current),
             limit: block.currentIsLimit === true,
+            ...(block.liveFinal === true && block.currentIsLimit !== true
+              ? { floor: true }
+              : {}),
           },
     );
   switch (block.question) {

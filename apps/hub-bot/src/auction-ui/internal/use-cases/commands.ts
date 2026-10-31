@@ -187,15 +187,7 @@ async function confirmOrRefuse(
   if (refusal !== undefined) {
     return resultBody(lot, page, { command: "bid", kind: "refused", refusal });
   }
-  // Лимит ниже цены удержанного лота Auction отклонил бы: отказ виден по
-  // снимку и приходит до «Да», как у ставки (PER-821).
-  const minimumProxyLimit =
-    offered.liveFinal &&
-    status.kind === "trading" &&
-    status.ask !== undefined &&
-    status.ask.minorUnits > status.currentPrice.minorUnits
-      ? status.ask
-      : offered.currentPrice;
+  const minimumProxyLimit = minimumProxyLimitOf(lot) ?? offered.currentPrice;
   if (
     (offered.forFinal || offered.liveFinal) &&
     pending.amount < minimumProxyLimit.minorUnits
@@ -1046,6 +1038,20 @@ function proxyExample(lot: LotView, viewer: Viewer): ProxyExample | undefined {
   return { currentPrice, step, limit, firstBid };
 }
 
+function minimumProxyLimitOf(lot: LotView): Money | undefined {
+  const { status } = lot;
+  if (status.kind === "held") return status.currentPrice;
+  if (status.kind !== "trading") return undefined;
+  if (
+    status.phase === "live" &&
+    status.ask !== undefined &&
+    status.ask.minorUnits > status.currentPrice.minorUnits
+  ) {
+    return status.ask;
+  }
+  return status.currentPrice;
+}
+
 // Вопрос с `force_reply`. Шаг и адресат едут в «Отмене»: ответ вернёт их в
 // `reply_to_message`, и вопрос переживёт рестарт процесса.
 function questionBody(
@@ -1066,7 +1072,12 @@ function questionBody(
     intent.question === "bid"
       ? lot.nextPrice
       : intent.question === "proxy"
-        ? (lot.viewerProxyLimit ?? (forFinal ? undefined : lot.nextPrice))
+        ? (lot.viewerProxyLimit ??
+          (forFinal
+            ? undefined
+            : liveFinal
+              ? minimumProxyLimitOf(lot)
+              : lot.nextPrice))
         : undefined;
   return {
     blocks: [
