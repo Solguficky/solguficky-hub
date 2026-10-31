@@ -1,12 +1,15 @@
 package auction.screen
 
+import auction.boundary.OperationFrame
 import auction.lot.AuctionId
 import auction.naming.DisplayNameRules
 import auction.naming.DisplayNameStore
 import auction.watch.AuctionChanges
+import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.ActorRef
 import org.apache.pekko.actor.Status
+import org.apache.pekko.http.scaladsl.model.StatusCodes
 import org.apache.pekko.stream.KillSwitches
 import org.apache.pekko.stream.Materializer
 import org.apache.pekko.stream.OverflowStrategy
@@ -14,6 +17,7 @@ import org.apache.pekko.stream.scaladsl.Flow
 import org.apache.pekko.stream.scaladsl.Keep
 import org.apache.pekko.stream.scaladsl.Sink
 import org.apache.pekko.stream.scaladsl.Source
+import org.slf4j.LoggerFactory
 
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -22,6 +26,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
+import scala.jdk.CollectionConverters.*
+import scala.util.Failure
 
 /**
  * Предел одновременных потоков экрана (ADR-040, дополнение 2026-10-19): ссылка открытая, и торги важнее табло. Место
@@ -165,7 +171,26 @@ final class ScreenFeed(
 
     private val (stopper, done) = changes
       .subscribe(auctionId)
-      .mapAsync(1)(_ => snapshot(auctionId))
+      .mapAsync(1) { _ =>
+        val startedAt = System.nanoTime()
+        snapshot(auctionId).andThen { case Failure(cause) =>
+          // Общий снимок обслуживает все SSE-потоки: здесь отказ записывается один раз и закрывает их для повтора.
+          ScreenFeed.logger.error(
+            "screen snapshot failed",
+            StructuredArguments.entries(
+              OperationFrame
+                .of(
+                  "auction.screen.snapshot",
+                  StatusCodes.InternalServerError,
+                  (System.nanoTime() - startedAt) / 1000,
+                  None,
+                  Some(cause)
+                )
+                .asJava
+            )
+          )
+        }
+      }
       .takeWhile(_.isDefined)
       .collect { case Some(json) => json }
       .viaMat(KillSwitches.single)(Keep.right)
@@ -219,6 +244,8 @@ final class ScreenFeed(
 }
 
 object ScreenFeed {
+
+  private val logger = LoggerFactory.getLogger(classOf[ScreenFeed])
 
   /** Сообщение проходит, только если отличается от предыдущего отправленного. */
   private val changed: Flow[String, String, NotUsed] =

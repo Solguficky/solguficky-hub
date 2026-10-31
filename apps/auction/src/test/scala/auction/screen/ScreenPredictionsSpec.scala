@@ -58,14 +58,16 @@ final class ScreenPredictionsSpec extends AnyWordSpec with Matchers with ScalaFu
       )
     }
 
-    "show no section while the game is not counted, was settled by hand or does not answer" in {
+    "show no section while the game is not counted or was settled by hand" in {
       for (view <- List(ResultsView.Unsettled, ResultsView.ByHand, ResultsView.Cancelled))
         ScreenPredictions.of(gateway(Future.successful(view))).read(auction).futureValue shouldBe Nil
-      ScreenPredictions
-        .of(gateway(Future.failed(RuntimeException("ask timed out"))))
-        .read(auction)
-        .futureValue shouldBe Nil
-      ScreenPredictions.of(gateway(throw IllegalStateException("not started"))).read(auction).futureValue shouldBe Nil
+    }
+
+    "propagate a failed read so the screen can reconnect and retry" in {
+      val failure = RuntimeException("ask timed out")
+      ScreenPredictions.of(gateway(Future.failed(failure))).read(auction).failed.futureValue shouldBe failure
+      val thrown = IllegalStateException("not started")
+      ScreenPredictions.of(gateway(throw thrown)).read(auction).failed.futureValue shouldBe thrown
     }
   }
 }

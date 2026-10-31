@@ -17,8 +17,8 @@ import scala.concurrent.Future
 final case class ScreenNomination(nomination: Nomination, value: NominationValue, winners: Int, names: List[String])
 
 /**
- * Итоги прогнозов для итога экрана. Это украшение снимка: пока игра не подсчитана, подведена вручную или чтение не
- * ответило, раздела просто нет, а итог аукциона рисуется как раньше.
+ * Итоги прогнозов для итога экрана: пока игра не подсчитана или подведена вручную, раздела нет. Ошибка чтения завершает
+ * поток снимков: страница переподключится и перечитает итог даже без новых событий аукциона.
  */
 trait ScreenPredictions {
   def read(auctionId: UUID): Future[List[ScreenNomination]]
@@ -43,5 +43,4 @@ object ScreenPredictions {
             }
           case _ => Nil
         }
-        .recover { case _ => Nil }
 }

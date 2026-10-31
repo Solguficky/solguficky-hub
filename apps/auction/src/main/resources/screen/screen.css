@@ -622,25 +622,28 @@ main {
   color: var(--brass);
 }
 
+.prophets-caption {
+  margin-bottom: 0.6cqw;
+  color: var(--bone);
+  font-size: 1.1cqw;
+  letter-spacing: 0.08em;
+}
+
 .prophecies {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  align-content: start;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
   gap: 1cqw;
   margin: 0;
   padding: 0;
   list-style: none;
+  min-height: 0;
   font-size: 1.45cqw;
-}
-
-/* До десяти номинаций — мельче, чтобы все карточки встали без прокрутки. */
-.prophecies.many {
-  font-size: 1.3cqw;
-  gap: 0.8cqw;
 }
 
 .prophecy {
   display: grid;
+  align-content: start;
   gap: 0.3em;
   min-width: 0;
   padding: 0.7em 0.9em;
@@ -666,20 +669,30 @@ main {
 }
 
 .prophecy-answer {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   font-weight: 800;
   font-size: 1.15em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   font-variant-numeric: tabular-nums;
 }
 
+.prophecy-count {
+  color: var(--brass);
+  font-size: 0.8em;
+  margin-top: 0.3em;
+}
+
 .prophecy-seers {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
   color: var(--bone);
   font-size: 0.85em;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 
 .prophecy-seers.none {

@@ -146,7 +146,7 @@ function render(state) {
     tick();
     clock = setInterval(tick, 1000);
   }
-  // Итог с прогнозами листает правую половину сам: «Кто что забрал» и «Пророки аукциона» по очереди. Таймер листания
+  // Итог с прогнозами листает правую половину сам: «Кто что забрал», затем страницы «Пророков аукциона». Таймер листания
   // свой: новый снимок того же итога его не сбрасывает, иначе частые снимки не дали бы странице смениться.
   const count = main.querySelectorAll(".leaf").length;
   if (count > 1 && leafTimer === null) leafTimer = setInterval(() => turnLeaf(1), LEAF_MS);
@@ -335,7 +335,7 @@ function sealText(outcome) {
 
 /**
  * Итог: слева общая сумма, справа гостевая книга — кто что забрал и за сколько, с ростом к стартовой, — а когда игра
- * прогнозов подсчитана, ещё и «Пророки аукциона»; две страницы справа сменяют друг друга (`render`).
+ * прогнозов подсчитана, ещё и «Пророки аукциона»; страницы справа сменяют друг друга (`render`).
  */
 function summary(title, sold, totals, predictions) {
   const grand = el("div", "grand");
@@ -350,7 +350,12 @@ function summary(title, sold, totals, predictions) {
   else ledger.append(soldLots(list));
   if (predictions.length === 0) return [grand, ledger];
   const currency = totals.all.sums[0]?.currency ?? "RUB";
-  return [grand, ledger, prophets(predictions, list, currency)];
+  const pages = [];
+  const pageCount = Math.ceil(predictions.length / 4);
+  for (let offset = 0; offset < predictions.length; offset += 4) {
+    pages.push(prophets(predictions.slice(offset, offset + 4), list, currency, offset / 4 + 1, pageCount));
+  }
+  return [grand, ledger, ...pages];
 }
 
 /** Номинации ADR-067 короткими подписями экрана, в порядке игры; ключи — имена номинаций потока. */
@@ -371,15 +376,19 @@ const NOMINATIONS = {
  * «Пророки аукциона» (PER-839): карточка на каждую разыгранную номинацию — вопрос, итоговое значение и кто угадал.
  * Лот называется по проданным лотам итога; суммы — в валюте продаж, ставки — штуками.
  */
-function prophets(predictions, sold, currency) {
+function prophets(predictions, sold, currency, pageNumber, pageCount) {
   const page = el("div", "prophets leaf");
-  page.append(el("h2", "ledger-title", "Пророки аукциона"));
-  const cards = el("ol", predictions.length > 6 ? "prophecies many" : "prophecies");
+  const header = el("div", "prophets-header");
+  header.append(el("div", "prophets-caption", `Итоги прогнозов · ${pageNumber} / ${pageCount}`));
+  header.append(el("h2", "ledger-title", "Пророки аукциона"));
+  page.append(header);
+  const cards = el("ol", "prophecies");
   const titles = new Map(sold.map((lot) => [lot.id, lot.title ?? "Лот без названия"]));
   for (const item of predictions) {
     const card = el("li", item.nomination.startsWith("final-") ? "prophecy final" : "prophecy");
     card.append(el("div", "prophecy-question", NOMINATIONS[item.nomination] ?? item.nomination));
     card.append(el("div", "prophecy-answer", answerText(item, titles, currency)));
+    if (item.winners > 0) card.append(el("div", "prophecy-count", `Угадали: ${item.winners}`));
     card.append(el("div", item.winners > 0 ? "prophecy-seers" : "prophecy-seers none", seersText(item)));
     cards.append(card);
   }
@@ -393,13 +402,13 @@ function answerText(item, titles, currency) {
   return `${item.number} ${bidsWord(item.number)}`;
 }
 
-/** Угадавшие по именам: трое и «ещё N», чтобы карточка держала одну высоту; имя стёртого по запросу — только числом. */
+/** До трёх имён и «ещё N»; общее число угадавших видно отдельно, даже когда имена длинные. */
 function seersText(item) {
   if (item.winners === 0) return "никто не угадал";
   const shown = item.names.slice(0, 3);
   const rest = item.winners - shown.length;
-  if (shown.length === 0) return `угадали: ${item.winners}`;
-  return `угадали: ${shown.join(", ")}${rest > 0 ? ` и ещё ${rest}` : ""}`;
+  if (shown.length === 0) return "";
+  return `${shown.join(", ")}${rest > 0 ? ` и ещё ${rest}` : ""}`;
 }
 
 function bidsWord(count) {
