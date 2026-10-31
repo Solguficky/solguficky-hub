@@ -240,6 +240,10 @@ export type LotInfo = {
   // Лот продан: цена продажи и личность победителя. Сумма, которую текст не
   // покажет точно, продажу из текста убирает — тогда её просто нет.
   sold?: { price: NoticeMoney; winnerId: string };
+  // Перебила автоставка другого участника (PER-840): знает только весть
+  // «перебили», и её рендер дочитывает признак из хронологии. Нет — источник
+  // неизвестен или ставка ручная, и весть говорит как прежде.
+  outbidByProxy?: true;
 };
 
 // Перевод снимка Auction в то, о чём читает текст. Правило одно у двух
@@ -278,6 +282,15 @@ export type LotNoticeReads = {
     lotId: string,
     requestId?: string,
   ): Promise<LotInfo>;
+  // Источник ставки, которая перебила получателя, по цене из вести (PER-840).
+  // `undefined` — не определён; сбой чтения весть не роняет. Чтения может не
+  // быть: тогда весть остаётся прежней.
+  outbidOrigin?(
+    identityId: string,
+    lotId: string,
+    minorUnits: number,
+    requestId?: string,
+  ): Promise<"proxy" | "manual" | undefined>;
   // Ориентировочное время финала аукциона (PER-812); `undefined` — не выставлено.
   // Чтения может не быть: тогда весть обходится без времени.
   auctionFinalAt?(
@@ -415,6 +428,28 @@ export function createLotNoticeRender({
       } catch (cause) {
         if (isPermanentFailure(cause)) return { kind: "rejected", cause };
         onTitleMissing(cause, requestId);
+      }
+      // Перебитие читает источник ставки: автоставка называется прямо. Любой
+      // сбой оставляет прежний текст, а доставку не роняет.
+      if (
+        notice.kind === "lot-outbid" &&
+        reads.outbidOrigin !== undefined &&
+        lots.has(notice.lotId)
+      ) {
+        try {
+          const origin = await reads.outbidOrigin(
+            recipientId,
+            notice.lotId,
+            notice.currentPrice.minorUnits,
+            requestId,
+          );
+          const info = lots.get(notice.lotId);
+          if (origin === "proxy" && info !== undefined) {
+            lots.set(notice.lotId, { ...info, outbidByProxy: true });
+          }
+        } catch (cause) {
+          onTitleMissing(cause, requestId);
+        }
       }
       // Идущий лот финала называется в тексте; не прочитался — текст
       // обходится словом «лот», а весть не теряется.
@@ -581,6 +616,9 @@ function singleText(
         return info.sold.winnerId === recipientId
           ? `Твою ставку перебивали, но ${lotWord} твой за ${money(info.sold.price)}.`
           : `Твою ставку перебили: ${lotWord} продан за ${money(info.sold.price)}.`;
+      }
+      if (info?.outbidByProxy === true) {
+        return `Тебя перебила автоставка другого участника${lot === undefined ? "" : `: ${lotWord}`}, цена ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
       }
       return `Твою ставку перебили${lot === undefined ? "" : `: ${lotWord}`}, цена ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
     case "lot-proxy-raised":

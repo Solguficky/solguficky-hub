@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   AuctionPort,
   FavoritesPort,
+  LotHistoryEntryView,
   LotView,
   Viewer,
 } from "../../ports.js";
@@ -311,5 +312,72 @@ describe("sold lot invoices entry", () => {
 
   it("does not show the button to anyone else", async () => {
     expect(await actionsFor(LEADER)).not.toContain("lot.invoices");
+  });
+});
+
+// PER-840: карточка называет рост цены от автоставок, когда последняя ставка
+// хронологии — прокси после чужой ставки. Первая ставка лота прокси «подъёмом»
+// не считается, а сбой чтения хронологии строку убирает.
+describe("price raised by proxies", () => {
+  const trading = lots.find(
+    ([name]) => name === "trading online",
+  )?.[1] as LotView;
+  const bid = (
+    sequence: number,
+    origin: "proxy" | "manual",
+  ): LotHistoryEntryView => ({
+    kind: "bid",
+    sequence,
+    occurredAt: "2026-10-20T15:00:00Z",
+    bidId: `bid-${sequence}`,
+    participantId: LEADER,
+    amount: rub(1000 + sequence * 100),
+    origin:
+      origin === "proxy"
+        ? { kind: "proxy" }
+        : { kind: "manual", source: "bot" },
+  });
+  const cardWith = async (
+    listLotHistory: AuctionPort["listLotHistory"],
+  ): Promise<boolean | undefined> => {
+    const body = await showLot({
+      auction: { ...auction, listLotHistory },
+      favorites,
+      viewer: VIEWER,
+      lot: trading,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    return block?.kind === "lot" ? block.autoRaised === true : undefined;
+  };
+  const history =
+    (...entries: LotHistoryEntryView[]) =>
+    async () => ({
+      entries,
+      nextPageToken: "",
+    });
+
+  it("is flagged when the last bid is a proxy after another bid", async () => {
+    expect(await cardWith(history(bid(1, "manual"), bid(2, "proxy")))).toBe(
+      true,
+    );
+  });
+
+  it("is not flagged when the last bid is manual", async () => {
+    expect(await cardWith(history(bid(1, "proxy"), bid(2, "manual")))).toBe(
+      false,
+    );
+  });
+
+  it("is not flagged for a lone first proxy bid", async () => {
+    expect(await cardWith(history(bid(1, "proxy")))).toBe(false);
+  });
+
+  it("drops the line when the history is unreadable", async () => {
+    expect(
+      await cardWith(async () => {
+        throw new Error("unavailable");
+      }),
+    ).toBe(false);
   });
 });

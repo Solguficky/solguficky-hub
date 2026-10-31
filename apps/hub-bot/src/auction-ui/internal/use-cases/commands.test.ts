@@ -13,7 +13,12 @@ import {
 } from "../../contract/check.js";
 import { AUCTION_SURFACES } from "../../contract/surfaces.js";
 import { handleAuctionUpdate } from "../../gateway.js";
-import type { LotView, TelegramUser } from "../../ports.js";
+import type {
+  BidOriginView,
+  LotHistoryEntryView,
+  LotView,
+  TelegramUser,
+} from "../../ports.js";
 import type { AuctionScreenBody } from "../../screen.js";
 
 const press = (ports: ReturnType<typeof spyPorts>, data: string) =>
@@ -845,4 +850,210 @@ describe("withdraw the own proxy limit (PER-822)", () => {
       result: { command: "withdraw", kind: "refused" },
     });
   });
+});
+
+// PER-840: «перебила автоставка» в ответе на ставку — только когда хронология
+// доказала ровно одну чужую прокси-ставку по новой цене. Лидер после команды
+// не ставивший сам по себе не доказательство: ставка зала и чужая ручная
+// оставляют нейтральный текст.
+describe("overtaken bid reply origin", () => {
+  const rivalId = "01929b7e-5c1d-7a3f-8e4b-000000000002";
+  const viewerId = contractViewer("auction").identityId;
+  const historyBid = (
+    sequence: number,
+    participantId: string,
+    rubles: number,
+    origin: BidOriginView,
+  ): LotHistoryEntryView => ({
+    kind: "bid",
+    sequence,
+    occurredAt: "2026-10-31T18:00:00Z",
+    bidId: `bid-${sequence}`,
+    participantId,
+    amount: rub(rubles),
+    origin,
+  });
+  const historyOf = (...entries: LotHistoryEntryView[]) => ({
+    [CONTRACT_LOT.lotId]: {
+      "": { entries, nextPageToken: "" },
+    },
+  });
+  const ledByRival = (phase: "online" | "live", price: number): LotView => ({
+    ...CONTRACT_LOT,
+    version: 4,
+    nextPrice: rub(price + 50),
+    status: {
+      kind: "trading",
+      currentPrice: rub(price),
+      leaderId: rivalId,
+      deadline: "2026-10-10T18:00:00Z",
+      phase,
+    },
+  });
+
+  it("names a proven proxy on the accepted online bid screen", async () => {
+    const result = await press(
+      spyPorts([], {
+        ...AUCTION,
+        bids: [{ kind: "accepted", lotVersion: 4 }],
+        after: [ledByRival("online", 1300)],
+        history: historyOf(
+          historyBid(1, viewerId, 1250, { kind: "manual", source: "bot" }),
+          historyBid(2, rivalId, 1300, { kind: "proxy" }),
+        ),
+      }),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId: CONTRACT_LOT.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 130000,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "accepted",
+      overtaken: rub(1300),
+    });
+  });
+
+  it.each([
+    {
+      name: "manual",
+      origin: { kind: "manual", source: "bot" } satisfies BidOriginView,
+    },
+    {
+      name: "floor",
+      origin: { kind: "manual", source: "floor" } satisfies BidOriginView,
+    },
+  ])(
+    "keeps the online reply silent when the new leader is $name",
+    async ({ origin }) => {
+      const result = await press(
+        spyPorts([], {
+          ...AUCTION,
+          bids: [{ kind: "accepted", lotVersion: 4 }],
+          after: [ledByRival("online", 1300)],
+          history: historyOf(
+            historyBid(1, viewerId, 1250, { kind: "manual", source: "bot" }),
+            historyBid(2, rivalId, 1300, origin),
+          ),
+        }),
+        encodeAuctionCallback({
+          kind: "commit",
+          command: "bid",
+          lotId: CONTRACT_LOT.lotId,
+          opId: CONTRACT_OP_IDS[0],
+          amount: 130000,
+          page: 0,
+        }),
+      );
+      if (result.kind !== "screen") throw new Error("no screen");
+      expect(result.body.blocks[0]).toEqual(
+        expect.objectContaining({ kind: "accepted" }),
+      );
+      expect(result.body.blocks[0]).not.toHaveProperty("overtaken");
+    },
+  );
+
+  it("keeps the online reply silent when two rival bids share the price", async () => {
+    const result = await press(
+      spyPorts([], {
+        ...AUCTION,
+        bids: [{ kind: "accepted", lotVersion: 4 }],
+        after: [ledByRival("online", 1300)],
+        history: historyOf(
+          historyBid(1, rivalId, 1300, { kind: "proxy" }),
+          historyBid(2, "01929b7e-5c1d-7a3f-8e4b-000000000004", 1300, {
+            kind: "manual",
+            source: "bot",
+          }),
+        ),
+      }),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId: CONTRACT_LOT.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 130000,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).not.toHaveProperty("overtaken");
+  });
+
+  it.each(AUCTION_SURFACES)(
+    "sets final overtaken only for a proven proxy (%s)",
+    async (surface) => {
+      const pressOn = (ports: ReturnType<typeof spyPorts>) =>
+        handleAuctionUpdate(
+          { kind: surface, ports },
+          {
+            identity: contractIdentity(surface),
+            user,
+            input: {
+              kind: "callback",
+              data: encodeAuctionCallback({
+                kind: "final-bid",
+                lotId: CONTRACT_LOT.lotId,
+                amount: rub(1300).minorUnits,
+                page: 0,
+              }),
+            },
+          },
+        );
+      const proven = await pressOn(
+        spyPorts(
+          [],
+          {
+            ...AUCTION,
+            lots: [liveAt(1200, 1300)],
+            bids: [{ kind: "accepted", lotVersion: 4 }],
+            after: [ledByRival("live", 1400)],
+            history: historyOf(
+              historyBid(1, contractViewer(surface).identityId, 1300, {
+                kind: "manual",
+                source: "bot",
+              }),
+              historyBid(2, rivalId, 1400, { kind: "proxy" }),
+            ),
+          },
+          contractIdentity(surface),
+        ),
+      );
+      if (proven.kind !== "screen") throw new Error("no card");
+      expect(lotBlock(proven.body).finalBid).toEqual({
+        kind: "accepted",
+        amount: rub(1300),
+        overtaken: true,
+      });
+
+      const floor = await pressOn(
+        spyPorts(
+          [],
+          {
+            ...AUCTION,
+            lots: [liveAt(1200, 1300)],
+            bids: [{ kind: "accepted", lotVersion: 4 }],
+            after: [ledByRival("live", 1400)],
+            history: historyOf(
+              historyBid(1, contractViewer(surface).identityId, 1300, {
+                kind: "manual",
+                source: "bot",
+              }),
+              historyBid(2, rivalId, 1400, { kind: "manual", source: "floor" }),
+            ),
+          },
+          contractIdentity(surface),
+        ),
+      );
+      if (floor.kind !== "screen") throw new Error("no card");
+      expect(lotBlock(floor.body).finalBid).toEqual({
+        kind: "accepted",
+        amount: rub(1300),
+      });
+    },
+  );
 });

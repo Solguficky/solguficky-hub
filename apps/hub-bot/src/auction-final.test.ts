@@ -37,6 +37,28 @@ describe("finalBidHeadline", () => {
     );
   });
 
+  // PER-840: исход несёт `overtaken`, только когда хронология доказала
+  // прокси; карточка тогда называет автоставку. Перебитие без доказательства
+  // остаётся нейтральным.
+  it("names the proxy that overbid a bid in the same command", () => {
+    expect(
+      finalBidHeadline(
+        {
+          ...card,
+          finalBid: { kind: "accepted", amount, overtaken: true },
+          status: {
+            kind: "trading",
+            phase: "live",
+            currentPrice: { ...amount, minorUnits: 140000 },
+          },
+        },
+        money,
+      ),
+    ).toBe(
+      "Твою ставку перебила автоставка другого участника — цена уже 1400 ₽",
+    );
+  });
+
   it("names an overbid even when the command was accepted", () => {
     expect(
       finalBidHeadline(

@@ -38,7 +38,10 @@ import {
   dayChronicleOf,
 } from "../../../core/auction/day-chronicle.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
-import { historyPageOf } from "../../../core/auction/history.js";
+import {
+  historyPageOf,
+  readOutbidOrigin,
+} from "../../../core/auction/history.js";
 import { myInvoicesOf } from "../../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
@@ -301,6 +304,13 @@ export type LotInfoReader = {
     auctionId: string,
     meta?: RpcMetadata,
   ): Promise<string | undefined>;
+  // Источник ставки, которая перебила получателя, для вести «перебили» (PER-840).
+  outbidOrigin(
+    identityId: string,
+    lotId: string,
+    minorUnits: number,
+    meta?: RpcMetadata,
+  ): Promise<"proxy" | "manual" | undefined>;
   // Лот, который торгуется в живом финале, для кнопки вести о старте (PER-833).
   finalActiveLot(
     identityId: string,
@@ -310,10 +320,24 @@ export type LotInfoReader = {
 };
 
 export function createLotInfoReader(
-  rpc: Pick<AuctionRpc, "getLot" | "getAuction">,
+  rpc: Pick<AuctionRpc, "getLot" | "getAuction" | "listLotHistory">,
   timeoutMs = 3_000,
 ): LotInfoReader {
   return {
+    outbidOrigin: (identityId, lotId, minorUnits, meta) =>
+      readOutbidOrigin(
+        (pageToken) =>
+          rpc.listLotHistory(
+            {
+              viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+              lotId,
+              pageToken,
+            },
+            { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+          ),
+        minorUnits,
+        identityId,
+      ),
     async auctionFinalAt(identityId, auctionId, meta) {
       const { auction } = await rpc.getAuction(
         {

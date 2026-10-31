@@ -2589,10 +2589,11 @@ describe("lot info reader", () => {
   it("reads the title as the recipient with the right to bid", async () => {
     const getLot = vi.fn().mockResolvedValue({ card: { title: "Кружка" } });
     await expect(
-      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
-        identityId,
-        lotId,
-      ),
+      createLotInfoReader({
+        getLot,
+        getAuction: vi.fn(),
+        listLotHistory: vi.fn(),
+      }).lotInfo(identityId, lotId),
     ).resolves.toEqual({ title: "Кружка" });
     expect(getLot).toHaveBeenCalledWith(
       {
@@ -2617,10 +2618,11 @@ describe("lot info reader", () => {
       },
     });
     await expect(
-      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
-        identityId,
-        lotId,
-      ),
+      createLotInfoReader({
+        getLot,
+        getAuction: vi.fn(),
+        listLotHistory: vi.fn(),
+      }).lotInfo(identityId, lotId),
     ).resolves.toEqual({
       title: "Кружка",
       deadline: "2026-10-20T19:45:00Z",
@@ -2642,10 +2644,11 @@ describe("lot info reader", () => {
       }),
     });
     await expect(
-      createLotInfoReader({ getLot: vi.fn(), getAuction }).auctionFinalAt(
-        identityId,
-        "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
-      ),
+      createLotInfoReader({
+        getLot: vi.fn(),
+        getAuction,
+        listLotHistory: vi.fn(),
+      }).auctionFinalAt(identityId, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1"),
     ).resolves.toBe("2026-10-31T17:00:00Z");
     expect(getAuction).toHaveBeenCalledWith(
       {
@@ -2662,10 +2665,11 @@ describe("lot info reader", () => {
   it("gives an empty title to a lot without a card", async () => {
     const getLot = vi.fn().mockResolvedValue({});
     await expect(
-      createLotInfoReader({ getLot, getAuction: vi.fn() }).lotInfo(
-        identityId,
-        lotId,
-      ),
+      createLotInfoReader({
+        getLot,
+        getAuction: vi.fn(),
+        listLotHistory: vi.fn(),
+      }).lotInfo(identityId, lotId),
     ).resolves.toEqual({ title: "" });
   });
 });

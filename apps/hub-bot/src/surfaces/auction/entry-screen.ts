@@ -74,6 +74,7 @@ import {
 } from "../../auction-set.js";
 import {
   autoFollowNote,
+  autoRaisedLines,
   awaitsFirstBid,
   currentValueLine,
   extensionLine,
@@ -93,6 +94,7 @@ import {
   lotsLabel,
   nameSettingsParagraphs,
   nameSettingsTitle,
+  overtakenByProxyLine,
   ownLimitLines,
   ownLotLine,
   proxyHintLead,
@@ -1481,6 +1483,9 @@ function acceptedText(
     ? screenText(
         `Ставка ${money(block.amount)} принята`,
         lotSubject(block.title),
+        block.overtaken === undefined
+          ? undefined
+          : overtakenByProxyLine(block.overtaken),
         extension,
         note,
       )
@@ -1899,6 +1904,7 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
         ...(showsStep(block) ? stepLines(block, options) : []),
+        ...autoRaisedLines(block),
         ...ownLimitLines(block),
       ];
       return [

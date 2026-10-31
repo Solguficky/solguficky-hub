@@ -706,6 +706,80 @@ describe("createLotNoticeRender", () => {
     expect(reads.lotInfo).toHaveBeenCalledTimes(DIGEST_LOT_LIMIT);
   });
 
+  // PER-840: перебитие читает источник ставки и называет автоставку; ручная
+  // ставка, неизвестный источник и сбой чтения оставляют прежний текст.
+  describe("outbid by a proxy", () => {
+    const lotId = lotOf(1);
+    const renderWith = async (
+      outbidOrigin: () => Promise<"proxy" | "manual" | undefined>,
+      onTitleMissing = () => {},
+    ) => {
+      const render = createLotNoticeRender({
+        reads: {
+          holdsPlaceBids: async () => true,
+          lotInfo: async () => lot("Кружка"),
+          outbidOrigin,
+        },
+        onTitleMissing,
+        frequencyButton: false,
+        timeZone,
+      });
+      const rendered = await render(
+        { kind: "lot-outbid", lotId, currentPrice: rub(950) },
+        { recipientId: lotOf(99) },
+      );
+      if (rendered.kind !== "ready") throw new Error("the notice must render");
+      return rendered.message.text;
+    };
+
+    it("names the proxy of another participant", async () => {
+      await expect(renderWith(async () => "proxy")).resolves.toBe(
+        `Тебя перебила автоставка другого участника: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+    });
+
+    it("keeps the plain wording for a manual bid", async () => {
+      await expect(renderWith(async () => "manual")).resolves.toBe(
+        `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+    });
+
+    it("keeps the plain wording when the origin is unknown", async () => {
+      await expect(renderWith(async () => undefined)).resolves.toBe(
+        `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+    });
+
+    it("keeps the plain wording and delivers when the history read fails", async () => {
+      const missing = vi.fn();
+      await expect(
+        renderWith(() => Promise.reject(new Error("unavailable")), missing),
+      ).resolves.toBe(
+        `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+      expect(missing).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads the origin for an outbid only", async () => {
+      const outbidOrigin = vi.fn(async () => "proxy" as const);
+      const render = createLotNoticeRender({
+        reads: {
+          holdsPlaceBids: async () => true,
+          lotInfo: async () => lot("Кружка"),
+          outbidOrigin,
+        },
+        onTitleMissing: () => {},
+        frequencyButton: false,
+        timeZone,
+      });
+      await render(
+        { kind: "lot-proxy-raised", lotId, currentPrice: rub(950) },
+        { recipientId: lotOf(99) },
+      );
+      expect(outbidOrigin).not.toHaveBeenCalled();
+    });
+  });
+
   // Лот, который Auction окончательно не отдаёт, остаётся строкой без
   // названия, но без кнопки: она упёрлась бы в тот же отказ.
   it("leaves out the button of a lot Auction refuses for good", async () => {
