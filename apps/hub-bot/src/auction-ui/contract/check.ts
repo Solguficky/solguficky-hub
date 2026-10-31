@@ -3102,7 +3102,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
       page: 2,
     }),
     auction: LIVE_AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_HISTORY_CALLS],
     body: liveBody({
       lot: LIVE_LOT,
       participantName: "@owl",
