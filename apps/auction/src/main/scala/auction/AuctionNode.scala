@@ -81,6 +81,7 @@ import auction.results.ResultsOutcomes
 import auction.results.ResultsStore
 import auction.screen.MeetupStandings
 import auction.screen.ScreenFeed
+import auction.screen.ScreenPredictions
 import auction.screen.StreamLimit
 import auction.slot.SlotHolders
 import auction.slot.TradingSlotEntity
@@ -589,12 +590,19 @@ object AuctionNode {
     import system.executionContext
     given Materializer = SystemMaterializer(system).materializer
     val views = SlickScreenViews(system)
+    // Итоги прогнозов на итоге экрана (PER-839) читаются тем же путём, что `GetPredictionResults`.
+    val results = ResultsGateway.sharded(
+      ClusterSharding(system),
+      SlickResultsStore(system),
+      config.getDuration("auction.grpc.ask-timeout").toScala
+    )
     val feed = ScreenFeed(
       views,
       SlickDisplayNameStore(system),
       standings,
       changes,
-      StreamLimit(config.getInt("auction.screen.max-streams"))
+      StreamLimit(config.getInt("auction.screen.max-streams")),
+      ScreenPredictions.of(results)
     )
     ScreenRoutes.route(feed, views, config.getDuration("auction.screen.heartbeat").toScala)
   }

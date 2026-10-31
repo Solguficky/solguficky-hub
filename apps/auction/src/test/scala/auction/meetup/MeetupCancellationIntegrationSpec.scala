@@ -55,7 +55,10 @@ final class MeetupCancellationIntegrationSpec
     with ScalaFutures
     with Eventually {
 
-  implicit override val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(30, Seconds))
+  // Предел ожидания шире AckWait durable (умолчание сервера — 30 секунд): факт, пришедший ровно на границе окна
+  // выборки, клиент уже не получает, а сервер считает выданным, и повтор приходит только по AckWait. На настоящей
+  // шине такой повтор приходил через 30 004 мс, поэтому умолчание в 30 секунд было бы гонкой с самой выдачей.
+  implicit override val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(60, Seconds))
 
   private given Timeout = Timeout(20.seconds)
 
@@ -264,7 +267,8 @@ final class MeetupCancellationIntegrationSpec
           // тишины — несколько пустых выборок, каждая из которых прежде давала тревогу.
           Thread.sleep(4000)
           publish(cancellation(meetup))
-          // Применённая отмена показывает, что потребитель всё это время выбирал, а не молчал.
+          // Применённая отмена показывает, что потребитель всё это время выбирал, а не молчал. Ожидание — общий
+          // предел сьюта: факт, пришедший на границе выборки, приходит повторно только по AckWait durable.
           eventually(auctionState(node, auction) shouldBe AuctionState.Initial)
           val alarms =
             appender.list.asScala.toList.filter(_.getArgumentArray.exists(_.toString.contains("heartbeatAlarm")))

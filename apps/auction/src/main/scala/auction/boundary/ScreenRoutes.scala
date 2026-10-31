@@ -42,9 +42,20 @@ object ScreenRoutes {
 
   /**
    * Страница и её файлы лежат ресурсами сервиса: сборки JS нет, в образ они едут runtime classpath. Отдаются только
-   * названные файлы, а не каталог: путь из запроса до загрузчика ресурсов не доходит.
+   * названные файлы, а не каталог: путь из запроса до загрузчика ресурсов не доходит. Шрифты (PER-839, лицензии OFL
+   * рядом, в `licenses/`) тоже свои: экран в зале не зависит от внешней сети.
    */
-  private val Assets: Set[String] = Set("screen.js", "connection.js", "screen.css")
+  private val Assets: Set[String] = Set(
+    "screen.js",
+    "connection.js",
+    "screen.css",
+    "manrope-cyrillic.woff2",
+    "manrope-latin.woff2",
+    "manrope-latin-ext.woff2",
+    "unbounded-cyrillic.woff2",
+    "unbounded-latin.woff2",
+    "unbounded-latin-ext.woff2"
+  )
 
   /**
    * Страница берёт ресурсы только у себя; данные из потока — ввод людей, и политика закрывает чужие скрипты, даже если
@@ -52,7 +63,7 @@ object ScreenRoutes {
    */
   private val Policy = RawHeader(
     "Content-Security-Policy",
-    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'self'; " +
       "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
   )
 

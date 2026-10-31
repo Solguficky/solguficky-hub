@@ -126,10 +126,15 @@ final class ScreenPageBrowserSpec
           assertThat(page.locator("#banner")).isHidden()
           digits(page) shouldBe expected(next)
 
-          // Вне активного лота: ведущий закрыл последний лот состава, и экран показывает итог сбора.
+          // Вне активного лота: ведущий закрыл последний лот состава, и экран показывает итог сбора. Снимок итога
+          // идёт через проекции лота и аукциона, а сторож тишины страницы ждёт три периода heartbeat: на загруженной
+          // машине снимок приходит позже, и молчание до него — не повод считать проверку проваленной.
           node.close(auction, lot)
-          assertThat(page.locator(".title")).hasText("Аукцион завершён")
-          assertThat(page.locator(".totals")).containsText("1 лот")
+          val settled = 30.seconds.toMillis.toDouble
+          assertThat(page.locator(".title"))
+            .hasText("Аукцион завершён", LocatorAssertions.HasTextOptions().setTimeout(settled))
+          assertThat(page.locator(".totals"))
+            .containsText("1 лот", LocatorAssertions.ContainsTextOptions().setTimeout(settled))
           awaitStatus(page, "live")
         } finally {
           chromium.close()
@@ -188,8 +193,8 @@ final class ScreenPageBrowserSpec
       .hasAttribute("data-status", value, LocatorAssertions.HasAttributeOptions().setTimeout(within.toMillis.toDouble))
 
   /**
-   * Цифры текущей ставки на экране: разделители разрядов и знак валюты зависят от локали, сумма — нет. Главная цифра
-   * `.price` с PER-819 — следующая цена, текущая ставка — `.current-price`.
+   * Цифры текущей ставки на экране: разделители разрядов и знак валюты зависят от локали, сумма — нет. С PER-839
+   * главная цифра `.price` — снова текущая ставка, и она же несёт `.current-price`.
    */
   private def digits(page: Page): String = page.locator(".current-price").textContent().replaceAll("\\D", "")
 

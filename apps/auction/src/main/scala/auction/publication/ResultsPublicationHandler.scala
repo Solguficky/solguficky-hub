@@ -6,6 +6,7 @@ import auction.results.ResultRow
 import auction.results.Results
 import auction.results.ResultsJournal
 import auction.results.StoredResultsEvent
+import auction.watch.AuctionChanges
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.typed.PersistenceId
 import org.apache.pekko.projection.eventsourced.EventEnvelope
@@ -49,6 +50,9 @@ final class ResultsPublicationHandler(serialization: Serialization)
         }
         val rows = participants(connection, auctionId)
         ResultsFacts.fact(auctionId, envelope.sequenceNr, envelope.event, after, rows).foreach(enqueue(connection, _))
+        // Итоги входят в итог экрана зала (PER-839), а подсчёт идёт после конца аукциона: без сигнала открытый экран
+        // так и остался бы без них. Сигнал уходит после коммита этой транзакции, когда событие итогов уже в журнале.
+        AuctionChanges.announce(connection, auctionId)
       }
 
   /** Строки итогов аукциона; до подсчёта их нет, и снимок факта несёт пустых участников. */
