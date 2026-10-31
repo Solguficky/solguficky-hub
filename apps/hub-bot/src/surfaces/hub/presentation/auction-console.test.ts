@@ -9344,7 +9344,7 @@ describe("auction announcement", () => {
     );
   });
 
-  it("refuses an announcement text longer than a photo caption", async () => {
+  it("refuses an announcement text longer than a Telegram message", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       week: { ...week, final: true },
@@ -9354,10 +9354,26 @@ describe("auction announcement", () => {
     const hub = bot(auction, announcements(), calls);
     await hub.init();
     await hub.handleUpdate(press(`v1:ac:nq:${auctionToken}:o`));
-    await hub.handleUpdate(answer(calls, { text: "а".repeat(1025) }));
+    await hub.handleUpdate(answer(calls, { text: "а".repeat(4097) }));
 
-    expect(plain(last(calls))).toContain("Текст длиннее 1024 знаков");
+    expect(plain(last(calls))).toContain("Текст длиннее 4096 знаков");
     expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Объявление"]]);
+  });
+
+  it("accepts an announcement text longer than a photo caption", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const calls: RecordedCall[] = [];
+    const hub = bot(auction, announcements(), calls);
+    await hub.init();
+    await hub.handleUpdate(press(`v1:ac:nq:${auctionToken}:o`));
+    await hub.handleUpdate(answer(calls, { text: "а".repeat(2000) }));
+
+    expect(plain(last(calls))).not.toContain("длиннее");
+    expect(labels(last(calls)).flat()).toContain("К аукциону");
   });
 
   it("opens and sends the announcement from the console of a finished auction", async () => {
