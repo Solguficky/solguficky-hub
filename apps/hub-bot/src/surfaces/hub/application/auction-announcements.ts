@@ -387,14 +387,21 @@ function failed(failure: AuctionFailure | NotificationFailure): ExecuteResult {
   }
 }
 
-/** Объявление уместно, пока участники видят аукцион и он не кончился. */
-export function announceable(console: AuctionConsoleSnapshot): boolean {
+/**
+ * Объявление уместно, пока участники видят аукцион. Скрытый, отменённый и
+ * черновик — нет; прошедший — да: рассылка его принимает, и после финала
+ * ещё есть что сказать про оплату и выдачу.
+ */
+export function announceable(
+  console: Pick<AuctionConsoleSnapshot, "status" | "hidden">,
+): boolean {
   switch (console.status) {
     case "scheduled":
       return !console.hidden;
     case "prebidding":
     case "break":
     case "lineup-frozen":
+    case "finished":
       return true;
     default:
       return false;

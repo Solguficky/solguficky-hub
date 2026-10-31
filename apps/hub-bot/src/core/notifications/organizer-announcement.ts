@@ -74,12 +74,16 @@ export const announcementButtonLabels: Readonly<
 };
 
 /**
- * Предел текста — подпись фото Telegram: с фото или видео объявление уходит
- * одним сообщением, и текст длиннее подписи не поместился бы. Тот же
- * предел и без фото: выбор фото после текста не должен отказывать тексту,
- * уже принятому на первом шаге.
+ * Предел текста — обычное сообщение Telegram и тело Notifications
+ * (4096 UTF-16). Подпись медиа короче: длиннее неё текст уходит отдельным
+ * сообщением после фото или поста, с кнопкой под текстом. Тот же предел и
+ * без фото: выбор фото после текста не должен отказывать тексту, уже
+ * принятому на первом шаге.
  */
-export const announcementTextLimit = 1024;
+export const announcementTextLimit = 4096;
+
+/** Подпись медиа Telegram: длиннее — текст отдельным сообщением. */
+export const telegramCaptionLimit = 1024;
 
 export type AnnouncementTextCheck =
   | { kind: "ok"; text: string }
@@ -372,13 +376,15 @@ export type AnnouncementApi = MediaChatApi & {
 export type AnnouncementMarkup = { inline_keyboard: readonly unknown[] };
 
 /**
- * Отправка объявления одному человеку. С фото — сообщение-фотография с текстом
- * подписью; фото, которое не загрузилось или которое Telegram не принял, —
- * объявление уходит текстом. Своё медиа (PER-776) — копия поста чата медиа с
- * текстом подписью; пост, которого нет или который бот не видит, — тоже
- * текстом, а запись об отказе делает чат медиа. Отказ отправки текста
- * бросается: его классифицирует вызывающий — доставка своими классами,
- * предпросмотр своим экраном сбоя.
+ * Отправка объявления одному человеку. Текст не длиннее подписи медиа —
+ * сообщение-фотография или копия поста с текстом подписью. Текст длиннее —
+ * медиа без подписи, затем обычное сообщение с текстом и кнопкой; номер
+ * ответа — у текстового, чтобы подтверждение читало его из предпросмотра.
+ * Фото, которое не загрузилось или которое Telegram не принял, — объявление
+ * уходит текстом. Своё медиа (PER-776) — копия поста чата медиа; пост,
+ * которого нет или который бот не видит, — тоже текстом, а запись об отказе
+ * делает чат медиа. Отказ отправки текста бросается: его классифицирует
+ * вызывающий — доставка своими классами, предпросмотр своим экраном сбоя.
  * Ответ — номер сообщения и что из медиа ушло, фото лота или пост: предпросмотр
  * без них не должен обещать их рассылке.
  */
@@ -399,14 +405,27 @@ export async function sendOrganizerAnnouncement(
 ): Promise<{ messageId: number; withPhoto: boolean; withPost: boolean }> {
   const keyboard =
     options.markup === undefined ? {} : { reply_markup: options.markup };
+  const captionFits = view.text.length <= telegramCaptionLimit;
+  const sendText = async () => {
+    const sent = await api.sendMessage(chatId, view.text, {
+      ...options.mark,
+      ...keyboard,
+      link_preview_options: { is_disabled: true },
+    });
+    return sent.message_id;
+  };
   if (view.post !== undefined && options.media !== undefined) {
     const shown = await options.media.show(api, chatId, view.post, {
-      caption: view.text,
-      markup: options.markup,
+      caption: captionFits ? view.text : "",
+      markup: captionFits ? options.markup : undefined,
       mark: options.mark,
     });
     if (shown.kind === "shown") {
-      return { messageId: shown.messageId, withPhoto: false, withPost: true };
+      return {
+        messageId: captionFits ? shown.messageId : await sendText(),
+        withPhoto: false,
+        withPost: true,
+      };
     }
   }
   if (view.photo !== undefined) {
@@ -415,12 +434,15 @@ export async function sendOrganizerAnnouncement(
       try {
         const sent = await api.sendPhoto(chatId, file, {
           ...options.mark,
-          caption: view.text,
-          ...keyboard,
+          ...(captionFits ? { caption: view.text, ...keyboard } : {}),
         });
         const largest = sent.photo?.at(-1)?.file_id;
         if (largest !== undefined) options.photos.remember(view.photo, largest);
-        return { messageId: sent.message_id, withPhoto: true, withPost: false };
+        return {
+          messageId: captionFits ? sent.message_id : await sendText(),
+          withPhoto: true,
+          withPost: false,
+        };
       } catch (cause) {
         // 400 у загрузки — отказ в самом изображении: объявление уходит
         // текстом. Прочий сбой — сеть, лимит или блокировка — общий исход
@@ -432,10 +454,9 @@ export async function sendOrganizerAnnouncement(
       }
     }
   }
-  const sent = await api.sendMessage(chatId, view.text, {
-    ...options.mark,
-    ...keyboard,
-    link_preview_options: { is_disabled: true },
-  });
-  return { messageId: sent.message_id, withPhoto: false, withPost: false };
+  return {
+    messageId: await sendText(),
+    withPhoto: false,
+    withPost: false,
+  };
 }
