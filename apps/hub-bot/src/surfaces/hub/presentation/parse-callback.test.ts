@@ -204,7 +204,9 @@ describe("callback parser", () => {
     const callbacks = [
       `v1:manage:republish:${token}:d`,
       `v1:manage:publish:${token}:123456789`,
+      `v1:manage:publish:${token}:123456789:s`,
       `v1:manage:confirm-publish:${token}:123456789`,
+      `v1:manage:confirm-publish:${token}:123456789:s`,
     ];
     for (const callback of callbacks) {
       expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
@@ -220,14 +222,31 @@ describe("callback parser", () => {
       version: 123456789,
     });
     expect(parseCallback(callbacks[2])).toEqual({
+      kind: "publish-meetup",
+      token,
+      version: 123456789,
+      silent: true,
+    });
+    expect(parseCallback(callbacks[3])).toEqual({
       kind: "manage-confirm-publish",
       token,
       version: 123456789,
     });
-    // Кнопка кадра конфликта и кнопки до подтверждения — без версии.
+    expect(parseCallback(callbacks[4])).toEqual({
+      kind: "manage-confirm-publish",
+      token,
+      version: 123456789,
+      silent: true,
+    });
+    // Кнопка кадра конфликта и кнопки до выбора — без версии.
     expect(parseCallback(`v1:manage:publish:${token}`)).toEqual({
       kind: "publish-meetup",
       token,
+    });
+    expect(parseCallback(`v1:manage:publish:${token}:s`)).toEqual({
+      kind: "publish-meetup",
+      token,
+      silent: true,
     });
     expect(parseCallback(`v1:manage:confirm-publish:${token}`)).toEqual({
       kind: "malformed",

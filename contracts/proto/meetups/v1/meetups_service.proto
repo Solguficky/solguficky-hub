@@ -168,6 +168,11 @@ message PublishMeetupRequest {
   // Aggregate version the caller's decision was based on. Required; see
   // ChangeMeetupAttributesRequest.expected_version.
   int64 expected_version = 3;
+
+  // When true, the first publication does not produce the "new meetup"
+  // addressable fact. Absence and false keep the current behaviour. A return
+  // after unpublish ignores the field: that occasion is meetup_republished.
+  bool silent = 4;
 }
 
 // The moment is a local community date and time; Meetups interprets it in the

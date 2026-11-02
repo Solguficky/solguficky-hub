@@ -53,6 +53,7 @@ let ``When a cancelled meetup is already hidden expect no event rather than a re
 /// состоявшуюся сходку с публикации снимают так же, как запланированную.
 [<Fact>]
 let ``When the meetup is held expect the unpublication is still allowed`` () =
-    let visible = Meetup.apply (Existing Sample.held) (MeetupPublished Sample.fixedNow)
+    let visible =
+        Meetup.apply (Existing Sample.held) (MeetupPublished(Sample.fixedNow, false))
 
     test <@ Meetup.decideUnpublish (Existing visible) = Ok(Some MeetupUnpublished) @>

@@ -70,7 +70,7 @@ let titled =
     Meetup.apply (Existing draft) (MeetupChanged(AttributesChanged attributes))
 
 /// Опубликованная сходка: видна, отметка первой публикации заполнена fixedNow.
-let published = Meetup.apply (Existing titled) (MeetupPublished fixedNow)
+let published = Meetup.apply (Existing titled) (MeetupPublished(fixedNow, false))
 
 /// Отменённые образцы: событие применяется к состоянию «до», как и у остальных.
 /// Схема допускала `cancelled` с первой миграции, а команду завёл PER-197.
@@ -82,7 +82,8 @@ let scheduled = Meetup.apply (Existing titled) (MeetupPublicationScheduled later
 
 /// Сходка, которую воркер опубликовал в назначенный момент: видима, момент забран
 /// публикацией. Из неё отмена момента видит проигранную гонку (PER-457).
-let publishedByWorker = Meetup.apply (Existing scheduled) (MeetupPublished later)
+let publishedByWorker =
+    Meetup.apply (Existing scheduled) (MeetupPublished(later, false))
 
 /// Отменённая скрытая сходка без заголовка: на ней видно, что состояние проверяется
 /// раньше заголовка и настоящая причина отказа не подменяется.

@@ -1015,8 +1015,9 @@ export const screenCatalog = {
     irreversible: true,
   },
   "past-date-confirm": { class: "screen", nav: "confirm" },
-  // Подтверждение публикации и, у кнопки без версии, кадр её конфликта.
-  "publish-confirm": { class: "screen", nav: "confirm" },
+  // Выбор публикации: оповестить или нет (PER-844). Тот же кадр — у кнопки
+  // без версии после конфликта.
+  "publish-confirm": { class: "screen", nav: "choice" },
   "material-confirm": { class: "screen", nav: "confirm" },
   "material-remove-confirm": {
     class: "screen",

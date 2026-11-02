@@ -4046,22 +4046,25 @@ describe("presentation adapter", () => {
       callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
     );
 
-    // Публикация выходит наружу и идёт через подтверждение; «Нет» вернёт в
-    // «Статус», «Да» несёт версию показанного снимка.
+    // Публикация выходит наружу и идёт через выбор; «Отмена» вернёт в
+    // «Статус», кнопки несут версию показанного снимка.
     expect(execute).not.toHaveBeenCalledWith(
       expect.objectContaining({ intent: "publish-meetup" }),
     );
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
+        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам. Оповещение о новой сходке уходит только по первой кнопке и только при первой публикации.",
       },
     });
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      '"text":"✔️ Да, опубликовать сходку","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"',
+      '"text":"Опубликовать и оповестить","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"',
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      '"text":"✖️ Нет","callback_data":"v1:manage:status:AZLzpLXGfY6fChssPU5fYA"',
+      '"text":"Опубликовать без оповещения","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1:s"',
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"text":"Отмена","callback_data":"v1:manage:status:AZLzpLXGfY6fChssPU5fYA"',
     );
 
     await bot.handleUpdate(
@@ -4154,17 +4157,25 @@ describe("presentation adapter", () => {
       method: "sendMessage",
       payload: {
         text: expect.stringContaining(
-          "Проверь данные и подтверди публикацию ещё раз.",
+          "Проверь данные и выбери публикацию ещё раз.",
         ),
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "✔️ Да, опубликовать",
+                text: "Опубликовать и оповестить",
                 callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
               },
+            ],
+            [
               {
-                text: "✖️ Нет",
+                text: "Опубликовать без оповещения",
+                callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:s",
+              },
+            ],
+            [
+              {
+                text: "Отмена",
                 callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
@@ -4246,16 +4257,24 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам, подписчики новых сходок получат уведомление.",
+        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам. Оповещение о новой сходке уходит только по первой кнопке и только при первой публикации.",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "✔️ Да, опубликовать сходку",
+                text: "Опубликовать и оповестить",
                 callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1",
               },
+            ],
+            [
               {
-                text: "✖️ Нет",
+                text: "Опубликовать без оповещения",
+                callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1:s",
+              },
+            ],
+            [
+              {
+                text: "Отмена",
                 callback_data: "v1:manage:draft:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
@@ -4276,6 +4295,32 @@ describe("presentation adapter", () => {
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
       "<b>Сходка опубликована</b>",
+    );
+  });
+
+  it("publishes a draft silently when the organizer chooses not to notify", async () => {
+    const draft = { ...publishedMeetup(), visibility: "hidden" as const };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: draft }
+        : { kind: "published", meetup: publishedMeetup() },
+    );
+    const { bot } = createHarness(resolvedIdentity("admin"), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA:d"),
+    );
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1:s"),
+    );
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "publish-meetup",
+        expectedVersion: 1,
+        silent: true,
+        useCase: "create_meetup",
+      }),
     );
   });
 

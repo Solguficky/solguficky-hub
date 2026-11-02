@@ -528,6 +528,7 @@ import {
   meetupNotificationsLabel,
   meetupsScreen,
   meetupTitleLabel,
+  publishChoiceKeyboard,
   publishConfirmScreen,
   stateConfirmScreen,
   statusScreen,
@@ -4468,12 +4469,12 @@ async function handleCallback(
         action.kind === "manage-publish" &&
         meetup.title.trim() === ""
       ) {
-        // Без названия Meetups сходку не опубликует (PER-457): подтверждение
-        // закончилось бы отказом домена.
+        // Без названия Meetups сходку не опубликует (PER-457): выбор
+        // закончился бы отказом домена.
         await showRefusal(ctx, untitledPublishText, exitToCard(token));
       } else if (action.kind === "manage-publish") {
-        // Публикация выходит наружу — через подтверждение (решение владельца
-        // 10 октября 2026 года); «Да» несёт версию этого снимка.
+        // Публикация выходит наружу — через выбор, оповестить или нет
+        // (PER-844); кнопки несут версию этого снимка.
         await showScreen(
           ctx,
           publishConfirmScreen({ meetup, origin: action.origin }),
@@ -4897,6 +4898,7 @@ async function handleCallback(
         ...(action.version === undefined
           ? {}
           : { expectedVersion: action.version }),
+        ...(action.silent === true ? { silent: true } : {}),
         ...rpcCall(ctx, useCase),
       });
       if (result.kind === "conflict" && action.version !== undefined) {
@@ -13116,16 +13118,17 @@ async function renderFormResult(
         ? []
         : ["", `Твоё значение: ${result.input}`]),
     ];
-    // Публикация подтверждается повторно по обновлённым данным: кнопка снова
-    // несёт снимок, который человек только что видел.
+    // Публикация выбирается повторно по обновлённым данным: кнопки снова
+    // несут снимок, который человек только что видел.
     if (result.field === undefined) {
+      const token = uuidToToken(stored.id);
       await showScreen(ctx, {
         id: "publish-confirm",
-        text: `${refusalText(lines.join("\n"))}\n\nПроверь данные и подтверди публикацию ещё раз.`,
-        keyboard: confirmKeyboard({
-          yes: "Да, опубликовать",
-          yesData: `v1:manage:publish:${uuidToToken(stored.id)}`,
-          noData: `v1:view:${uuidToToken(stored.id)}`,
+        text: `${refusalText(lines.join("\n"))}\n\nПроверь данные и выбери публикацию ещё раз.`,
+        keyboard: publishChoiceKeyboard({
+          notifyData: `v1:manage:publish:${token}`,
+          silentData: `v1:manage:publish:${token}:s`,
+          cancelData: `v1:view:${token}`,
         }),
         format: "HTML",
         delivery: "new",

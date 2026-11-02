@@ -251,7 +251,7 @@ let private announced (answer: Result<MeetupSnapshot, MeetupStore.VersionConflic
     let commit =
         DuePublicationLog.announcing written.Add (fun _ _ _ _ -> Task.FromResult answer)
 
-    commit (envelope "due-1") (Some 1L) Initial (MeetupPublished Sample.later)
+    commit (envelope "due-1") (Some 1L) Initial (MeetupPublished(Sample.later, false))
     |> Async.AwaitTask
     |> Async.RunSynchronously
     |> ignore
