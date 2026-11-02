@@ -28,7 +28,7 @@ type MeetupChange =
 type MeetupEvent =
     | MeetupCreated of id: MeetupId * author: PersonId
     | MeetupChanged of MeetupChange
-    | MeetupPublished of at: DateTimeOffset
+    | MeetupPublished of at: DateTimeOffset * silent: bool
     | MeetupUnpublished
     | MeetupRepublished
     | MeetupPublicationScheduled of at: DateTimeOffset
@@ -229,7 +229,7 @@ module Meetup =
         match state, event with
         | Initial, MeetupCreated(id, author) -> create id author
         | Existing meetup, MeetupChanged changed -> change meetup changed
-        | Existing meetup, MeetupPublished at -> publish meetup at
+        | Existing meetup, MeetupPublished(at, _) -> publish meetup at
         | Existing meetup, MeetupUnpublished -> setVisibility Hidden meetup
         | Existing meetup, MeetupRepublished -> republish meetup
         | Existing meetup, MeetupPublicationScheduled at -> schedulePublication at meetup
@@ -424,7 +424,11 @@ module Meetup =
     /// разрешённого перехода, а не переход, поэтому в таблицу оно не уехало. I4
     /// проверяется последним намеренно: иначе отменённый черновик без заголовка
     /// отвечал бы «нужен заголовок» и прятал настоящую причину отказа.
-    let decidePublish (now: DateTimeOffset) (state: MeetupState) : Result<MeetupEvent option, DomainError> =
+    let decidePublish
+        (now: DateTimeOffset)
+        (silent: bool)
+        (state: MeetupState)
+        : Result<MeetupEvent option, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
         | Existing meetup ->
@@ -443,7 +447,7 @@ module Meetup =
                         Error TitleRequiredForPublication
                     else
                         match meetup.FirstPublishedAt with
-                        | None -> Ok(Some(MeetupPublished now))
+                        | None -> Ok(Some(MeetupPublished(now, silent)))
                         | Some _ -> Ok(Some MeetupRepublished)
 
     /// Порядок проверок тот же, что у публикации, и по той же причине. I5 идёт

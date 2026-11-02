@@ -525,12 +525,12 @@ community-site-serve:
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Пороги числа тестов по уровням, в сумме 710. Поднимаются вручную вместе с
+# Пороги числа тестов по уровням, в сумме 732. Поднимаются вручную вместе с
 # набором — добавил тест, обнови число своего уровня здесь тем же изменением.
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "572"
+MEETUPS_UNIT_TEST_THRESHOLD := "592"
 MEETUPS_INTEGRATION_TEST_THRESHOLD := "140"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,
@@ -584,12 +584,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 1069. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 1076. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "732"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "337"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "738"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "338"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

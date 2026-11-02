@@ -7,7 +7,7 @@ open Xunit
 
 [<Fact>]
 let ``When the title is empty expect the publication is refused`` () =
-    let decision = Meetup.decidePublish Sample.fixedNow (Existing Sample.draft)
+    let decision = Meetup.decidePublish Sample.fixedNow false (Existing Sample.draft)
 
     test <@ decision = Error TitleRequiredForPublication @>
 
@@ -21,17 +21,17 @@ let ``When the title is only blanks expect the publication is refused`` () =
     let blank =
         Meetup.apply (Existing Sample.draft) (MeetupChanged(AttributesChanged blankTitle))
 
-    test <@ Meetup.decidePublish Sample.fixedNow (Existing blank) = Error TitleRequiredForPublication @>
+    test <@ Meetup.decidePublish Sample.fixedNow false (Existing blank) = Error TitleRequiredForPublication @>
 
 [<Fact>]
 let ``When the meetup does not exist expect the publication is refused`` () =
-    test <@ Meetup.decidePublish Sample.fixedNow Initial = Error MeetupNotFound @>
+    test <@ Meetup.decidePublish Sample.fixedNow false Initial = Error MeetupNotFound @>
 
 [<Fact>]
 let ``When the title is set expect a MeetupPublished event carrying the supplied instant`` () =
-    let decision = Meetup.decidePublish Sample.fixedNow (Existing Sample.titled)
+    let decision = Meetup.decidePublish Sample.fixedNow false (Existing Sample.titled)
 
-    test <@ decision = Ok(Some(MeetupPublished Sample.fixedNow)) @>
+    test <@ decision = Ok(Some(MeetupPublished(Sample.fixedNow, false))) @>
 
 [<Fact>]
 let ``When the publication is applied expect the meetup becomes visible and stamped`` () =
@@ -42,11 +42,11 @@ let ``When the publication is applied expect the meetup becomes visible and stam
 [<Fact>]
 let ``When an already visible meetup is published again expect no event`` () =
     // Команда сформулирована как целевое состояние: повтор успешен и события не даёт.
-    test <@ Meetup.decidePublish Sample.later (Existing Sample.published) = Ok None @>
+    test <@ Meetup.decidePublish Sample.later false (Existing Sample.published) = Ok None @>
 
 [<Fact>]
 let ``When the meetup is cancelled expect the publication is refused`` () =
-    test <@ Meetup.decidePublish Sample.fixedNow (Existing Sample.cancelled) = Error TransitionNotAllowed @>
+    test <@ Meetup.decidePublish Sample.fixedNow false (Existing Sample.cancelled) = Error TransitionNotAllowed @>
 
 /// Порядок проверок наблюдаем: у отменённого черновика нет и заголовка, и оба отказа
 /// достижимы. Тест требует именно отказ перехода — иначе настоящая причина пряталась
@@ -54,7 +54,7 @@ let ``When the meetup is cancelled expect the publication is refused`` () =
 /// заголовок случайно заполнен.
 [<Fact>]
 let ``When a cancelled meetup has no title expect the refusal to name the transition`` () =
-    test <@ Meetup.decidePublish Sample.fixedNow (Existing Sample.cancelledDraft) = Error TransitionNotAllowed @>
+    test <@ Meetup.decidePublish Sample.fixedNow false (Existing Sample.cancelledDraft) = Error TransitionNotAllowed @>
 
 /// Отмена закрывает переход к видимости, а не команду как таковую: у уже видимой
 /// сходки переходить некуда, и I5 выигрывает. Тест закрепляет именно приоритет —
@@ -62,20 +62,25 @@ let ``When a cancelled meetup has no title expect the refusal to name the transi
 /// видимая сходка существует ровно потому, что отмена оси видимости не трогает.
 [<Fact>]
 let ``When a cancelled meetup is already visible expect no event rather than a refusal`` () =
-    test <@ Meetup.decidePublish Sample.later (Existing Sample.cancelledVisible) = Ok None @>
+    test <@ Meetup.decidePublish Sample.later false (Existing Sample.cancelledVisible) = Ok None @>
 
 /// Узкое правило PER-195: публикацию закрывает отмена, а не любая терминальная
 /// стадия. Ретроспективно заведённую прошедшую сходку сообществу показать нужно.
 [<Fact>]
 let ``When the meetup is held expect the publication is still allowed`` () =
-    test <@ Meetup.decidePublish Sample.fixedNow (Existing Sample.held) = Ok(Some(MeetupPublished Sample.fixedNow)) @>
+    test
+        <@
+            Meetup.decidePublish Sample.fixedNow false (Existing Sample.held) = Ok(
+                Some(MeetupPublished(Sample.fixedNow, false))
+            )
+        @>
 
 /// Ось видимости не двигает жизненный цикл: у публикации состоявшейся сходки
 /// меняется только видимость и отметка.
 [<Fact>]
 let ``When a held meetup is published expect its lifecycle to stay untouched`` () =
     let snapshot =
-        Meetup.apply (Existing Sample.held) (MeetupPublished Sample.fixedNow)
+        Meetup.apply (Existing Sample.held) (MeetupPublished(Sample.fixedNow, false))
         |> Meetup.toSnapshot
 
     test <@ (snapshot.Lifecycle, snapshot.Visibility) = (Held, Visible) @>
@@ -83,7 +88,7 @@ let ``When a held meetup is published expect its lifecycle to stay untouched`` (
 [<Fact>]
 let ``When the publication is applied twice expect the first publication mark to survive`` () =
     let republished =
-        Meetup.apply (Existing Sample.published) (MeetupPublished Sample.later)
+        Meetup.apply (Existing Sample.published) (MeetupPublished(Sample.later, false))
         |> Meetup.toSnapshot
 
     test <@ republished.FirstPublishedAt = Some Sample.fixedNow @>
@@ -92,10 +97,22 @@ let ``When the publication is applied twice expect the first publication mark to
 /// публикации уже стоит, и событие обязано говорить, что сходка вернулась, а не что
 /// её показали впервые: потребитель журнала различает эти два факта.
 [<Fact>]
+let ``When a silent first publication is decided expect the event to carry silent`` () =
+    let decision = Meetup.decidePublish Sample.fixedNow true (Existing Sample.titled)
+
+    test <@ decision = Ok(Some(MeetupPublished(Sample.fixedNow, true))) @>
+
+[<Fact>]
+let ``When a silent return after unpublish is decided expect MeetupRepublished`` () =
+    let hidden = Meetup.apply (Existing Sample.published) MeetupUnpublished
+
+    test <@ Meetup.decidePublish Sample.later true (Existing hidden) = Ok(Some MeetupRepublished) @>
+
+[<Fact>]
 let ``When an unpublished meetup is published again expect a MeetupRepublished event`` () =
     let hidden = Meetup.apply (Existing Sample.published) MeetupUnpublished
 
-    test <@ Meetup.decidePublish Sample.later (Existing hidden) = Ok(Some MeetupRepublished) @>
+    test <@ Meetup.decidePublish Sample.later false (Existing hidden) = Ok(Some MeetupRepublished) @>
 
 /// I6: отметка первой публикации ставится один раз, и возврат её не переписывает.
 /// Иначе «когда сходку впервые показали сообществу» стало бы временем последнего

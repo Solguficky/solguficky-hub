@@ -139,7 +139,11 @@ message MeetupChanged {}
 // The meetup became visible for the first time. The mark of it is
 // state.first_published_at. A publication that fired from a scheduled moment carries
 // this same occasion: there is no separate one for it.
-message MeetupPublished {}
+message MeetupPublished {
+  // When true, Notifications must not produce the meetup_published fact. Absence
+  // and false keep the current behaviour. The meetup is public either way.
+  bool silent = 1;
+}
 
 // The meetup was taken out of publication. The mark of the first publication is not
 // reset, so this is distinguishable from a meetup that was never published.

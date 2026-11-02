@@ -24,14 +24,21 @@ let private stub: Deps =
         RequestId = None
     }
 
+let private command silent : Command =
+    {
+        Id = Sample.meetupId
+        Viewer = Sample.administrator
+        ExpectedVersion = Sample.expectedVersion
+        Silent = silent
+    }
+
 let private run (deps: Deps) =
-    execute
-        deps
-        {
-            Id = Sample.meetupId
-            Viewer = Sample.administrator
-            ExpectedVersion = Sample.expectedVersion
-        }
+    execute deps (command false)
+    |> Async.AwaitTask
+    |> Async.RunSynchronously
+
+let private runSilent (deps: Deps) =
+    execute deps (command true)
     |> Async.AwaitTask
     |> Async.RunSynchronously
 
@@ -75,7 +82,7 @@ let ``A titled hidden meetup is published and written as one event`` () =
         |> run
 
     let expected =
-        Meetup.apply (Existing Sample.titled) (MeetupPublished Sample.later)
+        Meetup.apply (Existing Sample.titled) (MeetupPublished(Sample.later, false))
         |> Meetup.toSnapshot
 
     test <@ result = Ok expected @>
@@ -104,7 +111,7 @@ let ``The publication moment and the event moment are the same value`` () =
     test
         <@
             envelope.OccurredAt = Sample.later
-            && event = MeetupPublished Sample.later
+            && event = MeetupPublished(Sample.later, false)
             && publishedAt = Some Sample.later
         @>
 
@@ -181,6 +188,24 @@ let ``The request that started the command is written with the event`` () =
     let envelope, _, _ = written[0]
 
     test <@ envelope.RequestId = requestId @>
+
+[<Fact>]
+let ``A silent publication writes a silent first-publication event`` () =
+    let written = ResizeArray()
+
+    let result =
+        stub
+        |> loading (Some(Meetup.toSnapshot Sample.titled))
+        |> recording written
+        |> runSilent
+
+    let _, _, event = written[0]
+
+    test
+        <@
+            Result.isOk result
+            && event = MeetupPublished(Sample.later, true)
+        @>
 
 [<Fact>]
 let ``A command without a request id writes none`` () =

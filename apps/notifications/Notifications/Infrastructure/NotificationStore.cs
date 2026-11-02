@@ -436,6 +436,10 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         var produced = fact.Occasion switch
         {
+            MeetupOccasion.FirstPublication when fact.Silent => new ProducedFacts(
+                NotificationFacts.MeetupPublishedType,
+                FactCount.None),
+
             MeetupOccasion.FirstPublication => new ProducedFacts(
                 NotificationFacts.MeetupPublishedType,
                 await AddMeetupPublished(work, fact, now, notAfter, cancellationToken)),

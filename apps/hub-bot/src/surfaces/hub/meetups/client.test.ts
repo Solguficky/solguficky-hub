@@ -489,6 +489,42 @@ describe("Meetups client", () => {
     );
   });
 
+  it("sends a silent first publication when asked and keeps the default notifying", async () => {
+    const rpc = rpcWithList(vi.fn());
+    const response = create(MeetupSnapshotSchema, {
+      id: "meetup-id",
+      lifecycle: MeetupLifecycle.PLANNED,
+      visibility: MeetupVisibility.VISIBLE,
+    });
+    rpc.publishMeetup.mockResolvedValue(response);
+    const meetups = createMeetupsAdapter(rpc);
+    const meetup = storedMeetup(3);
+
+    await meetups.publish(person, meetup);
+    await meetups.publish(person, meetup, undefined, true);
+
+    expect(rpc.publishMeetup).toHaveBeenNthCalledWith(
+      1,
+      {
+        viewer: { identityId: "viewer-id", rights: [] },
+        id: "meetup-id",
+        expectedVersion: 3n,
+        silent: false,
+      },
+      { timeoutMs: 3_000 },
+    );
+    expect(rpc.publishMeetup).toHaveBeenNthCalledWith(
+      2,
+      {
+        viewer: { identityId: "viewer-id", rights: [] },
+        id: "meetup-id",
+        expectedVersion: 3n,
+        silent: true,
+      },
+      { timeoutMs: 3_000 },
+    );
+  });
+
   it("sends attach and remove material requests with caller ids and the shown version", async () => {
     const rpc = rpcWithList(vi.fn());
     const response = create(MeetupSnapshotSchema, {

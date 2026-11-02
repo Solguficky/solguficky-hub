@@ -280,7 +280,7 @@ export function createMeetupsAdapter(
           ),
         ),
       ),
-    publish: (person, meetup, meta) =>
+    publish: (person, meetup, meta, silent) =>
       call(async () =>
         snapshot(
           await rpc.publishMeetup(
@@ -288,6 +288,7 @@ export function createMeetupsAdapter(
               viewer: viewer(person),
               id: meetup.id,
               expectedVersion: BigInt(meetup.version),
+              silent: silent === true,
             },
             options(meta),
           ),

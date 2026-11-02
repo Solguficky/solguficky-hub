@@ -109,7 +109,7 @@ describe("auction through both bots", () => {
     await admin.presses("Создать сходку");
     await fillsMeetupForm(admin, title);
     await admin.presses("Опубликовать");
-    await admin.presses("✔️ Да, опубликовать сходку");
+    await admin.presses("Опубликовать и оповестить");
     // Сходку открывают по ссылке для чата: список «Сходки» листается, а база
     // контура в режиме `just contour-up` живёт дольше прогона.
     const meetupId = meetupIdFromStartLink(admin.sees());

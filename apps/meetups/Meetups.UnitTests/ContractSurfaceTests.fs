@@ -576,7 +576,7 @@ let ``The name of each occasion on the wire is the name the journal writes`` () 
         [
             Meetups.Domain.MeetupCreated(Sample.meetupId, Sample.authorId)
             Meetups.Domain.MeetupChanged(Meetups.Domain.AttributesChanged Sample.attributes)
-            Meetups.Domain.MeetupPublished Sample.fixedNow
+            Meetups.Domain.MeetupPublished(Sample.fixedNow, false)
             Meetups.Domain.MeetupUnpublished
             Meetups.Domain.MeetupRepublished
             Meetups.Domain.MeetupPublicationScheduled Sample.later

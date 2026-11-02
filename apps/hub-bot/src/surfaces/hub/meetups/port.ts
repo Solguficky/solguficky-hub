@@ -137,6 +137,7 @@ export type Meetups = {
     person: Person,
     meetup: MeetupSnapshot,
     meta?: RpcMetadata,
+    silent?: boolean,
   ): Promise<MeetupResult>;
   unpublish(
     person: Person,

@@ -44,7 +44,7 @@ async function organizerConfirmingMaterial(scenario: string) {
   await organizer.presses("Создать сходку");
   await fillsMeetupForm(organizer, title);
   await organizer.presses("Опубликовать");
-  await organizer.presses("✔️ Да, опубликовать сходку");
+  await organizer.presses("Опубликовать и оповестить");
   const meetupId = meetupIdFromStartLink(organizer.sees());
 
   await organizer.opensLink(meetupId);
@@ -85,7 +85,7 @@ describe("материалы сходки", () => {
     await organizer.presses("Создать сходку");
     await fillsMeetupForm(organizer, titleFor("постер", telegramUserId));
     await organizer.presses("Опубликовать");
-    await organizer.presses("✔️ Да, опубликовать сходку");
+    await organizer.presses("Опубликовать и оповестить");
     await organizer.opensLink(meetupIdFromStartLink(organizer.sees()));
     await organizer.presses("📎 Материалы (0)");
     await organizer.presses("Прикрепить материал");
