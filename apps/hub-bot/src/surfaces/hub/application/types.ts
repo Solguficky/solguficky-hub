@@ -374,6 +374,17 @@ export type ExecuteRequest =
       useCase?: string;
       deadlineAt?: number;
     }
+  | {
+      identity: Person;
+      intent: "move-material";
+      meetupId: string;
+      materialId: string;
+      direction: "up" | "down";
+      expectedVersion: number;
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
   | NotificationRequest
   | ReleaseNotesRequest
   | BroadcastRequest
@@ -2462,6 +2473,7 @@ export type ExecuteResult =
     }
   | { kind: "material-attached"; meetup: MeetupSnapshot }
   | { kind: "material-removed"; meetup: MeetupSnapshot }
+  | { kind: "materials-reordered"; meetup: MeetupSnapshot }
   | {
       kind: "edit-unavailable";
       reason: "cancelled";

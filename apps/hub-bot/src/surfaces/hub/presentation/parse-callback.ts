@@ -717,6 +717,13 @@ type PlainAction =
   // «Ввести дату»: даты среди заготовок нет, и её спрашивают текстом.
   | { kind: "manage-type-schedule"; token: string; mode: WhenMode }
   | { kind: "manage-materials"; token: string; page?: number }
+  | {
+      kind: "move-material";
+      token: string;
+      materialToken: string;
+      direction: "up" | "down";
+      version: number;
+    }
   | { kind: "begin-attach-material"; token: string }
   // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
   // файлом остаётся следом с подписью, что прикрепления не было.
@@ -2417,6 +2424,18 @@ export function parseCallback(raw: unknown): CallbackAction {
     }
     const materialToken = TokenSchema.safeParse(parts[4]);
     if (!materialToken.success) return { kind: "malformed" };
+    if (parts.length === 6 && (parts[2] === "u" || parts[2] === "d")) {
+      const version = VersionSchema.safeParse(parts[5]);
+      return version.success
+        ? {
+            kind: "move-material",
+            token: meetupToken.data,
+            materialToken: materialToken.data,
+            direction: parts[2] === "u" ? "up" : "down",
+            version: version.data,
+          }
+        : { kind: "malformed" };
+    }
     // Подтверждения несут версию шестым сегментом. Прежние `confirm-add` и
     // `confirm-rm` версии не несли, и Meetups отвергал их с 22.09: такая кнопка
     // разбирается без версии, и экран перечитывает карточку вместо команды.

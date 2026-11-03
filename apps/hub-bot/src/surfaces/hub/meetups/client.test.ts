@@ -47,6 +47,9 @@ function rpcWithList(listVisibleMeetups: ListVisibleMeetupsRpc) {
     unpublishMeetup: vi.fn(),
     cancelMeetup: vi.fn(),
     attachMaterial: vi.fn(),
+    reorderMaterials: vi.fn(async () => {
+      throw new Error("unexpected reorderMaterials");
+    }),
     removeMaterial: vi.fn(),
     markMeetupHeld: vi.fn(),
     scheduleMeetupPublication: vi.fn(),
@@ -57,6 +60,34 @@ function rpcWithList(listVisibleMeetups: ListVisibleMeetupsRpc) {
 }
 
 describe("Meetups client", () => {
+  it("sends the complete target order with the shown version", async () => {
+    const base = rpcWithList(vi.fn());
+    const reorderMaterials = vi.fn(async () =>
+      create(MeetupSnapshotSchema, {
+        id: "meetup-id",
+        lifecycle: MeetupLifecycle.PLANNED,
+        visibility: MeetupVisibility.VISIBLE,
+        version: 8n,
+      }),
+    );
+    const adapter = createMeetupsAdapter({ ...base, reorderMaterials });
+    expect(
+      await adapter.reorderMaterials({
+        person,
+        meetupId: "meetup-id",
+        materialIds: ["second", "first"],
+        expectedVersion: 7,
+      }),
+    ).toMatchObject({ kind: "ok", meetup: { version: 8 } });
+    expect(reorderMaterials).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        id: "meetup-id",
+        materialIds: ["second", "first"],
+        expectedVersion: 7n,
+      }),
+      expect.anything(),
+    );
+  });
   it("passes the viewer to Meetups and maps every returned meetup", async () => {
     const listVisibleMeetups = vi.fn(async () =>
       create(ListVisibleMeetupsResponseSchema, {

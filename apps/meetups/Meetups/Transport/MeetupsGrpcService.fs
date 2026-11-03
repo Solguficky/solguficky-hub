@@ -89,6 +89,13 @@ type MeetupsGrpcService() =
             (AttachMaterial.Composition.buildDeps services (IncomingMetadata.requestId context))
             request
 
+    override _.ReorderMaterials(request: ReorderMaterialsRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+
+        ReorderMaterials.Api.handle
+            (ReorderMaterials.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
+
     override _.RemoveMaterial(request: RemoveMaterialRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
 
