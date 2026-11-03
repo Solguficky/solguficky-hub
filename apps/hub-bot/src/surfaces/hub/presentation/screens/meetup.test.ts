@@ -36,7 +36,7 @@ it("moves materials across page boundaries with stable ids and the shown version
   }));
   const value = meetup({ materials, version: 999999999 });
   const rows = materialsScreen(value, true, 0).keyboard.inline_keyboard;
-  const eighth = rows[15] ?? [];
+  const eighth = rows[7] ?? [];
   const down = eighth.find((button) => button.text === "↓");
   expect(down).toHaveProperty("callback_data");
   if (down && "callback_data" in down) {
@@ -52,9 +52,15 @@ it("moves materials across page boundaries with stable ids and the shown version
       parseCallback(down.callback_data.replace(":999999999", ":0")),
     ).toEqual({ kind: "malformed" });
   }
-  expect(rows[1]?.some((button) => button.text === "↑")).toBe(false);
+  expect(rows[0]?.some((button) => button.text === "↑")).toBe(false);
   expect(
-    materialsScreen(value, true, 1).keyboard.inline_keyboard[3]?.some(
+    rows.every((row) =>
+      row.some((button) => button.text !== "↑" && button.text !== "↓"),
+    ),
+  ).toBe(true);
+  expect(rows.length).toBeLessThanOrEqual(12);
+  expect(
+    materialsScreen(value, true, 1).keyboard.inline_keyboard[1]?.some(
       (button) => button.text === "↓",
     ),
   ).toBe(false);
@@ -676,14 +682,17 @@ describe("materialsScreen", () => {
   it("opens a file by a button and marks a link, with removal for the organizer", () => {
     const screen = materialsScreen(meetup({ materials }), true, 0);
 
-    expect(rows(screen)[0]).toEqual(["Материал 1", "🗑 Убрать"]);
-    expect(rows(screen)[1]).toEqual(["↓"]);
-    expect(rows(screen)[2]).toEqual(["Материал 2 ↗", "🗑 Убрать"]);
-    expect(rows(screen)[3]).toEqual(["↑", "↓"]);
+    expect(rows(screen)[0]).toEqual(["Материал 1", "↓", "🗑 Убрать"]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "↑", "↓", "🗑 Убрать"]);
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],
       ["‹ Сходка"],
+    ]);
+    expect(rows(materialsScreen(meetup({ materials }), true, 1))[0]).toEqual([
+      "Материал 9 ↗",
+      "↑",
+      "🗑 Убрать",
     ]);
   });
 

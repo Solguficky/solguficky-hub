@@ -872,13 +872,6 @@ export function materialsScreen(
     } else {
       keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
     }
-    if (canManage) {
-      keyboard.text(
-        removeLabel("Убрать"),
-        `v1:mm:rm:${token}:${materialToken}`,
-      );
-    }
-    keyboard.row();
     if (canReorder) {
       if (first + index > 0)
         keyboard.text(
@@ -890,9 +883,14 @@ export function materialsScreen(
           "↓",
           `v1:mm:d:${token}:${materialToken}:${meetup.version}`,
         );
-      if (first + index > 0 || first + index < meetup.materials.length - 1)
-        keyboard.row();
     }
+    if (canManage) {
+      keyboard.text(
+        removeLabel("Убрать"),
+        `v1:mm:rm:${token}:${materialToken}`,
+      );
+    }
+    keyboard.row();
   }
   withPager(keyboard, page, (to) => `v1:mm:list:${token}:${to}`);
   if (canManage) {
