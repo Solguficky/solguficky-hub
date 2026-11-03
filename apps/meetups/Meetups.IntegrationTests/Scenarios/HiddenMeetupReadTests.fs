@@ -73,6 +73,7 @@ type HiddenMeetupReadTests() =
                     "CancelMeetup"
                     "AttachMaterial"
                     "RemoveMaterial"
+                    "ReorderMaterials"
                     "MarkMeetupHeld"
                 ]
 

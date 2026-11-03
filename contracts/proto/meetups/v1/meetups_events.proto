@@ -55,6 +55,7 @@ message MeetupEvent {
     MeetupMaterialAttached meetup_material_attached = 14;
     MeetupMaterialRemoved meetup_material_removed = 15;
     MeetupHeld meetup_held = 16;
+    MaterialsReordered materials_reordered = 19;
   }
 
   // Opaque end-to-end id of the request that produced this fact: 1 to 128
@@ -183,3 +184,6 @@ message MeetupMaterialRemoved {
   // Canonical lowercase UUIDv7 with hyphens.
   string material_id = 1;
 }
+
+// The new order is carried by state.materials, as in every state snapshot.
+message MaterialsReordered {}

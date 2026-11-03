@@ -1150,6 +1150,51 @@ describe("presentation adapter", () => {
     expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
   });
 
+  it("dispatches a single material move with the version shown on the keyboard", async () => {
+    const ids = ["90", "91", "92", "93", "94", "95", "96", "9a", "9b"];
+    const material = (suffix: string) => ({
+      id: `0199c0de-0000-7000-8000-0000000000${suffix}`,
+      title: suffix,
+      source: {
+        kind: "message-link" as const,
+        url: `https://t.me/c/1234567890/${suffix}`,
+      },
+    });
+    const meetup = {
+      ...publishedMeetup(),
+      version: 6,
+      materials: [
+        ...ids.slice(0, 7).map(material),
+        material("9b"),
+        material("9a"),
+      ],
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "materials-reordered",
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:mm:d:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg:6"),
+    );
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        intent: "move-material",
+        meetupId: publishedMeetup().id,
+        materialId: "0199c0de-0000-7000-8000-00000000009a",
+        direction: "down",
+        expectedVersion: 6,
+      }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("Материалы · 2 из 2") },
+    });
+  });
+
   it("removes a material only after confirming that the original stays", async () => {
     const material = {
       id: "0199c0de-0000-7000-8000-00000000009a",

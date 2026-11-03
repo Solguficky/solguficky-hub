@@ -30,6 +30,7 @@ let eventType (event: MeetupEvent) : string =
     | MeetupCancelled -> "meetup_cancelled"
     | MeetupMaterialAttached _ -> "meetup_material_attached"
     | MeetupMaterialRemoved _ -> "meetup_material_removed"
+    | MaterialsReordered _ -> "materials_reordered"
     | MeetupHeld -> "meetup_held"
 
 /// Данные повода, которых снимок выразить не может: удалённого материала в нём уже
@@ -49,6 +50,7 @@ let materialId (event: MeetupEvent) : Nullable<Guid> =
     | MeetupPublicationScheduled _
     | MeetupPublicationCancelled
     | MeetupCancelled
+    | MaterialsReordered _
     | MeetupHeld -> Nullable()
 
 let private dateText (date: DateOnly) : string = date.ToString "yyyy-MM-dd"

@@ -863,6 +863,10 @@ export function materialsScreen(
     const number = first + index + 1;
     const materialToken = uuidToToken(material.id);
     const title = displayMaterialTitle(material, number);
+    const canReorder =
+      canManage &&
+      meetup.lifecycle !== "cancelled" &&
+      /^[1-9]\d{0,8}$/.test(String(meetup.version));
     if (material.source.kind === "message-link") {
       keyboard.url(buttonText(`${title} ↗`), material.source.url);
     } else {
@@ -875,6 +879,20 @@ export function materialsScreen(
       );
     }
     keyboard.row();
+    if (canReorder) {
+      if (first + index > 0)
+        keyboard.text(
+          "↑",
+          `v1:mm:u:${token}:${materialToken}:${meetup.version}`,
+        );
+      if (first + index < meetup.materials.length - 1)
+        keyboard.text(
+          "↓",
+          `v1:mm:d:${token}:${materialToken}:${meetup.version}`,
+        );
+      if (first + index > 0 || first + index < meetup.materials.length - 1)
+        keyboard.row();
+    }
   }
   withPager(keyboard, page, (to) => `v1:mm:list:${token}:${to}`);
   if (canManage) {

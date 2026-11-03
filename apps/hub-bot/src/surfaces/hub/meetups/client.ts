@@ -42,6 +42,7 @@ type MeetupsRpc = Pick<
   | "cancelMeetup"
   | "attachMaterial"
   | "removeMaterial"
+  | "reorderMaterials"
   | "markMeetupHeld"
   | "scheduleMeetupPublication"
   | "cancelMeetupPublication"
@@ -377,6 +378,26 @@ export function createMeetupsAdapter(
               materialId: material.id,
               title: material.title,
               source: fromMaterialSource(material.source),
+              expectedVersion: BigInt(expectedVersion),
+            },
+            options(meta),
+          ),
+        ),
+      ),
+    reorderMaterials: ({
+      person,
+      meetupId,
+      materialIds,
+      expectedVersion,
+      meta,
+    }) =>
+      call(async () =>
+        snapshot(
+          await rpc.reorderMaterials(
+            {
+              viewer: viewer(person),
+              id: meetupId,
+              materialIds: [...materialIds],
               expectedVersion: BigInt(expectedVersion),
             },
             options(meta),

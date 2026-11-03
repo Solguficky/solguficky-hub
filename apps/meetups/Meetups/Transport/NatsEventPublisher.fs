@@ -60,6 +60,7 @@ module Envelope =
             message.MeetupPublicationCancelled <- Meetups.V1.MeetupPublicationCancelled()
         | "meetup_cancelled" -> message.MeetupCancelled <- Meetups.V1.MeetupCancelled()
         | "meetup_held" -> message.MeetupHeld <- Meetups.V1.MeetupHeld()
+        | "materials_reordered" -> message.MaterialsReordered <- Meetups.V1.MaterialsReordered()
         | "meetup_material_attached" ->
             message.MeetupMaterialAttached <- Meetups.V1.MeetupMaterialAttached(MaterialId = materialId event)
         | "meetup_material_removed" ->

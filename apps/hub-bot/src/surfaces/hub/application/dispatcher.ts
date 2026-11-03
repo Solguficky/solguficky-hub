@@ -332,6 +332,7 @@ export function createDispatcher(
           return settings(request);
         case "attach-material":
         case "remove-material":
+        case "move-material":
           return materials === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
             : materials(request);

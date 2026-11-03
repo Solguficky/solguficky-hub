@@ -70,6 +70,9 @@ function harness({ existing = true }: { existing?: boolean } = {}) {
       kind: "ok" as const,
       meetup: snapshot,
     })),
+    reorderMaterials: vi.fn(async () => {
+      throw new Error("unexpected reorderMaterials");
+    }),
     removeMaterial: vi.fn(async () => ({
       kind: "ok" as const,
       meetup: snapshot,

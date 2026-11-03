@@ -6,6 +6,7 @@ import type {
   MeetupSummary,
 } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
+import { parseCallback } from "../parse-callback.js";
 import {
   archiveScreen,
   cardScreen,
@@ -22,6 +23,66 @@ import {
 // видит: что именно попало на страницу и куда ведёт возврат.
 
 const today = { year: 2026, month: 8, day: 1 };
+
+it("moves materials across page boundaries with stable ids and the shown version", () => {
+  const materials = Array.from({ length: 10 }, (_, index) => ({
+    id: `0199c0de-0000-7000-8000-${(index + 1).toString(16).padStart(12, "0")}`,
+    title: `Material ${index + 1}`,
+    source: {
+      kind: "file" as const,
+      fileKind: "photo" as const,
+      fileId: `photo-${index + 1}`,
+    },
+  }));
+  const value = meetup({ materials, version: 999999999 });
+  const rows = materialsScreen(value, true, 0).keyboard.inline_keyboard;
+  const eighth = rows[15] ?? [];
+  const down = eighth.find((button) => button.text === "↓");
+  expect(down).toHaveProperty("callback_data");
+  if (down && "callback_data" in down) {
+    expect(Buffer.byteLength(down.callback_data)).toBeLessThanOrEqual(64);
+    expect(parseCallback(down.callback_data)).toEqual({
+      kind: "move-material",
+      token: uuidToToken(value.id),
+      materialToken: uuidToToken(materials[7]?.id ?? ""),
+      direction: "down",
+      version: 999999999,
+    });
+    expect(
+      parseCallback(down.callback_data.replace(":999999999", ":0")),
+    ).toEqual({ kind: "malformed" });
+  }
+  expect(rows[1]?.some((button) => button.text === "↑")).toBe(false);
+  expect(
+    materialsScreen(value, true, 1).keyboard.inline_keyboard[3]?.some(
+      (button) => button.text === "↓",
+    ),
+  ).toBe(false);
+  expect(
+    materialsScreen(value, false, 0)
+      .keyboard.inline_keyboard.flat()
+      .some((button) => button.text === "↓"),
+  ).toBe(false);
+  const reordered = meetup({
+    materials: [
+      ...materials.slice(1, 2),
+      ...materials.slice(0, 1),
+      ...materials.slice(2),
+    ],
+  });
+  expect(
+    cardScreen({
+      meetup: reordered,
+      manageable: false,
+      subscribed: true,
+      presentation: "rich",
+      today,
+    }).media?.slice(0, 2),
+  ).toEqual([
+    { id: "p1", fileId: "photo-2" },
+    { id: "p2", fileId: "photo-1" },
+  ]);
+});
 
 function meetup(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
   return {
@@ -616,7 +677,9 @@ describe("materialsScreen", () => {
     const screen = materialsScreen(meetup({ materials }), true, 0);
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "🗑 Убрать"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "🗑 Убрать"]);
+    expect(rows(screen)[1]).toEqual(["↓"]);
+    expect(rows(screen)[2]).toEqual(["Материал 2 ↗", "🗑 Убрать"]);
+    expect(rows(screen)[3]).toEqual(["↑", "↓"]);
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],

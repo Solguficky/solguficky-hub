@@ -36,6 +36,7 @@ type MeetupEvent =
     | MeetupCancelled
     | MeetupMaterialAttached of material: MeetupMaterial
     | MeetupMaterialRemoved of materialId: MaterialId
+    | MaterialsReordered of materialIds: MaterialId list
     | MeetupHeld
 
 /// Отклонённый переход состояния. Отказа по правам здесь нет: право действовать не
@@ -62,6 +63,12 @@ type DomainError =
     // отличается тем же, чем TitleRequiredForPublication: у человека на них
     // разные действия — переспросить время или посмотреть состояние сходки.
     | PublicationMomentInThePast
+
+[<RequireQualifiedAccess>]
+type MaterialOrderError =
+    | MeetupNotFound
+    | TransitionNotAllowed
+    | MaterialSetMismatch
 
 /// Сходка (ADR-031). Представление приватно, поэтому запись копией вне этого файла
 /// не собирается: единственный путь появления и изменения полей — применение
@@ -215,6 +222,30 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    let private reorderMaterials (materialIds: MaterialId list) (meetup: Meetup) : Meetup =
+        let materials =
+            meetup.Materials
+            |> List.map (fun material -> material.Id, material)
+            |> Map.ofList
+
+        { meetup with
+            Materials =
+                materialIds
+                |> List.mapi (fun index id ->
+                    { materials[id] with
+                        Position = index + 1
+                    }
+                )
+            Version = meetup.Version + 1L
+        }
+
+    let private hasMaterialOrder (materialIds: MaterialId list) (meetup: Meetup) : bool =
+        (meetup.Materials
+         |> List.map (fun material -> material.Id)) = materialIds
+        && (meetup.Materials
+            |> List.mapi (fun index material -> material.Position = index + 1)
+            |> List.forall id)
+
     /// Жизненный цикл двигается на конечную стадию, независимая ось видимости не
     /// трогается: скрытая состоявшаяся остаётся скрытой, а видимая — видимой.
     let private hold (meetup: Meetup) : Meetup =
@@ -237,6 +268,7 @@ module Meetup =
         | Existing meetup, MeetupCancelled -> cancel meetup
         | Existing meetup, MeetupMaterialAttached material -> attachMaterial material meetup
         | Existing meetup, MeetupMaterialRemoved materialId -> removeMaterial materialId meetup
+        | Existing meetup, MaterialsReordered materialIds -> reorderMaterials materialIds meetup
         | Existing meetup, MeetupHeld -> hold meetup
         | Initial, MeetupChanged _
         | Initial, MeetupPublished _
@@ -247,6 +279,7 @@ module Meetup =
         | Initial, MeetupCancelled
         | Initial, MeetupMaterialAttached _
         | Initial, MeetupMaterialRemoved _
+        | Initial, MaterialsReordered _
         | Initial, MeetupHeld
         | Existing _, MeetupCreated _ ->
             // Событие решено не из этого состояния. Ни одно решение такой пары не
@@ -526,12 +559,34 @@ module Meetup =
                 )
             )
 
-    /// Команда сформулирована как целевое состояние, поэтому отсутствие материала —
-    /// успех без события, а не отказ: повтор после потерянного ответа безопасен.
-    /// Порядок проверок тот же, что у прикрепления: достигнутое целевое состояние
-    /// идёт первым, и только затем жизненный цикл. Отмена закрывает удаление так же,
-    /// как закрывает правку атрибутов (PER-197): материалы — обычное редактирование
-    /// сведений о сходке, а не способ её обойти.
+    /// Полный целевой порядок не меняет состав коллекции. Совпадение ID при дырках
+    /// позиций ещё не цель: первая запись уплотняет их, а следующий повтор безопасен.
+    let decideReorderMaterials
+        (materialIds: MaterialId list)
+        (state: MeetupState)
+        : Result<MeetupEvent option, MaterialOrderError> =
+        match state with
+        | Initial -> Error MaterialOrderError.MeetupNotFound
+        | Existing meetup ->
+            let currentIds =
+                meetup.Materials
+                |> List.map (fun material -> material.Id)
+                |> Set.ofList
+
+            if
+                materialIds.Length <> currentIds.Count
+                || Set.ofList materialIds <> currentIds
+            then
+                Error MaterialOrderError.MaterialSetMismatch
+            elif hasMaterialOrder materialIds meetup then
+                Ok None
+            elif meetup.Lifecycle = Cancelled then
+                Error MaterialOrderError.TransitionNotAllowed
+            else
+                Ok(Some(MaterialsReordered materialIds))
+
+    /// Отсутствие материала — успех без события; достигнутая цель проверяется
+    /// раньше отмены, как и у прикрепления. Сам оригинал не удаляется.
     let decideRemoveMaterial (materialId: MaterialId) (state: MeetupState) : Result<MeetupEvent option, DomainError> =
         match state with
         | Initial -> Error MeetupNotFound
@@ -617,3 +672,4 @@ module Meetup =
                 meetup.Materials
                 |> List.exists (fun existing -> existing.Id = materialId)
             )
+        | Existing meetup, MaterialsReordered materialIds -> hasMaterialOrder materialIds meetup

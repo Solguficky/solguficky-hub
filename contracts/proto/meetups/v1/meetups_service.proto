@@ -16,6 +16,7 @@ service MeetupsService {
   rpc CancelMeetup(CancelMeetupRequest) returns (MeetupSnapshot);
   rpc AttachMaterial(AttachMaterialRequest) returns (MeetupSnapshot);
   rpc RemoveMaterial(RemoveMaterialRequest) returns (MeetupSnapshot);
+  rpc ReorderMaterials(ReorderMaterialsRequest) returns (MeetupSnapshot);
   rpc MarkMeetupHeld(MarkMeetupHeldRequest) returns (MeetupSnapshot);
   rpc ListVisibleMeetups(ListVisibleMeetupsRequest) returns (ListVisibleMeetupsResponse);
   rpc ListArchivedMeetups(ListArchivedMeetupsRequest) returns (ListArchivedMeetupsResponse);
@@ -238,6 +239,17 @@ message AttachMaterialRequest {
   // Aggregate version the caller's decision was based on. Required; see
   // ChangeMeetupAttributesRequest.expected_version.
   int64 expected_version = 6;
+}
+
+message ReorderMaterialsRequest {
+  Viewer viewer = 1;
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+  // The complete target order, each current material exactly once.
+  // Every id is a canonical lowercase UUIDv7 with hyphens.
+  repeated string material_ids = 3;
+  // Version of the snapshot shown to the caller when deciding the target order.
+  int64 expected_version = 4;
 }
 
 message RemoveMaterialRequest {
