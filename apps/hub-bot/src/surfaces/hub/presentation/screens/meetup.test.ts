@@ -5,6 +5,7 @@ import type {
   MeetupSnapshot,
   MeetupSummary,
 } from "../../meetups/port.js";
+import { uuidToToken } from "../meetup-deep-link.js";
 import {
   archiveScreen,
   cardScreen,
@@ -12,6 +13,7 @@ import {
   materialsScreen,
   meetupParent,
   meetupsScreen,
+  publishConfirmScreen,
   statusScreen,
 } from "./meetup.js";
 
@@ -502,6 +504,71 @@ describe("cardScreen", () => {
       ["🛠 Написать подписчикам"],
       ["⚙️ Уведомления сходки"],
       ["‹ Архив"],
+    ]);
+  });
+});
+
+describe("publishConfirmScreen", () => {
+  it("offers both publication choices and returns to the draft", () => {
+    const screen = publishConfirmScreen({
+      meetup: meetup({ visibility: "hidden" }),
+      origin: "draft",
+    });
+    const token = uuidToToken(meetup().id);
+
+    expect(screen.id).toBe("publish-confirm");
+    expect(screen.text).toContain("Опубликовать сходку?");
+    expect(screen.text).toContain(
+      "Оповещение о новой сходке уходит только по первой кнопке",
+    );
+    expect(rows(screen)).toEqual([
+      ["Опубликовать и оповестить"],
+      ["Опубликовать без оповещения"],
+      ["Отмена"],
+    ]);
+    expect(screen.keyboard.inline_keyboard).toEqual([
+      [
+        {
+          text: "Опубликовать и оповестить",
+          callback_data: `v1:manage:publish:${token}:1`,
+        },
+      ],
+      [
+        {
+          text: "Опубликовать без оповещения",
+          callback_data: `v1:manage:publish:${token}:1:s`,
+        },
+      ],
+      [{ text: "Отмена", callback_data: `v1:manage:draft:${token}` }],
+    ]);
+  });
+
+  it("returns a status publication to the status screen", () => {
+    const screen = publishConfirmScreen({
+      meetup: meetup({ visibility: "hidden" }),
+      origin: "status",
+    });
+    const token = uuidToToken(meetup().id);
+
+    expect(rows(screen)).toEqual([
+      ["Опубликовать и оповестить"],
+      ["Опубликовать без оповещения"],
+      ["Отмена"],
+    ]);
+    expect(screen.keyboard.inline_keyboard).toEqual([
+      [
+        {
+          text: "Опубликовать и оповестить",
+          callback_data: `v1:manage:confirm-publish:${token}:1`,
+        },
+      ],
+      [
+        {
+          text: "Опубликовать без оповещения",
+          callback_data: `v1:manage:confirm-publish:${token}:1:s`,
+        },
+      ],
+      [{ text: "Отмена", callback_data: `v1:manage:status:${token}` }],
     ]);
   });
 });

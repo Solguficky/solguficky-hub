@@ -49,7 +49,9 @@ module Envelope =
         match event.EventType with
         | "meetup_created" -> message.MeetupCreated <- Meetups.V1.MeetupCreated()
         | "meetup_changed" -> message.MeetupChanged <- Meetups.V1.MeetupChanged()
-        | "meetup_published" -> message.MeetupPublished <- Meetups.V1.MeetupPublished()
+        | "meetup_published" ->
+            message.MeetupPublished <-
+                Meetups.V1.MeetupPublished(Silent = MeetupEventPayload.silentPublication event.Payload)
         | "meetup_unpublished" -> message.MeetupUnpublished <- Meetups.V1.MeetupUnpublished()
         | "meetup_republished" -> message.MeetupRepublished <- Meetups.V1.MeetupRepublished()
         | "meetup_publication_scheduled" ->

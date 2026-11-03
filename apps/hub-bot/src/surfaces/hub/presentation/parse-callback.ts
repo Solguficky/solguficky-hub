@@ -351,10 +351,10 @@ type PlainAction =
   // о названии. `from` — кнопка стоит в «Сходках» (№45), и «Отмена» вопроса
   // ведёт туда, а не в группу «Сходки и объявления».
   | { kind: "create-meetup"; token: string; from?: "meetups" }
-  // Команда публикации. С версией — «Да» подтверждения с черновика (решение
-  // владельца 10 октября 2026 года); без версии — «Да, опубликовать» кадра
-  // конфликта и кнопки, оставшиеся в чатах до подтверждения.
-  | { kind: "publish-meetup"; token: string; version?: number }
+  // Команда публикации. С версией — выбор с черновика; без версии — кадр
+  // конфликта и кнопки, оставшиеся в чатах до выбора. `silent` — без вести
+  // о новой сходке; отсутствие — оповестить.
+  | { kind: "publish-meetup"; token: string; version?: number; silent?: true }
   | { kind: "manage-edit"; token: string }
   | { kind: "manage-field"; token: string; field: FormField }
   // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
@@ -675,9 +675,14 @@ type PlainAction =
       person: string;
       version: number;
     }
-  // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
+  // «Опубликовать»: выбор, оповестить или нет. Источник решает, куда вернёт «Отмена».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
-  | { kind: "manage-confirm-publish"; token: string; version: number }
+  | {
+      kind: "manage-confirm-publish";
+      token: string;
+      version: number;
+      silent?: true;
+    }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string; version?: number }
   | { kind: "manage-cancel"; token: string }
@@ -2275,6 +2280,54 @@ function stateConfirm<
     : { kind: "malformed" };
 }
 
+function silentFlag(
+  parts: readonly string[],
+  index: number,
+): true | undefined | "malformed" {
+  if (parts.length === index) return undefined;
+  if (parts.length === index + 1 && parts[index] === "s") return true;
+  return "malformed";
+}
+
+function parsePublish(
+  token: string,
+  parts: readonly string[],
+): Extract<CallbackAction, { kind: "publish-meetup" }> | { kind: "malformed" } {
+  if (parts.length === 4) return { kind: "publish-meetup", token };
+  if (parts[4] === "s") {
+    return parts.length === 5
+      ? { kind: "publish-meetup", token, silent: true }
+      : { kind: "malformed" };
+  }
+  const version = VersionSchema.safeParse(parts[4]);
+  if (!version.success) return { kind: "malformed" };
+  const silent = silentFlag(parts, 5);
+  if (silent === "malformed") return { kind: "malformed" };
+  return silent === true
+    ? { kind: "publish-meetup", token, version: version.data, silent: true }
+    : { kind: "publish-meetup", token, version: version.data };
+}
+
+function parseConfirmPublish(
+  token: string,
+  parts: readonly string[],
+):
+  | Extract<CallbackAction, { kind: "manage-confirm-publish" }>
+  | { kind: "malformed" } {
+  const version = VersionSchema.safeParse(parts[4]);
+  if (!version.success) return { kind: "malformed" };
+  const silent = silentFlag(parts, 5);
+  if (silent === "malformed") return { kind: "malformed" };
+  return silent === true
+    ? {
+        kind: "manage-confirm-publish",
+        token,
+        version: version.data,
+        silent: true,
+      }
+    : { kind: "manage-confirm-publish", token, version: version.data };
+}
+
 export function parseCallback(raw: unknown): CallbackAction {
   const parsed = CallbackSchema.safeParse(raw);
   if (!parsed.success) return { kind: "malformed" };
@@ -2468,14 +2521,7 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "create-meetup", token: token.data };
   if (parts.length === 5 && parts[2] === "new" && parts[4] === "s")
     return { kind: "create-meetup", token: token.data, from: "meetups" };
-  if (parts.length === 4 && parts[2] === "publish")
-    return { kind: "publish-meetup", token: token.data };
-  if (parts.length === 5 && parts[2] === "publish") {
-    const version = VersionSchema.safeParse(parts[4]);
-    return version.success
-      ? { kind: "publish-meetup", token: token.data, version: version.data }
-      : { kind: "malformed" };
-  }
+  if (parts[2] === "publish") return parsePublish(token.data, parts);
   if (parts.length === 4 && parts[2] === "edit")
     return { kind: "manage-edit", token: token.data };
   if (parts.length === 5 && parts[2] === "field") {
@@ -2559,19 +2605,11 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "enable-auction", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
     return { kind: "manage-publish", token: token.data, origin: "status" };
-  // `d` — «Опубликовать» на черновике: «Нет» подтверждения вернёт на него.
+  // `d` — «Опубликовать» на черновике: «Отмена» выбора вернёт на него.
   if (parts.length === 5 && parts[2] === "republish" && parts[4] === "d")
     return { kind: "manage-publish", token: token.data, origin: "draft" };
-  if (parts.length === 5 && parts[2] === "confirm-publish") {
-    const version = VersionSchema.safeParse(parts[4]);
-    return version.success
-      ? {
-          kind: "manage-confirm-publish",
-          token: token.data,
-          version: version.data,
-        }
-      : { kind: "malformed" };
-  }
+  if (parts[2] === "confirm-publish")
+    return parseConfirmPublish(token.data, parts);
   if (parts.length === 4 && parts[2] === "unpublish")
     return { kind: "manage-unpublish", token: token.data };
   if (parts[2] === "confirm-unpublish")

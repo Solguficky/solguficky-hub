@@ -127,6 +127,33 @@ let ofSnapshot (snapshot: MeetupSnapshot) : string =
 
     node.ToJsonString()
 
+/// Снимок плюс данные повода, которых он выразить не может. `silent` первой
+/// публикации не часть состояния сходки: сходка публична в любом случае, а
+/// ключ читает только релей, когда собирает occasion `meetup_published`.
+let ofEvent (event: MeetupEvent) (snapshot: MeetupSnapshot) : string =
+    match event with
+    | MeetupPublished(_, true) ->
+        let node = JsonNode.Parse(ofSnapshot snapshot) :?> JsonObject
+        node["silent"] <- JsonValue.Create true
+        node.ToJsonString()
+    | _ -> ofSnapshot snapshot
+
+/// Отсутствие ключа и любое значение кроме JSON true — оповестить: так читаются
+/// строки, записанные до поля, и ошибочный литерал не превращается в тишину.
+let silentPublication (payload: string) : bool =
+    try
+        match JsonNode.Parse payload with
+        | :? JsonObject as node ->
+            match node["silent"] with
+            | :? JsonValue as value ->
+                match value.TryGetValue<bool>() with
+                | true, true -> true
+                | _ -> false
+            | _ -> false
+        | _ -> false
+    with :? System.Text.Json.JsonException ->
+        false
+
 /// Payload, который схема приняла, но читатель разобрать не может, — нарушение
 /// внутреннего контракта писателя и читателя, а не ожидаемый отказ. Исключение с
 /// идентификатором события, по той же причине, что `malformed` у MeetupRow.

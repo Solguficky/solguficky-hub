@@ -26,7 +26,9 @@ let ``The event type names the occasion the schema accepts`` () =
     let changed =
         MeetupEventPayload.eventType (MeetupChanged(AttributesChanged Sample.attributes))
 
-    let published = MeetupEventPayload.eventType (MeetupPublished Sample.fixedNow)
+    let published =
+        MeetupEventPayload.eventType (MeetupPublished(Sample.fixedNow, false))
+
     let unpublished = MeetupEventPayload.eventType MeetupUnpublished
     let republished = MeetupEventPayload.eventType MeetupRepublished
 
@@ -310,6 +312,39 @@ let ``A payload written before file kinds existed reads the file as not a photo`
         }
 
     test <@ MeetupEventPayload.toSnapshot eventId (node.ToJsonString()) = aged @>
+
+[<Fact>]
+let ``A silent first publication writes the silent key next to the snapshot`` () =
+    let snapshot = Meetup.toSnapshot Sample.published
+
+    let payload =
+        MeetupEventPayload.ofEvent (MeetupPublished(Sample.fixedNow, true)) snapshot
+
+    let node = JsonNode.Parse payload :?> JsonObject
+
+    test
+        <@
+            node["silent"].GetValue<bool>() = true
+            && MeetupEventPayload.silentPublication payload
+            && MeetupEventPayload.toSnapshot eventId payload = snapshot
+        @>
+
+[<Fact>]
+let ``A notifying publication and an aged payload without the key are not silent`` () =
+    let snapshot = Meetup.toSnapshot Sample.published
+
+    let notifying =
+        MeetupEventPayload.ofEvent (MeetupPublished(Sample.fixedNow, false)) snapshot
+
+    let aged = parse snapshot |> fun node -> node.ToJsonString()
+
+    test
+        <@
+            not (MeetupEventPayload.silentPublication notifying)
+            && not (MeetupEventPayload.silentPublication aged)
+            && not (MeetupEventPayload.silentPublication "")
+            && not (MeetupEventPayload.silentPublication "{")
+        @>
 
 [<Fact>]
 let ``Only the material occasions carry a material id`` () =

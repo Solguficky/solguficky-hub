@@ -172,8 +172,8 @@ export function createMeetupForm(
         // Признак, а не отдельный вид результата: тот же intent зовёт кнопка
         // статуса, и она рисует оба исхода одной карточкой.
         const repeated = current.meetup.visibility === "visible";
-        // Подтверждение несёт версию, которую человек видел: публикация уходит
-        // с ней, и правка между экраном и «Да» даёт конфликт. Повтор на видимой
+        // Выбор несёт версию, которую человек видел: публикация уходит с ней,
+        // и правка между экраном и кнопкой даёт конфликт. Повтор на видимой
         // сходке версию не сверяет — он и так ничего не меняет.
         const published = await meetups.publish(
           request.identity,
@@ -181,6 +181,7 @@ export function createMeetupForm(
             ? current.meetup
             : { ...current.meetup, version: request.expectedVersion },
           rpcMeta(request),
+          request.silent === true,
         );
         if (published.kind === "conflict") {
           return conflict(meetups, request);
