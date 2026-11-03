@@ -869,6 +869,21 @@ export function materialsScreen(
       keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
     }
     if (canManage) {
+      if (
+        meetup.lifecycle !== "cancelled" &&
+        /^[1-9]\d{0,8}$/.test(String(meetup.version))
+      ) {
+        if (first + index > 0)
+          keyboard.text(
+            "↑",
+            `v1:mm:u:${token}:${materialToken}:${meetup.version}`,
+          );
+        if (first + index < meetup.materials.length - 1)
+          keyboard.text(
+            "↓",
+            `v1:mm:d:${token}:${materialToken}:${meetup.version}`,
+          );
+      }
       keyboard.text(
         removeLabel("Убрать"),
         `v1:mm:rm:${token}:${materialToken}`,

@@ -74,3 +74,7 @@ Git остаётся источником схем. ADR-014 описывает �
 - [Protobuf language guide](https://protobuf.dev/programming-guides/proto3/)
 - [Integration catalog](../docs/architecture/integration.md)
 - [ADR index](../docs/decisions/README.md)
+
+## Порядок материалов Meetups
+
+`MeetupsService.ReorderMaterials` принимает полный список `material_ids` и версию показанного снимка `expected_version`. Чтения и событие `MaterialsReordered` передают результат порядком repeated-поля `materials`, без отдельного поля позиции. Новый повод — `events.meetups.materials_reordered`; подробные отказы и права описаны в integration catalog.

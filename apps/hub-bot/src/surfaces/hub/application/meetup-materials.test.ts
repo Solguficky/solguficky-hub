@@ -38,9 +38,15 @@ describe("meetup materials", () => {
     }));
     const materials = createMeetupMaterials({
       attachMaterial,
+      reorderMaterials: vi.fn(async () => {
+        throw new Error("unexpected reorderMaterials");
+      }),
       removeMaterial: vi.fn(),
       get: vi.fn(),
-    } satisfies Pick<Meetups, "attachMaterial" | "removeMaterial" | "get">);
+    } satisfies Pick<
+      Meetups,
+      "attachMaterial" | "removeMaterial" | "reorderMaterials" | "get"
+    >);
 
     await expect(
       materials({
@@ -75,9 +81,15 @@ describe("meetup materials", () => {
   it("keeps a forbidden removal as an authorization rejection", async () => {
     const materials = createMeetupMaterials({
       attachMaterial: vi.fn(),
+      reorderMaterials: vi.fn(async () => {
+        throw new Error("unexpected reorderMaterials");
+      }),
       removeMaterial: vi.fn(async () => ({ kind: "forbidden" as const })),
       get: vi.fn(),
-    } satisfies Pick<Meetups, "attachMaterial" | "removeMaterial" | "get">);
+    } satisfies Pick<
+      Meetups,
+      "attachMaterial" | "removeMaterial" | "reorderMaterials" | "get"
+    >);
 
     await expect(
       materials({
@@ -98,9 +110,15 @@ describe("meetup materials", () => {
       const conflict = vi.fn(async () => ({ kind: "conflict" as const }));
       const materials = createMeetupMaterials({
         attachMaterial: conflict,
+        reorderMaterials: vi.fn(async () => {
+          throw new Error("unexpected reorderMaterials");
+        }),
         removeMaterial: conflict,
         get,
-      } satisfies Pick<Meetups, "attachMaterial" | "removeMaterial" | "get">);
+      } satisfies Pick<
+        Meetups,
+        "attachMaterial" | "removeMaterial" | "reorderMaterials" | "get"
+      >);
 
       const result = await materials(
         intent === "attach-material"
@@ -137,9 +155,15 @@ describe("meetup materials", () => {
   it("answers a conflict on a meetup that is no longer visible as not found", async () => {
     const materials = createMeetupMaterials({
       attachMaterial: vi.fn(),
+      reorderMaterials: vi.fn(async () => {
+        throw new Error("unexpected reorderMaterials");
+      }),
       removeMaterial: vi.fn(async () => ({ kind: "conflict" as const })),
       get: vi.fn(async () => ({ kind: "not-found" as const })),
-    } satisfies Pick<Meetups, "attachMaterial" | "removeMaterial" | "get">);
+    } satisfies Pick<
+      Meetups,
+      "attachMaterial" | "removeMaterial" | "reorderMaterials" | "get"
+    >);
 
     await expect(
       materials({
@@ -150,5 +174,108 @@ describe("meetup materials", () => {
         expectedVersion: 1,
       }),
     ).resolves.toEqual({ kind: "meetup-not-found" });
+  });
+});
+
+describe("material movement", () => {
+  const person = { identityId: "person", rights: ["manage-meetups"] as const };
+  const meetup: MeetupSnapshot = {
+    id: "meetup",
+    author: "person",
+    title: "Meetup",
+    description: "",
+    venue: "",
+    lifecycle: "planned",
+    visibility: "visible",
+    version: 5,
+    materials: Array.from({ length: 10 }, (_, index) => ({
+      id: `material-${index}`,
+      title: `Material ${index}`,
+      source: {
+        kind: "file" as const,
+        fileKind: "photo" as const,
+        fileId: `file-${index}`,
+      },
+    })),
+  };
+  const request = {
+    identity: person,
+    intent: "move-material" as const,
+    meetupId: meetup.id,
+    materialId: "material-7",
+    direction: "down" as const,
+    expectedVersion: 5,
+  };
+
+  describe("moving one material", () => {
+    it("moves one of ten in one request without attaching any file again", async () => {
+      const ids = meetup.materials.map((material) => material.id);
+      const target = [...ids.slice(0, 7), ids[8], ids[7], ids[9]];
+      const reorderMaterials = vi.fn(async () => ({
+        kind: "ok" as const,
+        meetup: { ...meetup, version: 6 },
+      }));
+      const attachMaterial = vi.fn();
+      const removeMaterial = vi.fn();
+      const execute = createMeetupMaterials({
+        attachMaterial,
+        removeMaterial,
+        reorderMaterials,
+        get: vi.fn(async () => ({ kind: "ok" as const, meetup })),
+      });
+      expect(await execute(request)).toMatchObject({
+        kind: "materials-reordered",
+      });
+      expect(reorderMaterials).toHaveBeenCalledExactlyOnceWith({
+        person,
+        meetupId: meetup.id,
+        materialIds: target,
+        expectedVersion: 5,
+      });
+      expect(attachMaterial).not.toHaveBeenCalled();
+      expect(removeMaterial).not.toHaveBeenCalled();
+    });
+
+    it("rejects an old keyboard before sending a reordered list", async () => {
+      const reorderMaterials = vi.fn();
+      const fresh = {
+        ...meetup,
+        version: 6,
+        materials: [...meetup.materials].reverse(),
+      };
+      const execute = createMeetupMaterials({
+        attachMaterial: vi.fn(),
+        removeMaterial: vi.fn(),
+        reorderMaterials,
+        get: vi.fn(async () => ({ kind: "ok" as const, meetup: fresh })),
+      });
+      expect(await execute(request)).toEqual({
+        kind: "conflict",
+        meetup: fresh,
+      });
+      expect(reorderMaterials).not.toHaveBeenCalled();
+    });
+
+    it("rereads a racing write conflict without automatically moving again", async () => {
+      const reorderMaterials = vi.fn(async () => ({
+        kind: "conflict" as const,
+      }));
+      const fresh = { ...meetup, version: 6 };
+      const get = vi
+        .fn()
+        .mockResolvedValueOnce({ kind: "ok", meetup })
+        .mockResolvedValueOnce({ kind: "ok", meetup: fresh });
+      const execute = createMeetupMaterials({
+        attachMaterial: vi.fn(),
+        removeMaterial: vi.fn(),
+        reorderMaterials,
+        get,
+      });
+      expect(await execute(request)).toEqual({
+        kind: "conflict",
+        meetup: fresh,
+      });
+      expect(reorderMaterials).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -3486,6 +3486,7 @@ describe("opening the online week", () => {
         cancelPublication: notUsed,
         attachMaterial: notUsed,
         removeMaterial: notUsed,
+        reorderMaterials: notUsed,
       };
       const calls: RecordedCall[] = [];
       const { bot } = createHarness(

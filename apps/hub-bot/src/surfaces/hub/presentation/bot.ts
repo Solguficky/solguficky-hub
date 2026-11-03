@@ -460,6 +460,7 @@ import {
   heading,
   outcomeText,
   type Parent,
+  pageSize,
   plural,
   readableMoment,
   refusalText,
@@ -3415,6 +3416,51 @@ async function handleCallback(
         ok: ["material-attached"],
         okMessage: "material attached",
         rejectedMessage: "material attach rejected",
+        useCase,
+        meetupId,
+      });
+      return;
+    }
+    if (action.kind === "move-material") {
+      const meetupId = tokenToUuid(action.token);
+      if (!canManageMeetups(person)) {
+        await showRefusal(ctx, materialForbiddenText, exitToCard(action.token));
+        outcome = materialForbiddenOutcome(person, meetupId);
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "move-material",
+        meetupId,
+        materialId: tokenToUuid(action.materialToken),
+        direction: action.direction,
+        expectedVersion: action.version,
+        ...rpcCall(ctx, useCase),
+      });
+      if (result.kind === "conflict") {
+        await showScreen(ctx, {
+          id: "outcome",
+          text: outcomeText(conflictText, result.meetup.title),
+          keyboard: withNav(new InlineKeyboard(), toMaterials(action.token)),
+          format: "HTML",
+        });
+      } else if (result.kind === "materials-reordered") {
+        const index = result.meetup.materials.findIndex(
+          (material) => material.id === tokenToUuid(action.materialToken),
+        );
+        await renderMaterialManagement(
+          ctx,
+          result.meetup,
+          true,
+          Math.floor(Math.max(0, index) / pageSize),
+        );
+      } else {
+        await renderMaterialResult(ctx, result, action.token);
+      }
+      outcome = screenBoundary(result, {
+        ok: ["materials-reordered"],
+        okMessage: "materials reordered",
+        rejectedMessage: "material reorder rejected",
         useCase,
         meetupId,
       });
@@ -14723,6 +14769,7 @@ function callbackUseCase(
     | "manage-type-schedule"
     | "manage-retry-past-schedule"
     | "manage-materials"
+    | "move-material"
     | "begin-attach-material"
     | "decline-attach-material"
     | "confirm-attach-material"
@@ -14767,6 +14814,7 @@ function callbackUseCase(
     case "manage-pick-schedule":
     case "manage-type-schedule":
     case "manage-materials":
+    case "move-material":
     case "begin-attach-material":
     case "decline-attach-material":
     case "confirm-attach-material":

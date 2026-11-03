@@ -59,6 +59,7 @@ let private occasions =
         "meetup_publication_scheduled", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupPublicationScheduled
         "meetup_publication_cancelled", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupPublicationCancelled
         "meetup_cancelled", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupCancelled
+        "materials_reordered", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MaterialsReordered
         "meetup_held", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupHeld
         "meetup_material_attached", Some materialGuid, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupMaterialAttached
         "meetup_material_removed", Some materialGuid, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupMaterialRemoved

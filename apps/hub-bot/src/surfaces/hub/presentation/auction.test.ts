@@ -146,6 +146,7 @@ function fakeMeetups(snapshot = meetup(), down = false): Meetups {
     cancelPublication: notUsed,
     attachMaterial: notUsed,
     removeMaterial: notUsed,
+    reorderMaterials: notUsed,
   };
 }
 
