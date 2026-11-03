@@ -4,7 +4,6 @@ import {
   confirmNoLabel,
   confirmYesPrefix,
   lotGroupSigns,
-  marked,
   pictogram,
   pictogramWords,
   refreshLabel,
@@ -82,26 +81,32 @@ const carryingMethods: ReadonlySet<string> = new Set([
 const backSign = "‹ ";
 // Выход кадра исхода аукциона — к карточке лота, как у кнопки следа.
 const toLotLabel = "К лоту";
-const removeMaterialLabel = marked(pictogram.remove, "Убрать");
+const removeMaterialLabel = pictogram.remove;
 const moveUpLabel = "↑";
 const moveDownLabel = "↓";
+const materialEdgeLabel = "·";
 const adminSign = `${pictogram.admin} `;
 const linkSign = " ↗";
 const callbackDataLimit = 64;
 const defaultMaxRows = 12;
 
+function isOrderSlot(text: string, live: string): boolean {
+  return text === live || text === materialEdgeLabel;
+}
+
 function isMaterialManageRow(row: readonly Button[]): boolean {
-  const removeCount = row.filter(
-    (button) => button.text === removeMaterialLabel,
-  ).length;
-  if (removeCount !== 1) return false;
-  const arrows = row.filter(
-    (button) => button.text === moveUpLabel || button.text === moveDownLabel,
-  );
-  if (arrows.length !== new Set(arrows.map((button) => button.text)).size) {
+  if (row.at(-1)?.text !== removeMaterialLabel) return false;
+  if (
+    row.filter((button) => button.text === removeMaterialLabel).length !== 1
+  ) {
     return false;
   }
-  return row.length - 1 - arrows.length === 1;
+  if (row.length === 2) return true;
+  if (row.length !== 4) return false;
+  return (
+    isOrderSlot(row[1]?.text ?? "", moveUpLabel) &&
+    isOrderSlot(row[2]?.text ?? "", moveDownLabel)
+  );
 }
 
 // Слова, которые дизайн-код заменил: возврат называет родителя, подтверждение —
@@ -324,8 +329,8 @@ function checkRules(
   rows.forEach((row, index) => {
     // Шире двух — только ряд коротких заготовок вроде времени или листания
     // либо ряд, который дизайн-код называет поимённо: листание лотов с
-    // «🔄 Обновить» посередине (PER-669), строка материала со стрелками
-    // порядка (PER-848).
+    // «🔄 Обновить» посередине (PER-669), строка материала из четырёх слотов
+    // «название / ↑|· / ↓|· / 🗑» (PER-848).
     const short = row.every((button) => button.text.length <= 6);
     const pair = labels(row).join("|");
     const named =
@@ -338,7 +343,7 @@ function checkRules(
     }
     // Две в ряду — только у пар, которые дизайн-код называет поимённо: ряд
     // навигации, разделы меню, листание и заготовки, пары дерева бота,
-    // материал с «🗑 Убрать» и стрелками порядка.
+    // материал с «🗑» и стрелками порядка.
     const allowed =
       short ||
       named ||
@@ -354,7 +359,7 @@ function checkRules(
       materialRow;
     // Кнопка управления не делит ряд с кнопкой участника (решение владельца
     // 19 октября 2026 года, PER-669). Исключение — действие над строкой
-    // таблицы: «🗑 Убрать» у своего материала знака управления не несёт.
+    // таблицы: «🗑» у своего материала знака управления не несёт.
     const admin = row.filter((button) => button.text.startsWith(adminSign));
     if (admin.length > 0 && admin.length < row.length) {
       found.push([

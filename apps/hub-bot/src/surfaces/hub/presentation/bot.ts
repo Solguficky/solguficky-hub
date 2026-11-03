@@ -3421,6 +3421,16 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "material-edge") {
+      await ctx.waiting?.answer("Уже край списка.");
+      outcome = {
+        level: "info",
+        message: "material already at edge",
+        result: "ok",
+        use_case: useCase,
+      };
+      return;
+    }
     if (action.kind === "move-material") {
       const meetupId = tokenToUuid(action.token);
       if (!canManageMeetups(person)) {
@@ -14770,6 +14780,7 @@ function callbackUseCase(
     | "manage-retry-past-schedule"
     | "manage-materials"
     | "move-material"
+    | "material-edge"
     | "begin-attach-material"
     | "decline-attach-material"
     | "confirm-attach-material"
@@ -14821,6 +14832,7 @@ function callbackUseCase(
     case "remove-material":
     case "confirm-remove-material":
       return "update_meetup";
+    case "material-edge":
     case "open-material-file":
       return "view_meetup";
     case "begin-meetup-broadcast":

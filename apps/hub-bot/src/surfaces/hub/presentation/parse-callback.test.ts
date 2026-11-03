@@ -395,6 +395,7 @@ describe("callback parser", () => {
     const cases = [
       [`v1:mm:list:${meetup}`, "manage-materials"],
       [`v1:mm:add:${meetup}`, "begin-attach-material"],
+      [`v1:mm:e:${meetup}`, "material-edge"],
       [`v1:mm:ca:${meetup}:${material}:999999999`, "confirm-attach-material"],
       [`v1:mm:rm:${meetup}:${material}`, "remove-material"],
       [`v1:mm:cr:${meetup}:${material}:999999999`, "confirm-remove-material"],

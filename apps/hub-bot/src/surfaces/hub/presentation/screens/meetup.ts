@@ -37,7 +37,6 @@ import {
   paginate,
   readableDay,
   readableMoment,
-  removeLabel,
   screenText,
   subjectLine,
   submenuText,
@@ -58,6 +57,21 @@ import type { ScreenPhoto, ShownScreen } from "./show.js";
 /** Сколько материалов карточка перечисляет сама; остальное — в «Материалах». */
 const materialCardLimit = 20;
 const materialDisplayTitleLimit = 80;
+/** Заглушка невозможной стрелки: слот остаётся, колонки не прыгают. */
+const materialEdgeLabel = "·";
+
+function addMaterialOrderButton(
+  keyboard: InlineKeyboard,
+  token: string,
+  enabled: boolean,
+  label: "↑" | "↓",
+  data: string,
+): void {
+  keyboard.text(
+    enabled ? label : materialEdgeLabel,
+    enabled ? data : `v1:mm:e:${token}`,
+  );
+}
 
 // Черновик получает название вторым шагом формы, и брошенный на первом вопросе
 // остаётся с пустым: Telegram не принимает кнопку без текста, а строка списка
@@ -873,22 +887,23 @@ export function materialsScreen(
       keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
     }
     if (canReorder) {
-      if (first + index > 0)
-        keyboard.text(
-          "↑",
-          `v1:mm:u:${token}:${materialToken}:${meetup.version}`,
-        );
-      if (first + index < meetup.materials.length - 1)
-        keyboard.text(
-          "↓",
-          `v1:mm:d:${token}:${materialToken}:${meetup.version}`,
-        );
+      addMaterialOrderButton(
+        keyboard,
+        token,
+        first + index > 0,
+        "↑",
+        `v1:mm:u:${token}:${materialToken}:${meetup.version}`,
+      );
+      addMaterialOrderButton(
+        keyboard,
+        token,
+        first + index < meetup.materials.length - 1,
+        "↓",
+        `v1:mm:d:${token}:${materialToken}:${meetup.version}`,
+      );
     }
     if (canManage) {
-      keyboard.text(
-        removeLabel("Убрать"),
-        `v1:mm:rm:${token}:${materialToken}`,
-      );
+      keyboard.text(pictogram.remove, `v1:mm:rm:${token}:${materialToken}`);
     }
     keyboard.row();
   }

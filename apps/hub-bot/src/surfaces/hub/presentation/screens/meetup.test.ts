@@ -52,18 +52,36 @@ it("moves materials across page boundaries with stable ids and the shown version
       parseCallback(down.callback_data.replace(":999999999", ":0")),
     ).toEqual({ kind: "malformed" });
   }
-  expect(rows[0]?.some((button) => button.text === "↑")).toBe(false);
+  expect(rows[0]?.map((button) => button.text)).toEqual([
+    "Material 1",
+    "·",
+    "↓",
+    "🗑",
+  ]);
+  expect(rows.slice(0, 8).every((row) => row.length === 4)).toBe(true);
   expect(
     rows.every((row) =>
       row.some((button) => button.text !== "↑" && button.text !== "↓"),
     ),
   ).toBe(true);
   expect(rows.length).toBeLessThanOrEqual(12);
-  expect(
-    materialsScreen(value, true, 1).keyboard.inline_keyboard[1]?.some(
-      (button) => button.text === "↓",
-    ),
-  ).toBe(false);
+  const lastOnNextPage = materialsScreen(value, true, 1).keyboard
+    .inline_keyboard[1];
+  expect(lastOnNextPage?.map((button) => button.text)).toEqual([
+    "Material 10",
+    "↑",
+    "·",
+    "🗑",
+  ]);
+  const edge = lastOnNextPage?.find((button) => button.text === "·");
+  expect(edge).toHaveProperty("callback_data");
+  if (edge && "callback_data" in edge) {
+    expect(Buffer.byteLength(edge.callback_data)).toBeLessThanOrEqual(64);
+    expect(parseCallback(edge.callback_data)).toEqual({
+      kind: "material-edge",
+      token: uuidToToken(value.id),
+    });
+  }
   expect(
     materialsScreen(value, false, 0)
       .keyboard.inline_keyboard.flat()
@@ -682,8 +700,8 @@ describe("materialsScreen", () => {
   it("opens a file by a button and marks a link, with removal for the organizer", () => {
     const screen = materialsScreen(meetup({ materials }), true, 0);
 
-    expect(rows(screen)[0]).toEqual(["Материал 1", "↓", "🗑 Убрать"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "↑", "↓", "🗑 Убрать"]);
+    expect(rows(screen)[0]).toEqual(["Материал 1", "·", "↓", "🗑"]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "↑", "↓", "🗑"]);
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],
@@ -692,8 +710,21 @@ describe("materialsScreen", () => {
     expect(rows(materialsScreen(meetup({ materials }), true, 1))[0]).toEqual([
       "Материал 9 ↗",
       "↑",
-      "🗑 Убрать",
+      "·",
+      "🗑",
     ]);
+  });
+
+  it("keeps four columns on a single material and drops arrows when order is closed", () => {
+    const one = materials.slice(0, 1);
+    expect(
+      rows(materialsScreen(meetup({ materials: one }), true, 0))[0],
+    ).toEqual(["Материал 1", "·", "·", "🗑"]);
+    expect(
+      rows(
+        materialsScreen(meetup({ materials, lifecycle: "cancelled" }), true, 0),
+      )[0],
+    ).toEqual(["Материал 1", "🗑"]);
   });
 
   it("shows a participant the materials without management", () => {

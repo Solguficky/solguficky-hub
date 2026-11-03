@@ -724,6 +724,8 @@ type PlainAction =
       direction: "up" | "down";
       version: number;
     }
+  // Заглушка стрелки на краю списка: экран не меняется.
+  | { kind: "material-edge"; token: string }
   | { kind: "begin-attach-material"; token: string }
   // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
   // файлом остаётся следом с подписью, что прикрепления не было.
@@ -2421,6 +2423,9 @@ export function parseCallback(raw: unknown): CallbackAction {
     }
     if (parts.length === 4 && parts[2] === "no") {
       return { kind: "decline-attach-material", token: meetupToken.data };
+    }
+    if (parts.length === 4 && parts[2] === "e") {
+      return { kind: "material-edge", token: meetupToken.data };
     }
     const materialToken = TokenSchema.safeParse(parts[4]);
     if (!materialToken.success) return { kind: "malformed" };
