@@ -1163,7 +1163,11 @@ describe("presentation adapter", () => {
     const meetup = {
       ...publishedMeetup(),
       version: 6,
-      materials: [...ids.slice(0, 7).map(material), material("9b"), material("9a")],
+      materials: [
+        ...ids.slice(0, 7).map(material),
+        material("9b"),
+        material("9a"),
+      ],
     };
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "materials-reordered",
