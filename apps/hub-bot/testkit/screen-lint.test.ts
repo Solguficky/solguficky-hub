@@ -297,6 +297,15 @@ describe("inspectCall", () => {
       "vocabulary",
     ]);
     expect(tree([[key("Программа вечера"), key("🗑 Убрать")]])).toEqual([]);
+    expect(
+      tree([[key("Программа вечера"), key("↓"), key("🗑 Убрать")]]),
+    ).toEqual([]);
+    expect(
+      tree([[key("Программа вечера"), key("↑"), key("↓"), key("🗑 Убрать")]]),
+    ).toEqual([]);
+    expect(
+      tree([[key("Программа вечера"), key("Место"), key("🗑 Убрать")]]),
+    ).toEqual(["rows"]);
     expect(tree([[key("✔️ Допустить"), key("✖️ Отказать")]])).toEqual([]);
     expect(tree([[key("✔️ Допустить"), key("Закрыть")]])).toEqual(["rows"]);
     expect(tree([[key("• Участники"), key("Гости")]])).toEqual([]);
