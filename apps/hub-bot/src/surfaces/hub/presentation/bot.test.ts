@@ -1151,9 +1151,23 @@ describe("presentation adapter", () => {
   });
 
   it("dispatches a single material move with the version shown on the keyboard", async () => {
+    const ids = ["90", "91", "92", "93", "94", "95", "96", "9a", "9b"];
+    const material = (suffix: string) => ({
+      id: `0199c0de-0000-7000-8000-0000000000${suffix}`,
+      title: suffix,
+      source: {
+        kind: "message-link" as const,
+        url: `https://t.me/c/1234567890/${suffix}`,
+      },
+    });
+    const meetup = {
+      ...publishedMeetup(),
+      version: 6,
+      materials: [...ids.slice(0, 7).map(material), material("9b"), material("9a")],
+    };
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "materials-reordered",
-      meetup: publishedMeetup(),
+      meetup,
     });
     const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
@@ -1173,7 +1187,7 @@ describe("presentation adapter", () => {
     );
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: expect.stringContaining("Материалы") },
+      payload: { text: expect.stringContaining("Материалы · 2 из 2") },
     });
   });
 

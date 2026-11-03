@@ -80,6 +80,43 @@ let ``Every occasion of the dictionary becomes its own branch of the envelope`` 
         @>
 
 [<Fact>]
+let ``The reordered occasion carries materials in the snapshot order`` () =
+    let second =
+        { Sample.material with
+            Id = Sample.otherMaterialId
+            Position = 2
+            Title = "Фотография"
+        }
+
+    let two =
+        Meetup.apply (Existing Sample.withMaterial) (MeetupMaterialAttached second)
+
+    let reordered =
+        Meetup.apply
+            (Existing two)
+            (MaterialsReordered
+                [
+                    Sample.otherMaterialId
+                    Sample.materialId
+                ])
+
+    let message = Envelope.ofPending (pending "materials_reordered" reordered None)
+
+    let materialIds =
+        message.State.Materials
+        |> Seq.map (fun material -> material.Id)
+        |> Seq.toList
+
+    test
+        <@
+            message.OccasionCase = Meetups.V1.MeetupEvent.OccasionOneofCase.MaterialsReordered
+            && materialIds = [
+                "0199c0de-0000-7000-8000-0000000000a2"
+                "0199c0de-0000-7000-8000-0000000000a1"
+            ]
+        @>
+
+[<Fact>]
 let ``A silent first publication carries silent on the published occasion`` () =
     let snapshot = Meetup.toSnapshot Sample.published
     let (MeetupId meetupId) = snapshot.Id

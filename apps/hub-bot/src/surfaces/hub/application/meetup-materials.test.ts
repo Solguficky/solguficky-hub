@@ -213,7 +213,13 @@ describe("material movement", () => {
       const target = [...ids.slice(0, 7), ids[8], ids[7], ids[9]];
       const reorderMaterials = vi.fn(async () => ({
         kind: "ok" as const,
-        meetup: { ...meetup, version: 6 },
+        meetup: {
+          ...meetup,
+          version: 6,
+          materials: target.flatMap((id) =>
+            meetup.materials.filter((material) => material.id === id),
+          ),
+        },
       }));
       const attachMaterial = vi.fn();
       const removeMaterial = vi.fn();
@@ -223,8 +229,10 @@ describe("material movement", () => {
         reorderMaterials,
         get: vi.fn(async () => ({ kind: "ok" as const, meetup })),
       });
-      expect(await execute(request)).toMatchObject({
+      const result = await execute(request);
+      expect(result).toMatchObject({
         kind: "materials-reordered",
+        meetup: { materials: target.map((id) => ({ id })) },
       });
       expect(reorderMaterials).toHaveBeenCalledExactlyOnceWith({
         person,
