@@ -296,16 +296,17 @@ describe("inspectCall", () => {
       "rows",
       "vocabulary",
     ]);
-    expect(tree([[key("Программа вечера"), key("🗑 Убрать")]])).toEqual([]);
+    expect(tree([[key("Программа вечера"), key("🗑")]])).toEqual([]);
     expect(
-      tree([[key("Программа вечера"), key("↓"), key("🗑 Убрать")]]),
+      tree([[key("Программа вечера"), key("↑"), key("↓"), key("🗑")]]),
     ).toEqual([]);
-    expect(
-      tree([[key("Программа вечера"), key("↑"), key("↓"), key("🗑 Убрать")]]),
-    ).toEqual([]);
-    expect(
-      tree([[key("Программа вечера"), key("Место"), key("🗑 Убрать")]]),
-    ).toEqual(["rows"]);
+    expect(tree([[key("Программа вечера"), key("↑"), key("🗑")]])).toEqual([
+      "rows",
+    ]);
+    expect(tree([[key("М1"), key("↑"), key("🗑")]])).toEqual(["rows"]);
+    expect(tree([[key("Программа вечера"), key("Место"), key("🗑")]])).toEqual([
+      "rows",
+    ]);
     expect(tree([[key("✔️ Допустить"), key("✖️ Отказать")]])).toEqual([]);
     expect(tree([[key("✔️ Допустить"), key("Закрыть")]])).toEqual(["rows"]);
     expect(tree([[key("• Участники"), key("Гости")]])).toEqual([]);

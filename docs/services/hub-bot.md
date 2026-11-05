@@ -415,7 +415,9 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 | A-11 | Прикрепить материал | `v1:mm:add:AZLzpLXGfY6fChssPU5fYA` | 32 |
 | A-13 | Да, прикрепить (`ca` — confirm-add; последний сегмент — версия карточки, до девяти цифр) | `v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA:12` | 57 |
 | A-13 | Нет | `v1:mm:no:AZLzpLXGfY6fChssPU5fYA` | 31 |
-| A-11 | Убрать | `v1:mm:rm:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA` | 54 |
+| A-11 | ↑ / ↓ | `v1:mm:u:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA:12`, `v1:mm:d:…` | 56 |
+| A-11 | крайняя стрелка | `v1:mm:e:AZLzpLXGfY6fChssPU5fYA` | 30 |
+| A-11 | 🗑 | `v1:mm:rm:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA` | 54 |
 | A-14 | Да, убрать материал (`cr` — confirm-remove; версия — как у «Да, прикрепить») | `v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA:12` | 57 |
 | A-11 | файл материала | `v1:mm:file:AZLzpLXGfY6fChssPU5fYA:AZLzpLXGfY6fChssPU5fYA` | 56 |
 | A-07 | Написать подписчикам | `v1:bc:m:AZLzpLXGfY6fChssPU5fYA` | 30 |

@@ -37,7 +37,6 @@ import {
   paginate,
   readableDay,
   readableMoment,
-  removeLabel,
   screenText,
   subjectLine,
   submenuText,
@@ -873,22 +872,21 @@ export function materialsScreen(
       keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
     }
     if (canReorder) {
-      if (first + index > 0)
-        keyboard.text(
-          "↑",
-          `v1:mm:u:${token}:${materialToken}:${meetup.version}`,
-        );
-      if (first + index < meetup.materials.length - 1)
-        keyboard.text(
-          "↓",
-          `v1:mm:d:${token}:${materialToken}:${meetup.version}`,
-        );
+      keyboard.text(
+        "↑",
+        first + index > 0
+          ? `v1:mm:u:${token}:${materialToken}:${meetup.version}`
+          : `v1:mm:e:${token}`,
+      );
+      keyboard.text(
+        "↓",
+        first + index < meetup.materials.length - 1
+          ? `v1:mm:d:${token}:${materialToken}:${meetup.version}`
+          : `v1:mm:e:${token}`,
+      );
     }
     if (canManage) {
-      keyboard.text(
-        removeLabel("Убрать"),
-        `v1:mm:rm:${token}:${materialToken}`,
-      );
+      keyboard.text(pictogram.remove, `v1:mm:rm:${token}:${materialToken}`);
     }
     keyboard.row();
   }
