@@ -513,6 +513,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       extends InvoiceGateway {
     val commands = new java.util.concurrent.ConcurrentLinkedQueue[(String, OpId)]()
     def issue(invoice: InvoiceId, terms: InvoiceTerms) = fail("an invoice was issued")
+    def markUnredeemed(invoice: InvoiceId, opId: OpId) = fail("an invoice was closed as unredeemed")
     def get(invoice: InvoiceId) = Future.successful(state)
     def markPaid(invoice: InvoiceId, opId: OpId) = { commands.add("paid" -> opId); Future.successful(answer) }
     def markHandedOver(invoice: InvoiceId, opId: OpId) = {

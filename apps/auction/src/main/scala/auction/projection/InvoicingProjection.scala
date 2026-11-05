@@ -106,7 +106,7 @@ final class InvoicingHandler(
       case Some(sale) =>
         termOf(sale.auction).flatMap { term =>
           val terms = sale.terms(term)
-          issue(sale.invoice, if (sale.auction.value.version == 5) terms.copy(paymentDueAt = None) else terms)
+          issue(sale.invoice, InvoicingHandler.atIssue(sale.auction, terms))
         }
     }
 
@@ -140,6 +140,10 @@ object InvoicingHandler {
       case _ => None
     }
   }
+
+  /** Условия при выставлении по продаже: у аукциона сходки срок появится с концом торгов (`InvoicePaymentClock`). */
+  def atIssue(auction: AuctionId, terms: InvoiceTerms): InvoiceTerms =
+    if (auction.value.version == 5) terms.copy(paymentDueAt = None) else terms
 
   /** Срок оплаты по конфигурации аукциона, который открыл торги: продажа без старта торгов — дефект, а не умолчание. */
   def termOf(auction: Auction): Duration =

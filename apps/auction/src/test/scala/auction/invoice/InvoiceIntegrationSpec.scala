@@ -191,7 +191,7 @@ final class InvoiceIntegrationSpec
             else Future.successful(done)
           }
         }
-        override def markUnredeemed(id: InvoiceId, opId: OpId) = {
+        def markUnredeemed(id: InvoiceId, opId: OpId) = {
           import scala.concurrent.ExecutionContext.Implicits.global
           delegate.markUnredeemed(id, opId).flatMap(_ => Future.failed(new IllegalStateException("lost closure reply")))
         }
@@ -252,7 +252,9 @@ final class InvoiceIntegrationSpec
           node.invoices.get(original).futureValue.asInstanceOf[Invoice.Issued].status shouldBe InvoiceStatus.Unredeemed
           val current = node.invoices.get(replacement).futureValue.asInstanceOf[Invoice.Issued]
           current.terms.amount shouldBe money(200)
-          current.terms.paymentDueAt shouldBe at.plus(AuctionConfig.PlatformPaymentTerm)
+          current.terms.paymentDueAt shouldBe Some(
+            at.plus(AuctionConfig.PlatformPaymentTerm).truncatedTo(java.time.temporal.ChronoUnit.MICROS)
+          )
           invoiceRows(database).count(_._5 == "AwaitingPayment") shouldBe 1
         }
         node.settlements.accept(lot, offer, participant(3), op(51)).futureValue shouldBe Right(Done)
@@ -260,6 +262,34 @@ final class InvoiceIntegrationSpec
         node.invoices.markPaid(original, op(60)).futureValue shouldBe Left(InvoiceRefusal.InvoiceClosed)
         journalRows(database, original) shouldBe 2L
         journalRows(database, replacement) shouldBe 1L
+      }
+    }
+
+    "does not create a second obligation when the projection replays the sale of an already closed invoice" in {
+      val database = migrated()
+      val original = withNode(database) { node =>
+        val (id, sold) = soldLot(node, List(2 -> 100L, 3 -> 200L, 1 -> 300L))
+        val lot = LotId(id)
+        val invoice = InvoiceId.of(sold.bidId)
+        eventually(node.settlements.get(lot).futureValue shouldBe a[Settlement.Open])
+        node.settlements.requestUnredeemed(lot, invoice, op(80)).futureValue shouldBe Right(Done)
+        eventually {
+          node.invoices.get(invoice).futureValue.asInstanceOf[Invoice.Issued].status shouldBe InvoiceStatus.Unredeemed
+        }
+        invoice
+      }
+      def offsets = query(
+        database,
+        s"SELECT COUNT(DISTINCT projection_name) FROM pekko_projection_offset_store WHERE projection_name IN ('${InvoicingProjection.Name}', '${SettlementSalesHandler.Name}')"
+      )(_.getLong(1)).head
+      withConnection(database) { connection =>
+        connection.createStatement().executeUpdate("DELETE FROM pekko_projection_offset_store")
+      }
+      withNode(database) { node =>
+        // Обе проекции заново прошли продажу: offset снова записан, а второго обязательства нет.
+        eventually(offsets shouldBe 2L)
+        invoiceRows(database).map(row => row._1 -> row._5) shouldBe List(original.value.toString -> "Unredeemed")
+        journalRows(database, original) shouldBe 2L
       }
     }
 

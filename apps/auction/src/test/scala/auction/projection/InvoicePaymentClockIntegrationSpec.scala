@@ -57,10 +57,12 @@ final class InvoicePaymentClockIntegrationSpec extends AnyWordSpec with Matchers
           try {
             statement.execute(s"UPDATE auction_view SET status = 'finished' WHERE auction_id = '$auctionId'")
             statement.execute(invoiceSql(6, "NULL", "AwaitingPayment"))
+            // Счёт переданного лота: срок отсчитан от выставления после конца торгов и позже общего (ADR-075, п. 4).
+            statement.execute(invoiceSql(7, s"'${end.plus(Duration.ofDays(10))}'", "AwaitingPayment"))
           } finally statement.close()
         }
         val requested = changes
-        requested.map(_.invoice).toSet shouldBe Set(InvoiceId(uuid(2)), InvoiceId(uuid(6)))
+        requested.map(_.invoice).toSet shouldBe Set(InvoiceId(uuid(2)), InvoiceId(uuid(6))) // не uuid(7)
         requested.flatMap(_.dueAt).toSet shouldBe Set(end.plus(Duration.ofDays(1)))
       } finally database.close()
     }

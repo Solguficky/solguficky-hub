@@ -37,7 +37,8 @@ final class SettlementSalesHandler(
           else Future.successful(auction.aggregate.AuctionConfig.PlatformPaymentTerm)
         for {
           duration <- term
-          terms = sale.terms(duration)
+          // Как у lot-invoicing: счёт аукциона сходки получает срок от общего конца торгов, а не от продажи.
+          terms = InvoicingHandler.atIssue(sale.auction, sale.terms(duration))
           _ <- invoices.issue(sale.invoice, terms)
           events <- history(envelope)
           _ <- settlements.open(

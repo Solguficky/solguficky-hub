@@ -41,7 +41,7 @@ final class SettlementEntitySpec extends AnyWordSpec with Matchers with BeforeAn
         def markPaid(id: InvoiceId, op: OpId) = unexpected
         def markHandedOver(id: InvoiceId, op: OpId) = unexpected
         def chooseFulfillment(id: InvoiceId, who: ParticipantId, method: FulfillmentMethod, op: OpId) = unexpected
-        override def markUnredeemed(id: InvoiceId, op: OpId) = unexpected
+        def markUnredeemed(id: InvoiceId, op: OpId) = unexpected
       }
       val entity = EventSourcedBehaviorTestKit[SettlementEntity.Command, StoredSettlementEvent, Settlement](
         kit.system,
@@ -70,7 +70,7 @@ final class SettlementEntitySpec extends AnyWordSpec with Matchers with BeforeAn
           _
         )
       )
-      clock.now = terms.paymentDueAt.plusSeconds(1)
+      clock.now = terms.paymentDueAt.get.plusSeconds(1)
       ManualTime()(using kit.system).timePasses(8.days)
       val after = entity.runCommand[Settlement](SettlementEntity.Get(_)).reply.asInstanceOf[Settlement.Open]
       after.stage shouldBe SettlementStage.AwaitingPayment

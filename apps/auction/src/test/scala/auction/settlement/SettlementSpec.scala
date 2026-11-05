@@ -48,6 +48,19 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
   }
 
   "settlement" should {
+    "never moves to an offer or an unredeemed outcome on its own once the payment term has passed" in {
+      val state = opened()
+      val late = terms.paymentDueAt.get.plus(Duration.ofDays(30))
+      // Единственная функция со временем — принятие предложения, и без предложения она отказывает.
+      Settlement.accept(state, boris.bid, boris.participant, op(20), late) shouldBe Left(
+        SettlementRefusal.OfferNotFound
+      )
+      Settlement.decline(state, boris.bid, boris.participant, op(21)) shouldBe Left(SettlementRefusal.OfferNotFound)
+      Settlement.closureCompleted(state, op(22), ClosureOutcome.Closed) shouldBe None
+      Settlement.invoiceConfirmed(state, sale.invoice) shouldBe None
+      state.asInstanceOf[Settlement.Open].stage shouldBe SettlementStage.AwaitingPayment
+    }
+
     "offers each participant once at the last accepted bid including automatic bids, skipping a proxy without a bid" in {
       val history = List(
         LotEvent.BidPlaced(bid(10), participant(2), money(300), None, BidOrigin.Manual(BidSource.Bot)),
@@ -155,7 +168,7 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
         .asInstanceOf[Settlement.Open]
       accepted.current.id shouldBe InvoiceId.of(boris.bid)
       accepted.current.terms.amount shouldBe money(800)
-      accepted.current.terms.paymentDueAt shouldBe acceptedAt.plus(Duration.ofDays(7))
+      accepted.current.terms.paymentDueAt shouldBe Some(acceptedAt.plus(Duration.ofDays(7)))
       accepted.sale shouldBe sale
       accepted.invoices.head shouldBe SettlementInvoice(sale.invoice, terms)
       Settlement.accept(accepted, boris.bid, boris.participant, op(11), acceptedAt.plusSeconds(100)) shouldBe Right(

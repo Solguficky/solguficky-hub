@@ -62,7 +62,11 @@ object InvoicePaymentClock {
 
   final case class Change(invoice: InvoiceId, expected: Option[Instant], dueAt: Option[Instant])
 
-  /** Догоняет поздние продажи и старые неоплаченные счета; оплаченные не выбирает. */
+  /**
+   * Догоняет поздние продажи и старые неоплаченные счета; оплаченные не выбирает. Счёт, чей срок позже общего, — счёт
+   * переданного лота (PER-694, ADR-075, п. 4): его срок отсчитан заново от выставления, уже после конца торгов, и общий
+   * срок его не трогает.
+   */
   def changes(database: Database): Future[Vector[Change]] = {
     given GetResult[Change] = GetResult { row =>
       Change(
@@ -78,6 +82,7 @@ object InvoicePaymentClock {
       WHERE i.status = 'AwaitingPayment'
         AND (c.auction_id IS NOT NULL OR a.status IN ('prebidding', 'settling', 'on_break', 'lineup_frozen', 'in_final'))
         AND i.payment_due_at IS DISTINCT FROM c.payment_due_at
+        AND (c.payment_due_at IS NULL OR i.payment_due_at IS NULL OR i.payment_due_at <= c.payment_due_at)
       ORDER BY i.invoice_id LIMIT 100""".as[Change])
   }
 

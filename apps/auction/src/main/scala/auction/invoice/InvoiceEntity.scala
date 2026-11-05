@@ -109,8 +109,7 @@ object InvoiceEntity {
  * ответ.
  */
 trait InvoiceGateway {
-  def markUnredeemed(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
-    Future.failed(new IllegalStateException("invoice closure is not wired in this gateway"))
+  def markUnredeemed(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]]
 
   def issue(invoice: InvoiceId, terms: InvoiceTerms): Future[Done]
 
@@ -157,6 +156,7 @@ object InvoiceGateway {
     private def missing[T]: Future[T] = Future.failed(new IllegalStateException("invoices are not wired in this node"))
     def issue(invoice: InvoiceId, terms: InvoiceTerms) = missing
     def get(invoice: InvoiceId) = missing
+    def markUnredeemed(invoice: InvoiceId, opId: OpId) = missing
     def markPaid(invoice: InvoiceId, opId: OpId) = missing
     def markHandedOver(invoice: InvoiceId, opId: OpId) = missing
     def chooseFulfillment(invoice: InvoiceId, viewer: ParticipantId, method: FulfillmentMethod, opId: OpId) = missing

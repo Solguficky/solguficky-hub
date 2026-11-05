@@ -113,10 +113,15 @@ object SettlementEntity {
             case Closed(op, Success(Right(_))) => persist(Settlement.closureCompleted(state, op, ClosureOutcome.Closed))
             case Closed(op, Success(Left(InvoiceRefusal.InvoiceAlreadyPaid))) =>
               persist(Settlement.closureCompleted(state, op, ClosureOutcome.AlreadyPaid))
+            // op_id счёта занят другой командой: исход фиксируется, чтобы расчёт не зациклился, но это дефект — он
+            // уходит в `failed`, а не молча возвращает расчёт к ожиданию оплаты.
             case Closed(op, Success(Left(InvoiceRefusal.OpIdTaken))) =>
+              failed(new IllegalStateException(s"settlement invoice closure op_id $op is taken by another command"))
               persist(Settlement.closureCompleted(state, op, ClosureOutcome.OpIdTaken))
+            // Иной отказ счёта (например, InvoiceNotFound) не валит entity: сохранённое намерение повторит таймер.
             case Closed(_, Success(Left(refusal))) =>
-              throw new IllegalStateException(s"settlement invoice closure answered $refusal")
+              failed(new IllegalStateException(s"settlement invoice closure answered $refusal"))
+              Effect.none
             case Issued(invoice, Success(_)) => persist(Settlement.invoiceConfirmed(state, invoice))
             // Таймер уже вооружён; сбой ask не отменяет сохранённое намерение.
             case Closed(_, Failure(error)) => failed(error); Effect.none
