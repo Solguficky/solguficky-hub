@@ -169,6 +169,8 @@ final class SettlementSpec extends AnyWordSpec with Matchers {
       accepted.current.id shouldBe InvoiceId.of(boris.bid)
       accepted.current.terms.amount shouldBe money(800)
       accepted.current.terms.paymentDueAt shouldBe Some(acceptedAt.plus(Duration.ofDays(7)))
+      accepted.current.terms.transferred shouldBe true
+      accepted.invoices.head.terms.transferred shouldBe false
       accepted.sale shouldBe sale
       accepted.invoices.head shouldBe SettlementInvoice(sale.invoice, terms)
       Settlement.accept(accepted, boris.bid, boris.participant, op(11), acceptedAt.plusSeconds(100)) shouldBe Right(

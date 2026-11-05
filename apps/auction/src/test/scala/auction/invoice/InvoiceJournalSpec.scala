@@ -60,6 +60,8 @@ final class InvoiceJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("invoice-payment-started", InvoiceEvent.PaymentDueChanged(terms.paymentDueAt))
       keepsGolden("invoice-payment-deferred", InvoiceEvent.PaymentDueChanged(None))
       keepsGolden("invoice-issued", InvoiceEvent.InvoiceIssued(terms))
+      // Счёт переданного лота несёт признак; у обычного поле в строке отсутствует, и старые строки читаются как false.
+      keepsGolden("invoice-issued-transferred", InvoiceEvent.InvoiceIssued(terms.copy(transferred = true)))
       keepsGolden("invoice-paid", InvoiceEvent.InvoicePaid(op(2)))
       keepsGolden("invoice-handed-over", InvoiceEvent.InvoiceHandedOver(op(3)))
       keepsGolden("invoice-unredeemed", InvoiceEvent.InvoiceUnredeemed(op(2)))

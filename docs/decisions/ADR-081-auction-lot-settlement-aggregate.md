@@ -57,3 +57,7 @@
 - Другие ADR: [ADR-045](ADR-045-auction-scala-pekko-persistence-jdbc.md), [ADR-058](ADR-058-auction-journal-row-json-storage-model.md), [ADR-075](ADR-075-auction-unredeemed-lot-settlement.md).
 - Сервис: [Auction](../services/auction.md).
 - Задача: [PER-694](https://linear.app/anticnvm/issue/per-694).
+
+## Дополнение 2026-11-05: признак счёта переданного лота
+
+Счёт, выставленный по `Settlement.accept`, несёт `transferred = true` в `InvoiceTerms`; признак пишется в событие `InvoiceIssued` (необязательное поле, у обычных счетов его нет в строке) и в колонку `auction_invoice.transferred` (`V25`, по умолчанию `false`). `InvoicePaymentClock` пропускает счета с признаком вместо прежнего сравнения сроков ([ADR-075](ADR-075-auction-unredeemed-lot-settlement.md), п. 4).

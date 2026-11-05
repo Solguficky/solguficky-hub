@@ -5,6 +5,7 @@ import auction.entity.JournalSerializable
 import auction.entity.LotJournal
 import auction.entity.StoredMoney
 import auction.invoice.InvoiceId
+import auction.invoice.InvoiceJournal
 import auction.invoice.InvoiceTerms
 import auction.invoice.StoredInvoiceIssued
 import auction.lot.*
@@ -44,23 +45,9 @@ final case class StoredSettlementEvent(
 
 object SettlementJournal {
 
-  private def terms(value: InvoiceTerms): StoredInvoiceIssued =
-    StoredInvoiceIssued(
-      value.auction.value,
-      value.lot.value,
-      value.winner.value,
-      LotJournal.storeMoney(value.amount),
-      value.paymentDueAt
-    )
+  private def terms(value: InvoiceTerms): StoredInvoiceIssued = InvoiceJournal.storeTerms(value)
 
-  private def restore(value: StoredInvoiceIssued): InvoiceTerms =
-    InvoiceTerms(
-      AuctionId(value.auctionId),
-      auction.catalog.LotId(value.lotId),
-      ParticipantId(value.winnerId),
-      LotJournal.restoreMoney(value.amount),
-      value.paymentDueAt
-    )
+  private def restore(value: StoredInvoiceIssued): InvoiceTerms = InvoiceJournal.restoreTerms(value)
 
   def store(id: UUID, at: Instant)(event: SettlementEvent): StoredSettlementEvent = {
     val empty = StoredSettlementEvent(id, at, "")

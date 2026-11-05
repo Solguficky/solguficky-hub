@@ -151,14 +151,16 @@ object Settlement {
         .find(_.offer.candidate.bid == offer)
         .map(_.offer.candidate)
         .getOrElse(throw new IllegalStateException("current offer missing from history"))
-      val terms = InvoiceTerms.ofSale(
-        active.sale.terms.auction,
-        active.sale.terms.lot,
-        participant,
-        candidate.amount,
-        at,
-        active.sale.paymentTerm
-      )
+      val terms = InvoiceTerms
+        .ofSale(
+          active.sale.terms.auction,
+          active.sale.terms.lot,
+          participant,
+          candidate.amount,
+          at,
+          active.sale.paymentTerm
+        )
+        .copy(transferred = true)
       SettlementEvent.OfferAccepted(offer, participant, SettlementInvoice(InvoiceId.of(offer), terms), opId)
     }
 

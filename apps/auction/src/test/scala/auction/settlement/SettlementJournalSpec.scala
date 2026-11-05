@@ -24,7 +24,10 @@ final class SettlementJournalSpec extends AnyWordSpec with Matchers with BeforeA
   "settlement journal" should {
     "round trips every saved step through the actual Pekko serializer and restores the same recovery state" in {
       val replacement =
-        SettlementInvoice(InvoiceId.of(candidate.bid), terms.copy(winner = participant(2), amount = money(800)))
+        SettlementInvoice(
+          InvoiceId.of(candidate.bid),
+          terms.copy(winner = participant(2), amount = money(800), transferred = true)
+        )
       val events = List(
         SettlementEvent.Opened(sale, List(candidate)),
         SettlementEvent.ClosureRequested(sale.invoice, op(1)),

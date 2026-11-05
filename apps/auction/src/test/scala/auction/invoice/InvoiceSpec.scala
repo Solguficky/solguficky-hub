@@ -46,6 +46,12 @@ final class InvoiceSpec extends AnyWordSpec with Matchers {
       Invoice.changeDue(paid, terms.paymentDueAt, None) shouldBe None
     }
 
+    "keeps the own term of a transferred invoice when the shared deadline arrives" in {
+      val transferred = Invoice.apply(Invoice.initial, InvoiceEvent.InvoiceIssued(terms.copy(transferred = true)))
+      Invoice.changeDue(transferred, terms.paymentDueAt, None) shouldBe None
+      Invoice.changeDue(transferred, terms.paymentDueAt, Some(soldAt.plus(Duration.ofDays(2)))) shouldBe None
+    }
+
     "is issued once per sale with the price of the sale and the term counted from the sale" in {
       terms.amount shouldBe money(125000)
       terms.paymentDueAt shouldBe Some(Instant.parse("2026-10-15T21:00:00Z"))

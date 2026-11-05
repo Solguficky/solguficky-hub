@@ -44,14 +44,16 @@ enum FulfillmentMethod {
 /**
  * Условия счёта: аукцион и лот, адресат обязательства (историческое имя поля winner), сумма и момент, до которого счёт
  * ждёт оплаты. У исходного счёта это победитель и цена продажи, у переданного — согласившийся кандидат и его ставка.
- * Срок отсутствует, пока не закончены все торги; сумма и адресат неизменны.
+ * Срок отсутствует, пока не закончены все торги; сумма и адресат неизменны. `transferred` — счёт переданного лота
+ * (PER-694): его срок общий срок аукциона не перезаписывает; у остальных счетов false.
  */
 final case class InvoiceTerms(
     auction: AuctionId,
     lot: LotId,
     winner: ParticipantId,
     amount: Money,
-    paymentDueAt: Option[Instant]
+    paymentDueAt: Option[Instant],
+    transferred: Boolean = false
 )
 
 object InvoiceTerms {
@@ -147,10 +149,11 @@ object Invoice {
       case Issued(_, _, _, _) => None
     }
 
-  /** Общий срок применяется только к неоплаченным счетам и идемпотентен. */
+  /** Общий срок применяется только к неоплаченным счетам, кроме счетов переданного лота, и идемпотентен. */
   def changeDue(state: Invoice, expected: Option[Instant], dueAt: Option[Instant]): Option[InvoiceEvent] =
     state match {
-      case Issued(terms, InvoiceStatus.AwaitingPayment, _, _) if terms.paymentDueAt == expected && expected != dueAt =>
+      case Issued(terms, InvoiceStatus.AwaitingPayment, _, _)
+          if !terms.transferred && terms.paymentDueAt == expected && expected != dueAt =>
         Some(InvoiceEvent.PaymentDueChanged(dueAt))
       case _ => None
     }

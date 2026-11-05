@@ -44,7 +44,7 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
     "create the journal, tag, snapshot, lot catalog, display name, FAQ, lot projection, lot publication, auction projection, lot statistics, final metrics, raffle ticket, auction publication, prediction, results, participant removal, lot set, invoice and lot photo tables on an empty database" in {
       val database = freshDatabase()
 
-      JournalSchema.migrate(database) shouldBe 24
+      JournalSchema.migrate(database) shouldBe 25
 
       tables(database) should contain allOf (
         "event_journal",
@@ -111,7 +111,8 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         "21",
         "22",
         "23",
-        "24"
+        "24",
+        "25"
       )
     }
 
@@ -123,7 +124,7 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         60.seconds
       )
 
-      executed.sum shouldBe 24
+      executed.sum shouldBe 25
       appliedVersions(database) shouldBe List(
         "1",
         "2",
@@ -148,7 +149,8 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         "21",
         "22",
         "23",
-        "24"
+        "24",
+        "25"
       )
     }
   }

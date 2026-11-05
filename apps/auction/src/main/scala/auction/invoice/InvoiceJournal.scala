@@ -25,7 +25,8 @@ final case class StoredInvoiceIssued(
     lotId: UUID,
     winnerId: UUID,
     amount: StoredMoney,
-    paymentDueAt: Option[Instant]
+    paymentDueAt: Option[Instant],
+    @JsonInclude(JsonInclude.Include.NON_ABSENT) transferred: Option[Boolean] = None
 )
 
 /** Payload отметок оплаты и выдачи: `op_id` команды организатора. */
@@ -60,18 +61,7 @@ object InvoiceJournal {
   def storeEvent(event: InvoiceEvent): StoredInvoiceEventBody =
     event match {
       case InvoiceEvent.InvoiceIssued(terms) =>
-        empty.copy(
-          kind = "InvoiceIssued",
-          invoiceIssued = Some(
-            StoredInvoiceIssued(
-              terms.auction.value,
-              terms.lot.value,
-              terms.winner.value,
-              LotJournal.storeMoney(terms.amount),
-              terms.paymentDueAt
-            )
-          )
-        )
+        empty.copy(kind = "InvoiceIssued", invoiceIssued = Some(storeTerms(terms)))
       case InvoiceEvent.PaymentDueChanged(dueAt) =>
         empty.copy(kind = "PaymentDueChanged", paymentDueChanged = Some(StoredPaymentDueChanged(dueAt)))
       case InvoiceEvent.InvoicePaid(opId) =>
@@ -87,19 +77,32 @@ object InvoiceJournal {
         )
     }
 
+  /** Условия счёта в форме хранения: общая пара для журнала счёта и журнала расчётов, чтобы поле не разошлось. */
+  def storeTerms(terms: InvoiceTerms): StoredInvoiceIssued =
+    StoredInvoiceIssued(
+      terms.auction.value,
+      terms.lot.value,
+      terms.winner.value,
+      LotJournal.storeMoney(terms.amount),
+      terms.paymentDueAt,
+      Option.when(terms.transferred)(true)
+    )
+
+  def restoreTerms(stored: StoredInvoiceIssued): InvoiceTerms =
+    InvoiceTerms(
+      AuctionId(stored.auctionId),
+      LotId(stored.lotId),
+      ParticipantId(stored.winnerId),
+      LotJournal.restoreMoney(stored.amount),
+      stored.paymentDueAt,
+      stored.transferred.contains(true)
+    )
+
   /** Ровно та секция, что названа `kind`. Иначе строка испорчена. */
   def restoreEvent(stored: StoredInvoiceEventBody): InvoiceEvent =
     stored match {
       case StoredInvoiceEventBody("InvoiceIssued", Some(issued), None, None, None, None, None) =>
-        InvoiceEvent.InvoiceIssued(
-          InvoiceTerms(
-            AuctionId(issued.auctionId),
-            LotId(issued.lotId),
-            ParticipantId(issued.winnerId),
-            LotJournal.restoreMoney(issued.amount),
-            issued.paymentDueAt
-          )
-        )
+        InvoiceEvent.InvoiceIssued(restoreTerms(issued))
       case StoredInvoiceEventBody("InvoicePaid", None, Some(mark), None, None, None, None) =>
         InvoiceEvent.InvoicePaid(OpId(mark.opId))
       case StoredInvoiceEventBody("InvoiceHandedOver", None, None, Some(mark), None, None, None) =>

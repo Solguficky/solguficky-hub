@@ -256,6 +256,14 @@ final class InvoiceIntegrationSpec
             at.plus(AuctionConfig.PlatformPaymentTerm).truncatedTo(java.time.temporal.ChronoUnit.MICROS)
           )
           invoiceRows(database).count(_._5 == "AwaitingPayment") shouldBe 1
+          // Признак переданного лота дошёл до read model через журнал счёта и проекцию.
+          query(
+            database,
+            "SELECT invoice_id::text, transferred FROM auction_invoice"
+          )(row => row.getString(1) -> row.getBoolean(2)).toMap shouldBe Map(
+            original.value.toString -> false,
+            replacement.value.toString -> true
+          )
         }
         node.settlements.accept(lot, offer, participant(3), op(51)).futureValue shouldBe Right(Done)
         node.settlements.requestUnredeemed(lot, original, op(50)).futureValue shouldBe Right(Done)
