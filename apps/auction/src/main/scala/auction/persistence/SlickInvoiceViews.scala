@@ -40,12 +40,17 @@ final class SlickInvoiceViews(database: Database)(using ExecutionContext) extend
     InvoiceView(id, terms, InvoiceJournal.restoreStatus(row.<<), row.<<?[String].map(InvoiceJournal.restoreMethod))
   }
 
+  /**
+   * Внутренний статус `Unredeemed` (PER-694) в публичное чтение не отдаётся: контракт его не знает (`Status.Empty`),
+   * публичный статус и факт вводит PER-805. До него оба чтения пропускают такие строки.
+   */
   def mine(auction: AuctionId, winner: ParticipantId): Future[List[InvoiceView]] =
     database.run(
       sql"""SELECT invoice_id::text, auction_id::text, lot_id::text, winner_id::text, amount_minor, currency,
                    payment_due_at, status, fulfillment
             FROM auction_invoice
             WHERE auction_id = ${auction.value.toString}::uuid AND winner_id = ${winner.value.toString}::uuid
+              AND status <> 'Unredeemed'
             ORDER BY invoice_id""".as[InvoiceView].map(_.toList)
     )
 
@@ -54,7 +59,7 @@ final class SlickInvoiceViews(database: Database)(using ExecutionContext) extend
       sql"""SELECT invoice_id::text, auction_id::text, lot_id::text, winner_id::text, amount_minor, currency,
                    payment_due_at, status, fulfillment
             FROM auction_invoice
-            WHERE auction_id = ${auction.value.toString}::uuid
+            WHERE auction_id = ${auction.value.toString}::uuid AND status <> 'Unredeemed'
             ORDER BY invoice_id""".as[InvoiceView].map(_.toList)
     )
 }

@@ -425,6 +425,8 @@ object Lot {
       case Move.LimitWithdrawn => false
     }
 
+  private final case class RemovalReplay(trading: TradingState, bids: List[LotEvent.BidPlaced])
+
   /**
    * Переигрывание торгов без `without` (ADR-072, п. 2) от стартовой цены по входам оставшихся в порядке журнала.
    * Правила те же, что в торгах, и функции те же: ручная ставка ложится [[bidden]] без проверок П-01 — она уже принята,
@@ -438,7 +440,19 @@ object Lot {
    * Позиция лидера — `positionId` у любой ставки повтора: какая ставка её дала, событию не важно, а сумма позиции —
    * итоговая цена.
    */
-  private def rerun(config: LotConfig, course: Course, without: Set[ParticipantId], positionId: BidId): TradingState = {
+  private def rerun(config: LotConfig, course: Course, without: Set[ParticipantId], positionId: BidId): TradingState =
+    replayRemoval(config, course, without, positionId).trading
+
+  /** Последние ставки пересчитанной истории для расчётов; исход торгов и журнал эта функция не меняет. */
+  def replayedBids(config: LotConfig, course: Course, positionId: BidId): List[LotEvent.BidPlaced] =
+    replayRemoval(config, course, course.removed, positionId).bids
+
+  private def replayRemoval(
+      config: LotConfig,
+      course: Course,
+      without: Set[ParticipantId],
+      positionId: BidId
+  ): RemovalReplay = {
     val start = TradingState(
       config = config,
       currentPrice = course.startingPrice,
@@ -454,28 +468,37 @@ object Lot {
       stepWindows = course.stepWindows
     )
     val kept = (entry: Entry) => !without.contains(entry.participant)
-    val answered = (trading: TradingState, at: Instant) =>
-      resolve(trading, positionId, at).fold(trading)(bidden(trading, _))
-    val known = (trading: TradingState, entry: Entry) => trading.copy(stepWindows = course.windowsAt(entry.sequence))
-    val limit = (trading: TradingState, entry: Entry, max: Money) =>
-      trading.copy(proxyLimits = trading.proxyLimits.updated(entry.participant, ProxyLimit(max, entry.sequence)))
-    val online = course.online.filter(kept).foldLeft(start) { (before, entry) =>
-      val trading = known(before, entry)
+    val placed = (replay: RemovalReplay, event: LotEvent.BidPlaced) =>
+      RemovalReplay(bidden(replay.trading, event), event :: replay.bids.filterNot(_.participant == event.participant))
+    val answered = (replay: RemovalReplay, at: Instant) =>
+      resolve(replay.trading, positionId, at).fold(replay)(placed(replay, _))
+    val limit = (replay: RemovalReplay, entry: Entry, max: Money) =>
+      replay.copy(trading =
+        replay.trading.copy(proxyLimits =
+          replay.trading.proxyLimits.updated(entry.participant, ProxyLimit(max, entry.sequence))
+        )
+      )
+    val online = course.online.filter(kept).foldLeft(RemovalReplay(start, Nil)) { (before, entry) =>
+      val replay = before.copy(trading = before.trading.copy(stepWindows = course.windowsAt(entry.sequence)))
+      val trading = replay.trading
       entry.move match {
         case Move.Bid(amount) =>
           val price = if (trading.leader.contains(entry.participant)) greater(trading.currentPrice, amount) else amount
-          val placed: LotEvent.BidPlaced =
+          val event: LotEvent.BidPlaced =
             LotEvent.BidPlaced(positionId, entry.participant, price, trading.leader, BidOrigin.Proxy)
-          answered(bidden(trading, placed), entry.at)
-        case Move.LimitSet(max) => answered(limit(trading, entry, max), entry.at)
-        case Move.LimitWithdrawn => trading.copy(proxyLimits = trading.proxyLimits.removed(entry.participant))
+          answered(placed(replay, event), entry.at)
+        case Move.LimitSet(max) => answered(limit(replay, entry, max), entry.at)
+        case Move.LimitWithdrawn =>
+          replay.copy(trading = trading.copy(proxyLimits = trading.proxyLimits.removed(entry.participant)))
       }
     }
-    course.held.filter(kept).foldLeft(online) { (trading, entry) =>
+    course.held.filter(kept).foldLeft(online) { (replay, entry) =>
       entry.move match {
-        case Move.LimitSet(max) => limit(trading, entry, max)
-        case Move.LimitWithdrawn => trading.copy(proxyLimits = trading.proxyLimits.removed(entry.participant))
-        case Move.Bid(_) => trading
+        case Move.LimitSet(max) => limit(replay, entry, max)
+        case Move.LimitWithdrawn =>
+          replay
+            .copy(trading = replay.trading.copy(proxyLimits = replay.trading.proxyLimits.removed(entry.participant)))
+        case Move.Bid(_) => replay
       }
     }
   }

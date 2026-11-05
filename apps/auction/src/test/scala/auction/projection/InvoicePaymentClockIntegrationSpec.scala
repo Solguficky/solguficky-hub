@@ -57,10 +57,23 @@ final class InvoicePaymentClockIntegrationSpec extends AnyWordSpec with Matchers
           try {
             statement.execute(s"UPDATE auction_view SET status = 'finished' WHERE auction_id = '$auctionId'")
             statement.execute(invoiceSql(6, "NULL", "AwaitingPayment"))
+            // Счёт переданного лота: срок отсчитан от выставления после конца торгов, общий срок его не трогает
+            // (ADR-075, п. 4), даже если он случайно оказался раньше общего.
+            statement.execute(invoiceSql(7, s"'${end.plus(Duration.ofDays(10))}'", "AwaitingPayment"))
+            statement.execute(invoiceSql(9, s"'${end.minus(Duration.ofDays(10))}'", "AwaitingPayment"))
+            statement.execute(
+              s"UPDATE auction_invoice SET transferred = true WHERE invoice_id IN ('${uuid(7)}', '${uuid(9)}')"
+            )
+            // Обычный счёт со сроком позже общего перезаписывается: пропуск решает признак, а не сравнение сроков.
+            statement.execute(invoiceSql(8, s"'${end.plus(Duration.ofDays(10))}'", "AwaitingPayment"))
           } finally statement.close()
         }
         val requested = changes
-        requested.map(_.invoice).toSet shouldBe Set(InvoiceId(uuid(2)), InvoiceId(uuid(6)))
+        requested.map(_.invoice).toSet shouldBe Set(
+          InvoiceId(uuid(2)),
+          InvoiceId(uuid(6)),
+          InvoiceId(uuid(8))
+        ) // не 7 и 9
         requested.flatMap(_.dueAt).toSet shouldBe Set(end.plus(Duration.ofDays(1)))
       } finally database.close()
     }

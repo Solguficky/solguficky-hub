@@ -47,11 +47,16 @@ object InvoicingProjection {
 
   type Envelope = EventEnvelope[StoredLotEvent]
 
-  def init(system: ActorSystem[?], metrics: ProjectionMetrics, handler: () => Handler[Envelope]): Unit =
+  def init(
+      system: ActorSystem[?],
+      metrics: ProjectionMetrics,
+      handler: () => Handler[Envelope],
+      name: String = Name
+  ): Unit =
     ShardedDaemonProcess(system).init[ProjectionBehavior.Command](
-      Name,
+      name,
       LotTags.Count,
-      index => ProjectionBehavior(projection(system, LotTags.all(index), metrics, handler)),
+      index => ProjectionBehavior(projection(system, LotTags.all(index), metrics, handler, name)),
       ShardedDaemonProcessSettings(system),
       Some(ProjectionBehavior.Stop)
     )
@@ -60,12 +65,13 @@ object InvoicingProjection {
       system: ActorSystem[?],
       tag: String,
       metrics: ProjectionMetrics,
-      handler: () => Handler[Envelope]
+      handler: () => Handler[Envelope],
+      name: String = Name
   ): AtLeastOnceProjection[Offset, Envelope] = {
     val source = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database
     JdbcProjection
       .atLeastOnceAsync(
-        ProjectionId(Name, tag),
+        ProjectionId(name, tag),
         EventSourcedProvider.eventsByTag[StoredLotEvent](system, JdbcReadJournal.Identifier, tag),
         () => new PooledJdbcSession(source.source),
         handler
@@ -100,7 +106,7 @@ final class InvoicingHandler(
       case Some(sale) =>
         termOf(sale.auction).flatMap { term =>
           val terms = sale.terms(term)
-          issue(sale.invoice, if (sale.auction.value.version == 5) terms.copy(paymentDueAt = None) else terms)
+          issue(sale.invoice, InvoicingHandler.atIssue(sale.auction, terms))
         }
     }
 
@@ -134,6 +140,10 @@ object InvoicingHandler {
       case _ => None
     }
   }
+
+  /** Условия при выставлении по продаже: у аукциона сходки срок появится с концом торгов (`InvoicePaymentClock`). */
+  def atIssue(auction: AuctionId, terms: InvoiceTerms): InvoiceTerms =
+    if (auction.value.version == 5) terms.copy(paymentDueAt = None) else terms
 
   /** Срок оплаты по конфигурации аукциона, который открыл торги: продажа без старта торгов — дефект, а не умолчание. */
   def termOf(auction: Auction): Duration =

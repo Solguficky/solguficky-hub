@@ -155,8 +155,8 @@ final class InvoiceViewHandler(serialization: Serialization)
       connection.prepareStatement(
         """INSERT INTO auction_invoice
           |  (invoice_id, auction_id, lot_id, winner_id, amount_minor, currency, payment_due_at, status, fulfillment,
-          |   version)
-          |VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?)
+          |   version, transferred)
+          |VALUES (?::uuid, ?::uuid, ?::uuid, ?::uuid, ?, ?, ?, ?, ?, ?, ?)
           |ON CONFLICT (invoice_id) DO UPDATE SET status = EXCLUDED.status, fulfillment = EXCLUDED.fulfillment,
           |  payment_due_at = EXCLUDED.payment_due_at, version = EXCLUDED.version
           |WHERE auction_invoice.version < EXCLUDED.version""".stripMargin
@@ -172,6 +172,7 @@ final class InvoiceViewHandler(serialization: Serialization)
       statement.setString(8, InvoiceJournal.statusName(view.status))
       statement.setString(9, view.fulfillment.map(InvoiceJournal.methodName).orNull)
       statement.setLong(10, version)
+      statement.setBoolean(11, view.terms.transferred)
       statement.executeUpdate()
     }
 }
