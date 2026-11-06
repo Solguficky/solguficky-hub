@@ -39,7 +39,19 @@ defmodule Achievements.LedgerIntegrationTest do
     Application.delete_env(:achievements, :definitions)
 
     {:ok, _} = Application.ensure_all_started(:achievements)
-    on_exit(fn -> Application.stop(:achievements) end)
+
+    # Реестр контейнеров зарегистрирован по имени и ловит выход: модуль снимает
+    # его сам, иначе следующий модуль L1 получил бы `already_started` на своём
+    # `Testcontainers.start_link/0`.
+    on_exit(fn ->
+      Application.stop(:achievements)
+
+      case Process.whereis(Testcontainers) do
+        nil -> :ok
+        pid -> GenServer.stop(pid)
+      end
+    end)
+
     :ok
   end
 
