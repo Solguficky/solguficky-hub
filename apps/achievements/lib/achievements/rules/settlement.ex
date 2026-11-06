@@ -13,8 +13,16 @@ defmodule Achievements.Rules.Settlement do
 
   Конец аукциона загружает лоты своего реестра (`lot_ids` снимка), продажа и
   оплата — аукцион своего лота: решение созревает на последнем из трёх фактов,
-  каким бы он ни пришёл. Решённый лот (`decided`) больше не пересчитывается:
-  ачивка не отзывается, а поздний факт её не выдаёт.
+  каким бы он ни пришёл.
+
+  Необратима только выдача: лот с выдачей помечается `decided` и больше не
+  пересчитывается — ачивка не отзывается. Созревший лот без выдачи остаётся
+  открытым, и каждый следующий факт лота пересчитывает его: поздняя ставка,
+  пришедшая после трёх фактов барьера, ещё может выдать ачивку. Обратное —
+  поздняя ставка после выдачи, которая её бы не дала, — принятый риск: полноту
+  истории ставок шина не доказывает (номера `version` идут с пропусками), а
+  ошибочную выдачу гасит мейнтейнер (docs/product/future/achievements.md,
+  «Выдача»).
   """
 
   alias Achievements.{Fact, Rule}
@@ -78,21 +86,20 @@ defmodule Achievements.Rules.Settlement do
 
   defp mark_lot_fact(state, fact, track), do: track.(fact, state)
 
-  # Созревший лот решается один раз: выдача победителю, который сам оплатил
-  # свой счёт, если его ход торгов удовлетворяет правилу.
+  # Созревший лот выдаёт ачивку победителю, который сам оплатил свой счёт, если
+  # его ход торгов удовлетворяет правилу; решённым становится только лот с
+  # выдачей.
   defp decide(states, auction_key, qualifies?) do
     auction = states[auction_key]
 
     if auction["started"] && auction["finished"] do
       Enum.reduce(states, {[], states}, fn
         {"lot:" <> _ = key, lot}, {granted, acc} ->
-          if ripe?(lot) do
-            winner = lot["winner"]
-            granted = if qualifies?.(winner, lot), do: [winner | granted], else: granted
-            {granted, Map.put(acc, key, Map.put(lot, "decided", true))}
-          else
-            {granted, acc}
-          end
+          winner = lot["winner"]
+
+          if ripe?(lot) and qualifies?.(winner, lot),
+            do: {[winner | granted], Map.put(acc, key, Map.put(lot, "decided", true))},
+            else: {granted, acc}
 
         _other, result ->
           result

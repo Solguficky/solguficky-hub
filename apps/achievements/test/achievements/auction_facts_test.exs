@@ -5,6 +5,7 @@ defmodule Achievements.AuctionFactsTest do
     only: [
       auction_finished: 2,
       bid: 5,
+      final_started: 3,
       participant_removed: 6,
       prebidding_ended: 3,
       raffle_drawn: 3,
@@ -119,6 +120,14 @@ defmodule Achievements.AuctionFactsTest do
     assert {:ok, %Fact{kind: :auction_finished}} = AuctionFacts.decode(subject, body)
 
     {subject, body} = prebidding_ended(@auction, [], :on_break)
+    assert AuctionFacts.decode(subject, body) == :ignored
+  end
+
+  test "the start of the final opens the trading only of an auction without an online phase" do
+    {subject, body} = final_started(@auction, [], [])
+    assert {:ok, %Fact{kind: :trading_started}} = AuctionFacts.decode(subject, body)
+
+    {subject, body} = final_started(@auction, [], online: true)
     assert AuctionFacts.decode(subject, body) == :ignored
   end
 

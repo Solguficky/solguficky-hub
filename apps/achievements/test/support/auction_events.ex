@@ -6,6 +6,7 @@ defmodule Achievements.Test.AuctionEvents do
   # повтор того же факта — то же сообщение ещё раз.
 
   alias Auction.V1.{
+    AuctionConfig,
     AuctionEvent,
     AuctionFinished,
     AuctionState,
@@ -28,6 +29,7 @@ defmodule Achievements.Test.AuctionEvents do
     LotWithdrawn,
     ManualBid,
     Missed,
+    OnlinePhase,
     ParticipantRemoved,
     ParticipantResult,
     Participation,
@@ -51,6 +53,7 @@ defmodule Achievements.Test.AuctionEvents do
   def prebidding_started(auction, lots, opts \\ []),
     do: auction(auction, :prebidding_started, %PrebiddingStarted{}, prebidding(), lots, opts)
 
+  @doc "Начало финала; `online: true` — у аукциона есть онлайн-этап."
   def final_started(auction, lots, opts \\ []),
     do: auction(auction, :final_started, %FinalStarted{}, final(lots), lots, opts)
 
@@ -73,6 +76,13 @@ defmodule Achievements.Test.AuctionEvents do
         opts
       )
 
+  defp config(true),
+    do: %AuctionConfig{
+      online_phase: %OnlinePhase{opens_at: "2026-11-09T09:00:00Z"}
+    }
+
+  defp config(false), do: %AuctionConfig{}
+
   defp prebidding, do: {:prebidding, %AuctionState.Prebidding{}}
   defp final(lots), do: {:in_final, %AuctionState.Final{order: lots}}
   defp finished, do: {:finished, %AuctionState.Finished{}}
@@ -83,7 +93,12 @@ defmodule Achievements.Test.AuctionEvents do
       auction_id: auction,
       version: Keyword.get(opts, :version, 1),
       occurred_at: Keyword.get(opts, :at, @at),
-      state: %AuctionState{id: auction, lot_ids: lots, status: status},
+      state: %AuctionState{
+        id: auction,
+        lot_ids: lots,
+        status: status,
+        config: config(Keyword.get(opts, :online, false))
+      },
       occasion: {name, occasion}
     }
 

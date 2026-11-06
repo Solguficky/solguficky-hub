@@ -5,7 +5,7 @@ defmodule Achievements.Test.RuleRun do
   # occurred_at, дедупликация по event_id, состояние по state_keys через круг
   # JSON (ключи возвращаются строками, как из jsonb) и один держатель у
   # ачивки с получателем :one. Что харнесс совпадает с Ledger, держит L1
-  # test/integration/rules_ledger_test.exs.
+  # test/integration/ledger_test.exs.
 
   alias Achievements.{AuctionFacts, Definition, Fact, Proto}
 

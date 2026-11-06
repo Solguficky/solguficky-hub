@@ -101,6 +101,22 @@ defmodule Achievements.Rules.ProxyStrategistTest do
     assert RuleRun.holders(c.definition, [early | proxy_trading(c)] ++ settle(c, c.vitya)) == []
   end
 
+  test "an auction without an online phase starts trading with its final", c do
+    final = final_started(c.auction, [c.lot])
+    messages = [final | proxy_trading(c)] ++ settle(c, c.vitya)
+    assert RuleRun.holders(c.definition, messages) == [c.vitya]
+  end
+
+  test "a final after an online week before the start date does not open the trading", c do
+    # Неделя с ручной ставкой Вити — до даты начала, финал — после неё.
+    early = prebidding_started(c.auction, [c.lot], at: "2026-11-02T09:00:00Z")
+    manual = bid(c.auction, c.lot, 1, c.vitya, at: "2026-11-03T09:00:00Z")
+    final = final_started(c.auction, [c.lot], online: true)
+
+    messages = [early, manual, final | proxy_trading(c)] ++ settle(c, c.vitya)
+    assert RuleRun.holders(c.definition, messages) == []
+  end
+
   test "an online phase that ends the auction is its end, a break is not", c do
     base = [c.started | proxy_trading(c)] ++ Enum.take(settle(c, c.vitya), 2)
 
@@ -118,8 +134,8 @@ defmodule Achievements.Rules.ProxyStrategistTest do
   end
 
   test "the trading does not stall when both the online phase and the final start", c do
-    messages =
-      [c.started, final_started(c.auction, [c.lot]) | proxy_trading(c)] ++ settle(c, c.vitya)
+    final = final_started(c.auction, [c.lot], online: true)
+    messages = [c.started, final | proxy_trading(c)] ++ settle(c, c.vitya)
 
     assert RuleRun.holders(c.definition, messages) == [c.vitya]
   end
@@ -128,6 +144,23 @@ defmodule Achievements.Rules.ProxyStrategistTest do
     messages = proxy_trading(c) ++ settle(c, c.vitya) ++ [c.started]
     assert [{_, index, _}] = RuleRun.run(c.definition, messages)
     assert index == length(messages) - 1
+  end
+
+  test "a proxy bid of the winner that arrives after sale, payment and end still grants it", c do
+    # Единственная автоставка Вити приходит после трёх фактов барьера: до неё
+    # его ставок на лоте правило не видело, и выдачи нет.
+    late = bid(c.auction, c.lot, 3, c.vitya, origin: :proxy)
+    messages = [c.started, bid(c.auction, c.lot, 2, c.rival)] ++ settle(c, c.vitya) ++ [late]
+
+    assert [{holder, index, _}] = RuleRun.run(c.definition, messages)
+    assert holder == c.vitya
+    assert index == length(messages) - 1
+  end
+
+  test "a manual bid of the winner that arrives after the grant does not take it back", c do
+    late = bid(c.auction, c.lot, 1, c.vitya)
+    messages = [c.started | proxy_trading(c)] ++ settle(c, c.vitya) ++ [late]
+    assert RuleRun.holders(c.definition, messages) == [c.vitya]
   end
 
   test "repeated facts give no second grant", c do

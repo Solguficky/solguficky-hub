@@ -85,8 +85,7 @@ defmodule Achievements.Definition do
       definition.reach not in @reaches ->
         {:error, "achievement #{definition.code} has an unknown reach"}
 
-      definition.reach == :one_per_event != (definition.recipients == :one) and
-          definition.reach != :unspecified ->
+      not reach_fits?(definition) ->
         {:error, "achievement #{definition.code} has a reach that disagrees with its recipients"}
 
       definition.event_kind not in [:auction, :meetup] ->
@@ -99,6 +98,13 @@ defmodule Achievements.Definition do
         validate_issue(definition)
     end
   end
+
+  # Охват «один на событие» — ровно у ачивки с одним получателем; незаданный
+  # охват не спорит ни с чем.
+  defp reach_fits?(%__MODULE__{reach: :unspecified}), do: true
+
+  defp reach_fits?(%__MODULE__{reach: reach, recipients: recipients}),
+    do: reach == :one_per_event == (recipients == :one)
 
   defp validate_issue(%__MODULE__{issue: :manual, rule: nil}), do: :ok
 

@@ -153,9 +153,17 @@ defmodule Achievements.AuctionFacts do
   defp to_fact(%AuctionEvent{state: %AuctionState{} = state} = event, name, kind) do
     with :ok <- uuid(event.auction_id, "auction_id") do
       case {name, state.status} do
-        {:prebidding_ended, {:finished, _}} -> with_lots(event, kind, state)
-        {:prebidding_ended, _} -> :ignored
-        _ -> with_lots(event, kind, state)
+        {:prebidding_ended, {:finished, _}} ->
+          with_lots(event, kind, state)
+
+        {:prebidding_ended, _} ->
+          :ignored
+
+        {:final_started, _} ->
+          if online_phase?(state), do: :ignored, else: with_lots(event, kind, state)
+
+        _ ->
+          with_lots(event, kind, state)
       end
     end
   end
@@ -193,6 +201,13 @@ defmodule Achievements.AuctionFacts do
   end
 
   defp to_fact(_event, name, _kind), do: {:error, "the body does not carry a #{name} fact"}
+
+  # Начало торгов аукциона с онлайн-этапом — prebidding_started, а не начало
+  # финала: иначе аукцион, чья онлайн-неделя пришлась до даты начала ачивки,
+  # открыл бы ход торгов финалом, и правило считало бы ставки без недели.
+  # Начало финала — начало торгов только у аукциона без онлайн-этапа.
+  defp online_phase?(%AuctionState{config: %{online_phase: %{}}}), do: true
+  defp online_phase?(_state), do: false
 
   # Начало торгов и конец аукциона несут реестр лотов снимка: правилу хода
   # торгов он нужен, чтобы решить лоты на любом из двух фактов.

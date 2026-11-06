@@ -1,4 +1,4 @@
-defmodule Achievements.RulesLedgerIntegrationTest do
+defmodule Achievements.LedgerIntegrationTest do
   # L1: правила поставки через настоящий Ledger над PostgreSQL. Тесты правил
   # идут харнессом без базы (Achievements.Test.RuleRun); здесь доказывается,
   # что Ledger с jsonb-состоянием и уникальностями реестра выдаёт тех же

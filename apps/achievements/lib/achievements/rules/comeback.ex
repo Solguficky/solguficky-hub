@@ -19,11 +19,11 @@ defmodule Achievements.Rules.Comeback do
 
   @changes 3
 
+  # Факты лота, которые двигают лидера: их и только их правило пишет в журнал.
+  @moves [:bid_placed, :participant_removed, :lot_held_for_final, :lot_resumed]
+
   @impl true
-  def reads,
-    do:
-      [:bid_placed, :participant_removed, :lot_held_for_final, :lot_resumed] ++
-        Settlement.reads()
+  def reads, do: @moves ++ Settlement.reads()
 
   @impl true
   def state_keys(fact), do: Settlement.state_keys(fact)
@@ -31,8 +31,7 @@ defmodule Achievements.Rules.Comeback do
   @impl true
   def evaluate(fact, states), do: Settlement.evaluate(fact, states, &track/2, &qualifies?/2)
 
-  defp track(%{kind: kind, data: data}, lot)
-       when kind in [:bid_placed, :participant_removed, :lot_held_for_final, :lot_resumed] do
+  defp track(%{kind: kind, data: data}, lot) when kind in @moves do
     Map.update(lot, "log", [entry(kind, data)], &[entry(kind, data) | &1])
   end
 
