@@ -1195,6 +1195,18 @@ describe("presentation adapter", () => {
     });
   });
 
+  it("answers an edge arrow without reordering", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:mm:e:AZLzpLXGfY6fChssPU5fYA"));
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.map((call) => call.method)).toEqual(["answerCallbackQuery"]);
+    expect(calls[0]?.payload).toMatchObject({ text: "Уже край." });
+  });
+
   it("removes a material only after confirming that the original stays", async () => {
     const material = {
       id: "0199c0de-0000-7000-8000-00000000009a",

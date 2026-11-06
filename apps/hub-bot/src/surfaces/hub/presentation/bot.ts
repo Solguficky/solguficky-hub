@@ -3421,6 +3421,17 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "material-edge") {
+      await waiting.answer("Уже край.");
+      outcome = {
+        level: "info",
+        message: "material already at edge",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
+      return;
+    }
     if (action.kind === "move-material") {
       const meetupId = tokenToUuid(action.token);
       if (!canManageMeetups(person)) {
@@ -14769,6 +14780,7 @@ function callbackUseCase(
     | "manage-type-schedule"
     | "manage-retry-past-schedule"
     | "manage-materials"
+    | "material-edge"
     | "move-material"
     | "begin-attach-material"
     | "decline-attach-material"
@@ -14814,6 +14826,7 @@ function callbackUseCase(
     case "manage-pick-schedule":
     case "manage-type-schedule":
     case "manage-materials":
+    case "material-edge":
     case "move-material":
     case "begin-attach-material":
     case "decline-attach-material":

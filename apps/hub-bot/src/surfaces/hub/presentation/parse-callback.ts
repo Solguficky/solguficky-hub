@@ -717,6 +717,7 @@ type PlainAction =
   // «Ввести дату»: даты среди заготовок нет, и её спрашивают текстом.
   | { kind: "manage-type-schedule"; token: string; mode: WhenMode }
   | { kind: "manage-materials"; token: string; page?: number }
+  | { kind: "material-edge"; token: string }
   | {
       kind: "move-material";
       token: string;
@@ -2421,6 +2422,9 @@ export function parseCallback(raw: unknown): CallbackAction {
     }
     if (parts.length === 4 && parts[2] === "no") {
       return { kind: "decline-attach-material", token: meetupToken.data };
+    }
+    if (parts.length === 4 && parts[2] === "e") {
+      return { kind: "material-edge", token: meetupToken.data };
     }
     const materialToken = TokenSchema.safeParse(parts[4]);
     if (!materialToken.success) return { kind: "malformed" };

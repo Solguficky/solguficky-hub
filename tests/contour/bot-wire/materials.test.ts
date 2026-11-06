@@ -68,7 +68,7 @@ describe("материалы сходки", () => {
       "Программа вечера",
     ]);
 
-    await organizer.presses("🗑 Убрать");
+    await organizer.presses("🗑");
     await organizer.presses("✔️ Да, убрать материал");
 
     expect(organizer.sees()).toContain("Пока ничего не прикреплено.");

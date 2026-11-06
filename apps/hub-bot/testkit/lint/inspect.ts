@@ -4,7 +4,6 @@ import {
   confirmNoLabel,
   confirmYesPrefix,
   lotGroupSigns,
-  marked,
   pictogram,
   pictogramWords,
   refreshLabel,
@@ -82,7 +81,7 @@ const carryingMethods: ReadonlySet<string> = new Set([
 const backSign = "‹ ";
 // Выход кадра исхода аукциона — к карточке лота, как у кнопки следа.
 const toLotLabel = "К лоту";
-const removeMaterialLabel = marked(pictogram.remove, "Убрать");
+const removeMaterialLabel = pictogram.remove;
 const moveUpLabel = "↑";
 const moveDownLabel = "↓";
 const adminSign = `${pictogram.admin} `;
@@ -98,6 +97,7 @@ function isMaterialManageRow(row: readonly Button[]): boolean {
   const arrows = row.filter(
     (button) => button.text === moveUpLabel || button.text === moveDownLabel,
   );
+  if (arrows.length !== 0 && arrows.length !== 2) return false;
   if (arrows.length !== new Set(arrows.map((button) => button.text)).size) {
     return false;
   }
@@ -325,20 +325,26 @@ function checkRules(
     // Шире двух — только ряд коротких заготовок вроде времени или листания
     // либо ряд, который дизайн-код называет поимённо: листание лотов с
     // «🔄 Обновить» посередине (PER-669), строка материала со стрелками
-    // порядка (PER-848).
+    // порядка (PER-859).
     const short = row.every((button) => button.text.length <= 6);
     const pair = labels(row).join("|");
     const named =
       config.namedPairs?.has(pair) === true ||
       config.namedPairs?.has(pair.replace(/\d+/g, "#")) === true;
     const materialRow = isMaterialManageRow(row);
-    if (row.length > (short ? 4 : 2) && !named && !materialRow) {
+    const hasArrows = row.some(
+      (button) => button.text === moveUpLabel || button.text === moveDownLabel,
+    );
+    if (
+      (hasArrows && !materialRow) ||
+      (row.length > (short ? 4 : 2) && !named && !materialRow)
+    ) {
       found.push(["rows", `в ряду ${row.length} кнопок: ${describeRow(row)}`]);
       return;
     }
     // Две в ряду — только у пар, которые дизайн-код называет поимённо: ряд
     // навигации, разделы меню, листание и заготовки, пары дерева бота,
-    // материал с «🗑 Убрать» и стрелками порядка.
+    // материал с «🗑» и стрелками порядка.
     const allowed =
       short ||
       named ||
@@ -354,7 +360,7 @@ function checkRules(
       materialRow;
     // Кнопка управления не делит ряд с кнопкой участника (решение владельца
     // 19 октября 2026 года, PER-669). Исключение — действие над строкой
-    // таблицы: «🗑 Убрать» у своего материала знака управления не несёт.
+    // таблицы: «🗑» у своего материала знака управления не несёт.
     const admin = row.filter((button) => button.text.startsWith(adminSign));
     if (admin.length > 0 && admin.length < row.length) {
       found.push([
