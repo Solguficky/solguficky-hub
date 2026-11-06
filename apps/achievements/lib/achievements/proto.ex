@@ -87,6 +87,10 @@ defmodule Achievements.Proto do
     do: at |> DateTime.shift_zone!("Etc/UTC") |> DateTime.to_iso8601()
 
   defp rarity(:unspecified), do: :RARITY_UNSPECIFIED
+  defp rarity(:common), do: :RARITY_COMMON
+  defp rarity(:rare), do: :RARITY_RARE
+  defp rarity(:epic), do: :RARITY_EPIC
+  defp rarity(:legendary), do: :RARITY_LEGENDARY
 
   defp recipients(:one), do: :RECIPIENTS_ONE
   defp recipients(:many), do: :RECIPIENTS_MANY

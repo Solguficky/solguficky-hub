@@ -57,7 +57,7 @@ recipes_of() {
         meetups) echo "meetups-contracts-check meetups-build meetups-test meetups-format-check" ;;
         notifications) echo "notifications-contracts-check notifications-build notifications-test" ;;
         auction) echo "auction-verify" ;;
-        achievements) echo "achievements-build achievements-test achievements-format-check" ;;
+        achievements) echo "achievements-build achievements-test achievements-format-check achievements-images-check" ;;
         nats-tester) echo "nats-tester-check" ;;
         gate-observer) echo "gate-observer-check" ;;
     esac

@@ -6,8 +6,13 @@ defmodule Achievements.Definition do
 
   - `code` — стабильный код, snake_case: на него ссылаются набор, выдача и
     чтение картинки, и вошедшее в набор определение кода не меняет;
-  - `rarity` — только оформление; значения контракта приходят с первым набором
-    определений (PER-575), до него у перечисления одно `:unspecified`;
+  - `rarity` — ценность: сколько критерий требует от человека, `:common`,
+    `:rare`, `:epic` или `:legendary`; `:unspecified` — оформление по
+    умолчанию. Меняет только оформление (docs/product/future/achievements-auction.md,
+    «Ценность и охват»);
+  - `reach` — охват: сколько людей получает ачивку, `:one_per_event`, `:few`
+    или `:many`; показывается подписью на картинке. Охват «один на событие»
+    ровно у ачивки с получателем `:one`;
   - `image` — файл картинки: путь относительно `priv/achievements` или
     абсолютный; `nil` — картинки нет;
   - `recipients` — `:one` (один держатель на событие) или `:many`;
@@ -29,16 +34,20 @@ defmodule Achievements.Definition do
     :starts_at,
     :image,
     :rule,
-    rarity: :unspecified
+    rarity: :unspecified,
+    reach: :unspecified
   ]
 
   @type event_kind :: :auction | :meetup
+  @type rarity :: :unspecified | :common | :rare | :epic | :legendary
+  @type reach :: :unspecified | :one_per_event | :few | :many
 
   @type t :: %__MODULE__{
           code: String.t(),
           title: String.t(),
           description: String.t(),
-          rarity: :unspecified,
+          rarity: rarity(),
+          reach: reach(),
           image: Path.t() | nil,
           recipients: :one | :many,
           issue: :rule | :manual,
@@ -47,7 +56,8 @@ defmodule Achievements.Definition do
           rule: module() | nil
         }
 
-  @rarities [:unspecified]
+  @rarities [:unspecified, :common, :rare, :epic, :legendary]
+  @reaches [:unspecified, :one_per_event, :few, :many]
 
   # Вид события, чей стрим сервис читает. Правило ачивки сходки читать нечего:
   # её набор появляется ручной выдачей (ADR-077, п. 4).
@@ -71,6 +81,13 @@ defmodule Achievements.Definition do
 
       definition.recipients not in [:one, :many] ->
         {:error, "achievement #{definition.code} has unknown recipients"}
+
+      definition.reach not in @reaches ->
+        {:error, "achievement #{definition.code} has an unknown reach"}
+
+      definition.reach == :one_per_event != (definition.recipients == :one) and
+          definition.reach != :unspecified ->
+        {:error, "achievement #{definition.code} has a reach that disagrees with its recipients"}
 
       definition.event_kind not in [:auction, :meetup] ->
         {:error, "achievement #{definition.code} has an unknown event kind"}

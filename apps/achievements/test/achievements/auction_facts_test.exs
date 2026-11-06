@@ -1,8 +1,18 @@
 defmodule Achievements.AuctionFactsTest do
   use ExUnit.Case, async: true
 
+  import Achievements.Test.AuctionEvents,
+    only: [
+      auction_finished: 2,
+      bid: 5,
+      participant_removed: 6,
+      prebidding_ended: 3,
+      raffle_drawn: 3,
+      uuid: 0
+    ]
+
   alias Achievements.{AuctionFacts, Fact}
-  alias Auction.V1.{InvoiceEvent, InvoicePaid, InvoiceState, LotEvent, LotSold}
+  alias Auction.V1.{AskAdvanced, InvoiceEvent, InvoicePaid, InvoiceState, LotEvent}
 
   @auction "5f0c7a3e-3c1d-5a8b-9e1f-2a4b6c8d0e1f"
   @winner "0192f5a0-0000-7000-8000-000000000001"
@@ -51,13 +61,86 @@ defmodule Achievements.AuctionFactsTest do
   end
 
   test "an occasion no rule reads is ignored without decoding the body" do
-    assert AuctionFacts.decode("events.auction.lot_sold", "not a body") == :ignored
+    assert AuctionFacts.decode("events.auction.ask_advanced", "not a body") == :ignored
 
     assert AuctionFacts.decode(
-             "events.auction.lot_sold",
-             %LotEvent{occasion: {:lot_sold, %LotSold{}}} |> LotEvent.encode()
+             "events.auction.ask_advanced",
+             %LotEvent{occasion: {:ask_advanced, %AskAdvanced{}}} |> LotEvent.encode()
            ) ==
              :ignored
+  end
+
+  test "a bid is a fact about the leader of its snapshot in the auction of its lot" do
+    lot = uuid()
+    bidder = uuid()
+    {subject, body} = bid(@auction, lot, 4, bidder, origin: :proxy)
+
+    assert {:ok, %Fact{kind: :bid_placed} = fact} = AuctionFacts.decode(subject, body)
+    assert fact.event == {:auction, @auction}
+    assert fact.subject == bidder
+
+    assert fact.data == %{
+             lot_id: lot,
+             version: 4,
+             bidder: bidder,
+             origin: :proxy,
+             overtaken: false
+           }
+  end
+
+  test "a bid without a leader in its snapshot is undecodable" do
+    {subject, body} = bid(@auction, uuid(), 4, nil, [])
+    assert {:error, reason} = AuctionFacts.decode(subject, body)
+    assert reason =~ "leader_id"
+  end
+
+  test "a removal from a held lot takes the leader from the held state" do
+    leader = uuid()
+    previous = uuid()
+    {subject, body} = participant_removed(@auction, uuid(), 7, leader, previous, held: true)
+
+    assert {:ok, %Fact{kind: :participant_removed, data: data}} =
+             AuctionFacts.decode(subject, body)
+
+    assert data.leader == leader
+    assert data.previous_leader == previous
+  end
+
+  test "the end of the auction carries the lots of its registry" do
+    lots = [uuid(), uuid()]
+    {subject, body} = auction_finished(@auction, lots)
+
+    assert {:ok, %Fact{kind: :auction_finished, data: %{lot_ids: ^lots}}} =
+             AuctionFacts.decode(subject, body)
+  end
+
+  test "the end of the online phase is the end of the auction only when it finished it" do
+    {subject, body} = prebidding_ended(@auction, [], :finished)
+    assert {:ok, %Fact{kind: :auction_finished}} = AuctionFacts.decode(subject, body)
+
+    {subject, body} = prebidding_ended(@auction, [], :on_break)
+    assert AuctionFacts.decode(subject, body) == :ignored
+  end
+
+  test "a draw is a fact about the holder of the winning ticket" do
+    tickets = [uuid(), uuid(), uuid()]
+    {subject, body} = raffle_drawn(@auction, tickets, 2)
+
+    assert {:ok, %Fact{kind: :raffle_drawn} = fact} = AuctionFacts.decode(subject, body)
+    assert fact.event == {:auction, @auction}
+    assert fact.subject == Enum.at(tickets, 1)
+  end
+
+  test "a draw whose winning ticket names no ticket is undecodable" do
+    {subject, body} = raffle_drawn(@auction, [uuid()], 2)
+    assert {:error, reason} = AuctionFacts.decode(subject, body)
+    assert reason =~ "winning_ticket"
+  end
+
+  test "a body that carries another occasion than its subject is undecodable" do
+    {_subject, body} = bid(@auction, uuid(), 4, uuid(), [])
+    assert {:error, reason} = AuctionFacts.decode("events.auction.lot_sold", body)
+    assert reason =~ "lot_sold"
   end
 
   test "a subject outside the auction facts is ignored" do
@@ -102,7 +185,11 @@ defmodule Achievements.AuctionFactsTest do
       invoice_id: "0192f5a0-0000-7000-8000-0000000000bb",
       version: 2,
       occurred_at: "2026-10-28T12:00:00Z",
-      state: %InvoiceState{auction_id: @auction, lot_id: "lot", winner_id: @winner},
+      state: %InvoiceState{
+        auction_id: @auction,
+        lot_id: "0192f5a0-0000-7000-8000-0000000000cc",
+        winner_id: @winner
+      },
       occasion: {:invoice_paid, %InvoicePaid{}}
     }
   end

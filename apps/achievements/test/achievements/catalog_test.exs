@@ -67,6 +67,23 @@ defmodule Achievements.CatalogTest do
              Catalog.build([definition("a", event_kind: :meetup, issue: :manual, rule: nil)], dir)
   end
 
+  test "a reach of one per event refuses the catalog on an achievement of many", %{tmp_dir: dir} do
+    assert {:error, reason} = Catalog.build([definition("a", reach: :one_per_event)], dir)
+    assert reason =~ "disagrees with its recipients"
+  end
+
+  test "an achievement of one holder with a reach of many refuses the catalog", %{tmp_dir: dir} do
+    assert {:error, reason} =
+             Catalog.build([definition("a", recipients: :one, reach: :many)], dir)
+
+    assert reason =~ "disagrees with its recipients"
+  end
+
+  test "an unknown rarity refuses the catalog", %{tmp_dir: dir} do
+    assert {:error, reason} = Catalog.build([definition("a", rarity: :mythic)], dir)
+    assert reason =~ "unknown rarity"
+  end
+
   test "load refuses the start of a node with an invalid catalog", %{tmp_dir: dir} do
     assert_raise ArgumentError, ~r/more than once/, fn ->
       Catalog.load!([definition("a"), definition("a")], dir)
