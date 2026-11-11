@@ -676,6 +676,15 @@ jobs:
           github_token: ${{ github.token }}
       - run: just achievements-tools
       - run: just achievements-format-check
+      # Картинки ачивок: PNG в Git сверяются с SVG-шаблоном единицы
+      # apps/achievements/images побайтно — тем же рецептом, что в `verify`.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/achievements/images/package-lock.json
+      - run: just achievements-images-tools
+      - run: just achievements-images-check
       - run: just achievements-build
       - run: just achievements-test
       # L1: PostgreSQL и NATS поднимает сам тест в Testcontainers; Docker на

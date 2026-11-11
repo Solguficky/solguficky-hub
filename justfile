@@ -47,6 +47,9 @@ JUST_SHA256 := "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
 LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
+# Node 22 запускает .ts без флага с 22.18 (render.ts Achievements); меньший минор
+# установщик среды обновляет, а не считает установленным.
+NODE_MIN_MINOR := "18"
 
 # Erlang/OTP и Elixir Achievements: версии — apps/achievements/.tool-versions,
 # его же читает erlef/setup-beam в CI, а суммы архивов builds.hex.pm, которые
@@ -195,8 +198,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, Achievements и его формат, nats-tester, наблюдатель ручного гейта и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify achievements-build achievements-test achievements-format-check nats-tester-check gate-observer-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, Achievements, его формат и сверка картинок ачивок с шаблоном, nats-tester, наблюдатель ручного гейта и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify achievements-build achievements-test achievements-format-check achievements-images-check nats-tester-check gate-observer-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -228,7 +231,7 @@ verify-changed:
 test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration auction-test-browser achievements-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools achievements-tools nats-tester-tools
+tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools achievements-tools achievements-images-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -768,6 +771,23 @@ achievements-test: achievements-proto
 # L1: миграции, health, релей outbox, акторы ачивок над стримом и чтения по gRPC на PostgreSQL и NATS в Testcontainers; нужен Docker
 achievements-test-integration: achievements-proto
     cd apps/achievements && ACHIEVEMENTS_INTEGRATION_TESTS=1 mix test --warnings-as-errors
+
+# Картинки ачивок — PNG в apps/achievements/priv/achievements, их собирает из
+# SVG-шаблона node-единица apps/achievements/images (resvg в wasm и шрифт
+# DejaVu Sans из её package-lock.json). PNG лежат в Git: образ их не
+# пересобирает, а сверку шаблона с файлами держит achievements-images-check.
+
+# npm-зависимости единицы картинок ачивок. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
+achievements-images-tools:
+    cd apps/achievements/images && npm ci
+
+# Перерисовать PNG ачивок из шаблона и badges.json — после правки знака, рамки, подписи или новой ачивки
+achievements-images:
+    cd apps/achievements/images && npm run render
+
+# Typecheck и lint единицы картинок и сверка PNG в Git с шаблоном побайтно; входит в `verify`
+achievements-images-check:
+    cd apps/achievements/images && npm run typecheck && npm run lint && npm run check
 
 # Гейт форматирования по apps/achievements/.formatter.exs
 achievements-format-check:

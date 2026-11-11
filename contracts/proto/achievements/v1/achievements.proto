@@ -54,11 +54,24 @@ message AchievementImageRef {
   string version = 1;
 }
 
-// Rarity changes the presentation only, never the mechanics. The values arrive
-// with the first set of definitions; a value a caller does not know is shown as
-// the default presentation.
+// How much the rule asks of a person, whatever the number of holders: it says
+// nothing about how many got the achievement. It changes the presentation only,
+// never the mechanics. A value a caller does not know, and the unspecified one,
+// is shown as the default presentation.
 enum Rarity {
   RARITY_UNSPECIFIED = 0;
+
+  // One action or an outcome the person hardly decides.
+  RARITY_COMMON = 1;
+
+  // An outcome carried to its end: a lot won and paid, a guess come true.
+  RARITY_RARE = 2;
+
+  // An outcome won through a fight for it: lead lost and taken back.
+  RARITY_EPIC = 3;
+
+  // Reserved for a heroic achievement; no definition carries it yet.
+  RARITY_LEGENDARY = 4;
 }
 
 // How many people of one event may hold the achievement.
