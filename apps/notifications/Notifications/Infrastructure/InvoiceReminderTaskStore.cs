@@ -61,14 +61,23 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
         LIMIT 1;
         """;
 
-    // Живое задание с наступившим моментом: их до трёх, и срабатывает то,
-    // что ждало дольше.
+    // Живое задание с наступившим моментом: их до трёх, и срабатывает самое
+    // позднее. Простой, накрывший несколько моментов, даёт одно напоминание:
+    // «за 24 часа» после «за 12» уже не новость, а второе сообщение за секунды.
     private const string DueSql = """
         SELECT task_id, invoice_id, kind, due_at, state, payment_due_at
         FROM invoice_reminder_task
         WHERE invoice_id = @InvoiceId AND state = 'scheduled' AND due_at <= @Now
-        ORDER BY due_at
+        ORDER BY due_at DESC
         LIMIT 1;
+        """;
+
+    // Наступившие моменты раньше сработавшего: их напоминание перекрыто более
+    // поздним, и снимаются они вместе с его срабатыванием.
+    private const string SupersedeSql = """
+        UPDATE invoice_reminder_task
+        SET state = 'cancelled', reason = 'superseded by a later moment'
+        WHERE invoice_id = @InvoiceId AND state = 'scheduled' AND due_at < @DueAt AND due_at <= @Now;
         """;
 
     private const string InsertSql = """
@@ -253,7 +262,13 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
         var facts = await NotificationStore.AddInvoiceReminder(
             work, task.TaskId, task.Kind, replica, now, cancellationToken);
 
+        var superseded = await work.Execute(
+            SupersedeSql,
+            new { task.InvoiceId, DueAt = task.DueAt.UtcDateTime, Now = now.UtcDateTime },
+            cancellationToken);
+
         await work.Commit(cancellationToken);
+        telemetry.Remove(superseded, "cancelled");
         telemetry.Fire();
         return new InvoiceFireResult(InvoiceFireOutcome.Sent, facts);
     }

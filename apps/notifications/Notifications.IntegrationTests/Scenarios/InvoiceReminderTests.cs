@@ -346,6 +346,33 @@ public class InvoiceReminderTests
         env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.DayBefore).State.ShouldBe("fired");
     }
 
+    /// <summary>
+    /// Простой, накрывший «за 24 часа» и «за 12 часов», даёт одно напоминание:
+    /// срабатывает последний наступивший момент, а перекрытый им снимается.
+    /// </summary>
+    [Fact]
+    public async Task When_DowntimeCoveredTwoMoments_Expect_SingleReminderAndOlderSuperseded()
+    {
+        await using var env = await BusScenario.Start(HeldRelay);
+        var winner = await Person(env.Db, MemberHolding);
+
+        await env.Publish(IssuedSubject, env.Invoice(winner));
+        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 3);
+
+        InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
+            InvoiceReminderProbe.DayBefore, InvoiceReminderProbe.HalfDayBefore);
+        await Eventually(() => env.Facts(NotificationFacts.InvoiceReminderType), count => count >= 1);
+
+        // Окно на второе сообщение: sweeper идёт раз в секунду.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+
+        (await env.Facts(NotificationFacts.InvoiceReminderType)).ShouldBe(1);
+        var tasks = env.Tasks();
+        tasks.Single(task => task.Kind == InvoiceReminderProbe.HalfDayBefore).State.ShouldBe("fired");
+        tasks.Single(task => task.Kind == InvoiceReminderProbe.DayBefore).State.ShouldBe("cancelled");
+        tasks.Single(task => task.Kind == InvoiceReminderProbe.HourBefore).State.ShouldBe("scheduled");
+    }
+
     private static DateTimeOffset DueOf(IEnumerable<InvoiceReminderTaskRow> tasks, string kind) =>
         new(tasks.Single(task => task.Kind == kind && task.State == "scheduled").DueAt.ToUniversalTime());
 
