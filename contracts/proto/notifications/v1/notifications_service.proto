@@ -395,14 +395,8 @@ message BroadcastAuctionNoticeRequest {
   AuctionNoticePhoto photo = 6;
 
   // Which holders of the auction right receive it. The holders themselves are
-  // chosen by this service, as in BroadcastToCommunity; the author only narrows
-  // them by a filter, never by a list. UNSPECIFIED reads as ALL. A narrowing
-  // filter is answered from Auction at the moment of the call and nothing of
-  // it is kept: Auction unreachable or not configured is UNAVAILABLE, never a
-  // broadcast to everyone; a filter that the auction cannot answer now (the
-  // raffle registration is not open, no prediction round is open) is
-  // FAILED_PRECONDITION. A repeat with the same id and another audience is a
-  // conflict.
+  // chosen by this service; the author only narrows them by a filter, never by
+  // a list. UNSPECIFIED reads as ALL. Nothing of a narrowing is kept.
   AuctionNoticeAudience audience = 7;
 }
 
@@ -416,17 +410,15 @@ enum AuctionNoticeAudience {
   // Every holder of the auction right.
   AUCTION_NOTICE_AUDIENCE_ALL = 1;
 
-  // Those not registered in the raffle of the auction. Only while registration
-  // is open: after it closes the filter is FAILED_PRECONDITION.
+  // Those not registered in the raffle of the auction.
   AUCTION_NOTICE_AUDIENCE_NOT_IN_RAFFLE = 2;
 
   // Those without a non-empty prediction in the round of the predictions game
-  // open now: the final once it opens, otherwise the catalog. Only while a
-  // round is open.
+  // open now: the final once it opens, otherwise the catalog.
   AUCTION_NOTICE_AUDIENCE_WITHOUT_PREDICTIONS = 3;
 
   // Those not registered in the raffle or without a prediction: everyone except
-  // the registered with a prediction. Only while both are open.
+  // the registered with a prediction.
   AUCTION_NOTICE_AUDIENCE_NOT_IN_RAFFLE_OR_WITHOUT_PREDICTIONS = 4;
 }
 

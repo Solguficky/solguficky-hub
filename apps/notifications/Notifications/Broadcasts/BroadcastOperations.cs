@@ -111,16 +111,21 @@ public sealed class BroadcastOperations(
         }
 
         var narrowing = await Narrow(meetupId, notice.Audience, forwarded);
-        if (narrowing is AudienceNarrowing.Refused refused)
+        switch (narrowing)
         {
-            var fields = Fields(broadcast, forwarded, "audience_refused");
-            fields["reason"] = refused.Reason;
-            OperationLog.Write(logger, LogLevel.Information, null, fields);
+            case AudienceNarrowing.Refused refused:
+                var fields = Fields(broadcast, forwarded, "audience_refused");
+                fields["reason"] = refused.Reason;
+                OperationLog.Write(logger, LogLevel.Information, null, fields);
 
-            return new BroadcastResult(answer, null, refused);
+                return new BroadcastResult(answer, null, refused);
+
+            case AudienceNarrowing.Excluding excluding:
+                return await Accept(answer, broadcast, forwarded, excluding.Excluded);
+
+            default:
+                throw new InvalidOperationException($"unknown audience narrowing {narrowing.GetType().Name}");
         }
-
-        return await Accept(answer, broadcast, forwarded, ((AudienceNarrowing.Excluding)narrowing).Excluded);
     }
 
     public async Task<BroadcastPreview> PreviewMeetup(Guid authorId, Guid meetupId, Forwarded forwarded)
@@ -183,15 +188,17 @@ public sealed class BroadcastOperations(
         }
 
         var narrowing = await Narrow(meetupId, audience, forwarded);
-        if (narrowing is AudienceNarrowing.Refused refused)
+        if (narrowing is not AudienceNarrowing.Excluding excluding)
         {
+            var refused = narrowing as AudienceNarrowing.Refused
+                ?? throw new InvalidOperationException($"unknown audience narrowing {narrowing.GetType().Name}");
             WritePreview(forwarded, "audience_refused", NotificationFacts.AuctionNoticeType, authorId, meetupId, answer, null,
                 audience, refused.Reason);
             return new BroadcastPreview(answer, null, refused);
         }
 
         var read = await store.ReadAuctionNoticeAudience(
-            meetupId, ((AudienceNarrowing.Excluding)narrowing).Excluded, forwarded.Cancellation);
+            meetupId, excluding.Excluded, forwarded.Cancellation);
         var count = read is AudienceRead.Counted counted ? counted.RecipientCount : (int?)null;
         WritePreview(forwarded, read is AudienceRead.AuctionClosed ? "auction_closed" : "counted",
             NotificationFacts.AuctionNoticeType, authorId, meetupId, answer, count, audience);

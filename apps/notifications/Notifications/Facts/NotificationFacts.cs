@@ -1,7 +1,6 @@
 using Notifications.Auction;
 using Notifications.Broadcasts;
 using Notifications.Domain;
-using Notifications.Infrastructure;
 using Notifications.Reminders;
 using Notifications.Replica;
 using Notifications.V1;

@@ -99,8 +99,31 @@ public static class InvoiceReminderProbe
     /// простой кластера: «время прошло, пока силоса не было». Двигаются данные,
     /// а не часы процесса.
     /// </summary>
-    public static void MoveDueToPast(string connectionString, Guid invoiceId, string kind)
+    public static void MoveDueToPast(string connectionString, Guid invoiceId, params string[] kinds)
     {
+        if (kinds.Length > 1)
+        {
+            // Несколько моментов сдвигаются одним запросом: sweeper идёт раз в
+            // секунду и успел бы исполнить первый до сдвига второго.
+            using var batch = new NpgsqlConnection(connectionString);
+            var movedAll = batch.Execute(
+                """
+                UPDATE invoice_reminder_task
+                SET due_at = now() - interval '1 minute' * (10 - array_position(@kinds, kind))
+                WHERE invoice_id = @invoiceId AND kind = ANY(@kinds) AND state = 'scheduled';
+                """,
+                new { invoiceId, kinds });
+
+            if (movedAll != kinds.Length)
+            {
+                throw new InvalidOperationException(
+                    $"expected {kinds.Length} live invoice reminder tasks for {invoiceId}, moved {movedAll}");
+            }
+
+            return;
+        }
+
+        var kind = kinds.Single();
         using var connection = new NpgsqlConnection(connectionString);
 
         var moved = connection.Execute(
