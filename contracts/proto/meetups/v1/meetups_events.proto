@@ -132,11 +132,8 @@ message MeetupState {
   optional string scheduled_publish_at = 14;
 
   // Canonical lowercase UUIDv7 with hyphens: the internal Identity ids of the people
-  // in the organizer roster, in the order they joined it. The administrator is not
-  // here: holding manage_meetups is a right, not a roster entry (ADR-076, item 3).
-  // The author is here from creation until they leave the roster, and stays
-  // state.author after that. An empty collection is not an absent state: it is a
-  // roster the administrator emptied.
+  // in the organizer roster, in the order they joined it. An empty collection is a
+  // roster with no people, not an absent state.
   repeated string organizers = 15;
 }
 

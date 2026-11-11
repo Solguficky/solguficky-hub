@@ -82,8 +82,8 @@ enum MeetupRelation {
   MEETUP_RELATION_AUCTION_RUNNER = 2;
 
   // The person is in the organizer roster of this meetup and holds
-  // identity.v1.ACCESS_RIGHT_ORGANIZE_MEETUPS. It holds for one meetup, not for
-  // every meetup, and the administrator is not covered by it.
+  // the right organize_meetups. It holds for one meetup, not for every meetup,
+  // and the administrator is not covered by it.
   MEETUP_RELATION_ORGANIZER = 3;
 }
 
@@ -413,13 +413,9 @@ message MeetupSnapshot {
   optional string scheduled_publish_at = 14;
 
   // Canonical lowercase UUIDv7 with hyphens: the internal Identity ids of the
-  // organizer roster, in the order the people joined it. Field 2, author, stays
-  // the immutable fact of who created the meetup and is not a roster entry by
-  // itself: an author who left the roster is still author. The administrator
-  // (manage_meetups) is not listed. The roster does not say who holds the relation
-  // now: ORGANIZER also needs the right organize_meetups, checked at each action
-  // (ADR-076, item 4). An empty collection is a roster the administrator emptied,
-  // not an absent state.
+  // organizer roster, in the order the people joined it. Field 2, author, is
+  // not a roster entry by itself. An empty collection is a roster with no
+  // people, not an absent state.
   repeated string organizers = 15;
 }
 
