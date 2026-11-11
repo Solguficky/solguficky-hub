@@ -28,6 +28,7 @@ let ``When the draft is created expect an empty hidden meetup at version one`` (
             Visibility = Hidden
             FirstPublishedAt = None
             ScheduledPublishAt = None
+            Organizers = [ Sample.authorId ]
             Version = 1L
         }
 

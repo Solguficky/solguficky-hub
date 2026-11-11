@@ -528,13 +528,13 @@ community-site-serve:
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Пороги числа тестов по уровням, в сумме 732. Поднимаются вручную вместе с
+# Пороги числа тестов по уровням, в сумме 831. Поднимаются вручную вместе с
 # набором — добавил тест, обнови число своего уровня здесь тем же изменением.
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "592"
-MEETUPS_INTEGRATION_TEST_THRESHOLD := "140"
+MEETUPS_UNIT_TEST_THRESHOLD := "680"
+MEETUPS_INTEGRATION_TEST_THRESHOLD := "151"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,
 # а не пропуском: проекты решения названы по уровню.

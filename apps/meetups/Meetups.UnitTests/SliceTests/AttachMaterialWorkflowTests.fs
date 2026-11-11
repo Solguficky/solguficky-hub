@@ -101,13 +101,13 @@ let ``Attaching the same material id again returns the snapshot without writing`
 
     test <@ repeat = Ok stored @>
 
-/// Право спрашивается до загрузки: `Load` здесь падает, поэтому зелёный тест
-/// доказывает заодно, что до хранилища вызов не дошёл.
+/// Право решается после загрузки (состав лежит в сходке), и отсутствующая сходка
+/// отвечает тем же отказом, что чужая: до записи вызов не доходит.
 [<Fact>]
-let ``An ordinary viewer is refused before the meetup is loaded`` () =
-    let denied = run Sample.ordinary Sample.otherMaterialId stub
+let ``An ordinary viewer is refused like for a missing meetup and nothing is written`` () =
+    let denied = run Sample.ordinary Sample.otherMaterialId (stub |> loading None)
 
-    test <@ denied = Error(AttachMaterialError.Forbidden CannotManageMeetups) @>
+    test <@ denied = Error(AttachMaterialError.Forbidden CannotActOnMeetup) @>
 
 [<Fact>]
 let ``Attaching to a missing meetup is rejected without writing`` () =

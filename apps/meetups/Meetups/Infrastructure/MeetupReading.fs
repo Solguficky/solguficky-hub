@@ -47,6 +47,7 @@ let private selectAllSql =
         visibility AS Visibility,
         first_published_at AS FirstPublishedAt,
         scheduled_publish_at AS ScheduledPublishAt,
+        organizers AS Organizers,
         version AS Version,
         schedule_form AS ScheduleForm,
         schedule_precision AS SchedulePrecision,
@@ -62,6 +63,7 @@ let private visibleToViewerSql =
     WHERE (
         visibility = 'visible'
         OR author = @viewer_id
+        OR @viewer_id = ANY (organizers)
         OR @can_manage_meetups
     )
     """

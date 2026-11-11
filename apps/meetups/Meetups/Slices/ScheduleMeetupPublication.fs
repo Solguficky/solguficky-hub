@@ -77,18 +77,19 @@ let private interpret (zone: TimeZoneInfo) (moment: LocalDateTime) : Result<Date
 
 let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, ScheduleMeetupPublicationError>> =
     task {
-        // Право спрашивается до загрузки: состояние в этом решении не участвует, а
-        // проверка после чтения сделала бы отказ обычному смотрящему зависимым от
-        // того, существует ли сходка.
-        match Access.actOnBehalf command.Viewer with
+        // Загрузка идёт раньше решения о праве: организатор — это запись в составе
+        // сходки. Чужая и отсутствующая сходка проходят одну и ту же последовательность
+        // запросов и получают один отказ (ADR-076, п. 12).
+        let! existing = deps.Load command.Id
+
+        match Access.actOnBehalf command.Viewer existing with
         | Error denied -> return Error(ScheduleMeetupPublicationError.Forbidden denied)
         | Ok() ->
-            // Значение разбирается до обращения к базе: пояс и календарь не знают о
-            // сходке, а негодная пара не заслуживает ни строчки чтения.
+            // Значение разбирается до решения домена: пояс и календарь не знают о
+            // сходке, а негодная пара не заслуживает решения.
             match interpret deps.CommunityTimeZone command.Moment with
             | Error invalid -> return Error(ScheduleMeetupPublicationError.Malformed invalid)
             | Ok at ->
-                let! existing = deps.Load command.Id
                 let state = Meetup.restore existing
 
                 // Часы читаются один раз на команду: этот же момент решает, не
@@ -154,8 +155,8 @@ module Api =
         match error with
         | ScheduleMeetupPublicationError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | ScheduleMeetupPublicationError.Forbidden CannotManageMeetups ->
-            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
+        | ScheduleMeetupPublicationError.Forbidden CannotActOnMeetup ->
+            Status(StatusCode.PermissionDenied, "the viewer may not act on this meetup")
         | ScheduleMeetupPublicationError.Domain MeetupNotFound
         | ScheduleMeetupPublicationError.Domain DraftBelongsToAnotherAuthor ->
             Status(StatusCode.NotFound, "meetup not found")

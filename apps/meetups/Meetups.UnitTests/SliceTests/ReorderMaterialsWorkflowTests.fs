@@ -32,14 +32,16 @@ let private run deps cmd =
     |> Async.RunSynchronously
 
 [<Fact>]
-let ``An ordinary viewer is refused before loading`` () =
+let ``An ordinary viewer is refused like for a missing meetup and nothing is written`` () =
     test
         <@
             run
-                stub
+                { stub with
+                    Load = fun _ -> Task.FromResult None
+                }
                 { command with
                     Viewer = Sample.ordinary
-                } = Error(ReorderMaterialsError.Forbidden CannotManageMeetups)
+                } = Error(ReorderMaterialsError.Forbidden CannotActOnMeetup)
         @>
 
 [<Fact>]

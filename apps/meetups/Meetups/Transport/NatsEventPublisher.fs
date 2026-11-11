@@ -45,6 +45,11 @@ module Envelope =
         | Some id -> id.ToString "D"
         | None -> malformed event $"{event.EventType} carries no material_id"
 
+    let private personId (event: PendingEvent) : string =
+        match event.PersonId with
+        | Some id -> id.ToString "D"
+        | None -> malformed event $"{event.EventType} carries no person_id"
+
     let private setOccasion (event: PendingEvent) (message: Meetups.V1.MeetupEvent) : unit =
         match event.EventType with
         | "meetup_created" -> message.MeetupCreated <- Meetups.V1.MeetupCreated()
@@ -65,6 +70,10 @@ module Envelope =
             message.MeetupMaterialAttached <- Meetups.V1.MeetupMaterialAttached(MaterialId = materialId event)
         | "meetup_material_removed" ->
             message.MeetupMaterialRemoved <- Meetups.V1.MeetupMaterialRemoved(MaterialId = materialId event)
+        | "meetup_organizer_appointed" ->
+            message.MeetupOrganizerAppointed <- Meetups.V1.MeetupOrganizerAppointed(IdentityId = personId event)
+        | "meetup_organizer_dismissed" ->
+            message.MeetupOrganizerDismissed <- Meetups.V1.MeetupOrganizerDismissed(IdentityId = personId event)
         // Повод, которого нет в словаре контракта: пустой oneof значением не
         // является, и отправить его значило бы отдать потребителю сообщение, которое
         // тот обязан отвергнуть.

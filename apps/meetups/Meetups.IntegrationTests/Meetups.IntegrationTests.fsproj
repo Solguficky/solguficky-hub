@@ -36,6 +36,7 @@
     <Compile Include="Scenarios/MeetupBoundaryTests.fs" />
     <Compile Include="Scenarios/MeetupArchiveTests.fs" />
     <Compile Include="Scenarios/HiddenMeetupReadTests.fs" />
+    <Compile Include="Scenarios/OrganizerRosterTests.fs" />
     <Compile Include="Scenarios/ListMeetupStatesTests.fs" />
     <Compile Include="Scenarios/MeetupDispatchTests.fs" />
     <Compile Include="Scenarios/JournalMaterialIdTests.fs" />

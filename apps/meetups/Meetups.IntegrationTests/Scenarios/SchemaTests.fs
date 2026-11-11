@@ -100,13 +100,13 @@ module SchemaSql =
             dsn
             """
             INSERT INTO meetups (
-                id, author, lifecycle, visibility, version,
+                id, author, organizers, lifecycle, visibility, version,
                 first_published_at, scheduled_publish_at,
                 schedule_form, schedule_precision,
                 schedule_start_date, schedule_start_time,
                 schedule_end_date, schedule_end_time
             ) VALUES (
-                @id, @author, @lifecycle, @visibility, @version,
+                @id, @author, ARRAY[@author], @lifecycle, @visibility, @version,
                 @first_published_at, @scheduled_publish_at,
                 @form, @precision,
                 @start_date, @start_time,

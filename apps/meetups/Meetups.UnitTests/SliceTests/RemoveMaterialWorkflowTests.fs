@@ -89,11 +89,11 @@ let ``Removing an absent material returns the snapshot without writing`` () =
 
     test <@ repeat = Ok stored @>
 
-/// Право спрашивается до загрузки: `Load` здесь падает, поэтому зелёный тест
-/// доказывает заодно, что до хранилища вызов не дошёл.
+/// Право решается после загрузки (состав лежит в сходке), и отсутствующая сходка
+/// отвечает тем же отказом, что чужая: до записи вызов не доходит.
 [<Fact>]
-let ``An ordinary viewer is refused before the meetup is loaded`` () =
-    test <@ run Sample.ordinary stub = Error(RemoveMaterialError.Forbidden CannotManageMeetups) @>
+let ``An ordinary viewer is refused like for a missing meetup and nothing is written`` () =
+    test <@ run Sample.ordinary (stub |> loading None) = Error(RemoveMaterialError.Forbidden CannotActOnMeetup) @>
 
 [<Fact>]
 let ``Removing from a missing meetup is rejected without writing`` () =

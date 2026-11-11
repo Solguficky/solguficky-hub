@@ -44,6 +44,8 @@ type PendingEvent =
         /// Данные повода, которых снимок выразить не может: у прикрепления и
         /// удаления материала — его идентификатор, у остальных поводов — `None`.
         MaterialId: Guid option
+        /// У поводов состава — человек, который вошёл или вышел; у остальных `None`.
+        PersonId: Guid option
     }
 
 /// Исход попытки публикации. Значение, а не исключение: недоступность соседа —
@@ -352,6 +354,7 @@ module Composition =
                 |> Option.ofObj
                 |> Option.bind RequestId.create
             MaterialId = Option.ofNullable row.MaterialId
+            PersonId = Option.ofNullable row.PersonId
         }
 
     let private toBacklog (row: DispatchStore.BacklogRow) : Backlog =

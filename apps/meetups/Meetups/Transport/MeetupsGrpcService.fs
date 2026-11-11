@@ -5,7 +5,18 @@ open Meetups.Observability
 open Meetups.Slices
 open Meetups.V1
 
-/// Транспортная граница всех шестнадцати операций контракта.
+/// Цепочка входящего вызова для вопроса к Identity: заголовки, срок и отмена.
+/// Сборка зависимостей, а не решение, поэтому живёт рядом с диспетчером, а не в срезе.
+module private Chain =
+    let forwarded (context: ServerCallContext) : CheckMeetupAuthority.Forwarded =
+        {
+            RequestId = IncomingMetadata.requestId context
+            UseCase = IncomingMetadata.useCase context
+            Deadline = context.Deadline
+            Cancellation = context.CancellationToken
+        }
+
+/// Транспортная граница всех девятнадцати операций контракта.
 ///
 /// ASP.NET Core требует один класс-наследник сгенерированной базы со всеми
 /// операциями сервиса сразу, поэтому разложить его по срезам нельзя: это
@@ -110,6 +121,32 @@ type MeetupsGrpcService() =
             (MarkMeetupHeld.Composition.buildDeps services (IncomingMetadata.requestId context))
             request
 
+    override _.AppointMeetupOrganizer(request: AppointMeetupOrganizerRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+
+        // Право назначаемого Meetups спрашивает у Identity в той же цепочке вызова:
+        // заголовки, срок и отмена входящего вызова ограничивают и этот вопрос.
+        AppointMeetupOrganizer.Api.handle
+            (AppointMeetupOrganizer.Composition.buildDeps
+                services
+                (IncomingMetadata.requestId context)
+                (Chain.forwarded context))
+            request
+
+    override _.DismissMeetupOrganizer(request: DismissMeetupOrganizerRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+
+        DismissMeetupOrganizer.Api.handle
+            (DismissMeetupOrganizer.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
+
+    override _.LeaveMeetupOrganizers(request: LeaveMeetupOrganizersRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+
+        LeaveMeetupOrganizers.Api.handle
+            (LeaveMeetupOrganizers.Composition.buildDeps services (IncomingMetadata.requestId context))
+            request
+
     override _.GetMeetup(request: GetMeetupRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
         GetMeetup.Api.handle (GetMeetup.Composition.buildRead services) request
@@ -129,15 +166,9 @@ type MeetupsGrpcService() =
     override _.CheckMeetupAuthority(request: CheckMeetupAuthorityRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
 
-        let forwarded: CheckMeetupAuthority.Forwarded =
-            {
-                RequestId = IncomingMetadata.requestId context
-                UseCase = IncomingMetadata.useCase context
-                Deadline = context.Deadline
-                Cancellation = context.CancellationToken
-            }
-
-        CheckMeetupAuthority.Api.handle (CheckMeetupAuthority.Composition.buildDeps services forwarded) request
+        CheckMeetupAuthority.Api.handle
+            (CheckMeetupAuthority.Composition.buildDeps services (Chain.forwarded context))
+            request
 
     override _.GetMeetupStanding(request: GetMeetupStandingRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices

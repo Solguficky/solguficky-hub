@@ -37,5 +37,10 @@ type MeetupSnapshot =
         Visibility: MeetupVisibility
         FirstPublishedAt: DateTimeOffset option
         ScheduledPublishAt: DateTimeOffset option
+        /// Состав организаторов в порядке вступления (ADR-076, п. 3). Автор в нём с
+        /// рождения сходки, но остаётся автором, выйдя из состава; администратор как
+        /// держатель `manage_meetups` в состав не записывается, пока его не назначили
+        /// явно, — в нём он только как автор сходки, которую сам завёл.
+        Organizers: PersonId list
         Version: int64
     }

@@ -69,7 +69,8 @@ let private PendingSql =
         performed_by AS PerformedBy,
         occurred_at AS OccurredAt,
         request_id AS RequestId,
-        material_id AS MaterialId
+        material_id AS MaterialId,
+        person_id AS PersonId
     FROM meetup_events
     WHERE dispatched_at IS NULL
     ORDER BY position
@@ -114,6 +115,7 @@ type PendingRow =
         /// NULL у строк без запроса и у записанных до миграции 008.
         RequestId: string
         MaterialId: Nullable<Guid>
+        PersonId: Nullable<Guid>
     }
 
 /// Ход отпускается явным `unlock`, а не только закрытием соединения. Закрытие
