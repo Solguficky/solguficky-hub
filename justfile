@@ -47,6 +47,9 @@ JUST_SHA256 := "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
 LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
+# Node 22 запускает .ts без флага с 22.18 (render.ts Achievements); меньший минор
+# установщик среды обновляет, а не считает установленным.
+NODE_MIN_MINOR := "18"
 
 # Erlang/OTP и Elixir Achievements: версии — apps/achievements/.tool-versions,
 # его же читает erlef/setup-beam в CI, а суммы архивов builds.hex.pm, которые
