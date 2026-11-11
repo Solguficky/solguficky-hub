@@ -66,7 +66,7 @@ disable-model-invocation: false
 
 1. Сверь сигналы захвата листа по `docs/agents/issue-tracker.md`, раздел «Захват задачи». Занят — дерево не создавай, строка в журнал и вопрос.
 2. `git fetch origin` в своём дереве: зависимый лист ветвится от `develop` уже со слитым блокирующим листом. Затем `<orca> worktree create --name <per-x> --repo <репозиторий> --base-branch origin/develop --linear-issue PER-X --json` без `--agent` и без `--branch`: ветку исполнитель переименует сам по `docs/agents/branching-and-pr.md`, раздел «Имя ветки». Путь дерева — в `plan.md`.
-3. Скопируй `.claude/settings.local.json` из своего дерева в корень нового.
+3. Скопируй `.claude/settings.local.json` из своего дерева в новое по тому же пути — в его `.claude/settings.local.json`, а не в корень: Claude читает файл только оттуда.
 4. В новом дереве: `just skillshare-install`, затем `git checkout -- .skillshare/`, затем `skillshare sync --all -p`. Install выбрасывает из объявления запись, которую не пропустил аудит, и правит отслеживаемые файлы — без отката дерево грязное, и `/proj-take-task` исполнителя остановится на шаге 3.
 5. Код install не доказывает установку: на выброшенной записи обёртка выходит раньше проверки остальных. Поэтому сверь списки каталогов `.claude/skills/` нового дерева и своего: совпали — дальше; в новом не хватает каталога — вопрос с именами.
 6. `just agent-ready claude`: код 0 или 3 — дальше, иначе вопрос.
