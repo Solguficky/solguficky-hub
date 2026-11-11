@@ -75,12 +75,21 @@ type HiddenMeetupReadTests() =
                     "RemoveMaterial"
                     "ReorderMaterials"
                     "MarkMeetupHeld"
+                    "AppointMeetupOrganizer"
+                    "DismissMeetupOrganizer"
+                    "LeaveMeetupOrganizers"
                 ]
+
+        // Объявлена контрактом раньше реализации (PER-744, ADR-076): сценарий
+        // скрытой сходки для неё пишет лист PER-747 вместе с обработчиком и
+        // удаляет это исключение.
+        let declaredBeforeImplementation = set [ "ConfirmMeetupContact" ]
 
         let contractReadOperations =
             MeetupsService.Descriptor.Methods
             |> Seq.map _.Name
             |> Seq.filter (writeOperations.Contains >> not)
+            |> Seq.filter (declaredBeforeImplementation.Contains >> not)
             |> Set.ofSeq
 
         let operationsCoveredByThisSuite =
