@@ -44,10 +44,7 @@ func run() int {
 		return 1
 	}
 
-	addr := os.Getenv("IDENTITY_GRPC_ADDR")
-	if addr == "" {
-		addr = ":50051"
-	}
+	addr := listenAddr()
 
 	// Таблица вызывающих проверяется до базы и листенера: неполная или
 	// неоднозначная таблица останавливает процесс, а не оставляет зелёный health
@@ -97,9 +94,18 @@ func run() int {
 	}
 	defer stopRelay()
 
-	srv := server.New(log, db, maintainerToken, callers,
+	opts := []server.Option{
 		server.WithTracerProvider(traces),
-		server.WithCommunityQueue(communityQueue))
+		server.WithCommunityQueue(communityQueue),
+	}
+	meetupsOpt, closeMeetups, err := meetupsContactOption(traces)
+	if err != nil {
+		log.Error("meetups client invalid", "service", server.ServiceName, "error", err)
+		return 1
+	}
+	defer closeMeetups()
+	opts = append(opts, meetupsOpt...)
+	srv := server.New(log, db, maintainerToken, callers, opts...)
 	errCh := make(chan error, 1)
 	go func() {
 		log.Info("identity listening", "service", server.ServiceName, "addr", lis.Addr().String(),
@@ -257,4 +263,28 @@ func logLevel() (slog.Level, error) {
 		return slog.LevelInfo, err
 	}
 	return level, nil
+}
+
+// meetupsContactOption подключает клиент Meetups для ника организатора, когда
+// задан его адрес. Без адреса опции нет, и ResolveOrganizerUsername отвечает
+// UNAVAILABLE: профиль без Meetups ник не отдаёт. Адрес без токена останавливает
+// процесс на старте, а не первый вызов.
+func meetupsContactOption(tp trace.TracerProvider) ([]server.Option, func(), error) {
+	meetupsURL := os.Getenv(server.MeetupsURLEnv)
+	if meetupsURL == "" {
+		return nil, func() {}, nil
+	}
+	client, conn, err := server.DialMeetups(meetupsURL, os.Getenv(server.ServiceTokenEnv), tp)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	return []server.Option{server.WithContactConfirmer(client)}, func() { _ = conn.Close() }, nil
+}
+
+// listenAddr — адрес gRPC-листенера; без переменной сервис слушает :50051.
+func listenAddr() string {
+	if addr := os.Getenv("IDENTITY_GRPC_ADDR"); addr != "" {
+		return addr
+	}
+	return ":50051"
 }

@@ -20,8 +20,9 @@ service IdentityService {
   // apart from them. Identity does not know which surface asks or what it
   // guards.
   rpc CheckAccessRight(CheckAccessRightRequest) returns (CheckAccessRightResponse);
-  // Resolves the author of a meetup to their Telegram username for the meetup
-  // card.
+  // Resolves the Telegram username of the author or an organizer of a meetup for
+  // the meetup card, only when Meetups confirms that relation to the meetup as
+  // the viewer sees it and the person holds ACCESS_RIGHT_ORGANIZE_MEETUPS.
   rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
   // Resolves an identity id to that person's Telegram username for the screens
   // of an auction organizer.
@@ -559,14 +560,20 @@ message ResolveOrganizerUsernameRequest {
   // The viewer of the card.
   IdentityActor actor = 1;
 
-  // Canonical lowercase UUIDv7 string with hyphens: the author id taken from a
-  // meetup snapshot.
+  // Canonical lowercase UUIDv7 string with hyphens: the author or organizer id
+  // taken from a meetup snapshot.
   string identity_id = 2;
+
+  // Canonical lowercase UUIDv7 string with hyphens: the meetup whose card names
+  // the person. Identity asks Meetups to confirm the relation to it; a person
+  // Meetups does not confirm is NOT_FOUND, and a Meetups that cannot answer is
+  // UNAVAILABLE.
+  string meetup_id = 3;
 }
 
 message ResolveOrganizerUsernameResponse {
   // Username without the leading '@'. Absent only when the organizer has none:
-  // a profile the call does not answer for is a failed call, never an absent
+  // a person the call does not answer for is a failed call, never an absent
   // field here.
   optional string telegram_username = 1;
 }
