@@ -80,6 +80,13 @@ AS $$
 $$;
 -- +goose StatementEnd
 
+-- Неотправленные снимки с новым правом помечаются отправленными, пока
+-- ограничение ещё широкое: откат 017 отмечает так же все неотправленные строки,
+-- и без этого его отметка упала бы на узком ограничении этого отката.
+UPDATE identity_outbox
+SET published_at = GREATEST(now(), occurred_at)
+WHERE published_at IS NULL AND 'organize_meetups' = ANY (rights);
+
 -- Строки outbox неизменяемы (ID004, ID005), поэтому ограничение возвращается
 -- NOT VALID поверх снимков с новым правом, как в откате 019.
 ALTER TABLE identity_outbox DROP CONSTRAINT identity_outbox_rights_check;

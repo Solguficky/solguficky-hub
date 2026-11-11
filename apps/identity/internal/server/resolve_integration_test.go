@@ -215,6 +215,7 @@ func TestResolveIdentityDerivesRightsFromCircleAndPresets(t *testing.T) {
 		meetups  = identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS
 		grantors = identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS
 		auctions = identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS
+		organize = identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS
 		member   = identityv1.Circle_CIRCLE_MEMBER
 		guest    = identityv1.Circle_CIRCLE_GUEST
 	)
@@ -227,15 +228,15 @@ func TestResolveIdentityDerivesRightsFromCircleAndPresets(t *testing.T) {
 	}{
 		{
 			"admin", func(id string) { insertPreset(t, db, id, "admin") }, member,
-			[]identityv1.AccessRight{bids, hub, members, bidders, meetups, auctions},
+			[]identityv1.AccessRight{bids, hub, members, bidders, meetups, auctions, organize},
 			[]identityv1.Preset{identityv1.Preset_PRESET_ADMIN},
 		},
 		{
 			"maintainer", func(id string) { insertPreset(t, db, id, "maintainer") }, member,
-			[]identityv1.AccessRight{bids, hub, grantors},
+			[]identityv1.AccessRight{bids, hub, grantors, organize},
 			[]identityv1.Preset{identityv1.Preset_PRESET_MAINTAINER},
 		},
-		{"member", func(id string) { insertCircle(t, db, id, "member") }, member, []identityv1.AccessRight{bids, hub}, nil},
+		{"member", func(id string) { insertCircle(t, db, id, "member") }, member, []identityv1.AccessRight{bids, hub, organize}, nil},
 		{"guest", func(id string) { insertCircle(t, db, id, "guest") }, guest, []identityv1.AccessRight{bids}, nil},
 		{"", func(string) {}, identityv1.Circle_CIRCLE_UNSPECIFIED, nil, nil},
 	} {
