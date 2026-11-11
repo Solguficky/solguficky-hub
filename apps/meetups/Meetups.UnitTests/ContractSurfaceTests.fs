@@ -238,8 +238,22 @@ let ``The roster commands carry the expected version and only appoint and dismis
     test
         <@
             shape = [
-                "AppointMeetupOrganizerRequest", set [ "viewer"; "id"; "identity_id"; "expected_version" ]
-                "DismissMeetupOrganizerRequest", set [ "viewer"; "id"; "identity_id"; "expected_version" ]
+                "AppointMeetupOrganizerRequest",
+                set
+                    [
+                        "viewer"
+                        "id"
+                        "identity_id"
+                        "expected_version"
+                    ]
+                "DismissMeetupOrganizerRequest",
+                set
+                    [
+                        "viewer"
+                        "id"
+                        "identity_id"
+                        "expected_version"
+                    ]
                 "LeaveMeetupOrganizersRequest", set [ "viewer"; "id"; "expected_version" ]
             ]
         @>
@@ -636,7 +650,11 @@ let ``Every occasion of the domain dictionary has its own message on the wire`` 
         |> Seq.map (fun field -> field.MessageType.Name)
         |> Set.ofSeq
 
-    test <@ Set.isSubset declaredBeforeDomain wire && Set.difference wire declaredBeforeDomain = domain @>
+    test
+        <@
+            Set.isSubset declaredBeforeDomain wire
+            && Set.difference wire declaredBeforeDomain = domain
+        @>
 
 /// Имя ветки на проводе — то же имя, которое уходит в колонку `event_type`, поэтому
 /// subject публикации получается приписыванием домена к нему, а не второй таблицей

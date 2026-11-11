@@ -70,5 +70,9 @@ object MeetupsStub {
     def listArchivedMeetups(in: wire.ListArchivedMeetupsRequest) = unused
     def getMeetup(in: wire.GetMeetupRequest) = unused
     def listMeetupStates(in: wire.ListMeetupStatesRequest) = unused
+    def appointMeetupOrganizer(in: wire.AppointMeetupOrganizerRequest) = unused
+    def dismissMeetupOrganizer(in: wire.DismissMeetupOrganizerRequest) = unused
+    def leaveMeetupOrganizers(in: wire.LeaveMeetupOrganizersRequest) = unused
+    def confirmMeetupContact(in: wire.ConfirmMeetupContactRequest) = unused
   }
 }
