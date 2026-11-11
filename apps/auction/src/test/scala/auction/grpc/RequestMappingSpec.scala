@@ -216,7 +216,8 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
           AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS,
           AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS,
           AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS,
-          AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS
+          AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS,
+          AccessRightMessage.ACCESS_RIGHT_ORGANIZE_MEETUPS
         )
       )
       RequestMapping.acting(Some(all)).value.viewer.rights shouldBe AccessRight.values.toSet

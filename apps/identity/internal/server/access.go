@@ -62,6 +62,9 @@ const (
 	rightManageMeetups = "manage_meetups"
 	rightGrantAdmins   = "grant_admins"
 	rightRunAuctions   = "run_auctions"
+	// Право круга member (ADR-076, п. 1): записью не выдаётся, строки в
+	// issuers и records у него нет.
+	rightOrganizeMeetups = "organize_meetups"
 )
 
 // Что выдаётся и снимается. Таблица issuers ниже — единственное место, где
@@ -258,6 +261,8 @@ func accessRight(name string) (identityv1.AccessRight, bool) {
 		return identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS, true
 	case rightRunAuctions:
 		return identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS, true
+	case rightOrganizeMeetups:
+		return identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, true
 	default:
 		return identityv1.AccessRight_ACCESS_RIGHT_UNSPECIFIED, false
 	}
@@ -281,6 +286,8 @@ func rightName(right identityv1.AccessRight) (string, bool) {
 		return rightGrantAdmins, true
 	case identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS:
 		return rightRunAuctions, true
+	case identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS:
+		return rightOrganizeMeetups, true
 	default:
 		return "", false
 	}

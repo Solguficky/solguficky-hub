@@ -29,10 +29,10 @@ func TestRequestAccessHubAllowlistInAuctionBotGrantsMember(t *testing.T) {
 	resp := requestAccess(t, svc, accessRequest{telegramUserID: 7101, username: "insider", queue: auctionQueue, source: new("chan")})
 
 	assertOutcome(t, resp, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST)
-	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	assertAllowedUsernameRows(t, db, "insider", allowedUsernameCounts{total: 1, used: 1})
 	assertApplications(t, db, resp.GetIdentityId())
-	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() member{access_hub,place_bids}[] blocked=false")
+	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() member{access_hub,organize_meetups,place_bids}[] blocked=false")
 	assertApplicationEvents(t, db, resp.GetIdentityId())
 }
 
@@ -161,7 +161,7 @@ func TestRequestAccessAlreadyHeldStillConsumesAllowlist(t *testing.T) {
 	resp := requestAccess(t, svc, accessRequest{telegramUserID: 7109, username: "bidder", queue: auctionQueue})
 
 	assertOutcome(t, resp, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_ALREADY_HELD)
-	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	assertAllowedUsernameRows(t, db, "bidder", allowedUsernameCounts{total: 1, used: 1})
 	assertApplicationEvents(t, db, identityID)
 }
@@ -352,9 +352,9 @@ func TestClosedCommunityQueueAdmitsAllowlistedUsername(t *testing.T) {
 	resp := requestAccess(t, svc, accessRequest{telegramUserID: 7120, username: "invited", queue: hubQueue, firstName: "Eve"})
 
 	assertOutcome(t, resp, identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST)
-	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resp.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	assertApplications(t, db, resp.GetIdentityId())
-	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() member{access_hub,place_bids}[] blocked=false")
+	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() member{access_hub,organize_meetups,place_bids}[] blocked=false")
 }
 
 // Человек не из списка получает INVITATION_ONLY и на первый, и на повторный
