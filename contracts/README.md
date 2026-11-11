@@ -78,3 +78,7 @@ Git остаётся источником схем. ADR-014 описывает �
 ## Порядок материалов Meetups
 
 `MeetupsService.ReorderMaterials` принимает полный список `material_ids` и версию показанного снимка `expected_version`. Чтения и событие `MaterialsReordered` передают результат порядком repeated-поля `materials`, без отдельного поля позиции. Новый повод — `events.meetups.materials_reordered`; подробные отказы и права описаны в integration catalog.
+
+## Состав организаторов Meetups
+
+Состав организаторов сходки ([ADR-076](../docs/decisions/ADR-076-meetup-organizers.md), [PER-744](https://linear.app/anticnvm/issue/per-744)) — аддитивное расширение `meetups.v1`: поле `organizers` (номер 15) в `MeetupSnapshot` и `MeetupState`, значение `MEETUP_RELATION_ORGANIZER`, команды `AppointMeetupOrganizer`, `DismissMeetupOrganizer` и `LeaveMeetupOrganizers`, повода `meetup_organizer_appointed` и `meetup_organizer_dismissed` (номера 20 и 21 в `oneof occasion`) и узкий вопрос Identity к Meetups `ConfirmMeetupContact` с пустым ответом. Отказы и вызывающие — в integration catalog.

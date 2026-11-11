@@ -74,7 +74,7 @@ let ``The generated service lives under the meetups v1 package`` () =
     test <@ MeetupsService.Descriptor.FullName = "meetups.v1.MeetupsService" @>
 
 [<Fact>]
-let ``Service exposes exactly the eighteen slice operations`` () =
+let ``Service exposes exactly the twenty-two slice operations`` () =
     let actual =
         MeetupsService.Descriptor.Methods
         |> Seq.map (fun m -> m.Name)
@@ -94,12 +94,16 @@ let ``Service exposes exactly the eighteen slice operations`` () =
             "RemoveMaterial"
             "ReorderMaterials"
             "MarkMeetupHeld"
+            "AppointMeetupOrganizer"
+            "DismissMeetupOrganizer"
+            "LeaveMeetupOrganizers"
             "ListVisibleMeetups"
             "ListArchivedMeetups"
             "GetMeetup"
             "ListMeetupStates"
             "CheckMeetupAuthority"
             "GetMeetupStanding"
+            "ConfirmMeetupContact"
         ]
         |> set
 
@@ -118,6 +122,7 @@ let ``Every human operation carries the viewer as field one`` () =
                 "ListMeetupStatesRequest"
                 "CheckMeetupAuthorityRequest"
                 "GetMeetupStandingRequest"
+                "ConfirmMeetupContactRequest"
             ]
 
     let requests =
@@ -197,6 +202,60 @@ let ``The standing read takes only the meetup id and answers with the meetup sta
         <@
             request = set [ "id" ]
             && response = set [ "lifecycle"; "visibility" ]
+        @>
+
+/// Вопрос Identity «человек — автор или организатор сходки, видимой смотрящему»
+/// (ADR-076, п. 10): три идентификатора в запросе, смотрящий — отдельным полем, а не
+/// `viewer` с правами, и пустое тело ответа: весь ответ — статус.
+[<Fact>]
+let ``The contact confirmation names the meetup, the viewer and the person and answers with the status alone`` () =
+    let request = fieldNames ConfirmMeetupContactRequest.Descriptor
+    let response = fieldNames MeetupContactConfirmation.Descriptor
+
+    test
+        <@
+            request = set
+                [
+                    "id"
+                    "viewer_identity_id"
+                    "identity_id"
+                ]
+            && response = Set.empty
+        @>
+
+/// Три команды состава несут показанную версию, как и остальные команды изменения;
+/// назначение и снятие называют человека, выход — нет: выходит смотрящий (ADR-076, п. 6).
+[<Fact>]
+let ``The roster commands carry the expected version and only appoint and dismiss name a person`` () =
+    let shape =
+        [
+            AppointMeetupOrganizerRequest.Descriptor
+            DismissMeetupOrganizerRequest.Descriptor
+            LeaveMeetupOrganizersRequest.Descriptor
+        ]
+        |> List.map (fun message -> message.Name, fieldNames message)
+
+    test
+        <@
+            shape = [
+                "AppointMeetupOrganizerRequest", set [ "viewer"; "id"; "identity_id"; "expected_version" ]
+                "DismissMeetupOrganizerRequest", set [ "viewer"; "id"; "identity_id"; "expected_version" ]
+                "LeaveMeetupOrganizersRequest", set [ "viewer"; "id"; "expected_version" ]
+            ]
+        @>
+
+/// Состав едет полем снимка под номером 15 в обоих определениях, как и остальные
+/// поля, номера которых совпадают (см. MeetupState); автор остаётся полем 2.
+[<Fact>]
+let ``The organizer roster is field fifteen of both the snapshot and the event state`` () =
+    let number (message: MessageDescriptor) =
+        let field = message.FindFieldByName "organizers"
+        field.FieldNumber, field.IsRepeated, field.FieldType
+
+    test
+        <@
+            number MeetupSnapshot.Descriptor = (15, true, FieldType.String)
+            && number MeetupState.Descriptor = (15, true, FieldType.String)
         @>
 
 /// Запрос сверяется целиком, а не «содержит page_token»: равенство множеств и
@@ -554,6 +613,17 @@ let private occasionOneof =
     |> Seq.filter (fun o -> not o.IsSynthetic)
     |> Seq.exactlyOne
 
+/// Поводы, которые контракт объявил раньше доменного юниона: схема и каталог идут
+/// листом PER-744, домен и журнал — листом PER-745 (ADR-076).
+/// Набор нужен ровно до тех пор: лист домена добавляет случаи юниона и удаляет его,
+/// а тесты ниже снова сравнивают проводное множество с доменным без вычитания.
+let private declaredBeforeDomain =
+    set
+        [
+            "MeetupOrganizerAppointed"
+            "MeetupOrganizerDismissed"
+        ]
+
 [<Fact>]
 let ``Every occasion of the domain dictionary has its own message on the wire`` () =
     let domain =
@@ -566,7 +636,7 @@ let ``Every occasion of the domain dictionary has its own message on the wire`` 
         |> Seq.map (fun field -> field.MessageType.Name)
         |> Set.ofSeq
 
-    test <@ wire = domain @>
+    test <@ Set.isSubset declaredBeforeDomain wire && Set.difference wire declaredBeforeDomain = domain @>
 
 /// Имя ветки на проводе — то же имя, которое уходит в колонку `event_type`, поэтому
 /// subject публикации получается приписыванием домена к нему, а не второй таблицей
@@ -593,6 +663,7 @@ let ``The name of each occasion on the wire is the name the journal writes`` () 
 
     let wire =
         occasionOneof.Fields
+        |> Seq.filter (fun field -> not (declaredBeforeDomain.Contains field.MessageType.Name))
         |> Seq.map (fun field -> field.Name)
         |> Set.ofSeq
 

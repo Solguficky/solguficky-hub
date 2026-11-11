@@ -56,6 +56,8 @@ message MeetupEvent {
     MeetupMaterialRemoved meetup_material_removed = 15;
     MeetupHeld meetup_held = 16;
     MaterialsReordered materials_reordered = 19;
+    MeetupOrganizerAppointed meetup_organizer_appointed = 20;
+    MeetupOrganizerDismissed meetup_organizer_dismissed = 21;
   }
 
   // Opaque end-to-end id of the request that produced this fact: 1 to 128
@@ -128,6 +130,14 @@ message MeetupState {
   // RFC 3339 instant in UTC of the planned publication. Unset when no publication is
   // scheduled; publishing takes it, and cancelling the meetup clears it.
   optional string scheduled_publish_at = 14;
+
+  // Canonical lowercase UUIDv7 with hyphens: the internal Identity ids of the people
+  // in the organizer roster, in the order they joined it. The administrator is not
+  // here: holding manage_meetups is a right, not a roster entry (ADR-076, item 3).
+  // The author is here from creation until they leave the roster, and stays
+  // state.author after that. An empty collection is not an absent state: it is a
+  // roster the administrator emptied.
+  repeated string organizers = 15;
 }
 
 // The meetup was created as a draft. The author is state.author.
@@ -187,3 +197,19 @@ message MeetupMaterialRemoved {
 
 // The new order is carried by state.materials, as in every state snapshot.
 message MaterialsReordered {}
+
+// A person joined the organizer roster. state.organizers already contains them;
+// the id names which element is the new one. Who performed the command is
+// MeetupEvent.performed_by.
+message MeetupOrganizerAppointed {
+  // Canonical lowercase UUIDv7 with hyphens: the person who joined the roster.
+  string identity_id = 1;
+}
+
+// A person left the organizer roster. The id is carried because the person is no
+// longer in state.organizers. A removal by another person and leaving by one's own
+// will are the same occasion, told apart by MeetupEvent.performed_by.
+message MeetupOrganizerDismissed {
+  // Canonical lowercase UUIDv7 with hyphens: the person who left the roster.
+  string identity_id = 1;
+}

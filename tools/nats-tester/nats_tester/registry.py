@@ -60,6 +60,8 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.meetups.meetup_material_removed': meetups_events_pb2.MeetupEvent,
     'events.meetups.materials_reordered': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_held': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_organizer_appointed': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_organizer_dismissed': meetups_events_pb2.MeetupEvent,
     'events.auction.lot_opened': auction_events_pb2.LotEvent,
     'events.auction.bid_placed': auction_events_pb2.LotEvent,
     'events.auction.ask_advanced': auction_events_pb2.LotEvent,
