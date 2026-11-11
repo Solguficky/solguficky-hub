@@ -104,6 +104,34 @@ func TestRunPrintsBothProbabilitiesWithModelVersions(t *testing.T) {
 	}
 }
 
+// Windows user variables set from a CRLF file keep the trailing `\r`: Go then
+// refuses the header and the URL, and the observer reported «сеть» and «адрес
+// не разобран» for a key that was in place (PER-576, PER-666, PER-871).
+func TestRunTrimsCarriageReturnsFromKeys(t *testing.T) {
+	t.Parallel()
+	j := &stub{status: 200, reply: jevReply}
+	c := &stub{status: 200, reply: clefReply}
+	e := bothKeys(j.serve(t), c.serve(t))
+	e["TYPESAFE_API_KEY"] = jevKey + "\r"
+	e["CF_API_TOKEN"] = clefKey + "\r\n"
+	out, code := observe(t, e, "-point", "decided")
+
+	if code != 0 || !strings.Contains(out, "Jev 0.07 (jev-1.13.0)") || !strings.Contains(out, "Clef 0.91 (clef)") {
+		t.Fatalf("code %d, output %q: both columns must answer", code, out)
+	}
+	if j.auth != "Bearer "+jevKey || c.auth != "Bearer "+clefKey {
+		t.Errorf("bearer keys keep the carriage return: jev %q, clef %q", j.auth, c.auth)
+	}
+
+	e = bothKeys("", "")
+	delete(e, "CLEF_URL")
+	e["CF_ACCOUNT_ID"] = "acc\r"
+	out, _ = observe(t, e, "-point", "plan", "-dry-run")
+	if !strings.Contains(out, "/accounts/acc/ai/run/") {
+		t.Errorf("the account id keeps the carriage return in the URL: %q", out)
+	}
+}
+
 func TestRunWithoutKeysPrintsUnavailableAndExitsZero(t *testing.T) {
 	t.Parallel()
 	out, code := observe(t, env{}, "-point", "ask")
