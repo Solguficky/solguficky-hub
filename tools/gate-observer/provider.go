@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 )
 
 // Jev and Clef speak the same SystemOne request: one state, typed questions
@@ -22,12 +23,19 @@ type provider struct {
 	missing  string
 }
 
+// envKey reads a key without surrounding whitespace. Windows user variables
+// set from a CRLF file keep a trailing carriage return, and Go then refuses the header or
+// the URL that carries it, so a key in place would read as a network failure.
+func envKey(getenv func(string) string, name string) string {
+	return strings.TrimSpace(getenv(name))
+}
+
 func jev(getenv func(string) string) provider {
 	p := provider{
 		name:     "Jev",
 		endpoint: "https://api.typesafe.ai/v1/systemone",
 		model:    "jev-latest",
-		token:    getenv("TYPESAFE_API_KEY"),
+		token:    envKey(getenv, "TYPESAFE_API_KEY"),
 	}
 	if p.token == "" {
 		p.missing = "TYPESAFE_API_KEY"
@@ -39,12 +47,12 @@ func jev(getenv func(string) string) provider {
 }
 
 func clef(getenv func(string) string) provider {
-	account := getenv("CF_ACCOUNT_ID")
+	account := envKey(getenv, "CF_ACCOUNT_ID")
 	p := provider{
 		name:     "Clef",
 		endpoint: "https://api.cloudflare.com/client/v4/accounts/" + account + "/ai/run/@cf/cloudflare/clef",
 		model:    "clef",
-		token:    getenv("CF_API_TOKEN"),
+		token:    envKey(getenv, "CF_API_TOKEN"),
 	}
 	switch {
 	case p.token == "":
