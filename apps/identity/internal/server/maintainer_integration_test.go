@@ -47,7 +47,7 @@ func TestMaintainerPresetLifecycle(t *testing.T) {
 		t.Fatalf("circle after bootstrap: got %v want member", resolved.GetCircle())
 	}
 	assertRightSet(t, resolved.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB,
-		identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS)
+		identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS)
 	assertJournalCount(t, db, profile, 2)
 	assertSystemJournalActor(t, db, profile)
 

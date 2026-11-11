@@ -45,7 +45,7 @@ func TestEveryGrantPathLeavesOneActiveCircle(t *testing.T) {
 		t.Fatalf("admin snapshot: circle=%q rights=%q presets=%q", circle, rights, presets)
 	}
 	circle, rights, presets = lastSnapshot(t, db, applicant)
-	if circle != circleMember || rights != "access_hub,place_bids" || presets != "" {
+	if circle != circleMember || rights != "access_hub,organize_meetups,place_bids" || presets != "" {
 		t.Fatalf("member snapshot: circle=%q rights=%q presets=%q", circle, rights, presets)
 	}
 }

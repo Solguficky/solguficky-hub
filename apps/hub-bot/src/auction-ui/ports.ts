@@ -16,6 +16,7 @@ export const ACCESS_RIGHTS = [
   "manage-meetups",
   "grant-admins",
   "run-auctions",
+  "organize-meetups",
 ] as const;
 
 // Права, которые Identity вывел из круга, наборов и выданных записей (RFC-016).

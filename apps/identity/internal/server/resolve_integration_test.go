@@ -151,6 +151,7 @@ func TestResolveIdentityReturnsExistingPreset(t *testing.T) {
 	}
 	assertRightSet(t, second.GetRights(),
 		identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB,
+		identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS,
 		identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS,
 		identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS,
 		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS,
@@ -190,7 +191,7 @@ func TestResolveIdentityDoesNotRestoreRevokedPreset(t *testing.T) {
 	if second.GetIdentityId() != first.GetIdentityId() {
 		t.Fatalf("identity_id: got %q want %q", second.GetIdentityId(), first.GetIdentityId())
 	}
-	assertRightSet(t, second.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, second.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	if len(second.GetPresets()) != 0 {
 		t.Fatalf("presets after revoke: got %v want empty", second.GetPresets())
 	}
