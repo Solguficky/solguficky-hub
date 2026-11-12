@@ -39,6 +39,7 @@ type identityService struct {
 	log             *slog.Logger
 	maintainerToken string
 	communityQueue  CommunityQueue
+	contacts        ContactConfirmer
 }
 
 func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.ResolveIdentityRequest) (*identityv1.ResolveIdentityResponse, error) {

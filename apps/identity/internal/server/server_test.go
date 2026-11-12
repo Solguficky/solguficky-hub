@@ -41,12 +41,17 @@ func newConnWith(t *testing.T, db *sql.DB) *grpc.ClientConn {
 
 func newConnWithToken(t *testing.T, db *sql.DB, token string) *grpc.ClientConn {
 	t.Helper()
+	return newConnWithOptions(t, db, token)
+}
+
+func newConnWithOptions(t *testing.T, db *sql.DB, token string, opts ...server.Option) *grpc.ClientConn {
+	t.Helper()
 
 	lis := bufconn.Listen(1024 * 1024)
 	t.Cleanup(func() { _ = lis.Close() })
 
 	log := slog.New(slog.DiscardHandler)
-	srv := server.New(log, db, token, server.NewTestCallers(t, token))
+	srv := server.New(log, db, token, server.NewTestCallers(t, token), opts...)
 	t.Cleanup(srv.Stop)
 	go func() {
 		_ = srv.Serve(lis)

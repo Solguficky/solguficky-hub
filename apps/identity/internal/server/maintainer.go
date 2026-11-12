@@ -109,9 +109,15 @@ func (s identityService) authenticateMaintainer(ctx context.Context) error {
 }
 
 func canonicalIdentityID(raw string) (string, error) {
+	return canonicalUUID(raw, "identity_id")
+}
+
+// canonicalUUID принимает только каноническую строчную форму с дефисами;
+// имя поля попадает в текст отказа.
+func canonicalUUID(raw, field string) (string, error) {
 	id, err := uuid.Parse(raw)
 	if err != nil || id.String() != raw {
-		return "", status.Error(codes.InvalidArgument, "identity_id must be a canonical UUID")
+		return "", status.Error(codes.InvalidArgument, field+" must be a canonical UUID")
 	}
 	return raw, nil
 }
