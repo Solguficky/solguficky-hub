@@ -48,7 +48,7 @@ let ``A decision over a restored meetup matches the decision over the original``
 
     test
         <@
-            Meetup.decidePublish Sample.later (Existing restored) = Ok None
+            Meetup.decidePublish Sample.later false (Existing restored) = Ok None
             && Meetup.decideCreateDraft Sample.otherAuthorId Sample.meetupId (Existing restored) = Error
                 DraftBelongsToAnotherAuthor
         @>

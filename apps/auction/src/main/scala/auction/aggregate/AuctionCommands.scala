@@ -137,6 +137,15 @@ enum PaymentInstructionsRefusal {
 }
 
 /**
+ * Отказ промо-видео (PER-781): проверка до агрегата. `OpIdTaken` — под этим `op_id` записана другая команда или другое
+ * видео: тихое «принято» сообщило бы о видео, которого в журнале нет.
+ */
+enum PromoVideoRefusal {
+  case Denied(denial: Denial)
+  case OpIdTaken
+}
+
+/**
  * Отказ раскладки ленты (PER-719): проверка до агрегата или решение агрегата. `OpIdTaken` — под этим `op_id` записана
  * другая команда или другая раскладка: тихое «принято» сообщило бы о порядке, которого в журнале нет.
  */
@@ -205,6 +214,37 @@ enum ParticipantRemovalRefusal {
 enum LaunchRefusal {
   case Denied(denial: Denial)
   case Rejected(rejected: LaunchStepWindowRejected)
+  case OpIdTaken
+}
+
+/**
+ * Отказ создания периода «Счастливых часов»: проверка до агрегата или решение агрегата. `OpIdTaken` — под этим `op_id`
+ * записана другая команда аукциона.
+ */
+enum HappyHourRefusal {
+  case Denied(denial: Denial)
+  case Rejected(rejected: CreateHappyHourPeriodRejected)
+  case OpIdTaken
+}
+
+/** Отказ удаления периода «Счастливых часов»; `OpIdTaken` — под этим `op_id` записана другая команда аукциона. */
+enum HappyHourDeletionRefusal {
+  case Denied(denial: Denial)
+  case Rejected(rejected: DeleteHappyHourPeriodRejected)
+  case OpIdTaken
+}
+
+/** Отказ условий лота в периоде (PER-786); `OpIdTaken` — под этим `op_id` записана другая команда аукциона. */
+enum HappyHourTermsRefusal {
+  case Denied(denial: Denial)
+  case Rejected(rejected: SetHappyHourLotTermsRejected)
+  case OpIdTaken
+}
+
+/** Отказ снятия условий лота в периоде (PER-786); `OpIdTaken` — под этим `op_id` записана другая команда аукциона. */
+enum HappyHourTermsClearingRefusal {
+  case Denied(denial: Denial)
+  case Rejected(rejected: ClearHappyHourLotTermsRejected)
   case OpIdTaken
 }
 
@@ -586,6 +626,41 @@ final class AuctionCommands(
   }
 
   /**
+   * Промо-видео аукциона (PER-781): выставить, заменить или снять. Порядок тот же, что у текста оплаты: повтор, аукцион
+   * без журнала, право у Meetups, затем агрегат. Ворота — сходка не отменена, как у остальных команд пульта.
+   */
+  def setPromoVideo(
+      auctionId: AuctionId,
+      video: Option[PromoVideo],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[PromoVideoRefusal, Unit]] = {
+    // Выставить и снять — разные события; другое видео под тем же `op_id` — тоже чужая команда.
+    def ours(envelope: AuctionEnvelope): Boolean =
+      envelope.event match {
+        case AuctionEvent.PromoVideoSet(recorded) => video.contains(recorded)
+        case AuctionEvent.PromoVideoCleared => video.isEmpty
+        case _ => false
+      }
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        Future.successful(Either.cond(ours(original), (), PromoVideoRefusal.OpIdTaken))
+      case Inspection.Absent => Future.successful(Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, PromoVideoRefusal.Denied(_)) {
+          auctions
+            .setPromoVideo(auctionId, SetPromoVideo(video, opId), Initiator.Operator(person))
+            .map {
+              case Left(PromoVideoRejected.AuctionNotFound) => Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound))
+              case Right(AuctionAnswer.Written(original)) =>
+                Either.cond(ours(original), (), PromoVideoRefusal.OpIdTaken)
+              case Right(AuctionAnswer.Unchanged) => Right(())
+            }
+        }
+    }
+  }
+
+  /**
    * Порядок и разделы ленты (PER-719): раскладка целиком. Порядок тот же, что у времени финала: повтор, аукцион без
    * журнала, право у Meetups, затем агрегат. Ворота — сходка не отменена.
    */
@@ -762,6 +837,135 @@ final class AuctionCommands(
       case Left(LaunchStepWindowRejected.AuctionNotFound) => Left(LaunchRefusal.Denied(Denial.AuctionNotFound))
       case Left(rejected) => Left(LaunchRefusal.Rejected(rejected))
     }
+
+  /**
+   * Создание периода «Счастливых часов» (ADR-047, дополнение 2026-10-27); ответ — записанный период. Повтор своего
+   * `op_id` отвечает исходным периодом мимо Meetups: доставлять периоду нечего, и в entity повтор не идёт.
+   */
+  def createHappyHourPeriod(
+      auctionId: AuctionId,
+      command: CreateHappyHourPeriod,
+      person: ParticipantId
+  ): Future[Either[HappyHourRefusal, HappyHourPeriod]] =
+    auctions.inspect(auctionId, command.opId).flatMap {
+      case Inspection.Repeated(original) => Future.successful(createdBy(original))
+      case Inspection.Absent => Future.successful(Left(HappyHourRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, HappyHourRefusal.Denied(_)) {
+          auctions.createHappyHourPeriod(auctionId, command, Initiator.Operator(person)).map {
+            case Right(AuctionAnswer.Written(envelope)) => createdBy(envelope)
+            case Right(AuctionAnswer.Unchanged) =>
+              throw new IllegalStateException(s"auction $auctionId created a happy hour period without an event")
+            case Left(CreateHappyHourPeriodRejected.AuctionNotFound) =>
+              Left(HappyHourRefusal.Denied(Denial.AuctionNotFound))
+            case Left(rejected) => Left(HappyHourRefusal.Rejected(rejected))
+          }
+        }
+    }
+
+  /**
+   * Удаление периода до его начала. Повтор своего `op_id` идёт в entity мимо Meetups: события он не пишет, но дошлёт
+   * снятие условий лотам периода, не ответившим раньше (PER-786).
+   */
+  def deleteHappyHourPeriod(
+      auctionId: AuctionId,
+      command: DeleteHappyHourPeriod,
+      person: ParticipantId
+  ): Future[Either[HappyHourDeletionRefusal, Unit]] = {
+    def deletedBy(envelope: AuctionEnvelope): Either[HappyHourDeletionRefusal, Unit] =
+      envelope.event match {
+        case AuctionEvent.HappyHourPeriodDeleted(period) if period == command.period => Right(())
+        case _ => Left(HappyHourDeletionRefusal.OpIdTaken)
+      }
+    def delete: Future[Either[HappyHourDeletionRefusal, Unit]] =
+      auctions.deleteHappyHourPeriod(auctionId, command, Initiator.Operator(person)).map {
+        case Right(AuctionAnswer.Written(envelope)) => deletedBy(envelope)
+        case Right(AuctionAnswer.Unchanged) =>
+          throw new IllegalStateException(s"auction $auctionId deleted a happy hour period without an event")
+        case Left(DeleteHappyHourPeriodRejected.AuctionNotFound) =>
+          Left(HappyHourDeletionRefusal.Denied(Denial.AuctionNotFound))
+        case Left(rejected) => Left(HappyHourDeletionRefusal.Rejected(rejected))
+      }
+    auctions.inspect(auctionId, command.opId).flatMap {
+      case Inspection.Repeated(original) =>
+        deletedBy(original) match {
+          case Left(refusal) => Future.successful(Left(refusal))
+          case Right(()) => delete
+        }
+      case Inspection.Absent => Future.successful(Left(HappyHourDeletionRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, HappyHourDeletionRefusal.Denied(_))(delete)
+    }
+  }
+
+  /**
+   * Условия лота в периоде «Счастливых часов» (ADR-047, дополнение 2026-10-27, PER-786); ответ — записанные условия.
+   * После права обычные условия лота читаются у самого лота: аукцион их не знает, а сверять с ними нужно до записи.
+   * Повтор своего `op_id` идёт в entity мимо Meetups и лота: события он не пишет, но дошлёт условия, если лот не
+   * ответил раньше.
+   */
+  def setHappyHourLotTerms(
+      auctionId: AuctionId,
+      command: SetHappyHourLotTerms,
+      person: ParticipantId
+  ): Future[Either[HappyHourTermsRefusal, (LotId, HappyHourTerms)]] = {
+    def set(regulars: Option[LotRegulars]): Future[Either[HappyHourTermsRefusal, (LotId, HappyHourTerms)]] =
+      auctions.setHappyHourLotTerms(auctionId, command, regulars, Initiator.Operator(person)).map {
+        case Right(AuctionAnswer.Written(envelope)) => termsSetBy(envelope)
+        case Right(AuctionAnswer.Unchanged) =>
+          throw new IllegalStateException(s"auction $auctionId set happy hour lot terms without an event")
+        case Left(SetHappyHourLotTermsRejected.AuctionNotFound) =>
+          Left(HappyHourTermsRefusal.Denied(Denial.AuctionNotFound))
+        case Left(rejected) => Left(HappyHourTermsRefusal.Rejected(rejected))
+      }
+    auctions.inspect(auctionId, command.opId).flatMap {
+      case Inspection.Repeated(original) =>
+        termsSetBy(original) match {
+          case Left(refusal) => Future.successful(Left(refusal))
+          case Right(_) => set(None)
+        }
+      case Inspection.Absent => Future.successful(Left(HappyHourTermsRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, HappyHourTermsRefusal.Denied(_)) {
+          lots.stateOf(command.lot.value).flatMap(state => set(LotRegulars.of(state)))
+        }
+    }
+  }
+
+  /**
+   * Снятие условий лота в периоде (PER-786). Снимать нечего — ответ успехом без события. Повтор своего `op_id` идёт в
+   * entity мимо Meetups и дошлёт снятие, если лот не ответил раньше.
+   */
+  def clearHappyHourLotTerms(
+      auctionId: AuctionId,
+      command: ClearHappyHourLotTerms,
+      person: ParticipantId
+  ): Future[Either[HappyHourTermsClearingRefusal, Unit]] = {
+    def clearedBy(envelope: AuctionEnvelope): Either[HappyHourTermsClearingRefusal, Unit] =
+      envelope.event match {
+        case AuctionEvent.HappyHourLotTermsCleared(period, lot) if period == command.period && lot == command.lot =>
+          Right(())
+        case _ => Left(HappyHourTermsClearingRefusal.OpIdTaken)
+      }
+    def clear: Future[Either[HappyHourTermsClearingRefusal, Unit]] =
+      auctions.clearHappyHourLotTerms(auctionId, command, Initiator.Operator(person)).map {
+        case Right(AuctionAnswer.Written(envelope)) => clearedBy(envelope)
+        case Right(AuctionAnswer.Unchanged) => Right(())
+        case Left(ClearHappyHourLotTermsRejected.AuctionNotFound) =>
+          Left(HappyHourTermsClearingRefusal.Denied(Denial.AuctionNotFound))
+        case Left(rejected) => Left(HappyHourTermsClearingRefusal.Rejected(rejected))
+      }
+    auctions.inspect(auctionId, command.opId).flatMap {
+      case Inspection.Repeated(original) =>
+        clearedBy(original) match {
+          case Left(refusal) => Future.successful(Left(refusal))
+          case Right(()) => clear
+        }
+      case Inspection.Absent => Future.successful(Left(HappyHourTermsClearingRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, HappyHourTermsClearingRefusal.Denied(_))(clear)
+    }
+  }
 
   /** Ask ведущего лоту реестра (RFC-011, П-08); инициатор у лота — ведущий. */
   def advanceAsk(
@@ -963,6 +1167,20 @@ final class AuctionCommands(
       case _ => Left(LaunchRefusal.OpIdTaken)
     }
 
+  /** Период исходного создания; `op_id` под другим событием — чужая команда. */
+  private def createdBy(envelope: AuctionEnvelope): Either[HappyHourRefusal, HappyHourPeriod] =
+    envelope.event match {
+      case AuctionEvent.HappyHourPeriodCreated(period) => Right(period)
+      case _ => Left(HappyHourRefusal.OpIdTaken)
+    }
+
+  /** Условия исходной правки; `op_id` под другим событием — чужая команда. */
+  private def termsSetBy(envelope: AuctionEnvelope): Either[HappyHourTermsRefusal, (LotId, HappyHourTerms)] =
+    envelope.event match {
+      case AuctionEvent.HappyHourLotTermsSet(_, lot, terms) => Right(lot -> terms)
+      case _ => Left(HappyHourTermsRefusal.OpIdTaken)
+    }
+
   /** Лот родился в этом аукционе — сейчас или раньше. `false` — он уже есть, но в другом аукционе. */
   private def born(auctionId: AuctionId, lot: LotId, opId: OpId, person: ParticipantId): Future[Boolean] =
     lots.draftLot(lot.value, DraftLot(auctionId, opId), Initiator.Operator(person)).flatMap {
@@ -986,7 +1204,9 @@ final class AuctionCommands(
           AuctionEvent.AuctionHidden | AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared |
           AuctionEvent.PaymentInstructionsSet(_) | AuctionEvent.PaymentInstructionsCleared |
           AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) | AuctionEvent.LotSetSettled(_, _) |
-          AuctionEvent.LotLayoutSet(_) =>
+          AuctionEvent.LotLayoutSet(_) | AuctionEvent.PromoVideoSet(_) | AuctionEvent.PromoVideoCleared |
+          AuctionEvent.HappyHourPeriodCreated(_) | AuctionEvent.HappyHourPeriodDeleted(_) |
+          AuctionEvent.HappyHourLotTermsSet(_, _, _) | AuctionEvent.HappyHourLotTermsCleared(_, _) =>
         false
     }
 }

@@ -69,9 +69,9 @@ func TestAccessChangesAdvanceVersionWithSnapshotAfterChange(t *testing.T) {
 
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {}[] blocked=false",
-		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
-		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,place_bids,run_auctions}[admin] blocked=false",
-		"v4 preset_revoked(admin) member{access_hub,place_bids}[] blocked=false",
+		"v2 circle_changed() member{access_hub,organize_meetups,place_bids}[] blocked=false",
+		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,organize_meetups,place_bids,run_auctions}[admin] blocked=false",
+		"v4 preset_revoked(admin) member{access_hub,organize_meetups,place_bids}[] blocked=false",
 	)
 	if got := profileVersion(t, db, identityID); got != 4 {
 		t.Fatalf("profile version: got %d want 4", got)
@@ -92,8 +92,8 @@ func TestBlockPublishesOneEventWithEmptySnapshot(t *testing.T) {
 
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {}[] blocked=false",
-		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
-		"v3 preset_granted(maintainer) member{access_hub,grant_admins,place_bids}[maintainer] blocked=false",
+		"v2 circle_changed() member{access_hub,organize_meetups,place_bids}[] blocked=false",
+		"v3 preset_granted(maintainer) member{access_hub,grant_admins,organize_meetups,place_bids}[maintainer] blocked=false",
 		"v4 profile_blocked() {}[] blocked=true",
 		"v5 profile_unblocked() {}[] blocked=false",
 	)
@@ -113,8 +113,8 @@ func TestBlockOfBlockedProfileRevokesLeftoverAccess(t *testing.T) {
 
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {}[] blocked=false",
-		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
-		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,place_bids,run_auctions}[admin] blocked=false",
+		"v2 circle_changed() member{access_hub,organize_meetups,place_bids}[] blocked=false",
+		"v3 preset_granted(admin) member{access_hub,admit_bidders,manage_meetups,manage_members,organize_meetups,place_bids,run_auctions}[admin] blocked=false",
 		"v4 profile_blocked() {}[] blocked=true",
 	)
 	assertJournalSummary(t, db, identityID, "grant:member", "grant:preset:admin", "revoke:member", "revoke:preset:admin")
@@ -126,12 +126,12 @@ func TestRegistrationCarriesAllowedUsernameAdmissionInOneEvent(t *testing.T) {
 	mustChange(t)(svc.addAllowedUsername(t.Context(), "newcomer", circleMember, uuid.NullUUID{}))
 
 	registered := resolveInternal(t, svc, 6005, "newcomer")
-	assertEvents(t, db, registered, "v1 profile_registered() member{access_hub,place_bids}[] blocked=false")
+	assertEvents(t, db, registered, "v1 profile_registered() member{access_hub,organize_meetups,place_bids}[] blocked=false")
 
 	// Повторный вход и смена ника событием не являются.
 	resolveInternal(t, svc, 6005, "newcomer")
 	resolveInternal(t, svc, 6005, "renamed")
-	assertEvents(t, db, registered, "v1 profile_registered() member{access_hub,place_bids}[] blocked=false")
+	assertEvents(t, db, registered, "v1 profile_registered() member{access_hub,organize_meetups,place_bids}[] blocked=false")
 }
 
 func TestAdmissionOfExistingProfileGrantsOneCircleInOneEvent(t *testing.T) {
@@ -144,7 +144,7 @@ func TestAdmissionOfExistingProfileGrantsOneCircleInOneEvent(t *testing.T) {
 
 	assertEvents(t, db, existing,
 		"v1 profile_registered() {}[] blocked=false",
-		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
+		"v2 circle_changed() member{access_hub,organize_meetups,place_bids}[] blocked=false",
 	)
 }
 

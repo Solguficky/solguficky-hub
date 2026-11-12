@@ -94,6 +94,7 @@ let ``Viewer with every known right should carry all of them into the domain`` (
             Identity.V1.AccessRight.ManageMeetups
             Identity.V1.AccessRight.GrantAdmins
             Identity.V1.AccessRight.RunAuctions
+            Identity.V1.AccessRight.OrganizeMeetups
         ]
 
     let parsed = Contract.Inbound.viewer (viewerWith rights)
@@ -112,6 +113,7 @@ let ``Viewer with every known right should carry all of them into the domain`` (
                         ManageMeetups
                         GrantAdmins
                         RunAuctions
+                        OrganizeMeetups
                     ]
             )
         @>

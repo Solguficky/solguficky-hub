@@ -46,7 +46,7 @@ public class AuctionBotWiringTests
         var profile = ProfileResolver.Resolve(configuration);
 
         // Notifications — избранные лоты бота аукциона (PER-495).
-        profile.Services.Order(StringComparer.Ordinal).ShouldBe([Auction, AuctionBot, Identity, Notifications]);
+        profile.Services.Order(StringComparer.Ordinal).ShouldBe([AppHostNames.Resources.Achievements, Auction, AuctionBot, Identity, Notifications]);
         profile.Infrastructure.Order(StringComparer.Ordinal).ShouldBe(["nats", "postgres"]);
     }
 
@@ -208,6 +208,17 @@ public class AuctionBotWiringTests
     }
 
     [Fact]
+    public async Task AuctionBot_GetsAchievementsOnlyWhenTheProfileOwnsIt()
+    {
+        var (without, _) = Materialize("prod");
+        (await EnvironmentAsync(without)).ShouldNotContainKey("ACHIEVEMENTS_GRPC_URL");
+        var (with, _) = Materialize("prod", withAchievements: true);
+        (await EnvironmentAsync(with)).ShouldContainKey("ACHIEVEMENTS_GRPC_URL");
+        with.Annotations.OfType<WaitAnnotation>().Select(wait => wait.Resource.Name)
+            .ShouldContain(AppHostNames.Resources.Achievements);
+    }
+
+    [Fact]
     public async Task AuctionBot_WithoutMediaChannel_GetsNoVariable()
     {
         var (bot, _) = Materialize("prod");
@@ -226,12 +237,39 @@ public class AuctionBotWiringTests
         environment["BOT_ENVIRONMENT"].ShouldBe("test");
     }
 
+    /// <summary>Экран зала и стрим под карточкой лота бота (PER-825).</summary>
+    [Fact]
+    public async Task AuctionBot_GetsTheConfiguredHallLinks()
+    {
+        var (bot, _) = Materialize(
+            "prod",
+            hallScreenUrl: " https://hall.example.org/screen ",
+            hallStreamUrl: "https://stream.example.org/live");
+        var environment = await EnvironmentAsync(bot);
+
+        environment["BOT_HALL_SCREEN_URL"].ShouldBe("https://hall.example.org/screen");
+        environment["BOT_STREAM_URL"].ShouldBe("https://stream.example.org/live");
+    }
+
+    [Fact]
+    public async Task AuctionBot_WithoutHallLinks_GetsNoVariables()
+    {
+        var (bot, _) = Materialize("prod");
+        var environment = await EnvironmentAsync(bot);
+
+        environment.ShouldNotContainKey("BOT_HALL_SCREEN_URL");
+        environment.ShouldNotContainKey("BOT_STREAM_URL");
+    }
+
     private static (IResource Bot, ServiceGraphContext Context) Materialize(
         string telegramEnvironment,
         string? staleAuctionId = null,
         bool withNotifications = true,
         string? supportBotUsername = null,
-        string? mediaChannelId = null)
+        string? mediaChannelId = null,
+        bool withAchievements = false,
+        string? hallScreenUrl = null,
+        string? hallStreamUrl = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -254,6 +292,8 @@ public class AuctionBotWiringTests
             ["AuctionBot:AuctionId"] = staleAuctionId,
             [SupportBotLink.UsernameKey] = supportBotUsername,
             [BotMediaChannel.ChannelIdKey] = mediaChannelId,
+            [BotHallLinks.ScreenUrlKey] = hallScreenUrl,
+            [BotHallLinks.StreamUrlKey] = hallStreamUrl,
         });
         if (withNotifications)
         {
@@ -263,7 +303,12 @@ public class AuctionBotWiringTests
             });
         }
 
+        builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["Topology:Profiles:achievements:Services:0"] = AppHostNames.Resources.Achievements,
+        });
         string[] services = withNotifications ? [Identity, Auction, Notifications, AuctionBot] : [Identity, Auction, AuctionBot];
+        if (withAchievements) services = [.. services, AppHostNames.Resources.Achievements];
         var profile = new ProfileConfig { Name = "auction-bot", Services = [.. services], Infrastructure = [Nats] };
         var graph = new ServiceGraph(builder, profile);
         ServiceGraphContext? captured = null;
@@ -276,7 +321,8 @@ public class AuctionBotWiringTests
         // Узел в графе есть всегда, а владеет им профиль или нет — как
         // Notifications в настоящих профилях auction-bot и hub-auction.
         graph.AddService(Notifications, [], context => CheapGrpcNode(context, Notifications), LocalOnly);
-        graph.AddService(AuctionBot, [Nats, Identity, Auction, Notifications], context =>
+        graph.AddService(AppHostNames.Resources.Achievements, [], context => CheapGrpcNode(context, AppHostNames.Resources.Achievements), LocalOnly);
+        graph.AddService(AuctionBot, [Nats, Identity, Auction, Notifications, AppHostNames.Resources.Achievements], context =>
         {
             captured = context;
             return AuctionBotSetup.Configure(context);

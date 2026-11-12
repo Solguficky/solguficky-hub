@@ -128,7 +128,7 @@ let private attempt (deps: Deps) (now: DateTimeOffset) (snapshot: MeetupSnapshot
     task {
         let state = Meetup.restore (Some snapshot)
 
-        match Meetup.decidePublish now state with
+        match Meetup.decidePublish now false state with
         | Error error -> return Attempt.Blocked(snapshot.Id, error)
         // «Цель уже достигнута» здесь невыразимо, и это свойство выборки, а не удача:
         // `Ok None` приходит только от уже видимой сходки, а набор отбирает строки

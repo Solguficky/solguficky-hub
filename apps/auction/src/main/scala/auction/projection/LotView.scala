@@ -20,7 +20,10 @@ final case class LotViewRow(lotId: UUID, auctionId: UUID, stored: StoredLot) {
 
 /**
  * Ставка в хронологии лота: строка `lot_bid`, ключ — номер события в журнале лота. `removed` — автора сняли с лота
- * позже (ADR-072, PER-658): ставка остаётся в хронологии, но больше не считается.
+ * позже (ADR-072, PER-658): ставка остаётся в хронологии, но больше не считается. `windowStart` — стартовая цена окна
+ * лота, которое действовало в момент ставки (ADR-047, дополнение 2026-10-27), в минорных единицах валюты ставки; нет —
+ * окна со стартовой не было. От неё и суммы первой неснятой ставки статистика считает стартовую роста (PER-810): снимок
+ * проданного лота окон не несёт.
  */
 final case class BidRecord(
     lotId: UUID,
@@ -32,7 +35,8 @@ final case class BidRecord(
     origin: String,
     source: Option[String],
     occurredAt: Instant,
-    removed: Boolean = false
+    removed: Boolean = false,
+    windowStart: Option[Long] = None
 )
 
 /**
@@ -69,7 +73,8 @@ enum HistoryRecord {
  * `LotOpened`: в состоянии лота после открытия её нет, а рост цены статистики считается от неё. `heldPrice` — цена
  * удержания из `LotHeldForFinal` и из снятия участника с удержанного лота (PER-658), которую состояние `Held` теряет
  * при `LotResumed`; `resumedSequence` — номер события `LotResumed`: по нему ставки финала отделяются от ставок недели
- * (PER-608). `removals` — снятия участников: их ставки и участие помечаются снятыми, а снятие ложится в хронологию.
+ * (PER-608), `resumedAt` — его время (PER-819). `removals` — снятия участников: их ставки и участие помечаются снятыми,
+ * а снятие ложится в хронологию.
  */
 final case class LotViewFold(
     row: Option[LotViewRow],
@@ -78,11 +83,12 @@ final case class LotViewFold(
     startingPrice: Option[StoredMoney],
     heldPrice: Option[StoredMoney] = None,
     resumedSequence: Option[Long] = None,
+    resumedAt: Option[Instant] = None,
     removals: List[RemovalRecord] = Nil
 )
 
-/** Событие, которое свёртка применила, и строка лота сразу после него. */
-final case class AppliedEvent(sequence: Long, stored: StoredLotEvent, row: LotViewRow)
+/** Событие, которое свёртка применила, строка лота сразу после него и строка хронологии, если событие — ставка. */
+final case class AppliedEvent(sequence: Long, stored: StoredLotEvent, row: LotViewRow, bid: Option[BidRecord] = None)
 
 /** Что проекция делает с одним событием журнала. */
 enum LotViewStep {
@@ -134,7 +140,7 @@ object LotView {
         case (LotState.Initial, _) | (_, None) => Left(LotViewDefect.Unborn(lotId, sequence))
         case (_, Some(auction)) =>
           val row = LotViewRow(lotId, auction.value, LotJournal.storeLot(after, sequence))
-          Right(LotViewStep.Write(row, bid(lotId, sequence, stored)))
+          Right(LotViewStep.Write(row, bid(lotId, sequence, stored, before.state)))
       }
     }
   }
@@ -151,13 +157,15 @@ object LotView {
       events: Seq[(Long, StoredLotEvent)]
   ): Either[LotViewDefect, LotViewFold] =
     replay(current, lotId, events).map { applied =>
+      val resumed = applied.filter(step => step.stored.event.kind == "LotResumed").lastOption
       LotViewFold(
         row = applied.lastOption.map(_.row),
-        bids = applied.flatMap(step => bid(lotId, step.sequence, step.stored)),
+        bids = applied.flatMap(_.bid),
         participants = applied.flatMap(step => participant(step.stored)),
         startingPrice = applied.flatMap(step => step.stored.event.lotOpened.map(_.startingPrice)).lastOption,
         heldPrice = applied.flatMap(heldPrice).lastOption,
-        resumedSequence = applied.filter(step => step.stored.event.kind == "LotResumed").lastOption.map(_.sequence),
+        resumedSequence = resumed.map(_.sequence),
+        resumedAt = resumed.map(_.stored.occurredAt),
         removals = applied.flatMap(step => removal(lotId, step.sequence, step.stored))
       )
     }
@@ -207,13 +215,13 @@ object LotView {
         case (Right((row, applied)), (sequence, stored)) =>
           project(row, lotId, sequence, stored).map {
             case LotViewStep.Skip => (row, applied)
-            case LotViewStep.Write(next, _) => (Some(next), AppliedEvent(sequence, stored, next) :: applied)
+            case LotViewStep.Write(next, bid) => (Some(next), AppliedEvent(sequence, stored, next, bid) :: applied)
           }
         case (failed, _) => failed
       }
       .map((_, applied) => applied.reverse)
 
-  private def bid(lotId: UUID, sequence: Long, stored: StoredLotEvent): Option[BidRecord] =
+  private def bid(lotId: UUID, sequence: Long, stored: StoredLotEvent, before: LotState): Option[BidRecord] =
     stored.event.bidPlaced.map { placed =>
       BidRecord(
         lotId = lotId,
@@ -224,7 +232,20 @@ object LotView {
         currency = placed.amount.currency,
         origin = placed.origin,
         source = placed.source,
-        occurredAt = stored.occurredAt
+        occurredAt = stored.occurredAt,
+        windowStart = windowStart(before, stored.occurredAt, placed.amount.currency)
       )
+    }
+
+  /**
+   * Стартовая окна, которое действовало в момент ставки: то же окно, что выбирает `Lot.activeWindow` для команды, по
+   * тому же моменту — `occurred_at` строки и есть `now` команды. Окно в чужой валюте лот не принимает, но сравнение
+   * валют здесь держит сумму осмысленной и для строки прежней формы.
+   */
+  private def windowStart(before: LotState, at: Instant, currency: String): Option[Long] =
+    before match {
+      case LotState.Trading(trading) =>
+        Lot.activeWindow(trading, at).flatMap(_.start).filter(_.currency.value == currency).map(_.minorUnits)
+      case _ => None
     }
 }

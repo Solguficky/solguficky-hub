@@ -944,6 +944,7 @@ describe("presentation adapter", () => {
         "https://t.me/c/1234567890/4321/77",
       ],
       ["https://t.me/solguficky/77?single", "https://t.me/solguficky/77"],
+      ["t.me/solguficky/77", "https://t.me/solguficky/77"],
     ])("attaches %s and opens it from the materials", async (typed, url) => {
       const { bot, calls, execute } = materialHarness();
       await bot.init();
@@ -1013,10 +1014,14 @@ describe("presentation adapter", () => {
     });
 
     it.each([
-      "https://example.com/solguficky/77",
-      "https://t.me/solguficky",
-      "посмотри https://t.me/solguficky/77",
-    ])("refuses %s without a material", async (typed) => {
+      ["https://example.com/solguficky/77", "Текст сам по себе не материал"],
+      ["https://t.me/solguficky", "Текст сам по себе не материал"],
+      // Фраза со ссылкой — не текст без ссылки (PER-793).
+      [
+        "посмотри t.me/solguficky/77",
+        "Ссылку на сообщение пришли отдельно, без другого текста",
+      ],
+    ])("refuses %s without a material", async (typed, refusal) => {
       const { bot, calls, execute, records } = materialHarness();
       await bot.init();
 
@@ -1032,9 +1037,10 @@ describe("presentation adapter", () => {
         }),
       );
 
-      expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
-        "Текст сам по себе не материал",
-      );
+      const rejection = JSON.stringify(sentMessages(calls).at(-1)?.payload);
+      expect(rejection).toContain(refusal);
+      // Пересылку из чата бот не принимает и не предлагает (PER-793).
+      expect(rejection).not.toContain("из канала или чата");
       expect(
         execute.mock.calls.some(
           ([request]) => request.intent === "attach-material",
@@ -1142,6 +1148,63 @@ describe("presentation adapter", () => {
     expect(calls[1]?.payload).toMatchObject({ caption: "Прикреплено: Афиша" });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("callback_data");
     expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
+  });
+
+  it("dispatches a single material move with the version shown on the keyboard", async () => {
+    const ids = ["90", "91", "92", "93", "94", "95", "96", "9a", "9b"];
+    const material = (suffix: string) => ({
+      id: `0199c0de-0000-7000-8000-0000000000${suffix}`,
+      title: suffix,
+      source: {
+        kind: "message-link" as const,
+        url: `https://t.me/c/1234567890/${suffix}`,
+      },
+    });
+    const meetup = {
+      ...publishedMeetup(),
+      version: 6,
+      materials: [
+        ...ids.slice(0, 7).map(material),
+        material("9b"),
+        material("9a"),
+      ],
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "materials-reordered",
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      callbackUpdate("v1:mm:d:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg:6"),
+    );
+    expect(execute).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        intent: "move-material",
+        meetupId: publishedMeetup().id,
+        materialId: "0199c0de-0000-7000-8000-00000000009a",
+        direction: "down",
+        expectedVersion: 6,
+      }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: { text: expect.stringContaining("Материалы · 2 из 2") },
+    });
+  });
+
+  it("answers an edge arrow without reordering", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:mm:e:AZLzpLXGfY6fChssPU5fYA"));
+    expect(execute).not.toHaveBeenCalled();
+    expect(calls.map((call) => call.method)).toEqual(["answerCallbackQuery"]);
+    expect(calls[0]?.payload).toMatchObject({ text: "Уже край." });
   });
 
   it("removes a material only after confirming that the original stays", async () => {
@@ -4040,22 +4103,25 @@ describe("presentation adapter", () => {
       callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
     );
 
-    // Публикация выходит наружу и идёт через подтверждение; «Нет» вернёт в
-    // «Статус», «Да» несёт версию показанного снимка.
+    // Публикация выходит наружу и идёт через выбор; «Отмена» вернёт в
+    // «Статус», кнопки несут версию показанного снимка.
     expect(execute).not.toHaveBeenCalledWith(
       expect.objectContaining({ intent: "publish-meetup" }),
     );
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
+        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам. Оповещение о новой сходке уходит только по первой кнопке и только при первой публикации.",
       },
     });
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      '"text":"✔️ Да, опубликовать сходку","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"',
+      '"text":"Опубликовать и оповестить","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"',
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      '"text":"✖️ Нет","callback_data":"v1:manage:status:AZLzpLXGfY6fChssPU5fYA"',
+      '"text":"Опубликовать без оповещения","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1:s"',
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"text":"Отмена","callback_data":"v1:manage:status:AZLzpLXGfY6fChssPU5fYA"',
     );
 
     await bot.handleUpdate(
@@ -4148,17 +4214,25 @@ describe("presentation adapter", () => {
       method: "sendMessage",
       payload: {
         text: expect.stringContaining(
-          "Проверь данные и подтверди публикацию ещё раз.",
+          "Проверь данные и выбери публикацию ещё раз.",
         ),
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "✔️ Да, опубликовать",
+                text: "Опубликовать и оповестить",
                 callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
               },
+            ],
+            [
               {
-                text: "✖️ Нет",
+                text: "Опубликовать без оповещения",
+                callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:s",
+              },
+            ],
+            [
+              {
+                text: "Отмена",
                 callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
@@ -4240,16 +4314,24 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам, подписчики новых сходок получат уведомление.",
+        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам. Оповещение о новой сходке уходит только по первой кнопке и только при первой публикации.",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "✔️ Да, опубликовать сходку",
+                text: "Опубликовать и оповестить",
                 callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1",
               },
+            ],
+            [
               {
-                text: "✖️ Нет",
+                text: "Опубликовать без оповещения",
+                callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1:s",
+              },
+            ],
+            [
+              {
+                text: "Отмена",
                 callback_data: "v1:manage:draft:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
@@ -4270,6 +4352,32 @@ describe("presentation adapter", () => {
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
       "<b>Сходка опубликована</b>",
+    );
+  });
+
+  it("publishes a draft silently when the organizer chooses not to notify", async () => {
+    const draft = { ...publishedMeetup(), visibility: "hidden" as const };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: draft }
+        : { kind: "published", meetup: publishedMeetup() },
+    );
+    const { bot } = createHarness(resolvedIdentity("admin"), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA:d"),
+    );
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1:s"),
+    );
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "publish-meetup",
+        expectedVersion: 1,
+        silent: true,
+        useCase: "create_meetup",
+      }),
     );
   });
 
@@ -7242,7 +7350,7 @@ describe("notification frames", () => {
         kind: "global-notification-settings",
         categories: [{ category: "published", enabled: true }],
       });
-      const entry = { text: "🔨 Аукцион", callback_data: "v1:nav:exta" };
+      const entry = { text: "🏷️ Аукцион", callback_data: "v1:nav:exta" };
       for (const auction of [true, false]) {
         const { bot, calls } = harness(execute, auction);
         await bot.init();

@@ -5,7 +5,7 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleRafflePrizeChangeConfirmData,
   consoleRafflePrizeChangeData,
-  consoleViewData,
+  consoleRaffleScreenData,
 } from "../parse-callback.js";
 import {
   confirmKeyboard,
@@ -33,8 +33,12 @@ const retryLabel = "Ввести заново";
  */
 export const newPrizeLead = "Станет: ";
 
-function toConsole(auctionId: string): Parent {
-  return { name: "Пульт", data: consoleViewData(uuidToToken(auctionId)) };
+// Вход — с «Розыгрыша» пульта (PER-802), и возврат — туда же.
+function toRaffle(auctionId: string): Parent {
+  return {
+    name: "Розыгрыш",
+    data: consoleRaffleScreenData(uuidToToken(auctionId)),
+  };
 }
 
 /**
@@ -68,7 +72,7 @@ export function rafflePrizeChangeConfirmScreen(view: {
         auction,
         fingerprint(view.after),
       ),
-      noData: consoleViewData(auction),
+      noData: consoleRaffleScreenData(auction),
     }),
     format: "HTML",
   };
@@ -101,7 +105,7 @@ export function rafflePrizeChangeOutcomeScreen(
       noteText(view),
       view.note === "changed" ? `Приз: ${view.prize}` : undefined,
     ),
-    keyboard: withNav(new InlineKeyboard(), toConsole(view.auctionId)),
+    keyboard: withNav(new InlineKeyboard(), toRaffle(view.auctionId)),
     format: "HTML",
   };
 }
@@ -121,7 +125,7 @@ export function rafflePrizeChangeStaleScreen(auctionId: string): ShownScreen {
         retryLabel,
         consoleRafflePrizeChangeData(uuidToToken(auctionId)),
       ),
-      toConsole(auctionId),
+      toRaffle(auctionId),
     ),
     format: "HTML",
   };

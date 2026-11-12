@@ -1,10 +1,24 @@
 import { InlineKeyboard } from "grammy";
 import {
+  heldProxyAccepted,
+  heldProxyConfirmation,
+  heldProxyQuestion,
+  liveProxyAccepted,
+  liveProxyConfirmation,
+  liveProxyQuestion,
+  noLimitDetail,
+  noLimitTitle,
+  withdrawNote,
+  withdrawnTitle,
+  withdrawQuestion,
+} from "../../../../auction-final.js";
+import {
   autoFollowNote,
   currentValueLine,
   extensionLine,
   nameSettingsParagraphs,
   nameSettingsTitle,
+  overtakenByProxyLine,
   proxyHintLead,
 } from "../../../../auction-standing.js";
 import {
@@ -68,6 +82,22 @@ export function confirmScreen(
   keyboard: readonly (readonly AuctionButton[])[],
   money: (amount: Money) => string,
 ): ShownScreen {
+  if (block.command === "withdraw") {
+    return {
+      id: "withdraw-confirm",
+      text: screenText(
+        withdrawQuestion(block.amount, money),
+        lotSubject(block.title),
+        withdrawNote(block.forFinal === true),
+      ),
+      keyboard: confirmKeyboard({
+        yes: "Да, снять автоставку",
+        yesData: dataOf(keyboard, "confirm.yes"),
+        noData: dataOf(keyboard, "confirm.no"),
+      }),
+      format: "HTML",
+    };
+  }
   const bid = block.command === "bid";
   return {
     id: bid ? "bid-confirm" : "proxy-confirm",
@@ -80,7 +110,7 @@ export function confirmScreen(
       : screenText(
           `Включить автоставку до ${money(block.amount)}?`,
           lotSubject(block.title),
-          `${proxyGap(block.currentPrice, block.amount, money, block.firstBid)}\nЛимит видишь только ты.`,
+          `${block.liveFinal === true ? liveProxyConfirmation({ currentPrice: block.currentPrice, nextPrice: block.nextPrice, limit: block.amount, viewerIsLeader: block.liveFinalLeader === true, money }) : block.forFinal === true ? heldProxyConfirmation(block.currentPrice, block.amount, money) : proxyGap(block.currentPrice, block.amount, money, block.firstBid)}\nЛимит видишь только ты.`,
         ),
     keyboard: confirmKeyboard({
       // Сумма — в вопросе: с ней «Да» обрезалось в паре с «Нет» (PER-631, №86).
@@ -116,13 +146,20 @@ export function acceptedScreen(
       ? screenText(
           `Ставка ${money(block.amount)} принята`,
           lotSubject(block.title),
+          block.overtaken === undefined
+            ? undefined
+            : overtakenByProxyLine(block.overtaken),
           extension,
           note,
         )
       : screenText(
           `Автоставка до ${money(block.amount)} включена`,
           lotSubject(block.title),
-          "Лимит видишь только ты.",
+          block.liveFinal === true
+            ? `${liveProxyAccepted}\nЛимит видишь только ты.`
+            : block.forFinal === true
+              ? `${heldProxyAccepted}\nЛимит видишь только ты.`
+              : "Лимит видишь только ты.",
           extension,
           note,
         ),
@@ -169,6 +206,9 @@ export function questionScreen(
         : {
             amount: money(block.current),
             limit: block.currentIsLimit === true,
+            ...(block.liveFinal === true && block.currentIsLimit !== true
+              ? { floor: true }
+              : {}),
           },
     );
   const text = (() => {
@@ -189,11 +229,17 @@ export function questionScreen(
             ? undefined
             : proxyExplainer(block.explainer, money),
           [
-            "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+            block.liveFinal === true
+              ? liveProxyQuestion
+              : block.forFinal === true
+                ? heldProxyQuestion
+                : "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
             ...current(),
             // Подсказка уже несёт пример с ценой этого лота: второй, общий,
             // с ним расходится.
-            ...(block.explainer === undefined ? ["Например: 3 000"] : []),
+            ...(block.explainer === undefined && block.liveFinal !== true
+              ? ["Например: 3 000"]
+              : []),
           ].join("\n"),
         );
       case "alias":
@@ -421,8 +467,11 @@ function resultOutcome(
       detail: "Проверь цену на карточке: команда могла пройти.",
     };
   }
+  if (result.kind === "withdrawn") return { title: withdrawnTitle };
   const { refusal } = result;
   switch (refusal.kind) {
+    case "no-active-limit":
+      return { title: noLimitTitle, detail: noLimitDetail };
     case "lot-not-open":
       return { title: "Торги по лоту не идут" };
     case "lot-on-hold":
@@ -454,7 +503,7 @@ function resultOutcome(
       return { title: "Лот торгуется в другой валюте" };
     case "proxy-below-current-price":
       return {
-        title: "Лимит ниже текущей цены",
+        title: "Лимит ниже допустимой цены",
         detail: `Нужно от ${money(refusal.minLimit)}.`,
       };
     case "proxy-disabled":

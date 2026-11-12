@@ -84,12 +84,27 @@ let private interceptWithOutcome method authorization outcome =
 
 let private intercept method authorization = interceptWithOutcome method authorization StatusCode.OK
 
+/// Методы, которые контракт объявил раньше реализации: схема и каталог идут листом
+/// PER-744, обработчики и таблица допуска вызывающих — листами PER-745 и PER-747
+/// (ADR-076). `ConfirmMeetupContact` ждёт вызывающего Identity, которого в
+/// `Caller` ещё нет. Лист реализации удаляет набор, и тест снова сверяет контракт
+/// с таблицей целиком.
+let private declaredBeforeImplementation =
+    set
+        [
+            "AppointMeetupOrganizer"
+            "DismissMeetupOrganizer"
+            "LeaveMeetupOrganizers"
+            "ConfirmMeetupContact"
+        ]
+
 [<Fact>]
 let ``Method access should cover the contract and admit only its declared callers`` () =
     let contract =
         MeetupsService.Descriptor.Methods
         |> Seq.map _.Name
         |> Set.ofSeq
+        |> Set.filter (fun name -> not (declaredBeforeImplementation.Contains name))
 
     let configured = MethodAccess.byMethod |> Map.keys |> Set.ofSeq
 

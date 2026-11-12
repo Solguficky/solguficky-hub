@@ -117,6 +117,16 @@ final class AuctionFactsSpec extends AnyWordSpec with Matchers {
       )
     }
 
+    // PER-786: условия лота в периоде идут на шину снимками лота, а не фактом аукциона.
+    "publish nothing for the terms of a lot in a happy hour period" in {
+      val period = HappyHourPeriod.idOf(op(5))
+      val terms = HappyHourTerms(None, Some(auction.lot.LotFixtures.money(500)))
+      val set = AuctionEvent.HappyHourLotTermsSet(period, lot, terms)
+      val events = List(set, AuctionEvent.HappyHourLotTermsCleared(period, lot))
+
+      for (event <- events) AuctionFacts.occasion(event, Auction.initial) shouldBe None
+    }
+
     "publish nothing for a set that nobody collected" in {
       AuctionFacts.occasion(
         AuctionEvent.LotSetSettled(LotSetId(uuid(40)), LotSetSettlement.NotCollected),

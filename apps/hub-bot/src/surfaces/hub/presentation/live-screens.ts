@@ -4,7 +4,7 @@ import type {
   AuctionWatchState,
 } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
-import type { Person } from "../application/types.js";
+import type { ConsoleSort, Person } from "../application/types.js";
 import { viewerOf } from "../auction/port.js";
 import type { ShownScreen } from "./screens/show.js";
 
@@ -15,8 +15,10 @@ import type { ShownScreen } from "./screens/show.js";
 // перечитать экран тем же чтением, что «Обновить», а не то, что рисуется.
 // Чтение идёт в задаче лимитера: залп ставок даёт одно чтение и одну правку
 // в секунду на чат. Карточки финала участников (`core/auction/live-cards.ts`)
-// рисуются из самого потока и живут своим реестром. Рестарт память теряет:
-// экран замирает, а «Обновить» или любая его кнопка его оживляет.
+// рисуются из самого потока и живут своим реестром. Рестарт память теряет, но
+// не запись (PER-815, дополнение ADR-030 от 2026-10-29): открытый экран лежит
+// ещё и в хранилище вне процесса, и новый процесс после старта читает его,
+// перечитывает экран и подписывается на поток заново.
 
 /** Экран в показанном сообщении: кто его открыл и что он показывает. */
 export type LiveScreenShown<View> = {
@@ -24,17 +26,48 @@ export type LiveScreenShown<View> = {
   view: View;
 };
 
-/** Открытый экран: где он и с чем его открыли. */
-export type LiveScreenEntry<View> = {
+/**
+ * Что нужно следующему чтению экрана, кроме самого человека: страница и
+ * сортировка, которые он видит. Живёт в записи хранилища, поэтому только
+ * значения без структур Telegram и Auction.
+ */
+export type LiveScreenParams = {
+  page: number;
+  sort?: ConsoleSort;
+  media?: boolean;
+};
+
+/** Где экран и с чем его читать: всё, что переживает рестарт. */
+export type LiveScreenTarget = {
   chatId: number;
   messageId: number;
   auctionId: string;
   // Человек, которым экран читается вне update: его права проверит Auction.
   person: Person;
-  // Последний показанный вид: параметры следующего чтения и экран для
-  // пометки, когда читать нечем.
+  params: LiveScreenParams;
+};
+
+/** Открытый экран: цель чтения и последний показанный вид. */
+export type LiveScreenEntry<View> = LiveScreenTarget & {
+  // Последний показанный вид: экран для пометки, когда читать нечем.
   view: View;
 };
+
+/**
+ * Запись открытых экранов вне процесса, по одной на чат. Методы не бросают:
+ * недоступное хранилище — «записей нет», и экран живёт как без хранилища.
+ */
+export type LiveScreenStore = {
+  save(target: LiveScreenTarget): Promise<void>;
+  remove(chatId: number): Promise<void>;
+  list(): Promise<readonly LiveScreenTarget[]>;
+};
+
+/** Исход восстановления одной записи — для лога, а не для решения. */
+export type LiveScreenRestore =
+  | { kind: "restored"; chatId: number }
+  | { kind: "refused"; chatId: number }
+  | { kind: "unreadable"; chatId: number };
 
 /**
  * Чтение экрана вне update. `refused` — экран больше не открыть: права сняли
@@ -55,6 +88,12 @@ export type LiveScreens<View> = {
     messageId: number,
     shown: LiveScreenShown<View> | undefined,
   ): boolean;
+  /**
+   * Читает записи хранилища после старта процесса: каждый экран, которого
+   * процесс ещё не показал заново, перечитывается правами его человека,
+   * правится и снова слушает поток. Не бросает; ждёт всех записей.
+   */
+  restore(): Promise<readonly LiveScreenRestore[]>;
   size(): number;
   close(): void;
 };
@@ -69,6 +108,8 @@ export type LiveScreenKind<View> = {
   key: string;
   live: (view: View) => boolean;
   auctionOf: (view: View) => string;
+  // Параметры следующего чтения: страница и сортировка показанного вида.
+  params: (view: View) => LiveScreenParams;
   versions: (view: View) => ReadonlyMap<string, number>;
   active: (view: View) => string | undefined;
   render: (view: View, stale: boolean) => ShownScreen;
@@ -97,12 +138,16 @@ export function createLiveScreens<View>(
   options: {
     watches: AuctionWatches;
     limiter: EditLimiter;
-    read: (entry: LiveScreenEntry<View>) => Promise<LiveScreenRead<View>>;
+    read: (target: LiveScreenTarget) => Promise<LiveScreenRead<View>>;
     edit: (
       entry: LiveScreenEntry<View>,
       screen: ShownScreen,
     ) => Promise<LiveEditOutcome>;
     limit: number;
+    // Запись вне процесса (PER-815): без неё экран живёт, пока жив процесс.
+    store?: LiveScreenStore;
+    // Паузы между повторами чтения при восстановлении; тест подменяет.
+    restorePauses?: readonly number[];
   },
 ): LiveScreens<View> {
   // Чат → экран; порядок вставки — порядок свежести для вытеснения.
@@ -111,17 +156,63 @@ export function createLiveScreens<View>(
   const keyOf = (entry: { chatId: number; messageId: number }) =>
     `${kind.key}:${entry.chatId}:${entry.messageId}`;
 
-  const forget = (chatId: number) => {
+  // Запись лежит по ключу чата: новая запись затирает прежнюю, поэтому
+  // вытесняемый новым показом экран из хранилища не снимается, а снимается тот,
+  // что кончился. Остановка процесса не снимает ничего — ради этого запись и
+  // нужна.
+  const forget = (chatId: number, keepRecord = false) => {
     const entry = screens.get(chatId);
     if (entry === undefined) return;
     screens.delete(chatId);
     options.limiter.drop(keyOf(entry));
     unsubscribe.get(chatId)?.();
     unsubscribe.delete(chatId);
+    if (!keepRecord) drop(chatId);
   };
+
+  // Записи одного чата идут друг за другом: «снять» старого экрана не должно
+  // обогнать «записать» нового, а хранилище и соединение этого не обещают.
+  const writes = new Map<number, Promise<void>>();
+  const enqueue = (chatId: number, write: () => Promise<void>) => {
+    const next = (writes.get(chatId) ?? Promise.resolve())
+      .then(write)
+      .catch(() => {});
+    writes.set(chatId, next);
+    void next.then(() => {
+      if (writes.get(chatId) === next) writes.delete(chatId);
+    });
+  };
+
+  const drop = (chatId: number) => {
+    const { store } = options;
+    if (store !== undefined) enqueue(chatId, () => store.remove(chatId));
+  };
+
+  const save = (entry: Entry<View>) => {
+    const { store } = options;
+    if (store === undefined) return;
+    const target: LiveScreenTarget = {
+      chatId: entry.chatId,
+      messageId: entry.messageId,
+      auctionId: entry.auctionId,
+      person: entry.person,
+      params: entry.params,
+    };
+    enqueue(entry.chatId, () => store.save(target));
+  };
+
+  // Восстановление идёт, пока процесс уже отвечает людям: экран, с которого
+  // человек ушёл за это время, возвращать нельзя. Сообщение, в котором нажатие
+  // показало не живой экран, помнится до конца восстановления.
+  let restoring = false;
+  let closed = false;
+  const dismissed = new Set<string>();
+  const dismissalOf = (chatId: number, messageId: number) =>
+    `${chatId}:${messageId}`;
 
   const remember = (entry: Entry<View>, view: View) => {
     entry.view = view;
+    entry.params = kind.params(view);
     entry.versions = kind.versions(view);
     entry.active = kind.active(view);
     entry.dirty = false;
@@ -229,11 +320,115 @@ export function createLiveScreens<View>(
     reread(entry);
   };
 
+  // Экран встаёт в реестр: подписка на поток, запись в хранилище, предел числа.
+  const attach = (
+    chatId: number,
+    messageId: number,
+    person: Person,
+    view: View,
+  ): Entry<View> => {
+    const auctionId = kind.auctionOf(view);
+    const entry: Entry<View> = {
+      chatId,
+      messageId,
+      auctionId,
+      person,
+      params: kind.params(view),
+      view,
+      versions: new Map(),
+      active: undefined,
+      dirty: false,
+      stale: false,
+      ended: false,
+      breaks: 0,
+      shows: 0,
+    };
+    remember(entry, view);
+    // Новая подписка — до снятия прежней: у аукциона с одним подписчиком
+    // поток иначе закрылся бы и открылся заново.
+    const leave = options.watches.subscribe(
+      auctionId,
+      viewerOf(person),
+      (state) => onState(entry, state),
+      () => ended(entry),
+      () => interrupted(entry),
+    );
+    forget(chatId, true);
+    screens.set(chatId, entry);
+    unsubscribe.set(chatId, leave);
+    save(entry);
+    while (screens.size > options.limit) {
+      const oldest = screens.keys().next().value;
+      if (oldest === undefined) break;
+      forget(oldest);
+    }
+    return entry;
+  };
+
+  const pauses = options.restorePauses ?? [
+    2_000, 5_000, 15_000, 30_000, 60_000, 60_000, 60_000, 60_000,
+  ];
+  const pause = (ms: number) =>
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, ms).unref();
+    });
+
+  // Запись прошлого процесса: экран читается правами его человека, и
+  // прочитанное встаёт в реестр так, будто его только что показали, но уже
+  // «грязным» — первая же правка догоняет то, что произошло, пока бота не было.
+  // Чтение, которое не удалось, повторяется несколько раз: Auction в этот
+  // момент мог стартовать вместе с ботом. Запись остаётся, если экран прочесть
+  // так и не вышло, — следующий старт попробует снова, а срок её жизни
+  // ограничен хранилищем.
+  const restoreOne = async (
+    target: LiveScreenTarget,
+  ): Promise<LiveScreenRestore> => {
+    const { chatId } = target;
+    for (let attempt = 0; ; attempt += 1) {
+      // Нажатие нового процесса показало экран раньше — оно свежее записи.
+      const left = () => {
+        if (!dismissed.has(dismissalOf(chatId, target.messageId))) return false;
+        drop(chatId);
+        return true;
+      };
+      if (closed) return { kind: "unreadable", chatId };
+      if (screens.has(chatId) || left()) return { kind: "restored", chatId };
+      const read = await options
+        .read(target)
+        .catch((): LiveScreenRead<View> => ({ kind: "failed" }));
+      if (closed) return { kind: "unreadable", chatId };
+      if (screens.has(chatId) || left()) return { kind: "restored", chatId };
+      if (read.kind === "refused") {
+        drop(chatId);
+        return { kind: "refused", chatId };
+      }
+      if (read.kind === "view") {
+        // Финал кончился, пока бота не было: сообщение всё ещё показывает
+        // прошлое, поэтому и не живой вид правится, а уже потом забывается —
+        // его забывает само перечитывание.
+        const entry = attach(
+          chatId,
+          target.messageId,
+          target.person,
+          read.view,
+        );
+        // Сообщение показывает прошлое, а чтение выше уже свежее: правка.
+        entry.dirty = true;
+        reread(entry);
+        return { kind: "restored", chatId };
+      }
+      const wait = pauses[attempt];
+      if (wait === undefined) return { kind: "unreadable", chatId };
+      await pause(wait);
+    }
+  };
+
   return {
     shown(chatId, messageId, shown) {
       const prior = screens.get(chatId);
       if (shown === undefined || !kind.live(shown.view)) {
         if (prior?.messageId === messageId) forget(chatId);
+        if (restoring) dismissed.add(dismissalOf(chatId, messageId));
         return false;
       }
       const auctionId = kind.auctionOf(shown.view);
@@ -249,45 +444,26 @@ export function createLiveScreens<View>(
         prior.stale = false;
         prior.shows += 1;
         remember(prior, shown.view);
+        save(prior);
         return true;
       }
-      const entry: Entry<View> = {
-        chatId,
-        messageId,
-        auctionId,
-        person: shown.person,
-        view: shown.view,
-        versions: new Map(),
-        active: undefined,
-        dirty: false,
-        stale: false,
-        ended: false,
-        breaks: 0,
-        shows: 0,
-      };
-      remember(entry, shown.view);
-      // Новая подписка — до снятия прежней: у аукциона с одним подписчиком
-      // поток иначе закрылся бы и открылся заново.
-      const leave = options.watches.subscribe(
-        auctionId,
-        viewerOf(shown.person),
-        (state) => onState(entry, state),
-        () => ended(entry),
-        () => interrupted(entry),
-      );
-      forget(chatId);
-      screens.set(chatId, entry);
-      unsubscribe.set(chatId, leave);
-      while (screens.size > options.limit) {
-        const oldest = screens.keys().next().value;
-        if (oldest === undefined) break;
-        forget(oldest);
-      }
+      attach(chatId, messageId, shown.person, shown.view);
       return true;
+    },
+    async restore() {
+      restoring = true;
+      try {
+        const targets = await (options.store?.list() ?? Promise.resolve([]));
+        return await Promise.all(targets.map(restoreOne));
+      } finally {
+        restoring = false;
+        dismissed.clear();
+      }
     },
     size: () => screens.size,
     close() {
-      for (const chatId of [...screens.keys()]) forget(chatId);
+      closed = true;
+      for (const chatId of [...screens.keys()]) forget(chatId, true);
     },
   };
 }

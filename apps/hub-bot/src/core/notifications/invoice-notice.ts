@@ -3,7 +3,7 @@ import type {
   InvoiceReminder,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import type { RenderContext, RenderResult } from "../delivery/index.js";
-import { money } from "../format.js";
+import { money, shownInstant } from "../format.js";
 import { bold, type LotNoticeReads } from "./lot-notice.js";
 
 // Напоминание о неоплаченном счёте (PER-330) с кнопкой на счёт (PER-322). У
@@ -89,7 +89,7 @@ function dueMoment(instant: string, timeZone: string): string {
     month: "long",
     hour: "2-digit",
     minute: "2-digit",
-  }).format(new Date(instant));
+  }).format(new Date(shownInstant(instant, timeZone)));
 }
 
 // Одна фраза на «ты», без заголовка; название лота — жирным, без кавычек, как

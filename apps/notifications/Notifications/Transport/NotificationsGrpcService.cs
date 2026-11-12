@@ -255,6 +255,39 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         return Map(broadcastId, result);
     }
 
+    /// <summary>
+    /// Объявление аукциона сходки держателям права ставок (PER-764). Право
+    /// вести аукцион проверяет Meetups синхронным вызовом на самой команде;
+    /// аудиторию задаёт сервис.
+    /// </summary>
+    public override async Task<BroadcastAccepted> BroadcastAuctionNotice(
+        BroadcastAuctionNoticeRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var meetupId = RequestValidation.MeetupId(request.MeetupId);
+        var broadcastId = RequestValidation.BroadcastId(request.Id);
+        var body = RequestValidation.Body(request.Body);
+        var notice = RequestValidation.AuctionNotice(request.Button, request.Photo, request.Audience);
+
+        var result = await broadcasts.ToAuctionParticipants(
+            broadcastId, authorId, meetupId, body, notice, Chain(context));
+
+        return Map(broadcastId, result);
+    }
+
+    public override async Task<BroadcastAudience> PreviewAuctionNotice(
+        PreviewAuctionNoticeRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var meetupId = RequestValidation.MeetupId(request.MeetupId);
+        var audience = RequestValidation.NoticeAudience(request.Audience);
+        var result = await broadcasts.PreviewAuctionNotice(authorId, meetupId, audience, Chain(context));
+
+        return Map(result);
+    }
+
     public override async Task<BroadcastAudience> PreviewMeetupBroadcast(
         PreviewMeetupBroadcastRequest request,
         ServerCallContext context)
@@ -375,18 +408,26 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
                 StatusCode.Unavailable,
                 "the owner of the resource is unavailable and the right is not confirmed"),
             (AuthorityVerdict.Failed, _) => throw Refused(StatusCode.Internal, "the right check failed"),
+            (AuthorityVerdict.Closed, _) => throw Refused(StatusCode.FailedPrecondition, "the meetup is cancelled"),
+            _ when result.Narrowing is { } refused => throw NotNarrowed(refused),
 
             (_, BroadcastOutcome.Accepted accepted) => Accepted(broadcastId, accepted.AcceptedAt, created: true),
             (_, BroadcastOutcome.Repeated repeated) => Accepted(broadcastId, repeated.AcceptedAt, created: false),
             (_, BroadcastOutcome.Conflict) => throw Refused(
                 StatusCode.AlreadyExists,
-                "id is already accepted with a different body, meetup or author"),
+                "id is already accepted with a different body, meetup, button, photo or author"),
 
             // Право подтверждено, но реплика ещё не знает сходку: временное
             // «не сейчас», и повтор с тем же id безопасен.
             (_, BroadcastOutcome.MeetupNotReplicated) => throw Refused(
                 StatusCode.Unavailable,
                 "the meetup is not replicated yet"),
+
+            // Аукцион скрыт, отменён или удалён (PER-780): кнопка объявления
+            // привела бы к «не найдено». Ключ не принят.
+            (_, BroadcastOutcome.AuctionClosed closed) => throw Refused(
+                StatusCode.FailedPrecondition,
+                AuctionClosedMessage(closed.Standing)),
 
             _ => throw new InvalidOperationException($"unexpected broadcast result {result}"),
         };
@@ -399,12 +440,41 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
                 StatusCode.Unavailable,
                 "the owner of the resource is unavailable and the right is not confirmed"),
             (AuthorityVerdict.Failed, _) => throw Refused(StatusCode.Internal, "the right check failed"),
+            (AuthorityVerdict.Closed, _) => throw Refused(StatusCode.FailedPrecondition, "the meetup is cancelled"),
+            _ when result.Narrowing is { } refused => throw NotNarrowed(refused),
             (_, AudienceRead.MeetupNotReplicated) => throw Refused(
                 StatusCode.Unavailable,
                 "the meetup is not replicated yet"),
+            (_, AudienceRead.AuctionClosed closed) => throw Refused(
+                StatusCode.FailedPrecondition,
+                AuctionClosedMessage(closed.Standing)),
             (_, AudienceRead.Counted counted) => new BroadcastAudience { RecipientCount = counted.RecipientCount },
             _ => throw new InvalidOperationException($"unexpected broadcast preview {result}"),
         };
+
+    /// <summary>
+    /// Фильтр аудитории объявления аукциона не сузить (PER-778). Недоступный
+    /// Auction — <c>UNAVAILABLE</c>, а не рассылка всем: отправить всем автор
+    /// может, сменив аудиторию сам.
+    /// </summary>
+    private static RpcException NotNarrowed(AudienceNarrowing.Refused refused) => refused.Refusal switch
+    {
+        NarrowingRefusal.Unavailable => Refused(
+            StatusCode.Unavailable,
+            "auction is unavailable and the audience is not narrowed"),
+        NarrowingRefusal.Precondition => Refused(
+            StatusCode.FailedPrecondition,
+            $"the audience cannot be narrowed now: {refused.Reason}"),
+        _ => Refused(StatusCode.Internal, "the audience read failed"),
+    };
+
+    private static string AuctionClosedMessage(AuctionStanding standing) => standing switch
+    {
+        AuctionStanding.Hidden => "the auction is hidden",
+        AuctionStanding.Cancelled => "the auction is cancelled",
+        AuctionStanding.Discarded => "the auction is discarded",
+        _ => throw new ArgumentOutOfRangeException(nameof(standing)),
+    };
 
     private static BroadcastAccepted Accepted(Guid broadcastId, DateTimeOffset acceptedAt, bool created) =>
         new()

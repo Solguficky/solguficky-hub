@@ -49,7 +49,9 @@ module Envelope =
         match event.EventType with
         | "meetup_created" -> message.MeetupCreated <- Meetups.V1.MeetupCreated()
         | "meetup_changed" -> message.MeetupChanged <- Meetups.V1.MeetupChanged()
-        | "meetup_published" -> message.MeetupPublished <- Meetups.V1.MeetupPublished()
+        | "meetup_published" ->
+            message.MeetupPublished <-
+                Meetups.V1.MeetupPublished(Silent = MeetupEventPayload.silentPublication event.Payload)
         | "meetup_unpublished" -> message.MeetupUnpublished <- Meetups.V1.MeetupUnpublished()
         | "meetup_republished" -> message.MeetupRepublished <- Meetups.V1.MeetupRepublished()
         | "meetup_publication_scheduled" ->
@@ -58,6 +60,7 @@ module Envelope =
             message.MeetupPublicationCancelled <- Meetups.V1.MeetupPublicationCancelled()
         | "meetup_cancelled" -> message.MeetupCancelled <- Meetups.V1.MeetupCancelled()
         | "meetup_held" -> message.MeetupHeld <- Meetups.V1.MeetupHeld()
+        | "materials_reordered" -> message.MaterialsReordered <- Meetups.V1.MaterialsReordered()
         | "meetup_material_attached" ->
             message.MeetupMaterialAttached <- Meetups.V1.MeetupMaterialAttached(MaterialId = materialId event)
         | "meetup_material_removed" ->

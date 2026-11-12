@@ -1,3 +1,4 @@
+import { type HallLinks, readHallLinks } from "../../auction-hall.js";
 import {
   type Env,
   type Loaded,
@@ -12,6 +13,10 @@ import { type FaqContent, readFaqContent } from "./faq.js";
 export type AuctionConfig = {
   auctionUrl: string;
   faq: FaqContent;
+  // Стрим и экран финала (PER-825, PER-832): кнопки-URL в корне аукциона. Нет адресов —
+  // нет кнопок.
+  hall: HallLinks;
+  achievementsUrl?: string;
   // Настройка «перебили» (PER-515) и избранные лоты (PER-495) — расширение,
   // а не опора бота: без адреса Notifications нет ни пункта меню
   // «Уведомления», ни «Частоты уведомлений» под вестями о торгах, ни кнопки избранного на карточке
@@ -24,8 +29,11 @@ export type AuctionConfig = {
 
 export function readAuctionConfig(env: Env): Loaded<AuctionConfig> {
   const read = reader(env);
+  const achievementsUrl = read("ACHIEVEMENTS_GRPC_URL");
   const faq = readFaqContent(env);
   if (!faq.ok) return faq;
+  const hall = readHallLinks(env);
+  if (!hall.ok) return { ok: false, error: hall.error };
   const notificationsUrl = read("NOTIFICATIONS_GRPC_URL");
   // Имя бота поддержки — адрес кнопки кадра ожидания допуска (PER-625,
   // ADR-068): без него кнопки нет, а чужое имя — отказ конфигурации.
@@ -36,6 +44,8 @@ export function readAuctionConfig(env: Env): Loaded<AuctionConfig> {
     config: {
       auctionUrl: read("AUCTION_GRPC_URL") ?? "http://127.0.0.1:8081",
       faq: faq.content,
+      hall: hall.links,
+      ...(achievementsUrl === undefined ? {} : { achievementsUrl }),
       ...(notificationsUrl === undefined ? {} : { notificationsUrl }),
       ...(supportBot.config === undefined
         ? {}

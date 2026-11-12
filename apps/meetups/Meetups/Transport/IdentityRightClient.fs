@@ -41,6 +41,7 @@ let private right (value: AccessRight) : Identity.V1.AccessRight =
     | ManageMeetups -> Identity.V1.AccessRight.ManageMeetups
     | GrantAdmins -> Identity.V1.AccessRight.GrantAdmins
     | RunAuctions -> Identity.V1.AccessRight.RunAuctions
+    | OrganizeMeetups -> Identity.V1.AccessRight.OrganizeMeetups
 
 /// Сведение отказа Identity (ADR-051, п. 6). NOT_FOUND — неизвестный Identity
 /// человек — становится тем же «нет», что и `granted = false`: иначе посторонний

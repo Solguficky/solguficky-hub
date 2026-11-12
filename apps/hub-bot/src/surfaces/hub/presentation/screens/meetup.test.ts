@@ -5,6 +5,8 @@ import type {
   MeetupSnapshot,
   MeetupSummary,
 } from "../../meetups/port.js";
+import { uuidToToken } from "../meetup-deep-link.js";
+import { parseCallback } from "../parse-callback.js";
 import {
   archiveScreen,
   cardScreen,
@@ -12,6 +14,7 @@ import {
   materialsScreen,
   meetupParent,
   meetupsScreen,
+  publishConfirmScreen,
   statusScreen,
 } from "./meetup.js";
 
@@ -20,6 +23,86 @@ import {
 // видит: что именно попало на страницу и куда ведёт возврат.
 
 const today = { year: 2026, month: 8, day: 1 };
+
+it("moves materials across page boundaries with stable ids and the shown version", () => {
+  const materials = Array.from({ length: 10 }, (_, index) => ({
+    id: `0199c0de-0000-7000-8000-${(index + 1).toString(16).padStart(12, "0")}`,
+    title: `Material ${index + 1}`,
+    source: {
+      kind: "file" as const,
+      fileKind: "photo" as const,
+      fileId: `photo-${index + 1}`,
+    },
+  }));
+  const value = meetup({ materials, version: 999999999 });
+  const rows = materialsScreen(value, true, 0).keyboard.inline_keyboard;
+  const eighth = rows[7] ?? [];
+  const down = eighth.find((button) => button.text === "↓");
+  expect(down).toHaveProperty("callback_data");
+  if (down && "callback_data" in down) {
+    expect(Buffer.byteLength(down.callback_data)).toBeLessThanOrEqual(64);
+    expect(parseCallback(down.callback_data)).toEqual({
+      kind: "move-material",
+      token: uuidToToken(value.id),
+      materialToken: uuidToToken(materials[7]?.id ?? ""),
+      direction: "down",
+      version: 999999999,
+    });
+    expect(
+      parseCallback(down.callback_data.replace(":999999999", ":0")),
+    ).toEqual({ kind: "malformed" });
+  }
+  const firstUp = rows[0]?.find((button) => button.text === "↑");
+  expect(firstUp).toHaveProperty("callback_data");
+  if (firstUp && "callback_data" in firstUp) {
+    expect(parseCallback(firstUp.callback_data)).toEqual({
+      kind: "material-edge",
+      token: uuidToToken(value.id),
+    });
+  }
+  expect(
+    rows.every((row) =>
+      row.some((button) => button.text !== "↑" && button.text !== "↓"),
+    ),
+  ).toBe(true);
+  expect(rows.length).toBeLessThanOrEqual(12);
+  const lastDown = materialsScreen(
+    value,
+    true,
+    1,
+  ).keyboard.inline_keyboard[1]?.find((button) => button.text === "↓");
+  expect(lastDown).toHaveProperty("callback_data");
+  if (lastDown && "callback_data" in lastDown) {
+    expect(parseCallback(lastDown.callback_data)).toEqual({
+      kind: "material-edge",
+      token: uuidToToken(value.id),
+    });
+  }
+  expect(
+    materialsScreen(value, false, 0)
+      .keyboard.inline_keyboard.flat()
+      .some((button) => button.text === "↓"),
+  ).toBe(false);
+  const reordered = meetup({
+    materials: [
+      ...materials.slice(1, 2),
+      ...materials.slice(0, 1),
+      ...materials.slice(2),
+    ],
+  });
+  expect(
+    cardScreen({
+      meetup: reordered,
+      manageable: false,
+      subscribed: true,
+      presentation: "rich",
+      today,
+    }).media?.slice(0, 2),
+  ).toEqual([
+    { id: "p1", fileId: "photo-2" },
+    { id: "p2", fileId: "photo-1" },
+  ]);
+});
 
 function meetup(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
   return {
@@ -424,7 +507,7 @@ describe("cardScreen", () => {
           final: true,
         }),
       ).toContain(
-        "📍 Где: Циферблат\n\n🔨 Аукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
+        "📍 Где: Циферблат\n\n🏷️ Аукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
       );
     });
 
@@ -432,13 +515,13 @@ describe("cardScreen", () => {
     it("names an auction hidden from participants", () => {
       expect(
         withAuction({ auctionId, stage: "draft", final: false, hidden: true }),
-      ).toContain("\n\n🔨 Аукцион: готовится, скрыт от участников\n\n");
+      ).toContain("\n\n🏷️ Аукцион: готовится, скрыт от участников\n\n");
     });
 
     it("names a finished auction by its stage", () => {
       expect(
         withAuction({ auctionId, stage: "finished", final: false }),
-      ).toContain("\n\n🔨 Аукцион: завершён\n\n");
+      ).toContain("\n\n🏷️ Аукцион: завершён\n\n");
     });
 
     it("leaves the line out without an auction", () => {
@@ -506,6 +589,71 @@ describe("cardScreen", () => {
   });
 });
 
+describe("publishConfirmScreen", () => {
+  it("offers both publication choices and returns to the draft", () => {
+    const screen = publishConfirmScreen({
+      meetup: meetup({ visibility: "hidden" }),
+      origin: "draft",
+    });
+    const token = uuidToToken(meetup().id);
+
+    expect(screen.id).toBe("publish-confirm");
+    expect(screen.text).toContain("Опубликовать сходку?");
+    expect(screen.text).toContain(
+      "Оповещение о новой сходке уходит только по первой кнопке",
+    );
+    expect(rows(screen)).toEqual([
+      ["Опубликовать и оповестить"],
+      ["Опубликовать без оповещения"],
+      ["Отмена"],
+    ]);
+    expect(screen.keyboard.inline_keyboard).toEqual([
+      [
+        {
+          text: "Опубликовать и оповестить",
+          callback_data: `v1:manage:publish:${token}:1`,
+        },
+      ],
+      [
+        {
+          text: "Опубликовать без оповещения",
+          callback_data: `v1:manage:publish:${token}:1:s`,
+        },
+      ],
+      [{ text: "Отмена", callback_data: `v1:manage:draft:${token}` }],
+    ]);
+  });
+
+  it("returns a status publication to the status screen", () => {
+    const screen = publishConfirmScreen({
+      meetup: meetup({ visibility: "hidden" }),
+      origin: "status",
+    });
+    const token = uuidToToken(meetup().id);
+
+    expect(rows(screen)).toEqual([
+      ["Опубликовать и оповестить"],
+      ["Опубликовать без оповещения"],
+      ["Отмена"],
+    ]);
+    expect(screen.keyboard.inline_keyboard).toEqual([
+      [
+        {
+          text: "Опубликовать и оповестить",
+          callback_data: `v1:manage:confirm-publish:${token}:1`,
+        },
+      ],
+      [
+        {
+          text: "Опубликовать без оповещения",
+          callback_data: `v1:manage:confirm-publish:${token}:1:s`,
+        },
+      ],
+      [{ text: "Отмена", callback_data: `v1:manage:status:${token}` }],
+    ]);
+  });
+});
+
 describe("statusScreen", () => {
   it("keeps every state action of a planned hidden meetup with a moment", () => {
     const screen = statusScreen(
@@ -548,12 +696,19 @@ describe("materialsScreen", () => {
   it("opens a file by a button and marks a link, with removal for the organizer", () => {
     const screen = materialsScreen(meetup({ materials }), true, 0);
 
-    expect(rows(screen)[0]).toEqual(["Материал 1", "🗑 Убрать"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "🗑 Убрать"]);
+    expect(rows(screen)[0]).toEqual(["Материал 1", "↑", "↓", "🗑"]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "↑", "↓", "🗑"]);
+    expect(rows(screen)[7]).toEqual(["Материал 8 ↗", "↑", "↓", "🗑"]);
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],
       ["‹ Сходка"],
+    ]);
+    expect(rows(materialsScreen(meetup({ materials }), true, 1))[0]).toEqual([
+      "Материал 9 ↗",
+      "↑",
+      "↓",
+      "🗑",
     ]);
   });
 
@@ -562,5 +717,16 @@ describe("materialsScreen", () => {
 
     expect(rows(screen)).toEqual([["Материал 9 ↗"], ["←"], ["‹ Сходка"]]);
     expect(screen.text).toContain("<b>Материалы · 2 из 2</b>\n<i>Настолки</i>");
+  });
+
+  it("keeps remove without arrows on a cancelled meetup", () => {
+    const screen = materialsScreen(
+      meetup({ materials: materials.slice(0, 2), lifecycle: "cancelled" }),
+      true,
+      0,
+    );
+
+    expect(rows(screen)[0]).toEqual(["Материал 1", "🗑"]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "🗑"]);
   });
 });

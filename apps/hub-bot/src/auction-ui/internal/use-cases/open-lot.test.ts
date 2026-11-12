@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import type { AuctionPort, FavoritesPort, LotView } from "../../ports.js";
+import type {
+  AuctionPort,
+  FavoritesPort,
+  LotHistoryEntryView,
+  LotView,
+  Viewer,
+} from "../../ports.js";
 import { previewLot, showLot } from "./open-lot.js";
 
 // Предпросмотр лота (PER-512): блок тот же, что у карточки участника, на
@@ -29,6 +35,9 @@ const auction: AuctionPort = {
   placeBid: async () => {
     throw new Error("not used");
   },
+  withdrawProxyLimit: async () => {
+    throw new Error("not used");
+  },
   setProxyLimit: async () => {
     throw new Error("not used");
   },
@@ -47,14 +56,14 @@ const auction: AuctionPort = {
     throw new Error("not used");
   },
   listMyInvoices: async () => ({ invoices: [] }),
-  chooseFulfillment: async () => {
-    throw new Error("not used");
-  },
   getMyPredictions: async () => [],
   getPredictionResults: async () => {
     throw new Error("not used");
   },
   getDayChronicle: async () => {
+    throw new Error("not used");
+  },
+  getAuctionChronicle: async () => {
     throw new Error("not used");
   },
   submitPrediction: async () => {
@@ -179,5 +188,242 @@ describe("lot preview", () => {
     if (trading === undefined) throw new Error("no trading lot");
     const preview = await previewLot({ auction, viewer: VIEWER, lot: trading });
     expect(preview.blocks[0]).toMatchObject({ participantName: "Сова" });
+  });
+});
+
+describe("showLot", () => {
+  const live = (leaderId: string | undefined): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Шарф", description: "" },
+    nextPrice: rub(1000),
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: rub(900),
+      ...(leaderId === undefined ? {} : { leaderId }),
+      phase: "live",
+    },
+  });
+
+  const actionRows = async (lot: LotView, viewer: Viewer = VIEWER) => {
+    const body = await showLot({ auction, viewer, lot, page: 0 });
+    return body.keyboard
+      .filter((row) =>
+        row.some(
+          (button) =>
+            button.action === "lot.bid-final" || button.action === "lot.proxy",
+        ),
+      )
+      .map((row) => row.map((button) => button.action));
+  };
+
+  it("puts auto-bid below the next-price button and offers it to the leader", async () => {
+    expect(await actionRows(live(LEADER))).toEqual([
+      ["lot.bid-final"],
+      ["lot.proxy"],
+    ]);
+    expect(await actionRows(live(VIEWER.identityId))).toEqual([["lot.proxy"]]);
+  });
+
+  it("only offers auto-bid when enabled and the viewer may bid", async () => {
+    expect(await actionRows({ ...live(LEADER), proxyEnabled: false })).toEqual([
+      ["lot.bid-final"],
+    ]);
+    expect(
+      await actionRows(live(LEADER), { ...VIEWER, rights: [] as const }),
+    ).toEqual([["lot.bid-final"]]);
+  });
+});
+
+// Ряд «Автоставка» лота, который ждёт финала (PER-821, ADR-079).
+describe("proxy row of a lot waiting for the final", () => {
+  const held = (over: Partial<LotView> = {}): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Шарф", description: "" },
+    proxyEnabled: true,
+    status: { kind: "held", currentPrice: rub(900) },
+    ...over,
+  });
+  const rowsOf = async (
+    lot: LotView,
+    viewer: Viewer | typeof VIEWER = VIEWER,
+  ) => {
+    const body = await showLot({ auction, viewer, lot, page: 0 });
+    return body.keyboard
+      .flat()
+      .map((button) => button.action)
+      .filter(
+        (action) => action.startsWith("lot.bid") || action === "lot.proxy",
+      );
+  };
+
+  it("offers only the proxy limit, to the leader too", async () => {
+    expect(await rowsOf(held())).toEqual(["lot.proxy"]);
+    expect(
+      await rowsOf(
+        held({
+          status: {
+            kind: "held",
+            currentPrice: rub(900),
+            leaderId: VIEWER.identityId,
+          },
+        }),
+      ),
+    ).toEqual(["lot.proxy"]);
+  });
+
+  it("offers nothing without the proxy, the right to bid or on a sold lot", async () => {
+    expect(await rowsOf(held({ proxyEnabled: false }))).toEqual([]);
+    expect(await rowsOf(held(), { ...VIEWER, rights: [] })).toEqual([]);
+    expect(
+      await rowsOf(
+        held({ status: { kind: "sold", winnerId: LEADER, price: rub(900) } }),
+      ),
+    ).toEqual([]);
+  });
+});
+
+// «Снять лимит» (PER-822): ряд только у лота с лимитом смотрящего, в торгах
+// недели и в удержании.
+describe("withdraw row", () => {
+  const lot = (status: LotView["status"], limit?: boolean): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Шарф", description: "" },
+    proxyEnabled: true,
+    ...(limit === false ? {} : { viewerProxyLimit: rub(2000) }),
+    status,
+  });
+  const online: LotView["status"] = {
+    kind: "trading",
+    currentPrice: rub(900),
+    phase: "online",
+  };
+  const live: LotView["status"] = {
+    kind: "trading",
+    currentPrice: rub(900),
+    phase: "live",
+  };
+  const held: LotView["status"] = { kind: "held", currentPrice: rub(900) };
+  const hasWithdraw = async (view: LotView) => {
+    const body = await showLot({ auction, viewer: VIEWER, lot: view, page: 0 });
+    return body.keyboard.flat().some((b) => b.action === "lot.withdraw");
+  };
+
+  it("is shown for an own limit online and on hold", async () => {
+    expect(await hasWithdraw(lot(online))).toBe(true);
+    expect(await hasWithdraw(lot(held))).toBe(true);
+  });
+
+  it("is absent without an own limit (a rival's limit never reaches the card)", async () => {
+    expect(await hasWithdraw(lot(online, false))).toBe(false);
+    expect(await hasWithdraw(lot(held, false))).toBe(false);
+  });
+
+  it("is absent in the live final", async () => {
+    expect(await hasWithdraw(lot(live))).toBe(false);
+  });
+});
+
+// «Мои счета» на карточке проданного лота (PER-813): только покупателю.
+describe("sold lot invoices entry", () => {
+  const soldTo = (winnerId: string): LotView => ({
+    lotId: LOT_ID,
+    auctionId: AUCTION_ID,
+    version: 4,
+    card: { title: "Кружка", description: "" },
+    proxyEnabled: false,
+    status: { kind: "sold", winnerId, price: rub(1200) },
+  });
+  const actionsFor = async (winnerId: string) =>
+    (
+      await showLot({
+        auction,
+        viewer: VIEWER,
+        lot: soldTo(winnerId),
+        page: 0,
+      })
+    ).keyboard
+      .flat()
+      .map((button) => button.action);
+
+  it("gives the winner a way to the invoices", async () => {
+    expect(await actionsFor(VIEWER.identityId)).toContain("lot.invoices");
+  });
+
+  it("does not show the button to anyone else", async () => {
+    expect(await actionsFor(LEADER)).not.toContain("lot.invoices");
+  });
+});
+
+// PER-840: карточка называет рост цены от автоставок, когда последняя ставка
+// хронологии — прокси после чужой ставки. Первая ставка лота прокси «подъёмом»
+// не считается, а сбой чтения хронологии строку убирает.
+describe("price raised by proxies", () => {
+  const trading = lots.find(
+    ([name]) => name === "trading online",
+  )?.[1] as LotView;
+  const bid = (
+    sequence: number,
+    origin: "proxy" | "manual",
+  ): LotHistoryEntryView => ({
+    kind: "bid",
+    sequence,
+    occurredAt: "2026-10-20T15:00:00Z",
+    bidId: `bid-${sequence}`,
+    participantId: LEADER,
+    amount: rub(1000 + sequence * 100),
+    origin:
+      origin === "proxy"
+        ? { kind: "proxy" }
+        : { kind: "manual", source: "bot" },
+  });
+  const cardWith = async (
+    listLotHistory: AuctionPort["listLotHistory"],
+  ): Promise<boolean | undefined> => {
+    const body = await showLot({
+      auction: { ...auction, listLotHistory },
+      favorites,
+      viewer: VIEWER,
+      lot: trading,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    return block?.kind === "lot" ? block.autoRaised === true : undefined;
+  };
+  const history =
+    (...entries: LotHistoryEntryView[]) =>
+    async () => ({
+      entries,
+      nextPageToken: "",
+    });
+
+  it("is flagged when the last bid is a proxy after another bid", async () => {
+    expect(await cardWith(history(bid(1, "manual"), bid(2, "proxy")))).toBe(
+      true,
+    );
+  });
+
+  it("is not flagged when the last bid is manual", async () => {
+    expect(await cardWith(history(bid(1, "proxy"), bid(2, "manual")))).toBe(
+      false,
+    );
+  });
+
+  it("is not flagged for a lone first proxy bid", async () => {
+    expect(await cardWith(history(bid(1, "proxy")))).toBe(false);
+  });
+
+  it("drops the line when the history is unreadable", async () => {
+    expect(
+      await cardWith(async () => {
+        throw new Error("unavailable");
+      }),
+    ).toBe(false);
   });
 });

@@ -375,6 +375,15 @@ public static class NotificationsHost
             string.IsNullOrEmpty(identityUrl) ? null : OwnerAuthority.ConnectIdentity(identityUrl),
             serviceToken,
             services.GetRequiredService<TimeProvider>()));
+
+        // Сужение аудитории объявления аукциона (PER-778) спрашивает Auction
+        // тем же токеном. Адрес не задан — объявление «всем» работает, а фильтр
+        // отвечает UNAVAILABLE, а не рассылает всем.
+        var auctionUrl = builder.Configuration[AuctionEngagement.AuctionUrlVariable];
+        builder.Services.AddSingleton<IAuctionEngagement>(services => new AuctionEngagement(
+            string.IsNullOrEmpty(auctionUrl) ? null : AuctionEngagement.Connect(auctionUrl),
+            serviceToken,
+            services.GetRequiredService<TimeProvider>()));
         builder.Services.AddSingleton<BroadcastStore>();
         builder.Services.AddSingleton<BroadcastOperations>();
 

@@ -28,6 +28,14 @@ public static class AuctionFeed
     public const string ParticipantRemovedSubject = "events.auction.participant_removed";
 
     /// <summary>
+    /// Условия лота в периоде «Счастливых часов» заданы, заменены или сняты до
+    /// начала периода (PER-786). Снятое окно уходит из снимка, поэтому этот
+    /// факт зовёт грин начала окна и тогда, когда окон у лота не осталось
+    /// (PER-788).
+    /// </summary>
+    public const string StepWindowChangedSubject = "events.auction.step_window_changed";
+
+    /// <summary>
     /// Счёт выставлен по продаже (PER-308, PER-330): единственный факт, по
     /// которому заводятся два напоминания о неоплаченном счёте. Сообщение —
     /// <c>InvoiceEvent</c>.
@@ -38,6 +46,8 @@ public static class AuctionFeed
     /// Организатор подтвердил оплату (PER-308, PER-330): по этому факту
     /// снимаются несработавшие напоминания о счёте.
     /// </summary>
+    public const string InvoicePaymentDueChangedSubject = "events.auction.invoice_payment_due_changed";
+
     public const string InvoicePaidSubject = "events.auction.invoice_paid";
 
     /// <summary>
@@ -69,6 +79,7 @@ public static class AuctionFeed
             ["events.auction.auction_published"] = AuctionEvent.OccasionOneofCase.AuctionPublished,
             ["events.auction.auction_hidden"] = AuctionEvent.OccasionOneofCase.AuctionHidden,
             ["events.auction.prebidding_started"] = AuctionEvent.OccasionOneofCase.PrebiddingStarted,
+            ["events.auction.auction_drafted"] = AuctionEvent.OccasionOneofCase.AuctionDrafted,
         };
 
     /// <summary>
@@ -94,6 +105,7 @@ public static class AuctionFeed
             ["events.auction.lot_resumed"] = LotEvent.OccasionOneofCase.LotResumed,
             [ParticipantRemovedSubject] = LotEvent.OccasionOneofCase.ParticipantRemoved,
             ["events.auction.step_window_added"] = LotEvent.OccasionOneofCase.StepWindowAdded,
+            [StepWindowChangedSubject] = LotEvent.OccasionOneofCase.StepWindowChanged,
         };
 
     /// <summary>
@@ -108,6 +120,7 @@ public static class AuctionFeed
         new Dictionary<string, InvoiceEvent.OccasionOneofCase>(StringComparer.Ordinal)
         {
             [InvoiceIssuedSubject] = InvoiceEvent.OccasionOneofCase.InvoiceIssued,
+            [InvoicePaymentDueChangedSubject] = InvoiceEvent.OccasionOneofCase.InvoicePaymentDueChanged,
             [InvoicePaidSubject] = InvoiceEvent.OccasionOneofCase.InvoicePaid,
         };
 }

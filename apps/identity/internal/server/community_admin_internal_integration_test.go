@@ -31,7 +31,7 @@ func TestCommunityAdministrationIsAuthorizedAndIdempotent(t *testing.T) {
 	}
 
 	resolved := resolveDirect(t, svc, 9502, "target")
-	assertRightSet(t, resolved.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resolved.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	// Допуск без заявки — тоже решение администратора: сообщение получает и
 	// тот, кто ждал на экране без строки заявки, а повтор второго не даёт.
 	assertAdmissions(t, db, targetID, queueCommunity)

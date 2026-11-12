@@ -132,7 +132,7 @@ let ``Publishing a due meetup records the same event a manual publication record
 
     let _, _, event = calls[0]
 
-    test <@ event = MeetupPublished now @>
+    test <@ event = MeetupPublished(now, false) @>
 
 /// Ожидаемая версия — та, что пришла со снимком выборки. На ней и держится
 /// однократность: второй претендент на ту же строку не пройдёт предикат записи.

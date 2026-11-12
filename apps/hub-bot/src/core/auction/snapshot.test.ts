@@ -268,7 +268,28 @@ describe("lotViewOf", () => {
     expect(view.status).toMatchObject({ kind: "trading", extensionsUsed: 2 });
   });
 
-  it("refuses a window without a step", () => {
+  // Окно периода (PER-787): стартовая без шага — настоящее окно.
+  it("reads a window with a starting price and no step", () => {
+    const snapshot = create(LotSnapshotSchema, {
+      ...base,
+      activeWindow: create(LotStepWindowSchema, {
+        from: "2026-10-10T15:00:00Z",
+        until: "2026-10-10T18:00:00Z",
+        start: rub(800n),
+      }),
+      status: {
+        case: "trading",
+        value: { currentPrice: rub(1600n), phase: LotPhase.ONLINE },
+      },
+    });
+    expect(lotViewOf(snapshot).activeWindow).toEqual({
+      from: "2026-10-10T15:00:00Z",
+      until: "2026-10-10T18:00:00Z",
+      start: { minorUnits: 80000, currency: "RUB" },
+    });
+  });
+
+  it("refuses a window without a step and a starting price", () => {
     const snapshot = create(LotSnapshotSchema, {
       ...base,
       activeWindow: create(LotStepWindowSchema, {
@@ -280,7 +301,9 @@ describe("lotViewOf", () => {
         value: { currentPrice: rub(1200n), phase: LotPhase.ONLINE },
       },
     });
-    expect(() => lotViewOf(snapshot)).toThrow("without an amount");
+    expect(() => lotViewOf(snapshot)).toThrow(
+      "without a step and a starting price",
+    );
   });
 
   // Сет лота (ADR-073, п. 7): название, состав по порядку организатора и

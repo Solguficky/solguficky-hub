@@ -68,7 +68,7 @@ object RaffleFacts {
         Some("raffle_drawn" -> bus.RaffleEvent.Occasion.RaffleDrawn(bus.RaffleDrawn()))
       case RaffleEvent.RaffleOpened(_, _, _, _) | RaffleEvent.RaffleNotHeld(_) | RaffleEvent.Registered(_) |
           RaffleEvent.RegistrationCancelled(_) | RaffleEvent.PoolFixed(_, _) | RaffleEvent.RaffleCancelled(_) |
-          RaffleEvent.PrizeChanged(_) =>
+          RaffleEvent.PrizeChanged(_) | RaffleEvent.PrizePhotoSet(_) | RaffleEvent.PrizePhotoRemoved =>
         None
     }
 }

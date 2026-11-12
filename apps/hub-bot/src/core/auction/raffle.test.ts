@@ -15,6 +15,20 @@ import {
 const AUCTION_ID = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
 
 describe("raffle answers", () => {
+  // Фото приза (PER-773): ссылка без байтов — идентификатор и версия.
+  it("reads the prize photo reference", () => {
+    expect(
+      raffleOf(
+        create(RaffleSchema, {
+          auctionId: AUCTION_ID,
+          status: RaffleStatus.OPEN,
+          closesAt: "2026-10-29T18:00:00Z",
+          prizePhoto: { photoId: "photo-1", version: "v1" },
+        }),
+      ).prizePhoto,
+    ).toEqual({ photoId: "photo-1", version: "v1" });
+  });
+
   it("reads an open raffle with its commitment and round", () => {
     expect(
       raffleOf(
