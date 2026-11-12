@@ -13,6 +13,27 @@ public class InvoiceReminderPlanTests
     private static readonly DateTimeOffset IssuedAt = new(2026, 10, 20, 12, 0, 0, TimeSpan.Zero);
 
     [Fact]
+    public void Decide_PaymentNotStarted_CancelsAnOldLiveTask()
+    {
+        InvoiceReminderPlan.Decide(IssuedAt, true, null, true).Action.ShouldBe(InvoiceReminderAction.Cancel);
+    }
+
+    [Fact]
+    public void Decide_AlreadyDueLiveTaskWithoutANewMoment_LeavesItForFiring()
+    {
+        InvoiceReminderPlan.Decide(IssuedAt, true, null, false).Action.ShouldBe(InvoiceReminderAction.None);
+    }
+
+    [Fact]
+    public void Decide_DeadlineMoved_ReplacesTheOldMoment()
+    {
+        var requested = IssuedAt.AddDays(1);
+        var result = InvoiceReminderPlan.Decide(IssuedAt, false, requested, false);
+        result.Action.ShouldBe(InvoiceReminderAction.Create);
+        result.DueAt.ShouldBe(requested);
+    }
+
+    [Fact]
     public void Decide_NoLiveTask_CreatesTaskAtRequestedMoment()
     {
         var decision = InvoiceReminderPlan.Decide(null, everCreated: false, IssuedAt, settled: false);

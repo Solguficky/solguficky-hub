@@ -56,6 +56,7 @@ let ``Command should be refused for a viewer holding only another right`` () =
                 AdmitBidders
                 GrantAdmins
                 RunAuctions
+                OrganizeMeetups
             ]
             |> List.forall (fun right ->
                 let viewer =

@@ -58,9 +58,9 @@ func TestRunAuctionsIsGrantedAndRevokedByMembershipManager(t *testing.T) {
 	changeRight(t, svc.RevokeRight, adminID, memberID, runAuctions, false)
 	assertEvents(t, db, memberID,
 		"v1 profile_registered() {}[] blocked=false",
-		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
-		"v3 right_granted(run_auctions) member{access_hub,place_bids,run_auctions}[] blocked=false",
-		"v4 right_revoked(run_auctions) member{access_hub,place_bids}[] blocked=false")
+		"v2 circle_changed() member{access_hub,organize_meetups,place_bids}[] blocked=false",
+		"v3 right_granted(run_auctions) member{access_hub,organize_meetups,place_bids,run_auctions}[] blocked=false",
+		"v4 right_revoked(run_auctions) member{access_hub,organize_meetups,place_bids}[] blocked=false")
 }
 
 // Служебная запись живёт, пока человек участник: понижение в гостя и

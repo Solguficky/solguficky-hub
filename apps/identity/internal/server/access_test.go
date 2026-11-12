@@ -71,7 +71,7 @@ func TestVocabularyRoundTrips(t *testing.T) {
 
 func assertRightsRoundTrip(t *testing.T) {
 	t.Helper()
-	for _, name := range []string{rightAccessHub, rightPlaceBids, rightAdmitBidders, rightManageMembers, rightManageMeetups, rightGrantAdmins, rightRunAuctions} {
+	for _, name := range []string{rightAccessHub, rightPlaceBids, rightAdmitBidders, rightManageMembers, rightManageMeetups, rightGrantAdmins, rightRunAuctions, rightOrganizeMeetups} {
 		value, ok := accessRight(name)
 		if !ok {
 			t.Fatalf("right %q has no contract value", name)
@@ -107,6 +107,21 @@ func assertPresetsAndCirclesRoundTrip(t *testing.T) {
 	for _, retired := range []string{"admin", "maintainer"} {
 		if _, ok := circleValue(retired); ok {
 			t.Errorf("retired circle %q has a contract value", retired)
+		}
+	}
+}
+
+// Право заводить сходки идёт с кругом member (ADR-076, п. 1): ни таблица
+// выдачи, ни таблица поштучных записей его не знают, поэтому выдать его
+// записью нельзя.
+func TestOrganizeMeetupsIsNotGrantedByRecord(t *testing.T) {
+	t.Parallel()
+	if _, ok := records[rightOrganizeMeetups]; ok {
+		t.Fatal("organize_meetups has a one-by-one record")
+	}
+	for g := range issuers {
+		if string(g) == "record:"+rightOrganizeMeetups {
+			t.Fatalf("issuers has %s", g)
 		}
 	}
 }

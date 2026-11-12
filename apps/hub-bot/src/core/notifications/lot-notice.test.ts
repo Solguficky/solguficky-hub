@@ -102,17 +102,54 @@ describe("lotNoticeOf", () => {
     });
   });
 
-  // Следующий лот финала несёт лот и оценку его длительности.
-  it("carries the next lot of the final with its estimate", () => {
+  // Следующий лот финала несёт лот, идущий лот и место своего в составе.
+  it("carries the next lot of the final with the active lot and place", () => {
     const value = create(AuctionFinalLotNextSchema, {
       lotId: lotOf(5),
-      estimatedMinutes: 7,
+      activeLotId: lotOf(4),
+      place: 3,
+      lineupSize: 5,
     });
     expect(lotNoticeOf({ case: "auctionFinalLotNext", value })).toEqual({
       kind: "lot-final-next",
       lotId: lotOf(5),
-      estimatedMinutes: 7,
+      activeLotId: lotOf(4),
+      place: 3,
+      lineupSize: 5,
+      estimatedMinutes: 0,
     });
+  });
+
+  // На старте финала идущего лота ещё нет: пустая строка — не дефект.
+  it("accepts a next lot without an active lot", () => {
+    const value = create(AuctionFinalLotNextSchema, {
+      lotId: lotOf(5),
+      place: 1,
+      lineupSize: 5,
+    });
+    expect(lotNoticeOf({ case: "auctionFinalLotNext", value })).toEqual({
+      kind: "lot-final-next",
+      lotId: lotOf(5),
+      place: 1,
+      lineupSize: 5,
+      estimatedMinutes: 0,
+    });
+  });
+
+  // Идущий лот не в канонической форме и место за пределами состава — дефект.
+  it("finds a next lot with a broken active lot or place malformed", () => {
+    for (const fields of [
+      { activeLotId: "not-a-lot" },
+      { place: 6, lineupSize: 5 },
+    ]) {
+      const value = create(AuctionFinalLotNextSchema, {
+        lotId: lotOf(5),
+        ...fields,
+      });
+      expect(
+        lotNoticeOf({ case: "auctionFinalLotNext", value }),
+      ).toBeUndefined();
+    }
   });
 
   // Оценка без лота — дефект издателя: сообщение без лота нечего открывать.
@@ -377,6 +414,22 @@ describe("renderLotNotice", () => {
     );
   });
 
+  // PER-831: полночь читается как 23:59, а 00:03 после анти-снайпа — как есть.
+  it("names a midnight deadline as 23:59 and keeps 00:03", () => {
+    const lotId = lotOf(1);
+    const outbid = (at: string) =>
+      renderLotNotice(
+        { kind: "lot-outbid", lotId, currentPrice: rub(950) },
+        {
+          lots: new Map([[lotId, lot("Кружка", { deadline: at })]]),
+          frequencyButton: false,
+          timeZone,
+        },
+      ).text;
+    expect(outbid("2026-10-30T21:00:00Z")).toContain("Торг до 23:59.");
+    expect(outbid("2026-10-30T21:03:00Z")).toContain("Торг до 00:03.");
+  });
+
   // Продление анти-снайпом двигает дедлайн, и сообщение говорит об этом.
   it("names the extended deadline of the outbid lot", () => {
     const lotId = lotOf(1);
@@ -478,9 +531,15 @@ describe("renderLotNotice", () => {
     expect(
       render({ kind: "lot-proxy-raised", lotId, currentPrice: rub(950) }),
     ).toBe(`Твоя автоставка на лот подняла цену до 950${nbsp}₽: лидируешь ты.`);
-    expect(render({ kind: "lot-final-next", lotId, estimatedMinutes: 0 })).toBe(
-      "Твой лот следующий.",
-    );
+    expect(
+      render({
+        kind: "lot-final-next",
+        lotId,
+        place: 0,
+        lineupSize: 0,
+        estimatedMinutes: 0,
+      }),
+    ).toBe("Твой лот следующий.");
   });
 
   // Напоминание о дедлайне выключается снятием отметки (ADR-063, п.5), а не
@@ -520,10 +579,65 @@ describe("renderLotNotice", () => {
   });
 
   // Следующий лот финала: оценка длительности — по уже прошедшим лотам.
-  it("names the next lot of the final with its estimate", () => {
+  it("names the active lot and the place of the next lot, without a made-up time", () => {
+    const lotId = lotOf(5);
+    const activeLotId = lotOf(4);
+    const view = renderLotNotice(
+      {
+        kind: "lot-final-next",
+        lotId,
+        activeLotId,
+        place: 3,
+        lineupSize: 5,
+        estimatedMinutes: 0,
+      },
+      {
+        lots: new Map([
+          [lotId, lot("Кружка")],
+          [activeLotId, lot("Плед")],
+        ]),
+        frequencyButton: true,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      "Твой лот «<b>Кружка</b>» следующий — 3-й из 5 в составе. Сейчас идёт лот «<b>Плед</b>».",
+    );
+    expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
+  });
+
+  it("says the final starts with the own lot when none is active yet", () => {
     const lotId = lotOf(5);
     const view = renderLotNotice(
-      { kind: "lot-final-next", lotId, estimatedMinutes: 7 },
+      {
+        kind: "lot-final-next",
+        lotId,
+        place: 1,
+        lineupSize: 5,
+        estimatedMinutes: 0,
+      },
+      {
+        lots: new Map([[lotId, lot("Кружка")]]),
+        frequencyButton: true,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      "Финал начинается с твоего лота: лот «<b>Кружка</b>» идёт первым.",
+    );
+  });
+
+  // Весть старого образа с оценкой, пока она стоит в очереди, читается по-прежнему.
+  it("still prints an estimate the publisher carried", () => {
+    const lotId = lotOf(5);
+    const view = renderLotNotice(
+      {
+        kind: "lot-final-next",
+        lotId,
+        place: 0,
+        lineupSize: 0,
+        estimatedMinutes: 7,
+      },
       {
         lots: new Map([[lotId, lot("Кружка")]]),
         frequencyButton: true,
@@ -533,7 +647,6 @@ describe("renderLotNotice", () => {
     expect(view.text).toBe(
       "Твой лот «<b>Кружка</b>» следующий. Примерно через 7 минут.",
     );
-    expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
 
   // Сводка за час может набрать много лотов: текст и клавиатура держатся в
@@ -591,6 +704,80 @@ describe("createLotNoticeRender", () => {
     await render(digest(lines), { recipientId: lotOf(99) });
     expect(reads.holdsPlaceBids).toHaveBeenCalledTimes(1);
     expect(reads.lotInfo).toHaveBeenCalledTimes(DIGEST_LOT_LIMIT);
+  });
+
+  // PER-840: перебитие читает источник ставки и называет автоставку; ручная
+  // ставка, неизвестный источник и сбой чтения оставляют прежний текст.
+  describe("outbid by a proxy", () => {
+    const lotId = lotOf(1);
+    const renderWith = async (
+      outbidOrigin: () => Promise<"proxy" | "manual" | undefined>,
+      onTitleMissing = () => {},
+    ) => {
+      const render = createLotNoticeRender({
+        reads: {
+          holdsPlaceBids: async () => true,
+          lotInfo: async () => lot("Кружка"),
+          outbidOrigin,
+        },
+        onTitleMissing,
+        frequencyButton: false,
+        timeZone,
+      });
+      const rendered = await render(
+        { kind: "lot-outbid", lotId, currentPrice: rub(950) },
+        { recipientId: lotOf(99) },
+      );
+      if (rendered.kind !== "ready") throw new Error("the notice must render");
+      return rendered.message.text;
+    };
+
+    it("names the proxy of another participant", async () => {
+      await expect(renderWith(async () => "proxy")).resolves.toBe(
+        `Тебя перебила автоставка другого участника: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+    });
+
+    it("keeps the plain wording for a manual bid", async () => {
+      await expect(renderWith(async () => "manual")).resolves.toBe(
+        `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+    });
+
+    it("keeps the plain wording when the origin is unknown", async () => {
+      await expect(renderWith(async () => undefined)).resolves.toBe(
+        `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+    });
+
+    it("keeps the plain wording and delivers when the history read fails", async () => {
+      const missing = vi.fn();
+      await expect(
+        renderWith(() => Promise.reject(new Error("unavailable")), missing),
+      ).resolves.toBe(
+        `Твою ставку перебили: лот «<b>Кружка</b>», цена 950${nbsp}₽.`,
+      );
+      expect(missing).toHaveBeenCalledTimes(1);
+    });
+
+    it("reads the origin for an outbid only", async () => {
+      const outbidOrigin = vi.fn(async () => "proxy" as const);
+      const render = createLotNoticeRender({
+        reads: {
+          holdsPlaceBids: async () => true,
+          lotInfo: async () => lot("Кружка"),
+          outbidOrigin,
+        },
+        onTitleMissing: () => {},
+        frequencyButton: false,
+        timeZone,
+      });
+      await render(
+        { kind: "lot-proxy-raised", lotId, currentPrice: rub(950) },
+        { recipientId: lotOf(99) },
+      );
+      expect(outbidOrigin).not.toHaveBeenCalled();
+    });
   });
 
   // Лот, который Auction окончательно не отдаёт, остаётся строкой без

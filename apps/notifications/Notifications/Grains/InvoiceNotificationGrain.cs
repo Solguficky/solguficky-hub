@@ -100,14 +100,15 @@ public sealed class InvoiceNotificationGrain(
         // Оплаченный счёт напоминаний не имеет: живые задания снимаются, а
         // новые не заводятся. Неоплаченный, о котором реплика ничего не знает,
         // — тоже: момент выставления неизвестен, а без него напоминать не о чем.
-        var settled = replica is null || replica.Status != InvoiceStatus.AwaitingPayment;
+        var settled = replica is null || replica.Status != InvoiceStatus.AwaitingPayment || replica.PaymentDueAt is null;
 
         // Срок оплаты прошёл, а счёт не оплачен: напоминать уже не о чем, и
         // весть о неоплаченном счёте после срока — шум.
-        var overdue = replica is { } current && current.PaymentDueAt <= Now();
+        var overdue = replica?.PaymentDueAt is { } deadline && deadline <= Now();
 
         var creates = new List<(InvoiceReminderKind Kind, DateTimeOffset DueAt)>();
         var cancel = false;
+        var kept = new List<(InvoiceReminderKind Kind, DateTimeOffset DueAt)>();
 
         foreach (var kind in Kinds)
         {
@@ -115,12 +116,14 @@ public sealed class InvoiceNotificationGrain(
             var live = existing is { Live: true } ? existing.DueAt : (DateTimeOffset?)null;
             var requested = settled || overdue ? null : Moment(kind, replica!);
 
-            var decision = InvoiceReminderPlan.Decide(live, existing is not null, requested, settled || overdue);
+            var firedAtRequestedMoment = existing is { State: "fired" } && existing.DueAt == requested;
+            var decision = InvoiceReminderPlan.Decide(live, firedAtRequestedMoment, requested, settled || overdue);
 
             switch (decision.Action)
             {
                 case InvoiceReminderAction.Create:
                     creates.Add((kind, decision.DueAt!.Value));
+                    cancel |= live is not null;
                     break;
 
                 case InvoiceReminderAction.Cancel:
@@ -128,6 +131,11 @@ public sealed class InvoiceNotificationGrain(
                     break;
 
                 case InvoiceReminderAction.Keep:
+                    if (live is { } keptDue)
+                    {
+                        kept.Add((kind, keptDue));
+                    }
+                    break;
                 case InvoiceReminderAction.None:
                 default:
                     continue;
@@ -140,15 +148,19 @@ public sealed class InvoiceNotificationGrain(
         // Решения по всем видам применяются одной транзакцией: задания —
         // моменты одного напоминания, и падение между их записями оставило бы
         // счёт без части моментов навсегда.
-        await tasks.Apply(invoiceId, creates, cancel, Reason(replica, settled, overdue), Now(), token);
+        if (cancel)
+        {
+            creates.AddRange(kept);
+        }
+        await tasks.Apply(invoiceId, creates, cancel, replica?.PaymentDueAt, Reason(replica, settled, overdue), Now(), token);
 
         await Settle(invoiceId, token);
     }
 
     /// <summary>Причина снятия заданий: она встаёт в строку и читается глазами.</summary>
     private static string Reason(InvoiceReplica? replica, bool settled, bool overdue) =>
-        settled ? (replica is null ? "invoice is unknown" : "invoice paid")
-        : "payment deadline passed";
+        settled ? (replica is null ? "invoice is unknown" : replica.PaymentDueAt is null ? "payment term not started" : "invoice paid")
+        : overdue ? "payment deadline passed" : "payment deadline changed";
 
     private DateTimeOffset Now() => clock.GetUtcNow();
 
@@ -213,12 +225,12 @@ public sealed class InvoiceNotificationGrain(
     /// </remarks>
     private DateTimeOffset? Moment(InvoiceReminderKind kind, InvoiceReplica replica)
     {
-        if (replica.IssuedAt is not { } issuedAt)
+        if (replica.IssuedAt is not { } issuedAt || replica.PaymentDueAt is not { } paymentDueAt)
         {
             return null;
         }
 
-        var moment = InvoiceReminderMoments.For(kind, issuedAt, replica.PaymentDueAt, Options.IssueGap);
+        var moment = InvoiceReminderMoments.For(kind, issuedAt, paymentDueAt, Options.IssueGap);
 
         return moment is { } value && value > Now() ? ReminderPlan.ToStoredPrecision(value) : null;
     }

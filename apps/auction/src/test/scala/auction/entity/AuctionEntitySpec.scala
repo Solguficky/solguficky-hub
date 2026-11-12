@@ -8,6 +8,7 @@ import auction.lot.AddStepWindow
 import auction.lot.AddStepWindowRejected
 import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
+import auction.lot.ClearPeriodWindow
 import auction.lot.CloseLot
 import auction.lot.CloseLotRejected
 import auction.lot.CloseReason
@@ -25,6 +26,7 @@ import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ParticipantId
+import auction.lot.PeriodWindowRejected
 import auction.lot.PlaceBid
 import auction.lot.RemoveParticipant
 import auction.lot.RemoveParticipantRejected
@@ -33,6 +35,7 @@ import auction.lot.ResumeLotRejected
 import auction.lot.Sale
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
+import auction.lot.SetPeriodWindow
 import auction.lot.StepPolicyInput
 import auction.lot.StepPolicyInvalid
 import auction.lot.UnmarkForFinal
@@ -289,6 +292,25 @@ final class AuctionEntitySpec
       if (lost(lot)) Promise[Either[AddStepWindowRejected, Unit]]().future else Future.successful(answer)
     }
 
+    private var periodWindows = Vector.empty[(LotId, Any)]
+
+    def periodCommands: Vector[(LotId, Any)] = synchronized(periodWindows)
+
+    /** Условия лота в периоде; `lost` — лот их принял, но ответ потерялся. */
+    def setPeriodWindow(lot: LotId, command: SetPeriodWindow): Future[Either[PeriodWindowRejected, Unit]] =
+      synchronized {
+        periodWindows :+= lot -> command
+        val answer = Lot.decide(lots(lot), command, now()).map(_.foreach(written(lot, command.opId, _)))
+        if (lost(lot)) Promise[Either[PeriodWindowRejected, Unit]]().future else Future.successful(answer)
+      }
+
+    def clearPeriodWindow(lot: LotId, command: ClearPeriodWindow): Future[Either[PeriodWindowRejected, Unit]] =
+      synchronized {
+        periodWindows :+= lot -> command
+        val answer = Lot.decide(lots(lot), command, now()).map(_.foreach(written(lot, command.opId, _)))
+        if (lost(lot)) Promise[Either[PeriodWindowRejected, Unit]]().future else Future.successful(answer)
+      }
+
     private def opening(event: LotEvent): Option[Instant] =
       event match {
         case opened: LotEvent.LotOpened => opened.deadline
@@ -441,6 +463,40 @@ final class AuctionEntitySpec
     entity.runCommand[Either[LaunchStepWindowRejected, AuctionAnswer]](
       AuctionEntity.Launch(LaunchStepWindow(from, until, LotFixtures.money(1), chosen, op(opN)), administrator, _)
     )
+
+  private def createPeriod(opN: Int, from: Instant, until: Instant) =
+    entity.runCommand[Either[CreateHappyHourPeriodRejected, AuctionAnswer]](
+      AuctionEntity.CreatePeriod(CreateHappyHourPeriod(from, until, op(opN)), administrator, _)
+    )
+
+  private def deletePeriod(opN: Int, created: Int) =
+    entity.runCommand[Either[DeleteHappyHourPeriodRejected, AuctionAnswer]](
+      AuctionEntity.DeletePeriod(DeleteHappyHourPeriod(HappyHourPeriod.idOf(op(created)), op(opN)), administrator, _)
+    )
+
+  private def setTerms(opN: Int, created: Int, step: Option[Long] = Some(5), start: Option[Long] = Some(60)) = {
+    val period = HappyHourPeriod.idOf(op(created))
+    val command = SetHappyHourLotTerms(period, lot, step.map(LotFixtures.money), start.map(LotFixtures.money), op(opN))
+    entity.runCommand[Either[SetHappyHourLotTermsRejected, AuctionAnswer]](
+      AuctionEntity.SetTerms(command, LotRegulars.of(lots.stateNow(lot)), administrator, _)
+    )
+  }
+
+  private def clearTerms(opN: Int, created: Int) =
+    entity.runCommand[Either[ClearHappyHourLotTermsRejected, AuctionAnswer]](
+      AuctionEntity.ClearTerms(
+        ClearHappyHourLotTerms(HappyHourPeriod.idOf(op(created)), lot, op(opN)),
+        administrator,
+        _
+      )
+    )
+
+  /** Окна лота в торгах: условия периодов доходят до него только так. */
+  private def windowsOf(lotId: LotId): List[auction.lot.StepWindow] =
+    lots.stateNow(lotId) match {
+      case LotState.Trading(trading) => trading.stepWindows
+      case other => fail(s"the lot is not trading: $other")
+    }
 
   private def discard(opN: Int) =
     entity.runCommand[Either[DiscardAuctionRejected, AuctionAnswer]](
@@ -1248,6 +1304,94 @@ final class AuctionEntitySpec
           trading.stepWindows shouldBe List(auction.lot.StepWindow(window.from, window.until, window.step))
         case other => fail(s"the lot is not trading: $other")
       }
+    }
+
+    // ADR-047, дополнение 2026-10-27: «в прошлом» и «начался» судят часы entity, а не вызывающий.
+    "records a happy hour period and deletes it only before its start by the clock of the entity" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      val from = opensAt.plusSeconds(7200)
+      val period = HappyHourPeriod(HappyHourPeriod.idOf(op(opening + 1)), from, opensAt.plusSeconds(10800))
+
+      createPeriod(opening + 1, from, period.until).reply shouldBe
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(opening + 1), AuctionEvent.HappyHourPeriodCreated(period))))
+      entity.getState().auction.happyHours shouldBe List(period)
+      createPeriod(opening + 2, time.instant0.minusSeconds(1), period.until).reply shouldBe
+        Left(CreateHappyHourPeriodRejected.PeriodInPast)
+
+      time.instant0 = from
+      deletePeriod(opening + 3, created = opening + 1).reply shouldBe
+        Left(DeleteHappyHourPeriodRejected.PeriodStarted)
+      time.instant0 = from.minusSeconds(1)
+      deletePeriod(opening + 3, created = opening + 1).reply shouldBe Right(
+        AuctionAnswer.Written(AuctionEnvelope(6, op(opening + 3), AuctionEvent.HappyHourPeriodDeleted(period.id)))
+      )
+      entity.getState().auction.happyHours shouldBe empty
+    }
+
+    // PER-786: условия лота в периоде доходят до лота парой «команда — подтверждение», а «начался» судят часы entity.
+    "delivers the terms of a lot in a period, replaces and clears them only before the period starts" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      val from = opensAt.plusSeconds(7200)
+      createPeriod(opening + 1, from, opensAt.plusSeconds(10800))
+      val window = auction.lot.StepWindow(
+        from,
+        opensAt.plusSeconds(10800),
+        Some(LotFixtures.money(5)),
+        Some(LotFixtures.money(60)),
+        Some(auction.lot.WindowPeriod(HappyHourPeriod.idOf(op(opening + 1)).value))
+      )
+
+      setTerms(opening + 2, created = opening + 1).reply.isRight shouldBe true
+      eventually(windowsOf(lot) shouldBe List(window))
+      setTerms(opening + 3, created = opening + 1, step = None, start = Some(50)).reply.isRight shouldBe true
+      eventually(windowsOf(lot) shouldBe List(window.copy(step = None, start = Some(LotFixtures.money(50)))))
+
+      time.instant0 = from
+      setTerms(opening + 4, created = opening + 1).reply shouldBe Left(SetHappyHourLotTermsRejected.PeriodStarted)
+      clearTerms(opening + 5, created = opening + 1).reply shouldBe Left(ClearHappyHourLotTermsRejected.PeriodStarted)
+      time.instant0 = from.minusSeconds(1)
+      clearTerms(opening + 5, created = opening + 1).reply.isRight shouldBe true
+      eventually(windowsOf(lot) shouldBe empty)
+      eventually(roster.deliveries.values.toSet shouldBe Set(WindowDelivery.Delivered))
+    }
+
+    "clears the windows of the lots of a period it deletes" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      createPeriod(opening + 1, opensAt.plusSeconds(7200), opensAt.plusSeconds(10800))
+      setTerms(opening + 2, created = opening + 1).reply.isRight shouldBe true
+      eventually(windowsOf(lot) should have size 1)
+
+      deletePeriod(opening + 3, created = opening + 1).reply.isRight shouldBe true
+
+      eventually(windowsOf(lot) shouldBe empty)
+      entity.getState().auction.periodTerms.map(_.terms) shouldBe List(None)
+    }
+
+    "delivers the terms again after a restart under the same op_id, and the lot records them once" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      createPeriod(opening + 1, opensAt.plusSeconds(7200), opensAt.plusSeconds(10800))
+      lots.lost = Set(lot)
+      setTerms(opening + 2, created = opening + 1).reply.isRight shouldBe true
+      eventually(lots.periodCommands should have size 1)
+      lots.lost = Set.empty
+
+      entity.restart()
+
+      eventually(roster.deliveries.values.toSet shouldBe Set(WindowDelivery.Delivered))
+      lots.periodCommands should have size 2
+      lots.periodCommands.map(_._2).distinct should have size 1
+      windowsOf(lot) should have size 1
     }
 
     "answers a repeated launch with the original envelope and writes nothing" in {

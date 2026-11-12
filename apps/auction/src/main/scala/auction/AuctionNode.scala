@@ -54,6 +54,7 @@ import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
 import auction.persistence.SlickPredictionStore
+import auction.persistence.SlickRafflePrizePhotos
 import auction.persistence.SlickRaffleTickets
 import auction.persistence.SlickResultsStore
 import auction.prediction.PredictionEntity
@@ -74,12 +75,16 @@ import auction.projection.InvoicePublicationHandler
 import auction.projection.InvoiceViewHandler
 import auction.projection.InvoicingHandler
 import auction.projection.InvoicingProjection
+import auction.projection.SettlementSalesHandler
+import auction.settlement.SettlementGateway
+import auction.telemetry.SettlementFailures
 import auction.results.ResultsForecasts
 import auction.results.ResultsGateway
 import auction.results.ResultsOutcomes
 import auction.results.ResultsStore
 import auction.screen.MeetupStandings
 import auction.screen.ScreenFeed
+import auction.screen.ScreenPredictions
 import auction.screen.StreamLimit
 import auction.slot.SlotHolders
 import auction.slot.TradingSlotEntity
@@ -103,6 +108,8 @@ import org.apache.pekko.cluster.sharding.typed.scaladsl.Entity
 import org.apache.pekko.cluster.typed.Cluster
 import org.apache.pekko.cluster.typed.Join
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.SystemMaterializer
 import org.apache.pekko.util.Timeout
 import org.slf4j.LoggerFactory
 
@@ -268,9 +275,11 @@ object AuctionNode {
       sharding: ClusterSharding,
       invoices: InvoiceGateway,
       metrics: ProjectionMetrics,
+      settlementFailures: SettlementFailures,
       askTimeout: FiniteDuration,
-      backlogTimeout: FiniteDuration
-  ): Unit = {
+      backlogTimeout: FiniteDuration,
+      clock: Clock = Clock.systemUTC()
+  ): SettlementGateway = {
     import system.executionContext
     val auctions = AuctionGateway.sharded(sharding, askTimeout)
     InvoicingProjection.init(
@@ -278,7 +287,34 @@ object AuctionNode {
       metrics,
       () => InvoicingHandler(auction => auctions.get(auction).map(InvoicingHandler.termOf), invoices.issue)
     )
+    auction.projection.InvoicePaymentClock.start(system, invoices)
     metrics.watchBacklog(InvoicingProjection.Name, InvoicingProjection.backlog(system, backlogTimeout))
+    val settlements = SettlementGateway.sharded(
+      system,
+      sharding,
+      invoices,
+      clock,
+      UuidV7.generator(clock),
+      askTimeout,
+      settlementFailures.record
+    )
+    InvoicingProjection.init(
+      system,
+      metrics,
+      () =>
+        new SettlementSalesHandler(
+          auction => auctions.get(auction).map(InvoicingHandler.termOf),
+          invoices,
+          settlements,
+          SettlementSalesHandler.history(system)
+        ),
+      SettlementSalesHandler.Name
+    )
+    metrics.watchBacklog(
+      SettlementSalesHandler.Name,
+      LotProjection.backlog(system, SettlementSalesHandler.Name, backlogTimeout)
+    )
+    settlements
   }
 
   /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */
@@ -569,7 +605,8 @@ object AuctionNode {
       finalBids = SlickFinalBids(system),
       invoices = invoices,
       invoiceViews = SlickInvoiceViews(system),
-      raffleByHand = raffleByHand
+      raffleByHand = raffleByHand,
+      prizePhotos = SlickRafflePrizePhotos(system)
     )
     GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
   }
@@ -582,13 +619,21 @@ object AuctionNode {
   def screen(system: ActorSystem[?], changes: AuctionChanges, standings: MeetupStandings): Route = {
     val config = system.settings.config
     import system.executionContext
+    given Materializer = SystemMaterializer(system).materializer
     val views = SlickScreenViews(system)
+    // Итоги прогнозов на итоге экрана (PER-839) читаются тем же путём, что `GetPredictionResults`.
+    val results = ResultsGateway.sharded(
+      ClusterSharding(system),
+      SlickResultsStore(system),
+      config.getDuration("auction.grpc.ask-timeout").toScala
+    )
     val feed = ScreenFeed(
       views,
       SlickDisplayNameStore(system),
       standings,
       changes,
-      StreamLimit(config.getInt("auction.screen.max-streams"))
+      StreamLimit(config.getInt("auction.screen.max-streams")),
+      ScreenPredictions.of(results)
     )
     ScreenRoutes.route(feed, views, config.getDuration("auction.screen.heartbeat").toScala)
   }

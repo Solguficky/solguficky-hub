@@ -23,6 +23,7 @@ module MethodAccess =
             "CancelMeetup", bot
             "AttachMaterial", bot
             "RemoveMaterial", bot
+            "ReorderMaterials", bot
             "MarkMeetupHeld", bot
             "ListVisibleMeetups", bot
             "ListArchivedMeetups", bot

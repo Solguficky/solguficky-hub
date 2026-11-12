@@ -41,11 +41,11 @@ func TestEveryGrantPathLeavesOneActiveCircle(t *testing.T) {
 
 	// Снимок outbox несёт круг, права и наборы после выдачи — те же, что ответ.
 	circle, rights, presets := lastSnapshot(t, db, guest)
-	if circle != circleMember || rights != "access_hub,admit_bidders,manage_meetups,manage_members,place_bids,run_auctions" || presets != "admin" {
+	if circle != circleMember || rights != "access_hub,admit_bidders,manage_meetups,manage_members,organize_meetups,place_bids,run_auctions" || presets != "admin" {
 		t.Fatalf("admin snapshot: circle=%q rights=%q presets=%q", circle, rights, presets)
 	}
 	circle, rights, presets = lastSnapshot(t, db, applicant)
-	if circle != circleMember || rights != "access_hub,place_bids" || presets != "" {
+	if circle != circleMember || rights != "access_hub,organize_meetups,place_bids" || presets != "" {
 		t.Fatalf("member snapshot: circle=%q rights=%q presets=%q", circle, rights, presets)
 	}
 }
@@ -58,11 +58,11 @@ func TestPresetsCarryOnlyTheirOwnRights(t *testing.T) {
 	svc, db := newIdentityService(t)
 	maintainer := seedProfile(t, db, 9911)
 	mustChange(t)(svc.grantPreset(t.Context(), maintainer, presetMaintainer, maintainerActor()))
-	assertRights(t, svc, maintainer, rightAccessHub, rightGrantAdmins, rightPlaceBids)
+	assertRights(t, svc, maintainer, rightAccessHub, rightGrantAdmins, rightOrganizeMeetups, rightPlaceBids)
 
 	admin := seedProfile(t, db, 9912)
 	mustChange(t)(svc.grantPreset(t.Context(), admin, presetAdmin, maintainerActor()))
-	assertRights(t, svc, admin, rightAccessHub, rightAdmitBidders, rightManageMeetups, rightManageMembers, rightPlaceBids, rightRunAuctions)
+	assertRights(t, svc, admin, rightAccessHub, rightAdmitBidders, rightManageMeetups, rightManageMembers, rightOrganizeMeetups, rightPlaceBids, rightRunAuctions)
 }
 
 func lastSnapshot(t *testing.T, db *sql.DB, identityID string) (string, string, string) {
@@ -90,5 +90,5 @@ func TestAdminPresetReplacesAdmitBiddersRecord(t *testing.T) {
 	assertActiveRights(t, db, member)
 	mustChange(t)(svc.revokePreset(t.Context(), member, presetAdmin, maintainerActor()))
 	assertActiveCircle(t, db, member, circleMember)
-	assertRights(t, svc, member, rightAccessHub, rightPlaceBids)
+	assertRights(t, svc, member, rightAccessHub, rightOrganizeMeetups, rightPlaceBids)
 }

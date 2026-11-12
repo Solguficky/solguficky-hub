@@ -103,7 +103,7 @@ let ``Apply should consume the scheduled publication moment on publication`` () 
     // поле противоречило бы схеме и снимку. Раньше это обнуление стояло в SQL
     // (PER-280), теперь оно принадлежит состоянию.
     let published =
-        Meetup.apply (Existing Sample.scheduled) (MeetupPublished Sample.fixedNow)
+        Meetup.apply (Existing Sample.scheduled) (MeetupPublished(Sample.fixedNow, false))
 
     test <@ (Meetup.toSnapshot published).ScheduledPublishAt = None @>
     test <@ (Meetup.toSnapshot published).FirstPublishedAt = Some Sample.fixedNow @>

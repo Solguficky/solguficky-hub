@@ -45,7 +45,8 @@ export function photoVariantOf(fileId: string): PhotoVariant | undefined {
     : undefined;
 }
 
-type ScreenMedia = { kind: "document" | "photo"; fileId: string };
+// `post` — копия поста чата медиа ботов (PER-776): номер поста вместо файла.
+type ScreenMedia = { kind: "document" | "photo" | "post"; fileId: string };
 
 type Screen = {
   messageId: number;
@@ -520,6 +521,7 @@ const sendingMethods: ReadonlySet<string> = new Set([
   "sendRichMessage",
   "sendDocument",
   "sendPhoto",
+  "copyMessage",
 ]);
 
 const namedEntities: Record<string, string> = {
@@ -577,7 +579,10 @@ function readScreens(calls: readonly RecordedCall[], chatId: number): Screen[] {
     const previous = current.get(messageId);
     // Файл бот отправляет по идентификатору Telegram, а текст такого сообщения
     // — его подпись.
-    const media = readMedia(payload) ?? previous?.media;
+    const media =
+      (call.method === "copyMessage"
+        ? readPost(payload)
+        : readMedia(payload)) ?? previous?.media;
     // Карточка сходки рисуется богатым сообщением (ADR-034): его текст — HTML
     // в `rich_message`, а не в `text`. Запасная карточка приходит в `text` с
     // `parse_mode: "HTML"`. Человек видит оба без разметки, поэтому экран
@@ -673,6 +678,14 @@ function carriesQuestionStep(payload: ScreenPayload): boolean {
   const last = payload.reply_markup?.inline_keyboard?.at(-1);
   const data = last?.length === 1 ? last[0]?.callback_data : undefined;
   return typeof data === "string" && data.startsWith("v1:q:");
+}
+
+// Копия поста несёт номер поста полем `message_id`, а номер нового сообщения
+// даёт соглашение отправки.
+function readPost(payload: ScreenPayload): ScreenMedia | undefined {
+  return typeof payload.message_id === "number"
+    ? { kind: "post", fileId: String(payload.message_id) }
+    : undefined;
 }
 
 function readMedia(payload: ScreenPayload): ScreenMedia | undefined {

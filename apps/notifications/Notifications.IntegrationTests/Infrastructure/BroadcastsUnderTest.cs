@@ -2,9 +2,12 @@ using System.Collections.Concurrent;
 using Dapper;
 using Grpc.Net.Client;
 using Microsoft.Extensions.DependencyInjection;
+using Notifications.Auction;
 using Notifications.Broadcasts;
 using Notifications.V1;
 using Npgsql;
+using Shouldly;
+using Xunit;
 
 namespace Notifications.IntegrationTests.Infrastructure;
 
@@ -35,6 +38,35 @@ public sealed class StubAuthority : IBroadcastAuthority
     {
         Asked.Enqueue(("identity", authorId, null, forwarded.RequestId));
         return Task.FromResult(Identity);
+    }
+
+    /// <summary>Право вести аукцион — у Meetups, тем же вердиктом, что рассылка по сходке.</summary>
+    public Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded)
+    {
+        Asked.Enqueue(("meetups:auction", authorId, meetupId, forwarded.RequestId));
+        return Task.FromResult(Meetups);
+    }
+}
+
+/// <summary>
+/// Auction, подставленный на вопрос «кто вовлечён» (PER-778). Отвечает заданным
+/// чтением и считает вопросы: объявление «всем» спрашивать его не должно.
+/// </summary>
+/// <remarks>
+/// Сведение настоящего ответа Auction проверяет unit-набор на
+/// <see cref="AuctionEngagement" />; здесь предмет — получатели и отказы.
+/// </remarks>
+public sealed class StubEngagement : IAuctionEngagement
+{
+    public EngagementRead Answer { get; set; } =
+        new EngagementRead.Known(true, new HashSet<Guid>(), true, new HashSet<Guid>());
+
+    public ConcurrentQueue<Guid> Asked { get; } = new();
+
+    public Task<EngagementRead> Read(Guid auctionId, Forwarded forwarded)
+    {
+        Asked.Enqueue(auctionId);
+        return Task.FromResult(Answer);
     }
 }
 
@@ -69,12 +101,18 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
     private readonly SiloUnderTest silo;
     private readonly GrpcChannel channel;
 
-    private BroadcastsUnderTest(IsolatedDatabase db, SiloUnderTest silo, GrpcChannel channel, StubAuthority? owners)
+    private BroadcastsUnderTest(
+        IsolatedDatabase db,
+        SiloUnderTest silo,
+        GrpcChannel channel,
+        StubAuthority? owners,
+        StubEngagement? auction)
     {
         Db = db;
         this.silo = silo;
         this.channel = channel;
         Owners = owners ?? new StubAuthority();
+        Auction = auction ?? new StubEngagement();
         Client = new NotificationsService.NotificationsServiceClient(SiloUnderTest.AsBot(channel));
     }
 
@@ -94,16 +132,25 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
     /// <summary>Подставленные владельцы. У стенда без подстановки не участвуют.</summary>
     public StubAuthority Owners { get; }
 
-    /// <summary>Стенд с подставленными владельцами права.</summary>
-    public static Task<BroadcastsUnderTest> Start() => Launch(new StubAuthority());
+    /// <summary>Подставленный Auction. У стенда без подстановки не участвует.</summary>
+    public StubEngagement Auction { get; }
+
+    /// <summary>Стенд с подставленными владельцами права и Auction.</summary>
+    public static Task<BroadcastsUnderTest> Start() => Launch(new StubAuthority(), new StubEngagement());
 
     /// <summary>
     /// Стенд с composition root как есть: адреса Meetups и Identity не заданы,
     /// и сервис обязан отказать, а не разослать без проверки.
     /// </summary>
-    public static Task<BroadcastsUnderTest> StartWithoutOwners() => Launch(owners: null);
+    public static Task<BroadcastsUnderTest> StartWithoutOwners() => Launch(owners: null, auction: null);
 
-    private static async Task<BroadcastsUnderTest> Launch(StubAuthority? owners)
+    /// <summary>
+    /// Стенд с подставленными владельцами права, но без адреса Auction, как в
+    /// профиле без него: объявление «всем» работает, фильтр отказывает.
+    /// </summary>
+    public static Task<BroadcastsUnderTest> StartWithoutAuction() => Launch(new StubAuthority(), auction: null);
+
+    private static async Task<BroadcastsUnderTest> Launch(StubAuthority? owners, StubEngagement? auction)
     {
         var database = new IsolatedDatabase();
         SiloUnderTest? silo = null;
@@ -115,9 +162,16 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
                 ? await SiloUnderTest.Start(database.ConnectionString)
                 : await SiloUnderTest.StartWith(
                     database.ConnectionString,
-                    services => services.AddSingleton<IBroadcastAuthority>(owners));
+                    services =>
+                    {
+                        services.AddSingleton<IBroadcastAuthority>(owners);
+                        if (auction is not null)
+                        {
+                            services.AddSingleton<IAuctionEngagement>(auction);
+                        }
+                    });
 
-            return new BroadcastsUnderTest(database, silo, GrpcChannel.ForAddress(silo.Address), owners);
+            return new BroadcastsUnderTest(database, silo, GrpcChannel.ForAddress(silo.Address), owners, auction);
         }
         catch
         {
@@ -146,6 +200,70 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
             new { Id = broadcastId });
 
         return rows.ToList();
+    }
+
+    /// <summary>Круг доставки каждого факта рассылки <paramref name="broadcastId" />: бот, который его выносит.</summary>
+    public async Task<IReadOnlyDictionary<Guid, string>> Surfaces(string broadcastId)
+    {
+        await using var connection = new NpgsqlConnection(Db.ConnectionString);
+        var rows = await connection.QueryAsync<(Guid RecipientId, string Surface)>(
+            """
+            SELECT recipient_id, delivery_surface
+            FROM notification
+            WHERE cause_kind = 'command_request' AND cause_id = @Id;
+            """,
+            new { Id = broadcastId });
+
+        return rows.ToDictionary(row => row.RecipientId, row => row.Surface);
+    }
+
+    /// <summary>
+    /// Применяет факт аукциона так же, как потребитель <c>AUCTION_EVENTS</c>:
+    /// разбор и хранилище те же, шины нет. Нужен объявлению аукциона (PER-780),
+    /// которое читает положение аукциона из реплики.
+    /// </summary>
+    public async Task ApplyAuctionFact(string subject, Google.Protobuf.IMessage fact)
+    {
+        var store = silo.Service<AuctionStore>();
+        var now = DateTimeOffset.UtcNow;
+        var cancellation = TestContext.Current.CancellationToken;
+        var application = AuctionMapping.Decode(subject, Google.Protobuf.MessageExtensions.ToByteArray(fact)) switch
+        {
+            AuctionDecoded.Announcement { Value: var announcement } => await store.Apply(announcement, now, cancellation),
+            AuctionDecoded.Closed { Value: var closed } => await store.Apply(closed, now, cancellation),
+            var other => throw new InvalidOperationException($"{subject} is not a visibility or end fact: {other}"),
+        };
+
+        application.Outcome.ShouldNotBe(AuctionOutcome.Duplicate);
+    }
+
+    /// <summary>Строки фактов рассылки со снятием и выносом.</summary>
+    public async Task<IReadOnlyList<(Guid RecipientId, DateTime? DispatchedAt, DateTime? WithdrawnAt, string? Reason)>>
+        Lifecycle(string broadcastId)
+    {
+        await using var connection = new NpgsqlConnection(Db.ConnectionString);
+        var rows = await connection.QueryAsync<(Guid, DateTime?, DateTime?, string?)>(
+            """
+            SELECT recipient_id, dispatched_at, withdrawn_at, withdrawal_reason
+            FROM notification
+            WHERE cause_kind = 'command_request' AND cause_id = @Id
+            ORDER BY recipient_id;
+            """,
+            new { Id = broadcastId });
+
+        return rows.ToList();
+    }
+
+    /// <summary>Отмечает факт получателя вынесенным, как отметил бы релей.</summary>
+    public async Task MarkDispatched(string broadcastId, Guid recipientId)
+    {
+        await using var connection = new NpgsqlConnection(Db.ConnectionString);
+        await connection.ExecuteAsync(
+            """
+            UPDATE notification SET dispatched_at = now()
+            WHERE cause_kind = 'command_request' AND cause_id = @Id AND recipient_id = @RecipientId;
+            """,
+            new { Id = broadcastId, RecipientId = recipientId });
     }
 
     /// <summary>Сколько рассылок принято: отказ не должен оставлять ключ.</summary>

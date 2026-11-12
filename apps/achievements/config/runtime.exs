@@ -12,12 +12,24 @@ if config_env() != :test do
 
   config :achievements,
     grpc_port: Achievements.Settings.port!("ACHIEVEMENTS_GRPC_PORT", "50051"),
-    nats: Achievements.Settings.nats!(System.get_env("ACHIEVEMENTS_NATS_URL"))
+    nats: Achievements.Settings.nats!(System.get_env("ACHIEVEMENTS_NATS_URL")),
+    # Вызывающие — колонка Caller раздела «Achievements gRPC» integration.md.
+    callers: Achievements.Settings.callers!([:hub_bot, :auction_bot])
 
   # Адрес OTLP кладёт дашборд Aspire локально и ClusterTelemetry в чарте.
   # Без него экспорт выключен, как у остальных сервисов.
   if System.get_env("OTEL_EXPORTER_OTLP_ENDPOINT") not in [nil, ""] do
     config :opentelemetry, traces_exporter: :otlp
     config :achievements, export_logs: true
+
+    # Метрики (Achievements.Metrics) уходят тем же адресом раз в 30 секунд.
+    config :opentelemetry_experimental,
+      readers: [
+        %{
+          id: :otlp,
+          module: :otel_metric_reader,
+          config: %{exporter: {:otel_exporter_metrics_otlp, %{}}, export_interval_ms: 30_000}
+        }
+      ]
   end
 end

@@ -4,7 +4,6 @@ import type {
   BidOriginView,
   BidRefusal,
   DisplayNameRefusal,
-  FulfillmentMethod,
   LotCardView,
   LotSetView,
   LotStatusView,
@@ -18,6 +17,7 @@ import type {
   StepTierView,
   StepWindowView,
   WinnerInvoiceView,
+  WithdrawLimitRefusal,
 } from "./ports.js";
 import type {
   PredictionNomination,
@@ -32,6 +32,15 @@ export type PredictionResultsLine = {
   winnerNames: readonly string[];
   winnerCount: number;
   mine?: PredictionOwnResult;
+};
+
+// Проданный лот в итогах аукциона (PER-813). `mine` — смотрящий купил лот.
+export type AuctionResultLot = {
+  lotId: string;
+  title?: string;
+  price: Money;
+  winnerName?: string;
+  mine: boolean;
 };
 
 // Каноническое тело аукционного экрана (ADR-044, «Один аукцион, две оболочки»).
@@ -90,6 +99,10 @@ export type FeedSectionItem = {
 
 export type AuctionBlock =
   | {
+      kind: "achievements";
+      screen: import("./achievement-types.js").AchievementScreen;
+    }
+  | {
       // Корень аукциона (PER-605): стадия и сроки, вход в лоты и розыгрыш.
       // Нет `auction` — Auction аукцион не отдал: кнопка устарела.
       kind: "root";
@@ -115,6 +128,13 @@ export type AuctionBlock =
       // не торговался — все готовятся, запланированы или сняты. Сводка тогда
       // не говорит о лидерстве. Нет — торги идут, прошли или лотов нет.
       beforeTrading?: true;
+      // Группы списка (PER-813): лоты идут по состоянию — на торгах, ждёт
+      // финала, продан, не продан, — и блок называет, сколько лотов в каждой.
+      // Нет — в списке одна группа или ни одной.
+      groups?: readonly {
+        group: "trading" | "held" | "sold" | "unsold";
+        count: number;
+      }[];
       // Идёт живой финал (PER-639): лот, который ведущий торгует сейчас, — нет
       // его между лотами. Кнопки тогда стоят в порядке зала: активный лот,
       // оставшиеся лоты состава по порядку выхода, затем остальные по цене:
@@ -161,6 +181,19 @@ export type AuctionBlock =
       // запоминает сообщение, чтобы править его по потоку аукциона. `page` —
       // страница ленты для кнопок карточки, которые соберёт правка.
       live?: { page: number };
+      // Нажали «Следить за торгами» (PER-826, PER-837): оболочка после показа
+      // карточки включает слежение — карточка сама правится по потоку, и её
+      // подписка переживает рестарт.
+      watch?: true;
+      // Нажали «Не следить»: оболочка слежение выключает.
+      unwatch?: true;
+      // Карточка в слежении: на ней «Не следить».
+      watching?: true;
+      // Аукцион закончился: карточка в слежении пишет «Аукцион завершён».
+      ended?: true;
+      // Цену подняли автоставки, а не ручная ставка (PER-840): последняя ставка
+      // хронологии — прокси после чужой. Нет — не прочитали или поднял человек.
+      autoRaised?: true;
       // Исход ставки финала — строкой на самой карточке, а не своим экраном,
       // как в онлайн-неделе (PER-472): карточка финала живая, и экран исхода
       // вытеснил бы её из чата вместе с кнопкой на новую цену (PER-336).
@@ -245,6 +278,16 @@ export type AuctionBlock =
       // (PER-631, №107). Нет — о продлении сказать нечего или лот не
       // перечитался.
       extension?: BidExtension;
+      // Лимит поставлен лоту, который ждёт финала (PER-821, ADR-079): он не
+      // перебивает по шагу сейчас, а сработает в финале по сетке цен.
+      forFinal?: true;
+      // Ручную ставку тут же перебила автоставка другого участника (PER-840):
+      // цена лота после команды, и хронология доказала прокси. Нет — ставка
+      // держит лидерство, лот не перечитался или происхождение не доказано.
+      overtaken?: Money;
+      // Лимит поставлен на живой карточке финала (PER-823): сетка работает
+      // сейчас, и при покрытой следующей цене прокси сразу ставит её.
+      liveFinal?: true;
     }
   | {
       // Подтверждение команды участника: ставку отменить нельзя (дизайн-код,
@@ -257,6 +300,15 @@ export type AuctionBlock =
       amount: Money;
       // Цена лота сейчас: автоставка объясняется разницей цены и лимита.
       currentPrice: Money;
+      // Лимит лоту, который ждёт финала (PER-821): ничего не перебивается
+      // сейчас, подтверждение говорит про сетку финала.
+      forFinal?: true;
+      // Лимит на живой карточке финала (PER-823): `nextPrice` — следующая
+      // точка сетки. Пересчёт может изменить цену и лидера из-за скрытых
+      // лимитов; лидеру бот не ставит против себя.
+      liveFinal?: true;
+      nextPrice?: Money;
+      liveFinalLeader?: true;
       // Ставка, которую автоставка сделает сразу: у лота без ставок это
       // стартовая цена (П-01), и лимит, равный ей, всё равно ставит её.
       firstBid?: Money;
@@ -276,6 +328,12 @@ export type AuctionBlock =
       // лимита до первой принятой автоставки или по «Как это работает».
       // `example` — пример на этом лоте; нет — у лота нет цены или шага.
       explainer?: { example?: ProxyExample };
+      // Вопрос лимита лоту, который ждёт финала (PER-821): пояснения с
+      // примером по шагу онлайн-недели у него нет, текст говорит про финал.
+      forFinal?: true;
+      // Вопрос лимита на живой карточке финала (PER-823): текст объясняет
+      // немедленную ставку по покрытой цене сетки и отсутствие добора остатка.
+      liveFinal?: true;
     }
   | {
       // Первая ставка в аукционе: имя видно всем участникам, и без ника его
@@ -302,16 +360,26 @@ export type AuctionBlock =
       entries: readonly HistoryItem[];
     }
   | {
-      kind: "prediction-results";
+      // Итоги завершённого аукциона для участника (PER-813): проданные лоты с
+      // ценой и покупателем и число лотов без продажи. Имя покупателя — подсказка:
+      // нет его — Auction имя не отдал, и идентификатор на экран не выходит.
+      kind: "auction-results";
       auctionId: string;
-      results:
-        | { kind: "after-final" }
-        | { kind: "by-hand" }
-        | { kind: "cancelled" }
-        | {
-            kind: "counted";
-            nominations: readonly PredictionResultsLine[];
-          };
+      sold: readonly AuctionResultLot[];
+      // Проданные лоты, которых экран не показал: предел длины сообщения.
+      hiddenSold?: number;
+      unsoldCount: number;
+      // Сумма продаж; нет — ничего не продано.
+      total?: Money;
+    }
+  | {
+      // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов, который
+      // оболочка присылает новым сообщением. Поста нет — видео убрали, аукцион
+      // не отдан или чат медиа выключен: оболочка отвечает «видео недоступно»,
+      // а экран, с которого нажали, остаётся.
+      kind: "promo";
+      auctionId: string;
+      postId?: number;
     }
   | {
       // Хроники дня (PER-725): номинации последних суток глазами участника.
@@ -334,6 +402,26 @@ export type AuctionBlock =
           };
     }
   | {
+      // Статистика аукциона (PER-770): счётчики всех торгов и номинации за
+      // весь аукцион. Лот назван только названием карточки, людей — только
+      // числом: ни имён, ни ников в блоке нет.
+      kind: "auction-chronicle";
+      auctionId: string;
+      chronicle:
+        | { kind: "no-lots" }
+        | { kind: "no-bids" }
+        | {
+            kind: "counted";
+            bidCount: number;
+            participantCount: number;
+            tradedLotCount: number;
+            lotCount: number;
+            growthRecord?: { title?: string; growth: Money };
+            contested?: { title?: string; leaderChanges: number };
+            duel?: { title?: string; longestDuel: number };
+          };
+    }
+  | {
       // Розыгрыш среди участников (ADR-066, п. 11): что показать, решает
       // статус. Нет `raffle` — у аукциона розыгрыша нет: кнопка устарела.
       kind: "raffle";
@@ -350,14 +438,12 @@ export type AuctionBlock =
       paymentInstructions?: string;
     }
   | {
-      // Счёт победителя (PER-322): лот, сумма, статус, срок оплаты, способ
-      // получения и текст организатора. `notice` — исход выбора способа, с
-      // которого экран открыт.
+      // Счёт победителя (PER-322): лот, сумма, статус, срок оплаты и текст
+      // организатора.
       kind: "invoice";
       auctionId: string;
       invoice: InvoiceItem;
       paymentInstructions?: string;
-      notice?: "fulfillment-chosen" | "fulfillment-frozen";
     }
   | {
       // Счёта по кнопке нет: лот или счёт Auction не отдал. `auctionId` —
@@ -413,6 +499,12 @@ export type AuctionBlock =
       // (ADR-067, дополнение 2026-10-24).
       closesAt?: string;
       currency?: string;
+      // Итоги раунда (PER-813): во вкладке «Прогнозы» после подсчёта, а не
+      // отдельным экраном. Нет — итогов ещё нет или их не прочитать.
+      results?:
+        | { kind: "by-hand" }
+        | { kind: "cancelled" }
+        | { kind: "counted"; nominations: readonly PredictionResultsLine[] };
       notice?:
         | "lot-not-in-round"
         | "round-closed"
@@ -503,13 +595,21 @@ export type CommandResult =
   | { command: "proxy"; kind: "refused"; refusal: ProxyLimitRefusal }
   // Ответа Auction не дождались и после повтора тем же `op_id`: команда могла
   // пройти. Карточка, перечитанная следом, показывает, что вышло.
-  | { command: AuctionCommand; kind: "unknown" };
+  | { command: AuctionCommand; kind: "unknown" }
+  // Снятие лимита (PER-822): снят, либо снимать нечего — «лимита уже нет».
+  | { command: "withdraw"; kind: "withdrawn" }
+  | {
+      command: "withdraw";
+      kind: "refused";
+      refusal: WithdrawLimitRefusal;
+    };
 
 // Исход ставки финала одним нажатием (ADR-049): принята, отказ с ценой или
 // ответа не было и после повтора тем же `op_id`. Отказ `bid-not-at-next-price`
 // — гонка нажатий: карточка уже несёт кнопку на новую цену.
 export type FinalBidOutcome =
-  | { kind: "accepted"; amount: Money }
+  | { kind: "accepted"; amount: Money; overtaken?: true }
+  | { kind: "accepted-unread"; amount: Money }
   | { kind: "refused"; refusal: BidRefusal }
   | { kind: "unknown" }
   // Цена ушла, пока человек выбирал имя (PER-713): ставка не отправлена,
@@ -556,12 +656,6 @@ export type AuctionButton =
   | { action: "set.open-lot"; lotId: string; callbackData: string }
   // Счёт в списке счетов: подпись — название лота из блока (PER-322).
   | { action: "invoices.open"; invoiceId: string; callbackData: string }
-  // Способ получения на экране счёта: подпись — способ, выбранный отмечен.
-  | {
-      action: "invoice.fulfillment";
-      method: FulfillmentMethod;
-      callbackData: string;
-    }
   // «По шагу» с порогом в подписи: сумма — та, что уедет в подтверждение.
   | { action: "lot.bid-step"; amount: Money; callbackData: string }
   // «Поставить N» карточки финала: сумма — следующая цена, она же ожидаемая
@@ -569,12 +663,18 @@ export type AuctionButton =
   | { action: "lot.bid-final"; amount: Money; callbackData: string }
   | {
       action: // Корень аукциона: лоты, розыгрыш и избранное.
+        | "root.achievements"
         | "root.lots"
         | "root.predictions"
-        | "root.prediction-results"
         | "root.day-chronicle"
+        // Итоги завершённого аукциона (PER-813): вход из корня и возврат.
+        | "root.results"
+        | "results.back"
         | "root.raffle"
         | "root.favorites"
+        // Промо-видео (PER-774): вход из корня и возврат в корень из-под видео.
+        | "root.promo"
+        | "promo.back"
         // Счета победителя (PER-322): вход из корня, возврат из списка в
         // корень и со счёта — в список.
         | "root.invoices"
@@ -584,10 +684,15 @@ export type AuctionButton =
         | "invoice.retry"
         | "feed.prev"
         | "feed.next"
+        | "lot.current"
         | "lot.refresh"
         | "lot.bid-custom"
         | "lot.proxy"
+        // Снять свой лимит (PER-822).
+        | "lot.withdraw"
         | "lot.history"
+        // «Мои счета» победителя на карточке проданного лота (PER-813).
+        | "lot.invoices"
         // Лоты сета — экран сета с карточки лота сета (ADR-073, п. 7).
         | "lot.set"
         // Возврат с экрана сета — карточка лота, с которой он открыт.
@@ -612,6 +717,8 @@ export type AuctionButton =
         | "history.back"
         | "lot.follow"
         | "lot.unfollow"
+        | "lot.watch"
+        | "lot.unwatch"
         | "favorites.prev"
         | "favorites.next"
         | "favorites.back"
@@ -629,8 +736,8 @@ export type AuctionButton =
         | "raffle.proof"
         | "raffle.back"
         | "raffle.return"
-        | "prediction-results.back"
         | "day-chronicle.back"
+        | "auction-chronicle.back"
         // Имя из настроек: возврат на экран имени с исхода.
         | "name.return";
       callbackData: string;

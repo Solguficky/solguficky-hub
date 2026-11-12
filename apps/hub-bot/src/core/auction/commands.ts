@@ -6,6 +6,7 @@ import {
   type GetDisplayNamesResponse,
   type PlaceBidResponse,
   type SetProxyLimitResponse,
+  type WithdrawProxyLimitResponse,
 } from "../../../gen/auction/v1/auction_service_pb.js";
 import type {
   BidRefusal,
@@ -15,6 +16,7 @@ import type {
   Money,
   OwnDisplayName,
   ProxyLimitRefusal,
+  WithdrawLimitRefusal,
 } from "../../auction-ui/index.js";
 import { moneyOf } from "./snapshot.js";
 
@@ -124,6 +126,37 @@ export function limitOutcomeOf(
     }
     case undefined:
       throw new Error("proxy limit response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Снятие лимита (PER-822): ответ версии лота не несёт, поэтому принятая
+// команда называет версию 0 — «Auction её не назвал».
+export function withdrawOutcomeOf(
+  response: WithdrawProxyLimitResponse,
+): CommandOutcome<WithdrawLimitRefusal> {
+  const { outcome } = response;
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "accepted", lotVersion: 0 };
+    case "refused": {
+      const { reason } = outcome.value;
+      switch (reason.case) {
+        case "noActiveProxyLimit":
+          return refused({ kind: "no-active-limit" });
+        case undefined:
+          throw new Error("proxy limit withdrawal refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      throw new Error("proxy limit withdrawal response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

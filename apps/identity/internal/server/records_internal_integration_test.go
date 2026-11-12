@@ -111,9 +111,9 @@ func TestAuctionModerationIsGrantedAndRevokedByMembershipManager(t *testing.T) {
 	changeRight(t, svc.RevokeRight, adminID, adminID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, false)
 	assertEvents(t, db, memberID,
 		"v1 profile_registered() {}[] blocked=false",
-		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
-		"v3 right_granted(admit_bidders) member{access_hub,admit_bidders,place_bids}[] blocked=false",
-		"v4 right_revoked(admit_bidders) member{access_hub,place_bids}[] blocked=false")
+		"v2 circle_changed() member{access_hub,organize_meetups,place_bids}[] blocked=false",
+		"v3 right_granted(admit_bidders) member{access_hub,admit_bidders,organize_meetups,place_bids}[] blocked=false",
+		"v4 right_revoked(admit_bidders) member{access_hub,organize_meetups,place_bids}[] blocked=false")
 	if rights := resolveDirect(t, svc, 6522, "").GetRights(); slices.Contains(rights, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS) {
 		t.Fatalf("after revoke: rights=%v", rights)
 	}

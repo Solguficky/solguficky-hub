@@ -32,6 +32,9 @@ defmodule Achievements.MixProject do
       {:ecto_sql, "~> 3.14"},
       {:postgrex, "~> 0.22"},
       {:grpc_server, "~> 1.0"},
+      # Сгенерированный из contracts/proto клиент сервиса (`use GRPC.Stub`)
+      # компилируется в каждой среде; адаптер соединения нужен только тестам.
+      {:grpc, "~> 1.0"},
       {:protobuf, "~> 0.17"},
       {:gnat, "~> 1.18"},
       {:opentelemetry_api, "~> 1.5"},
@@ -40,7 +43,6 @@ defmodule Achievements.MixProject do
       # Экспорт логов по OTLP (otel_log_handler) живёт только здесь.
       {:opentelemetry_experimental, "~> 0.6"},
       {:opentelemetry_api_experimental, "~> 0.6"},
-      {:grpc, "~> 1.0", only: :test},
       {:mint, "~> 1.9", only: :test},
       {:testcontainers, "~> 2.4", only: :test}
     ]

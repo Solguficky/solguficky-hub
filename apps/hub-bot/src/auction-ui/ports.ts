@@ -16,6 +16,7 @@ export const ACCESS_RIGHTS = [
   "manage-meetups",
   "grant-admins",
   "run-auctions",
+  "organize-meetups",
 ] as const;
 
 // Права, которые Identity вывел из круга, наборов и выданных записей (RFC-016).
@@ -146,11 +147,18 @@ export type LotStatusView =
 
 export type TradingPhase = "online" | "live";
 
-// Окно сниженного шага — полуинтервал `[from, until)`, моменты RFC 3339 в UTC.
+// Окно «Счастливых часов» лота — полуинтервал `[from, until)`, моменты RFC 3339
+// в UTC. Окно задаёт шаг, стартовую цену или оба (ADR-047, дополнение
+// 2026-10-27); хотя бы одно есть всегда.
 export type StepWindowView = {
   from: string;
   until: string;
-  step: Money;
+  // Шаг в окне. Нет — окно шаг не меняет.
+  step?: Money;
+  // Цена первой ставки в окне, пока у лота нет ставок, ниже обычной
+  // стартовой. У действующего окна Auction отдаёт её, только пока она и есть
+  // следующая цена; у будущего — объявленной.
+  start?: Money;
 };
 
 // Порог шага по цене (PER-491): шаг при цене не ниже `lowerBound` и ниже
@@ -307,6 +315,9 @@ export type AuctionSummaryView = {
   // Порядок и разделы ленты, которые выставил администратор (PER-719). Нет —
   // администратор лоты не упорядочивал, и лента идёт в порядке создания.
   layout?: LotLayoutView;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов, который
+  // выставил администратор. Нет — видео нет.
+  promoVideo?: number;
 };
 
 // Порядок и разделы ленты (PER-719): лоты вне разделов и разделы, каждые в
@@ -397,6 +408,13 @@ export interface AuctionPort {
     max: Money;
     opId: string;
   }): Promise<CommandOutcome<ProxyLimitRefusal>>;
+  // Снять свой лимит (PER-822). Auction версии лота в ответе не называет:
+  // `lotVersion` принятой команды — 0.
+  withdrawProxyLimit(request: {
+    viewer: Viewer;
+    lotId: string;
+    opId: string;
+  }): Promise<CommandOutcome<WithdrawLimitRefusal>>;
   chooseDisplayName(request: {
     viewer: Viewer;
     auctionId: string;
@@ -438,13 +456,6 @@ export interface AuctionPort {
     viewer: Viewer;
     auctionId: string;
   }): Promise<MyInvoicesView>;
-  // Способ получения своего счёта (P-54): выбор заменяет прежний до выдачи.
-  chooseFulfillment(request: {
-    viewer: Viewer;
-    invoiceId: string;
-    method: FulfillmentMethod;
-    opId: string;
-  }): Promise<FulfillmentOutcome>;
   // Итоги прогнозов (PER-568). Четыре исхода чтения Auction.
   getPredictionResults(request: {
     viewer: Viewer;
@@ -456,7 +467,32 @@ export interface AuctionPort {
     viewer: Viewer;
     auctionId: string;
   }): Promise<DayChronicleView>;
+  // Статистика аукциона (PER-770): те же агрегаты за все торги. Право —
+  // `place_bids`, как у хроник дня.
+  getAuctionChronicle(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<AuctionChronicleView>;
 }
+
+// Статистика аукциона (PER-770) — срез `GetAuctionChronicle`: счётчики всех
+// торгов, рекорд роста, который выбрал Auction, и агрегаты каждого лота
+// реестра без значимого порядка. Людей в срезе нет — только их число.
+export type AuctionChronicleView = {
+  bidCount: number;
+  participantCount: number;
+  tradedLotCount: number;
+  // Нет — ни один лот не вырос.
+  growthRecord?: { lotId: string; growth: Money };
+  lots: readonly AuctionChronicleLot[];
+};
+
+export type AuctionChronicleLot = {
+  lotId: string;
+  bidCount: number;
+  leaderChanges: number;
+  longestDuel: number;
+};
 
 // Хроники дня (PER-725) — срез `GetAuctionDayChronicle`: агрегаты окна каждого
 // лота реестра без значимого порядка, а из жизни лота — только число ставок и
@@ -481,8 +517,6 @@ export type DayChronicleLot = {
 // Счёт проданного лота глазами победителя (PER-322; integration.md,
 // «Счета»). Деньги идут мимо продукта: оплату отмечает организатор, и статус
 // меняется только его отметкой.
-export type FulfillmentMethod = "pickup" | "delivery" | "digital";
-
 export type InvoiceStatus = "awaiting-payment" | "paid" | "handed-over";
 
 export type WinnerInvoiceView = {
@@ -490,9 +524,7 @@ export type WinnerInvoiceView = {
   lotId: string;
   amount: Money;
   // Момент RFC 3339 в UTC. Просрочка — не статус: счёт ждёт оплаты после него.
-  paymentDueAt: string;
-  // Нет — победитель способ ещё не выбрал.
-  fulfillment?: FulfillmentMethod;
+  paymentDueAt: string | undefined;
   status: InvoiceStatus;
 };
 
@@ -501,13 +533,6 @@ export type MyInvoicesView = {
   // Свободный текст администратора; нет — он его не написал.
   paymentInstructions?: string;
 };
-
-// `not-found` — счёта нет или он чужой: Auction их не различает.
-export type FulfillmentOutcome =
-  | { kind: "accepted" }
-  | { kind: "refused"; refusal: "fulfillment-frozen" }
-  | { kind: "not-found" }
-  | { kind: "unanswered" };
 
 export type PredictionOwnResult =
   | { kind: "guessed" }
@@ -622,6 +647,10 @@ export type RaffleView = {
   // Итог называет администратор, а не маяк (PER-727): известно с фиксации
   // пула, и пересчитывать такой итог нечего. Нет поля — итог по маяку.
   drawnByHand?: true;
+  // Фото приза без байтов (PER-773): байты читает край через
+  // `LotImagePort.getRafflePrizePhoto`, версия — ключ кэша `file_id`. Нет —
+  // приз без фото.
+  prizePhoto?: { photoId: string; version: string };
 };
 
 export type RaffleRegistrationRefusal =
@@ -672,6 +701,10 @@ export type ProxyLimitRefusal =
   | { kind: "display-name-not-chosen" }
   | { kind: "removed-from-lot" };
 
+// Лимита, который можно снять, у смотрящего на лоте нет: снят раньше или не
+// ставился (PER-822). Для человека это не сбой, а «лимита уже нет».
+export type WithdrawLimitRefusal = { kind: "no-active-limit" };
+
 // Исход команды с `op_id`. `unanswered` — ответа не было вовсе: дедлайн вызова
 // истёк или связь оборвалась. Только его пакет повторяет, и тем же `op_id`:
 // принятую команду Auction узнаёт по нему и второй раз не исполняет. Прочие
@@ -717,12 +750,19 @@ export type LotImage = {
 // `file_id` — дело Telegram-края приложения (ADR-057, дополнение), а тип здесь,
 // чтобы оба бота реализовали одну сигнатуру.
 export interface LotImagePort {
+  getAchievementImage?(code: string): Promise<LotImage>;
   getLotImage(request: { viewer: Viewer; lotId: string }): Promise<LotImage>;
   // Одно фото лота по идентификатору из `LotCardView.photos` (PER-721).
   getLotPhoto(request: {
     viewer: Viewer;
     lotId: string;
     photoId: string;
+  }): Promise<LotImage>;
+  // Фото приза розыгрыша аукциона (PER-773) в той же форме. Нет метода —
+  // экран розыгрыша идёт без фото.
+  getRafflePrizePhoto?(request: {
+    viewer: Viewer;
+    auctionId: string;
   }): Promise<LotImage>;
 }
 
@@ -757,9 +797,14 @@ export interface ProxyExplainerPort {
 // без кнопки избранного, а список отказывает как недоступный сосед. Нет
 // `proxyExplainer` — вопрос лимита объясняет автоставку каждый раз.
 export type AuctionBotPorts = {
+  achievements?: import("./achievement-types.js").AchievementsPort;
   identity: IdentityPort;
   auction: AuctionPort;
   operations: OperationIdPort;
   favorites?: FavoritesPort;
   proxyExplainer?: ProxyExplainerPort;
+  // Чат медиа ботов включён (PER-774): корень аукциона с видео ставит
+  // «🎬 Промо». Нет — кнопки нет, а подделанная кнопка отвечает «видео
+  // недоступно». Показ поста — вызов Telegram, его делает поверхность.
+  media?: true;
 };

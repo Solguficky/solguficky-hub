@@ -53,7 +53,16 @@ public class AchievementsWiringTests
             .Where(key => !key.StartsWith("OTEL_", StringComparison.Ordinal))
             .Order(StringComparer.Ordinal)
             .ToArray()
-            .ShouldBe(["ACHIEVEMENTS_DATABASE_URL", "ACHIEVEMENTS_GRPC_PORT", "ACHIEVEMENTS_NATS_URL", "ELIXIR_ERL_OPTIONS"]);
+            .ShouldBe([
+                // Таблица вызывающих полна и в одиночном профиле (ADR-056): колонка
+                // Caller раздела «Achievements gRPC» integration.md.
+                "ACHIEVEMENTS_CALLER_TOKEN_AUCTION_BOT",
+                "ACHIEVEMENTS_CALLER_TOKEN_HUB_BOT",
+                "ACHIEVEMENTS_DATABASE_URL",
+                "ACHIEVEMENTS_GRPC_PORT",
+                "ACHIEVEMENTS_NATS_URL",
+                "ELIXIR_ERL_OPTIONS"
+            ]);
         // Исполняемый файл получает адрес OTLP только явным экспортёром.
         environment.Keys.ShouldContain("OTEL_EXPORTER_OTLP_ENDPOINT");
     }
@@ -82,7 +91,19 @@ public class AchievementsWiringTests
         awaited.ShouldContain("achievements-build");
     }
 
-    private static IResource Materialize(bool withBus)
+    /// <summary>
+    /// Сгенерированного кода в Git нет: без шага кодогенерации до сборки
+    /// `mix compile` свежего дерева не нашёл бы модулей контракта.
+    /// </summary>
+    [Fact]
+    public void AchievementsBuild_WaitsForCodegen()
+    {
+        var build = Materialize(withBus: true, name: "achievements-build");
+
+        build.Annotations.OfType<WaitAnnotation>().Select(wait => wait.Resource.Name).ShouldContain("achievements-proto");
+    }
+
+    private static IResource Materialize(bool withBus, string name = Achievements)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -105,7 +126,7 @@ public class AchievementsWiringTests
         graph.AddService(Achievements, [Postgres, Nats], AchievementsSetup.Configure, LocalOnly);
         graph.Build();
 
-        return builder.Resources.Single(resource => resource.Name == Achievements);
+        return builder.Resources.Single(resource => resource.Name == name);
     }
 
     private static async Task<Dictionary<string, object>> EnvironmentAsync(IResource resource)

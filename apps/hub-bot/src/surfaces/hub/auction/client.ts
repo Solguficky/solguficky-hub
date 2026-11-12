@@ -8,7 +8,6 @@ import {
 } from "@connectrpc/connect-node";
 import {
   BidSource,
-  FulfillmentMethod,
   type StepPolicySchema,
 } from "../../../../gen/auction/v1/auction_pb.js";
 import type {
@@ -32,15 +31,18 @@ import {
   limitOutcomeOf,
   ownDisplayNameOf,
   unansweredOn,
+  withdrawOutcomeOf,
 } from "../../../core/auction/commands.js";
-import { dayChronicleOf } from "../../../core/auction/day-chronicle.js";
-import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
-import { historyPageOf } from "../../../core/auction/history.js";
 import {
-  fulfillmentOutcomeOn,
-  myInvoicesOf,
-  wireFulfillment,
-} from "../../../core/auction/invoices.js";
+  auctionChronicleOf,
+  dayChronicleOf,
+} from "../../../core/auction/day-chronicle.js";
+import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
+import {
+  historyPageOf,
+  readOutbidOrigin,
+} from "../../../core/auction/history.js";
+import { myInvoicesOf } from "../../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
@@ -72,13 +74,14 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
-import type {
-  FulfillmentMethod as FulfillmentView,
-  Invoice,
-  Person,
-  RemovalRefusal,
-} from "../application/types.js";
+import type { Invoice, Person, RemovalRefusal } from "../application/types.js";
 import { consoleOf } from "./console.js";
+import {
+  clearHappyHourLotTermsResult,
+  createHappyHourPeriodResult,
+  deleteHappyHourPeriodResult,
+  setHappyHourLotTermsResult,
+} from "./happy-hours.js";
 import {
   type AddLotResult,
   type AdvanceAskResult,
@@ -114,6 +117,8 @@ import {
   type LotStepPolicyInput,
   type MeetupAuctions,
   type PaymentInstructionsResult,
+  type PromoVideoResult,
+  type RafflePrizePhotoResult,
   type RemovalPreviewResult,
   type RemoveLotResult,
   type RemoveParticipantResult,
@@ -147,21 +152,25 @@ type AuctionRpc = Pick<
   | "listAuctionNames"
   | "placeBid"
   | "setProxyLimit"
+  | "withdrawProxyLimit"
   | "chooseDisplayName"
   | "getAuction"
   | "getRaffle"
   | "assignRaffleWinner"
   | "changeRafflePrize"
+  | "setRafflePrizePhoto"
+  | "removeRafflePrizePhoto"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
   | "listMyInvoices"
-  | "chooseFulfillment"
   | "getMyPredictions"
   | "getPredictionResults"
   | "getAuctionDayChronicle"
+  | "getAuctionChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
+  | "getRafflePrizePhoto"
   | "addLotPhoto"
   | "removeLotPhoto"
   | "getAuctionConsole"
@@ -169,6 +178,10 @@ type AuctionRpc = Pick<
   | "getAuctionDaySummary"
   | "scheduleAuction"
   | "launchStepWindow"
+  | "createHappyHourPeriod"
+  | "deleteHappyHourPeriod"
+  | "setHappyHourLotTerms"
+  | "clearHappyHourLotTerms"
   | "startPrebidding"
   | "discardAuction"
   | "cancelAuction"
@@ -191,6 +204,7 @@ type AuctionRpc = Pick<
   | "markInvoicePaid"
   | "markInvoiceHandedOver"
   | "setPaymentInstructions"
+  | "setPromoVideo"
 >;
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
@@ -284,13 +298,70 @@ export type LotInfoReader = {
     lotId: string,
     meta?: RpcMetadata,
   ): Promise<LotInfo>;
+  // Ориентировочное время финала для вести о конце торгов (PER-812).
+  auctionFinalAt(
+    identityId: string,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<string | undefined>;
+  // Источник ставки, которая перебила получателя, для вести «перебили» (PER-840).
+  outbidOrigin(
+    identityId: string,
+    lotId: string,
+    minorUnits: number,
+    meta?: RpcMetadata,
+  ): Promise<"proxy" | "manual" | undefined>;
+  // Лот, который торгуется в живом финале, для кнопки вести о старте (PER-833).
+  finalActiveLot(
+    identityId: string,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<string | undefined>;
 };
 
 export function createLotInfoReader(
-  rpc: Pick<AuctionRpc, "getLot">,
+  rpc: Pick<AuctionRpc, "getLot" | "getAuction" | "listLotHistory">,
   timeoutMs = 3_000,
 ): LotInfoReader {
   return {
+    outbidOrigin: (identityId, lotId, minorUnits, meta) =>
+      readOutbidOrigin(
+        (pageToken) =>
+          rpc.listLotHistory(
+            {
+              viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+              lotId,
+              pageToken,
+            },
+            { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+          ),
+        minorUnits,
+        identityId,
+      ),
+    async auctionFinalAt(identityId, auctionId, meta) {
+      const { auction } = await rpc.getAuction(
+        {
+          viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+          auctionId,
+        },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      return auction === undefined
+        ? undefined
+        : auctionSummaryViewOf(auction).finalAt;
+    },
+    async finalActiveLot(identityId, auctionId, meta) {
+      const { auction } = await rpc.getAuction(
+        {
+          viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+          auctionId,
+        },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      return auction === undefined
+        ? undefined
+        : auctionSummaryViewOf(auction).lineup?.activeLotId;
+    },
     async lotInfo(identityId, lotId, meta) {
       const snapshot = await rpc.getLot(
         {
@@ -430,7 +501,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return assignRaffleWinnerResult(response.outcome);
+        return translated(() => assignRaffleWinnerResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -443,7 +514,38 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return changeRafflePrizeResult(response.outcome);
+        return translated(() => changeRafflePrizeResult(response.outcome));
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Фото приза (PER-773): повтор того же `photo_id` Auction примет без
+    // второй смены, ключ снятия рождается на нажатие «Да».
+    async setRafflePrizePhoto(person, command, meta) {
+      try {
+        const response = await rpc.setRafflePrizePhoto(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            photoId: command.photoId,
+            photo: { content: command.image },
+          },
+          options(meta),
+        );
+        return translated(() => rafflePrizePhotoResult(response.outcome, true));
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async removeRafflePrizePhoto(person, command, meta) {
+      try {
+        const response = await rpc.removeRafflePrizePhoto(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return translated(() =>
+          rafflePrizePhotoResult(response.outcome, false),
+        );
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -454,7 +556,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), meetupId, opId },
           options(meta),
         );
-        return enableResult(response.outcome);
+        return translated(() => enableResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -465,7 +567,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...card },
           options(meta),
         );
-        return cardResult(response.outcome, false);
+        return translated(() => cardResult(response.outcome, false));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -490,7 +592,9 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return cardResult(response.outcome, image !== undefined);
+        return translated(() =>
+          cardResult(response.outcome, image !== undefined),
+        );
       } catch (cause) {
         return toFailure(cause);
       }
@@ -506,7 +610,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return photoResult(response.outcome, true);
+        return translated(() => photoResult(response.outcome, true));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -521,7 +625,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return photoResult(response.outcome, false);
+        return translated(() => photoResult(response.outcome, false));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -532,7 +636,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...lot },
           options(meta),
         );
-        return addLotResult(response.outcome);
+        return translated(() => addLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -543,7 +647,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...lot },
           options(meta),
         );
-        return removeLotResult(response.outcome);
+        return translated(() => removeLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -589,7 +693,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return scheduleLotResult(response.outcome);
+        return translated(() => scheduleLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -616,7 +720,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), auctionId },
           options(meta),
         );
-        return consoleResult(response.outcome);
+        return translated(() => consoleResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -627,7 +731,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), auctionId },
           options(meta),
         );
-        return lotStatisticsResult(response.outcome);
+        return translated(() => lotStatisticsResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -643,7 +747,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return daySummaryResult(response.outcome);
+        return translated(() => daySummaryResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -695,7 +799,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return scheduleAuctionResult(response.outcome);
+        return translated(() => scheduleAuctionResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -717,7 +821,81 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return launchStepWindowResult(response.outcome);
+        return translated(() => launchStepWindowResult(response.outcome));
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Периоды «Счастливых часов» и условия лотов в них (PER-787).
+    async createHappyHourPeriod(person, period, meta) {
+      try {
+        const response = await rpc.createHappyHourPeriod(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: period.auctionId,
+            from: period.from,
+            until: period.until,
+            opId: period.opId,
+          },
+          options(meta),
+        );
+        return translated(() => createHappyHourPeriodResult(response.outcome));
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async deleteHappyHourPeriod(person, period, meta) {
+      try {
+        const response = await rpc.deleteHappyHourPeriod(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: period.auctionId,
+            periodId: period.periodId,
+            opId: period.opId,
+          },
+          options(meta),
+        );
+        return translated(() => deleteHappyHourPeriodResult(response.outcome));
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async setHappyHourLotTerms(person, terms, meta) {
+      try {
+        const response = await rpc.setHappyHourLotTerms(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: terms.auctionId,
+            periodId: terms.periodId,
+            lotId: terms.lotId,
+            ...(terms.step === undefined
+              ? {}
+              : { step: wireMoney(terms.step) }),
+            ...(terms.start === undefined
+              ? {}
+              : { start: wireMoney(terms.start) }),
+            opId: terms.opId,
+          },
+          options(meta),
+        );
+        return translated(() => setHappyHourLotTermsResult(response.outcome));
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async clearHappyHourLotTerms(person, terms, meta) {
+      try {
+        const response = await rpc.clearHappyHourLotTerms(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: terms.auctionId,
+            periodId: terms.periodId,
+            lotId: terms.lotId,
+            opId: terms.opId,
+          },
+          options(meta),
+        );
+        return translated(() => clearHappyHourLotTermsResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -728,7 +906,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...start },
           options(meta),
         );
-        return startPrebiddingResult(response.outcome);
+        return translated(() => startPrebiddingResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -739,7 +917,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...discard },
           options(meta),
         );
-        return discardAuctionResult(response.outcome);
+        return translated(() => discardAuctionResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -750,7 +928,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...cancel },
           options(meta),
         );
-        return cancelAuctionResult(response.outcome);
+        return translated(() => cancelAuctionResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -761,7 +939,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...publish },
           options(meta),
         );
-        return visibilityResult(response.outcome, "publish");
+        return translated(() => visibilityResult(response.outcome, "publish"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -772,7 +950,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...hide },
           options(meta),
         );
-        return visibilityResult(response.outcome, "hide");
+        return translated(() => visibilityResult(response.outcome, "hide"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -785,7 +963,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return finalTimeResult(response.outcome);
+        return translated(() => finalTimeResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -800,7 +978,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return saveLotSetResult(response.outcome);
+        return translated(() => saveLotSetResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -824,7 +1002,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return lotLayoutResult(response.outcome);
+        return translated(() => lotLayoutResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -835,7 +1013,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...set },
           options(meta),
         );
-        return deleteLotSetResult(response.outcome);
+        return translated(() => deleteLotSetResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -846,7 +1024,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...mark },
           options(meta),
         );
-        return finalistResult(response.outcome, "select");
+        return translated(() => finalistResult(response.outcome, "select"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -857,7 +1035,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...mark },
           options(meta),
         );
-        return finalistResult(response.outcome, "deselect");
+        return translated(() => finalistResult(response.outcome, "deselect"));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -876,7 +1054,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return freezeFinalLineupResult(response.outcome);
+        return translated(() => freezeFinalLineupResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -888,7 +1066,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...start },
           options(meta),
         );
-        return startFinalResult(response.outcome);
+        return translated(() => startFinalResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -899,7 +1077,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...start },
           options(meta),
         );
-        return startNextLotResult(response.outcome);
+        return translated(() => startNextLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -916,7 +1094,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return advanceAskResult(response.outcome);
+        return translated(() => advanceAskResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -927,7 +1105,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...close },
           options(meta),
         );
-        return closeLotResult(response.outcome);
+        return translated(() => closeLotResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -960,7 +1138,11 @@ export function createAuctionAdapter(
     // имён.
     async recentBids(person, read, meta) {
       const viewer = wireViewer(viewerOf(person));
-      let bids: { amount: Money; participantId: string }[] = [];
+      let bids: {
+        amount: Money;
+        participantId: string;
+        origin?: "floor" | "proxy";
+      }[] = [];
       try {
         let pageToken = "";
         for (let page = 0; page < historyPageLimit; page += 1) {
@@ -976,7 +1158,13 @@ export function createAuctionAdapter(
             // запись снятия в последние ставки не идут.
             ...history.entries.flatMap((entry) =>
               entry.kind === "bid" && entry.removed !== true
-                ? [{ amount: entry.amount, participantId: entry.participantId }]
+                ? [
+                    {
+                      amount: entry.amount,
+                      participantId: entry.participantId,
+                      ...originMark(entry.origin),
+                    },
+                  ]
                 : [],
             ),
           ].slice(-read.limit);
@@ -1047,7 +1235,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return floorBidResult(response.outcome);
+        return translated(() => floorBidResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -1131,7 +1319,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...target },
           options(meta),
         );
-        return removalPreviewResult(response.outcome);
+        return translated(() => removalPreviewResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -1149,7 +1337,7 @@ export function createAuctionAdapter(
           },
           options(meta),
         );
-        return removeParticipantResult(response.outcome);
+        return translated(() => removeParticipantResult(response.outcome));
       } catch (cause) {
         return toFailure(cause);
       }
@@ -1160,7 +1348,7 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), auctionId },
           options(meta),
         );
-        return invoicesResult(response.outcome);
+        return translated(() => invoicesResult(response.outcome));
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1193,8 +1381,38 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), ...command },
           options(meta),
         );
-        return paymentInstructionsResult(response.outcome);
+        return translated(() => paymentInstructionsResult(response.outcome));
       } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Промо-видео (PER-774): без `postId` — снятие, и Auction отвечает тем
+    // же приёмом.
+    async setPromoVideo(person, command, meta) {
+      try {
+        const response = await rpc.setPromoVideo(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: command.auctionId,
+            opId: command.opId,
+            ...(command.postId === undefined
+              ? {}
+              : { video: { messageId: BigInt(command.postId) } }),
+          },
+          options(meta),
+        );
+        return translated(() => promoVideoResult(response.outcome));
+      } catch (cause) {
+        // Ключ прикрепления выведен из сообщения ответа (PER-793): тот же
+        // ключ с другим постом — повтор доставки после рестарта, когда пост
+        // опубликован заново. Видео уже прикреплено первым постом.
+        if (
+          command.postId !== undefined &&
+          cause instanceof ConnectError &&
+          cause.code === Code.AlreadyExists
+        ) {
+          return { kind: "ok" };
+        }
         return auctionMissing(cause) ?? toFailure(cause);
       }
     },
@@ -1314,6 +1532,20 @@ export function createAuctionAdapter(
               ),
             );
           },
+          withdrawProxyLimit(request) {
+            return unansweredOn(async () =>
+              withdrawOutcomeOf(
+                await rpc.withdrawProxyLimit(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    lotId: request.lotId,
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
+              ),
+            );
+          },
           async chooseDisplayName(request) {
             const { choice } = request;
             return displayNameOutcomeOf(
@@ -1368,19 +1600,6 @@ export function createAuctionAdapter(
                 {
                   viewer: wireViewer(request.viewer),
                   auctionId: request.auctionId,
-                },
-                options(meta),
-              ),
-            );
-          },
-          chooseFulfillment(request) {
-            return fulfillmentOutcomeOn(() =>
-              rpc.chooseFulfillment(
-                {
-                  viewer: wireViewer(request.viewer),
-                  invoiceId: request.invoiceId,
-                  method: wireFulfillment(request.method),
-                  opId: request.opId,
                 },
                 options(meta),
               ),
@@ -1444,6 +1663,16 @@ export function createAuctionAdapter(
             );
             return dayChronicleOf(response);
           },
+          async getAuctionChronicle(request) {
+            const response = await rpc.getAuctionChronicle(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return auctionChronicleOf(response);
+          },
           submitPrediction(request) {
             return unansweredOn(async () =>
               predictionOutcomeOf(
@@ -1480,6 +1709,21 @@ export function createAuctionAdapter(
                 viewer: wireViewer(request.viewer),
                 lotId: request.lotId,
                 photoId: request.photoId,
+              },
+              options(meta),
+            );
+            return {
+              content: image.content,
+              mediaType: image.mediaType,
+              version: image.version,
+            };
+          },
+          // Фото приза розыгрыша (PER-773) — та же форма.
+          async getRafflePrizePhoto(request) {
+            const image = await rpc.getRafflePrizePhoto(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
               },
               options(meta),
             );
@@ -1832,7 +2076,7 @@ function lotStatisticsResult(
             uniqueParticipantCount,
             ...(lot.priceGrowth === undefined
               ? {}
-              : { priceGrowth: moneyOf(lot.priceGrowth) }),
+              : { priceGrowth: growthOf(lot.priceGrowth) }),
           };
         }),
       };
@@ -1885,7 +2129,7 @@ function daySummaryResult(
               : { maxPrice: moneyOf(lot.maxPrice) }),
             ...(lot.growth === undefined
               ? {}
-              : { growth: moneyOf(lot.growth) }),
+              : { growth: growthOf(lot.growth) }),
           };
         }),
       };
@@ -1911,6 +2155,14 @@ function daySummaryResult(
   }
 }
 
+// Пометка ставки в «Последних ставках» пульта (PER-834): зал и автоставка.
+function originMark(
+  origin: { kind: "manual"; source: "bot" | "floor" } | { kind: "proxy" },
+): { origin?: "floor" | "proxy" } {
+  if (origin.kind === "proxy") return { origin: "proxy" };
+  return origin.source === "floor" ? { origin: "floor" } : {};
+}
+
 function safeCount(value: bigint, field: string): number {
   const count = Number(value);
   if (!Number.isSafeInteger(count) || count < 0) {
@@ -1920,9 +2172,23 @@ function safeCount(value: bigint, field: string): number {
 }
 
 function moneyOf(value: { minorUnits: bigint; currency: string }): Money {
+  return amountOf(value, "price", true);
+}
+
+// Рост — разность цен, а не цена: контракт знака не ограничивает, и ставка по
+// стартовой окна ниже обычной стартовой даёт отрицательный рост (PER-811).
+function growthOf(value: { minorUnits: bigint; currency: string }): Money {
+  return amountOf(value, "price growth", false);
+}
+
+function amountOf(
+  value: { minorUnits: bigint; currency: string },
+  what: string,
+  nonNegative: boolean,
+): Money {
   const minorUnits = Number(value.minorUnits);
-  if (!Number.isSafeInteger(minorUnits) || minorUnits < 0) {
-    throw new Error("price growth out of range");
+  if (!Number.isSafeInteger(minorUnits) || (nonNegative && minorUnits < 0)) {
+    throw new Error(`${what} out of range`);
   }
   return { minorUnits, currency: value.currency };
 }
@@ -2796,7 +3062,11 @@ function invoicesResult(
 // не роняет экран на сроке.
 function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
   if (snapshot.amount === undefined) return undefined;
-  if (Number.isNaN(Date.parse(snapshot.paymentDueAt))) return undefined;
+  if (
+    snapshot.paymentDueAt !== "" &&
+    Number.isNaN(Date.parse(snapshot.paymentDueAt))
+  )
+    return undefined;
   const status =
     snapshot.status.case === "awaitingPayment"
       ? "awaiting-payment"
@@ -2812,25 +3082,9 @@ function invoiceOf(snapshot: InvoiceSnapshot): Invoice | undefined {
     lotId: snapshot.lotId,
     winnerId: snapshot.winnerId,
     amount: moneyOf(snapshot.amount),
-    paymentDueAt: snapshot.paymentDueAt,
-    fulfillment: fulfillmentOf(snapshot.fulfillment),
+    paymentDueAt: snapshot.paymentDueAt || undefined,
     status,
   };
-}
-
-// Способ новее схемы бот не знает и показывает как невыбранный: счёт важнее
-// подписи способа.
-function fulfillmentOf(method: FulfillmentMethod): FulfillmentView {
-  switch (method) {
-    case FulfillmentMethod.PICKUP:
-      return "pickup";
-    case FulfillmentMethod.DELIVERY:
-      return "delivery";
-    case FulfillmentMethod.DIGITAL:
-      return "digital";
-    default:
-      return "unspecified";
-  }
 }
 
 // Ответы текста «Как оплатить и получить» (PER-322): именованный отказ
@@ -2856,6 +3110,38 @@ function paymentInstructionsResult(
       }
     case undefined:
       return defect("payment instructions response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы промо-видео (PER-774): именованный отказ Auction — значение ответа,
+// а не сбой вызова.
+function promoVideoResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setPromoVideo"]>>["outcome"],
+): PromoVideoResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case undefined:
+          return defect("promo video refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("promo video response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -2948,6 +3234,66 @@ function changeRafflePrizeResult(
     }
     case undefined:
       return defect("raffle prize response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+type RafflePrizePhotoOutcome =
+  | Awaited<ReturnType<AuctionRpc["setRafflePrizePhoto"]>>["outcome"]
+  | Awaited<ReturnType<AuctionRpc["removeRafflePrizePhoto"]>>["outcome"];
+
+// Ответы фото приза (PER-773). Отказ изображения бывает только у постановки:
+// у снятия он — дефект соседа, как у фото лота.
+function rafflePrizePhotoResult(
+  outcome: RafflePrizePhotoOutcome,
+  setting: boolean,
+): RafflePrizePhotoResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok", raffle: raffleOf(outcome.value) };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "raffleNotFound":
+          return { kind: "raffle-not-found" };
+        case "alreadyDrawn":
+          return { kind: "already-drawn" };
+        case "withoutResult":
+          return { kind: "without-result" };
+        case "imageTooLarge":
+          return setting
+            ? {
+                kind: "image-too-large",
+                maxBytes: Number(reason.value.maxBytes),
+              }
+            : defect("raffle prize photo removal refused an image");
+        case "unsupportedImage":
+          return setting
+            ? { kind: "unsupported-image" }
+            : defect("raffle prize photo removal refused an image");
+        case "photoConflict":
+          return setting
+            ? { kind: "photo-conflict" }
+            : defect("raffle prize photo removal answered a photo conflict");
+        case undefined:
+          return defect("raffle prize photo refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("raffle prize photo response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -3073,6 +3419,18 @@ function summaryOrNothing(
     return { auction: auctionSummaryViewOf(snapshot) };
   } catch {
     return {};
+  }
+}
+
+// Ответ Auction пришёл, но перевод его отверг (PER-811): дефект соседа с
+// причиной, а не недоступность — повтор его не вылечит, а запись границы
+// называет причину. Обёртка стоит вокруг перевода, а не в `toFailure`: бросок до
+// ответа — сборка запроса или заголовков — остаётся отказом вызова.
+function translated<T>(read: () => T): T | { kind: "invalid"; cause: unknown } {
+  try {
+    return read();
+  } catch (cause) {
+    return { kind: "invalid", cause };
   }
 }
 

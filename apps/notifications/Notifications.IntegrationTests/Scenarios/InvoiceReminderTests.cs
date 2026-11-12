@@ -28,6 +28,41 @@ namespace Notifications.IntegrationTests.Scenarios;
 /// </remarks>
 public class InvoiceReminderTests
 {
+    [Fact]
+    public async Task When_PaymentTermDeferredAndStarted_Expect_OldTasksCancelledAndNewDeadlineCaptured()
+    {
+        await using var env = await BusScenario.Start(Sweeping);
+        var winner = await Person(env.Db, MemberHolding);
+        await env.Publish(IssuedSubject, env.Invoice(winner));
+        await Eventually(() => Task.FromResult(env.Tasks()), tasks => tasks.Count == 3);
+
+        var deferred = env.Invoice(winner);
+        deferred.Version = 2;
+        deferred.InvoicePaymentDueChanged = new global::Auction.V1.InvoicePaymentDueChanged();
+        deferred.State.PaymentDueAt = "";
+        await env.Publish(AuctionFeed.InvoicePaymentDueChangedSubject, deferred);
+        await Eventually(() => Task.FromResult(env.Tasks()), tasks => tasks.All(task => task.State == "cancelled"));
+
+        var due = DateTimeOffset.UtcNow.AddDays(3);
+        var started = env.Invoice(winner, due);
+        started.Version = 3;
+        started.InvoicePaymentDueChanged = new global::Auction.V1.InvoicePaymentDueChanged();
+        await env.Publish(AuctionFeed.InvoicePaymentDueChangedSubject, started);
+        var rescheduled = await Eventually(() => Task.FromResult(env.Tasks()),
+            tasks => tasks.Count(task => task.State == "scheduled") == 3);
+        rescheduled.Count(task => task.State == "cancelled").ShouldBe(3);
+        DueOf(rescheduled, InvoiceReminderProbe.HourBefore).ShouldBe(due.AddHours(-1), TimeSpan.FromMilliseconds(1));
+
+        using var connection = new NpgsqlConnection(env.Db.ConnectionString);
+        var captured = connection.Query<DateTime>(
+            "SELECT payment_due_at FROM invoice_reminder_task WHERE invoice_id = @Invoice AND state = 'scheduled'",
+            new { Invoice = Guid.Parse(env.InvoiceId) });
+        captured.ShouldAllBe(value => Math.Abs((value.ToUniversalTime() - due.UtcDateTime).TotalMilliseconds) < 1);
+
+        await env.Grain.ApplyReplica();
+        env.Tasks().Count(task => task.State == "scheduled").ShouldBe(3);
+    }
+
     private const string IssuedSubject = "events.auction.invoice_issued";
     private const string PaidSubject = "events.auction.invoice_paid";
 
@@ -310,6 +345,38 @@ public class InvoiceReminderTests
         (await env.Facts(NotificationFacts.InvoiceReminderType)).ShouldBe(1);
         env.Tasks().Single(task => task.Kind == InvoiceReminderProbe.DayBefore).State.ShouldBe("fired");
     }
+
+    /// <summary>
+    /// Простой, накрывший «за 24 часа» и «за 12 часов», даёт одно напоминание:
+    /// срабатывает последний наступивший момент, а перекрытый им снимается.
+    /// </summary>
+    [Fact]
+    public async Task When_DowntimeCoveredTwoMoments_Expect_SingleReminderAndOlderSuperseded()
+    {
+        await using var env = await BusScenario.Start(HeldRelay);
+        var winner = await Person(env.Db, MemberHolding);
+
+        await env.Publish(IssuedSubject, env.Invoice(winner));
+        await Eventually(() => Task.FromResult(env.Tasks()), rows => rows.Count == 3);
+
+        InvoiceReminderProbe.MoveDueToPast(env.Db.ConnectionString, Guid.Parse(env.InvoiceId),
+            InvoiceReminderProbe.DayBefore, InvoiceReminderProbe.HalfDayBefore);
+        await Eventually(() => Reminders(env), count => count >= 1);
+
+        // Окно на второе сообщение: sweeper идёт раз в секунду.
+        await Task.Delay(TimeSpan.FromSeconds(3));
+
+        (await Reminders(env)).ShouldBe(1);
+        var tasks = env.Tasks();
+        tasks.Single(task => task.Kind == InvoiceReminderProbe.HalfDayBefore).State.ShouldBe("fired");
+        tasks.Single(task => task.Kind == InvoiceReminderProbe.DayBefore).State.ShouldBe("cancelled");
+        tasks.Single(task => task.Kind == InvoiceReminderProbe.HourBefore).State.ShouldBe("scheduled");
+    }
+
+    /// <summary>Факты напоминания о счёте обоих типов: дальний момент и ближние.</summary>
+    private static async Task<long> Reminders(BusScenario env) =>
+        await env.Facts(NotificationFacts.InvoiceReminderType) +
+        await env.Facts(NotificationFacts.InvoiceDueReminderType);
 
     private static DateTimeOffset DueOf(IEnumerable<InvoiceReminderTaskRow> tasks, string kind) =>
         new(tasks.Single(task => task.Kind == kind && task.State == "scheduled").DueAt.ToUniversalTime());

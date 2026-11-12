@@ -8,6 +8,7 @@ import {
   type LotNotice,
 } from "../../../core/notifications/lot-notice.js";
 import { renderStepWindowNotice } from "../../../core/notifications/step-window-notice.js";
+import { marked, pictogram } from "../../../core/pictograms.js";
 import type {
   MeetupAspect,
   MeetupLifecycle,
@@ -104,7 +105,7 @@ function grammyError(code: number, retryAfter?: number): GrammyError {
 describe("renderNotification", () => {
   // Анонс финала (PER-478): свой лот — ряд с его названием, след на карточку
   // лота аукционного дерева; у старта финала клавиатуры нет.
-  it("traces the own lot of the final lineup and sends the started final bare", () => {
+  it("traces the own lot of the final lineup and gives the lineup and the started final their entries", () => {
     const view = renderFinalNotice(
       {
         kind: "final-lineup",
@@ -125,6 +126,16 @@ describe("renderNotification", () => {
           callback_data: `v1:t:${encodeAuctionCallback({ kind: "lot", lotId, page: 0 }).slice("v1:".length)}`,
         },
       ],
+      [
+        {
+          text: "Прогнозы",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "prediction", auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b", round: "final" }).slice("v1:".length)}`,
+        },
+        {
+          text: marked(pictogram.auction, "Аукцион"),
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "root", auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b" }).slice("v1:".length)}`,
+        },
+      ],
     ]);
     const started = renderNotification({
       kind: "lot-notice",
@@ -136,10 +147,15 @@ describe("renderNotification", () => {
         { lots: new Map() },
       ),
     });
-    expect(started).toEqual({
-      text: "Начался финал аукциона.",
-      keyboard: undefined,
-    });
+    expect(started.text).toBe("Начался финал аукциона.");
+    expect(started.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: marked(pictogram.auction, "Лоты"),
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "feed", auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b", page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
   });
 
   // Начало окна «Счастливых часов» (PER-616): ряд на каждый лот окна, след на

@@ -517,6 +517,7 @@ public class ReplicaMappingTests
         var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
 
         fact.Occasion.ShouldBe(MeetupOccasion.FirstPublication);
+        fact.Silent.ShouldBeFalse();
         var card = fact.Card;
         card.Id.ShouldBe(MeetupId);
         card.Title.ShouldBe("Пятничная");
@@ -524,6 +525,15 @@ public class ReplicaMappingTests
         card.Schedule.ShouldBe(message.State.Schedule);
         card.Lifecycle.ShouldBe(MeetupLifecycle.Planned);
         card.Visibility.ShouldBe(MeetupVisibility.Visible);
+    }
+
+    [Fact]
+    public void Meetup_SilentFirstPublication_CarriesSilent()
+    {
+        var message = EventFactory.Meetup(MeetupId, version: 2);
+        message.MeetupPublished.Silent = true;
+
+        Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).Silent.ShouldBeTrue();
     }
 
     /// <summary>

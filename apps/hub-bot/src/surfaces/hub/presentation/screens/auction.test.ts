@@ -46,6 +46,112 @@ const lot = (
 });
 
 describe("lot card in the hub shell", () => {
+  // Стрим и экран финала (PER-832): на карточке лота ссылок нет, они в корне.
+  it("has no hall links on the lot card", () => {
+    const rows = auctionScreen({
+      ...view([lot({})]),
+      hall: {
+        screenUrl: "https://hall.example.org/screen",
+        streamUrl: "https://stream.example.org/live",
+      },
+    }).screen.keyboard.inline_keyboard;
+    expect(rows.some((row) => row.some((button) => "url" in button))).toBe(
+      false,
+    );
+  });
+
+  const rootView = (
+    hall?: { screenUrl?: string; streamUrl?: string },
+    keyboard: AuctionView["body"]["keyboard"] = [],
+  ): AuctionView => ({
+    ...view([
+      {
+        kind: "root",
+        auctionId,
+        auction: { stage: "prebidding" },
+      } as unknown as AuctionBlock,
+    ]),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId,
+          auction: { stage: "prebidding" },
+        } as unknown as AuctionBlock,
+      ],
+      keyboard,
+    },
+    ...(hall === undefined ? {} : { hall }),
+  });
+  const labels = (view: AuctionView) =>
+    auctionScreen(view).screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => button.text),
+    );
+
+  it("puts the stream and the screen of the final into one row of the root", () => {
+    expect(labels(rootView())).not.toContainEqual(
+      expect.arrayContaining(["Стрим финала ↗"]),
+    );
+    const rows = auctionScreen(
+      rootView({
+        screenUrl: "https://hall.example.org/screen",
+        streamUrl: "https://stream.example.org/live",
+      }),
+    ).screen.keyboard.inline_keyboard;
+    expect(rows.at(-2)).toEqual([
+      { text: "Стрим финала ↗", url: "https://stream.example.org/live" },
+      {
+        text: "Экран финала ↗",
+        url: `https://hall.example.org/screen/${auctionId}`,
+      },
+    ]);
+  });
+
+  it("puts the results and the invoices of a finished auction into one row", () => {
+    const keyboard = [
+      [{ action: "root.results", callbackData: "v1:auc:res:x" }],
+      [{ action: "root.invoices", callbackData: "v1:auc:inv:x" }],
+    ] as unknown as AuctionView["body"]["keyboard"];
+    const rows = labels(rootView(undefined, keyboard));
+    expect(rows).toContainEqual(["Итоги", "Мои счета"]);
+  });
+
+  it("attaches the achievement image to the rich card after loading it", () => {
+    const block: AuctionBlock = {
+      kind: "achievements",
+      screen: {
+        scope: "event",
+        view: "card",
+        auctionId,
+        page: 0,
+        pages: 1,
+        items: [],
+        back: "v1:auc:ach:test:0",
+        holderNames: ["Сова"],
+        erasedHolders: 0,
+        holdersPage: 0,
+        holderPages: 1,
+        achievement: {
+          code: "first",
+          title: "Первая ачивка",
+          description: "За участие",
+          recipients: "many",
+          manual: false,
+          imageVersion: "v1",
+        },
+      },
+    };
+    const data = view([block]);
+    expect(auctionScreen(data).images).toEqual([
+      { lotId: "achievement:first", achievementCode: "first", version: "v1" },
+    ]);
+    const photos = [{ id: "lot", fileId: "photo-1" }];
+    const shown = auctionScreen({ ...data, photos }).screen;
+    expect(shown.media).toEqual(photos);
+    expect(shown.text).toContain('<img src="tg://photo?id=lot"/>');
+    expect(shown.text).toContain("Сова");
+    expect(auctionScreen(view([block], "plain")).images).toBeUndefined();
+  });
   it("orders the groups as status, price with leader and deadline, course, description", () => {
     const { screen } = auctionScreen(
       view([
@@ -97,9 +203,33 @@ describe("lot card in the hub shell", () => {
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
         "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
-        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n" +
+        "Если лот попадёт в финал, лимит сработает и там\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лоту, который ждёт финала, лимит обещает финал, а лимит ниже цены лота — нет
+  // (PER-822).
+  it("promises the final to a limit of a held lot only when it covers the price", () => {
+    const held = (limit: number) =>
+      plain(
+        auctionScreen(
+          view(
+            [
+              lot({
+                card: { title: "Кружка", description: "" },
+                status: { kind: "held", currentPrice: rub(1200) },
+                viewerProxyLimit: rub(limit),
+              }),
+            ],
+            "plain",
+          ),
+        ).screen.text,
+      );
+    expect(held(2000)).toContain("сработает в финале");
+    expect(held(900)).toContain("в финале не сработает");
+    expect(held(900)).not.toContain("сработает в финале");
   });
 
   // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81).
@@ -130,10 +260,9 @@ describe("lot card in the hub shell", () => {
     );
   });
 
-  // В живом финале кнопки «Автоставка» нет (PER-713): исчерпанный лимит не
-  // советует его поднять, а лимит лидера ниже текущей цены не показан
-  // действующим.
-  it("names an exhausted own limit in the live final without advising to raise it", () => {
+  // В живом финале исчерпанный лимит сообщает отдельная строка карточки;
+  // доступ к автоставке находится в своём ряду (PER-823).
+  it("names an exhausted own limit in the live final", () => {
     const course = (standing?: "leader") =>
       plain(
         auctionScreen(
@@ -334,6 +463,30 @@ describe("lot card in the hub shell", () => {
     expect(plain(screen.text)).toContain("Торги до: 9 января 2027, сб, 21:00");
   });
 
+  // PER-831: дедлайн в полночь читается как 23:59 предыдущего дня.
+  it.each([
+    ["2026-10-30T21:00:00Z", "Торги до: 30 октября, пт, 23:59"],
+    ["2026-10-30T21:03:00Z", "Торги до: 31 октября, сб, 00:03"],
+    ["2026-10-30T10:30:00Z", "Торги до: 30 октября, пт, 13:30"],
+  ])("shows the deadline %s as it reads at midnight", (deadline, line) => {
+    const { screen } = auctionScreen(
+      view(
+        [
+          lot({
+            status: {
+              kind: "trading",
+              currentPrice: rub(1),
+              deadline,
+              phase: "online",
+            },
+          }),
+        ],
+        "plain",
+      ),
+    );
+    expect(plain(screen.text)).toContain(line);
+  });
+
   // Карточка лота: статус первой группой, строки-поля без точки в конце.
   it.each([
     lot({ status: { kind: "draft" } }),
@@ -435,7 +588,7 @@ describe("feed and history in the hub shell", () => {
         .flat()
         .filter((button) => !/^(‹ |←$|→$)/.test(button.text))
         .map((button) => plain(button.text)),
-    ).toEqual(["Носки · старт 500 ₽", "Лот без названия · не продан"]);
+    ).toEqual(["Носки · старт 500 ₽", "💤 Лот без названия · не продан"]);
   });
 
   // Перенос строки в названии не плодит строк сводки: вторая выглядела бы
@@ -710,6 +863,33 @@ describe("bid sheet in the hub shell", () => {
     ).toEqual([["Как это работает"], ["Отмена"]]);
   });
 
+  it("names the accepted live-final floor, not the next grid price", () => {
+    const { screen } = sheet({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: auctionId,
+      current: rub(1000),
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Лимит от: 1 000 ₽");
+    expect(plain(screen.text)).not.toContain("Минимальная ставка");
+  });
+
+  it("names the own live-final limit instead of the floor", () => {
+    const { screen } = sheet({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: auctionId,
+      current: rub(1500),
+      currentIsLimit: true,
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Твой лимит сейчас: 1 500 ₽");
+    expect(plain(screen.text)).not.toContain("Лимит от:");
+  });
+
   // Отказ команды — свой экран исхода (PER-472), тексты — как у бота
   // аукциона.
   it("shows a refused command as its own outcome screen", () => {
@@ -741,6 +921,37 @@ describe("bid sheet in the hub shell", () => {
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
     ).toEqual([["‹ Лот"]]);
+  });
+
+  it("names the allowed floor when a live-final limit is below the announced ask", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "result",
+            result: {
+              command: "proxy",
+              kind: "refused",
+              refusal: {
+                kind: "proxy-below-current-price",
+                minLimit: rub(1200),
+              },
+            },
+            lotId: "lot-1",
+            auctionId: auctionId,
+            title: "Кружка",
+          },
+        ],
+        keyboard: [
+          [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+
+    expect(plain(screen.text)).toBe(
+      "<b>Лимит ниже допустимой цены</b>\n\n<b>Кружка</b>\n\nНужно от 1 200 ₽.",
+    );
   });
 
   it("names five times the next price when a bid is above the ceiling", () => {
@@ -825,8 +1036,54 @@ describe("happy hours in the hub shell", () => {
         },
       }),
     ).toContain(
-      "Следующая ставка: от 1 210 ₽<br>Счастливые часы: шаг 10 ₽ до 10 октября, сб, 21:00<br>Обычный шаг: 50 ₽",
+      "Следующая ставка: от 1 210 ₽<br>Счастливые часы до 10 октября, сб, 21:00: шаг 10 ₽<br>Обычный шаг: 50 ₽",
     );
+  });
+
+  // Период со стартовой ценой (PER-787): у лота без ставок стартовая окна
+  // парой с обычной, без «Обычного шага», когда шаг окно не меняет.
+  it("shows the window start next to the regular start of a lot without bids", () => {
+    expect(
+      facts({
+        nextPrice: rub(800),
+        fixedStep: rub(50),
+        baseStep: rub(50),
+        activeWindow: {
+          from: "2026-10-10T15:00:00Z",
+          until: "2026-10-10T18:00:00Z",
+          start: rub(800),
+        },
+      }),
+    ).toContain(
+      "Следующая ставка: от 800 ₽<br>Счастливые часы до 10 октября, сб, 21:00: от 800 ₽ вместо 1 200 ₽<br>Шаг: 50 ₽",
+    );
+  });
+
+  it("promises the start of a future window only to a lot without bids", () => {
+    const window = {
+      from: "2026-10-11T12:00:00Z",
+      until: "2026-10-11T15:00:00Z",
+      start: rub(800),
+    };
+    expect(
+      facts({ fixedStep: rub(50), baseStep: rub(50), nextWindow: window }),
+    ).toContain(
+      "Счастливые часы: с 11 октября, вс, 15:00 до 18:00, от 800 ₽ вместо 1 200 ₽",
+    );
+    expect(
+      plain(
+        auctionScreen(
+          view([
+            lot({
+              status: { ...trading, leaderId: "someone" },
+              fixedStep: rub(50),
+              baseStep: rub(50),
+              nextWindow: window,
+            }),
+          ]),
+        ).screen.text,
+      ),
+    ).not.toContain("Счастливые часы");
   });
 
   it("shows the thresholds instead of one step when the step is tiered", () => {
@@ -1050,8 +1307,8 @@ describe("live final in the hub shell", () => {
     expect(plain(screen.text)).not.toContain("не лидируешь");
     expect(labels(screen).slice(0, 3)).toEqual([
       "▶ Футболка · на торгах",
-      "Ваза · в составе · 400 ₽",
-      "Кружка · продан за 900 ₽",
+      "🏁 Ваза · в составе · 400 ₽",
+      "🤝 Кружка · продан за 900 ₽",
     ]);
   });
 
@@ -1065,8 +1322,8 @@ describe("live final in the hub shell", () => {
     const screen = feedOf();
     expect(plain(screen.text)).toContain("Ты пока не лидируешь");
     expect(labels(screen).slice(0, 2)).toEqual([
-      "Футболка · 1 200 ₽",
-      "Ваза · 400 ₽",
+      "🔥 Футболка · 1 200 ₽",
+      "🏁 Ваза · 400 ₽",
     ]);
   });
 

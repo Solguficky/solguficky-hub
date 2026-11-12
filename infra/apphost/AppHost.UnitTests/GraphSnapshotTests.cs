@@ -30,7 +30,7 @@ public class GraphSnapshotTests
 
     /// <summary>
     /// Имя бота поддержки и канал медиа ботов — настройки, которых в CI нет
-    /// (SupportBotLink, BotMediaChannel): без них снимок не показал бы
+    /// (SupportBotLink, BotMediaChannel, BotHallLinks): без них снимок не показал бы
     /// переменных, которые получают два других бота.
     /// </summary>
     private static readonly string[] HubArgs =
@@ -39,6 +39,8 @@ public class GraphSnapshotTests
         "hub",
         "--SupportBot:Username=solguficky_support_bot",
         "--BotMedia:ChannelId=-1001234567890",
+        "--HallLinks:ScreenUrl=https://hall.example.org/screen",
+        "--HallLinks:StreamUrl=https://stream.example.org/live",
     ];
 
     /// <summary>

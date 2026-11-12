@@ -20,12 +20,13 @@ object InvoiceValues {
       lotId = view.terms.lot.value.toString,
       winnerId = view.terms.winner.value.toString,
       amount = Some(LotValues.money(view.terms.amount)),
-      paymentDueAt = LotValues.instant(view.terms.paymentDueAt),
+      paymentDueAt = view.terms.paymentDueAt.fold("")(LotValues.instant),
       status = view.status match {
         case InvoiceStatus.AwaitingPayment =>
           bus.InvoiceState.Status.AwaitingPayment(bus.InvoiceState.AwaitingPayment())
         case InvoiceStatus.Paid => bus.InvoiceState.Status.Paid(bus.InvoiceState.Paid())
         case InvoiceStatus.HandedOver => bus.InvoiceState.Status.HandedOver(bus.InvoiceState.HandedOver())
+        case InvoiceStatus.Unredeemed => bus.InvoiceState.Status.Empty
       }
     )
 
@@ -36,13 +37,14 @@ object InvoiceValues {
       lotId = view.terms.lot.value.toString,
       winnerId = view.terms.winner.value.toString,
       amount = Some(LotValues.money(view.terms.amount)),
-      paymentDueAt = LotValues.instant(view.terms.paymentDueAt),
+      paymentDueAt = view.terms.paymentDueAt.fold("")(LotValues.instant),
       fulfillment = view.fulfillment.fold(model.FulfillmentMethod.FULFILLMENT_METHOD_UNSPECIFIED)(method),
       status = view.status match {
         case InvoiceStatus.AwaitingPayment =>
           wire.InvoiceSnapshot.Status.AwaitingPayment(bus.InvoiceState.AwaitingPayment())
         case InvoiceStatus.Paid => wire.InvoiceSnapshot.Status.Paid(bus.InvoiceState.Paid())
         case InvoiceStatus.HandedOver => wire.InvoiceSnapshot.Status.HandedOver(bus.InvoiceState.HandedOver())
+        case InvoiceStatus.Unredeemed => wire.InvoiceSnapshot.Status.Empty
       }
     )
 

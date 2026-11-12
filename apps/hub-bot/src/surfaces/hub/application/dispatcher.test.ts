@@ -66,6 +66,7 @@ describe("dispatcher", () => {
       cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
+      reorderMaterials: notUsed,
     };
     const dispatcher = createDispatcher(meetups);
 
@@ -119,6 +120,7 @@ describe("dispatcher", () => {
       cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
+      reorderMaterials: notUsed,
     };
     const dispatcher = createDispatcher(meetups);
 
@@ -163,6 +165,7 @@ describe("dispatcher", () => {
         cancelPublication: notUsed,
         attachMaterial: notUsed,
         removeMaterial: notUsed,
+        reorderMaterials: notUsed,
       };
       await expect(
         createDispatcher(meetups).execute({
@@ -196,6 +199,7 @@ describe("dispatcher", () => {
       cancelPublication: notUsed,
       attachMaterial: notUsed,
       removeMaterial: notUsed,
+      reorderMaterials: notUsed,
     };
     await expect(
       createDispatcher(meetups).execute({

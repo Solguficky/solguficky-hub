@@ -50,6 +50,9 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionDecoded.FinalLotActivated { Value: var activated } => (new EventRef(activated.EventId, null,
                     activated.AuctionId, activated.Version, activated.OccurredAt),
                 () => store.Apply(activated, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.TradingEnded { Value: var tradingEnded } => (new EventRef(tradingEnded.EventId, null,
+                    tradingEnded.AuctionId, tradingEnded.Version, tradingEnded.OccurredAt),
+                () => store.Apply(tradingEnded, clock.GetUtcNow(), stoppingToken)),
             AuctionDecoded.Closed { Value: var closed } => (new EventRef(closed.EventId, null, closed.AuctionId,
                     closed.Version, closed.OccurredAt),
                 () => store.Apply(closed, clock.GetUtcNow(), stoppingToken)),
@@ -125,8 +128,12 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             // Окна сниженного шага заводят задание начала окна (PER-614): оно
             // живёт на пару «аукцион и момент начала», поэтому его грин — на
             // аукцион, а не на лот. Снимок без окон задания не заводит, и
-            // звать грин нечего.
-            if (decoded is AuctionDecoded.Lot { Value.Snapshot.Windows.Count: > 0 } windowed)
+            // звать грин нечего — кроме изменения условий лота в периоде
+            // (PER-786): после снятия окон у лота может не остаться, а задание
+            // их начала грин должен снять (PER-788).
+            if (decoded is AuctionDecoded.Lot windowed
+                && (windowed.Value.Snapshot.Windows.Count > 0
+                    || message.Subject == AuctionFeed.StepWindowChangedSubject))
             {
                 try
                 {
@@ -193,9 +200,11 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.AuctionCancelled => "auction_cancelled",
             AuctionOutcome.AuctionEnded => "auction_ended",
             AuctionOutcome.FinalLotNext => "final_lot_next",
+            AuctionOutcome.TradingEnded => "trading_ended",
             AuctionOutcome.LeadRestored => "lead_restored",
             AuctionOutcome.Announcement => "announcement",
             AuctionOutcome.AnnouncementWithdrawn => "announcement_withdrawn",
+            AuctionOutcome.StandingRecorded => "standing_recorded",
             AuctionOutcome.InvoiceReplicated => "invoice_replicated",
             AuctionOutcome.InvoiceStale => "invoice_stale",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),

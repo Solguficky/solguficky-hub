@@ -139,6 +139,15 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
       )
       .map { case (participants, answers) => PredictionTally(participants, answers) }
 
+  def forecasters(auction: AuctionId, round: PredictionRound): Future[Set[ParticipantId]] =
+    database
+      .run(
+        sql"""SELECT DISTINCT participant_id::text FROM auction_prediction
+              WHERE auction_id = ${auction.value.toString}::uuid AND round = ${roundName(round)}"""
+          .as[String]
+      )
+      .map(_.map(participant => ParticipantId(UUID.fromString(participant))).toSet)
+
   def discard(auction: AuctionId): Future[Unit] =
     database
       .run(

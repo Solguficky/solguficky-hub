@@ -70,6 +70,10 @@ enum AccessRight {
   // shared by every auction and floor bids. Comes with PRESET_ADMIN; a member
   // is granted it one by one.
   ACCESS_RIGHT_RUN_AUCTIONS = 7;
+
+  // Creating a meetup and being its organizer (ADR-076). Comes with the member
+  // circle; no preset carries it and it is not granted one by one.
+  ACCESS_RIGHT_ORGANIZE_MEETUPS = 8;
 }
 
 // The queue an application lies in. The queues are independent: a refusal in
