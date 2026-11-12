@@ -113,6 +113,7 @@ let ``A local time that does not exist is refused before the store is read`` () 
     let result =
         { stub with
             CommunityTimeZone = berlin
+            Load = fun _ -> System.Threading.Tasks.Task.FromResult(Some(Meetup.toSnapshot Sample.titled))
         }
         |> run (localDateTime (DateOnly(2026, 3, 29)) 2 30)
 

@@ -34,40 +34,19 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
     interface IClassFixture<MeetupsHostFixture>
 
-    /// Заголовочный критерий задачи: отказ по праву приходит от Meetups, а не от
-    /// проверки в боте, и приходит на каждой административной операции.
+    /// Заводить сходку вправе держатель `organize_meetups` или администратор, и этот
+    /// отказ принимается до открытия соединения. У остальных команд право решается
+    /// после загрузки сходки (состав лежит в ней), поэтому их отказ по праву
+    /// проверяется на живой базе в MeetupBoundaryTests.
     [<Fact>]
-    member _.``Every command refuses an ordinary viewer with PERMISSION_DENIED``() =
+    member _.``Creating a meetup refuses an ordinary viewer with PERMISSION_DENIED``() =
         let actual =
-            [
-                Rpc.codeOf (fun () ->
-                    client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = viewer, Id = id))
-                    |> ignore
-                )
-                Rpc.codeOf (fun () ->
-                    client.ChangeMeetupAttributes(
-                        ChangeMeetupAttributesRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L)
-                    )
-                    |> ignore
-                )
-                Rpc.codeOf (fun () ->
-                    client.SetMeetupSchedule(
-                        SetMeetupScheduleRequest(
-                            Viewer = viewer,
-                            Id = id,
-                            ExpectedVersion = 1L,
-                            Schedule = Schedule(NoDate = NoDate())
-                        )
-                    )
-                    |> ignore
-                )
-                Rpc.codeOf (fun () ->
-                    client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L))
-                    |> ignore
-                )
-            ]
+            Rpc.codeOf (fun () ->
+                client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = viewer, Id = id))
+                |> ignore
+            )
 
-        test <@ actual = List.replicate 4 (Some StatusCode.PermissionDenied) @>
+        test <@ actual = Some StatusCode.PermissionDenied @>
 
     /// Проверка права спрашивает Identity раньше хранилища, которого у этого хоста и
     /// нет. Identity здесь недостижим, и ответ — «право не подтверждено», а не отказ
@@ -107,18 +86,12 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         newcomer.Rights.Add(enum<Identity.V1.AccessRight> 99)
 
         let actual =
-            [
-                Rpc.codeOf (fun () ->
-                    client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = newcomer, Id = id))
-                    |> ignore
-                )
-                Rpc.codeOf (fun () ->
-                    client.PublishMeetup(PublishMeetupRequest(Viewer = newcomer, Id = id, ExpectedVersion = 1L))
-                    |> ignore
-                )
-            ]
+            Rpc.codeOf (fun () ->
+                client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = newcomer, Id = id))
+                |> ignore
+            )
 
-        test <@ actual = List.replicate 2 (Some StatusCode.PermissionDenied) @>
+        test <@ actual = Some StatusCode.PermissionDenied @>
 
     /// Клиент собрал запрос неправильно — это INVALID_ARGUMENT, а не отказ домена.
     /// Проверяются разные дефекты сборки, потому что каждый разбирает своя функция
@@ -227,15 +200,13 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
     [<Fact>]
     member _.``A declared refusal is recorded as a warning with its transport code``() =
         Rpc.codeOf (fun () ->
-            client.ChangeMeetupAttributes(
-                ChangeMeetupAttributesRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L)
-            )
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = viewer, Id = id))
             |> ignore
         )
         |> ignore
 
         let frame =
-            recordOf "/meetups.v1.MeetupsService/ChangeMeetupAttributes"
+            recordOf "/meetups.v1.MeetupsService/CreateMeetupDraft"
             |> Option.map (fun entry ->
                 entry.Level, entry.Fields.TryFind "result", entry.Fields.TryFind "grpc_code", entry.Exception.IsSome
             )

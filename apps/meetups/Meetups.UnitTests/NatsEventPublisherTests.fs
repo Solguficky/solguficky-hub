@@ -40,6 +40,7 @@ let private pending (eventType: string) (meetup: Meetup) (materialId: Guid optio
         OccurredAt = occurredAt
         RequestId = None
         MaterialId = materialId
+        PersonId = None
     }
 
 let private materialGuid =
@@ -132,6 +133,7 @@ let ``A silent first publication carries silent on the published occasion`` () =
             OccurredAt = occurredAt
             RequestId = None
             MaterialId = None
+            PersonId = None
         }
 
     let message = Envelope.ofPending event

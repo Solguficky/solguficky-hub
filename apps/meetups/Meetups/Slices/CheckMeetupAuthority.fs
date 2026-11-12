@@ -8,12 +8,13 @@
 /// отношения «администратор» Meetups спрашивает у Identity сам, на каждом запросе и
 /// без кэша (ADR-051). Право, присланное вызывающим, пришлось бы принимать на веру.
 ///
-/// Решение по-прежнему принимается до загрузки: оба отношения держатся на праве —
-/// `manage_meetups` и `run_auctions`, — а не на записи сходки. Посторонний получает один и тот же отказ
-/// для существующей, скрытой и отсутствующей сходки, а работа сервиса от
-/// существования не зависит, поэтому ответ неразличим и по времени. Различать
-/// «сходки нет» и «права нет» можно только тому, чьё право уже подтверждено:
-/// администратор видит любую сходку, и существование для него не тайна.
+/// Отношения «администратор» и «ведущий аукциона» держатся на праве и решаются до
+/// загрузки; «организатор» требует записи сходки (состав) и решается после неё
+/// (ADR-076, п. 12). Посторонний получает один и тот же отказ для существующей,
+/// скрытой и отсутствующей сходки с одной и той же последовательностью запросов.
+/// Различать «сходки нет» и «права нет» можно только тому, чьё право на уровне
+/// сообщества уже подтверждено: администратор видит любую сходку, и существование
+/// для него не тайна.
 module Meetups.Slices.CheckMeetupAuthority
 
 open System
@@ -100,11 +101,18 @@ let private holdsAny (ask: AskRight) (person: PersonId) (rights: Set<AccessRight
 /// Ответ свежий на каждый вызов: кэша нет ни здесь, ни в контракте, потому что
 /// устаревшее разрешение равносильно пропущенной проверке (ADR-026).
 ///
+/// Порядок: сначала отношения, которые держатся на праве, — их Identity подтверждает
+/// без записи сходки, и существование сходки для них не тайна. Не подтвердилось ни
+/// одно, и вызывающий принимает отношение «организатор» — сходка загружается, и
+/// решает состав плюс право `organize_meetups`, которое снова спрашивает Identity.
+/// Посторонний и отсутствующая сходка проходят одну последовательность запросов —
+/// вопросы о правах и одна загрузка — и получают один отказ (ADR-076, п. 12); право
+/// организатора спрашивается только у того, кто в составе.
+///
 /// Успех несёт снимок сходки, а не один факт права: вызывающий, чьи собственные
-/// ворота зависят от её состояния, получает обе оси той же загрузкой, которой
-/// подтверждённое существование и так отвечает (ADR-047, дополнение 2026-10-12).
-/// Решение о праве от состояния не зависит; состояние — данные ответа, а не
-/// второе правило отказа.
+/// ворота зависят от её состояния, получает обе оси той же загрузкой
+/// (ADR-047, дополнение 2026-10-12). Решение о праве от состояния не зависит;
+/// состояние — данные ответа, а не второе правило отказа.
 let execute (deps: Deps) (query: Query) : Task<Result<MeetupSnapshot, CheckMeetupAuthorityError>> =
     task {
         match deps.AskRight with
@@ -114,11 +122,25 @@ let execute (deps: Deps) (query: Query) : Task<Result<MeetupSnapshot, CheckMeetu
             | Error(IdentityFailure.Unavailable reason) ->
                 return Error(CheckMeetupAuthorityError.IdentityUnavailable reason)
             | Error(IdentityFailure.Failed reason) -> return Error(CheckMeetupAuthorityError.IdentityFailed reason)
-            | Ok false -> return Error CheckMeetupAuthorityError.Forbidden
             | Ok true ->
                 match! deps.Load query.Id with
                 | Some meetup -> return Ok meetup
                 | None -> return Error CheckMeetupAuthorityError.NotFound
+            | Ok false when not (Set.contains Organizer query.Accepted) ->
+                return Error CheckMeetupAuthorityError.Forbidden
+            | Ok false ->
+                match! deps.Load query.Id with
+                | None -> return Error CheckMeetupAuthorityError.Forbidden
+                | Some meetup when not (List.contains query.Person meetup.Organizers) ->
+                    return Error CheckMeetupAuthorityError.Forbidden
+                | Some meetup ->
+                    match! ask query.Person OrganizeMeetups with
+                    | Ok true -> return Ok meetup
+                    | Ok false -> return Error CheckMeetupAuthorityError.Forbidden
+                    | Error(IdentityFailure.Unavailable reason) ->
+                        return Error(CheckMeetupAuthorityError.IdentityUnavailable reason)
+                    | Error(IdentityFailure.Failed reason) ->
+                        return Error(CheckMeetupAuthorityError.IdentityFailed reason)
     }
 
 /// Загрузка та же, что у команд: вопрос задаётся от их имени, и видимость на него

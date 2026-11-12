@@ -77,6 +77,7 @@ module Inbound =
             match value with
             | Meetups.V1.MeetupRelation.CommunityAdministrator -> Some CommunityAdministrator
             | Meetups.V1.MeetupRelation.AuctionRunner -> Some AuctionRunner
+            | Meetups.V1.MeetupRelation.Organizer -> Some Organizer
             | _ -> None
 
         let parsed = values |> Seq.map relation |> List.ofSeq
@@ -266,6 +267,11 @@ module Outbound =
 
         contract.Materials.AddRange(value.Materials |> Seq.map material)
 
+        contract.Organizers.AddRange(
+            value.Organizers
+            |> Seq.map (fun (PersonId person) -> person.ToString "D")
+        )
+
         // Единственное настоящее отсутствие в сообщении: unset означает «никогда не
         // публиковалась». UtcDateTime, а не сам DateTimeOffset: формат "o" у второго
         // печатает смещение +00:00, а контракт требует RFC 3339 UTC с Z.
@@ -307,6 +313,11 @@ module Outbound =
             )
 
         contract.Materials.AddRange(value.Materials |> Seq.map material)
+
+        contract.Organizers.AddRange(
+            value.Organizers
+            |> Seq.map (fun (PersonId person) -> person.ToString "D")
+        )
 
         match value.FirstPublishedAt with
         | Some at -> contract.FirstPublishedAt <- at.ToUniversalTime().UtcDateTime.ToString "o"

@@ -20,9 +20,9 @@ import {
 
 // Сценарий первого среза целиком (first-slice.md, «Сценарий») и его
 // отрицательная половина: до публикации сходка для солегуфика не наблюдаема ни
-// списком, ни прямой ссылкой. Плюс кадр E-01: вход в управление
-// солегуфик не видит, а отказ в праве по оставшейся в чате кнопке приходит от
-// Meetups, а не от проверки в боте.
+// списком, ни прямой ссылкой. Плюс кадр E-01: отказ в праве заводить сходку
+// приходит от Meetups, а не от проверки в боте (после ADR-076 участник заводит
+// свою сходку сам, поэтому отказ проверяется прямым вызовом без прав).
 const environment = readContourEnvironment();
 const direct = openDirectClients(environment);
 const wire = openBotWire(environment);
@@ -103,31 +103,23 @@ describe("сценарий первого среза", () => {
     expect(member.sees()).toBe("Управление сходками доступно администратору.");
   });
 
-  it("E-01: создать сходку после снятия набора admin отказывает Meetups, и журнал не растёт", async () => {
+  it("E-01: создать сходку без права заводить отказывает Meetups, и журнал не растёт", async () => {
+    // С ADR-076 (PER-745) право `organize_meetups` идёт с кругом `member`, поэтому
+    // человек в чате создаёт свою сходку и после снятия набора admin: отказ по
+    // праву через бота получить нельзя. Отказ приходит от Meetups, а не от
+    // проверки в боте, и проверяется на том же слое: вызов с токеном бота и
+    // смотрящим, у которого прав нет, как после отзыва права на стороне Identity.
     const adminId = await direct.grantAdmin(freshTelegramUserId());
-    const { telegramUserId, person } = await memberAllowedBy(
-      wire,
-      direct,
-      adminId,
-    );
-    // Круг `member` человек получает первым `/start`: без него после отзыва он
-    // упёрся бы в кадр ожидания доступа, а не в Meetups.
-    await person.says("/start");
-    await direct.grantAdmin(telegramUserId);
-    await person.says("/start");
-    await person.says("/manage");
-    await person.presses("Сходки и объявления");
-    // Сходка рождается ответом на вопрос о названии (прогон 14.10), и сам
-    // вопрос бот без права не задаёт — поэтому набор снимается после вопроса.
-    await person.presses("Создать сходку");
+    const { telegramUserId } = await memberAllowedBy(wire, direct, adminId);
     const personId = await direct.identityOf(telegramUserId);
-    await direct.revokeAdmin(personId);
 
-    // Вопрос остался в чате, а ответ на него бот не сторожит: право решает
-    // Meetups, и отказ звучит без имени сервиса.
-    await person.says("Без права");
+    await expect(
+      direct.meetups.createMeetupDraft({
+        viewer: { identityId: personId, rights: [] },
+        id: unusedMeetupId(),
+      }),
+    ).rejects.toThrow("the viewer may not act on this meetup");
 
-    expect(person.sees()).toBe("Это действие тебе недоступно.");
     expect(await direct.journalOf(personId)).toEqual({
       meetupIds: [],
       events: 0,

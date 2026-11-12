@@ -150,8 +150,8 @@ type JournalMaterialIdTests() =
             MaterialIdSql.failureCode
                 db.ConnectionString
                 """
-                INSERT INTO meetups (id, author, lifecycle, visibility, version, schedule_form, schedule_precision)
-                VALUES (@id, @actor, 'planned', 'hidden', 2, 'no_date', NULL);
+                INSERT INTO meetups (id, author, organizers, lifecycle, visibility, version, schedule_form, schedule_precision)
+                VALUES (@id, @actor, ARRAY[@actor], 'planned', 'hidden', 2, 'no_date', NULL);
                 INSERT INTO meetup_events (event_id, meetup_id, version, event_type, payload, performed_by, occurred_at)
                 VALUES (@event_id, @id, 2, 'meetup_material_removed', '{}'::jsonb, @actor, now());
                 """
@@ -171,8 +171,8 @@ type JournalMaterialIdTests() =
             MaterialIdSql.failureCode
                 db.ConnectionString
                 """
-                INSERT INTO meetups (id, author, lifecycle, visibility, version, schedule_form, schedule_precision)
-                VALUES (@id, @actor, 'planned', 'hidden', 1, 'no_date', NULL);
+                INSERT INTO meetups (id, author, organizers, lifecycle, visibility, version, schedule_form, schedule_precision)
+                VALUES (@id, @actor, ARRAY[@actor], 'planned', 'hidden', 1, 'no_date', NULL);
                 INSERT INTO meetup_events (
                     event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, material_id
                 ) VALUES (@event_id, @id, 1, 'meetup_created', '{}'::jsonb, @actor, now(), @material);

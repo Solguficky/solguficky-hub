@@ -63,6 +63,7 @@ let private SelectDueSql =
         visibility AS Visibility,
         first_published_at AS FirstPublishedAt,
         scheduled_publish_at AS ScheduledPublishAt,
+        organizers AS Organizers,
         version AS Version,
         schedule_form AS ScheduleForm,
         schedule_precision AS SchedulePrecision,

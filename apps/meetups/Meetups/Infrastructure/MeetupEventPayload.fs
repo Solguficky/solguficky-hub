@@ -32,6 +32,8 @@ let eventType (event: MeetupEvent) : string =
     | MeetupMaterialRemoved _ -> "meetup_material_removed"
     | MaterialsReordered _ -> "materials_reordered"
     | MeetupHeld -> "meetup_held"
+    | MeetupOrganizerAppointed _ -> "meetup_organizer_appointed"
+    | MeetupOrganizerDismissed _ -> "meetup_organizer_dismissed"
 
 /// Данные повода, которых снимок выразить не может: удалённого материала в нём уже
 /// нет. Колонка `material_id`, а не ключ payload, — её правило держит CHECK
@@ -50,6 +52,27 @@ let materialId (event: MeetupEvent) : Nullable<Guid> =
     | MeetupPublicationScheduled _
     | MeetupPublicationCancelled
     | MeetupCancelled
+    | MaterialsReordered _
+    | MeetupHeld
+    | MeetupOrganizerAppointed _
+    | MeetupOrganizerDismissed _ -> Nullable()
+
+/// Человек из повода состава: после снятия снимок его уже не содержит. Колонка
+/// `person_id`, правило которой держит `meetup_events_person_id_occasion`.
+let personId (event: MeetupEvent) : Nullable<Guid> =
+    match event with
+    | MeetupOrganizerAppointed(PersonId id)
+    | MeetupOrganizerDismissed(PersonId id) -> Nullable id
+    | MeetupCreated _
+    | MeetupChanged _
+    | MeetupPublished _
+    | MeetupUnpublished
+    | MeetupRepublished
+    | MeetupPublicationScheduled _
+    | MeetupPublicationCancelled
+    | MeetupCancelled
+    | MeetupMaterialAttached _
+    | MeetupMaterialRemoved _
     | MaterialsReordered _
     | MeetupHeld -> Nullable()
 
@@ -124,6 +147,15 @@ let ofSnapshot (snapshot: MeetupSnapshot) : string =
     if row.ScheduledPublishAt.HasValue then
         node["scheduled_publish_at"] <-
             JsonValue.Create(row.ScheduledPublishAt.Value.ToString "yyyy-MM-ddTHH\:mm\:ss.ffffffZ")
+
+    // Состав — часть состояния, как и материалы: порядок вступления, пустой массив —
+    // состав, который опустошил администратор.
+    let organizers = JsonArray()
+
+    for person in row.Organizers do
+        organizers.Add(JsonValue.Create(person.ToString "D"))
+
+    node["organizers"] <- organizers
 
     node["version"] <- JsonValue.Create row.Version
 
@@ -284,10 +316,34 @@ let toSnapshot (eventId: Guid) (payload: string) : MeetupSnapshot =
             | :? JsonArray as value -> value.ToJsonString()
             | _ -> malformed eventId "materials is not an array"
 
+        // Ключа нет у строк, записанных до состава: сходка тогда принадлежала автору,
+        // и так же её читает миграция схемы (в составе автор). Пустой массив, который
+        // есть, — состав без людей. Ключ, который есть, но не массив, — дефект.
+        let author = uuid eventId node "author"
+
+        let organizers =
+            match node["organizers"] with
+            | null -> [| author |]
+            | :? JsonArray as value ->
+                value
+                |> Seq.map (fun item ->
+                    match item with
+                    | :? JsonValue as text ->
+                        match text.TryGetValue<string>() with
+                        | true, result ->
+                            match Guid.TryParseExact(result, "D") with
+                            | true, parsed -> parsed
+                            | _ -> malformed eventId "organizers contains a non-UUID"
+                        | _ -> malformed eventId "organizers contains a non-text element"
+                    | _ -> malformed eventId "organizers contains a non-text element"
+                )
+                |> Array.ofSeq
+            | _ -> malformed eventId "organizers is not an array"
+
         MeetupRow.toSnapshot
             {
                 Id = uuid eventId node "id"
-                Author = uuid eventId node "author"
+                Author = author
                 Title = text eventId node "title"
                 Description = text eventId node "description"
                 Venue = text eventId node "venue"
@@ -298,6 +354,7 @@ let toSnapshot (eventId: Guid) (payload: string) : MeetupSnapshot =
                 Visibility = text eventId node "visibility"
                 FirstPublishedAt = momentOf eventId node "first_published_at"
                 ScheduledPublishAt = momentOf eventId node "scheduled_publish_at"
+                Organizers = organizers
                 Version = int64Of eventId node "version"
                 ScheduleForm = text eventId schedule "form"
                 SchedulePrecision =

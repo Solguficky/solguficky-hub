@@ -50,12 +50,13 @@ type Deps =
 
 let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, CreateMeetupDraftError>> =
     task {
-        // Право спрашивается до загрузки: состояние в этом решении не участвует, а
-        // проверка после чтения сделала бы отказ обычному смотрящему зависимым от
-        // того, существует ли сходка, то есть способом узнать про чужой черновик.
-        match Access.actOnBehalf command.Viewer with
-        | Error denied -> return Error(CreateMeetupDraftError.Forbidden denied)
-        | Ok() ->
+        // Право спрашивается до загрузки: состояние в этом решении не участвует (завести
+        // сходку может держатель `organize_meetups` или администратор), а проверка
+        // после чтения сделала бы отказ обычному смотрящему зависимым от того,
+        // существует ли сходка, то есть способом узнать про чужой черновик.
+        match Access.mayCreate command.Viewer with
+        | false -> return Error(CreateMeetupDraftError.Forbidden CannotActOnMeetup)
+        | true ->
             let! existing = deps.Load command.Id
             let state = Meetup.restore existing
 
@@ -119,8 +120,8 @@ module Api =
         match error with
         | CreateMeetupDraftError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | CreateMeetupDraftError.Forbidden CannotManageMeetups ->
-            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
+        | CreateMeetupDraftError.Forbidden CannotActOnMeetup ->
+            Status(StatusCode.PermissionDenied, "the viewer may not act on this meetup")
         // Чужой черновик отвечает как несуществующий: иначе ответ подтвердил бы, что
         // он существует (ADR-031, ADR-022). Видимость своего кода не имеет.
         | CreateMeetupDraftError.Domain DraftBelongsToAnotherAuthor
