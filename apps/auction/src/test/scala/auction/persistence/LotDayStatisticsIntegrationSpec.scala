@@ -60,15 +60,17 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
       lotId: UUID,
       minorUnits: Long,
       at: Instant,
-      by: UUID = UUID.randomUUID()
+      by: UUID = UUID.randomUUID(),
+      windowStart: Option[Long] = None
   ): Unit = {
     connection
       .createStatement()
       .executeUpdate(
         s"""INSERT INTO lot_bid (lot_id, sequence, bid_id, participant_id, minor_units, currency, origin, source,
-                                 occurred_at)
+                                 occurred_at, window_start_minor_units)
             SELECT '$lotId', COALESCE(MAX(sequence), 0) + 1, '${UUID.randomUUID()}', '$by',
-                   $minorUnits, 'RUB', 'Manual', 'Bot', '${at.toString}'::timestamptz
+                   $minorUnits, 'RUB', 'Manual', 'Bot', '${at.toString}'::timestamptz,
+                   ${windowStart.fold("NULL")(_.toString)}
             FROM lot_bid WHERE lot_id = '$lotId'"""
       )
     ()
@@ -185,6 +187,50 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
       }
     }
 
+    // PER-810: первая ставка легла по стартовой окна ниже обычной — окно открылось по ней, и рост от неё, а не
+    // отрицательный от обычной стартовой.
+    "opens the window at the starting price of the window the first bid took" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        startingPrice(connection, id, 300)
+        bid(connection, id, 150, windowFrom.plusSeconds(1), windowStart = Some(150))
+        bid(connection, id, 155, windowFrom.plusSeconds(2), windowStart = Some(150))
+        id
+      }
+      withViews(database) { views =>
+        val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue.head
+        single.lotId shouldBe lotId
+        single.priceBefore shouldBe Some(Money(150, CurrencyCode("RUB")))
+        single.growth shouldBe Some(Money(5, CurrencyCode("RUB")))
+      }
+    }
+
+    // PER-810: сняли автора первой ставки, а вторая легла уже за окном ниже обычной стартовой — стартовая роста не выше
+    // суммы первой оставшейся ставки, и рост не уходит ниже нуля.
+    "opens the window no higher than the first bid that remains after a removal" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val removed = UUID.randomUUID()
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        startingPrice(connection, id, 300)
+        bid(connection, id, 150, windowFrom.plusSeconds(1), removed, windowStart = Some(150))
+        bid(connection, id, 170, windowFrom.plusSeconds(2))
+        connection
+          .createStatement()
+          .executeUpdate(s"UPDATE lot_bid SET removed = true WHERE lot_id = '$id' AND participant_id = '$removed'")
+        id
+      }
+      withViews(database) { views =>
+        val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue.head
+        single.lotId shouldBe lotId
+        single.priceBefore shouldBe Some(Money(170, CurrencyCode("RUB")))
+        single.growth shouldBe Some(Money(0, CurrencyCode("RUB")))
+      }
+    }
+
     // PER-511: смены лидера и дуэль окна; лидер к открытию окна — автор последней ставки до него.
     "counts the leader changes and the longest duel inside the window from the chronology of the lot" in {
       val database = freshDatabase()
@@ -224,6 +270,58 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
         lots.head.growth shouldBe None
         lots.map(_.lotId) should not contain born
       }
+    }
+
+    // PER-769: хроники всего аукциона — то же чтение без окна суток; ставки разных дней складываются в итог.
+    "sums the bids of separate days into the statistics of the whole trading" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        startingPrice(connection, id, 100)
+        bid(connection, id, 300, before)
+        bid(connection, id, 900, windowFrom.plusSeconds(60))
+        bid(connection, id, 1_500, windowFrom.plusSeconds(120))
+        bid(connection, id, 1_700, pastWindow)
+        id
+      }
+      val now = pastWindow.plusSeconds(3600)
+      withViews(database) { views =>
+        val days = List(before.minusSeconds(3 * 3600) -> windowFrom, windowFrom -> windowUntil, windowUntil -> now)
+          .map((from, until) => views.dayStatistics(auctionId, from, until).futureValue.head)
+        val whole = views.dayStatistics(auctionId, Instant.EPOCH, now).futureValue.head
+        whole.lotId shouldBe lotId
+        whole.bidCount shouldBe days.map(_.bidCount).sum
+        whole.bidCount shouldBe 4
+        whole.maxPrice shouldBe Some(Money(1_700, CurrencyCode("RUB")))
+        // Цена к открытию «окна от начала времён» — стартовая, поэтому рост — от старта.
+        whole.growth shouldBe Some(Money(1_600, CurrencyCode("RUB")))
+      }
+    }
+
+    "counts every participant of the registry once and leaves a removed one out" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val (a, b, removed) = (UUID.randomUUID(), UUID.randomUUID(), UUID.randomUUID())
+      withConnection(database) { connection =>
+        def participant(lotId: UUID, person: UUID, gone: Boolean = false): Unit = {
+          connection
+            .createStatement()
+            .executeUpdate(
+              s"""INSERT INTO lot_participant (lot_id, participant_id, removed)
+                  VALUES ('$lotId', '$person', $gone)"""
+            )
+          ()
+        }
+        val (first, second, outside) =
+          (lot(connection, registered = true), lot(connection, registered = true), lot(connection, registered = false))
+        participant(first, a)
+        participant(second, a)
+        participant(second, b)
+        participant(first, removed, gone = true)
+        participant(outside, UUID.randomUUID())
+      }
+      withViews(database)(_.participantCount(auctionId).futureValue shouldBe 2)
     }
   }
 }

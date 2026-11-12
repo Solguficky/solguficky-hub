@@ -99,6 +99,9 @@ object InvoiceMapping {
       case Right(()) => Right(paymentAccepted)
       case Left(InvoiceRefusal.InvoiceNotFound) => Left(invoiceNotFound)
       case Left(InvoiceRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(InvoiceRefusal.InvoiceClosed) => Left(invoiceClosed)
+      case Left(InvoiceRefusal.InvoiceAlreadyPaid) =>
+        throw new IllegalStateException("payment mark answered InvoiceAlreadyPaid")
       case Left(refused @ (InvoiceRefusal.InvoiceNotPaid | InvoiceRefusal.FulfillmentFrozen)) =>
         throw new IllegalStateException(s"payment mark answered $refused")
     }
@@ -117,6 +120,9 @@ object InvoiceMapping {
       case Left(InvoiceRefusal.OpIdTaken) => Left(opIdTaken)
       case Left(InvoiceRefusal.FulfillmentFrozen) =>
         throw new IllegalStateException("handover mark answered FulfillmentFrozen")
+      case Left(InvoiceRefusal.InvoiceClosed) => Left(invoiceClosed)
+      case Left(InvoiceRefusal.InvoiceAlreadyPaid) =>
+        throw new IllegalStateException("handover mark answered InvoiceAlreadyPaid")
     }
   }
 
@@ -134,6 +140,9 @@ object InvoiceMapping {
       case Left(InvoiceRefusal.OpIdTaken) => Left(opIdTaken)
       case Left(InvoiceRefusal.InvoiceNotPaid) =>
         throw new IllegalStateException("fulfillment choice answered InvoiceNotPaid")
+      case Left(InvoiceRefusal.InvoiceClosed) => Left(invoiceClosed)
+      case Left(InvoiceRefusal.InvoiceAlreadyPaid) =>
+        throw new IllegalStateException("fulfillment choice answered InvoiceAlreadyPaid")
     }
   }
 
@@ -199,6 +208,8 @@ object InvoiceMapping {
     }
 
   val invoiceNotFound: Status = Status.NOT_FOUND.withDescription("invoice not found")
+
+  private val invoiceClosed: Status = Status.FAILED_PRECONDITION.withDescription("invoice is closed")
 
   private val opIdTaken: Status = Status.ALREADY_EXISTS.withDescription("op_id belongs to another command")
 }

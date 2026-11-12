@@ -17,6 +17,7 @@ export type LotNeighbor = { lotId: string; page: number };
 // из его списка, а «‹ Лоты» карточки ведёт в раздел. Нет — лот в общем
 // списке или идёт финал.
 export type LotNeighbors = {
+  final?: { activeLotId?: string };
   prev?: LotNeighbor;
   next?: LotNeighbor;
   sectionId?: number;
@@ -67,7 +68,18 @@ export async function readNeighbors(input: {
       loadFeed(feed),
     ]);
     if (lineup !== undefined) {
-      return neighborsOf(orderForFeed(lots, lineup), input.lot.lotId);
+      return {
+        ...neighborsOf(orderForFeed(lots, lineup), input.lot.lotId),
+        ...(lineup.order.includes(input.lot.lotId)
+          ? {
+              final: {
+                ...(lineup.activeLotId === undefined
+                  ? {}
+                  : { activeLotId: lineup.activeLotId }),
+              },
+            }
+          : {}),
+      };
     }
     // Вне финала соседи — в списке лота: в его разделе или в общем списке,
     // как их показывает лента.

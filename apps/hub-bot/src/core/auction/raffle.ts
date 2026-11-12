@@ -57,6 +57,14 @@ export function raffleOf(raffle: Raffle): RaffleView {
       ? {}
       : { prize: raffle.rafflePrize }),
     ...(raffle.drawnByHand ? { drawnByHand: true as const } : {}),
+    ...(raffle.prizePhoto === undefined
+      ? {}
+      : {
+          prizePhoto: {
+            photoId: raffle.prizePhoto.photoId,
+            version: raffle.prizePhoto.version,
+          },
+        }),
     ...(reveal === undefined
       ? {}
       : {

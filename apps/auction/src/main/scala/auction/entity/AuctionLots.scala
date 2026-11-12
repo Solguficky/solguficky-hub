@@ -6,6 +6,7 @@ import auction.aggregate.LotEnding
 import auction.catalog.LotId
 import auction.lot.AddStepWindow
 import auction.lot.AddStepWindowRejected
+import auction.lot.ClearPeriodWindow
 import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLot
@@ -19,6 +20,7 @@ import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ParticipantId
+import auction.lot.PeriodWindowRejected
 import auction.lot.RemoveParticipant
 import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLot
@@ -26,6 +28,7 @@ import auction.lot.ResumeLotRejected
 import auction.lot.Sale
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
+import auction.lot.SetPeriodWindow
 import auction.lot.UnmarkForFinal
 import auction.lot.UnmarkForFinalRejected
 import auction.lot.WithdrawLot
@@ -106,6 +109,15 @@ trait AuctionLots {
    * записи: окно в чужой валюте лот отбрасывает, и ждать от него больше нечего.
    */
   def addWindow(lot: LotId, command: AddStepWindow): Future[Either[AddStepWindowRejected, Unit]]
+
+  /**
+   * Условия лота в периоде «Счастливых часов» (PER-786). Подтверждение — и записанное окно, и принятое без записи, и
+   * отказ: лот, ушедший из торгов, и период, который уже начался, ждать от лота больше нечего.
+   */
+  def setPeriodWindow(lot: LotId, command: SetPeriodWindow): Future[Either[PeriodWindowRejected, Unit]]
+
+  /** Снятие условий лота в периоде (PER-786); подтверждение — как у [[setPeriodWindow]]. */
+  def clearPeriodWindow(lot: LotId, command: ClearPeriodWindow): Future[Either[PeriodWindowRejected, Unit]]
 }
 
 object AuctionLots {
@@ -204,6 +216,18 @@ object AuctionLots {
       def addWindow(lot: LotId, command: AddStepWindow): Future[Either[AddStepWindowRejected, Unit]] =
         entity(lot)
           .ask[Either[AddStepWindowRejected, Option[Envelope]]](LotEntity.AddWindow(command, Initiator.Scheduler, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      // Условия периода доставляет аукцион, а не человек: после рестарта он шлёт их сам. Кто их задал, называет строка
+      // аукциона под тем же `op_id` правки.
+      def setPeriodWindow(lot: LotId, command: SetPeriodWindow): Future[Either[PeriodWindowRejected, Unit]] =
+        entity(lot)
+          .ask[Either[PeriodWindowRejected, Option[Envelope]]](LotEntity.SetPeriod(command, Initiator.Scheduler, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      def clearPeriodWindow(lot: LotId, command: ClearPeriodWindow): Future[Either[PeriodWindowRejected, Unit]] =
+        entity(lot)
+          .ask[Either[PeriodWindowRejected, Option[Envelope]]](LotEntity.ClearPeriod(command, Initiator.Scheduler, _))
           .map(_.map(_ => ()))(using ExecutionContext.parasitic)
     }
 

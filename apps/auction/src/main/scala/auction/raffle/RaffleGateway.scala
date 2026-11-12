@@ -22,6 +22,10 @@ trait RaffleGateway {
 
   def changePrize(auction: AuctionId, command: ChangePrize): Future[Either[ChangePrizeRejected, Raffle]]
 
+  def setPrizePhoto(auction: AuctionId, command: SetPrizePhoto): Future[Either[ChangePrizeRejected, Raffle]]
+
+  def removePrizePhoto(auction: AuctionId, command: RemovePrizePhoto): Future[Either[ChangePrizeRejected, Raffle]]
+
   def get(auction: AuctionId): Future[Raffle]
 }
 
@@ -44,6 +48,15 @@ object RaffleGateway {
 
       def changePrize(auction: AuctionId, command: ChangePrize): Future[Either[ChangePrizeRejected, Raffle]] =
         entity(auction).ask(RaffleEntity.SetPrize(command, _))
+
+      def setPrizePhoto(auction: AuctionId, command: SetPrizePhoto): Future[Either[ChangePrizeRejected, Raffle]] =
+        entity(auction).ask(RaffleEntity.SetPhoto(command, _))
+
+      def removePrizePhoto(
+          auction: AuctionId,
+          command: RemovePrizePhoto
+      ): Future[Either[ChangePrizeRejected, Raffle]] =
+        entity(auction).ask(RaffleEntity.RemovePhoto(command, _))
 
       def get(auction: AuctionId): Future[Raffle] = entity(auction).ask(RaffleEntity.Get(_))
     }

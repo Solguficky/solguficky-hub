@@ -26,6 +26,9 @@ export const TICKETS_SHOWN = 40;
 export type RaffleTextOptions = {
   // Момент RFC 3339 для чтения в поясе сообщества.
   moment: (instant: string) => string;
+  // Момент состоявшейся жеребьёвки — событие, а не срок: полночь здесь не
+  // сдвигается (PER-831). Не задан — читается как `moment`.
+  eventMoment?: (instant: string) => string;
 };
 
 // Экран исхода регистрации (прогон 14.10, №69): заголовок — исход, под ним
@@ -42,7 +45,7 @@ export function raffleRegisteredParagraphs(
       ? "Номер билета появится, когда регистрация закроется."
       : `Номер билета появится, когда регистрация закроется — ${escapeHtml(options.moment(raffle.closesAt))}. ${
           raffle.drawnByHand === true
-            ? "Победителя выберут организаторы по списку билетов."
+            ? "Итог подведёт организатор после этого."
             : "Итог — через пару минут после этого."
         }`;
   return [closes, "Отменить регистрацию можно до её закрытия."];
@@ -62,6 +65,24 @@ function provableLines(raffle: RaffleView): string[] {
   return raffle.drawnByHand === true ? [] : [provableLine];
 }
 
+/**
+ * Экран розыгрыша rich-сообщением — так он идёт, когда у приза есть фото
+ * (PER-773): фото оболочка ставит первым блоком, над заголовком, как у
+ * карточки лота. Перенос строки в `html` rich-сообщения не рисуется, поэтому
+ * абзац — свой блок, а строки внутри — `<br>`. Абзацы уже экранированы.
+ */
+export function raffleRichText(
+  title: string,
+  paragraphs: readonly string[],
+): string {
+  return [
+    `<h1>${escapeHtml(title)}</h1>`,
+    ...paragraphs
+      .filter((paragraph) => paragraph !== "")
+      .map((paragraph) => `<p>${paragraph.split("\n").join("<br>")}</p>`),
+  ].join("");
+}
+
 /** Абзацы тела экрана под заголовком, уже экранированные. */
 export function raffleParagraphs(
   raffle: RaffleView | undefined,
@@ -75,7 +96,7 @@ export function raffleParagraphs(
         rules,
         ...prizeLine(raffle),
         raffle.drawnByHand === true
-          ? `Регистрация до ${closesAt}. Победителя выберут организаторы по списку билетов после закрытия регистрации.`
+          ? `Регистрация до ${closesAt}. Итог подведёт организатор после закрытия регистрации.`
           : `Регистрация до ${closesAt}. Итог — через пару минут после закрытия регистрации.`,
         raffle.registered
           ? "<b>Ты зарегистрирован.</b> Отменить регистрацию можно до её закрытия."
@@ -85,7 +106,11 @@ export function raffleParagraphs(
     case "closing":
       return [
         ...prizeLine(raffle),
-        `Регистрация закрыта ${closesAt}: билеты получают номера.`,
+        // Ручной итог (PER-799): после закрытия ждут организатора, а не
+        // номеров и жеребьёвки.
+        raffle.drawnByHand === true
+          ? `Регистрация закрыта ${closesAt}, итог подведёт организатор.`
+          : `Регистрация закрыта ${closesAt}: билеты получают номера.`,
         raffle.registered
           ? "Ты зарегистрирован: номер билета появится, когда пул зафиксируют."
           : "Ты не зарегистрирован.",
@@ -280,7 +305,9 @@ function winnerLine(raffle: RaffleView): string {
 // нет строки: экран итога прежней формы момента не выдумывает.
 function drawnAtLine(raffle: RaffleView, options: RaffleTextOptions): string[] {
   if (raffle.drawnAt === undefined) return [];
-  const moment = escapeHtml(options.moment(raffle.drawnAt));
+  const moment = escapeHtml(
+    (options.eventMoment ?? options.moment)(raffle.drawnAt),
+  );
   return [
     raffle.drawnByHand === true ? `Итог: ${moment}` : `Жеребьёвка: ${moment}`,
   ];

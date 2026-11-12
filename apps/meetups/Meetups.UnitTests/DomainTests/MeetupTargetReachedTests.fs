@@ -58,4 +58,4 @@ let ``A matching schedule on a concurrently cancelled meetup is not a reached ta
 /// публикации.
 [<Fact>]
 let ``A visible meetup is a reached target for publication even when cancelled`` () =
-    test <@ Meetup.targetReached (MeetupPublished Sample.fixedNow) (Existing Sample.cancelledVisible) = true @>
+    test <@ Meetup.targetReached (MeetupPublished(Sample.fixedNow, false)) (Existing Sample.cancelledVisible) = true @>

@@ -48,6 +48,7 @@ function snapshot(
     status,
     hidden: false,
     launchedWindows: [],
+    happyHourPeriods: [],
     // Реестр Auction отдаёт без порядка.
     lots: [lot(lampId, "Лампа"), lot(vaseId, "Ваза"), lot(mugId, "Кружка")],
     lotSets: [],

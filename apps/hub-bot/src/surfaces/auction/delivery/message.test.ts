@@ -442,6 +442,39 @@ describe("prediction results notice", () => {
   });
 });
 
+// Входы анонса финала (PER-833) бот аукциона кодирует следом дерева.
+describe("final notice entries", () => {
+  const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+  const intentOf = (data: string | undefined) => {
+    const parsed = parseAuctionCallback(parseTraceCallback(data ?? "") ?? "");
+    return parsed.ok ? parsed.intent : undefined;
+  };
+
+  it("leads from the lineup to the prediction round 2 and to the auction", () => {
+    const message = renderNotification({
+      kind: "final-lineup",
+      auctionId,
+      lineup: [{ lotId, price: { minorUnits: 50_000, currency: "RUB" } }],
+      yourLotIds: [],
+    });
+    const row = message.rows?.[0];
+    expect(row?.map((button) => intentOf(button.callback_data))).toEqual([
+      { kind: "prediction", auctionId, round: "final" },
+      { kind: "root", auctionId },
+    ]);
+  });
+
+  it("leads from the started final to the feed when no lot is known", () => {
+    const message = renderNotification({ kind: "final-started", auctionId });
+    const button = message.rows?.[0]?.[0];
+    expect(intentOf(button?.callback_data)).toEqual({
+      kind: "feed",
+      auctionId,
+      page: 0,
+    });
+  });
+});
+
 describe("raffle result", () => {
   const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
   const result = (

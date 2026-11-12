@@ -114,8 +114,10 @@ export function startWaiting(ctx: Context): Waiting {
     // только с её концом: до него крутится кнопка, держится «печатает…», а
     // на нажатие отвечает сторож (дизайн-код, «Показ фото лота»).
     // Отказ Telegram на изображение — ещё не результат: карточку следом везёт
-    // текстовая доставка, и ответ уйдёт с ней.
-    if (carriesUpload(payload)) {
+    // текстовая доставка, и ответ уйдёт с ней. Копия поста чата медиа ботов
+    // (PER-774) — так же: пост удалён — и на нажатие ещё можно ответить
+    // всплывающим «видео недоступно».
+    if (carriesUpload(payload) || method === "copyMessage") {
       const response = await prev(method, payload, signal);
       if (response.ok) await show();
       return response;

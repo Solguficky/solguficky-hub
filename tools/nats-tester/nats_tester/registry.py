@@ -4,9 +4,11 @@
 `docs/architecture/integration.md` и `NATS_PROTO_FILES` в `proto_sources.py`.
 
 Схемы `identity/v1/identity_service.proto`, `meetups/v1/meetups_service.proto`,
-`notifications/v1/notifications_service.proto` и `auction/v1/auction_service.proto`
+`notifications/v1/notifications_service.proto`, `auction/v1/auction_service.proto`
+и `achievements/v1/achievements_service.proto`
 обслуживают gRPC и в реестр не попадают: subject у них не бывает. Классы
-`meetups/v1/meetups.proto`, `identity/v1/access.proto` и `auction/v1/auction.proto`
+`meetups/v1/meetups.proto`, `identity/v1/access.proto`, `auction/v1/auction.proto`
+и `achievements/v1/achievements.proto`
 собираются как payload: их импортируют схемы событий своих доменов, и без них
 те не импортируются.
 
@@ -27,6 +29,7 @@ from typing import Type
 
 from google.protobuf.message import Message
 
+from nats_tester.generated.achievements.v1 import achievements_events_pb2
 from nats_tester.generated.auction.v1 import auction_events_pb2
 from nats_tester.generated.identity.v1 import identity_events_pb2
 from nats_tester.generated.meetups.v1 import meetups_events_pb2
@@ -55,7 +58,10 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.meetups.meetup_cancelled': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_material_attached': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_material_removed': meetups_events_pb2.MeetupEvent,
+    'events.meetups.materials_reordered': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_held': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_organizer_appointed': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_organizer_dismissed': meetups_events_pb2.MeetupEvent,
     'events.auction.lot_opened': auction_events_pb2.LotEvent,
     'events.auction.bid_placed': auction_events_pb2.LotEvent,
     'events.auction.ask_advanced': auction_events_pb2.LotEvent,
@@ -68,6 +74,7 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.lot_drafted': auction_events_pb2.LotEvent,
     'events.auction.lot_scheduled': auction_events_pb2.LotEvent,
     'events.auction.step_window_added': auction_events_pb2.LotEvent,
+    'events.auction.step_window_changed': auction_events_pb2.LotEvent,
     'events.auction.participant_removed': auction_events_pb2.LotEvent,
     'events.auction.auction_drafted': auction_events_pb2.AuctionEvent,
     'events.auction.auction_scheduled': auction_events_pb2.AuctionEvent,
@@ -86,11 +93,13 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.lot_set_collected': auction_events_pb2.AuctionEvent,
     'events.auction.auction_published': auction_events_pb2.AuctionEvent,
     'events.auction.auction_hidden': auction_events_pb2.AuctionEvent,
+    'events.auction.invoice_payment_due_changed': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_issued': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_paid': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_handed_over': auction_events_pb2.InvoiceEvent,
     'events.auction.raffle_drawn': auction_events_pb2.RaffleEvent,
     'events.auction.prediction_results_settled': auction_events_pb2.PredictionResultsEvent,
+    'events.achievements.achievement_granted': achievements_events_pb2.AchievementGrantEvent,
 }
 
 COMMAND_TYPES: dict[str, Type[Message]] = {}

@@ -59,6 +59,7 @@ let private occasions =
         "meetup_publication_scheduled", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupPublicationScheduled
         "meetup_publication_cancelled", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupPublicationCancelled
         "meetup_cancelled", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupCancelled
+        "materials_reordered", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MaterialsReordered
         "meetup_held", None, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupHeld
         "meetup_material_attached", Some materialGuid, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupMaterialAttached
         "meetup_material_removed", Some materialGuid, Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupMaterialRemoved
@@ -77,6 +78,73 @@ let ``Every occasion of the dictionary becomes its own branch of the envelope`` 
             cases = (occasions
                      |> List.map (fun (_, _, expected) -> expected))
         @>
+
+[<Fact>]
+let ``The reordered occasion carries materials in the snapshot order`` () =
+    let second =
+        { Sample.material with
+            Id = Sample.otherMaterialId
+            Position = 2
+            Title = "Фотография"
+        }
+
+    let two =
+        Meetup.apply (Existing Sample.withMaterial) (MeetupMaterialAttached second)
+
+    let reordered =
+        Meetup.apply
+            (Existing two)
+            (MaterialsReordered
+                [
+                    Sample.otherMaterialId
+                    Sample.materialId
+                ])
+
+    let message = Envelope.ofPending (pending "materials_reordered" reordered None)
+
+    let materialIds =
+        message.State.Materials
+        |> Seq.map (fun material -> material.Id)
+        |> Seq.toList
+
+    test
+        <@
+            message.OccasionCase = Meetups.V1.MeetupEvent.OccasionOneofCase.MaterialsReordered
+            && materialIds = [
+                "0199c0de-0000-7000-8000-0000000000a2"
+                "0199c0de-0000-7000-8000-0000000000a1"
+            ]
+        @>
+
+[<Fact>]
+let ``A silent first publication carries silent on the published occasion`` () =
+    let snapshot = Meetup.toSnapshot Sample.published
+    let (MeetupId meetupId) = snapshot.Id
+
+    let event: PendingEvent =
+        {
+            EventId = eventId
+            MeetupId = meetupId
+            Version = snapshot.Version
+            EventType = "meetup_published"
+            Payload = MeetupEventPayload.ofEvent (MeetupPublished(Sample.fixedNow, true)) snapshot
+            PerformedBy = Guid.Parse "0199c0de-0000-7000-8000-000000000001"
+            OccurredAt = occurredAt
+            RequestId = None
+            MaterialId = None
+        }
+
+    let message = Envelope.ofPending event
+
+    test
+        <@
+            message.OccasionCase = Meetups.V1.MeetupEvent.OccasionOneofCase.MeetupPublished
+            && message.MeetupPublished.Silent
+        @>
+
+[<Fact>]
+let ``A notifying first publication leaves silent unset`` () =
+    test <@ (Envelope.ofPending (pending "meetup_published" Sample.published None)).MeetupPublished.Silent = false @>
 
 [<Fact>]
 let ``The subject is the occasion under the stream prefix`` () =

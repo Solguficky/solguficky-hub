@@ -99,19 +99,28 @@ object SnapshotMapping {
   }
 
   /**
-   * Действующее окно несёт шаг, который действует. Окно, которое при текущей цене шаг не снижает, участнику не
-   * показывается: на дешёвых порогах `Tiered` оно ничего не меняет, и видно оно только в пульте (RFC-011, П-03).
+   * Действующее окно несёт шаг, который действует, и стартовую цену, пока лот без ставок и она ниже обычной. Окно,
+   * которое при текущей цене ничего не меняет, участнику не показывается: на дешёвых порогах `Tiered` шаг окна не ниже
+   * обычного, а стартовая окна после первой ставки не действует, и видно оно только в пульте (RFC-011, П-03; ADR-047,
+   * дополнение 2026-10-27).
    */
   private def active(trading: TradingState, current: StepWindow, at: Instant): Option[wire.LotStepWindow] = {
     val step = Lot.step(trading, trading.currentPrice, at)
-    Option.when(step != Lot.baseStep(trading, trading.currentPrice))(window(current).withStep(LotValues.money(step)))
+    val lowered = Option.when(step != Lot.baseStep(trading, trading.currentPrice))(LotValues.money(step))
+    val opening = Lot.openingPrice(trading, at)
+    // Стартовая окна показывается, только пока она и есть следующая цена: объявленный ask выше неё её перекрывает.
+    val start = Option.when(opening != trading.currentPrice && Lot.minRequired(trading, at) == opening)(
+      LotValues.money(opening)
+    )
+    Option.when(lowered.isDefined || start.isDefined)(window(current).copy(step = lowered, start = start))
   }
 
   private def window(value: StepWindow): wire.LotStepWindow =
     wire.LotStepWindow(
       from = LotValues.instant(value.from),
       until = LotValues.instant(value.until),
-      step = Some(LotValues.money(value.step))
+      step = value.step.map(LotValues.money),
+      start = value.start.map(LotValues.money)
     )
 
   private def lotSet(view: LotSetView, names: Map[ParticipantId, DisplayName]): wire.LotSetMembership =

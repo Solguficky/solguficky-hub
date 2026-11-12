@@ -141,7 +141,7 @@ object PredictionMapping {
       case _ => Left(FormError("round"))
     }
 
-  private def roundOf(round: PredictionRound): wire.PredictionRound =
+  private[grpc] def roundOf(round: PredictionRound): wire.PredictionRound =
     round match {
       case PredictionRound.Catalog => wire.PredictionRound.PREDICTION_ROUND_CATALOG
       case PredictionRound.Final => wire.PredictionRound.PREDICTION_ROUND_FINAL

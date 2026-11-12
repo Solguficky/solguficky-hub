@@ -36,6 +36,11 @@
           ]
         }
       ]
-    }
+    },
+    "promoVideo": null,
+    "happyHourPeriodCreated": null,
+    "happyHourPeriodDeleted": null,
+    "happyHourLotTermsSet": null,
+    "happyHourLotTermsCleared": null
   }
 }

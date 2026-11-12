@@ -193,7 +193,7 @@ func TestAdmitMemberClosesGuestApplicationByGrant(t *testing.T) {
 	if got := decide(t, svc.AdmitApplication, adminID, memberID).GetOutcome(); got != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_ADMITTED {
 		t.Fatalf("outcome = %v, want ADMITTED", got)
 	}
-	assertRightSet(t, resolveDirect(t, svc, 9662, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resolveDirect(t, svc, 9662, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	assertApplicationOutcome(t, db, guestApplicationID, outcomeClosedByGrant, adminID)
 	assertAdmissions(t, db, applicantID, queueCommunity)
 }
@@ -347,7 +347,7 @@ func TestReconsiderDeclinedAdmitsToHub(t *testing.T) {
 	if err != nil || !reconsidered.GetChanged() {
 		t.Fatalf("reconsider: changed=%t error=%v", reconsidered.GetChanged(), err)
 	}
-	assertRightSet(t, resolveDirect(t, svc, 9712, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resolveDirect(t, svc, 9712, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	assertRefused(t, svc, adminID)
 	assertAdmissions(t, db, applicantID, queueCommunity)
 }

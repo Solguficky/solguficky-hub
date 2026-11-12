@@ -6,6 +6,7 @@ import {
   type NotificationSender,
   type SendResult,
 } from "../../../core/delivery/index.js";
+import type { MediaChat } from "../../../core/media-chat.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
 import { renderAuctionAnnouncement } from "../../../core/notifications/auction-announcement-notice.js";
 import { renderAuctionCancelledNotice } from "../../../core/notifications/auction-cancelled-notice.js";
@@ -16,9 +17,18 @@ import type {
 } from "../../../core/notifications/invoice-notice.js";
 import type {
   LotNotice,
+  LotNoticeButton,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
 import { renderLotSetNotice } from "../../../core/notifications/lot-set-notice.js";
+import {
+  type AnnouncementPhotos,
+  announcementButtonData,
+  noAnnouncementPhotos,
+  type OrganizerAnnouncement,
+  renderOrganizerAnnouncement,
+  sendOrganizerAnnouncement,
+} from "../../../core/notifications/organizer-announcement.js";
 import { renderPredictionResultsNotice } from "../../../core/notifications/prediction-results-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
 import type { StepWindowNotice } from "../../../core/notifications/step-window-notice.js";
@@ -133,9 +143,13 @@ export type OutgoingNotification =
       | FinalNotice
       | StepWindowNotice
       | InvoiceNotice
+      | OrganizerAnnouncement
       | { kind: "release-summary" }
     >
   | AccessRequestView
+  // Объявление аукциона (PER-765): фото лота отправитель читает правами
+  // получателя, поэтому рендер доставки кладёт его рядом.
+  | (OrganizerAnnouncement & { viewerId?: string })
   | { kind: "lot-notice"; view: LotNoticeView }
   // Напоминание о счёте (PER-322) приходит собранным: название лота читается
   // у Auction до отправителя.
@@ -244,6 +258,23 @@ export function renderNotification(
       ),
     };
   }
+  if (content.kind === "organizer-announcement") {
+    // Объявление аукциона (PER-765): текст организатора простым текстом, как
+    // объявление сообществу, и кнопка следа на экран дерева новым сообщением.
+    const view = renderOrganizerAnnouncement(content);
+    return {
+      text: view.text,
+      keyboard:
+        view.button === undefined
+          ? undefined
+          : new InlineKeyboard().text(
+              view.button.text,
+              traceCallback(
+                `v1:${announcementButtonData(view.button).slice(3)}`,
+              ),
+            ),
+    };
+  }
   if (content.kind === "lot-set-collected") {
     // Собранный сет (PER-687): весть простым текстом, как итог розыгрыша, так
     // что имя сета от организатора экранировать не нужно; кнопка следа
@@ -273,9 +304,14 @@ export function renderNotification(
       ),
     };
   }
-  if (content.kind === "new-auction" || content.kind === "trading-opened") {
-    // Вести о новом аукционе и об открытии торгов (PER-646): кнопка следа —
-    // корень аукциона или его лента, экран придёт новым сообщением.
+  if (
+    content.kind === "new-auction" ||
+    content.kind === "trading-opened" ||
+    content.kind === "step-window-announced"
+  ) {
+    // Вести о новом аукционе, об открытии торгов (PER-646) и общая весть о
+    // начале «Счастливых часов» (PER-766): кнопка следа — корень аукциона или
+    // его лента, экран придёт новым сообщением.
     const view = renderAuctionAnnouncement(content, timeZone);
     return {
       text: view.text,
@@ -433,10 +469,30 @@ export function renderNotification(
   }
 }
 
+// Намерение дерева за кнопкой вести (PER-833): лот, лента, корень аукциона и
+// раунд 2 прогнозов — те же кнопки, что в дереве.
+function noticeIntent(
+  button: Exclude<LotNoticeButton, { kind: "frequency" }>,
+): Parameters<typeof encodeAuctionCallback>[0] {
+  switch (button.kind) {
+    case "lot":
+      return { kind: "lot", lotId: button.lotId, page: 0 };
+    case "feed":
+      return { kind: "feed", auctionId: button.auctionId, page: 0 };
+    case "auction":
+      return { kind: "root", auctionId: button.auctionId };
+    case "predictions":
+      return {
+        kind: "prediction",
+        auctionId: button.auctionId,
+        round: "final",
+      };
+  }
+}
+
 // Кнопки общего рендера — следы хаба: лот — кнопка лота аукционного дерева,
 // частота — «Аукцион» в «Настройки» → «Расширения» (PER-605). Карточка и
-// экран приходят новым сообщением, уведомление остаётся в истории. У анонса
-// финала без своих лотов и у старта финала рядов нет — и клавиатуры тоже.
+// экран приходят новым сообщением, уведомление остаётся в истории.
 function lotKeyboard(view: LotNoticeView): InlineKeyboard | undefined {
   if (view.rows.length === 0) return undefined;
   return InlineKeyboard.from(
@@ -445,9 +501,9 @@ function lotKeyboard(view: LotNoticeView): InlineKeyboard | undefined {
         InlineKeyboard.text(
           button.text,
           traceCallback(
-            button.kind === "lot"
-              ? `v1:${encodeAuctionCallback({ kind: "lot", lotId: button.lotId, page: 0 }).slice(3)}`
-              : "v1:notify:outbid",
+            button.kind === "frequency"
+              ? "v1:notify:outbid"
+              : `v1:${encodeAuctionCallback(noticeIntent(button)).slice(3)}`,
           ),
         ),
       ),
@@ -659,7 +715,11 @@ function pad(part: number): string {
 
 export type SendMessageApi = Pick<
   Api,
-  "sendMessage" | "setMyCommands" | "deleteMyCommands"
+  | "sendMessage"
+  | "sendPhoto"
+  | "copyMessage"
+  | "setMyCommands"
+  | "deleteMyCommands"
 >;
 
 // Содержимое рисуется здесь же, при отправке: соседи для текста хабу не
@@ -671,6 +731,10 @@ export function createNotificationSender(
   auctionBotUsername?: string,
   today?: () => CommunityDay,
   timeZone = "UTC",
+  // Фото объявления аукциона (PER-765); нет — объявление уходит текстом.
+  photos?: AnnouncementPhotos,
+  // Чат медиа ботов: своё фото или видео объявления (PER-776).
+  media?: MediaChat,
 ): NotificationSender<OutgoingNotification> {
   return {
     async send({ telegramUserId, message: content }) {
@@ -681,6 +745,31 @@ export function createNotificationSender(
         timeZone,
       );
       try {
+        if (
+          content.kind === "organizer-announcement" &&
+          ((content.photo !== undefined &&
+            content.viewerId !== undefined &&
+            photos !== undefined) ||
+            (content.post !== undefined && media !== undefined))
+        ) {
+          await sendOrganizerAnnouncement(
+            api,
+            Number(telegramUserId),
+            {
+              text: message.text,
+              ...(content.photo === undefined ? {} : { photo: content.photo }),
+              ...(content.post === undefined ? {} : { post: content.post }),
+            },
+            {
+              photos: photos ?? noAnnouncementPhotos,
+              media,
+              viewerId: content.viewerId ?? "",
+              markup: message.keyboard,
+              mark: screenMark("notification"),
+            },
+          );
+          return { kind: "sent" };
+        }
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
         // 52 битах, поэтому переход из bigint в number точен. Метка каталога —
         // чтобы линтер test kit видел и эту отправку: весть идёт мимо

@@ -148,6 +148,29 @@ public class MeetupPublishedFactTests
         (await Eventually(nats.PublishedFacts, facts => facts.Count == 2)).Count.ShouldBe(2);
     }
 
+    /// <summary>
+    /// Тихая первая публикация обновляет реплику, но адресного факта «новая
+    /// сходка» не даёт: сходка публична, шума в Telegram нет.
+    /// </summary>
+    [Fact]
+    public async Task When_SilentFirstPublication_Expect_ReplicaAppliedAndNoFact()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await Person(db, MemberHolding);
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var published = EventFactory.Meetup(EventFactory.NewId(), version: 2);
+        published.MeetupPublished.Silent = true;
+        await nats.Publish(MeetupPublishedSubject, published);
+
+        await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.MeetupsSource, "applied")), count => count == 1);
+        (await Facts(db)).ShouldBe(0);
+        (await nats.PublishedFacts()).ShouldBeEmpty();
+    }
+
     [Fact]
     public async Task When_UnpublishedAndRepublished_Expect_NoSecondNewMeetupFact()
     {

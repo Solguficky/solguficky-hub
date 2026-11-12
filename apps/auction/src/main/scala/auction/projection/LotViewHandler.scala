@@ -15,6 +15,7 @@ import org.apache.pekko.serialization.jackson.JacksonObjectMapperProvider
 
 import java.sql.Connection
 import java.sql.Timestamp
+import java.time.Instant
 import java.util.UUID
 import scala.util.Using
 
@@ -72,7 +73,7 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
           folded.participants.distinct.foreach(addParticipant(connection, lotId, _))
           folded.startingPrice.foreach(recordStartingPrice(connection, lotId, _))
           folded.heldPrice.foreach(recordHeldPrice(connection, lotId, _))
-          folded.resumedSequence.foreach(recordResumed(connection, lotId, _))
+          folded.resumedSequence.foreach(recordResumed(connection, lotId, _, folded.resumedAt))
           folded.removals.foreach(recordRemoval(connection, _))
       }
     }
@@ -151,16 +152,18 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
       statement.executeUpdate()
     }
 
-  // Номер `LotResumed`: ставки финала — строки `lot_bid` с номером больше него. Возврат в торги у лота один.
-  private def recordResumed(connection: Connection, lotId: UUID, sequence: Long): Unit =
+  // Номер `LotResumed`: ставки финала — строки `lot_bid` с номером больше него. Возврат в торги у лота один. Время
+  // возврата (PER-819) читает экран зала: «лот в торгах уже столько-то».
+  private def recordResumed(connection: Connection, lotId: UUID, sequence: Long, at: Option[Instant]): Unit =
     Using.resource(
       connection.prepareStatement(
-        """INSERT INTO lot_resume (lot_id, sequence) VALUES (?, ?)
-          |ON CONFLICT (lot_id) DO UPDATE SET sequence = EXCLUDED.sequence""".stripMargin
+        """INSERT INTO lot_resume (lot_id, sequence, occurred_at) VALUES (?, ?, ?)
+          |ON CONFLICT (lot_id) DO UPDATE SET sequence = EXCLUDED.sequence, occurred_at = EXCLUDED.occurred_at""".stripMargin
       )
     ) { statement =>
       statement.setObject(1, lotId)
       statement.setLong(2, sequence)
+      statement.setTimestamp(3, at.map(Timestamp.from).orNull)
       statement.executeUpdate()
     }
 
@@ -168,7 +171,8 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
     Using.resource(
       connection.prepareStatement(
         """INSERT INTO lot_bid (lot_id, sequence, bid_id, participant_id, minor_units, currency, origin, source,
-          |occurred_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (lot_id, sequence) DO NOTHING""".stripMargin
+          |occurred_at, window_start_minor_units) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          |ON CONFLICT (lot_id, sequence) DO NOTHING""".stripMargin
       )
     ) { statement =>
       statement.setObject(1, bid.lotId)
@@ -180,6 +184,10 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
       statement.setString(7, bid.origin)
       statement.setString(8, bid.source.orNull)
       statement.setTimestamp(9, Timestamp.from(bid.occurredAt))
+      bid.windowStart match {
+        case Some(start) => statement.setLong(10, start)
+        case None => statement.setNull(10, java.sql.Types.BIGINT)
+      }
       statement.executeUpdate()
     }
 }

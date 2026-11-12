@@ -103,11 +103,11 @@ describe("eventsScreen", () => {
       "Europe/Moscow",
       today,
     );
-    expect(screen.text).toContain("🔨 Аукцион: идёт финал");
+    expect(screen.text).toContain("🏷️ Аукцион: идёт финал");
     const buttons = screen.keyboard.inline_keyboard.map((row) =>
       row.map((button) => button.text),
     );
-    expect(buttons).toEqual([["🔨 Аукцион"], ["‹ Меню"]]);
+    expect(buttons).toEqual([["🏷️ Аукцион"], ["‹ Меню"]]);
   });
 
   it("says that nothing goes when there is no event", () => {

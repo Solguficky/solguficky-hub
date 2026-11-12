@@ -1,9 +1,4 @@
-import type {
-  AuctionBlock,
-  FulfillmentMethod,
-  InvoiceItem,
-  Money,
-} from "./auction-ui/index.js";
+import type { AuctionBlock, InvoiceItem, Money } from "./auction-ui/index.js";
 import { money, truncate } from "./core/format.js";
 
 // Тексты счетов победителя (PER-322) общие у обеих поверхностей: счёт один,
@@ -19,28 +14,12 @@ export const invoiceMissingTitle = "Счёт не найден";
 
 const instructionsHeading = "<b>Как оплатить и получить</b>";
 const noInstructions =
-  "Как оплатить и получить, организатор ещё не написал. Загляни сюда позже.";
-
-const FULFILLMENT_LABELS: Readonly<Record<FulfillmentMethod, string>> = {
-  pickup: "Самовывоз",
-  delivery: "Доставка",
-  digital: "Цифровая выдача",
-};
+  "Организатор добавит инструкцию по оплате не позже завершения аукциона. Она появится здесь.";
 
 export type InvoiceTextOptions = {
   // Момент RFC 3339 для чтения в поясе сообщества.
   moment: (instant: string) => string;
 };
-
-// Подпись кнопки способа: выбранный отмечен словом, а не знаком — знаки
-// кнопок держит словарь пиктограмм.
-export function fulfillmentLabel(
-  method: FulfillmentMethod,
-  chosen: FulfillmentMethod | undefined,
-): string {
-  const label = FULFILLMENT_LABELS[method];
-  return method === chosen ? `${label} · выбрано` : label;
-}
 
 // Подпись кнопки счёта в списке: название и сумма.
 export function invoiceLabel(item: InvoiceItem | undefined): string {
@@ -51,6 +30,8 @@ export function invoiceLabel(item: InvoiceItem | undefined): string {
 function statusLine(item: InvoiceItem, options: InvoiceTextOptions): string {
   switch (item.status) {
     case "awaiting-payment":
+      if (item.paymentDueAt === undefined)
+        return "срок оплаты начнётся после завершения аукциона";
       return `ждёт оплаты до ${options.moment(item.paymentDueAt)}`;
     case "paid":
       return "оплачен, ждёт выдачи";
@@ -122,18 +103,10 @@ export function invoiceParagraphs(
   options: InvoiceTextOptions,
 ): string[] {
   const { invoice } = block;
-  const notice =
-    block.notice === "fulfillment-chosen"
-      ? "Способ получения выбран — организатор видит его в сводке."
-      : block.notice === "fulfillment-frozen"
-        ? "Лот уже выдан — способ получения не меняется."
-        : undefined;
   return [
-    ...(notice === undefined ? [] : [notice]),
     [
       `Сумма: <b>${money(invoice.amount)}</b>`,
       `Статус: ${escapeHtml(statusLine(invoice, options))}`,
-      `Получение: ${invoice.fulfillment === undefined ? "способ не выбран" : FULFILLMENT_LABELS[invoice.fulfillment].toLowerCase()}`,
     ].join("\n"),
     instructionsParagraph(block.paymentInstructions),
   ];

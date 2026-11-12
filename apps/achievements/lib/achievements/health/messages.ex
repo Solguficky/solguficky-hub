@@ -1,8 +1,8 @@
 # Сообщения и сервис grpc.health.v1 (https://github.com/grpc/grpc-proto,
-# grpc/health/v1/health.proto) в DSL библиотеки protobuf. Схема не наша и
-# не меняется, своего генератора у сервиса пока нет: кодогенерацию из
-# contracts/proto приносит его контракт. Сервис объявлен без List и Watch —
-# пробы зовут только Check, а необъявленный метод отвечает UNIMPLEMENTED.
+# grpc/health/v1/health.proto) в DSL библиотеки protobuf. Схема не наша, не
+# меняется и в contracts/proto не лежит, поэтому генератор сервиса (buf.gen.yaml)
+# её не видит. Сервис объявлен без List и Watch — пробы зовут только Check, а
+# необъявленный метод отвечает UNIMPLEMENTED.
 
 defmodule Grpc.Health.V1.HealthCheckResponse.ServingStatus do
   @moduledoc false

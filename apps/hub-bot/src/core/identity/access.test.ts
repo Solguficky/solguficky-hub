@@ -15,6 +15,8 @@ describe("identity access vocabulary", () => {
         WireRight.ADMIT_BIDDERS,
         WireRight.MANAGE_MEETUPS,
         WireRight.GRANT_ADMINS,
+        WireRight.RUN_AUCTIONS,
+        WireRight.ORGANIZE_MEETUPS,
       ]),
     ).toEqual([
       "access-hub",
@@ -23,6 +25,8 @@ describe("identity access vocabulary", () => {
       "admit-bidders",
       "manage-meetups",
       "grant-admins",
+      "run-auctions",
+      "organize-meetups",
     ]);
   });
 

@@ -13,6 +13,8 @@ import type {
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoleSnapshot,
+  HappyHourLotTerms,
+  HappyHourPeriod,
   Invoice,
   InvoiceMark,
   Person,
@@ -501,6 +503,62 @@ export type LaunchStepWindowCommand = {
   lotIds: readonly string[];
 };
 
+// Периоды «Счастливых часов» и условия лотов в них (PER-787; контракт —
+// PER-785 и PER-786, ADR-047, дополнение 2026-10-27). Команды только в
+// онлайн-торгах и только до начала периода; повтор того же `opId` Auction
+// отвечает исходным ответом. Общие отказы у всех четырёх.
+type HappyHourCommonRefusal =
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "not-in-prebidding" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type CreateHappyHourPeriodResult =
+  | { kind: "ok"; period: HappyHourPeriod }
+  | { kind: "period-in-past" }
+  | { kind: "period-empty" }
+  | { kind: "period-outside-phase" }
+  | HappyHourCommonRefusal;
+
+export type DeleteHappyHourPeriodResult =
+  | { kind: "ok" }
+  | { kind: "period-not-found" }
+  | { kind: "period-started" }
+  | HappyHourCommonRefusal;
+
+// `step-not-lower` и `start-not-lower` несут обычное значение лота: отказ
+// называет его человеку.
+export type SetHappyHourLotTermsResult =
+  | { kind: "ok"; terms: HappyHourLotTerms }
+  | { kind: "period-not-found" }
+  | { kind: "period-started" }
+  | { kind: "terms-empty" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "lot-not-open" }
+  | { kind: "amount-invalid" }
+  | { kind: "step-not-lower"; regularStep?: Money }
+  | { kind: "start-not-lower"; regularStart?: Money }
+  | { kind: "windows-overlap"; from: string; until: string }
+  | HappyHourCommonRefusal;
+
+export type ClearHappyHourLotTermsResult =
+  | { kind: "ok" }
+  | { kind: "period-not-found" }
+  | { kind: "period-started" }
+  | { kind: "lot-not-in-auction" }
+  | HappyHourCommonRefusal;
+
+export type HappyHourLotTermsCommand = {
+  auctionId: string;
+  periodId: string;
+  lotId: string;
+  opId: string;
+  step?: Money;
+  start?: Money;
+};
+
 export type FinalistMark = { auctionId: string; lotId: string; opId: string };
 
 // Финал ведущего (PER-337; контракт — PER-475). Ведущий — администратор
@@ -587,7 +645,12 @@ export type DisplayNamesResult =
 export type FinalBidsResult =
   | {
       kind: "ok";
-      bids: readonly { amount: Money; participantId: string }[];
+      bids: readonly {
+        amount: Money;
+        participantId: string;
+        // Не онлайн-ставка человека (PER-834): ставка зала или автоставки.
+        origin?: "floor" | "proxy";
+      }[];
       names: Readonly<Record<string, string>>;
     }
   | AuctionFailure;
@@ -704,6 +767,16 @@ export type PaymentInstructionsResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// Промо-видео аукциона (PER-774, PER-781): задать, заменить и снять одной
+// командой. Ворота — сходка не отменена, как у команд пульта.
+export type PromoVideoResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 // Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
 // розыгрыша нет.
 export type ConsoleRaffleResult =
@@ -746,6 +819,22 @@ export type ChangeRafflePrizeResult =
   | { kind: "without-result" }
   | AuctionFailure;
 
+// Фото приза идущего розыгрыша (PER-773): поставить и убрать — тем же правилом,
+// что приз. Отказы изображения бывают только у постановки.
+export type RafflePrizePhotoResult =
+  | { kind: "ok"; raffle: RaffleView }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  | { kind: "raffle-not-found" }
+  | { kind: "already-drawn" }
+  | { kind: "without-result" }
+  | { kind: "image-too-large"; maxBytes: number }
+  | { kind: "unsupported-image" }
+  | { kind: "photo-conflict" }
+  | AuctionFailure;
+
 // Аукционы сообщества от запланированного до финала (`ListAuctions` ACTIVE):
 // по ним пульт узнаёт, у кого идут торги, до подтверждения открытия недели.
 export type ActiveAuctionsResult =
@@ -782,6 +871,27 @@ export type AuctionConsoles = {
     launch: LaunchStepWindowCommand,
     meta?: RpcMetadata,
   ): Promise<LaunchStepWindowResult>;
+  // Периоды «Счастливых часов» и условия лотов в них (PER-787).
+  createHappyHourPeriod(
+    person: Person,
+    period: { auctionId: string; opId: string; from: string; until: string },
+    meta?: RpcMetadata,
+  ): Promise<CreateHappyHourPeriodResult>;
+  deleteHappyHourPeriod(
+    person: Person,
+    period: { auctionId: string; opId: string; periodId: string },
+    meta?: RpcMetadata,
+  ): Promise<DeleteHappyHourPeriodResult>;
+  setHappyHourLotTerms(
+    person: Person,
+    terms: HappyHourLotTermsCommand,
+    meta?: RpcMetadata,
+  ): Promise<SetHappyHourLotTermsResult>;
+  clearHappyHourLotTerms(
+    person: Person,
+    terms: Omit<HappyHourLotTermsCommand, "step" | "start">,
+    meta?: RpcMetadata,
+  ): Promise<ClearHappyHourLotTermsResult>;
   // Повтор того же `opId` Auction принимает; новый ключ на открытом
   // аукционе — `not-scheduled`.
   startPrebidding(
@@ -916,6 +1026,18 @@ export type AuctionConsoles = {
     command: { auctionId: string; prize: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<ChangeRafflePrizeResult>;
+  // Фото приза идущего розыгрыша (PER-773): `photoId` — ключ повтора, его
+  // выводит край из ответа с фото; ключ снятия рождается на нажатие «Да».
+  setRafflePrizePhoto(
+    person: Person,
+    command: { auctionId: string; photoId: string; image: Uint8Array },
+    meta?: RpcMetadata,
+  ): Promise<RafflePrizePhotoResult>;
+  removeRafflePrizePhoto(
+    person: Person,
+    command: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<RafflePrizePhotoResult>;
   // Активные аукционы сообщества: слот торгов один (PER-603), и пульт
   // предупреждает об идущих торгах до подтверждения открытия (PER-618).
   activeAuctions(
@@ -988,6 +1110,13 @@ export type AuctionConsoles = {
     command: { auctionId: string; opId: string; text?: string },
     meta?: RpcMetadata,
   ): Promise<PaymentInstructionsResult>;
+  // Промо-видео аукциона (PER-774): номер поста в чате медиа ботов; без
+  // `postId` — снять. Повтор того же `opId` Auction принимает.
+  setPromoVideo(
+    person: Person,
+    command: { auctionId: string; opId: string; postId?: number },
+    meta?: RpcMetadata,
+  ): Promise<PromoVideoResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

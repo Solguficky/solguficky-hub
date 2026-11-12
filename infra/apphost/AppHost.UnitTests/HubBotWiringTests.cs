@@ -69,10 +69,45 @@ public class HubBotWiringTests
         environment.ShouldNotContainKey("BOT_MEDIA_CHANNEL_ID");
     }
 
+    /// <summary>Экран зала и стрим (PER-825): адреса как есть, без пробелов.</summary>
+    [Fact]
+    public async Task HubBot_GetsTheConfiguredHallLinks()
+    {
+        var environment = await EnvironmentAsync(
+            null,
+            hallScreenUrl: " https://hall.example.org/screen ",
+            hallStreamUrl: "https://stream.example.org/live");
+
+        environment["BOT_HALL_SCREEN_URL"].ShouldBe("https://hall.example.org/screen");
+        environment["BOT_STREAM_URL"].ShouldBe("https://stream.example.org/live");
+    }
+
+    /// <summary>Стрим необязателен: без его адреса нет только его переменной.</summary>
+    [Fact]
+    public async Task HubBot_WithoutStream_GetsOnlyTheScreenUrl()
+    {
+        var environment = await EnvironmentAsync(null, hallScreenUrl: "https://hall.example.org/screen");
+
+        environment.ShouldContainKey("BOT_HALL_SCREEN_URL");
+        environment.ShouldNotContainKey("BOT_STREAM_URL");
+    }
+
+    /// <summary>Без адресов бот стартует как прежде: кнопок нет.</summary>
+    [Fact]
+    public async Task HubBot_WithoutHallLinks_GetsNoVariables()
+    {
+        var environment = await EnvironmentAsync(null);
+
+        environment.ShouldNotContainKey("BOT_HALL_SCREEN_URL");
+        environment.ShouldNotContainKey("BOT_STREAM_URL");
+    }
+
     private static async Task<Dictionary<string, object>> EnvironmentAsync(
         string? auctionBotUsername,
         string? supportBotUsername = null,
-        string? mediaChannelId = null)
+        string? mediaChannelId = null,
+        string? hallScreenUrl = null,
+        string? hallStreamUrl = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -83,6 +118,8 @@ public class HubBotWiringTests
             [HubBotSetup.AuctionBotUsernameKey] = auctionBotUsername,
             [SupportBotLink.UsernameKey] = supportBotUsername,
             [BotMediaChannel.ChannelIdKey] = mediaChannelId,
+            [BotHallLinks.ScreenUrlKey] = hallScreenUrl,
+            [BotHallLinks.StreamUrlKey] = hallStreamUrl,
         });
         var profile = new ProfileConfig { Name = "hub", Services = ["hub-bot"], Infrastructure = [] };
         var bot = HubBotSetup.Configure(new ServiceGraphContext(builder, profile)).Resource;

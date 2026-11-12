@@ -31,7 +31,7 @@ Authentication в MVP выполняет Telegram, а доверенной гр�
 | ник Telegram | nullable-кэш для сверки состава человеком и для связи с организатором сходки и организатором аукциона; обновляется только при фактическом изменении и не хранит истории |
 | круг | одна активная запись `identity_circles`: `member` или `guest`; вторую активную строку отвергает схема. Ранга у круга нет: он решает аудиторию, а не допуск |
 | наборы | живые строки `identity_presets`: `admin`, `maintainer`; их может быть несколько |
-| права | `access_hub`, `place_bids`, `admit_bidders`, `manage_members`, `manage_meetups`, `grant_admins`, `run_auctions`: Identity выводит их из круга, наборов и активных записей `identity_rights`; любой допуск решает право |
+| права | `access_hub`, `place_bids`, `admit_bidders`, `manage_members`, `manage_meetups`, `grant_admins`, `run_auctions`, `organize_meetups`: Identity выводит их из круга, наборов и активных записей `identity_rights`; любой допуск решает право |
 | блокировка | обязательное булево поле `blocked`, отдельное от круга; блокировка отзывает круг, наборы и записи |
 | created_at / updated_at | служебные метки; `updated_at` меняется только вместе с ником |
 
@@ -55,10 +55,10 @@ Authentication в MVP выполняет Telegram, а доверенной гр�
 
 Модель доступа — круг без ранга, наборы и права с глаголом ([ADR о наборах](../decisions/ADR-065-circle-presets-and-verb-rights.md), RFC-016). Она заменила круги-ранги [ADR-043](../decisions/ADR-043-identity-roles-and-community-circles.md) и [ADR-064](../decisions/ADR-064-two-bots-by-audience-circle-and-rights.md), при которых сервисы решали одни вопросы по праву, другие по кругу, третьи по проекции `global_roles`.
 
-- **Круг** — `member` или `guest`, ровно один или никакого: строка `identity_circles`, вторую активную отвергает индекс `identity_circles_one_active`. Он решает аудиторию — какой бот отвечает человеку и в какую очередь ляжет заявка — и несёт права: `member` даёт `access_hub` и `place_bids`, `guest` — ничего. Ни одно решение о допуске круг не читает.
+- **Круг** — `member` или `guest`, ровно один или никакого: строка `identity_circles`, вторую активную отвергает индекс `identity_circles_one_active`. Он решает аудиторию — какой бот отвечает человеку и в какую очередь ляжет заявка — и несёт права: `member` даёт `access_hub`, `place_bids` и `organize_meetups` (миграция `020`, [ADR-076](../decisions/ADR-076-meetup-organizers.md), [PER-743](https://linear.app/anticnvm/issue/per-743)), `guest` — ничего. Ни одно решение о допуске круг не читает.
 - **Набор** — живая строка `identity_presets`: `admin` даёт `admit_bidders`, `manage_members`, `manage_meetups` и `run_auctions` (миграция `019`, [PER-651](https://linear.app/anticnvm/issue/per-651)), `maintainer` — `grant_admins`. Держатели набора получили `run_auctions` выводом прав, без строк и событий: реплика потребителя узнаёт о нём со следующим событием человека, как после переноса `017`. Набор выдаётся и снимается целиком, людям показывается его название, а ни один сервис его не проверяет. Наборы держатся одновременно.
 - **Запись** — право, выданное поштучно: `place_bids` гостю и `admit_bidders` участнику. Записью выдаются только они.
-- **Права** = права круга ∪ права наборов ∪ записи; у заблокированного прав нет. Вывод один — функции схемы `identity_carried_rights` (круг и наборы), `identity_access_rights` (с записями) и `identity_active_presets` из миграции `017`: их читают ответы `ResolveIdentity` и `RequestAccess`, `CheckAccessRight`, `ResolveOrganizerUsername`, право актора во всех операциях и снимок outbox. Права друг друга не подразумевают.
+- **Права** = права круга ∪ права наборов ∪ записи; у заблокированного прав нет. Вывод один — функции схемы `identity_carried_rights` (круг и наборы), `identity_access_rights` (с записями) и `identity_active_presets` из миграции `017` (состав круга и наборов в `identity_carried_rights` — с `020`): их читают ответы `ResolveIdentity` и `RequestAccess`, `CheckAccessRight`, `ResolveOrganizerUsername`, право актора во всех операциях и снимок outbox. Права друг друга не подразумевают.
 
 **Таблица выдачи** — данные `issuers` в `internal/server/access.go`, а не ветки обработчиков; запрет на каждую строку держит тест:
 
@@ -74,7 +74,7 @@ Authentication в MVP выполняет Telegram, а доверенной гр�
 
 Выдача круга идёт через одну функцию `grantCircleTxWithReason`. Выдача `member` заменяет круг гостя и снимает его запись `place_bids` — участник держит право кругом; выдача `guest` человеку без круга даёт круг с записью `place_bids`, гостю без записи — запись, а участнику холостая. Понижение `member` → `guest` снимает служебные записи и выдаёт `place_bids`. Выдача набора `admin` снимает запись `admit_bidders` — набор несёт право сам, — а снятие набора записи человека не трогает. Холостые операции событий не пишут.
 
-Хаб пускает по `access_hub`, ставки — по `place_bids`, очередь аукциона решает `admit_bidders`, очередь сообщества и состав — `manage_members`, сходки — `manage_meetups`, аукцион у сходки, пульт и каталог лотов — `run_auctions`, экран администраторов — `grant_admins`. Правила и коды ответов — [integration.md](../architecture/integration.md#круг-наборы-права-и-очереди).
+Хаб пускает по `access_hub`, ставки — по `place_bids`, очередь аукциона решает `admit_bidders`, очередь сообщества и состав — `manage_members`, сходки — `manage_meetups`, аукцион у сходки, пульт и каталог лотов — `run_auctions`, экран администраторов — `grant_admins`, заведение сходки и роль организатора — `organize_meetups`: право идёт с кругом `member`, наборы и записи его не выдают, а `GrantRight` с ним отвечает `INVALID_ARGUMENT`. Правила и коды ответов — [integration.md](../architecture/integration.md#круг-наборы-права-и-очереди).
 
 Самозаписи `guest` нет: вход в аукцион идёт через премодерацию, как и вход в хаб (раздел «Контроль состава сообщества»). Круг `guest` — курируемый факт: его выдал белый список или модератор торгов, но признаком знакомства с сообществом он не является.
 

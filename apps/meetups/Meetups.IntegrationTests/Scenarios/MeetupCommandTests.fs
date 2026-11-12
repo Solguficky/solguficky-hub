@@ -21,6 +21,106 @@ type MeetupCommandTests() =
     let fourthEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e4"
     let fifthEvent = Guid.Parse "0199c0de-0000-7000-8000-0000000000e6"
 
+    [<Fact>]
+    member _.``Reordered materials survive a new reader and retries leave one journal event``() =
+        use db = SchemaSql.applyIsolated ()
+        let dsn = db.ConnectionString
+        let id = MeetupId meetupId
+
+        let reordered =
+            use source = MeetupCommands.source dsn
+
+            MeetupCommands.create source firstEvent id MeetupCommands.administrator
+            |> ignore
+
+            MeetupCommands.attach
+                source
+                secondEvent
+                id
+                MeetupCommands.materialId
+                "Link"
+                (MessageLink "https://t.me/solguficky/42")
+            |> ignore
+
+            MeetupCommands.attach source thirdEvent id MeetupCommands.otherMaterialId "Photo" (FileId("photo", Photo))
+            |> ignore
+
+            let deps: Meetups.Slices.ReorderMaterials.Deps =
+                {
+                    Load = MeetupStore.load source
+                    Commit = MeetupStore.commit source
+                    Now = fun () -> MeetupCommands.now
+                    NewEventId = fun () -> fourthEvent
+                    RequestId = None
+                }
+
+            let command: Meetups.Slices.ReorderMaterials.Command =
+                {
+                    Id = id
+                    MaterialIds =
+                        [
+                            MeetupCommands.otherMaterialId
+                            MeetupCommands.materialId
+                        ]
+                    Viewer = MeetupCommands.administrator
+                    ExpectedVersion = 3L
+                }
+
+            let first =
+                Meetups.Slices.ReorderMaterials.execute deps command
+                |> MeetupCommands.run
+
+            let retry =
+                Meetups.Slices.ReorderMaterials.execute deps command
+                |> MeetupCommands.run
+
+            test <@ first = retry @>
+            first
+
+        use reader = MeetupCommands.source dsn
+        let stored = MeetupStore.load reader id |> MeetupCommands.run
+
+        let productRead =
+            MeetupReading.read reader MeetupCommands.administrator (MeetupReading.Scope.ById id)
+            |> MeetupCommands.run
+
+        let expectedIds =
+            [
+                MeetupCommands.otherMaterialId
+                MeetupCommands.materialId
+            ]
+
+        test
+            <@
+                stored
+                |> Option.map (fun snapshot ->
+                    snapshot.Materials
+                    |> List.map (fun material -> material.Id)
+                ) = Some expectedIds
+            @>
+
+        test
+            <@
+                stored
+                |> Option.map (fun snapshot ->
+                    snapshot.Materials
+                    |> List.map (fun material -> material.Position)
+                ) = Some [ 1; 2 ]
+            @>
+
+        test <@ stored |> Option.map Ok = Some reordered @>
+        test <@ productRead = MeetupReading.ReadResult.Snapshots(stored |> Option.toList) @>
+
+        test
+            <@
+                MeetupCommands.eventTypes dsn meetupId = [
+                    "meetup_created"
+                    "meetup_material_attached"
+                    "meetup_material_attached"
+                    "materials_reordered"
+                ]
+            @>
+
     /// Успешный путь доказывает единство транзакции сам по себе: у обеих строк одна
     /// и та же `xmin`. Адаптер, разложенный на две транзакции, краснеет здесь, не
     /// дожидаясь, пока кто-нибудь придумает ему отказ.

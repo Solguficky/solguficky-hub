@@ -7,8 +7,8 @@ namespace AppHost.Configuration.Services;
 
 /// <summary>
 /// Achievements — сквозной сервис ачивок на Elixir (ADR-077, дополнение
-/// 2026-10-26). Пока это скелет: база с миграциями, health по gRPC и релей
-/// outbox; контракта и вызывающих у него нет.
+/// 2026-10-26): реестр выдач в своей базе, акторы ачивок над AUCTION_EVENTS,
+/// релей outbox в ACHIEVEMENTS_EVENTS и чтения обоих ботов по gRPC (PER-752).
 /// </summary>
 internal static class AchievementsSetup
 {
@@ -37,9 +37,17 @@ internal static class AchievementsSetup
         // сигнал остановки DCP получает сама VM и останавливает дерево штатно —
         // ловушки `go run` и `sbt run` здесь нет. Зависимости кладёт
         // `just achievements-tools`.
+        // Код из contracts/proto в Git не лежит: его пишет buf плагином
+        // protoc-gen-elixir, который `just achievements-tools` кладёт в
+        // ~/.mix/escripts. Рецепт, а не buf напрямую: путь к плагину он
+        // добавляет в PATH сам, как у Identity шаг кодогенерации идёт до сборки.
+        var proto = context.Builder
+            .AddExecutable("achievements-proto", "just", RepositoryPaths.Root(context.Builder), "achievements-proto");
+
         var build = context.Builder
             .AddExecutable("achievements-build", "mix", achievementsPath, "compile")
-            .WithEnvironment("ELIXIR_ERL_OPTIONS", "+fnu");
+            .WithEnvironment("ELIXIR_ERL_OPTIONS", "+fnu")
+            .WaitForCompletion(proto);
 
         var achievements = context.Builder
             .AddExecutable(
@@ -56,6 +64,7 @@ internal static class AchievementsSetup
             .WithEnvironment("ELIXIR_ERL_OPTIONS", "+fnu")
             .WaitForCompletion(build);
 
+        proto.WithParentRelationship(achievements);
         build.WithParentRelationship(achievements);
 
         // Исполняемый файл получает OTLP-переменные только так.
@@ -84,14 +93,20 @@ internal static class AchievementsSetup
         where T : IResourceWithEnvironment, IResourceWithWaitSupport, IResourceWithEndpoints
     {
         return achievements
+            // Колонка Caller раздела «Achievements gRPC» integration.md (ADR-056):
+            // без полной таблицы сервис не стартует, поэтому она следует графу
+            // вызовов, а не составу профиля.
+            .AcceptCallers(context, AppHostNames.Resources.HubBot, AppHostNames.Resources.AuctionBot)
             // URI в форме libpq: режим TLS сервис переводит из sslmode сам.
             .BindConnection<T, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.AchievementsDb,
                 "ACHIEVEMENTS_DATABASE_URL",
                 PostgresConnection.Uri)
-            // Адрес шины для релея outbox. Узла nats в запуске нет — bind молчит,
-            // и сервис поднимается без релея: строки ждут в outbox.
+            // Адрес шины для релея outbox и акторов ачивок, которые читают
+            // AUCTION_EVENTS эфемерными потребителями с позиции из своей базы.
+            // Узла nats в запуске нет — bind молчит, и сервис поднимается без
+            // релея и акторов: строки ждут в outbox, стрим дочитается позже.
             .BindConnection<T, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.Nats,

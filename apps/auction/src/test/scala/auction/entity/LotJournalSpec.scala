@@ -104,9 +104,11 @@ final class LotJournalSpec
     "refuse step windows of an opening that break И-21 instead of trading on them" in {
       val body = storedEvent(openedWithWindows)
       val windows = body.event.lotOpened.flatMap(_.stepWindows).get
-      val foreign = windows.map(window => window.copy(step = window.step.copy(currency = "EUR")))
+      val foreign = windows.map(window => window.copy(step = window.step.map(_.copy(currency = "EUR"))))
+      val foreignStart = windows.map(window => window.copy(start = window.step.map(_.copy(currency = "EUR"))))
       val reversed = windows.map(window => window.copy(from = window.until, until = window.from))
-      for (broken <- List(foreign, reversed, windows ++ windows))
+      val empty = windows.map(window => window.copy(step = None, start = None))
+      for (broken <- List(foreign, foreignStart, reversed, empty, windows ++ windows))
         a[JournalCorrupted] should be thrownBy LotJournal.envelope(
           1,
           body.copy(event = body.event.copy(lotOpened = body.event.lotOpened.map(_.copy(stepWindows = Some(broken)))))
@@ -248,6 +250,62 @@ final class LotJournalSpec
 
       keepsGolden("step-window-added", stored)
       LotJournal.envelope(6, stored).event shouldBe added
+    }
+
+    "keep the stored form of a period window and of its removal equal to their golden files and read them back" in {
+      val period = WindowPeriod(new java.util.UUID(7L, 1L))
+      val window = StepWindow(
+        Instant.parse("2026-10-05T12:00:00Z"),
+        Instant.parse("2026-10-05T14:00:00Z"),
+        step = Some(money(50)),
+        start = Some(money(5000)),
+        period = Some(period)
+      )
+      val set = storedEvent(LotEvent.PeriodWindowSet(window), opN = 7)
+      val cleared = storedEvent(LotEvent.PeriodWindowCleared(period), opN = 8)
+
+      keepsGolden("period-window-set", set)
+      keepsGolden("period-window-cleared", cleared)
+      LotJournal.envelope(7, set).event shouldBe LotEvent.PeriodWindowSet(window)
+      LotJournal.envelope(8, cleared).event shouldBe LotEvent.PeriodWindowCleared(period)
+    }
+
+    "refuse a period window without its period instead of trading on it" in {
+      val period = Some(WindowPeriod(new java.util.UUID(7L, 1L)))
+      val window = StepWindow(deadline.minusSeconds(60), deadline, money(100)).copy(period = period)
+      val body = storedEvent(LotEvent.PeriodWindowSet(window))
+      val section = body.event.periodWindowSet.map(_.copy(period = None))
+      val bare = body.copy(event = body.event.copy(periodWindowSet = section))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, bare)
+    }
+
+    "keep the stored form of a window with a starting price and no step equal to its golden file and read it back" in {
+      val added = LotEvent.StepWindowAdded(
+        StepWindow(
+          Instant.parse("2026-10-05T12:00:00Z"),
+          Instant.parse("2026-10-05T14:00:00Z"),
+          step = None,
+          start = Some(money(5000))
+        )
+      )
+      val stored = storedEvent(added, opN = 6)
+
+      keepsGolden("step-window-added-with-start", stored)
+      LotJournal.envelope(6, stored).event shouldBe added
+    }
+
+    // Строки, записанные до стартовой цены окна (ADR-047, дополнение 2026-10-27): окно с одним шагом.
+    "read windows written before the starting price of a window as windows of a step alone" in {
+      val opening = write(kit.system, storedEvent(openedWithWindows))
+        .copy(bytes = golden("legacy/lot-opened-with-step-windows"))
+      LotJournal.envelope(1, read(kit.system, opening).asInstanceOf[StoredLotEvent]) shouldBe
+        Envelope(1, op(1), openedWithWindows)
+      val launched = LotEvent.StepWindowAdded(
+        StepWindow(Instant.parse("2026-10-05T12:00:00Z"), Instant.parse("2026-10-05T14:00:00Z"), money(100))
+      )
+      val row = write(kit.system, storedEvent(launched, opN = 6)).copy(bytes = golden("legacy/step-window-added"))
+      LotJournal.envelope(6, read(kit.system, row).asInstanceOf[StoredLotEvent]).event shouldBe launched
     }
 
     "refuse a launched window that ends before it starts instead of trading on it" in {

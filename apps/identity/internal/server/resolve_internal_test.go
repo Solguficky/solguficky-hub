@@ -68,6 +68,7 @@ func TestAccessWireNumbersAreStable(t *testing.T) {
 			5: "ACCESS_RIGHT_MANAGE_MEETUPS",
 			6: "ACCESS_RIGHT_GRANT_ADMINS",
 			7: "ACCESS_RIGHT_RUN_AUCTIONS",
+			8: "ACCESS_RIGHT_ORGANIZE_MEETUPS",
 		}},
 	} {
 		if len(tt.names) != len(tt.want) {

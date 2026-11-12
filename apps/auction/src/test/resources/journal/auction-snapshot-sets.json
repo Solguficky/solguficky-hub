@@ -29,7 +29,12 @@
         "lotSetSettled": null,
         "finalTime": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null,
+        "happyHourPeriodCreated": null,
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -53,7 +58,12 @@
         "lotSetSettled": null,
         "finalTime": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null,
+        "happyHourPeriodCreated": null,
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -77,7 +87,12 @@
         "lotSetSettled": null,
         "finalTime": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null,
+        "happyHourPeriodCreated": null,
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -106,7 +121,12 @@
         "lotSetSettled": null,
         "finalTime": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null,
+        "happyHourPeriodCreated": null,
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -161,7 +181,12 @@
         "lotSetSettled": null,
         "finalTime": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null,
+        "happyHourPeriodCreated": null,
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -183,7 +208,12 @@
         "lotSetSettled": null,
         "finalTime": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null,
+        "happyHourPeriodCreated": null,
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     },
     {
@@ -208,7 +238,12 @@
         },
         "finalTime": null,
         "paymentInstructions": null,
-        "lotLayout": null
+        "lotLayout": null,
+        "promoVideo": null,
+        "happyHourPeriodCreated": null,
+        "happyHourPeriodDeleted": null,
+        "happyHourLotTermsSet": null,
+        "happyHourLotTermsCleared": null
       }
     }
   ],
@@ -267,5 +302,8 @@
   ],
   "finalAt": null,
   "paymentInstructions": null,
-  "layout": null
+  "layout": null,
+  "promoVideo": null,
+  "happyHours": null,
+  "periodTerms": null
 }

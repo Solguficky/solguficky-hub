@@ -62,6 +62,7 @@ public static class FavoriteStore
 
     private const string PruneFavoritesSql = """
         DELETE FROM lot_favorite WHERE lot_id = ANY(@LotIds);
+        DELETE FROM lot_bidder WHERE lot_id = ANY(@LotIds);
         """;
 
     // Строка «аукцион закончен» живёт тот же горизонт от записи (PER-604).

@@ -83,6 +83,11 @@
       "commit": "da95f9cb15738222b9cc6f4e465924e03d616bb4",
       "tree_hash": "dcb133f6e77de01735157ac4068855a416ef8433"
     },
+    "typesafe-ai": {
+      "source": "github.com/typesafe-ai/skills/skills/typesafe-ai",
+      "commit": "302eea662c54bca6730873fe245bec1d69ebc23d",
+      "tree_hash": "1d7aa7574f194619b5189d96c6f79bdd4cc452f2"
+    },
     "unslop-ui": {
       "source": "github.com/jcarterjohnson/vibecoded-design-tells/skill",
       "commit": "f7c4aefc2c797a66e55b49354a93917ab60d33ac",
