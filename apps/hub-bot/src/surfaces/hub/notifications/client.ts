@@ -8,6 +8,7 @@ import type { ReleaseSummary as WireReleaseSummary } from "../../../../gen/notif
 import {
   NotificationsService,
   type AuctionNotificationPreferences as WireAuctionPreferences,
+  AuctionNoticeAudience as WireAudience,
   NotificationCategory as WireCategory,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
 import type {
@@ -15,6 +16,11 @@ import type {
   ProxyExplainerPort,
 } from "../../../auction-ui/index.js";
 import { createFavoritesPort } from "../../../core/notifications/favorites.js";
+import {
+  wireAnnouncementButton,
+  wireAnnouncementPhoto,
+  wireAnnouncementPost,
+} from "../../../core/notifications/organizer-announcement.js";
 import {
   auctionNotificationsOf,
   auctionNotificationsToWire,
@@ -27,6 +33,12 @@ import {
   type RpcMetadata,
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
+import type {
+  AnnouncementAudience,
+  AnnouncementCommand,
+  AnnouncementRefused,
+  AuctionAnnouncements,
+} from "../application/auction-announcements.js";
 import type {
   AuctionNotificationsResult,
   BroadcastAudienceCount,
@@ -56,6 +68,8 @@ type NotificationsRpc = Pick<
   | "broadcastToCommunity"
   | "previewMeetupBroadcast"
   | "previewCommunityBroadcast"
+  | "broadcastAuctionNotice"
+  | "previewAuctionNotice"
   | "reportReleaseNotes"
   | "listReleaseSummaries"
   | "getReleaseSummary"
@@ -74,6 +88,8 @@ export type NotificationsClient = Notifications & {
     meta?: RpcMetadata,
     onRefused?: (cause: unknown) => void,
   ): ProxyExplainerPort;
+  // Объявление аукциона (PER-765) на том же соединении.
+  announcements: AuctionAnnouncements;
   close(): void;
 };
 
@@ -112,8 +128,113 @@ export function createNotificationsClient(
         }),
         onRefused,
       ),
+    announcements: createAuctionAnnouncementsAdapter(rpc, timeoutMs),
     close: () => sessionManager.abort(),
   };
+}
+
+// Аудитория объявления (PER-778): «всем» уходит явным значением, а не
+// пустым полем.
+const wireAudiences: Readonly<Record<AnnouncementAudience, WireAudience>> = {
+  all: WireAudience.ALL,
+  "not-in-raffle": WireAudience.NOT_IN_RAFFLE,
+  "without-predictions": WireAudience.WITHOUT_PREDICTIONS,
+  "not-in-raffle-or-without-predictions":
+    WireAudience.NOT_IN_RAFFLE_OR_WITHOUT_PREDICTIONS,
+};
+
+// Объявление аукциона (PER-765, контракт PER-764): тот же механизм приёма и
+// счётчика, что у двух рассылок, и те же переводы отказов. Адресат —
+// сходка: связи «аукцион — сходка» у Notifications нет.
+export function createAuctionAnnouncementsAdapter(
+  rpc: Pick<
+    NotificationsRpc,
+    "broadcastAuctionNotice" | "previewAuctionNotice"
+  >,
+  timeoutMs = 3_000,
+): AuctionAnnouncements {
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
+  return {
+    async previewAuctionAnnouncement(person, meetupId, audience, meta) {
+      try {
+        const response = await rpc.previewAuctionNotice(
+          {
+            identityId: person.identityId,
+            meetupId,
+            audience: wireAudiences[audience],
+          },
+          options(meta),
+        );
+        return Number.isInteger(response.recipientCount) &&
+          response.recipientCount >= 0
+          ? { kind: "ok", recipientCount: response.recipientCount }
+          : { kind: "invalid", cause: response.recipientCount };
+      } catch (cause) {
+        return toAnnouncementFailure(cause);
+      }
+    },
+    async announceAuction(person, command, meta) {
+      try {
+        const response = await rpc.broadcastAuctionNotice(
+          {
+            identityId: person.identityId,
+            meetupId: command.meetupId,
+            id: command.announcementId,
+            body: command.text,
+            audience: wireAudiences[command.audience],
+            ...(command.button === undefined
+              ? {}
+              : { button: wireAnnouncementButton(command.button) }),
+            ...noticePhoto(command),
+          },
+          options(meta),
+        );
+        return { kind: "ok", created: response.created };
+      } catch (cause) {
+        return toAnnouncementFailure(cause);
+      }
+    },
+  };
+}
+
+// Источник фото в контракте один: пост чата медиа (PER-776) встаёт на место
+// фото лота, поэтому при обоих уходит пост.
+function noticePhoto(command: AnnouncementCommand) {
+  if (command.post !== undefined)
+    return { photo: wireAnnouncementPost(command.post) };
+  if (command.photo !== undefined)
+    return { photo: wireAnnouncementPhoto(command.photo) };
+  return {};
+}
+
+// `FAILED_PRECONDITION` объявления аукциона несёт три причины (PER-792), и
+// контракт различает их только текстом статуса Notifications
+// (`NotificationsGrpcService`): аукцион скрыт, аукцион или сходка закрыты,
+// фильтр аудитории не сузить. Текст, которого бот не знает, остаётся прежним
+// отказом `invalid`: это расхождение с сервисом, а не исход шага.
+function toAnnouncementFailure(
+  cause: unknown,
+): AnnouncementRefused | NotificationFailure {
+  if (cause instanceof ConnectError && cause.code === Code.FailedPrecondition) {
+    const message = cause.rawMessage;
+    if (message.startsWith("the audience cannot be narrowed")) {
+      return { kind: "refused", reason: "audience-gone" };
+    }
+    if (message === "the auction is hidden") {
+      return { kind: "refused", reason: "auction-hidden" };
+    }
+    if (
+      message === "the auction is cancelled" ||
+      message === "the auction is discarded" ||
+      message === "the meetup is cancelled"
+    ) {
+      return { kind: "refused", reason: "auction-closed" };
+    }
+  }
+  return toFailure(cause);
 }
 
 export function createNotificationsAdapter(

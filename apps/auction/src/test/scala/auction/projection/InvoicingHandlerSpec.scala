@@ -64,7 +64,7 @@ final class InvoicingHandlerSpec extends AnyWordSpec with Matchers {
 
   "the invoicing handler" should {
 
-    "issues an invoice for a sale with the price of the sale and the term of the auction from the sale" in {
+    "issues a meetup invoice immediately without starting its payment term" in {
       val ports = Ports()
       processed(ports, envelope(meetupAuction, sold)) shouldBe Done
       ports.asked.asScala.toList shouldBe List(meetupAuction)
@@ -74,7 +74,7 @@ final class InvoicingHandlerSpec extends AnyWordSpec with Matchers {
           lot,
           participant(1),
           money(125000),
-          Instant.parse("2026-10-11T21:00:00Z")
+          None
         )
       )
     }
@@ -90,7 +90,9 @@ final class InvoicingHandlerSpec extends AnyWordSpec with Matchers {
       val ports = Ports()
       processed(ports, envelope(testAuction, sold))
       ports.asked.asScala shouldBe empty
-      ports.issued.asScala.map(_._2.paymentDueAt).toList shouldBe List(soldAt.plus(AuctionConfig.PlatformPaymentTerm))
+      ports.issued.asScala.map(_._2.paymentDueAt).toList shouldBe List(
+        Some(soldAt.plus(AuctionConfig.PlatformPaymentTerm))
+      )
     }
 
     "sends nothing for an event that is not a sale" in {

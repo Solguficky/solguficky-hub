@@ -57,7 +57,9 @@
           "step": {
             "minorUnits": 100,
             "currency": "RUB"
-          }
+          },
+          "start": null,
+          "period": null
         }
       ]
     },
@@ -72,6 +74,8 @@
     "askAdvanced": null,
     "lotWithdrawn": null,
     "stepWindowAdded": null,
-    "participantRemoved": null
+    "participantRemoved": null,
+    "periodWindowSet": null,
+    "periodWindowCleared": null
   }
 }

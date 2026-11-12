@@ -4,14 +4,64 @@ import type { ExecuteRequest, ExecuteResult } from "./types.js";
 
 type MaterialRequest = Extract<
   ExecuteRequest,
-  { intent: "attach-material" | "remove-material" }
+  { intent: "attach-material" | "remove-material" | "move-material" }
 >;
 
 export function createMeetupMaterials(
-  meetups: Pick<Meetups, "attachMaterial" | "removeMaterial" | "get">,
+  meetups: Pick<
+    Meetups,
+    "attachMaterial" | "removeMaterial" | "reorderMaterials" | "get"
+  >,
 ) {
   return async (request: MaterialRequest): Promise<ExecuteResult> => {
     const meta = rpcMeta(request);
+    if (request.intent === "move-material") {
+      const current = await meetups.get(
+        request.identity,
+        request.meetupId,
+        meta,
+      );
+      if (current.kind !== "ok") {
+        return current.kind === "not-found"
+          ? { kind: "meetup-not-found" }
+          : failure(current);
+      }
+      const meetup = current.meetup;
+      // Не переносим действие со старой кнопки на перечитанный порядок.
+      if (meetup.version !== request.expectedVersion)
+        return { kind: "conflict", meetup };
+      const ids = meetup.materials.map((material) => material.id);
+      const index = ids.indexOf(request.materialId);
+      const target = index + (request.direction === "up" ? -1 : 1);
+      const material = ids[index];
+      const neighbor = ids[target];
+      if (index < 0 || material === undefined || neighbor === undefined) {
+        return { kind: "conflict", meetup };
+      }
+      ids[index] = neighbor;
+      ids[target] = material;
+      const result = await meetups.reorderMaterials({
+        person: request.identity,
+        meetupId: request.meetupId,
+        materialIds: ids,
+        expectedVersion: request.expectedVersion,
+        ...(meta === undefined ? {} : { meta }),
+      });
+      if (result.kind === "ok")
+        return { kind: "materials-reordered", meetup: result.meetup };
+      if (result.kind === "conflict") {
+        const fresh = await meetups.get(
+          request.identity,
+          request.meetupId,
+          meta,
+        );
+        if (fresh.kind === "ok")
+          return { kind: "conflict", meetup: fresh.meetup };
+        if (fresh.kind === "not-found") return { kind: "meetup-not-found" };
+        return failure(fresh);
+      }
+      return failure(result);
+    }
     const result =
       request.intent === "attach-material"
         ? await meetups.attachMaterial({

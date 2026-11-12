@@ -15,6 +15,7 @@ import type {
 } from "../auction/port.js";
 import { communityDay, communityInstant } from "../community-time.js";
 import type { ParticipantUsernameResolver } from "../identity/port.js";
+import type { Meetups } from "../meetups/port.js";
 import { fingerprint } from "./fingerprint.js";
 import { lotCurrency, parseRubles } from "./lot-form.js";
 import type {
@@ -447,8 +448,16 @@ const rafflePhases: ReadonlySet<ConsoleAuctionStatus> = new Set([
   "prebidding",
   "settling",
   "break",
+  "lineup-frozen",
   "finished",
 ]);
+// Статусы, в которых пульт читает текст оплаты для своей строки (PER-814).
+const paymentTextPhases: ReadonlySet<ConsoleAuctionStatus> = new Set([
+  "draft",
+  "scheduled",
+  "prebidding",
+]);
+
 /**
  * Сколько лотов держит состав финала в кнопке (PER-619): номер лота — знак
  * base36, и выбор порядка с отпечатком и страницей укладывается в 64 байта
@@ -676,6 +685,9 @@ export function createAuctionConsole(
   // Настоящий аккаунт названного человека (PER-648). Порт необязателен: без
   // Identity пульт показывает псевдоним, как раньше.
   usernames?: ParticipantUsernameResolver,
+  // Видимость сходки до открытия недели (PER-801). Порт необязателен: без
+  // Meetups пульт узнаёт о скрытой сходке только отказом «Да».
+  meetups?: Pick<Meetups, "get">,
 ) {
   type Read =
     | { kind: "ok"; console: AuctionConsoleView }
@@ -763,10 +775,12 @@ export function createAuctionConsole(
       });
     }
     const live = liveActive({ ...found.console, lots });
-    const [trading, raffle, leaders] = await Promise.all([
+    const [trading, raffle, leaders, meetup, paymentText] = await Promise.all([
       tradingOf(request, live),
       raffleOf(request, live),
       leadersOf(request, live),
+      meetupHiddenOf(request, live),
+      paymentTextOf(request, live),
     ]);
     const console = {
       ...live,
@@ -782,8 +796,65 @@ export function createAuctionConsole(
         ...console,
         ...(trading === undefined ? {} : { trading }),
         ...(raffle === undefined ? {} : { raffle }),
+        ...(meetup === "hidden" ? { meetupHidden: true as const } : {}),
+        ...(meetup === "published" ? { meetupPublished: true as const } : {}),
+        ...(paymentText === undefined ? {} : { paymentText }),
       },
     };
+  }
+
+  // Текст оплаты для строки пульта (PER-814): его задают до дедлайна недели, и
+  // строка говорит, задан ли он. Читается у Auction тем же чтением, что сводка
+  // счетов, пока торги впереди или идут; дальше строки нет, текст живёт в
+  // «Счетах». Отказ чтения пульт не роняет: строка скажет, что не проверила.
+  async function paymentTextOf(
+    request: AuctionConsoleRequest,
+    console: AuctionConsoleView,
+  ): Promise<"set" | "unset" | undefined> {
+    if (!paymentTextPhases.has(console.status)) return undefined;
+    try {
+      const found = await consoles.listAuctionInvoices(
+        request.identity,
+        request.auctionId,
+        rpcMeta(request),
+      );
+      if (found.kind !== "ok") return undefined;
+      return found.paymentInstructions === undefined ? "unset" : "set";
+    } catch {
+      return undefined;
+    }
+  }
+
+  // Скрытая сходка закрывает открытие онлайн-недели (ADR-047, дополнение
+  // 2026-10-12), а Auction говорит это только отказом «Да». Пульт до открытия
+  // недели читает сходку у Meetups сам (PER-801); отказ чтения пульт не
+  // роняет — страховкой остаётся отказ команды.
+  async function meetupHiddenOf(
+    request: AuctionConsoleRequest,
+    console: AuctionConsoleView,
+  ): Promise<"hidden" | "published" | undefined> {
+    const { meetupId } = console;
+    if (
+      meetups === undefined ||
+      meetupId === undefined ||
+      (console.status !== "draft" && console.status !== "scheduled")
+    ) {
+      return undefined;
+    }
+    try {
+      const meetup = await meetups.get(
+        request.identity,
+        meetupId,
+        rpcMeta(request),
+      );
+      if (meetup.kind !== "ok") return undefined;
+      // Отменённую сходку не публикуют: её отказ пульт называет сам.
+      if (meetup.meetup.lifecycle === "cancelled") return undefined;
+      // Опубликованную сходку видит чек-лист подготовки (PER-802).
+      return meetup.meetup.visibility === "hidden" ? "hidden" : "published";
+    } catch {
+      return undefined;
+    }
   }
 
   // Имена лидеров для строк пульта (прогон 14.10, №76) — одним чтением на
@@ -907,9 +978,11 @@ export function createAuctionConsole(
       lotId: active.lot.lotId,
       bids: bids.bids.map((bid) => {
         const name = bids.names[bid.participantId];
-        return name === undefined
-          ? { amount: bid.amount }
-          : { amount: bid.amount, name };
+        return {
+          amount: bid.amount,
+          ...(name === undefined ? {} : { name }),
+          ...(bid.origin === undefined ? {} : { origin: bid.origin }),
+        };
       }),
       ...(leaderName === undefined ? {} : { leaderName }),
     };
@@ -988,6 +1061,34 @@ export function createAuctionConsole(
       kind: "auction-console",
       console: accepted(current.console),
       ...(note === undefined ? {} : { note }),
+    };
+  }
+
+  // Экран «Оплата» (PER-834): пульт и сам текст оплаты. Отказ чтения текста
+  // экран не роняет: он скажет, что текста нет, а кнопка «Изменить текст»
+  // заменяет его целиком.
+  async function viewPayment(
+    request: AuctionConsoleRequest,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    let text: string | undefined;
+    try {
+      const found = await consoles.listAuctionInvoices(
+        request.identity,
+        request.auctionId,
+        rpcMeta(request),
+      );
+      if (found.kind === "ok") text = found.paymentInstructions;
+    } catch {
+      text = undefined;
+    }
+    return {
+      kind: "auction-console",
+      console: {
+        ...current.console,
+        ...(text === undefined ? {} : { paymentInstructions: text }),
+      },
     };
   }
 
@@ -1382,20 +1483,18 @@ export function createAuctionConsole(
         ? { ...result, noteLot: request.lotId }
         : result;
     switch (marked.kind) {
+      // Отметка переключается на месте (PER-834): исхода-подтверждения нет,
+      // экран «Финал» перерисовывается с новой подписью кнопки лота.
       case "ok":
         return aboutLot(
-          await after(
-            request,
-            request.selected ? "marked" : "unmarked",
-            (console) => ({
-              ...console,
-              lots: console.lots.map((each) =>
-                each.lot.lotId === request.lotId
-                  ? { ...each, markedForFinal: request.selected }
-                  : each,
-              ),
-            }),
-          ),
+          await after(request, undefined, (console) => ({
+            ...console,
+            lots: console.lots.map((each) =>
+              each.lot.lotId === request.lotId
+                ? { ...each, markedForFinal: request.selected }
+                : each,
+            ),
+          })),
         );
       case "refused":
         return aboutLot(await after(request, marked.reason));
@@ -1702,6 +1801,14 @@ export function createAuctionConsole(
     }
   }
 
+  // Открытие лота необратимо, как продажа: торги по нему начинаются сразу
+  // (PER-816). Подтверждение ничего не читает: «Да» — прежняя кнопка открытия.
+  function prepareOpen(
+    request: Extract<AuctionConsoleRequest, { intent: "prepare-final-open" }>,
+  ): ExecuteResult {
+    return { kind: "final-open-confirm", auctionId: request.auctionId };
+  }
+
   // Открыть следующий лот состава. Пока лот торгуется, следующего Auction не
   // открывает: пульт называет это строкой, а не открывает второй.
   async function startNextLot(
@@ -1911,6 +2018,9 @@ export function createAuctionConsole(
       auctionId: request.auctionId,
       position: request.position,
       opId: request.opId,
+      ...(request.position === (console.lineup?.order.length ?? 0) - 1
+        ? { last: true as const }
+        : {}),
       ...titled(entry),
       ...(status.leaderId === undefined ? {} : { price: status.currentPrice }),
       ...(leaderName === undefined ? {} : { leaderName }),
@@ -3006,6 +3116,8 @@ export function createAuctionConsole(
         return startFinal(request);
       case "start-final-lot":
         return startNextLot(request);
+      case "prepare-final-open":
+        return prepareOpen(request);
       case "ask-final-price":
         return askPrice(request);
       case "advance-final-ask":
@@ -3015,7 +3127,9 @@ export function createAuctionConsole(
       case "close-final-lot":
         return closeLot(request);
       case "view-auction-console":
-        return after(request, undefined);
+        return request.payment === true
+          ? viewPayment(request)
+          : after(request, undefined);
       case "view-day-summary":
         return daySummary(request);
       case "ask-auction-week":

@@ -1,6 +1,17 @@
 package auction.grpc
 
 import auction.aggregate.AskRefusal
+import auction.aggregate.Auction
+import auction.aggregate.HappyHourPeriod
+import auction.aggregate.HappyHourTerms
+import auction.aggregate.HappyHourTermsRefusal
+import auction.aggregate.HappyHourTermsClearingRefusal
+import auction.aggregate.SetHappyHourLotTermsRejected
+import auction.aggregate.ClearHappyHourLotTermsRejected
+import auction.aggregate.HappyHourRefusal
+import auction.aggregate.HappyHourDeletionRefusal
+import auction.aggregate.CreateHappyHourPeriodRejected
+import auction.aggregate.DeleteHappyHourPeriodRejected
 import auction.aggregate.AuctionState
 import auction.aggregate.CancellationRefusal
 import auction.aggregate.CloseAuctionLotRejected
@@ -25,6 +36,7 @@ import auction.aggregate.LotSetRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.ParticipantRemovalRefusal
 import auction.aggregate.PaymentInstructionsRefusal
+import auction.aggregate.PromoVideoRefusal
 import auction.aggregate.RemovalRefusal
 import auction.aggregate.SchedulingRefusal
 import auction.aggregate.VisibilityRefusal
@@ -732,6 +744,28 @@ object ResponseMapping {
     }
   }
 
+  /** Промо-видео аукциона (PER-781): ворота «сходка не отменена», поэтому отказов значением три. */
+  def setPromoVideo(outcome: Either[PromoVideoRefusal, Unit]): Either[Status, wire.SetPromoVideoResponse] = {
+    import wire.PromoVideoRefusal.Reason
+    def refused(reason: Reason) = Right(wire.SetPromoVideoResponse().withRefused(wire.PromoVideoRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SetPromoVideoResponse().withAccepted(wire.PromoVideoAccepted()))
+      case Left(PromoVideoRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(PromoVideoRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(PromoVideoRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(PromoVideoRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(PromoVideoRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(PromoVideoRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            PromoVideoRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"auction promo video answered $denial")
+    }
+  }
+
   def cancelAuction(outcome: Either[CancellationRefusal, Unit]): Either[Status, wire.CancelAuctionResponse] =
     outcome match {
       case Right(()) => Right(wire.CancelAuctionResponse().withAccepted(wire.AuctionCancelAccepted()))
@@ -1085,12 +1119,9 @@ object ResponseMapping {
         refused(Reason.LotNotInAuction(wire.StepWindowLotNotInAuction(lot.value.toString)))
       case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.LotNotOpen(lot))) =>
         refused(Reason.LotNotOpen(wire.StepWindowLotNotOpen(lot.value.toString)))
-      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.StepWindowsOverlap(lot, existing))) =>
-        val overlap = wire.LaunchedStepWindowsOverlap(
-          lot.value.toString,
-          LotValues.instant(existing.from),
-          LotValues.instant(existing.until)
-        )
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.StepWindowsOverlap(lot, from, until))) =>
+        val overlap =
+          wire.LaunchedStepWindowsOverlap(lot.value.toString, LotValues.instant(from), LotValues.instant(until))
         refused(Reason.StepWindowsOverlap(overlap))
       case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.AuctionNotFound)) => Left(auctionNotFound)
       case Left(LaunchRefusal.Denied(Denial.NotAdministrator)) =>
@@ -1104,6 +1135,183 @@ object ResponseMapping {
             LaunchRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
           ) =>
         throw new IllegalStateException(s"step window launch answered $denial")
+    }
+  }
+
+  /**
+   * Период «Счастливых часов» в форме контракта и действующие условия лотов в нём по возрастанию `lot_id` (PER-786).
+   */
+  def happyHourPeriod(period: HappyHourPeriod, terms: List[(LotId, HappyHourTerms)]): wire.HappyHourPeriod =
+    wire.HappyHourPeriod(
+      period.id.value.toString,
+      LotValues.instant(period.from),
+      LotValues.instant(period.until),
+      terms.sortBy(_._1.value.toString).map(happyHourLotTerms)
+    )
+
+  /** Условия лота в периоде в форме контракта. */
+  def happyHourLotTerms(lot: LotId, terms: HappyHourTerms): wire.HappyHourLotTerms =
+    wire.HappyHourLotTerms(
+      lotId = lot.value.toString,
+      step = terms.step.map(LotValues.money),
+      start = terms.start.map(LotValues.money)
+    )
+
+  /** Условия лота в периоде: принятые отдаются, как их записал аукцион. */
+  def setHappyHourLotTerms(
+      outcome: Either[HappyHourTermsRefusal, (LotId, HappyHourTerms)]
+  ): Either[Status, wire.SetHappyHourLotTermsResponse] = {
+    import wire.SetHappyHourLotTermsRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.SetHappyHourLotTermsResponse().withRefused(wire.SetHappyHourLotTermsRefusal(reason)))
+    outcome match {
+      case Right((lot, terms)) =>
+        Right(wire.SetHappyHourLotTermsResponse().withAccepted(happyHourLotTerms(lot, terms)))
+      case Left(HappyHourTermsRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(HappyHourTermsRefusal.Rejected(rejected)) =>
+        rejected match {
+          case SetHappyHourLotTermsRejected.AuctionNotFound => Left(auctionNotFound)
+          case SetHappyHourLotTermsRejected.NotInPrebidding => refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+          case SetHappyHourLotTermsRejected.PeriodNotFound =>
+            refused(Reason.PeriodNotFound(wire.HappyHourPeriodNotFound()))
+          case SetHappyHourLotTermsRejected.PeriodStarted =>
+            refused(Reason.PeriodStarted(wire.HappyHourPeriodStarted()))
+          case SetHappyHourLotTermsRejected.TermsEmpty => refused(Reason.TermsEmpty(wire.HappyHourLotTermsEmpty()))
+          case SetHappyHourLotTermsRejected.LotNotInAuction =>
+            refused(Reason.LotNotInAuction(wire.HappyHourLotNotInAuction()))
+          case SetHappyHourLotTermsRejected.LotNotOpen => refused(Reason.LotNotOpen(wire.HappyHourLotNotOpen()))
+          case SetHappyHourLotTermsRejected.AmountInvalid =>
+            refused(Reason.AmountInvalid(wire.HappyHourLotTermsAmountInvalid()))
+          case SetHappyHourLotTermsRejected.StepNotLower(regular) =>
+            refused(Reason.StepNotLower(wire.HappyHourStepNotLower(Some(LotValues.money(regular)))))
+          case SetHappyHourLotTermsRejected.StartNotLower(regular) =>
+            refused(Reason.StartNotLower(wire.HappyHourStartNotLower(Some(LotValues.money(regular)))))
+          case SetHappyHourLotTermsRejected.WindowsOverlap(from, until) =>
+            refused(
+              Reason.WindowsOverlap(wire.HappyHourLotWindowsOverlap(LotValues.instant(from), LotValues.instant(until)))
+            )
+        }
+      case Left(HappyHourTermsRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(HappyHourTermsRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(HappyHourTermsRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(HappyHourTermsRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(HappyHourTermsRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            HappyHourTermsRefusal.Denied(
+              denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
+        throw new IllegalStateException(s"happy hour lot terms answered $denial")
+    }
+  }
+
+  /** Снятие условий лота в периоде: отказы домена — значения ответа, `OpIdTaken` — статус. */
+  def clearHappyHourLotTerms(
+      outcome: Either[HappyHourTermsClearingRefusal, Unit]
+  ): Either[Status, wire.ClearHappyHourLotTermsResponse] = {
+    import wire.ClearHappyHourLotTermsRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.ClearHappyHourLotTermsResponse().withRefused(wire.ClearHappyHourLotTermsRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.ClearHappyHourLotTermsResponse().withAccepted(wire.HappyHourLotTermsCleared()))
+      case Left(HappyHourTermsClearingRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(HappyHourTermsClearingRefusal.Rejected(rejected)) =>
+        rejected match {
+          case ClearHappyHourLotTermsRejected.AuctionNotFound => Left(auctionNotFound)
+          case ClearHappyHourLotTermsRejected.NotInPrebidding =>
+            refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+          case ClearHappyHourLotTermsRejected.PeriodNotFound =>
+            refused(Reason.PeriodNotFound(wire.HappyHourPeriodNotFound()))
+          case ClearHappyHourLotTermsRejected.PeriodStarted =>
+            refused(Reason.PeriodStarted(wire.HappyHourPeriodStarted()))
+          case ClearHappyHourLotTermsRejected.LotNotInAuction =>
+            refused(Reason.LotNotInAuction(wire.HappyHourLotNotInAuction()))
+        }
+      case Left(HappyHourTermsClearingRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(HappyHourTermsClearingRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(HappyHourTermsClearingRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(HappyHourTermsClearingRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(HappyHourTermsClearingRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            HappyHourTermsClearingRefusal.Denied(
+              denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
+        throw new IllegalStateException(s"happy hour lot terms clearing answered $denial")
+    }
+  }
+
+  /** Создание периода «Счастливых часов»: принятый период отдаётся, как его записал аукцион. */
+  def createHappyHourPeriod(
+      outcome: Either[HappyHourRefusal, HappyHourPeriod]
+  ): Either[Status, wire.CreateHappyHourPeriodResponse] = {
+    import wire.CreateHappyHourPeriodRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.CreateHappyHourPeriodResponse().withRefused(wire.CreateHappyHourPeriodRefusal(reason)))
+    outcome match {
+      case Right(period) => Right(wire.CreateHappyHourPeriodResponse().withAccepted(happyHourPeriod(period, Nil)))
+      case Left(HappyHourRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.NotInPrebidding)) =>
+        refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodInPast)) =>
+        refused(Reason.PeriodInPast(wire.HappyHourPeriodInPast()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodEmpty)) =>
+        refused(Reason.PeriodEmpty(wire.HappyHourPeriodEmpty()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.PeriodOutsideOnlinePhase)) =>
+        refused(Reason.PeriodOutsideOnlinePhase(wire.HappyHourPeriodOutsideOnlinePhase()))
+      case Left(HappyHourRefusal.Rejected(CreateHappyHourPeriodRejected.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(HappyHourRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(HappyHourRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(HappyHourRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(HappyHourRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(HappyHourRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            HappyHourRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"happy hour period creation answered $denial")
+    }
+  }
+
+  /** Удаление периода «Счастливых часов»: отказы домена — значения ответа, `OpIdTaken` — статус. */
+  def deleteHappyHourPeriod(
+      outcome: Either[HappyHourDeletionRefusal, Unit]
+  ): Either[Status, wire.DeleteHappyHourPeriodResponse] = {
+    import wire.DeleteHappyHourPeriodRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.DeleteHappyHourPeriodResponse().withRefused(wire.DeleteHappyHourPeriodRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.DeleteHappyHourPeriodResponse().withAccepted(wire.HappyHourPeriodDeleted()))
+      case Left(HappyHourDeletionRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.NotInPrebidding)) =>
+        refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.PeriodNotFound)) =>
+        refused(Reason.PeriodNotFound(wire.HappyHourPeriodNotFound()))
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.PeriodStarted)) =>
+        refused(Reason.PeriodStarted(wire.HappyHourPeriodStarted()))
+      case Left(HappyHourDeletionRefusal.Rejected(DeleteHappyHourPeriodRejected.AuctionNotFound)) =>
+        Left(auctionNotFound)
+      case Left(HappyHourDeletionRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(HappyHourDeletionRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(HappyHourDeletionRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(HappyHourDeletionRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(HappyHourDeletionRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            HappyHourDeletionRefusal.Denied(
+              denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
+        throw new IllegalStateException(s"happy hour period deletion answered $denial")
     }
   }
 
@@ -1152,6 +1360,20 @@ object ResponseMapping {
       case Denial.AuctionNotFound => Left(auctionNotFound)
       case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
         throw new IllegalStateException(s"raffle prize authority answered $denial")
+    }
+  }
+
+  /** Отказ права на фото приза розыгрыша — та же пара, что у смены приза (PER-772). */
+  def prizePhotoDenied(denial: Denial): Either[Status, wire.RafflePrizePhotoRefusal.Reason] = {
+    import wire.RafflePrizePhotoRefusal.Reason
+    denial match {
+      case Denial.NotAdministrator => Right(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => Right(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.MeetupCancelled => Right(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"raffle prize photo authority answered $denial")
     }
   }
 
@@ -1228,6 +1450,12 @@ object ResponseMapping {
       // Запущенные по ходу торгов окна (PER-724): участник видит их в программе недели рядом с объявленными, как
       // администратор в пульте.
       launchedStepWindows = view.auction.launched.map(_.window).map(AuctionValues.stepWindow),
+      promoVideo = view.auction.promoVideo.map(video => wire.AuctionPromoVideo(video.messageId)),
+      // Периоды «Счастливых часов» (PER-804): участник видит их в программе недели рядом с окнами — тот же список, что
+      // у пульта, по возрастанию начала и с прошедшими.
+      happyHourPeriods = view.auction.happyHours
+        .sortBy(_.from)
+        .map(period => happyHourPeriod(period, Auction.termsOf(view.auction, period.id))),
       status = status
     )
   }

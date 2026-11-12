@@ -19,12 +19,14 @@ import type {
   AccessRequest,
   AccessRequestAnswer,
   AccessRequestOutcome,
+  AchievementsPort,
   LotImagePort,
   Money,
   ResolvedIdentity,
   TelegramUser,
   Viewer,
 } from "../../auction-ui/index.js";
+import { createAchievementsClient } from "../../core/achievements/client.js";
 import { auctionSummaryViewOf } from "../../core/auction/auction.js";
 import {
   bidOutcomeOf,
@@ -32,15 +34,15 @@ import {
   limitOutcomeOf,
   ownDisplayNameOf,
   unansweredOn,
+  withdrawOutcomeOf,
 } from "../../core/auction/commands.js";
-import { dayChronicleOf } from "../../core/auction/day-chronicle.js";
-import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
-import { historyPageOf } from "../../core/auction/history.js";
 import {
-  fulfillmentOutcomeOn,
-  myInvoicesOf,
-  wireFulfillment,
-} from "../../core/auction/invoices.js";
+  auctionChronicleOf,
+  dayChronicleOf,
+} from "../../core/auction/day-chronicle.js";
+import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
+import { historyPageOf, readOutbidOrigin } from "../../core/auction/history.js";
+import { myInvoicesOf } from "../../core/auction/invoices.js";
 import { predictionResultsOf } from "../../core/auction/prediction-results.js";
 import {
   myPredictionsOf,
@@ -112,6 +114,7 @@ export type AuctionRpc = Pick<
   | "getDisplayNames"
   | "placeBid"
   | "setProxyLimit"
+  | "withdrawProxyLimit"
   | "chooseDisplayName"
   | "getAuction"
   | "getRaffle"
@@ -120,14 +123,15 @@ export type AuctionRpc = Pick<
   | "getMyPredictions"
   | "getPredictionResults"
   | "getAuctionDayChronicle"
+  | "getAuctionChronicle"
   | "submitPrediction"
   | "getLotImage"
   | "getLotPhoto"
+  | "getRafflePrizePhoto"
   | "listAuctions"
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
   | "listMyInvoices"
-  | "chooseFulfillment"
 >;
 // Notifications боту аукциона нужен ради настроек уведомлений аукциона
 // (PER-515, PER-539),
@@ -147,6 +151,10 @@ export type PortsFactory = (
 ) => EntryPorts & { image: LotImagePort };
 
 export type PortsOptions = {
+  achievements?: (meta: {
+    requestId: string;
+    deadlineAt?: number;
+  }) => AchievementsPort;
   timeoutMs?: number;
   // Источник `op_id`; тесты подменяют его, чтобы ключ команды был виден.
   newOperationId?: () => string;
@@ -170,6 +178,7 @@ export function createPorts(
   identity: IdentityRpc,
   auction: AuctionRpc,
   {
+    achievements,
     timeoutMs = rpcTimeoutMs,
     newOperationId = createUuidV7,
     onNamesRefused,
@@ -181,6 +190,10 @@ export function createPorts(
   }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
+    const achievementReads = achievements?.({
+      requestId,
+      ...(deadlineAt === undefined ? {} : { deadlineAt }),
+    });
     const headers = { [requestIdHeader]: requestId };
     // Остаток бюджета считается в момент вызова, а не при сборке портов.
     const callOptions = (ownMs: number) => ({
@@ -191,6 +204,9 @@ export function createPorts(
       headers,
     });
     return {
+      ...(achievementReads === undefined
+        ? {}
+        : { achievements: achievementReads }),
       identity: {
         async resolveIdentity(user: TelegramUser): Promise<ResolvedIdentity> {
           const response = await identity.resolveIdentity(
@@ -349,6 +365,20 @@ export function createPorts(
             ),
           );
         },
+        withdrawProxyLimit(request) {
+          return unansweredOn(async () =>
+            withdrawOutcomeOf(
+              await auction.withdrawProxyLimit(
+                {
+                  viewer: wireViewer(request.viewer),
+                  lotId: request.lotId,
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
+            ),
+          );
+        },
         async chooseDisplayName(request) {
           const { choice } = request;
           return displayNameOutcomeOf(
@@ -386,19 +416,6 @@ export function createPorts(
               {
                 viewer: wireViewer(request.viewer),
                 auctionId: request.auctionId,
-              },
-              callOptions(timeoutMs),
-            ),
-          );
-        },
-        chooseFulfillment(request) {
-          return fulfillmentOutcomeOn(() =>
-            auction.chooseFulfillment(
-              {
-                viewer: wireViewer(request.viewer),
-                invoiceId: request.invoiceId,
-                method: wireFulfillment(request.method),
-                opId: request.opId,
               },
               callOptions(timeoutMs),
             ),
@@ -478,6 +495,16 @@ export function createPorts(
           );
           return dayChronicleOf(response);
         },
+        async getAuctionChronicle(request) {
+          const response = await auction.getAuctionChronicle(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return auctionChronicleOf(response);
+        },
         submitPrediction(request) {
           return unansweredOn(async () =>
             predictionOutcomeOf(
@@ -530,6 +557,12 @@ export function createPorts(
         },
       },
       image: {
+        ...(achievementReads === undefined
+          ? {}
+          : {
+              getAchievementImage: (code: string) =>
+                achievementReads.getImage(code),
+            }),
         async getLotImage(request) {
           const image = await auction.getLotImage(
             { viewer: wireViewer(request.viewer), lotId: request.lotId },
@@ -547,6 +580,21 @@ export function createPorts(
               viewer: wireViewer(request.viewer),
               lotId: request.lotId,
               photoId: request.photoId,
+            },
+            callOptions(imageTimeoutMs),
+          );
+          return {
+            content: image.content,
+            mediaType: image.mediaType,
+            version: image.version,
+          };
+        },
+        // Фото приза розыгрыша (PER-773) — та же форма и тот же срок.
+        async getRafflePrizePhoto(request) {
+          const image = await auction.getRafflePrizePhoto(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
             },
             callOptions(imageTimeoutMs),
           );
@@ -639,6 +687,44 @@ export function createDeliveryPorts(
         );
         return lotInfoOf(snapshot);
       },
+      outbidOrigin: (identityId, lotId, minorUnits, requestId) =>
+        readOutbidOrigin(
+          (pageToken) =>
+            auction.listLotHistory(
+              {
+                viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+                lotId,
+                pageToken,
+              },
+              options(requestId),
+            ),
+          minorUnits,
+          identityId,
+        ),
+      async finalActiveLot(identityId, auctionId, requestId) {
+        const { auction: snapshot } = await auction.getAuction(
+          {
+            viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+            auctionId,
+          },
+          options(requestId),
+        );
+        return snapshot === undefined
+          ? undefined
+          : auctionSummaryViewOf(snapshot).lineup?.activeLotId;
+      },
+      async auctionFinalAt(identityId, auctionId, requestId) {
+        const { auction: snapshot } = await auction.getAuction(
+          {
+            viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+            auctionId,
+          },
+          options(requestId),
+        );
+        return snapshot === undefined
+          ? undefined
+          : auctionSummaryViewOf(snapshot).finalAt;
+      },
     },
   };
 }
@@ -658,6 +744,11 @@ export function createClients(options: {
   identityUrl: string;
   auctionUrl: string;
   notificationsUrl?: string;
+  achievementsUrl?: string;
+  onAchievementsRefused?: (
+    cause: unknown,
+    meta?: import("../../core/rpc-metadata.js").RpcMetadata,
+  ) => void;
   serviceToken: string;
   tracing: Tracing;
   onNamesRefused?: (cause: unknown, requestId: string) => void;
@@ -667,6 +758,15 @@ export function createClients(options: {
   // Keepalive соединения с Auction; тесты сжимают его до долей секунды.
   auctionKeepalive?: Http2SessionOptions;
 }): Clients {
+  const achievements =
+    options.achievementsUrl === undefined
+      ? undefined
+      : createAchievementsClient(options.achievementsUrl, {
+          ...options,
+          ...(options.onAchievementsRefused === undefined
+            ? {}
+            : { onFailure: options.onAchievementsRefused }),
+        });
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(
     options.auctionUrl,
@@ -709,6 +809,9 @@ export function createClients(options: {
         );
   return {
     ports: createPorts(identity, auction, {
+      ...(achievements === undefined
+        ? {}
+        : { achievements: achievements.port }),
       ...(options.onNamesRefused === undefined
         ? {}
         : { onNamesRefused: options.onNamesRefused }),
@@ -727,6 +830,7 @@ export function createClients(options: {
     watch: watchSourceOf(auction),
     outbidSettings: notifications !== undefined,
     close() {
+      achievements?.close();
       identitySession.abort();
       auctionSession.abort();
       notificationsSession?.abort();

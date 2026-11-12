@@ -61,6 +61,8 @@ skills:
     source: github.com/georgeguimaraes/elixir-agent-tools/plugins/elixir-dev/skills/phoenix
   - name: oban
     source: github.com/georgeguimaraes/elixir-agent-tools/plugins/elixir-dev/skills/oban
+  - name: typesafe-ai
+    source: github.com/typesafe-ai/skills/skills/typesafe-ai
 ignore:
   - .DS_Store
   - .git/

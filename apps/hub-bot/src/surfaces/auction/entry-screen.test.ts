@@ -77,6 +77,7 @@ describe("renderEntryScreen", () => {
     const menu = renderEntryScreen({ kind: "menu" }, options);
     expect(menu.keyboard.flat().map((button) => button.text)).toEqual([
       "Аукционы",
+      "Ачивки",
       "Настройки",
       "Правила и FAQ",
     ]);
@@ -242,7 +243,7 @@ describe("renderEntryScreen", () => {
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
       [
         ["Носки · старт 500 ₽"],
-        ["Лот без названия · не продан"],
+        ["💤 Лот без названия · не продан"],
         ["→"],
         // Лента — под корнем аукциона, и возврат в него ставит тело дерева
         // (PER-644).
@@ -371,6 +372,66 @@ describe("renderEntryScreen", () => {
     expect(text).toContain("Победитель: Сыч*");
   });
 
+  // Стрим и экран финала (PER-832): на карточке лота ссылок нет даже при
+  // настроенных адресах, они в корне аукциона.
+  it("has no hall links on the lot card", () => {
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    expect(lotScreen({}, { ...options, hall }).keyboard).toEqual([
+      [{ text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" }],
+    ]);
+  });
+
+  // Ссылки корня: одним рядом над возвратом, только при настроенных адресах.
+  it("puts the stream and the screen of the final into one row of the root", () => {
+    const root = (render: RenderOptions) =>
+      renderEntryScreen(
+        {
+          kind: "auction",
+          body: {
+            blocks: [
+              {
+                kind: "root",
+                auctionId: "auc-1",
+                auction: { stage: "prebidding" },
+              } as unknown as AuctionBlock,
+            ],
+            keyboard: [],
+          },
+        },
+        render,
+      ).keyboard;
+    const back = [
+      { text: "‹ Аукционы", callback_data: entryCallback("auctions") },
+    ];
+    expect(root(options)).toEqual([back]);
+    const hall = {
+      screenUrl: "https://hall.example.org/screen",
+      streamUrl: "https://stream.example.org/live",
+    };
+    expect(root({ ...options, hall })).toEqual([
+      [
+        { text: "Стрим финала ↗", url: "https://stream.example.org/live" },
+        {
+          text: "Экран финала ↗",
+          url: "https://hall.example.org/screen/auc-1",
+        },
+      ],
+      back,
+    ]);
+    expect(root({ ...options, hall: { screenUrl: hall.screenUrl } })).toEqual([
+      [
+        {
+          text: "Экран финала ↗",
+          url: "https://hall.example.org/screen/auc-1",
+        },
+      ],
+      back,
+    ]);
+  });
+
   // Последний ряд под лотом — возврат одной кнопкой: «Меню» нет (решение
   // владельца 10 октября 2026 года).
   it("puts the return to the feed alone into the last row of a lot", () => {
@@ -487,9 +548,24 @@ describe("renderEntryScreen", () => {
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
         "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
-        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n" +
+        "Если лот попадёт в финал, лимит сработает и там\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лоту, который ждёт финала, лимит обещает финал прямо (PER-822, ADR-079).
+  it("says the own limit will work in the final on a held lot", () => {
+    const screen = lotScreen(
+      {
+        card: { title: "Кружка", description: "" },
+        status: { kind: "held", currentPrice: rub(1200) },
+        viewerProxyLimit: rub(2000),
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toContain("сработает в финале");
+    expect(plain(screen.text)).not.toContain("Если лот попадёт");
   });
 
   // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81):
@@ -520,10 +596,9 @@ describe("renderEntryScreen", () => {
     );
   });
 
-  // В живом финале кнопки «Автоставка» нет (PER-713): исчерпанный лимит не
-  // советует его поднять, а лимит лидера ниже текущей цены — его ставка рукой
-  // выше лимита — не показан действующим.
-  it("names an exhausted own limit in the live final without advising to raise it", () => {
+  // В живом финале исчерпанный лимит сообщает отдельная строка карточки;
+  // доступ к автоставке находится в своём ряду (PER-823).
+  it("names an exhausted own limit in the live final", () => {
     const course = (standing?: "leader") =>
       plain(
         lotScreen(
@@ -585,6 +660,40 @@ describe("renderEntryScreen", () => {
     ]);
   });
 
+  it("names the allowed floor when a live-final limit is below the announced ask", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "result",
+              result: {
+                command: "proxy",
+                kind: "refused",
+                refusal: {
+                  kind: "proxy-below-current-price",
+                  minLimit: rub(1200),
+                },
+              },
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
+            },
+          ],
+          keyboard: [
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      plainCard,
+    );
+
+    expect(plain(screen.text)).toBe(
+      "<b>Лимит ниже допустимой цены</b>\n\n<b>Кружка</b>\n\nНужно от 1 200 ₽.",
+    );
+  });
+
   it("names five times the next price when a bid is above the ceiling", () => {
     const screen = renderEntryScreen(
       {
@@ -630,6 +739,27 @@ describe("renderEntryScreen", () => {
       ),
     );
     expect(text).toContain("Торги до: 9 января 2027, сб, 21:00");
+  });
+
+  // PER-831: дедлайн в полночь читается как 23:59 предыдущего дня.
+  it.each([
+    ["2026-10-30T21:00:00Z", "Торги до: 30 октября, пт, 23:59"],
+    ["2026-10-30T21:03:00Z", "Торги до: 31 октября, сб, 00:03"],
+    ["2026-10-30T10:30:00Z", "Торги до: 30 октября, пт, 13:30"],
+  ])("shows the deadline %s as it reads at midnight", (deadline, line) => {
+    const text = plain(
+      visible(
+        lotScreen({
+          status: {
+            kind: "trading",
+            currentPrice: rub(1),
+            deadline,
+            phase: "online",
+          },
+        }).text,
+      ),
+    );
+    expect(text).toContain(line);
   });
 
   it("formats kopecks only when there are some", () => {
@@ -816,6 +946,33 @@ describe("bid sheet screens", () => {
       "\n\n💡 Подсказка: платишь цену, а не лимит.",
     );
     expect(screen.text).not.toContain("Например: цена сейчас");
+  });
+
+  it("names the accepted live-final floor, not the next grid price", () => {
+    const screen = body({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      current: rub(1000),
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Лимит от: 1 000 ₽");
+    expect(plain(screen.text)).not.toContain("Минимальная ставка");
+  });
+
+  it("names the own live-final limit instead of the floor", () => {
+    const screen = body({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      current: rub(1500),
+      currentIsLimit: true,
+      liveFinal: true,
+    });
+    expect(plain(screen.text)).toContain("Твой лимит сейчас: 1 500 ₽");
+    expect(plain(screen.text)).not.toContain("Лимит от:");
   });
 
   // Непринятый ответ — свой экран (PER-472): причина в заголовке, над
@@ -1105,9 +1262,46 @@ describe("happy hours", () => {
     });
     // «Шаг: 50 ₽» не повторяется: обычный шаг назван своей строкой.
     expect(text).toContain(
-      "Следующая ставка: от 1 210 ₽\nСчастливые часы: шаг 10 ₽ до 10 октября, сб, 21:00\nОбычный шаг: 50 ₽\n",
+      "Следующая ставка: от 1 210 ₽\nСчастливые часы до 10 октября, сб, 21:00: шаг 10 ₽\nОбычный шаг: 50 ₽\n",
     );
     expect(text).not.toContain("\nШаг:");
+  });
+
+  // Период со стартовой ценой (PER-787): у лота без ставок стартовая окна
+  // парой с обычной; будущее окно обещает её только лоту без ставок.
+  it("shows the window start next to the regular start of a lot without bids", () => {
+    const text = facts({
+      nextPrice: rub(800),
+      fixedStep: rub(50),
+      baseStep: rub(50),
+      activeWindow: {
+        from: "2026-10-10T15:00:00Z",
+        until: "2026-10-10T18:00:00Z",
+        start: rub(800),
+        step: rub(10),
+      },
+    });
+    expect(text).toContain(
+      "Следующая ставка: от 800 ₽\nСчастливые часы до 10 октября, сб, 21:00: от 800 ₽ вместо 1 200 ₽, шаг 10 ₽\nОбычный шаг: 50 ₽\n",
+    );
+  });
+
+  it("does not promise the start of a future window to a lot with bids", () => {
+    const text = plain(
+      visible(
+        lotScreen({
+          status: { ...trading, leaderId: "someone" },
+          fixedStep: rub(50),
+          baseStep: rub(50),
+          nextWindow: {
+            from: "2026-10-11T12:00:00Z",
+            until: "2026-10-11T15:00:00Z",
+            start: rub(800),
+          },
+        }).text,
+      ),
+    );
+    expect(text).not.toContain("Счастливые часы");
   });
 
   it("shows the regular step once the snapshot has no window", () => {
@@ -1188,7 +1382,7 @@ describe("happy hours", () => {
       "<b>Лоты</b>\n\nТы пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.\n\nСчастливые часы сейчас: Кружка.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
-      [["Кружка · 1 200 ₽"], ["Ваза · 1 200 ₽"], ["‹ Аукцион"]],
+      [["🔥 Кружка · 1 200 ₽"], ["🔥 Ваза · 1 200 ₽"], ["‹ Аукцион"]],
     );
   });
 });
@@ -1328,8 +1522,8 @@ describe("live final in the auction shell", () => {
       screen.keyboard.slice(0, 3).map((row) => plain(row[0]?.text ?? "")),
     ).toEqual([
       "▶ Футболка · на торгах",
-      "Ваза · в составе · 400 ₽",
-      "Кружка · продан за 900 ₽",
+      "🏁 Ваза · в составе · 400 ₽",
+      "🤝 Кружка · продан за 900 ₽",
     ]);
   });
 

@@ -12,6 +12,7 @@ name: Image Achievements
 on:
   pull_request:
     paths:
+      - 'contracts/proto/**'
       - 'apps/achievements/**'
       - 'tools/image/**'
       - '.github/workflows/image-achievements.yml'
@@ -19,6 +20,7 @@ on:
   push:
     branches: [stage, main]
     paths:
+      - 'contracts/proto/**'
       - 'apps/achievements/**'
       - 'tools/image/**'
       - '.github/workflows/image-achievements.yml'

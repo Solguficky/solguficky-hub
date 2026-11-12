@@ -100,7 +100,10 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         SELECT follower.identity_id AS IdentityId,
                CASE WHEN person.circle = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface,
                replica.lot_id AS LotId,
-               replica.step_windows AS Windows
+               replica.step_windows AS Windows,
+               replica.leader_id AS Leader,
+               replica.price_minor_units AS PriceMinorUnits,
+               replica.price_currency AS PriceCurrency
         FROM lot_favorite AS follower
         JOIN identity_replica AS person ON person.identity_id = follower.identity_id
         JOIN lot_replica AS replica ON replica.lot_id = follower.lot_id
@@ -109,6 +112,17 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND follower.removed_at IS NULL
             AND NOT person.blocked
         ORDER BY follower.identity_id, replica.lot_id;
+        """;
+
+    // Лоты аукциона в торгах с их окнами: общей вести о начале окна нужны
+    // число лотов окна и самый поздний конец, а не следящие за ними. Лидер и
+    // цена решают, даёт ли окно только со стартовой что-то лоту (PER-788).
+    private const string StepWindowLotsSql = """
+        SELECT lot_id AS LotId, step_windows AS Windows, leader_id AS Leader,
+               price_minor_units AS PriceMinorUnits, price_currency AS PriceCurrency
+        FROM lot_replica
+        WHERE auction_id = @AuctionId AND status = 'trading'
+        ORDER BY lot_id;
         """;
 
     // Срок годности у каждого человека свой: он кончается вместе с его
@@ -255,10 +269,27 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         ORDER BY person.identity_id;
         """;
 
+    // Держатели права ставок для вестей финала (PER-812): без заблокированных.
+    // Настройку анонса финала читает вызывающий той же транзакцией.
+    private const string PlaceBidsHoldersSql = """
+        SELECT person.identity_id
+        FROM identity_replica AS person
+        WHERE NOT person.blocked
+            AND person.rights && @Rights
+        ORDER BY person.identity_id;
+        """;
+
     // Название сходки для вести: у аукциона своего названия нет, а карточка
     // реплики — единственное место, где оно есть без звонка в Meetups.
     private const string MeetupTitleSql = """
         SELECT title FROM meetup_replica WHERE meetup_id = @MeetupId;
+        """;
+
+    // Название для объявления аукциона (PER-764) — только у видимой сходки:
+    // право вести аукцион видимости черновика не даёт, а объявление уходит и
+    // гостям, поэтому название скрытой сходки оно не разносит.
+    private const string VisibleMeetupTitleSql = """
+        SELECT title FROM meetup_replica WHERE meetup_id = @MeetupId AND visibility = 'visible';
         """;
 
     // Аукцион сняли с публикации, пока весть о нём ждала релея (PER-646): человек
@@ -275,6 +306,20 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND withdrawn_at IS NULL
             AND rejected_at IS NULL
         RETURNING type;
+        """;
+
+    // Аукцион скрыли, отменили или удалили, пока его объявление ждало релея
+    // (PER-780): кнопка объявления повела бы к «не найдено». Объявление —
+    // команда, а не факт аукциона, поэтому признак — тип и сходка, а не повод.
+    // Без SKIP LOCKED по той же причине, что снятие при отмене.
+    private const string WithdrawAuctionNoticesSql = """
+        UPDATE notification
+        SET withdrawn_at = @Now, withdrawal_reason = @Reason
+        WHERE meetup_id = @MeetupId
+            AND type = @Type
+            AND dispatched_at IS NULL
+            AND withdrawn_at IS NULL
+            AND rejected_at IS NULL;
         """;
 
     // SKIP LOCKED: второй экземпляр сервиса берёт другие строки, а не ждёт
@@ -391,6 +436,10 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         var produced = fact.Occasion switch
         {
+            MeetupOccasion.FirstPublication when fact.Silent => new ProducedFacts(
+                NotificationFacts.MeetupPublishedType,
+                FactCount.None),
+
             MeetupOccasion.FirstPublication => new ProducedFacts(
                 NotificationFacts.MeetupPublishedType,
                 await AddMeetupPublished(work, fact, now, notAfter, cancellationToken)),
@@ -837,7 +886,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             audience,
             (id, recipient) => InvoiceReminderFact(kind, id, recipient, taskId, replica, now),
             now,
-            replica.PaymentDueAt,
+            replica.PaymentDueAt ?? throw new InvalidOperationException("invoice payment has not started"),
             cancellationToken);
     }
 
@@ -880,9 +929,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         return NotificationFacts.TypeOf(kind) switch
         {
             NotificationFacts.InvoiceReminderType => NotificationFacts.InvoiceReminder(id, recipient, taskId,
-                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt, now),
+                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt ?? throw new InvalidOperationException("invoice payment has not started"), now),
             NotificationFacts.InvoiceDueReminderType => NotificationFacts.InvoiceDueReminder(id, recipient, taskId,
-                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt, now),
+                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt ?? throw new InvalidOperationException("invoice payment has not started"), now),
             _ => throw new ArgumentOutOfRangeException(nameof(kind)),
         };
     }
@@ -933,18 +982,19 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     }
 
     /// <summary>
-    /// Разворачивает начало окна сниженного шага на следящих за его лотами и
-    /// пишет факты в транзакции <paramref name="work" /> — той же, что переводит
-    /// задание в «сработало» (ADR-047, дополнение 2026-10-12).
+    /// Разворачивает начало окна сниженного шага на следящих за его лотами, а
+    /// общую весть — на остальных держателей права ставок, и пишет факты в
+    /// транзакции <paramref name="work" /> — той же, что переводит задание в
+    /// «сработало» (ADR-047, дополнения 2026-10-12 и 2026-10-27).
     /// </summary>
     /// <remarks>
     /// Сверка на момент срабатывания, а не на момент факта: окно могло уже
-    /// кончиться, лот — выйти из торгов, а аукцион — кончиться. Человек
-    /// получает одно сообщение со всеми своими лотами окна; ключ повода —
-    /// задание, поэтому повтор срабатывания и поздний факт лота второго не
-    /// дают.
+    /// кончиться, лот — выйти из торгов, а аукцион — кончиться. Следящий
+    /// получает одно сообщение со всеми своими лотами окна и общей вести не
+    /// получает; ключ повода обеих — задание, поэтому повтор срабатывания и
+    /// поздний факт лота второго не дают.
     /// </remarks>
-    internal static async Task<FactCount> AddStepWindowStart(
+    internal static async Task<StepWindowStartFacts> AddStepWindowStart(
         UnitOfWork work,
         LiveStepWindowTask task,
         DateTimeOffset now,
@@ -955,9 +1005,26 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         // не срабатывать вечно.
         if (await AuctionEndStore.Read(work, task.AuctionId, cancellationToken) is not null)
         {
-            return FactCount.None;
+            return StepWindowStartFacts.None;
         }
 
+        var (started, followers) = await AddStepWindowFollowers(work, task, now, cancellationToken);
+        var announced = await AddStepWindowAnnouncement(work, task, followers, now, cancellationToken);
+
+        return new StepWindowStartFacts(started, announced);
+    }
+
+    /// <summary>
+    /// Весть следящим за лотами окна: каждому — его лоты этого окна. Отдаёт
+    /// ещё и всех, кому весть положена, даже если факт уже был записан: общая
+    /// весть их обходит.
+    /// </summary>
+    private static async Task<(FactCount Facts, IReadOnlySet<Guid> Recipients)> AddStepWindowFollowers(
+        UnitOfWork work,
+        LiveStepWindowTask task,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
         var rows = await work.Query<StepWindowAudienceRow>(
             StepWindowAudienceSql,
             new { task.AuctionId },
@@ -967,9 +1034,12 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         foreach (var row in rows)
         {
             // Начало окна сравнивается по значению: и задание, и реплика
-            // хранят момент с точностью базы.
+            // хранят момент с точностью базы. Окно, которое лоту в этот момент
+            // ничего не даёт, лот в весть не приводит (PER-788).
             if (LotReplicaStore.WindowsOf(row.Windows).FirstOrDefault(window =>
-                    window.From == task.StartsAt && StepWindowPlan.Running(window, now)) is not { } window)
+                    window.From == task.StartsAt && StepWindowPlan.Running(window, now)) is not { } window
+                || StepWindowPlan.Terms(row.LotId, window, row.Leader,
+                    LotReplicaStore.PriceOf(row.PriceMinorUnits, row.PriceCurrency)) is not { } terms)
             {
                 continue;
             }
@@ -980,12 +1050,12 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 people.Add(row.IdentityId, person);
             }
 
-            person.Lots.Add(new StepWindowNoticeLot(row.LotId, window.Until, window.Step));
+            person.Lots.Add(terms);
         }
 
         if (people.Count == 0)
         {
-            return FactCount.None;
+            return (FactCount.None, new HashSet<Guid>());
         }
 
         var selected = people.Values.OrderBy(person => person.IdentityId).ToArray();
@@ -1021,7 +1091,59 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             },
             cancellationToken);
 
-        return new FactCount(created, 0);
+        return (new FactCount(created, 0), people.Keys.ToHashSet());
+    }
+
+    /// <summary>
+    /// Общая весть о начале окна (ADR-047, дополнение 2026-10-27): каждому
+    /// держателю права ставок, кроме заблокированных, выключивших вести о новом
+    /// аукционе и торгах и следящих за лотом окна, — одна на начало окна.
+    /// </summary>
+    /// <remarks>
+    /// Лоты окна — те же, что у вести следящим: в торгах и с окном этого
+    /// начала, которое ещё идёт. Нет таких лотов — нет и вести. Конец — самый
+    /// поздний из концов окон этого начала, им же кончается срок факта.
+    /// </remarks>
+    private static async Task<FactCount> AddStepWindowAnnouncement(
+        UnitOfWork work,
+        LiveStepWindowTask task,
+        IReadOnlySet<Guid> followers,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var lots = await work.Query<StepWindowLotRow>(StepWindowLotsSql, new { task.AuctionId }, cancellationToken);
+        var windows = lots
+            .Select(lot => LotReplicaStore.WindowsOf(lot.Windows).FirstOrDefault(window =>
+                    window.From == task.StartsAt && StepWindowPlan.Running(window, now)) is { } window
+                ? StepWindowPlan.Terms(lot.LotId, window, lot.Leader,
+                    LotReplicaStore.PriceOf(lot.PriceMinorUnits, lot.PriceCurrency))
+                : null)
+            .OfType<StepWindowNoticeLot>()
+            .ToArray();
+
+        if (windows.Length == 0)
+        {
+            return FactCount.None;
+        }
+
+        var until = windows.Max(window => window.Until);
+        var audience = (await work.Query<AudienceRow>(
+                AuctionAnnouncementAudienceSql,
+                new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
+                cancellationToken))
+            .Where(person => !followers.Contains(person.IdentityId))
+            .ToArray();
+
+        return await Insert(
+            work,
+            new FactCause(NotificationFacts.StepWindowAnnouncedType, NotificationFacts.ReminderTaskCause,
+                task.TaskId.ToString(), null, null),
+            audience,
+            (id, recipient) => NotificationFacts.StepWindowAnnounced(
+                id, recipient, task.TaskId, task.AuctionId, task.StartsAt, until, windows.Length, now, until),
+            now,
+            until,
+            cancellationToken);
     }
 
     // Дедлайн, о котором ещё можно напомнить (ADR-063, п.3): у лота в конечном
@@ -1124,6 +1246,15 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     }
 
     /// <summary>
+    /// Все держатели права <c>place_bids</c>, кроме заблокированных: круг вестей
+    /// конца онлайн-торгов и финала (PER-812), а не только ведшие лот.
+    /// </summary>
+    internal static async Task<IReadOnlyList<Guid>> PlaceBidsHolders(UnitOfWork work,
+        CancellationToken cancellationToken) =>
+        await work.Query<Guid>(PlaceBidsHoldersSql, new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
+            cancellationToken);
+
+    /// <summary>
     /// Снимает неотправленную весть о новом аукционе, который сняли с публикации
     /// (PER-646). Отправленное не отзывается: отзыва доставленного в продукте нет.
     /// </summary>
@@ -1146,6 +1277,27 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             cancellationToken);
         return types.Count;
     }
+
+    /// <summary>
+    /// Снимает неотправленные объявления аукциона сходки, который скрыли,
+    /// отменили или удалили (PER-780). Отправленное не отзывается.
+    /// </summary>
+    internal static Task<int> WithdrawAuctionNotices(
+        UnitOfWork work,
+        Guid meetupId,
+        string reason,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        work.Execute(
+            WithdrawAuctionNoticesSql,
+            new
+            {
+                MeetupId = meetupId,
+                Type = NotificationFacts.AuctionNoticeType,
+                Now = now.UtcDateTime,
+                Reason = reason,
+            },
+            cancellationToken);
 
     // Категории, которые требуют подписки: разворот идёт по подписчикам этой
     // сходки, а не по всему кругу.
@@ -1227,6 +1379,68 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             now,
             notAfter,
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Разворачивает объявление аукциона (PER-764) на держателей права
+    /// <c>place_bids</c> тем же запросом, что весть о новом аукционе (PER-646):
+    /// кроме заблокированных и выключивших вести о новом аукционе и торгах, с
+    /// кругом доставки каждого. Пишет факты в транзакции
+    /// <paramref name="work" /> — той же, что приняла ключ рассылки.
+    /// </summary>
+    /// <remarks>
+    /// Автор адресатом не исключается: он держатель права ставок, как все, и
+    /// видит то же, что получили остальные.
+    /// </remarks>
+    /// <param name="excluded">Кого фильтр аудитории (PER-778) убрал из держателей права ставок.</param>
+    internal static async Task<FactCount> AddAuctionNotice(
+        UnitOfWork work,
+        AcceptedBroadcast broadcast,
+        Guid meetupId,
+        IReadOnlySet<Guid> excluded,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var notice = broadcast.Notice
+            ?? throw new ArgumentException("an auction notice carries its button", nameof(broadcast));
+        var titles = await work.Query<string>(VisibleMeetupTitleSql, new { MeetupId = meetupId }, cancellationToken);
+        var title = titles.Count == 0 ? "" : titles[0];
+        var audience = await AuctionNoticeAudience(work, excluded, cancellationToken);
+
+        return await Insert(
+            work,
+            FactCause.Of(broadcast, NotificationFacts.AuctionNoticeType, meetupId),
+            audience,
+            (id, recipient) => NotificationFacts.AuctionNotice(
+                id, recipient, broadcast.Id, broadcast.AuthorId, meetupId, title, broadcast.Body, notice,
+                broadcast.RequestId, now, notAfter),
+            now,
+            notAfter,
+            cancellationToken);
+    }
+
+    internal static async Task<int> CountAuctionNoticeRecipients(
+        UnitOfWork work,
+        IReadOnlySet<Guid> excluded,
+        CancellationToken cancellationToken) =>
+        EnabledOf(await AuctionNoticeAudience(work, excluded, cancellationToken)).Length;
+
+    // Исключённые фильтром аудитории (PER-778) — не «подавленные» настройкой:
+    // они не адресаты этого объявления и в счёт подавленных не входят. Список
+    // приходит от Auction на время команды и в SQL не уходит: держателей права
+    // ставок сотни, и отсев в памяти дешевле параметра-массива.
+    private static async Task<IReadOnlyList<AudienceRow>> AuctionNoticeAudience(
+        UnitOfWork work,
+        IReadOnlySet<Guid> excluded,
+        CancellationToken cancellationToken)
+    {
+        var holders = await work.Query<AudienceRow>(
+            AuctionAnnouncementAudienceSql,
+            new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
+            cancellationToken);
+
+        return excluded.Count == 0 ? holders : holders.Where(row => !excluded.Contains(row.IdentityId)).ToList();
     }
 
     internal static async Task<int> CountOrganizerRecipients(
@@ -1650,6 +1864,26 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         /// <summary>Окна лота строкой реплики: их разбирает <see cref="LotReplicaStore.WindowsOf" />.</summary>
         public string? Windows { get; init; }
+
+        public Guid? Leader { get; init; }
+
+        public long? PriceMinorUnits { get; init; }
+
+        public string? PriceCurrency { get; init; }
+    }
+
+    private sealed class StepWindowLotRow
+    {
+        public Guid LotId { get; init; }
+
+        /// <summary>Окна лота строкой реплики: их разбирает <see cref="LotReplicaStore.WindowsOf" />.</summary>
+        public string? Windows { get; init; }
+
+        public Guid? Leader { get; init; }
+
+        public long? PriceMinorUnits { get; init; }
+
+        public string? PriceCurrency { get; init; }
     }
 
     private sealed record CircleTransition(string PreviousCircle, string CurrentCircle);

@@ -167,7 +167,8 @@ public static class ReplicaMapping
             occasion,
             message.HasRequestId ? message.RequestId : null,
             material,
-            performedBy));
+            performedBy,
+            occasion == MeetupOccasion.FirstPublication && message.MeetupPublished.Silent));
     }
 
     /// <summary>

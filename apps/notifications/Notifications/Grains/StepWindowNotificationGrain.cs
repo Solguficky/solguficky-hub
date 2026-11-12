@@ -63,6 +63,17 @@ public sealed class StepWindowNotificationGrain(
             await tasks.Create(auctionId, window.From, StepWindowPlan.DueAt(window.From, now, Options.Hold), now, token);
         }
 
+        // Итоговые окна решают и снятие (PER-788): условия лота в периоде
+        // сняты или период удалён до начала — задание начала, у которого не
+        // осталось окон ни у одного лота в торгах, снимается, а не ждёт
+        // срабатывания вхолостую.
+        var cancelled = await tasks.CancelGone(auctionId, token);
+        if (cancelled > 0)
+        {
+            logger.LogInformation("Step window tasks cancelled {auction_id} {lot_id} {cancelled}", auctionId, lotId,
+                cancelled);
+        }
+
         await Settle(auctionId, token);
     }
 
@@ -84,22 +95,26 @@ public sealed class StepWindowNotificationGrain(
             }
 
             // «Исполнено» и «сообщение ушло» — разные вещи: пустая аудитория,
-            // кончившийся аукцион и кончившееся окно дают ноль фактов. Ноль и
-            // назван ниже как ноль, чтобы систематический промах сверки не
-            // выглядел успехом.
-            if (result.Facts.Created == 0)
+            // кончившийся аукцион и кончившееся окно дают ноль фактов обоих
+            // видов. Ноль и назван ниже как ноль, чтобы систематический промах
+            // сверки не выглядел успехом.
+            facts.Record(NotificationFacts.StepWindowStartedType, result.Facts.Started);
+            facts.Record(NotificationFacts.StepWindowAnnouncedType, result.Facts.Announced);
+
+            if (result.Facts.Started.Created == 0 && result.Facts.Announced.Created == 0)
             {
                 continue;
             }
 
             sent = true;
-            facts.Record(NotificationFacts.StepWindowStartedType, result.Facts);
             logger.LogInformation(
-                "Step window start fired {auction_id} {starts_at} {task_id} {facts_created}",
+                "Step window start fired {auction_id} {starts_at} {task_id} {facts_created} {announced_created} {announced_suppressed}",
                 auctionId,
                 task.StartsAt,
                 task.TaskId,
-                result.Facts.Created);
+                result.Facts.Started.Created,
+                result.Facts.Announced.Created,
+                result.Facts.Announced.Suppressed);
         }
 
         await Settle(auctionId, token);

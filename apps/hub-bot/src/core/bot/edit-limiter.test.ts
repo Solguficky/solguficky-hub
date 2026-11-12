@@ -171,4 +171,94 @@ describe("edit limiter", () => {
     expect(failures).toHaveLength(1);
     expect(edits.map((e) => e.chatId)).toEqual([2]);
   });
+
+  // PER-826: трансляция хода торгов идёт фоновой полосой и не задерживает
+  // карточки финала.
+  describe("background lane", () => {
+    it("never takes more than its slots of the window", async () => {
+      const time = manualClock();
+      const limiter = createEditLimiter({ clock: time.clock });
+      const { edits, task } = recorder(time.now);
+      for (let chat = 1; chat <= 40; chat += 1) {
+        limiter.submit(chat, `bc:${chat}`, task(chat, 1), "background");
+      }
+      await time.advance(10_000);
+      expect(edits).toHaveLength(40);
+      for (const edit of edits) {
+        const inWindow = edits.filter(
+          (e) => e.at > edit.at - 1_000 && e.at <= edit.at,
+        );
+        expect(inWindow.length).toBeLessThanOrEqual(15);
+      }
+    });
+
+    it("lets a final card edit start without waiting behind the broadcast", async () => {
+      const time = manualClock();
+      const limiter = createEditLimiter({ clock: time.clock });
+      const { edits, task } = recorder(time.now);
+      // 30 подписчиков заняли полосу: на старте секунды 15 правок, 15 ждут.
+      for (let chat = 1; chat <= 30; chat += 1) {
+        limiter.submit(chat, `bc:${chat}`, task(chat, 1), "background");
+      }
+      await time.advance(10);
+      expect(edits).toHaveLength(15);
+      // Карточка финала пришла позже всех, но стартует сразу, а не после
+      // 15 ждущих правок трансляции.
+      limiter.submit(100, "100:1", task(100, 7));
+      await time.advance(10);
+      expect(edits.some((e) => e.chatId === 100)).toBe(true);
+      expect(edits.filter((e) => e.chatId < 100)).toHaveLength(15);
+    });
+
+    it("keeps the background moving while the foreground uses fifteen slots", async () => {
+      const time = manualClock();
+      const limiter = createEditLimiter({ clock: time.clock });
+      const { edits, task } = recorder(time.now);
+      for (let second = 0; second < 3; second += 1) {
+        for (let chat = 1; chat <= 15; chat += 1) {
+          limiter.submit(chat, `${chat}:1`, task(chat, second));
+        }
+        for (let chat = 101; chat <= 110; chat += 1) {
+          limiter.submit(chat, `bc:${chat}`, task(chat, second), "background");
+        }
+        await time.advance(1_000);
+      }
+      const background = edits.filter((e) => e.chatId > 100);
+      // Десять свободных мест в секунду не простаивают.
+      expect(background.length).toBeGreaterThanOrEqual(25);
+    });
+
+    it("serves the foreground first when both wait", async () => {
+      const time = manualClock();
+      const limiter = createEditLimiter({
+        clock: time.clock,
+        perSecond: 2,
+        backgroundSlots: 1,
+      });
+      const { edits, task } = recorder(time.now);
+      limiter.submit(1, "bc:1", task(1, 1), "background");
+      limiter.submit(2, "bc:2", task(2, 1), "background");
+      limiter.submit(3, "3:1", task(3, 1));
+      await time.advance(5_000);
+      expect(edits.map((e) => e.chatId)).toEqual([1, 3, 2]);
+    });
+
+    it("pauses the whole bot on 429 and still delivers the last edit", async () => {
+      const time = manualClock();
+      const limiter = createEditLimiter({ clock: time.clock });
+      const { edits, task } = recorder(time.now);
+      limiter.submit(
+        1,
+        "bc:1",
+        task(1, 1, { kind: "retry-after", ms: 3_000 }),
+        "background",
+      );
+      await time.advance(10);
+      limiter.submit(2, "2:1", task(2, 1));
+      await time.advance(2_000);
+      expect(edits.map((e) => e.chatId)).toEqual([1]);
+      await time.advance(3_000);
+      expect(edits.map((e) => e.chatId).sort()).toEqual([1, 1, 2]);
+    });
+  });
 });

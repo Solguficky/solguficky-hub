@@ -7,6 +7,11 @@
 ```text
 contracts/proto/
 ├── buf.yaml
+├── achievements/
+│   └── v1/
+│       ├── achievements.proto
+│       ├── achievements_events.proto
+│       └── achievements_service.proto
 ├── auction/
 │   └── v1/
 │       ├── auction.proto
@@ -28,11 +33,11 @@ contracts/proto/
         └── notifications_service.proto
 ```
 
-Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `auction.v1`, `identity.v1`, `meetups.v1`, `notifications.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
+Схемы раскладываются по домену-владельцу и major-версии: `<domain>/v<major>/`. Protobuf package повторяет путь: `achievements.v1`, `auction.v1`, `identity.v1`, `meetups.v1`, `notifications.v1`. Транспорт каталогом не является — то, что операция идёт по gRPC, а не по NATS, записано в [integration catalog](../docs/architecture/integration.md), а не в раскладке.
 
 Корень buf-модуля — сам `contracts/proto/`, поэтому импорты между схемами считаются от него. Как потребитель указывает этот корень — в [стандарте Protobuf](../docs/standards/contracts/protobuf.md).
 
-Схемы прежнего аукциона удалены и контрактом не являются; `auction/v1` написан заново по словарю [ADR-047](../docs/decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md): публичные факты журналов лота и аукциона, команды участника и чтение состояния торгов. Первый NATS-контракт — `notifications/v1/notifications.proto`: адресный факт уведомления, который Notifications публикует каналам. Второй — `meetups/v1/meetups_events.proto`: исходящие факты журнала сходок. Третий — `identity/v1/identity_events.proto`: исходящие факты о доступе человека. Контракт Telegram Bot ещё не спроектирован.
+Схемы прежнего аукциона удалены и контрактом не являются; `auction/v1` написан заново по словарю [ADR-047](../docs/decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md): публичные факты журналов лота и аукциона, команды участника и чтение состояния торгов. Первый NATS-контракт — `notifications/v1/notifications.proto`: адресный факт уведомления, который Notifications публикует каналам. Второй — `meetups/v1/meetups_events.proto`: исходящие факты журнала сходок. Третий — `identity/v1/identity_events.proto`: исходящие факты о доступе человека. `achievements/v1` описывает чтения ботов, ручную выдачу и факт выдачи ачивки; сервер его ещё не обслуживает, и сегодня схему читают только `contracts-build`, `contracts-codegen` и `tools/nats-tester`. Контракт Telegram Bot ещё не спроектирован.
 
 Файл домена делится по признаку «сервис, значения или исходящие факты», а не по транспорту: `meetups/v1/meetups.proto` и `identity/v1/access.proto` несут только типы значений, `*_service.proto` — сам сервис и его запросы, а `*_events.proto` — то, что домен публикует наружу. Последние вынесены по той же причине, по которой вынесены значения: потребителю событий не нужен ни `MeetupsService` с его запросами, ни `IdentityService` с его операциями. Импорт через границу домена целится в файл значений: так `notifications/v1/notifications.proto` берёт расписание, жизненный цикл и видимость сходки, не зная `MeetupsService`. Внутри домена работает то же правило: `identity/v1/identity_events.proto` берёт `Circle`, `Preset` и `AccessRight` из файла значений своего домена.
 
@@ -69,3 +74,11 @@ Git остаётся источником схем. ADR-014 описывает �
 - [Protobuf language guide](https://protobuf.dev/programming-guides/proto3/)
 - [Integration catalog](../docs/architecture/integration.md)
 - [ADR index](../docs/decisions/README.md)
+
+## Порядок материалов Meetups
+
+`MeetupsService.ReorderMaterials` принимает полный список `material_ids` и версию показанного снимка `expected_version`. Чтения и событие `MaterialsReordered` передают результат порядком repeated-поля `materials`, без отдельного поля позиции. Новый повод — `events.meetups.materials_reordered`; подробные отказы и права описаны в integration catalog.
+
+## Состав организаторов Meetups
+
+Состав организаторов сходки ([ADR-076](../docs/decisions/ADR-076-meetup-organizers.md), [PER-744](https://linear.app/anticnvm/issue/per-744)) — аддитивное расширение `meetups.v1`: поле `organizers` (номер 15) в `MeetupSnapshot` и `MeetupState`, значение `MEETUP_RELATION_ORGANIZER`, команды `AppointMeetupOrganizer`, `DismissMeetupOrganizer` и `LeaveMeetupOrganizers`, повода `meetup_organizer_appointed` и `meetup_organizer_dismissed` (номера 20 и 21 в `oneof occasion`) и узкий вопрос Identity к Meetups `ConfirmMeetupContact` с пустым ответом. Отказы и вызывающие — в integration catalog.

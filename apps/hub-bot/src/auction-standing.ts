@@ -65,8 +65,8 @@ export function stepBidLabel(amount: Money, firstBid: boolean): string {
 /**
  * Свой лимит на карточке. Лимит ниже порога следующей ставки у не-лидера
  * больше ничего не сделает (PER-631, №81): строка говорит, что он исчерпан.
- * В живом финале (PER-713) кнопки «Автоставка» нет, поэтому поднять лимит
- * строка не советует, а лидеру, который поставил выше своего лимита рукой,
+ * В живом финале (PER-823) строка сообщает об исчерпанном лимите, а автоставка
+ * меняется отдельным рядом. Лидеру, который поставил выше своего лимита рукой,
  * лимит ниже текущей цены тоже показан исчерпанным, а не действующим.
  * Онлайн-неделя показывает лимит лидера как раньше.
  */
@@ -96,6 +96,58 @@ export function ownProxyLine(lot: {
 }
 
 /**
+ * Строка о том, что лимит сработает в финале (PER-822, ADR-079, п. 3). Лоту,
+ * который ждёт финала, она обещает финал прямо. Лоту онлайн-недели участник
+ * отметки «в финал» не видит (она в пульте администратора), поэтому строка
+ * говорит условно. Живому финалу и прочим состояниям строки нет.
+ */
+export function finalLimitLine(lot: {
+  viewerProxyLimit: Money;
+  status: LotStatusView;
+}): string | undefined {
+  const { status } = lot;
+  if (status.kind === "held") {
+    return `Твой лимит до ${money(lot.viewerProxyLimit)} сработает в финале`;
+  }
+  return status.kind === "trading" && status.phase === "online"
+    ? "Если лот попадёт в финал, лимит сработает и там"
+    : undefined;
+}
+
+/**
+ * Строки своего лимита на карточке лота (PER-822): лоту в торгах — своя
+ * автоставка и условная строка про финал, лоту, который ждёт финала, — одна
+ * строка про финал. Лимита нет — строк нет. Чужих лимитов экран не знает.
+ */
+export function ownLimitLines(lot: {
+  viewerProxyLimit?: Money;
+  nextPrice?: Money;
+  standing?: LotStanding;
+  status: LotStatusView;
+}): string[] {
+  if (lot.viewerProxyLimit === undefined) return [];
+  const own = { ...lot, viewerProxyLimit: lot.viewerProxyLimit };
+  const { status } = lot;
+  // Лимит ниже цены лота в финале не сработает: обещать его нельзя.
+  if (status.kind === "held") {
+    return [
+      own.viewerProxyLimit.currency === status.currentPrice.currency &&
+      // Не-лидеру лимит, равный цене, ничего не поставит: перебить нужно выше.
+      (own.viewerProxyLimit.minorUnits < status.currentPrice.minorUnits ||
+        (own.viewerProxyLimit.minorUnits === status.currentPrice.minorUnits &&
+          lot.standing !== "leader"))
+        ? `Твой лимит до ${money(own.viewerProxyLimit)} не выше цены лота — в финале не сработает`
+        : (finalLimitLine(own) ?? ""),
+    ].filter((line) => line !== "");
+  }
+  const ownLine = ownProxyLine(own);
+  // Исчерпанный лимит уже назван исчерпанным: условной строки про финал
+  // рядом с ним нет, она бы ему противоречила.
+  const final = ownLine.includes("исчерпана") ? undefined : finalLimitLine(own);
+  return [ownLine, ...(final === undefined ? [] : [final])];
+}
+
+/**
  * Строка анти-снайпа на экране принятой ставки (PER-631, №107): «Торги
  * продлены до 11:03 (продление 3 из 3).» или, когда продления кончились,
  * «Продлений больше не будет: торги закроются в 11:03.» Строка не говорит, что
@@ -112,6 +164,22 @@ export function extensionLine(
   return extension.kind === "exhausted"
     ? `Продлений больше не будет: торги закроются в ${at}.`
     : `Торги продлены до ${at} (продление ${extension.used} из ${extension.max}).`;
+}
+
+/**
+ * Автоставки в словах участника (PER-840), одни у двух ботов, онлайн-недели и
+ * финала: чем была перебита его ставка и почему цена выросла сама.
+ */
+export const autoRaisedLine =
+  "Цена выросла автоматически: сработали автоставки";
+
+export function overtakenByProxyLine(price: Money): string {
+  return `Тебя перебила автоставка другого участника, цена ${money(price)}.`;
+}
+
+/** Строки карточки о росте цены от автоставок: пусто, пока рост не доказан. */
+export function autoRaisedLines(lot: { autoRaised?: true }): string[] {
+  return lot.autoRaised === true ? [autoRaisedLine] : [];
 }
 
 /** Строка карточки проданного лота у покупателя: «✅ Твой лот». */
@@ -157,16 +225,19 @@ export function feedSummary(
     mine?: readonly FeedItem[];
     beforeTrading?: true;
     final?: { active?: FeedItem };
+    groups?: readonly { group: FeedGroupName; count: number }[];
   },
   options: MineOptions,
 ): string[] {
   if (feed.beforeTrading === true) return [beforeTradingLine];
   const mine = feed.mine ?? [];
+  const groups = groupsLine(feed.groups);
   // В живом финале сводка начинается с того, что идёт в зале (PER-639), а
   // «не лидируешь» не говорит: лидерство решает ведущий по лоту за лотом.
   if (feed.final !== undefined) {
     return [
       finalFeedLine(feed.final.active, options),
+      ...groups,
       ...(mine.length === 0 ? [] : [mineLines(mine, options)]),
     ];
   }
@@ -178,13 +249,39 @@ export function feedSummary(
   if (mine.length === 0) {
     return [
       "Ты пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.",
+      ...groups,
       ...happyLine,
     ];
   }
   return [
     "Здесь только твои лоты: где ты лидер и что ты купил. Все лоты аукциона — кнопками ниже.",
     mineLines(mine, options),
+    ...groups,
     ...happyLine,
+  ];
+}
+
+export type FeedGroupName = "trading" | "held" | "sold" | "unsold";
+
+const groupWords: Readonly<Record<FeedGroupName, string>> = {
+  trading: "на торгах",
+  held: "ждёт финала",
+  sold: "продан",
+  unsold: "не продан",
+};
+
+/**
+ * Группы списка (PER-813): кнопки лотов идут по состоянию в этом порядке, а
+ * строка называет, сколько лотов в каждой.
+ */
+function groupsLine(
+  groups: readonly { group: FeedGroupName; count: number }[] | undefined,
+): string[] {
+  if (groups === undefined || groups.length === 0) return [];
+  return [
+    `Лоты идут по группам: ${groups
+      .map((each) => `${groupWords[each.group]} — ${each.count}`)
+      .join(", ")}.`,
   ];
 }
 
@@ -211,6 +308,34 @@ export function finalFeedLine(
   return `Идёт финал: сейчас «${options.title(active)}»${price}${ask}.`;
 }
 
+/** Значок группы лота в ленте (PER-836); у лота вне групп его нет. */
+export function lotGroupSign(status: LotStatusView): string | undefined {
+  switch (status.kind) {
+    case "trading":
+      return pictogram.lotTrading;
+    case "held":
+      return pictogram.lotHeld;
+    case "sold":
+      return pictogram.lotSold;
+    case "unsold":
+      return pictogram.lotUnsold;
+    case "draft":
+    case "scheduled":
+    case "withdrawn":
+      return undefined;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Знак группы лота и пробел впереди подписи кнопки ленты; у лота вне групп пусто. */
+export function lotGroupPrefix(item: FeedItem): string {
+  const sign = lotGroupSign(item.status);
+  return sign === undefined ? "" : `${sign} `;
+}
+
 /**
  * Подпись кнопки лота в ленте финала (PER-639): лот на торгах выделен, лоты
  * состава, которые ждут очереди, помечены — так они видны отдельно от
@@ -223,7 +348,10 @@ export function finalFeedLabel(
 ): string | null {
   if (final.active?.lotId === item.lotId) return `▶ ${title} · на торгах`;
   if (item.status.kind === "held") {
-    return `${title} · в составе · ${money(item.status.currentPrice)}`;
+    // Предел подписи кнопки 64: ужимается название, а не цена в хвосте.
+    const prefix = lotGroupPrefix(item);
+    const tail = ` · в составе · ${money(item.status.currentPrice)}`;
+    return `${prefix}${truncate(title, Math.max(1, 64 - prefix.length - tail.length))}${tail}`;
   }
   return null;
 }
@@ -334,14 +462,12 @@ export function nameSettingsParagraphs(
 
 /** Подпись текущего значения в вопросе суммы и лимита (PER-595). */
 export function currentValueLine(
-  current: { amount: string; limit: boolean } | undefined,
+  current: { amount: string; limit: boolean; floor?: boolean } | undefined,
 ): string[] {
   if (current === undefined) return [];
-  return [
-    current.limit
-      ? `Твой лимит сейчас: ${current.amount}`
-      : `Минимальная ставка: ${current.amount}`,
-  ];
+  if (current.limit) return [`Твой лимит сейчас: ${current.amount}`];
+  if (current.floor === true) return [`Лимит от: ${current.amount}`];
+  return [`Минимальная ставка: ${current.amount}`];
 }
 
 /** Начало пояснения автоставки голосом помощника (PER-517, PER-595). */

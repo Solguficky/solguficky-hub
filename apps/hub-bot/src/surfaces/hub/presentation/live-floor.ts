@@ -5,7 +5,9 @@ import {
   createLiveScreens,
   type LiveScreenEntry,
   type LiveScreenRead,
+  type LiveScreenStore,
   type LiveScreens,
+  type LiveScreenTarget,
 } from "./live-screens.js";
 import {
   type FloorScreenView,
@@ -28,18 +30,21 @@ export const LIVE_FLOORS_LIMIT = 200;
 export function createLiveFloors(options: {
   watches: AuctionWatches;
   limiter: EditLimiter;
-  read: (entry: LiveFloorEntry) => Promise<LiveScreenRead<FloorScreenView>>;
+  read: (target: LiveScreenTarget) => Promise<LiveScreenRead<FloorScreenView>>;
   edit: (
     entry: LiveFloorEntry,
     screen: ShownScreen,
   ) => Promise<LiveEditOutcome>;
   limit?: number;
+  store?: LiveScreenStore;
+  restorePauses?: readonly number[];
 }): LiveFloors {
   return createLiveScreens<FloorScreenView>(
     {
       key: "floor",
       live: liveFloor,
       auctionOf: (view) => view.floor.auctionId,
+      params: (view) => ({ page: view.page }),
       versions: (view) => new Map(Object.entries(view.floor.versions)),
       active: (view) => view.floor.lot?.lotId,
       render: (view, stale) =>
@@ -51,6 +56,10 @@ export function createLiveFloors(options: {
       read: options.read,
       edit: options.edit,
       limit: options.limit ?? LIVE_FLOORS_LIMIT,
+      ...(options.store === undefined ? {} : { store: options.store }),
+      ...(options.restorePauses === undefined
+        ? {}
+        : { restorePauses: options.restorePauses }),
     },
   );
 }

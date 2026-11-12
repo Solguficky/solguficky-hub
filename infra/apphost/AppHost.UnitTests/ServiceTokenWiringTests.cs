@@ -141,9 +141,9 @@ public class ServiceTokenWiringTests
     }
 
     /// <summary>
-    /// Профиль Auction ботов не поднимает, а таблица полна всё равно: бот хаба
-    /// берёт тот же параметр, что в своём профиле, а бот аукциона — свой, хотя
-    /// его узла ещё нет. Собственного токена у Auction нет: он никого не зовёт.
+    /// Профиль Auction ботов и Notifications не поднимает, а таблица полна всё
+    /// равно: бот хаба и Notifications берут тот же параметр, что в своих
+    /// профилях, а бот аукциона — свой, хотя его узла ещё нет.
     /// </summary>
     [Fact]
     public async Task CallerTable_AuctionProfile_AcceptsBothBots()
@@ -152,11 +152,13 @@ public class ServiceTokenWiringTests
 
         tokens.Keys.ShouldBe([Auction]);
         tokens[Auction].Keys.Order(StringComparer.Ordinal).ToArray()
-            .ShouldBe(["AUCTION_CALLER_TOKEN_AUCTION_BOT", "AUCTION_CALLER_TOKEN_HUB_BOT", "AUCTION_SERVICE_TOKEN"]);
+            .ShouldBe(["AUCTION_CALLER_TOKEN_AUCTION_BOT", "AUCTION_CALLER_TOKEN_HUB_BOT", "AUCTION_CALLER_TOKEN_NOTIFICATIONS", "AUCTION_SERVICE_TOKEN"]);
         // Свой токен Auction — тот, что принимает Meetups (CheckMeetupAuthority).
         tokens[Auction]["AUCTION_SERVICE_TOKEN"].Name.ShouldBe("auction-service-token");
         tokens[Auction]["AUCTION_CALLER_TOKEN_HUB_BOT"].Name.ShouldBe("hub-bot-service-token");
         tokens[Auction]["AUCTION_CALLER_TOKEN_AUCTION_BOT"].Name.ShouldBe("auction-bot-service-token");
+        // Notifications предъявляет Auction тот же токен, что Identity и Meetups.
+        tokens[Auction]["AUCTION_CALLER_TOKEN_NOTIFICATIONS"].Name.ShouldBe("notifications-service-token");
     }
 
     /// <summary>

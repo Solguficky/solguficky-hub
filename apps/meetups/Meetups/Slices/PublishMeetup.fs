@@ -14,6 +14,9 @@ type Command =
         Viewer: Viewer
         /// Версия показанного снимка, из которого принято решение (PER-78).
         ExpectedVersion: int64
+        /// Первая публикация без адресного факта «новая сходка». На возврате после
+        /// снятия поле не действует: повод тогда `MeetupRepublished`.
+        Silent: bool
     }
 
 [<RequireQualifiedAccess; NoComparison>]
@@ -55,7 +58,7 @@ let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, Publis
             // чтения дали бы одному факту два времени.
             let now = deps.Now()
 
-            match Meetup.decidePublish now state with
+            match Meetup.decidePublish now command.Silent state with
             | Error error -> return Error(PublishMeetupError.Domain error)
             | Ok None ->
                 match existing with
@@ -147,6 +150,7 @@ module Api =
                     Id = id
                     Viewer = viewer
                     ExpectedVersion = expectedVersion
+                    Silent = request.Silent
                 }
         | Error invalid, _, _
         | _, Error invalid, _

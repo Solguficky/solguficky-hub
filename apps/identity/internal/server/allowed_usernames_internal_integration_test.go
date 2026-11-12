@@ -43,6 +43,7 @@ func TestAllowedUsernameOperationsNormalizeAndKeepHistory(t *testing.T) {
 	first := resolveDirect(t, svc, 9401, "@Alice")
 	assertRightSet(t, first.GetRights(),
 		identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB,
+		identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS,
 		identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS,
 	)
 	assertAllowedUsernameRows(t, db, "alice", allowedUsernameCounts{total: 2, used: 1, removed: 1})
@@ -108,6 +109,7 @@ func TestResolveIdentityConsumesAllowedUsernameOnlyOnce(t *testing.T) {
 	first := resolveDirect(t, svc, 9411, "@mEmBeR")
 	assertRightSet(t, first.GetRights(),
 		identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB,
+		identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS,
 		identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS,
 	)
 	assertWhitelistJournal(t, db, first.GetIdentityId())

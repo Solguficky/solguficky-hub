@@ -110,6 +110,14 @@ export type RemoveMaterialRequest = {
   meta?: RpcMetadata;
 };
 
+export type ReorderMaterialsRequest = {
+  person: Person;
+  meetupId: string;
+  materialIds: readonly string[];
+  expectedVersion: number;
+  meta?: RpcMetadata;
+};
+
 export type Meetups = {
   listVisible(person: Person, meta?: RpcMetadata): Promise<MeetupListResult>;
   listArchived(
@@ -137,6 +145,7 @@ export type Meetups = {
     person: Person,
     meetup: MeetupSnapshot,
     meta?: RpcMetadata,
+    silent?: boolean,
   ): Promise<MeetupResult>;
   unpublish(
     person: Person,
@@ -167,4 +176,5 @@ export type Meetups = {
   ): Promise<MeetupResult>;
   attachMaterial(request: AttachMaterialRequest): Promise<MeetupResult>;
   removeMaterial(request: RemoveMaterialRequest): Promise<MeetupResult>;
+  reorderMaterials(request: ReorderMaterialsRequest): Promise<MeetupResult>;
 };

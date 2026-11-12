@@ -8,6 +8,7 @@ import auction.raffle.RaffleView
 import auction.raffle.RegistrationRejected
 import auction.v1.auction_service as wire
 import auction.v1.auction_service.ChangeRafflePrizeRefusal.Reason as PrizeReason
+import auction.v1.auction_service.RafflePrizePhotoRefusal.Reason as PhotoReason
 import io.grpc.Status
 
 /**
@@ -36,7 +37,8 @@ object RaffleMapping {
           winningTicket = reveal.winningTicket
         )
       },
-      drawnByHand = view.byHand
+      drawnByHand = view.byHand,
+      prizePhoto = view.photo.map(photo => wire.RafflePrizePhoto(photo.photoId.toString, photo.version))
     )
 
   private def status(value: RaffleStatus): wire.RaffleStatus =
@@ -117,6 +119,43 @@ object RaffleMapping {
       case Left(ChangePrizeRejected.WithoutResult) =>
         Right(prizeRefused(PrizeReason.WithoutResult(wire.RaffleWithoutResult())))
       case Left(ChangePrizeRejected.OpIdTaken) => Left(opIdTaken)
+    }
+
+  /**
+   * Фото приза (PER-772): тот же отказ розыгрыша, что у приза. Чужой `op_id` у снятия — `ALREADY_EXISTS`, а у фото id
+   * фото — ключ повтора: занятый другими байтами — `photo_conflict`.
+   */
+  def setPrizePhoto(
+      outcome: Either[ChangePrizeRejected, wire.Raffle]
+  ): Either[Status, wire.SetRafflePrizePhotoResponse] =
+    outcome match {
+      case Right(raffle) => Right(wire.SetRafflePrizePhotoResponse().withAccepted(raffle))
+      case Left(ChangePrizeRejected.OpIdTaken) =>
+        Right(prizePhotoRefused(PhotoReason.PhotoConflict(wire.PhotoConflict())))
+      case Left(rejected) => photoRejected(rejected).map(prizePhotoRefused)
+    }
+
+  def removePrizePhoto(
+      outcome: Either[ChangePrizeRejected, wire.Raffle]
+  ): Either[Status, wire.RemoveRafflePrizePhotoResponse] =
+    outcome match {
+      case Right(raffle) => Right(wire.RemoveRafflePrizePhotoResponse().withAccepted(raffle))
+      case Left(rejected) =>
+        photoRejected(rejected).map(reason =>
+          wire.RemoveRafflePrizePhotoResponse().withRefused(wire.RafflePrizePhotoRefusal(reason))
+        )
+    }
+
+  def prizePhotoRefused(reason: PhotoReason): wire.SetRafflePrizePhotoResponse =
+    wire.SetRafflePrizePhotoResponse().withRefused(wire.RafflePrizePhotoRefusal(reason))
+
+  private def photoRejected(rejected: ChangePrizeRejected): Either[Status, PhotoReason] =
+    rejected match {
+      case ChangePrizeRejected.RaffleNotFound => Right(PhotoReason.RaffleNotFound(wire.RaffleNotFound()))
+      case ChangePrizeRejected.AlreadyDrawn(winningTicket) =>
+        Right(PhotoReason.AlreadyDrawn(wire.RaffleAlreadyDrawn(winningTicket)))
+      case ChangePrizeRejected.WithoutResult => Right(PhotoReason.WithoutResult(wire.RaffleWithoutResult()))
+      case ChangePrizeRejected.OpIdTaken => Left(opIdTaken)
     }
 
   /** Текст приза отвергнут тем же отказом, что приз конфигурации. */

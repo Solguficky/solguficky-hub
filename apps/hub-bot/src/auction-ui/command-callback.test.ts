@@ -17,6 +17,22 @@ const OP_ID = "01929b7e-5c1d-7a3f-8e4b-ffffffffffff";
 const ADDRESSEE = Number.MAX_SAFE_INTEGER;
 
 const WORST: readonly AuctionIntent[] = [
+  // Снятие лимита (PER-822): та же форма, что у ставки, и те же 64 байта.
+  {
+    kind: "confirm",
+    command: "withdraw",
+    lotId: LOT_ID,
+    amount: MAX_COMMAND_AMOUNT,
+    page: MAX_FEED_PAGE,
+  },
+  {
+    kind: "commit",
+    command: "withdraw",
+    lotId: LOT_ID,
+    opId: OP_ID,
+    amount: MAX_COMMAND_AMOUNT,
+    page: MAX_FEED_PAGE,
+  },
   {
     kind: "confirm",
     command: "bid",

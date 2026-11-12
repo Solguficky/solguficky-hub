@@ -13,7 +13,9 @@ import { readRaffle } from "./open-feed.js";
 // программа недели (PER-724) — окна и финал из сводки, розыгрыш из `getRaffle`,
 // вход в лоты, в прогнозы, пока участнику есть что отправить или перечитать
 // (PER-489), в хроники дня онлайн-недели (PER-725), в розыгрыш, пока Auction
-// его отдаёт, и, у процесса с Notifications, в избранное. Корень один у двух
+// его отдаёт, в промо-видео парой с лотами, пока оно есть и чат медиа включён
+// (PER-774, PER-798), и,
+// у процесса с Notifications, в избранное. Корень один у двух
 // ботов (PER-644, решение владельца по прогону 14 октября 2026 года): лента,
 // прогнозы, хроники, розыгрыш и избранное возвращают в него. Остальные ряды —
 // правила, пульт и возврат — ставит оболочка поверхности.
@@ -28,6 +30,8 @@ import { readRaffle } from "./open-feed.js";
 export async function openRoot(input: {
   auction: AuctionPort;
   favorites?: FavoritesPort;
+  achievements?: import("../../achievement-types.js").AchievementsPort;
+  media?: true;
   viewer: Viewer;
   auctionId: string;
 }): Promise<AuctionScreenBody> {
@@ -38,10 +42,23 @@ export async function openRoot(input: {
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
-  const [raffle, predictionRound, invoices] = await Promise.all([
+  const achievementsRead =
+    auction === undefined || input.achievements === undefined
+      ? Promise.resolve(false)
+      : input.achievements.getEvent(input.auctionId).then(
+          (rows) => rows.length > 0,
+          (cause) => {
+            // Сервис не ответил (PER-813): кнопки, за которой пусто или
+            // ошибка, нет. Сбой пишет в лог порт, корень не роняется.
+            input.achievements?.reportFailure?.(cause);
+            return false;
+          },
+        );
+  const [raffle, openRound, invoices, hasAchievements] = await Promise.all([
     raffleRead,
     predictionRead,
     invoicesRead,
+    achievementsRead,
   ]);
   if (auction === undefined) {
     return {
@@ -49,6 +66,64 @@ export async function openRoot(input: {
       keyboard: [],
     };
   }
+  const raffleButtons =
+    raffle !== undefined
+      ? [
+          {
+            action: "root.raffle" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: input.auctionId,
+            }),
+          },
+        ]
+      : [];
+  // После конца аукциона вкладка остаётся и тем, у кого нет ответов: в ней
+  // итоги прогнозов (PER-813).
+  const predictionRound =
+    openRound?.round ??
+    (openRound !== undefined && auction.stage === "finished"
+      ? ("catalog" as const)
+      : undefined);
+  const predictionsButtons =
+    predictionRound !== undefined
+      ? [
+          {
+            action: "root.predictions" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "prediction",
+              auctionId: input.auctionId,
+              round: predictionRound,
+            }),
+          },
+        ]
+      : [];
+  const resultsButtons =
+    auction.stage === "finished"
+      ? [
+          {
+            action: "root.results" as const,
+            callbackData: encodeAuctionCallback({
+              kind: "auction-results",
+              auctionId: input.auctionId,
+            }),
+          },
+        ]
+      : [];
+  // «Розыгрыш» и «Прогнозы» — парой под «Лотами» (решение владельца по
+  // прогону stage 27.10, PER-798; пересматривает №66 прогона 14.10): без
+  // «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему пары не нашлось, —
+  // своим рядом.
+  const hasPredictions = predictionsButtons.length > 0;
+  // «Итоги» и «Мои счета» — одним рядом (PER-832): со счетами «Итоги» уходят
+  // из пары с розыгрышем и из своего ряда в ряд счетов.
+  const resultsWithInvoices = invoices && resultsButtons.length > 0;
+  const ownResults = resultsWithInvoices ? [] : resultsButtons;
+  const paired = hasPredictions ? predictionsButtons : ownResults;
+  const rest = hasPredictions ? ownResults : [];
+  const raffleAndPredictionRows = [[...raffleButtons, ...paired], rest].filter(
+    (row) => row.length > 0,
+  );
   return {
     blocks: [
       {
@@ -63,8 +138,10 @@ export async function openRoot(input: {
       },
     ],
     keyboard: [
-      // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
-      // №66; пересматривает «Розыгрыш своим рядом» PER-669).
+      // «🏷️ Лоты» — главный вход, первым рядом парой с «🎬 Промо», пока
+      // администратор выставил видео, а показать пост есть чем — чатом медиа
+      // ботов (PER-774); без промо — своим рядом (решение владельца 27.10,
+      // PER-798).
       [
         {
           action: "root.lots",
@@ -74,40 +151,28 @@ export async function openRoot(input: {
             page: 0,
           }),
         },
-        ...(raffle !== undefined
+        ...(input.media !== undefined && auction.promoVideo !== undefined
           ? [
               {
-                action: "root.raffle" as const,
+                action: "root.promo" as const,
                 callbackData: encodeAuctionCallback({
-                  kind: "raffle",
+                  kind: "promo",
                   auctionId: input.auctionId,
                 }),
               },
             ]
           : []),
       ],
-      ...(predictionRound === undefined
-        ? []
-        : [
-            [
-              {
-                action: "root.predictions" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "prediction",
-                  auctionId: input.auctionId,
-                  round: predictionRound,
-                }),
-              },
-            ],
-          ]),
-      ...(auction.stage === "finished"
+      ...raffleAndPredictionRows,
+      ...(hasAchievements
         ? [
             [
               {
-                action: "root.prediction-results" as const,
+                action: "root.achievements" as const,
                 callbackData: encodeAuctionCallback({
-                  kind: "prediction-results",
+                  kind: "achievements",
                   auctionId: input.auctionId,
+                  page: 0,
                 }),
               },
             ],
@@ -117,8 +182,10 @@ export async function openRoot(input: {
       // — от открытия торгов до закрытия последнего лота по дедлайну. Читает её
       // только держатель `place_bids`: держатель одного `run_auctions`, которого
       // хаб пускает в корень, получил бы отказ Auction, и кнопки у него нет.
-      ...((auction.stage === "prebidding" || auction.stage === "settling") &&
-      input.viewer.rights.includes("place-bids")
+      // «Статистики» всего аукциона (PER-770) в корне нет ни у кого: она —
+      // вход в пульт хаба (PER-800, решение владельца по прогону 27.10).
+      ...(input.viewer.rights.includes("place-bids") &&
+      (auction.stage === "prebidding" || auction.stage === "settling")
         ? [
             [
               {
@@ -136,6 +203,7 @@ export async function openRoot(input: {
       ...(invoices
         ? [
             [
+              ...(resultsWithInvoices ? resultsButtons : []),
               {
                 action: "root.invoices" as const,
                 callbackData: encodeAuctionCallback({
@@ -172,12 +240,15 @@ async function predictionEntryRound(input: {
   auction: AuctionPort;
   viewer: Viewer;
   auctionId: string;
-}): Promise<PredictionRoundView["round"] | undefined> {
+}): Promise<{ round?: PredictionRoundView["round"] }> {
   const rounds = await input.auction.getMyPredictions({
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
   const open = rounds.find((round) => round.status === "open");
-  if (open !== undefined) return open.round;
-  return [...rounds].reverse().find((round) => round.answers.length > 0)?.round;
+  if (open !== undefined) return { round: open.round };
+  const answered = [...rounds]
+    .reverse()
+    .find((round) => round.answers.length > 0)?.round;
+  return answered === undefined ? {} : { round: answered };
 }

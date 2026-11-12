@@ -15,6 +15,7 @@
     },
     "raffleCancelled": null,
     "winnerAssigned": null,
-    "prizeChanged": null
+    "prizeChanged": null,
+    "prizePhotoSet": null
   }
 }

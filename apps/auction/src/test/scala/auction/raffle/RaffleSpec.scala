@@ -323,6 +323,66 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
     }
   }
 
+  "the prize photo" should {
+
+    val photo = PrizePhoto(uuid(600), "a" * 64)
+    val other = PrizePhoto(uuid(601), "b" * 64)
+
+    def set(raffle: Raffle, value: PrizePhoto) =
+      accepted(raffle, OpId(value.photoId), Raffle.decide(raffle, SetPrizePhoto(value, OpId(value.photoId))))
+
+    def byHand(raffle: Raffle): Raffle =
+      Raffle.decide(raffle, FixPool(Set.empty, byHand = true), closesAt) match {
+        case Right(event) => step(raffle, op(90), event)
+        case Left(rejected) => fail(s"pool not fixed: $rejected")
+      }
+
+    "is set, replaced and removed before the result, leaving the prize text as it was" in {
+      val registered = register(open, 1, 2)
+      for (raffle <- List(registered, fixed(registered), byHand(registered))) {
+        val withPhoto = set(raffle, photo)
+        Raffle.prizePhoto(withPhoto.state) shouldBe Some(photo)
+        withPhoto.state.getClass shouldBe raffle.state.getClass
+        val replaced = set(withPhoto, other)
+        Raffle.prizePhoto(replaced.state) shouldBe Some(other)
+        val removed = accepted(replaced, op(62), Raffle.decide(replaced, RemovePrizePhoto(op(62))))
+        Raffle.prizePhoto(removed.state) shouldBe None
+      }
+    }
+
+    "answers a repeat of the photo id with the original, other bytes under it with a refusal and no photo without an event" in {
+      val withPhoto = set(open, photo)
+      val key = OpId(photo.photoId)
+      Raffle.decide(withPhoto, SetPrizePhoto(photo, key)) shouldBe Right(RaffleDecision.Repeated(withPhoto.seen(key)))
+      Raffle.decide(withPhoto, SetPrizePhoto(photo.copy(version = "c" * 64), key)) shouldBe
+        Left(ChangePrizeRejected.OpIdTaken)
+      Raffle.decide(withPhoto, RemovePrizePhoto(key)) shouldBe Left(ChangePrizeRejected.OpIdTaken)
+      Raffle.decide(open, RemovePrizePhoto(op(62))) shouldBe Right(RaffleDecision.Unchanged)
+      val removed = accepted(withPhoto, op(62), Raffle.decide(withPhoto, RemovePrizePhoto(op(62))))
+      Raffle.decide(removed, RemovePrizePhoto(op(62))) shouldBe Right(RaffleDecision.Repeated(removed.seen(op(62))))
+    }
+
+    "keeps the photo into the result and refuses to change it after, as the prize" in {
+      val waiting = set(byHand(register(open, 1, 2)), photo)
+      val assigned = accepted(waiting, op(70), Raffle.decide(waiting, AssignWinner(1, op(70)), closesAt))
+      Raffle.prizePhoto(assigned.state) shouldBe Some(photo)
+      Raffle.decide(assigned, SetPrizePhoto(other, OpId(other.photoId))) shouldBe
+        Left(ChangePrizeRejected.AlreadyDrawn(1))
+      Raffle.decide(assigned, RemovePrizePhoto(op(62))) shouldBe Left(ChangePrizeRejected.AlreadyDrawn(1))
+    }
+
+    "refuses a raffle that is not there and one that will have no result" in {
+      val command = SetPrizePhoto(photo, OpId(photo.photoId))
+      Raffle.decide(Raffle.initial, command) shouldBe Left(ChangePrizeRejected.RaffleNotFound)
+      val notHeld = step(Raffle.initial, op(1), RaffleEvent.RaffleNotHeld(closesAt))
+      Raffle.decide(notHeld, command) shouldBe Left(ChangePrizeRejected.WithoutResult)
+      Raffle.decide(fixed(open), RemovePrizePhoto(op(62))) shouldBe Left(ChangePrizeRejected.WithoutResult)
+      val cancelled = step(set(open, photo), op(80), RaffleEvent.RaffleCancelled(closesAt.minusSeconds(30)))
+      Raffle.decide(cancelled, RemovePrizePhoto(op(62))) shouldBe Left(ChangePrizeRejected.WithoutResult)
+      Raffle.prizePhoto(cancelled.state) shouldBe Some(photo)
+    }
+  }
+
   "cancelling with the auction" should {
 
     val cancelledAt = closesAt.plusSeconds(30)

@@ -19,14 +19,17 @@ public sealed class StepWindowTelemetry
     private static readonly Gauge<double> OldestDueAge = Meter.CreateGauge<double>("notifications.step_window.oldest_due_age_seconds");
     private static readonly Counter<long> Scheduled = Meter.CreateCounter<long>("notifications.step_window.scheduled");
     private static readonly Counter<long> Fired = Meter.CreateCounter<long>("notifications.step_window.fired");
+    private static readonly Counter<long> Cancelled = Meter.CreateCounter<long>("notifications.step_window.cancelled");
 
     private long lastSuccessfulSweepUnixSeconds;
     private long scheduledTotal;
     private long firedTotal;
+    private long cancelledTotal;
 
     public long LastSuccessfulSweepUnixSeconds => Interlocked.Read(ref lastSuccessfulSweepUnixSeconds);
     public long ScheduledTotal => Interlocked.Read(ref scheduledTotal);
     public long FiredTotal => Interlocked.Read(ref firedTotal);
+    public long CancelledTotal => Interlocked.Read(ref cancelledTotal);
 
     public void Tick() => SweepTicks.Add(1);
 
@@ -49,5 +52,17 @@ public sealed class StepWindowTelemetry
     {
         Fired.Add(1);
         Interlocked.Increment(ref firedTotal);
+    }
+
+    /// <summary>Задания, снятые потому, что у их начала не осталось окон (PER-788).</summary>
+    public void Cancel(int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        Cancelled.Add(count);
+        Interlocked.Add(ref cancelledTotal, count);
     }
 }

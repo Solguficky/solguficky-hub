@@ -48,6 +48,9 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     placeBid: async () => {
       throw new Error("not used");
     },
+    withdrawProxyLimit: async () => {
+      throw new Error("not used");
+    },
     setProxyLimit: async () => {
       throw new Error("not used");
     },
@@ -57,14 +60,14 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     getAuction: async () => undefined,
     getRaffle: async () => undefined,
     listMyInvoices: async () => ({ invoices: [] }),
-    chooseFulfillment: async () => {
-      throw new Error("not used");
-    },
     getMyPredictions: async () => [],
     getPredictionResults: async () => {
       throw new Error("not used");
     },
     getDayChronicle: async () => {
+      throw new Error("not used");
+    },
+    getAuctionChronicle: async () => {
       throw new Error("not used");
     },
     submitPrediction: async () => {
@@ -189,9 +192,9 @@ describe("feed", () => {
     ).rejects.toThrow("server pages");
   });
 
-  // Без раскладки администратора — порядок создания (PER-719): цена лот
-  // больше не двигает.
-  it("orders the feed by creation, not by price", () => {
+  // Без раскладки администратора — порядок создания (PER-719) внутри группы
+  // (PER-813): на торгах, затем не проданные; цена лот не двигает.
+  it("orders the feed by group, then by creation, not by price", () => {
     const { sections, rest } = arrangeFeed(
       [lot(5), lot(4, 10), lot(3), lot(2, 10), lot(1, 5)],
       undefined,
@@ -200,8 +203,8 @@ describe("feed", () => {
     expect(rest.map((l) => l.lotId.slice(-1))).toEqual([
       "1",
       "2",
-      "3",
       "4",
+      "3",
       "5",
     ]);
   });
@@ -336,6 +339,12 @@ describe("feed in the live final", () => {
       mug.lotId,
     ]);
     expect(block.final?.active?.lotId).toBe(shirt.lotId);
+    // Группы (PER-813): на торгах, ждёт финала, продан.
+    expect(block.groups).toEqual([
+      { group: "trading", count: 1 },
+      { group: "held", count: 2 },
+      { group: "sold", count: 1 },
+    ]);
   });
 
   // Раскладка администратора (PER-719) финал не трогает: разделов нет, лоты
@@ -584,5 +593,110 @@ describe("feed in the order of the administrator", () => {
     });
     expect(sections).toEqual([]);
     expect(rest.map((l) => l.lotId)).toEqual([id(2), id(1)]);
+  });
+});
+
+// Группы списка (PER-813, решение владельца): на торгах, ждёт финала, продан,
+// не продан — не вперемешку, и блок называет число лотов в каждой.
+describe("feed groups", () => {
+  const trading = (n: number): LotView => ({
+    ...lot(n, 100),
+  });
+  const unsold = (n: number): LotView => lot(n);
+  const soldLot = (n: number): LotView => ({
+    ...lot(n),
+    status: {
+      kind: "sold",
+      winnerId: "01929b7e-5c1d-7a3f-8e4b-0000000000b9",
+      price: { minorUnits: 50_000, currency: "RUB" },
+    },
+  });
+
+  it("lists trading, then sold, then unsold lots and counts each group", async () => {
+    const body = await openFeed({
+      auction: oneServerPage([unsold(1), soldLot(2), trading(3), soldLot(4)]),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    expect(block.lots.map((item) => item.status.kind)).toEqual([
+      "trading",
+      "sold",
+      "sold",
+      "unsold",
+    ]);
+    expect(block.groups).toEqual([
+      { group: "trading", count: 1 },
+      { group: "sold", count: 2 },
+      { group: "unsold", count: 1 },
+    ]);
+  });
+
+  it("does not name a single group", async () => {
+    const body = await openFeed({
+      auction: oneServerPage([trading(1), trading(2)]),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    expect(block.groups).toBeUndefined();
+  });
+});
+
+// Перерыв перед финалом (PER-833): лидер лота, который ждёт финала, видит его
+// среди своих лотов сводки.
+describe("feed summary in the break before the final", () => {
+  it("counts the leadership on a lot that awaits the final", async () => {
+    const heldLot: LotView = {
+      ...lot(1),
+      status: {
+        kind: "held",
+        currentPrice: { minorUnits: 90000, currency: "RUB" },
+        leaderId: VIEWER.identityId,
+      },
+    };
+    const body = await openFeed({
+      auction: oneServerPage([heldLot]),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    expect(block.mine?.map((item) => item.lotId)).toEqual([heldLot.lotId]);
+  });
+
+  // Состав объявлен, финал не начат (стадия «готовим финал»): ленты финала ещё
+  // нет, а лидерство на удержанных лотах считается.
+  it("counts it once the lineup is frozen and the final has not begun", async () => {
+    const heldLot: LotView = {
+      ...lot(1),
+      status: {
+        kind: "held",
+        currentPrice: { minorUnits: 35000, currency: "RUB" },
+        leaderId: VIEWER.identityId,
+      },
+    };
+    const body = await openFeed({
+      auction: {
+        ...oneServerPage([heldLot, lot(2)]),
+        getAuction: async () => ({
+          auctionId: AUCTION_ID,
+          stage: "lineup-frozen",
+          final: true,
+        }),
+      },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    expect(block.final).toBeUndefined();
+    expect(block.mine?.map((item) => item.lotId)).toEqual([heldLot.lotId]);
   });
 });

@@ -67,6 +67,7 @@ export function parsePaymentText(raw: string): PaymentTextParseResult {
 export function isOverdue(invoice: Invoice, now: Date): boolean {
   return (
     invoice.status === "awaiting-payment" &&
+    invoice.paymentDueAt !== undefined &&
     Date.parse(invoice.paymentDueAt) < now.getTime()
   );
 }

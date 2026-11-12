@@ -8,7 +8,7 @@ namespace Notifications.Infrastructure;
 
 /// <summary>Задание напоминания о счёте: строка таблицы и её положение.</summary>
 public sealed record InvoiceReminderTask(Guid TaskId, Guid InvoiceId, InvoiceReminderKind Kind, DateTimeOffset DueAt,
-    string State)
+    string State, DateTimeOffset? PaymentDueAt = null)
 {
     /// <summary>Живое задание: запланированное и ещё не сработавшее.</summary>
     public bool Live => State == "scheduled";
@@ -54,26 +54,35 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
     // запрос: строки не чистятся, и без порядка по времени вопрос «какое
     // последнее» не имел бы ответа.
     private const string ReadSql = """
-        SELECT task_id, invoice_id, kind, due_at, state
+        SELECT task_id, invoice_id, kind, due_at, state, payment_due_at
         FROM invoice_reminder_task
         WHERE invoice_id = @InvoiceId AND kind = @Kind
         ORDER BY created_at DESC
         LIMIT 1;
         """;
 
-    // Живое задание с наступившим моментом: их до трёх, и срабатывает то,
-    // что ждало дольше.
+    // Живое задание с наступившим моментом: их до трёх, и срабатывает самое
+    // позднее. Простой, накрывший несколько моментов, даёт одно напоминание:
+    // «за 24 часа» после «за 12» уже не новость, а второе сообщение за секунды.
     private const string DueSql = """
-        SELECT task_id, invoice_id, kind, due_at, state
+        SELECT task_id, invoice_id, kind, due_at, state, payment_due_at
         FROM invoice_reminder_task
         WHERE invoice_id = @InvoiceId AND state = 'scheduled' AND due_at <= @Now
-        ORDER BY due_at
+        ORDER BY due_at DESC
         LIMIT 1;
         """;
 
+    // Наступившие моменты раньше сработавшего: их напоминание перекрыто более
+    // поздним, и снимаются они вместе с его срабатыванием.
+    private const string SupersedeSql = """
+        UPDATE invoice_reminder_task
+        SET state = 'cancelled', reason = 'superseded by a later moment'
+        WHERE invoice_id = @InvoiceId AND state = 'scheduled' AND due_at < @DueAt AND due_at <= @Now;
+        """;
+
     private const string InsertSql = """
-        INSERT INTO invoice_reminder_task (task_id, invoice_id, kind, due_at, state, created_at)
-        VALUES (@TaskId, @InvoiceId, @Kind, @DueAt, 'scheduled', @Now);
+        INSERT INTO invoice_reminder_task (task_id, invoice_id, kind, due_at, state, created_at, payment_due_at)
+        VALUES (@TaskId, @InvoiceId, @Kind, @DueAt, 'scheduled', @Now, @PaymentDueAt);
         """;
 
     private const string CancelSql = """
@@ -131,6 +140,7 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
     /// <param name="invoiceId">Счёт, чьи задания правятся.</param>
     /// <param name="creates">Задания, которых не хватает: вид и момент.</param>
     /// <param name="cancelLive">Снять ли живые задания счёта.</param>
+    /// <param name="paymentDueAt">Срок из реплики, по которой рассчитаны создаваемые задания.</param>
     /// <param name="cancelReason">Причина снятия: она встаёт в строку.</param>
     /// <param name="now">Момент записи.</param>
     /// <remarks>
@@ -143,6 +153,7 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
         Guid invoiceId,
         IReadOnlyList<(InvoiceReminderKind Kind, DateTimeOffset DueAt)> creates,
         bool cancelLive,
+        DateTimeOffset? paymentDueAt,
         string cancelReason,
         DateTimeOffset now,
         CancellationToken cancellationToken)
@@ -172,6 +183,7 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
                     TaskId = Guid.NewGuid(),
                     InvoiceId = invoiceId,
                     Kind = InvoiceReminderKinds.Text(kind),
+                    PaymentDueAt = paymentDueAt?.UtcDateTime,
                     DueAt = dueAt.UtcDateTime,
                     Now = now.UtcDateTime,
                 },
@@ -211,7 +223,8 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
         var replica = await InvoiceReplicaStore.ReadLocked(work, task.InvoiceId, cancellationToken);
-        if (replica is null || replica.Status != InvoiceStatus.AwaitingPayment)
+        if (replica is null || replica.Status != InvoiceStatus.AwaitingPayment || replica.PaymentDueAt is null ||
+            task.PaymentDueAt != replica.PaymentDueAt)
         {
             var cancelled = await work.Execute(
                 CancelOneSql,
@@ -249,17 +262,24 @@ public sealed class InvoiceReminderTaskStore(NpgsqlDataSource source, InvoiceRem
         var facts = await NotificationStore.AddInvoiceReminder(
             work, task.TaskId, task.Kind, replica, now, cancellationToken);
 
+        var superseded = await work.Execute(
+            SupersedeSql,
+            new { task.InvoiceId, DueAt = task.DueAt.UtcDateTime, Now = now.UtcDateTime },
+            cancellationToken);
+
         await work.Commit(cancellationToken);
+        telemetry.Remove(superseded, "cancelled");
         telemetry.Fire();
         return new InvoiceFireResult(InvoiceFireOutcome.Sent, facts);
     }
 
     private static InvoiceReminderTask Map(Row row) =>
-        new(row.task_id, row.invoice_id, InvoiceReminderKinds.Parse(row.kind), Moment(row.due_at), row.state);
+        new(row.task_id, row.invoice_id, InvoiceReminderKinds.Parse(row.kind), Moment(row.due_at), row.state,
+            row.payment_due_at is { } due ? Moment(due) : null);
 
     // timestamptz читается как DateTime, а не DateTimeOffset — так его отображает
     // Npgsql. Перевод идёт через ToUniversalTime, как в остальных хранилищах.
     private static DateTimeOffset Moment(DateTime value) => new(value.ToUniversalTime());
 
-    private sealed record Row(Guid task_id, Guid invoice_id, string kind, DateTime due_at, string state);
+    private sealed record Row(Guid task_id, Guid invoice_id, string kind, DateTime due_at, string state, DateTime? payment_due_at);
 }

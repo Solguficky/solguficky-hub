@@ -161,7 +161,7 @@ describe("inspectCall configuration", () => {
     expect(
       rulesOf(
         "editMessageText",
-        call("edit", "<b>Изменить</b>\n\n🔨 Аукцион: идут торги", [back]),
+        call("edit", "<b>Изменить</b>\n\n🏷️ Аукцион: идут торги", [back]),
       ),
     ).toEqual([]);
     // Поле записи с отступом называет бота, а не раздел.

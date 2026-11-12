@@ -16,6 +16,23 @@ defmodule Achievements.Settings do
   end
 
   @doc """
+  Таблица вызывающих gRPC (ADR-056): токен каждого вызывающего из колонки
+  Caller — `<имя>` из `names` читается из `ACHIEVEMENTS_CALLER_TOKEN_<ИМЯ>`.
+  Таблица полна всегда: без токена узел не стартует и называет переменную.
+  """
+  @spec callers!([atom()]) :: %{atom() => String.t()}
+  def callers!(names) do
+    Map.new(names, fn caller ->
+      name = "ACHIEVEMENTS_CALLER_TOKEN_" <> String.upcase(Atom.to_string(caller))
+
+      case System.get_env(name) do
+        token when token in [nil, ""] -> raise "#{name} is not set: a caller token is required"
+        token -> {caller, token}
+      end
+    end)
+  end
+
+  @doc """
   Адрес NATS для релея outbox. Пустой адрес — шины в запуске нет: релей не
   стартует, строки копятся в outbox и уйдут, когда адрес появится.
   """

@@ -1,15 +1,26 @@
 import { InlineKeyboard } from "grammy";
+import { achievementScreen } from "../../../../achievement-screen.js";
 import { dayChronicleButtonLabel } from "../../../../auction-day-chronicle.js";
 import {
+  auctionEndedLine,
+  finalBidHeadline,
   finalBidLabel,
-  finalBidLine,
   finalPriceLines,
   showsStep,
+  unwatchFinalLabel,
+  watchFinalLabel,
+  withdrawButtonLabel,
 } from "../../../../auction-final.js";
+import { type HallLinks, hallButtons } from "../../../../auction-hall.js";
+import {
+  activeHappyHourLine,
+  happyHourTerms,
+} from "../../../../auction-happy-hours.js";
 import { predictionButtonLabel } from "../../../../auction-prediction.js";
-import { predictionResultsButtonLabel } from "../../../../auction-prediction-results.js";
 import { programmeParagraph } from "../../../../auction-programme.js";
+import { promoButtonLabel } from "../../../../auction-promo.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
+import { auctionResultsButtonLabel } from "../../../../auction-results.js";
 import {
   collectedLine,
   type SetLotOptions,
@@ -20,6 +31,7 @@ import {
   setMoreLine,
 } from "../../../../auction-set.js";
 import {
+  autoRaisedLines,
   awaitsFirstBid,
   favoritesEmptyText,
   favoritesSummary,
@@ -31,11 +43,12 @@ import {
   historyLine,
   leaderLine,
   lotButtonTail,
+  lotGroupPrefix,
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
+  ownLimitLines,
   ownLotLine,
-  ownProxyLine,
   stepBidLabel,
   struckHistoryLine,
   tradingPriceLine,
@@ -48,11 +61,13 @@ import type {
   FeedItem,
   FeedSectionItem,
   LotStatusView,
+  Money,
 } from "../../../../auction-ui/index.js";
 import { invoicesButtonLabel } from "../../../../auction-winner-invoices.js";
 import {
   type LotPhotoKey,
   lotPhotoKeys,
+  rafflePrizePhotoKeys,
   richPhotoBlock,
 } from "../../../../core/auction/lot-photos.js";
 import { money, truncate } from "../../../../core/format.js";
@@ -63,14 +78,17 @@ import {
   pictogram,
   refreshLabel,
 } from "../../../../core/pictograms.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import {
+  type CommunityDay,
+  communityLocalTime,
+  communityShownTime,
+} from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
-  consoleSetsData,
   consoleViewData,
-  floorData,
   lotFormData,
+  lotHappyHoursData,
   lotNewData,
   removalData,
 } from "../parse-callback.js";
@@ -86,8 +104,8 @@ import {
   oneLine,
   questionScreen,
 } from "./auction-bid.js";
+import { auctionChronicleScreen } from "./auction-chronicle.js";
 import { dayChronicleScreen } from "./auction-day-chronicle.js";
-import { predictionResultsScreen } from "./auction-prediction-results.js";
 import {
   predictionAliasQuestionScreen,
   predictionAnswerRefusedScreen,
@@ -96,6 +114,7 @@ import {
   predictionNumberQuestionScreen,
   predictionScreen,
 } from "./auction-predictions.js";
+import { auctionPromoScreen } from "./auction-promo.js";
 import {
   raffleAnswerRefusedScreen,
   raffleNameChoiceScreen,
@@ -104,6 +123,7 @@ import {
   raffleRegisteredScreen,
   raffleScreen,
 } from "./auction-raffle.js";
+import { auctionResultsScreen } from "./auction-results.js";
 import { stageLine } from "./auction-stage.js";
 import {
   invoiceMissingScreen,
@@ -171,6 +191,16 @@ export type AuctionView = {
    */
   canManage?: boolean;
   /**
+   * Чат медиа ботов включён (PER-774): держатель права вести аукцион видит в
+   * корне вход в промо-видео.
+   */
+  media?: boolean;
+  /**
+   * Стрим и экран финала (PER-825, PER-832): кнопки-URL одним рядом корня
+   * аукциона. Нет поля — адресов в настройке нет, и кнопок нет.
+   */
+  hall?: HallLinks;
+  /**
    * Принимает ли аукцион новые лоты: `false` — онлайн-неделя открыта, и ряда
    * «Добавить лот» в ленте нет (PER-468). Статус аукциона лента тела не несёт,
    * его читает адаптер у пульта; не прочитал — отдаёт `true`, и ряд остаётся,
@@ -196,13 +226,11 @@ export type AuctionView = {
 // нет, и тело у двух ботов остаётся одним.
 // Знак управления — 🛠 (PER-669): экраны аукциона видит и участник.
 const editLotLabel = adminLabel("Изменить лот");
+// «Счастливые часы» лота (PER-787) — тот же знак управления.
+const happyHoursLotLabel = adminLabel("Счастливые часы");
+
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
 const consoleLabel = adminLabel("Пульт");
-// «Ставки зала» помощника (PER-565) — рядом с пультом, пока идёт финал.
-export const floorLabel = adminLabel("Ставки зала");
-// Сеты лотов (PER-509) — рядом с пультом; в финале пара пульта занята
-// «Ставками зала», и сеты встают своим рядом.
-export const lotSetsLabel = adminLabel("Сеты");
 const favoritesLabel = "Избранное";
 
 /**
@@ -214,6 +242,9 @@ export type AuctionShown = {
   screen: ShownScreen;
   images?: readonly LotPhotoKey[];
   asks?: true;
+  // Промо-видео (PER-774): экран — копия поста чата медиа ботов новым
+  // сообщением, а `postId` нет — видео недоступно, и экран не уходит.
+  promo?: { postId?: number };
 };
 
 // Пометка предпросмотра — последним абзацем: над заголовком у карточки только
@@ -240,6 +271,31 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
   // экраны; отказ и непринятый ответ — тоже (PER-472).
   for (const block of view.body.blocks) {
     switch (block.kind) {
+      case "achievements": {
+        const shown = achievementScreen(block.screen, {
+          rich: view.presentation === "rich",
+          timeZone: view.timeZone,
+        });
+        if (shown.id === "my-achievements" || shown.id === "my-achievement")
+          throw new Error("private auction collection is unavailable in hub");
+        const photos = view.presentation === "rich" ? (view.photos ?? []) : [];
+        const keyboard = new InlineKeyboard();
+        for (const [index, row] of shown.keyboard.entries()) {
+          if (index > 0) keyboard.row();
+          for (const button of row)
+            keyboard.text(button.text, button.callback_data);
+        }
+        return {
+          screen: {
+            id: shown.id,
+            text: richPhotoBlock(photos.map((photo) => photo.id)) + shown.text,
+            ...(photos.length === 0 ? {} : { media: photos }),
+            keyboard,
+            format: view.presentation === "rich" ? "rich" : "HTML",
+          },
+          ...(view.presentation === "rich" ? { images: shown.photos } : {}),
+        };
+      }
       case "confirm":
         return { screen: confirmScreen(block, view.body.keyboard, money) };
       case "accepted":
@@ -269,12 +325,29 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
       case "follow-refused":
         return { screen: followRefusedScreen(block, view.body.keyboard) };
       // Розыгрыш среди участников (ADR-066).
-      case "prediction-results":
-        return { screen: predictionResultsScreen(block) };
+      case "auction-results":
+        return { screen: auctionResultsScreen(block) };
       case "day-chronicle":
         return { screen: dayChronicleScreen(block) };
-      case "raffle":
-        return { screen: raffleScreen(block, view.body.keyboard, view) };
+      case "auction-chronicle":
+        return { screen: auctionChronicleScreen(block) };
+      case "promo":
+        return {
+          screen: auctionPromoScreen(block),
+          promo: block.postId === undefined ? {} : { postId: block.postId },
+        };
+      // Фото приза (PER-773) — как фото лота: ключи отдаются адаптеру, а
+      // готовые фото приходят обратно полем `photos`.
+      case "raffle": {
+        const images =
+          view.presentation === "rich"
+            ? rafflePrizePhotoKeys(block.raffle)
+            : [];
+        return {
+          screen: raffleScreen(block, view.body.keyboard, view),
+          ...(images.length > 0 ? { images } : {}),
+        };
+      }
       case "raffle-registered":
         return {
           screen: raffleRegisteredScreen(block, view.body.keyboard, view),
@@ -463,7 +536,7 @@ const mineOptions = {
 
 /**
  * Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
- * «Лоты», «Пульт» и «Сеты» по праву и «Розыгрыш», пока он есть, «Избранное» тела у
+ * «Лоты», «Пульт» по праву и «Розыгрыш», пока он есть, «Избранное» тела у
  * процесса с Notifications и «Правила и FAQ». Возврат — в меню «Расширения»
  * сходки.
  */
@@ -494,9 +567,7 @@ function rootScreen(
   const predictions = buttons.find(
     (button) => button.action === "root.predictions",
   );
-  const predictionResults = buttons.find(
-    (button) => button.action === "root.prediction-results",
-  );
+  const results = buttons.find((button) => button.action === "root.results");
   const dayChronicle = buttons.find(
     (button) => button.action === "root.day-chronicle",
   );
@@ -505,29 +576,48 @@ function rootScreen(
     (button) => button.action === "root.favorites",
   );
   const invoices = buttons.find((button) => button.action === "root.invoices");
-  // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
-  // №66; пересматривает «Розыгрыш своим рядом» PER-669).
+  const achievements = buttons.find(
+    (button) => button.action === "root.achievements",
+  );
+  const promo = buttons.find((button) => button.action === "root.promo");
+  // «🏷️ Лоты» — первым рядом парой с «🎬 Промо» (PER-774), пока у аукциона
+  // есть видео, иначе своим рядом; «Розыгрыш» и «Прогнозы» — парой под ним
+  // (решения владельца по прогону stage 27.10, PER-798; пересматривают №66
+  // прогона 14.10): без «Прогнозов» розыгрышу в пару идут «Итоги», а то, чему
+  // пары не нашлось, — своим рядом.
   if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData);
+  if (promo !== undefined) keyboard.text(promoButtonLabel, promo.callbackData);
+  nextRow(keyboard);
   if (raffle !== undefined) {
     keyboard.text(raffleButtonLabel, raffle.callbackData);
   }
-  nextRow(keyboard);
   if (predictions !== undefined) {
-    keyboard.text(predictionButtonLabel, predictions.callbackData).row();
+    keyboard.text(predictionButtonLabel, predictions.callbackData);
+    nextRow(keyboard);
   }
-  if (predictionResults !== undefined) {
-    keyboard
-      .text(predictionResultsButtonLabel, predictionResults.callbackData)
-      .row();
+  // «Итоги» и «Мои счета» — одним рядом (PER-832): у завершённого аукциона,
+  // где есть счета, «Итоги» уходят из пары с розыгрышем в ряд счетов.
+  const resultsWithInvoices = results !== undefined && invoices !== undefined;
+  if (results !== undefined && !resultsWithInvoices) {
+    keyboard.text(auctionResultsButtonLabel, results.callbackData);
   }
+  nextRow(keyboard);
   // «Хроники дня» (PER-725) — своим рядом, пока идёт онлайн-неделя.
   if (dayChronicle !== undefined) {
-    keyboard.text(dayChronicleButtonLabel, dayChronicle.callbackData).row();
+    keyboard.text(dayChronicleButtonLabel, dayChronicle.callbackData);
   }
-  // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета.
+  nextRow(keyboard);
+  // «Мои счета» (PER-322) — своим рядом, пока у смотрящего есть счета; у
+  // завершённого аукциона с «Итогами» (PER-832).
   if (invoices !== undefined) {
-    nextRow(keyboard).text(invoicesButtonLabel, invoices.callbackData).row();
+    nextRow(keyboard);
+    if (results !== undefined) {
+      keyboard.text(auctionResultsButtonLabel, results.callbackData);
+    }
+    keyboard.text(invoicesButtonLabel, invoices.callbackData).row();
   }
+  if (achievements !== undefined)
+    nextRow(keyboard).text("Ачивки", achievements.callbackData).row();
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);
   }
@@ -536,19 +626,22 @@ function rootScreen(
     auctionFaqData(token, view.entry === "events"),
   );
   // «🛠 Пульт» — своим рядом над возвратом (PER-669): действие управления не
-  // делит ряд с кнопками участника.
+  // делит ряд с кнопками участника. Это единственный вход управления в корне
+  // (PER-802): сеты, объявление, промо-видео и ставки зала — в пульте.
   if (view.canManage === true) {
     nextRow(keyboard).text(consoleLabel, consoleViewData(token));
-    // Ставки зала заносят в живом финале (ADR-070 п. 4): вход — парой с
-    // пультом ведущего, пока состав объявлен или финал идёт.
-    if (auction.stage === "lineup-frozen" || auction.stage === "in-final") {
-      keyboard.text(floorLabel, floorData(token));
-      nextRow(keyboard);
-    }
-    keyboard.text(lotSetsLabel, consoleSetsData(token));
+  }
+  // «Стрим финала ↗» и «Экран финала ↗» (PER-832) — одним рядом над
+  // возвратом; без адресов кнопок нет.
+  const links = hallButtons(view.hall, root.auctionId);
+  if (links.length > 0) {
+    nextRow(keyboard);
+    for (const button of links) keyboard.url(button.text, button.url);
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  const deadline = (instant: string) =>
+    readableMoment(communityShownTime(instant, view.timeZone), view.today);
   // Блоки, как у карточки сходки (прогон 14.10, №65): статус, пустая строка,
   // поле «📅 Когда:» онлайн-торгов и строка финала под ним.
   const online =
@@ -556,7 +649,7 @@ function rootScreen(
       ? undefined
       : auction.closesAt === undefined
         ? `Когда: онлайн-торги с ${moment(auction.opensAt)}`
-        : `Когда: онлайн-торги с ${moment(auction.opensAt)} до ${moment(auction.closesAt)}`;
+        : `Когда: онлайн-торги с ${moment(auction.opensAt)} до ${deadline(auction.closesAt)}`;
   const fields = [
     ...(online === undefined
       ? []
@@ -608,18 +701,20 @@ function feedLabel(
       // пересматривает ADR-073, п. 7): отметка съедала название, и одинаковые
       // лоты сета нельзя было различить. Сет называет карточка лота.
       return finalLabel === null
-        ? lotButton(item, title)
+        ? lotButton(item, title, lotGroupPrefix(item))
         : buttonText(finalLabel);
     }
     case "feed.prev":
       return "←";
     case "feed.next":
       return "→";
+    case "lot.current":
     case "lot.refresh":
     case "lot.bid-step":
     case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
+    case "lot.withdraw":
     case "lot.history":
     case "lot.back":
     case "history.prev":
@@ -639,6 +734,8 @@ function feedLabel(
     case "name.return":
     case "lot.follow":
     case "lot.unfollow":
+    case "lot.watch":
+    case "lot.unwatch":
     case "favorites.open-lot":
     case "favorites.prev":
     case "favorites.next":
@@ -659,18 +756,22 @@ function feedLabel(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "auction-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
     case "lot.set":
+    case "lot.invoices":
     case "set.open-lot":
     case "set.back":
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a feed body`);
@@ -723,30 +824,27 @@ function lotScreen(
   // лидера и срока со знаками, группа хода торгов, описание — группы через
   // пустую строку, в rich — блоками. Исход ставки финала — своей группой под
   // ними (PER-336).
-  const groups = [
-    ...statusGroups(lot, view),
-    ...(lot.finalBid === undefined
-      ? []
-      : [[finalBidLine(lot.finalBid, money)]]),
-    ...setGroups(lot),
-  ];
+  const groups = [...statusGroups(lot, view), ...setGroups(lot)];
   const mark = preview === undefined ? [] : [lotPreviewMark];
   const rich = view.presentation === "rich";
   const photos = rich ? (view.photos ?? []) : [];
   const images = lotPhotoKeys(lot.lotId, lot.card);
   // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026
   // года, «Показ фото лота»); несколько — каруселью (PER-721).
+  const result =
+    lot.ended === true ? auctionEndedLine : finalBidHeadline(lot, money);
   const text = rich
     ? [
         richPhotoBlock(photos.map((photo) => photo.id)),
         `<h1>${escapeHtml(title)}</h1>`,
+        ...(result === undefined ? [] : [`<h2>${escapeHtml(result)}</h2>`]),
         ...groups.map(
           (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
         ),
         ...richParagraphs(description),
         ...mark.map((line) => `<p>${escapeHtml(line)}</p>`),
       ].join("")
-    : plainLot(title, description, groups, mark);
+    : plainLot(title, description, groups, mark, result);
   return {
     screen: {
       id: preview === undefined ? "lot" : "lot-preview",
@@ -779,10 +877,12 @@ function plainLot(
   description: string | undefined,
   groups: readonly (readonly string[])[],
   footer: readonly string[] = [],
+  result?: string,
 ): string {
   const join = (shown: string | undefined) =>
     screenText(
       title,
+      result === undefined ? undefined : `<b>${escapeHtml(result)}</b>`,
       ...groups.map((lines) => lines.map(escapeHtml).join("\n")),
       shown === undefined ? undefined : escapeHtml(shown),
       ...footer.map(escapeHtml),
@@ -825,6 +925,14 @@ function editRow(
   );
   if (placed) return;
   nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
+  // «Счастливые часы» лота (PER-787): условия под периоды задаются лоту в
+  // онлайн-торгах — своим рядом под правкой.
+  if (lot.status.kind === "trading" && lot.status.phase === "online") {
+    nextRow(keyboard).text(
+      happyHoursLotLabel,
+      lotHappyHoursData(uuidToToken(lot.lotId)),
+    );
+  }
 }
 
 function lotLabel(
@@ -832,6 +940,8 @@ function lotLabel(
   lot: Extract<AuctionBlock, { kind: "lot" }>,
 ): string {
   switch (button.action) {
+    case "lot.current":
+      return "К текущему лоту";
     case "lot.refresh":
       return refreshLabel;
     case "lot.history":
@@ -839,6 +949,9 @@ function lotLabel(
     // Лоты сета — экран сета с карточки (ADR-073, п. 7).
     case "lot.set":
       return setLabel;
+    // «Мои счета» победителю на карточке проданного лота (PER-813).
+    case "lot.invoices":
+      return invoicesButtonLabel;
     // Без ставок первая ставка — не «по шагу» (PER-631, №82).
     case "lot.bid-step":
       return stepBidLabel(button.amount, awaitsFirstBid(lot.status));
@@ -848,10 +961,16 @@ function lotLabel(
       return "Своя сумма";
     case "lot.proxy":
       return "Автоставка";
+    case "lot.withdraw":
+      return withdrawButtonLabel;
     case "lot.follow":
       return followLabel;
     case "lot.unfollow":
       return unfollowLabel;
+    case "lot.watch":
+      return watchFinalLabel;
+    case "lot.unwatch":
+      return unwatchFinalLabel;
     case "lot.prev":
       return lotPrevLabel;
     case "lot.next":
@@ -896,15 +1015,18 @@ function lotLabel(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "auction-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a lot body`);
@@ -999,6 +1121,8 @@ function setLotLabelOf(
     case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
+    case "lot.withdraw":
+    case "lot.current":
     case "lot.refresh":
     case "lot.history":
     case "lot.back":
@@ -1006,6 +1130,8 @@ function setLotLabelOf(
     case "lot.next":
     case "lot.follow":
     case "lot.unfollow":
+    case "lot.watch":
+    case "lot.unwatch":
     case "feed.prev":
     case "feed.next":
     case "feed.back":
@@ -1039,16 +1165,20 @@ function setLotLabelOf(
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "auction-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
+    case "lot.invoices":
     case "set.back":
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a set body`);
@@ -1114,7 +1244,7 @@ function favoritesScreen(
 function favoriteState(status: LotStatusView, view: AuctionView): string {
   return status.kind === "trading" && status.deadline !== undefined
     ? `${priceLabel(status)}, торги до ${readableMoment(
-        communityLocalTime(status.deadline, view.timeZone),
+        communityShownTime(status.deadline, view.timeZone),
         view.today,
       )}`
     : priceLabel(status);
@@ -1123,10 +1253,10 @@ function favoriteState(status: LotStatusView, view: AuctionView): string {
 // Кнопка лота ленты и избранного: название, обрезанное под хвост с ценой,
 // отметкой лидера (прогон 14.10, №83) и, в ленте, отметкой сета, в пределе
 // подписи.
-function lotButton(item: FeedItem, title: string): string {
+function lotButton(item: FeedItem, title: string, prefix = ""): string {
   const tail = lotButtonTail(item, priceLabel(item.status));
   return buttonText(
-    `${truncate(title, Math.max(1, BUTTON_LIMIT - tail.length))}${tail}`,
+    `${prefix}${truncate(title, Math.max(1, BUTTON_LIMIT - prefix.length - tail.length))}${tail}`,
   );
 }
 
@@ -1231,11 +1361,13 @@ function historyLabel(button: AuctionButton): string {
     case "feed.open-section":
     case "feed.prev":
     case "feed.next":
+    case "lot.current":
     case "lot.refresh":
     case "lot.bid-step":
     case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
+    case "lot.withdraw":
     case "lot.history":
     case "lot.back":
     case "history.back":
@@ -1253,6 +1385,8 @@ function historyLabel(button: AuctionButton): string {
     case "name.return":
     case "lot.follow":
     case "lot.unfollow":
+    case "lot.watch":
+    case "lot.unwatch":
     case "favorites.open-lot":
     case "favorites.prev":
     case "favorites.next":
@@ -1273,18 +1407,22 @@ function historyLabel(button: AuctionButton): string {
     case "raffle.return":
     case "root.lots":
     case "root.predictions":
-    case "root.prediction-results":
-    case "prediction-results.back":
+    case "root.results":
+    case "results.back":
+    case "root.achievements":
     case "root.day-chronicle":
     case "day-chronicle.back":
+    case "auction-chronicle.back":
+    case "root.promo":
+    case "promo.back":
     case "root.raffle":
     case "lot.set":
+    case "lot.invoices":
     case "set.open-lot":
     case "set.back":
     case "root.invoices":
     case "invoices.open":
     case "invoices.back":
-    case "invoice.fulfillment":
     case "invoice.back":
     case "invoice.retry":
       throw new Error(`action ${button.action} in a history body`);
@@ -1333,17 +1471,11 @@ function statusGroups(
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
         ...(showsStep(block) ? stepLines(block, view) : []),
+        ...autoRaisedLines(block),
         // Свой лимит смотрящего: чужих Auction не отдаёт. Исчерпанный лимит
         // так и назван (PER-631, №81), в живом финале — без совета поднять
         // его (PER-713).
-        ...(block.viewerProxyLimit === undefined
-          ? []
-          : [
-              ownProxyLine({
-                ...block,
-                viewerProxyLimit: block.viewerProxyLimit,
-              }),
-            ]),
+        ...ownLimitLines(block),
       ];
       return [
         [
@@ -1364,7 +1496,7 @@ function statusGroups(
                 marked(
                   pictogram.deadline,
                   `Торги до: ${readableMoment(
-                    communityLocalTime(status.deadline, view.timeZone),
+                    communityShownTime(status.deadline, view.timeZone),
                     view.today,
                   )}`,
                 ),
@@ -1383,6 +1515,8 @@ function statusGroups(
             leaderLine(status.leaderId, participantName, block.standing),
           ),
         ],
+        // Свой лимит лоту, который ждёт финала (PER-822).
+        ...(block.viewerProxyLimit === undefined ? [] : [ownLimitLines(block)]),
       ];
     // Покупатель видит, что лот его (PER-595).
     case "sold":
@@ -1410,18 +1544,28 @@ function statusGroups(
 }
 
 // Шаг лота до торгов и в торгах — те же строки, что у бота аукциона
-// (дизайн-код, «Карточка лота»): в окне «Счастливых часов» шаг окна до его
-// конца и обычный шаг, иначе «Шаг», когда он один на все цены, или «Шаг по
-// порогам»; будущее окно — своей строкой. Окна Auction отдаёт только в торгах.
+// (дизайн-код, «Карточка лота»): в окне «Счастливых часов» его условия до
+// конца — стартовая окна, шаг или оба (PER-787) — и обычный шаг, иначе «Шаг»,
+// когда он один на все цены, или «Шаг по порогам»; будущее окно — своей
+// строкой. Окна Auction отдаёт только в торгах.
 function stepLines(
   block: Extract<AuctionBlock, { kind: "lot" }>,
   view: AuctionView,
 ): string[] {
   const local = (instant: string) => communityLocalTime(instant, view.timeZone);
   const at = (instant: string) => readableMoment(local(instant), view.today);
+  const shown = (instant: string) =>
+    readableMoment(communityShownTime(instant, view.timeZone), view.today);
   const active = block.activeWindow;
-  const current =
+  const activeTerms =
     active === undefined
+      ? undefined
+      : happyHourTerms(active, regularStart(block), money);
+  const current =
+    // Окно только со стартовой шаг не меняет: строка шага остаётся.
+    active === undefined ||
+    activeTerms === undefined ||
+    active.step === undefined
       ? block.tiers === undefined
         ? block.fixedStep === undefined
           ? []
@@ -1433,27 +1577,50 @@ function stepLines(
             ),
           ]
       : [
-          `Счастливые часы: шаг ${money(active.step)} до ${at(active.until)}`,
+          activeHappyHourLine(shown(active.until), activeTerms),
           ...(block.baseStep === undefined
             ? []
             : [`Обычный шаг: ${money(block.baseStep)}`]),
         ];
+  const startOnly =
+    active !== undefined &&
+    activeTerms !== undefined &&
+    active.step === undefined
+      ? [activeHappyHourLine(shown(active.until), activeTerms)]
+      : [];
   const next = block.nextWindow;
-  if (next === undefined) return current;
+  const nextTerms =
+    next === undefined
+      ? undefined
+      : happyHourTerms(next, regularStart(block), money);
+  if (next === undefined || nextTerms === undefined) {
+    return [...startOnly, ...current];
+  }
   // Окно внутри одного дня называет день один раз.
   const from = local(next.from);
-  const until = local(next.until);
+  const until = communityShownTime(next.until, view.timeZone);
   const sameDay =
     from.year === until.year &&
     from.month === until.month &&
     from.day === until.day;
   const pad = (part: number) => String(part).padStart(2, "0");
   return [
+    ...startOnly,
     ...current,
     `Счастливые часы: с ${at(next.from)} до ${
-      sameDay ? `${pad(until.hours)}:${pad(until.minutes)}` : at(next.until)
-    }, шаг ${money(next.step)}`,
+      sameDay ? `${pad(until.hours)}:${pad(until.minutes)}` : shown(next.until)
+    }, ${nextTerms}`,
   ];
+}
+
+// Обычная стартовая — текущая цена лота в торгах без ставок: с ней стартовая
+// окна идёт парой (PER-787).
+function regularStart(
+  block: Extract<AuctionBlock, { kind: "lot" }>,
+): Money | undefined {
+  return block.status.kind === "trading" && block.status.leaderId === undefined
+    ? block.status.currentPrice
+    : undefined;
 }
 
 function priceLabel(status: LotStatusView): string {

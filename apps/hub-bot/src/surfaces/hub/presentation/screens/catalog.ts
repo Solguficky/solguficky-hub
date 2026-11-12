@@ -30,6 +30,25 @@ export const manageMembersParent = "manage-members-parent";
 // владельца 10 октября 2026 года). Что цепочка родителей каждого экрана
 // доходит до корня, держит проверка графа `inspectCatalog` test kit.
 export const screenCatalog = {
+  "auction-achievements": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивки",
+    parent: "auction-root",
+    backName: "Ачивки",
+  },
+  "auction-achievement": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивка",
+    parent: "auction-achievements",
+  },
+  "achievements-unavailable": {
+    class: "screen",
+    nav: "exit",
+    title: "Ачивки недоступны",
+  },
+
   menu: {
     class: "screen",
     nav: "root",
@@ -294,12 +313,12 @@ export const screenCatalog = {
     parent: "lots",
     backName: "Лоты",
   },
-  // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
-  // корня аукциона и возврат туда же (PER-644).
-  "prediction-results": {
+  // Итоги завершённого аукциона (PER-813) — тело общего аукционного дерева,
+  // вход из корня аукциона и возврат туда же.
+  "auction-results": {
     class: "screen",
     nav: "tree",
-    title: "Итоги прогнозов",
+    title: "Итоги аукциона",
     parent: "auction-root",
     backName: "Итоги",
   },
@@ -311,6 +330,15 @@ export const screenCatalog = {
     title: "Хроники дня",
     parent: "auction-root",
     backName: "Хроники дня",
+  },
+  // Статистика аукциона (PER-770) — тело общего аукционного дерева: вход со
+  // «Сводки дня» пульта (PER-800) и возврат туда же.
+  "auction-chronicle": {
+    class: "screen",
+    nav: "tree",
+    title: "Статистика аукциона",
+    parent: "day-summary",
+    backName: "Статистика",
   },
   predictions: {
     class: "screen",
@@ -324,6 +352,8 @@ export const screenCatalog = {
     nav: "tree",
     title: "Выбрать лот",
     parent: "predictions",
+    // До двенадцати лотов страницы, «Очистить», стрелки и возврат (PER-836).
+    maxRows: 15,
   },
   "prediction-name-choice": {
     class: "screen",
@@ -354,14 +384,16 @@ export const screenCatalog = {
   // складываются по смыслу (PER-594, PER-644, PER-669): ставка по шагу, своя
   // сумма с автоставкой, «Ставки» с избранным (PER-495), «Лоты сета»
   // (ADR-073, п. 7), «🛠 Изменить лот» администратора своим рядом, листание
-  // `[◀️][🔄 Обновить][▶️]` и навигация — семь, у участника шесть.
+  // `[◀️][🔄 Обновить][▶️]` и навигация — семь, у участника шесть. Ссылок
+  // «Стрим финала ↗» и «Экран финала ↗» на карточке нет: они в корне
+  // аукциона (PER-832).
   lot: {
     class: "screen",
     nav: "tree",
     parent: "lots",
     backName: "Лот",
     refresh: true,
-    maxRows: 7,
+    maxRows: 9,
   },
   // Сет лотов (ADR-073, п. 7): экран-раздел карточки лота — лоты сета и,
   // после итога, кто его собрал. Открывается с карточки лота сета.
@@ -430,6 +462,24 @@ export const screenCatalog = {
     title: "Какие лоты изменить?",
     parent: "lot-form",
   },
+  // «Счастливые часы» лота (PER-787): периоды аукциона с условиями лота и
+  // условия в периоде. Родитель — карточка лота: вход стоит на ней.
+  "lot-happy-hours": {
+    class: "screen",
+    nav: "tree",
+    title: "Счастливые часы",
+    parent: "lot",
+    backName: "Счастливые часы",
+    subject: true,
+  },
+  // Заголовок — «Период N», линтер сверяет его по началу.
+  "lot-happy-hour": {
+    class: "screen",
+    nav: "tree",
+    title: "Период",
+    parent: "lot-happy-hours",
+    subject: true,
+  },
   // Удаление лота (PER-716): вернуть лот бот не умеет, поэтому «Да» красное.
   "lot-remove-confirm": {
     class: "screen",
@@ -445,9 +495,11 @@ export const screenCatalog = {
     parent: "lot-form",
   },
   // Пульт аукциона администратора (PER-320): экран хаба, а не тело пакета.
-  // Открывается из корня аукциона (PER-605). В финале он же —
-  // пульт ведущего (PER-337): цену и ставки лота двигает зал, поэтому у
-  // экрана «Обновить».
+  // Открывается из корня аукциона (PER-605) — единственным входом управления
+  // в корне (PER-802). В финале он же — пульт ведущего (PER-337): цену и
+  // ставки лота двигает зал, поэтому у экрана «Обновить». До открытия недели
+  // — чек-лист подготовки, после — группы; редкое уходит в экраны под ним, и
+  // пульт держит общий потолок рядов.
   "auction-console": {
     class: "screen",
     nav: "tree",
@@ -455,11 +507,37 @@ export const screenCatalog = {
     parent: "auction-root",
     backName: "Пульт",
     refresh: true,
-    // Пульт — экран администратора, и он набит: сроки, видимость, финал,
-    // время финала, счастливые часы, розыгрыш, приз, снятия и открытие
-    // недели. Общий потолок в двенадцать рядов ему тесен (PER-663), поэтому
-    // у него свой — тринадцать.
-    maxRows: 13,
+  },
+  // «Розыгрыш» под пультом (PER-802): момент, приз, фото и итог.
+  "console-raffle": {
+    class: "screen",
+    nav: "tree",
+    title: "Розыгрыш",
+    parent: "auction-console",
+    backName: "Розыгрыш",
+  },
+  // «Финал» под пультом (PER-802): отбор лотов кнопкой на лот и время финала.
+  "console-final": {
+    class: "screen",
+    nav: "tree",
+    title: "Финал",
+    parent: "auction-console",
+    backName: "Финал",
+  },
+  // «Оплата» под пультом (PER-834): текст и срок оплаты на одном экране.
+  "console-payment": {
+    class: "screen",
+    nav: "tree",
+    title: "Оплата",
+    parent: "auction-console",
+    backName: "Оплата",
+  },
+  // «Ещё» под пультом (PER-802): снятие с публикации, удаление и отмена.
+  "console-more": {
+    class: "screen",
+    nav: "tree",
+    title: "Ещё",
+    parent: "auction-console",
   },
   // «Сводка дня торгов» (PER-492): текст за сутки со ссылками на лоты в боте
   // аукциона. Публикует его организатор — бот в группу не пишет.
@@ -468,6 +546,7 @@ export const screenCatalog = {
     nav: "tree",
     title: "Сводка дня",
     parent: "auction-console",
+    backName: "Сводка дня",
   },
   // Счета проданных лотов (PER-321): итог собранного и ожидаемого, строка на
   // счёт и кнопка на счёт. Открываются с пульта, как только лоты продаются.
@@ -502,7 +581,7 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     title: "Итог розыгрыша",
-    parent: "auction-console",
+    parent: "console-raffle",
   },
   // Итог не меняется, и участники сразу получают весть: «Да» красное.
   "raffle-winner-confirm": {
@@ -517,6 +596,86 @@ export const screenCatalog = {
     class: "screen",
     nav: "confirm",
     title: "Изменить приз?",
+  },
+  // Фото приза идущего розыгрыша (PER-773): есть ли фото и что с ним можно
+  // сделать. Открывается с «Розыгрыша» пульта (PER-802), пока у розыгрыша нет
+  // итога.
+  "raffle-prize-photo": {
+    class: "screen",
+    nav: "tree",
+    title: "Фото приза",
+    parent: "console-raffle",
+  },
+  // Снятие фото приза: бот вернуть его не может, поэтому «Да» красное, как у
+  // «Убрать фото» лота.
+  "raffle-prize-photo-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Убрать фото приза?",
+    irreversible: true,
+  },
+  // Промо-видео аукциона (PER-774): экран из пульта (PER-802) и
+  // подтверждение снятия; видео прикрепляется заново, поэтому «Да» не
+  // красное.
+  "promo-video": {
+    class: "screen",
+    nav: "tree",
+    title: "Промо-видео",
+    parent: "auction-console",
+    backName: "Промо-видео",
+  },
+  "promo-video-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Убрать промо-видео?",
+  },
+  // Объявление аукциона (PER-765): меню шаблонов из пульта (PER-802), выбор
+  // окна и лота,
+  // шаги кнопки и фото с текстом хвостом кадра и подтверждение, которое
+  // отвечает на предпросмотр. Рассылку не отменить — «Да» красное.
+  announcement: {
+    class: "screen",
+    nav: "tree",
+    title: "Объявление",
+    parent: "auction-console",
+    backName: "Объявление",
+  },
+  "announcement-windows": {
+    class: "screen",
+    nav: "tree",
+    title: "Счастливые часы",
+    parent: "announcement",
+  },
+  "announcement-lots": {
+    class: "screen",
+    nav: "tree",
+    title: "История лота",
+    parent: "announcement",
+  },
+  "announcement-button": {
+    class: "screen",
+    nav: "tree",
+    title: "Кнопка объявления",
+    parent: "announcement",
+  },
+  "announcement-photo": {
+    class: "screen",
+    nav: "tree",
+    title: "Фото объявления",
+    parent: "announcement",
+  },
+  // Шаг «Кому» объявления (PER-779): аудитория перед предпросмотром.
+  "announcement-audience": {
+    class: "screen",
+    nav: "tree",
+    title: "Кому",
+    parent: "announcement",
+  },
+  "announcement-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Отправить объявление?",
+    irreversible: true,
   },
   // «Счастливые часы» (PER-504): окна сниженного шага онлайн-недели.
   // Открываются с пульта, пока неделя не открыта, а после — только для
@@ -536,6 +695,30 @@ export const screenCatalog = {
     title: "Окно",
     parent: "step-windows",
   },
+  // Периоды «Счастливых часов» (PER-787): список с «Создать период», период с
+  // условиями лотов и удаление до начала. Условия лота в периоде задаются с
+  // карточки лота, а здесь только видны.
+  "happy-hour-periods": {
+    class: "screen",
+    nav: "tree",
+    title: "Периоды",
+    parent: "step-windows",
+    backName: "Периоды",
+  },
+  // Заголовок — «Период N», линтер сверяет его по началу.
+  "happy-hour-period": {
+    class: "screen",
+    nav: "tree",
+    title: "Период",
+    parent: "happy-hour-periods",
+  },
+  // Условия лотов в удалённом периоде вернуть нельзя: «Да» красное.
+  "happy-hour-period-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Удалить период",
+    irreversible: true,
+  },
   // Запуск окна по ходу торгов (PER-615): сроки и шаг запускаемого окна, лоты
   // реестра переключателями и ряд запуска.
   "step-window-launch": {
@@ -544,13 +727,13 @@ export const screenCatalog = {
     title: "Запуск окна",
     parent: "step-windows",
   },
-  // Сеты лотов (ADR-073, PER-509): вход «🛠 Сеты» корня аукциона. Сеты
+  // Сеты лотов (ADR-073, PER-509): вход «Сеты» пульта (PER-802). Сеты
   // меняются, пока неделя не открыта, а после — только для просмотра.
   "lot-sets": {
     class: "screen",
     nav: "tree",
     title: "Сеты",
-    parent: "auction-root",
+    parent: "auction-console",
     backName: "Сеты",
   },
   // Сет: число лотов и лоты реестра переключателями. Заголовок — «Сет
@@ -607,7 +790,7 @@ export const screenCatalog = {
     irreversible: true,
   },
   // «Ставки зала» помощника ведущего (PER-565, ADR-070 пп. 4–6): вход — из
-  // корня аукциона рядом с «Пультом». Люди зала стоят по два в ряд — это
+  // пульта ведущего (PER-802). Люди зала стоят по два в ряд — это
   // содержимое экрана, а не пара действий (дизайн-код, «Ставки зала»); цену
   // двигает зал, поэтому у экрана «Обновить». Найденные по имени — ответ на
   // «Другой человек…» с возвратом в экран.
@@ -615,12 +798,21 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     title: "Ставки зала",
-    parent: "auction-root",
+    parent: "auction-console",
     backName: "Ставки зала",
     refresh: true,
     pairedContent: true,
   },
   "floor-found": {
+    class: "screen",
+    nav: "tree",
+    title: "Ставки зала",
+    parent: "floor-bids",
+    pairedContent: true,
+  },
+  // Правка состава зала (PER-816): те же люди кнопками «убрать», возврат —
+  // «Готово» на экран людей.
+  "floor-room": {
     class: "screen",
     nav: "tree",
     title: "Ставки зала",
@@ -657,6 +849,11 @@ export const screenCatalog = {
   // Закрытие лота финала ведущим (PER-337): продажа необратима, поэтому —
   // подтверждение с красным «Да». Заголовок — вопрос с названием лота,
   // линтер сверяет его по началу.
+  "final-open-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Открыть следующий лот",
+  },
   "final-close-confirm": {
     class: "screen",
     nav: "confirm",
@@ -720,6 +917,13 @@ export const screenCatalog = {
     nav: "confirm",
     title: "Включить автоставку",
     irreversible: true,
+  },
+  // Снять свой лимит (PER-822): подтверждение с вопросом-заголовком; поставить
+  // лимит можно снова, поэтому «необратимого» в нём нет.
+  "withdraw-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Снять автоставку",
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
@@ -811,8 +1015,9 @@ export const screenCatalog = {
     irreversible: true,
   },
   "past-date-confirm": { class: "screen", nav: "confirm" },
-  // Подтверждение публикации и, у кнопки без версии, кадр её конфликта.
-  "publish-confirm": { class: "screen", nav: "confirm" },
+  // Выбор публикации: оповестить или нет (PER-844). Тот же кадр — у кнопки
+  // без версии после конфликта.
+  "publish-confirm": { class: "screen", nav: "choice" },
   "material-confirm": { class: "screen", nav: "confirm" },
   "material-remove-confirm": {
     class: "screen",
@@ -876,9 +1081,15 @@ export const screenCatalog = {
   // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
   hint: { class: "screen", nav: "exit" },
   notification: { class: "trace", nav: "free" },
+  // Трансляция хода торгов живого финала (PER-826): одно сообщение подписчика,
+  // которое бот правит на каждую ставку; одна кнопка «Не следить».
+  "bid-watch": { class: "trace", nav: "free" },
   // Файл материала (PER-644): подпись — название без разметки, под ним одна
   // кнопка «‹ Материалы».
   "material-file": { class: "trace", nav: "tree", parent: "materials" },
+  // Промо-видео под «🎬 Промо» (PER-774): копия поста чата медиа ботов с
+  // подписью и одной кнопкой «‹ Аукцион».
+  "auction-promo": { class: "trace", nav: "tree", parent: "auction-root" },
   "access-opened": { class: "trace", nav: "free" },
 } as const;
 

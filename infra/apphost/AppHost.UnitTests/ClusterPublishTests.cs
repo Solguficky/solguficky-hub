@@ -248,14 +248,14 @@ public class ClusterPublishTests
     /// <c>hub-auction</c>. Расхождение составов — решение, которое должно быть
     /// видно правкой этого теста, а не тихо приехать в прод вместе с изменением
     /// локального профиля. Stage поднимает хаб с аукционом и три бота
-    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет. Расхождений
-    /// два: туннель публичного входа — локально экран открывается по адресу,
-    /// который публикует Aspire (ADR-071), — и Achievements, который чарт везёт
-    /// выключенным до решения о выкатке (ADR-077, дополнение 2026-10-26), а
-    /// локально поднимает свой профиль.
+    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет. Achievements
+    /// в обоих составах: оба бота ждут его в графе, а чарт везёт его выключенным
+    /// до решения о выкатке (ADR-077, дополнение 2026-10-26). Расхождение одно —
+    /// туннель публичного входа: локально экран открывается по адресу, который
+    /// публикует Aspire (ADR-071).
     /// </summary>
     [Fact]
-    public void PublishProfile_IsHubAuctionCompositionWithTunnelAndAchievements()
+    public void PublishProfile_IsHubAuctionCompositionWithTunnel()
     {
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -269,7 +269,7 @@ public class ClusterPublishTests
             .Build());
 
         cluster.Name.ShouldBe("cluster");
-        cluster.Services.Order().ShouldBe(local.Services.Append(R.Cloudflared).Append(R.Achievements).Order());
+        cluster.Services.Order().ShouldBe(local.Services.Append(R.Cloudflared).Order());
         cluster.Infrastructure.Order().ShouldBe(local.Infrastructure.Order());
     }
 }

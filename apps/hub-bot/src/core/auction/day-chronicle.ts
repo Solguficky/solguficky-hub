@@ -1,5 +1,11 @@
-import type { GetAuctionDayChronicleResponse } from "../../../gen/auction/v1/auction_service_pb.js";
-import type { DayChronicleView } from "../../auction-ui/index.js";
+import type {
+  GetAuctionChronicleResponse,
+  GetAuctionDayChronicleResponse,
+} from "../../../gen/auction/v1/auction_service_pb.js";
+import type {
+  AuctionChronicleView,
+  DayChronicleView,
+} from "../../auction-ui/index.js";
 import { moneyOf } from "./snapshot.js";
 
 // Хроники дня (PER-725): перевод `GetAuctionDayChronicleResponse` в словарь
@@ -29,6 +35,46 @@ export function dayChronicleOf(
           : { priceGrowth: moneyOf(lot.priceGrowth) }),
       };
     }),
+  };
+}
+
+// Статистика аукциона (PER-770): перевод `GetAuctionChronicleResponse` тем же
+// словарём. Момент ответа экрану не нужен — окно «всё время торгов», — а рекорд
+// роста без суммы — нарушение контракта: Auction ставит его только росту.
+export function auctionChronicleOf(
+  response: GetAuctionChronicleResponse,
+): AuctionChronicleView {
+  const record = response.growthRecord;
+  if (record !== undefined && record.growth === undefined) {
+    throw new Error("auction chronicle growth record without growth");
+  }
+  return {
+    bidCount: countOf(response.bidCount, "auction chronicle bid count"),
+    participantCount: countOf(
+      response.participantCount,
+      "auction chronicle participant count",
+    ),
+    tradedLotCount: countOf(
+      response.tradedLotCount,
+      "auction chronicle traded lot count",
+    ),
+    ...(record?.growth === undefined
+      ? {}
+      : {
+          growthRecord: {
+            lotId: record.lotId,
+            growth: moneyOf(record.growth),
+          },
+        }),
+    lots: response.lots.map((lot) => ({
+      lotId: lot.lotId,
+      bidCount: countOf(lot.bidCount, "auction chronicle lot bid count"),
+      leaderChanges: countOf(
+        lot.leaderChangeCount,
+        "auction chronicle leader change count",
+      ),
+      longestDuel: countOf(lot.longestDuel, "auction chronicle longest duel"),
+    })),
   };
 }
 

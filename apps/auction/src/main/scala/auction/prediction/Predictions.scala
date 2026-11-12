@@ -174,6 +174,16 @@ object Predictions {
   def discard(predictions: Predictions): Option[PredictionEvent] =
     if (predictions == initial) None else Some(PredictionEvent.PredictionsDiscarded)
 
+  /**
+   * Раунд, который принимает прогнозы сейчас (PER-768, ответ 2): финал, если он открыт, иначе каталог. Отменённая игра
+   * открытого раунда не имеет. Каталог закрывается общим дедлайном раньше заморозки состава, поэтому оба раунда открыты
+   * разве что на миг, и тогда в счёт идёт финал.
+   */
+  def openRound(predictions: Predictions): Option[PredictionRound] =
+    if (predictions.cancelled) None
+    else
+      List(PredictionRound.Final, PredictionRound.Catalog).find(round => predictions.status(round) == RoundStatus.Open)
+
   /** Принимает ли раунд прогноз сейчас; повтор `op_id` решает хранилище раньше этого правила. */
   def admits(predictions: Predictions, round: PredictionRound): Either[SubmitRejected, Unit] =
     if (predictions.cancelled) Left(SubmitRejected.PredictionsCancelled)

@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import {
+  auctionChronicleButtonLabel,
   contestedName,
   contestedTail,
   darkHorseName,
@@ -7,7 +8,11 @@ import {
   duelName,
   duelTail,
 } from "../../../../auction-day-chronicle.js";
-import { biggestBy, dayNominations } from "../../../../auction-ui/index.js";
+import {
+  biggestBy,
+  dayNominations,
+  encodeAuctionCallback,
+} from "../../../../auction-ui/index.js";
 import { money, truncate } from "../../../../core/format.js";
 import type { DaySummaryLot } from "../../application/types.js";
 import type { CommunityDay } from "../../community-time.js";
@@ -126,10 +131,21 @@ export function daySummaryScreen(view: DaySummaryScreenView): ShownScreen {
             ),
           ]),
     ),
-    keyboard: withNav(new InlineKeyboard(), {
-      name: "Пульт",
-      data: consoleViewData(auction),
-    }),
+    // «Статистика» всего аукциона (PER-800) — вход пульта: тело аукционного
+    // дерева, которое шлюз открывает только держателю `run_auctions` в хабе.
+    keyboard: withNav(
+      new InlineKeyboard().text(
+        auctionChronicleButtonLabel,
+        encodeAuctionCallback({
+          kind: "auction-chronicle",
+          auctionId: view.auctionId,
+        }),
+      ),
+      {
+        name: "Пульт",
+        data: consoleViewData(auction),
+      },
+    ),
     format: "HTML",
   };
 }

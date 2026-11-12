@@ -254,6 +254,71 @@ describe("prediction screens in the hub shell", () => {
     ).toEqual(["Кружка <с совой> · 900 ₽", "Очистить", "‹ Прогнозы"]);
   });
 
+  it("names the page of the lot picker and keeps the arrows in their own row", () => {
+    const lots = Array.from({ length: 12 }, (_, index) => ({
+      lotId: `lot-${index}`,
+      title: `Лот ${index + 1}`,
+      status: { kind: "draft" as const },
+    }));
+    const shown = predictionLotsScreen(
+      {
+        kind: "prediction-lots",
+        auctionId: AUCTION_ID,
+        round: "catalog",
+        nomination: "catalog-most-expensive-lot",
+        page: 0,
+        pageCount: 2,
+        lots,
+      },
+      rows(
+        ...lots.map((lot): AuctionButton[] => [
+          {
+            action: "prediction.select-lot",
+            lotId: lot.lotId,
+            callbackData: lot.lotId,
+          },
+        ]),
+        [{ action: "feed.next", callbackData: "next" }],
+        [{ action: "prediction.back", callbackData: "back" }],
+      ),
+    );
+
+    expect(plain(shown.text)).toContain("Выбрать лот · страница 1 из 2");
+    expect(shown.text).not.toContain("Выбрать лот · 1 из 2");
+    const keyboard = shown.keyboard.inline_keyboard;
+    expect(keyboard).toHaveLength(14);
+    expect(keyboard[11]?.map((button) => button.text)).toEqual([
+      "Лот 12 · готовится",
+    ]);
+    expect(keyboard[12]?.map((button) => button.text)).toEqual(["→"]);
+  });
+
+  it("puts both arrows in one row below the lots", () => {
+    const shown = predictionLotsScreen(
+      {
+        kind: "prediction-lots",
+        auctionId: AUCTION_ID,
+        round: "catalog",
+        nomination: "catalog-most-expensive-lot",
+        page: 1,
+        pageCount: 3,
+        lots: [{ lotId: "a", title: "Лот", status: { kind: "draft" } }],
+      },
+      rows(
+        [{ action: "prediction.select-lot", lotId: "a", callbackData: "a" }],
+        [
+          { action: "feed.prev", callbackData: "prev" },
+          { action: "feed.next", callbackData: "next" },
+        ],
+        [{ action: "prediction.back", callbackData: "back" }],
+      ),
+    );
+
+    expect(
+      shown.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
+    ).toEqual([["Лот · готовится"], ["←", "→"], ["‹ Прогнозы"]]);
+  });
+
   it("shows the current number in the reply question and lets the user clear it", () => {
     const shown = predictionNumberQuestionScreen(
       {

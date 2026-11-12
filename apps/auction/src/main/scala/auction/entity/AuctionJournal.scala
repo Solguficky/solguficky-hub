@@ -84,6 +84,37 @@ final case class StoredLotSection(sectionId: Int, name: String, lots: List[UUID]
  */
 final case class StoredLotLayout(lots: List[UUID], sections: List[StoredLotSection])
 
+/**
+ * Payload `PromoVideoSet` и промо-видео в snapshot (PER-781): номер поста в чате медиа ботов. Снятие видео — событие
+ * без payload, как `PaymentInstructionsCleared`. Номер лежит в классе, а не `Option[Long]`: Jackson стирает тип внутри
+ * `Option` и читал бы число как `Integer`.
+ */
+final case class StoredPromoVideo(messageId: Long)
+
+/**
+ * Payload `HappyHourPeriodCreated` и период в snapshot (ADR-047, дополнение 2026-10-27): идентификатор и полуинтервал
+ * `[from, until)`.
+ */
+final case class StoredHappyHourPeriod(periodId: UUID, from: Instant, until: Instant)
+
+/** Payload `HappyHourPeriodDeleted`: только идентификатор периода. */
+final case class StoredHappyHourPeriodRef(periodId: UUID)
+
+/** Условия лота в периоде: шаг и стартовая цена, хотя бы одно из двух (PER-786). */
+final case class StoredHappyHourTerms(step: Option[StoredMoney], start: Option[StoredMoney])
+
+/** Payload `HappyHourLotTermsSet`: период, лот и условия целиком (PER-786). */
+final case class StoredHappyHourLotTermsSet(periodId: UUID, lotId: UUID, terms: StoredHappyHourTerms)
+
+/** Payload `HappyHourLotTermsCleared`: только период и лот (PER-786). */
+final case class StoredHappyHourLotTermsRef(periodId: UUID, lotId: UUID)
+
+/**
+ * Последняя правка условий лота в периоде в snapshot (PER-786): `terms` пуст — условия сняты, `change` — `op_id`
+ * правки, от которого выводится доставка лоту.
+ */
+final case class StoredPeriodLotTerms(periodId: UUID, lotId: UUID, terms: Option[StoredHappyHourTerms], change: UUID)
+
 /** Сет в snapshot: определение и, после итога, `settled` с собравшим или без него. */
 final case class StoredLotSet(
     lotSetId: UUID,
@@ -116,7 +147,8 @@ final case class StoredAuctionConfig(
  * `PrebiddingDeadlineReached`, `FinalStarted`, `AuctionCancelled`, `AuctionFinished`, `AuctionPublished` и
  * `AuctionHidden` пишутся одним `kind`. Секция `finalTime` добавлена в конец (ADR-040, дополнение 2026-10-19): строка,
  * записанная до неё, читается без ориентировочного времени финала. Секции сета лотов добавлены за ней (ADR-073), а за
- * секцией текста оплаты — секция раскладки ленты (PER-719).
+ * секцией текста оплаты — секция раскладки ленты (PER-719), а за ней — секция промо-видео (PER-781), секции периода
+ * «Счастливых часов» (ADR-047, дополнение 2026-10-27) и секции условий лота в периоде (PER-786).
  */
 final case class StoredAuctionEventBody(
     kind: String,
@@ -134,7 +166,12 @@ final case class StoredAuctionEventBody(
     lotSetDeleted: Option[StoredLotSetRef] = None,
     lotSetSettled: Option[StoredLotSetSettled] = None,
     paymentInstructions: Option[StoredPaymentInstructions] = None,
-    lotLayout: Option[StoredLotLayout] = None
+    lotLayout: Option[StoredLotLayout] = None,
+    promoVideo: Option[StoredPromoVideo] = None,
+    happyHourPeriodCreated: Option[StoredHappyHourPeriod] = None,
+    happyHourPeriodDeleted: Option[StoredHappyHourPeriodRef] = None,
+    happyHourLotTermsSet: Option[StoredHappyHourLotTermsSet] = None,
+    happyHourLotTermsCleared: Option[StoredHappyHourLotTermsRef] = None
 )
 
 object StoredAuctionEventBody {
@@ -172,7 +209,11 @@ final case class StoredAuctionSeen(sequence: Long, opId: UUID, event: StoredAuct
  * него — аукцион без времени финала. `sets` — сеты лотов по возрастанию идентификатора и только непустым; добавлен в
  * конец (ADR-073): snapshot без него — аукцион без сетов. `paymentInstructions` — текст «как оплатить и получить»;
  * добавлен в конец (PER-322): snapshot без него — аукцион без текста. `layout` — порядок и разделы ленты, только
- * непустым; добавлен в конец (PER-719): snapshot без него — лента в порядке создания.
+ * непустым; добавлен в конец (PER-719): snapshot без него — лента в порядке создания. `promoVideo` — промо-видео
+ * аукциона; добавлен в конец (PER-781): snapshot без него — аукцион без видео. `happyHours` — периоды «Счастливых
+ * часов» в порядке создания и только непустым; добавлен в конец (ADR-047, дополнение 2026-10-27): snapshot без него —
+ * аукцион без периодов. `periodTerms` — последние правки условий лотов в периодах в порядке первой правки и только
+ * непустым; добавлен в конец (PER-786): snapshot без него — аукцион без условий лотов в периодах.
  */
 final case class StoredAuction(
     sequence: Long,
@@ -191,7 +232,10 @@ final case class StoredAuction(
     finalAt: Option[Instant] = None,
     sets: Option[List[StoredLotSet]] = None,
     paymentInstructions: Option[String] = None,
-    layout: Option[StoredLotLayout] = None
+    layout: Option[StoredLotLayout] = None,
+    promoVideo: Option[StoredPromoVideo] = None,
+    happyHours: Option[List[StoredHappyHourPeriod]] = None,
+    periodTerms: Option[List[StoredPeriodLotTerms]] = None
 ) extends JournalSerializable
 
 object AuctionJournal {
@@ -260,9 +304,28 @@ object AuctionJournal {
         auction.sets.toList.sortBy(_._1.value).map((id, set) => storeLotSet(id, set))
       ),
       paymentInstructions = auction.paymentInstructions.map(_.value),
-      layout = Option.unless(auction.layout.isEmpty)(storeLayout(auction.layout))
+      layout = Option.unless(auction.layout.isEmpty)(storeLayout(auction.layout)),
+      promoVideo = auction.promoVideo.map(video => StoredPromoVideo(video.messageId)),
+      happyHours = Option.when(auction.happyHours.nonEmpty)(auction.happyHours.map(storePeriod)),
+      periodTerms = Option.when(auction.periodTerms.nonEmpty)(auction.periodTerms.map { terms =>
+        StoredPeriodLotTerms(terms.period.value, terms.lot.value, terms.terms.map(storeTerms), terms.change.value)
+      })
     )
   }
+
+  private def storeTerms(terms: HappyHourTerms): StoredHappyHourTerms =
+    StoredHappyHourTerms(terms.step.map(LotJournal.storeMoney), terms.start.map(LotJournal.storeMoney))
+
+  private def restoreTerms(stored: StoredHappyHourTerms): HappyHourTerms =
+    if (stored.step.isEmpty && stored.start.isEmpty) corrupted("happy hour terms with neither a step nor a start")
+    else HappyHourTerms(stored.step.map(LotJournal.restoreMoney), stored.start.map(LotJournal.restoreMoney))
+
+  private def storePeriod(period: HappyHourPeriod): StoredHappyHourPeriod =
+    StoredHappyHourPeriod(period.id.value, period.from, period.until)
+
+  private def restorePeriod(stored: StoredHappyHourPeriod): HappyHourPeriod =
+    if (!stored.from.isBefore(stored.until)) corrupted("happy hour period that ends before it starts")
+    else HappyHourPeriod(HappyHourPeriodId(stored.periodId), stored.from, stored.until)
 
   private def storeLayout(layout: LotLayout): StoredLotLayout =
     StoredLotLayout(
@@ -379,7 +442,17 @@ object AuctionJournal {
       finalAt = stored.finalAt,
       sets = restoreSets(stored),
       paymentInstructions = stored.paymentInstructions.map(PaymentInstructions.of),
-      layout = restoreSnapshotLayout(stored)
+      layout = restoreSnapshotLayout(stored),
+      promoVideo = stored.promoVideo.map(video => PromoVideo.of(video.messageId)),
+      happyHours = stored.happyHours.getOrElse(Nil).map(restorePeriod),
+      periodTerms = stored.periodTerms.getOrElse(Nil).map { terms =>
+        PeriodLotTerms(
+          HappyHourPeriodId(terms.periodId),
+          LotId(terms.lotId),
+          terms.terms.map(restoreTerms),
+          OpId(terms.change)
+        )
+      }
     )
   }
 
@@ -464,6 +537,23 @@ object AuctionJournal {
         StoredAuctionEventBody.of("LotSetSettled").copy(lotSetSettled = Some(StoredLotSetSettled(set.value, collector)))
       case AuctionEvent.LotLayoutSet(layout) =>
         StoredAuctionEventBody.of("LotLayoutSet").copy(lotLayout = Some(storeLayout(layout)))
+      case AuctionEvent.PromoVideoSet(video) =>
+        StoredAuctionEventBody.of("PromoVideoSet").copy(promoVideo = Some(StoredPromoVideo(video.messageId)))
+      case AuctionEvent.PromoVideoCleared => StoredAuctionEventBody.of("PromoVideoCleared")
+      case AuctionEvent.HappyHourPeriodCreated(period) =>
+        StoredAuctionEventBody.of("HappyHourPeriodCreated").copy(happyHourPeriodCreated = Some(storePeriod(period)))
+      case AuctionEvent.HappyHourPeriodDeleted(period) =>
+        StoredAuctionEventBody
+          .of("HappyHourPeriodDeleted")
+          .copy(happyHourPeriodDeleted = Some(StoredHappyHourPeriodRef(period.value)))
+      case AuctionEvent.HappyHourLotTermsSet(period, lot, terms) =>
+        StoredAuctionEventBody
+          .of("HappyHourLotTermsSet")
+          .copy(happyHourLotTermsSet = Some(StoredHappyHourLotTermsSet(period.value, lot.value, storeTerms(terms))))
+      case AuctionEvent.HappyHourLotTermsCleared(period, lot) =>
+        StoredAuctionEventBody
+          .of("HappyHourLotTermsCleared")
+          .copy(happyHourLotTermsCleared = Some(StoredHappyHourLotTermsRef(period.value, lot.value)))
     }
 
   /**
@@ -487,11 +577,21 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionDrafted(MeetupId(drafted.meetupId), drafted.hidden.getOrElse(false))
       case StoredAuctionEventBody(
             "AuctionPublished",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -525,6 +625,11 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionHidden
@@ -532,6 +637,11 @@ object AuctionJournal {
             "LotAdded",
             None,
             Some(added),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -563,6 +673,11 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.LotRemoved(LotId(removed.lotId))
@@ -582,11 +697,21 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionScheduled(restoreConfig(config))
       case StoredAuctionEventBody(
             "PrebiddingStarted",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -620,11 +745,21 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.AuctionDiscarded
       case StoredAuctionEventBody(
             "AuctionCancelled",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -658,6 +793,11 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.PrebiddingDeadlineReached
@@ -668,6 +808,11 @@ object AuctionJournal {
             None,
             None,
             Some(ended),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -696,11 +841,21 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) if lineup.order.nonEmpty && lineup.order.distinct.size == lineup.order.size =>
         AuctionEvent.FinalLineupFrozen(lineup.order.map(LotId(_)))
       case StoredAuctionEventBody(
             "FinalStarted",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -734,6 +889,11 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.FinalLotActivated(LotId(activated.lotId))
@@ -753,11 +913,21 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.FinalLotCompleted(LotId(completed.lotId))
       case StoredAuctionEventBody(
             "AuctionFinished",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -792,6 +962,11 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) if window.from.isBefore(window.until) && window.lots.nonEmpty =>
         AuctionEvent.StepWindowLaunched(restoreWindow(window))
@@ -812,12 +987,22 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.FinalTimeSet(time.at)
       // Снятие времени: payload у него пуст, как у `AuctionPublished`.
       case StoredAuctionEventBody(
             "FinalTimeCleared",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -852,12 +1037,22 @@ object AuctionJournal {
             None,
             None,
             Some(instructions),
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) =>
         AuctionEvent.PaymentInstructionsSet(PaymentInstructions.of(instructions.text))
       // Снятие текста: payload у него пуст, как у `FinalTimeCleared`.
       case StoredAuctionEventBody(
             "PaymentInstructionsCleared",
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None,
@@ -891,6 +1086,11 @@ object AuctionJournal {
             None,
             None,
             None,
+            None,
+            None,
+            None,
+            None,
+            None,
             None
           ) if set.lots.distinct.size == set.lots.size =>
         AuctionEvent.LotSetDefined(LotSetId(set.lotSetId), restoreName(set.lotSetId, set.name), set.lots.map(LotId(_)))
@@ -908,6 +1108,11 @@ object AuctionJournal {
             None,
             None,
             Some(set),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None,
             None
@@ -928,6 +1133,11 @@ object AuctionJournal {
             None,
             None,
             Some(set),
+            None,
+            None,
+            None,
+            None,
+            None,
             None,
             None
           ) =>
@@ -951,9 +1161,163 @@ object AuctionJournal {
             None,
             None,
             None,
-            Some(layout)
+            Some(layout),
+            None,
+            None,
+            None,
+            None,
+            None
           ) =>
         AuctionEvent.LotLayoutSet(restoreLayout(layout))
+      // Промо-видео (PER-781): номер поста чата медиа ботов, как его записал администратор.
+      case StoredAuctionEventBody(
+            "PromoVideoSet",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(video),
+            None,
+            None,
+            None,
+            None
+          ) =>
+        AuctionEvent.PromoVideoSet(PromoVideo.of(video.messageId))
+      // Снятие видео: payload у него пуст, как у `PaymentInstructionsCleared`.
+      case StoredAuctionEventBody(
+            "PromoVideoCleared",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+          ) =>
+        AuctionEvent.PromoVideoCleared
+      // Период «Счастливых часов» (ADR-047, дополнение 2026-10-27): полуинтервал, который начинается раньше, чем
+      // кончается.
+      case StoredAuctionEventBody(
+            "HappyHourPeriodCreated",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(period),
+            None,
+            None,
+            None
+          ) =>
+        AuctionEvent.HappyHourPeriodCreated(restorePeriod(period))
+      case StoredAuctionEventBody(
+            "HappyHourPeriodDeleted",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(period),
+            None,
+            None
+          ) =>
+        AuctionEvent.HappyHourPeriodDeleted(HappyHourPeriodId(period.periodId))
+      // Условия лота в периоде (PER-786): шаг, стартовая цена или оба.
+      case StoredAuctionEventBody(
+            "HappyHourLotTermsSet",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(set),
+            None
+          ) =>
+        AuctionEvent.HappyHourLotTermsSet(HappyHourPeriodId(set.periodId), LotId(set.lotId), restoreTerms(set.terms))
+      case StoredAuctionEventBody(
+            "HappyHourLotTermsCleared",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(cleared)
+          ) =>
+        AuctionEvent.HappyHourLotTermsCleared(HappyHourPeriodId(cleared.periodId), LotId(cleared.lotId))
       case other => corrupted(s"auction event of kind ${other.kind} with sections that do not match it")
     }
 

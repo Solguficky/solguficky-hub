@@ -13,7 +13,12 @@ import {
 } from "../../contract/check.js";
 import { AUCTION_SURFACES } from "../../contract/surfaces.js";
 import { handleAuctionUpdate } from "../../gateway.js";
-import type { LotView, TelegramUser } from "../../ports.js";
+import type {
+  BidOriginView,
+  LotHistoryEntryView,
+  LotView,
+  TelegramUser,
+} from "../../ports.js";
 import type { AuctionScreenBody } from "../../screen.js";
 
 const press = (ports: ReturnType<typeof spyPorts>, data: string) =>
@@ -444,3 +449,898 @@ describe.each(AUCTION_SURFACES)(
     });
   },
 );
+
+// Повторное открытие после потери памяти процесса и отказы одинаковы у двух ботов.
+describe.each(AUCTION_SURFACES)("final recovery (%s)", (surface) => {
+  const call = (
+    ports: ReturnType<typeof spyPorts>,
+    kind: "lot" | "final-bid" = "final-bid",
+  ) =>
+    handleAuctionUpdate(
+      { kind: surface, ports },
+      {
+        identity: contractIdentity(surface),
+        user,
+        input: {
+          kind: "callback",
+          data: encodeAuctionCallback(
+            kind === "lot"
+              ? { kind, lotId: CONTRACT_LOT.lotId, page: 0 }
+              : { kind, lotId: CONTRACT_LOT.lotId, amount: 130000, page: 0 },
+          ),
+        },
+      },
+    );
+
+  it("revives a sold card in the final and offers the current lot", async () => {
+    const nextId = "01929b7e-5c1d-7a3f-8e4b-0000000000b2";
+    const ports = spyPorts(
+      [],
+      {
+        ...AUCTION,
+        lots: [
+          {
+            ...CONTRACT_LOT,
+            status: { kind: "sold", winnerId: "rival", price: rub(1400) },
+          },
+        ],
+        summary: {
+          auctionId: CONTRACT_LOT.auctionId,
+          stage: "in-final",
+          final: true,
+          lineup: { order: [CONTRACT_LOT.lotId, nextId], activeLotId: nextId },
+        },
+      },
+      contractIdentity(surface),
+    );
+    const result = await call(ports, "lot");
+    if (result.kind !== "screen") throw new Error("no card");
+    expect(lotBlock(result.body).live).toEqual({ page: 0 });
+    expect(result.body.keyboard.flat()).toContainEqual({
+      action: "lot.current",
+      callbackData: encodeAuctionCallback({
+        kind: "lot",
+        lotId: nextId,
+        page: 0,
+      }),
+    });
+  });
+
+  it("refuses explicitly if the initial read fails and sends no bid", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(calls, AUCTION, contractIdentity(surface));
+    ports.auction.getLot = async () => {
+      throw new Error("offline");
+    };
+    await expect(call(ports)).rejects.toThrow(
+      "Аукцион недоступен, ставка не принята",
+    );
+    expect(commandCalls(calls)).toHaveLength(0);
+  });
+
+  it("keeps an unknown outcome if both bid replies and the following read are lost", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      {
+        ...AUCTION,
+        lots: [liveAt(1200, 1300)],
+        bids: [{ kind: "unanswered" }, { kind: "unanswered" }],
+      },
+      contractIdentity(surface),
+    );
+    let reads = 0;
+    const initial = ports.auction.getLot;
+    ports.auction.getLot = (request) =>
+      ++reads === 1 ? initial(request) : Promise.reject(new Error("offline"));
+    const result = await call(ports);
+    if (result.kind !== "screen") throw new Error("no card");
+    expect(lotBlock(result.body).finalBid).toEqual({ kind: "unknown" });
+    expect(commandCalls(calls)).toHaveLength(2);
+  });
+
+  it("keeps the acknowledged acceptance when the following read fails", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      {
+        ...AUCTION,
+        lots: [liveAt(1200, 1300)],
+        bids: [{ kind: "accepted", lotVersion: 5 }],
+      },
+      contractIdentity(surface),
+    );
+    let reads = 0;
+    const initial = ports.auction.getLot;
+    ports.auction.getLot = (request) =>
+      ++reads === 1 ? initial(request) : Promise.reject(new Error("offline"));
+    const result = await call(ports);
+    if (result.kind !== "screen") throw new Error("no card");
+    expect(lotBlock(result.body).finalBid).toEqual({
+      kind: "accepted-unread",
+      amount: rub(1300),
+    });
+    expect(commandCalls(calls)).toHaveLength(1);
+  });
+});
+
+// Лот ждёт финала (PER-821, ADR-079): лимит автоставки принимается и сработает
+// в финале по сетке цен, а ставка удержанного лота остаётся отказом.
+describe("proxy limit of a lot waiting for the final", () => {
+  const { nextPrice: _nextPrice, ...unpriced } = CONTRACT_LOT;
+  const held = {
+    ...unpriced,
+    status: {
+      kind: "held" as const,
+      currentPrice: { minorUnits: 90_000, currency: "RUB" },
+      leaderId: "01929b7e-5c1d-7a3f-8e4b-000000000002",
+    },
+  };
+  const ports = (calls: PortCall[] = [], extra = {}) =>
+    spyPorts(calls, { ...AUCTION, lots: [held], ...extra });
+
+  it("refuses a limit below the price before the confirmation", async () => {
+    const calls: PortCall[] = [];
+    const result = await press(
+      ports(calls),
+      encodeAuctionCallback({
+        kind: "confirm",
+        command: "proxy",
+        lotId: held.lotId,
+        amount: 50_000,
+        page: 0,
+      }),
+    );
+    expect(commandCalls(calls)).toEqual([]);
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: {
+        refusal: {
+          kind: "proxy-below-current-price",
+          minLimit: { minorUnits: 90_000, currency: "RUB" },
+        },
+      },
+    });
+  });
+
+  it("confirms the limit and names the final", async () => {
+    const result = await press(
+      ports(),
+      encodeAuctionCallback({
+        kind: "confirm",
+        command: "proxy",
+        lotId: held.lotId,
+        amount: 150_000,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "confirm",
+      command: "proxy",
+      forFinal: true,
+      currentPrice: { minorUnits: 90_000, currency: "RUB" },
+    });
+  });
+
+  it("sends the limit and shows it accepted for the final", async () => {
+    const calls: PortCall[] = [];
+    const result = await press(
+      ports(calls, { limits: [{ kind: "accepted", lotVersion: 0 }] }),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "proxy",
+        lotId: held.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 150_000,
+        page: 0,
+      }),
+    );
+    expect(commandCalls(calls)).toHaveLength(1);
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "accepted",
+      command: "proxy",
+      forFinal: true,
+    });
+    expect(result.body.blocks[0]).not.toHaveProperty("favorites");
+  });
+
+  it("names a limit below the price as a refusal screen", async () => {
+    const result = await press(
+      ports([], {
+        limits: [
+          {
+            kind: "refused",
+            refusal: {
+              kind: "proxy-below-current-price",
+              minLimit: { minorUnits: 90_000, currency: "RUB" },
+            },
+          },
+        ],
+      }),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "proxy",
+        lotId: held.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 50_000,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: { refusal: { kind: "proxy-below-current-price" } },
+    });
+  });
+
+  it("asks the limit without the online-week example", async () => {
+    const result = await press(
+      ports(),
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: held.lotId,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    const [block] = result.body.blocks;
+    expect(block).toMatchObject({ kind: "question", forFinal: true });
+    expect(block).not.toHaveProperty("explainer");
+    expect(block).not.toHaveProperty("current");
+    expect(result.body.keyboard.flat().map((button) => button.action)).toEqual([
+      "question.cancel",
+    ]);
+  });
+
+  it("still refuses a bid on the held lot without sending it", async () => {
+    const calls: PortCall[] = [];
+    const result = await press(
+      ports(calls),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId: held.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 100_000,
+        page: 0,
+      }),
+    );
+    expect(commandCalls(calls)).toEqual([]);
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: { refusal: { kind: "lot-on-hold" } },
+    });
+  });
+});
+
+describe("handleAuctionUpdate", () => {
+  const live = (leaderId = "rival"): LotView => ({
+    ...CONTRACT_LOT,
+    nextPrice: { minorUnits: 110_000, currency: "RUB" },
+    status: {
+      kind: "trading",
+      currentPrice: { minorUnits: 100_000, currency: "RUB" },
+      leaderId,
+      phase: "live",
+    },
+  });
+  const ports = (calls: PortCall[] = [], lot = live(), extra = {}) =>
+    spyPorts(calls, { ...AUCTION, lots: [lot], ...extra });
+  const reply = (
+    target: ReturnType<typeof ports>,
+    data: string,
+    text: string,
+  ) =>
+    handleAuctionUpdate(
+      { kind: "auction", ports: target },
+      {
+        identity: contractIdentity("auction"),
+        user: CONTRACT_USER,
+        input: { kind: "reply", data, text },
+      },
+    );
+  const questionStep = (body: AuctionScreenBody) => {
+    const cancel = body.keyboard
+      .flat()
+      .find((button) => button.action === "question.cancel");
+    if (cancel === undefined) throw new Error("no question step");
+    return cancel.callbackData;
+  };
+
+  it("asks for a live-final limit without the online explainer", async () => {
+    const result = await press(
+      ports(),
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: CONTRACT_LOT.lotId,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no question");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "question",
+      question: "proxy",
+      liveFinal: true,
+      current: { minorUnits: 100_000, currency: "RUB" },
+    });
+    expect(result.body.blocks[0]).not.toHaveProperty("currentIsLimit");
+    expect(result.body.blocks[0]).not.toHaveProperty("explainer");
+    expect(result.body.keyboard.flat().map((button) => button.action)).toEqual([
+      "question.cancel",
+    ]);
+  });
+
+  it("asks for a live-final limit from the announced ask, not the next grid price", async () => {
+    const current = live();
+    if (current.status.kind !== "trading") {
+      throw new Error("lot is not trading");
+    }
+    const lot: LotView = {
+      ...current,
+      nextPrice: { minorUnits: 130_000, currency: "RUB" },
+      status: {
+        ...current.status,
+        ask: { minorUnits: 120_000, currency: "RUB" },
+      },
+    };
+    const result = await press(
+      ports([], lot),
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: lot.lotId,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no question");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "question",
+      liveFinal: true,
+      current: { minorUnits: 120_000, currency: "RUB" },
+    });
+    expect(result.body.blocks[0]).not.toHaveProperty("currentIsLimit");
+  });
+
+  it("shows the own live-final limit as the current value", async () => {
+    const result = await press(
+      ports([], {
+        ...live(),
+        viewerProxyLimit: { minorUnits: 150_000, currency: "RUB" },
+      }),
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: CONTRACT_LOT.lotId,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no question");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "question",
+      liveFinal: true,
+      current: { minorUnits: 150_000, currency: "RUB" },
+      currentIsLimit: true,
+    });
+  });
+
+  it("refuses a live-final limit below the current price before sending it", async () => {
+    const calls: PortCall[] = [];
+    const result = await press(
+      ports(calls),
+      encodeAuctionCallback({
+        kind: "confirm",
+        command: "proxy",
+        lotId: CONTRACT_LOT.lotId,
+        amount: 99_000,
+        page: 0,
+      }),
+    );
+    expect(commandCalls(calls)).toEqual([]);
+    if (result.kind !== "screen") throw new Error("no refusal");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: {
+        refusal: {
+          kind: "proxy-below-current-price",
+          minLimit: { minorUnits: 100_000, currency: "RUB" },
+        },
+      },
+    });
+  });
+
+  it("refuses a live-final limit below the announced ask before sending it", async () => {
+    const calls: PortCall[] = [];
+    const current = live();
+    if (current.status.kind !== "trading") {
+      throw new Error("lot is not trading");
+    }
+    const lot: LotView = {
+      ...current,
+      nextPrice: { minorUnits: 120_000, currency: "RUB" },
+      status: {
+        ...current.status,
+        ask: { minorUnits: 120_000, currency: "RUB" },
+      },
+    };
+    const result = await press(
+      ports(calls, lot),
+      encodeAuctionCallback({
+        kind: "confirm",
+        command: "proxy",
+        lotId: lot.lotId,
+        amount: 110_000,
+        page: 0,
+      }),
+    );
+    expect(commandCalls(calls)).toEqual([]);
+    if (result.kind !== "screen") throw new Error("no refusal");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: {
+        refusal: {
+          kind: "proxy-below-current-price",
+          minLimit: { minorUnits: 120_000, currency: "RUB" },
+        },
+      },
+    });
+  });
+
+  it("waits when the limit is above the price but below the next grid point", async () => {
+    const calls: PortCall[] = [];
+    const target = ports(calls, live(), {
+      limits: [{ kind: "accepted", lotVersion: 5 }],
+    });
+    const asked = await press(
+      target,
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: CONTRACT_LOT.lotId,
+        page: 0,
+      }),
+    );
+    if (asked.kind !== "screen") throw new Error("no question");
+    const confirmed = await reply(target, questionStep(asked.body), "1 050");
+    if (confirmed.kind !== "screen") throw new Error("no confirmation");
+    expect(confirmed.body.blocks[0]).toMatchObject({
+      kind: "confirm",
+      command: "proxy",
+      liveFinal: true,
+      currentPrice: { minorUnits: 100_000, currency: "RUB" },
+      nextPrice: { minorUnits: 110_000, currency: "RUB" },
+      amount: { minorUnits: 105_000, currency: "RUB" },
+    });
+    expect(confirmed.body.blocks[0]).not.toHaveProperty("firstBid");
+
+    const yes = confirmed.body.keyboard
+      .flat()
+      .find((button) => button.action === "confirm.yes");
+    if (yes === undefined) throw new Error("no confirm button");
+    const accepted = await press(target, yes.callbackData);
+    expect(commandCalls(calls)).toHaveLength(1);
+    expect(commandCalls(calls)[0]).toMatchObject({
+      method: "setProxyLimit",
+      request: { max: { minorUnits: 105_000, currency: "RUB" } },
+    });
+    if (accepted.kind !== "screen") throw new Error("no acceptance");
+    expect(accepted.body.blocks[0]).toMatchObject({
+      kind: "accepted",
+      command: "proxy",
+      liveFinal: true,
+      amount: { minorUnits: 105_000, currency: "RUB" },
+    });
+  });
+
+  it("keeps the next grid price without predicting hidden proxy outcomes", async () => {
+    const confirmAt = async (lot: LotView) => {
+      const result = await press(
+        ports([], lot),
+        encodeAuctionCallback({
+          kind: "confirm",
+          command: "proxy",
+          lotId: lot.lotId,
+          amount: 110_000,
+          page: 0,
+        }),
+      );
+      if (result.kind !== "screen") throw new Error("no confirmation");
+      return result.body.blocks[0];
+    };
+    expect(await confirmAt(live())).toMatchObject({
+      kind: "confirm",
+      liveFinal: true,
+      nextPrice: { minorUnits: 110_000, currency: "RUB" },
+    });
+    expect(await confirmAt(live())).not.toHaveProperty("firstBid");
+    expect(
+      await confirmAt(live(contractViewer("auction").identityId)),
+    ).toMatchObject({
+      kind: "confirm",
+      liveFinal: true,
+      liveFinalLeader: true,
+    });
+  });
+
+  it("sends and accepts the live limit through the proxy command", async () => {
+    const calls: PortCall[] = [];
+    const target = ports(calls, live(), {
+      limits: [{ kind: "accepted", lotVersion: 5 }],
+    });
+    const asked = await press(
+      target,
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: CONTRACT_LOT.lotId,
+        page: 0,
+      }),
+    );
+    if (asked.kind !== "screen") throw new Error("no question");
+    const confirmed = await reply(target, questionStep(asked.body), "1 100");
+    if (confirmed.kind !== "screen") throw new Error("no confirmation");
+    const yes = confirmed.body.keyboard
+      .flat()
+      .find((button) => button.action === "confirm.yes");
+    if (yes === undefined) throw new Error("no confirm button");
+
+    const accepted = await press(target, yes.callbackData);
+    expect(commandCalls(calls)).toHaveLength(1);
+    expect(commandCalls(calls)[0]).toMatchObject({
+      method: "setProxyLimit",
+      request: { max: { minorUnits: 110_000, currency: "RUB" } },
+    });
+    if (accepted.kind !== "screen") throw new Error("no acceptance");
+    expect(accepted.body.blocks[0]).toMatchObject({
+      kind: "accepted",
+      command: "proxy",
+      liveFinal: true,
+    });
+    expect(accepted.body.blocks[0]).not.toHaveProperty("forFinal");
+  });
+});
+
+describe("withdraw the own proxy limit (PER-822)", () => {
+  const WITH_LIMIT = {
+    ...CONTRACT_LOT,
+    viewerProxyLimit: { minorUnits: 200000, currency: "RUB" },
+  };
+  const withLimit = (
+    extra: Partial<ContractAuction> = {},
+  ): ContractAuction => ({
+    ...AUCTION,
+    lots: [WITH_LIMIT],
+    ...extra,
+  });
+  const confirmData = (lotId: string) =>
+    encodeAuctionCallback({
+      kind: "confirm",
+      command: "withdraw",
+      lotId,
+      amount: 200000,
+      page: 0,
+    });
+  const withdrawCalls = (calls: readonly PortCall[]) =>
+    calls.filter((call) => call.method === "withdrawProxyLimit");
+
+  const yesOf = async (ports: ReturnType<typeof spyPorts>) => {
+    const confirm = await press(ports, confirmData(WITH_LIMIT.lotId));
+    if (confirm.kind !== "screen") throw new Error("no confirmation");
+    const yes = confirm.body.keyboard[0]?.[0];
+    if (yes?.action !== "confirm.yes") throw new Error("no yes button");
+    return yes.callbackData;
+  };
+
+  it("sends the same op_id on a repeated «Да» and names the result", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      withLimit({
+        withdrawals: [
+          { kind: "accepted", lotVersion: 0 },
+          { kind: "accepted", lotVersion: 0 },
+        ],
+      }),
+    );
+    const yes = await yesOf(ports);
+    const first = await press(ports, yes);
+    await press(ports, yes);
+    expect(
+      withdrawCalls(calls).map((call) =>
+        call.method === "withdrawProxyLimit" ? call.request.opId : undefined,
+      ),
+    ).toEqual([CONTRACT_OP_IDS[0], CONTRACT_OP_IDS[0]]);
+    if (first.kind !== "screen") throw new Error("no screen");
+    expect(first.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: { command: "withdraw", kind: "withdrawn" },
+    });
+  });
+
+  it("shows «no limit» as a value when the server has none", async () => {
+    const ports = spyPorts(
+      [],
+      withLimit({
+        withdrawals: [
+          { kind: "refused", refusal: { kind: "no-active-limit" } },
+        ],
+      }),
+    );
+    const result = await press(ports, await yesOf(ports));
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: {
+        command: "withdraw",
+        kind: "refused",
+        refusal: { kind: "no-active-limit" },
+      },
+    });
+  });
+
+  it("retries once with the same op_id when the first call had no answer", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      withLimit({
+        withdrawals: [
+          { kind: "unanswered" },
+          { kind: "accepted", lotVersion: 0 },
+        ],
+      }),
+    );
+    await press(ports, await yesOf(ports));
+    const opIds = withdrawCalls(calls).map((call) =>
+      call.method === "withdrawProxyLimit" ? call.request.opId : undefined,
+    );
+    expect(opIds).toHaveLength(2);
+    expect(opIds[0]).toBe(opIds[1]);
+  });
+
+  it("shows the confirmation again when the limit changed since it was shown", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(
+      calls,
+      withLimit({ withdrawals: [{ kind: "accepted", lotVersion: 0 }] }),
+    );
+    const stale = encodeAuctionCallback({
+      kind: "commit",
+      command: "withdraw",
+      lotId: WITH_LIMIT.lotId,
+      opId: CONTRACT_OP_IDS[0],
+      amount: 150000,
+      page: 0,
+    });
+    const result = await press(ports, stale);
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(withdrawCalls(calls)).toEqual([]);
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "confirm",
+      command: "withdraw",
+      amount: { minorUnits: 200000 },
+    });
+  });
+
+  it("does not call Auction when the lot shows no own limit", async () => {
+    const calls: PortCall[] = [];
+    const ports = spyPorts(calls, AUCTION);
+    const result = await press(ports, confirmData(CONTRACT_LOT.lotId));
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(withdrawCalls(calls)).toEqual([]);
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "result",
+      result: { command: "withdraw", kind: "refused" },
+    });
+  });
+});
+
+// PER-840: «перебила автоставка» в ответе на ставку — только когда хронология
+// доказала ровно одну чужую прокси-ставку по новой цене. Лидер после команды
+// не ставивший сам по себе не доказательство: ставка зала и чужая ручная
+// оставляют нейтральный текст.
+describe("overtaken bid reply origin", () => {
+  const rivalId = "01929b7e-5c1d-7a3f-8e4b-000000000002";
+  const viewerId = contractViewer("auction").identityId;
+  const historyBid = (
+    sequence: number,
+    participantId: string,
+    rubles: number,
+    origin: BidOriginView,
+  ): LotHistoryEntryView => ({
+    kind: "bid",
+    sequence,
+    occurredAt: "2026-10-31T18:00:00Z",
+    bidId: `bid-${sequence}`,
+    participantId,
+    amount: rub(rubles),
+    origin,
+  });
+  const historyOf = (...entries: LotHistoryEntryView[]) => ({
+    [CONTRACT_LOT.lotId]: {
+      "": { entries, nextPageToken: "" },
+    },
+  });
+  const ledByRival = (phase: "online" | "live", price: number): LotView => ({
+    ...CONTRACT_LOT,
+    version: 4,
+    nextPrice: rub(price + 50),
+    status: {
+      kind: "trading",
+      currentPrice: rub(price),
+      leaderId: rivalId,
+      deadline: "2026-10-10T18:00:00Z",
+      phase,
+    },
+  });
+
+  it("names a proven proxy on the accepted online bid screen", async () => {
+    const result = await press(
+      spyPorts([], {
+        ...AUCTION,
+        bids: [{ kind: "accepted", lotVersion: 4 }],
+        after: [ledByRival("online", 1300)],
+        history: historyOf(
+          historyBid(1, viewerId, 1250, { kind: "manual", source: "bot" }),
+          historyBid(2, rivalId, 1300, { kind: "proxy" }),
+        ),
+      }),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId: CONTRACT_LOT.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 130000,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).toMatchObject({
+      kind: "accepted",
+      overtaken: rub(1300),
+    });
+  });
+
+  it.each([
+    {
+      name: "manual",
+      origin: { kind: "manual", source: "bot" } satisfies BidOriginView,
+    },
+    {
+      name: "floor",
+      origin: { kind: "manual", source: "floor" } satisfies BidOriginView,
+    },
+  ])(
+    "keeps the online reply silent when the new leader is $name",
+    async ({ origin }) => {
+      const result = await press(
+        spyPorts([], {
+          ...AUCTION,
+          bids: [{ kind: "accepted", lotVersion: 4 }],
+          after: [ledByRival("online", 1300)],
+          history: historyOf(
+            historyBid(1, viewerId, 1250, { kind: "manual", source: "bot" }),
+            historyBid(2, rivalId, 1300, origin),
+          ),
+        }),
+        encodeAuctionCallback({
+          kind: "commit",
+          command: "bid",
+          lotId: CONTRACT_LOT.lotId,
+          opId: CONTRACT_OP_IDS[0],
+          amount: 130000,
+          page: 0,
+        }),
+      );
+      if (result.kind !== "screen") throw new Error("no screen");
+      expect(result.body.blocks[0]).toEqual(
+        expect.objectContaining({ kind: "accepted" }),
+      );
+      expect(result.body.blocks[0]).not.toHaveProperty("overtaken");
+    },
+  );
+
+  it("keeps the online reply silent when two rival bids share the price", async () => {
+    const result = await press(
+      spyPorts([], {
+        ...AUCTION,
+        bids: [{ kind: "accepted", lotVersion: 4 }],
+        after: [ledByRival("online", 1300)],
+        history: historyOf(
+          historyBid(1, rivalId, 1300, { kind: "proxy" }),
+          historyBid(2, "01929b7e-5c1d-7a3f-8e4b-000000000004", 1300, {
+            kind: "manual",
+            source: "bot",
+          }),
+        ),
+      }),
+      encodeAuctionCallback({
+        kind: "commit",
+        command: "bid",
+        lotId: CONTRACT_LOT.lotId,
+        opId: CONTRACT_OP_IDS[0],
+        amount: 130000,
+        page: 0,
+      }),
+    );
+    if (result.kind !== "screen") throw new Error("no screen");
+    expect(result.body.blocks[0]).not.toHaveProperty("overtaken");
+  });
+
+  it.each(AUCTION_SURFACES)(
+    "sets final overtaken only for a proven proxy (%s)",
+    async (surface) => {
+      const pressOn = (ports: ReturnType<typeof spyPorts>) =>
+        handleAuctionUpdate(
+          { kind: surface, ports },
+          {
+            identity: contractIdentity(surface),
+            user,
+            input: {
+              kind: "callback",
+              data: encodeAuctionCallback({
+                kind: "final-bid",
+                lotId: CONTRACT_LOT.lotId,
+                amount: rub(1300).minorUnits,
+                page: 0,
+              }),
+            },
+          },
+        );
+      const proven = await pressOn(
+        spyPorts(
+          [],
+          {
+            ...AUCTION,
+            lots: [liveAt(1200, 1300)],
+            bids: [{ kind: "accepted", lotVersion: 4 }],
+            after: [ledByRival("live", 1400)],
+            history: historyOf(
+              historyBid(1, contractViewer(surface).identityId, 1300, {
+                kind: "manual",
+                source: "bot",
+              }),
+              historyBid(2, rivalId, 1400, { kind: "proxy" }),
+            ),
+          },
+          contractIdentity(surface),
+        ),
+      );
+      if (proven.kind !== "screen") throw new Error("no card");
+      expect(lotBlock(proven.body).finalBid).toEqual({
+        kind: "accepted",
+        amount: rub(1300),
+        overtaken: true,
+      });
+
+      const floor = await pressOn(
+        spyPorts(
+          [],
+          {
+            ...AUCTION,
+            lots: [liveAt(1200, 1300)],
+            bids: [{ kind: "accepted", lotVersion: 4 }],
+            after: [ledByRival("live", 1400)],
+            history: historyOf(
+              historyBid(1, contractViewer(surface).identityId, 1300, {
+                kind: "manual",
+                source: "bot",
+              }),
+              historyBid(2, rivalId, 1400, { kind: "manual", source: "floor" }),
+            ),
+          },
+          contractIdentity(surface),
+        ),
+      );
+      if (floor.kind !== "screen") throw new Error("no card");
+      expect(lotBlock(floor.body).finalBid).toEqual({
+        kind: "accepted",
+        amount: rub(1300),
+      });
+    },
+  );
+});

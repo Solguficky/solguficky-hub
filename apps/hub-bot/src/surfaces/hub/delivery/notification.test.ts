@@ -14,6 +14,8 @@ import {
   AccessRequestedSchema,
   AuctionFinalLineupSchema,
   AuctionFinalStartedSchema,
+  AuctionLotSoldInFinalSchema,
+  AuctionPrebiddingEndedSchema,
   CircleChangedSchema,
   CommunityAnnouncementSchema,
   LotActivityKind,
@@ -333,6 +335,52 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Конец онлайн-торгов и продажа лота в финале (PER-812) идут тем же путём,
+  // что анонс финала.
+  it("decodes the end of trading and a lot sold in the final", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    const fact = (type: Notification["type"]) =>
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type,
+          }),
+        ),
+      );
+    expect(
+      fact({
+        case: "auctionPrebiddingEnded",
+        value: create(AuctionPrebiddingEndedSchema, {
+          auctionId,
+          soldCount: 3,
+          heldCount: 2,
+        }),
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "prebidding-ended", soldCount: 3, heldCount: 2 },
+      },
+    });
+    expect(
+      fact({
+        case: "auctionLotSoldInFinal",
+        value: create(AuctionLotSoldInFinalSchema, {
+          lotId,
+          price: { minorUnits: 90_000n, currency: "RUB" },
+        }),
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "lot-sold-in-final", lotId } },
+    });
+  });
+
   // Начало окна «Счастливых часов» (PER-616) участнику доставляет бот хаба,
   // как вести о лотах: без разбора ветка ушла бы в отказ `unrendered_type`.
   it("decodes the start of a window for a community member", () => {
@@ -547,6 +595,43 @@ describe("decodeNotification", () => {
           kind: "trading-opened",
           auctionId,
           meetupTitle: "Пятничная",
+        },
+      },
+    });
+  });
+
+  // Общая весть о начале «Счастливых часов» (PER-766) участнику доставляет
+  // бот хаба.
+  it("decodes the announcement of a step window", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const decoded = decodeNotification(
+      toBinary(
+        NotificationSchema,
+        create(NotificationSchema, {
+          notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+          recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+          createdAt: "2026-10-21T17:00:05Z",
+          type: {
+            case: "stepWindowAnnounced",
+            value: {
+              auctionId,
+              startsAt: "2026-10-21T17:00:00Z",
+              until: "2026-10-21T19:00:00Z",
+              lotCount: 4,
+            },
+          },
+        }),
+      ),
+    );
+
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "step-window-announced",
+          auctionId,
+          until: "2026-10-21T19:00:00Z",
+          lotCount: 4,
         },
       },
     });

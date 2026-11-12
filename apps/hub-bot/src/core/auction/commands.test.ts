@@ -9,6 +9,7 @@ import {
   type PlaceBidRefusal,
   PlaceBidResponseSchema,
   SetProxyLimitResponseSchema,
+  WithdrawProxyLimitResponseSchema,
 } from "../../../gen/auction/v1/auction_service_pb.js";
 import {
   bidOutcomeOf,
@@ -16,6 +17,7 @@ import {
   limitOutcomeOf,
   ownDisplayNameOf,
   unansweredOn,
+  withdrawOutcomeOf,
 } from "./commands.js";
 
 const rub = (rubles: bigint) =>
@@ -212,6 +214,34 @@ describe("own display name", () => {
   it("throws on an answer without the requested participant", () => {
     expect(() =>
       ownDisplayNameOf(create(GetDisplayNamesResponseSchema, {}), me),
+    ).toThrow();
+  });
+});
+
+describe("withdrawOutcomeOf", () => {
+  it("translates acceptance and the only refusal", () => {
+    expect(
+      withdrawOutcomeOf(
+        create(WithdrawProxyLimitResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        }),
+      ),
+    ).toEqual({ kind: "accepted", lotVersion: 0 });
+    expect(
+      withdrawOutcomeOf(
+        create(WithdrawProxyLimitResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "noActiveProxyLimit", value: {} } },
+          },
+        }),
+      ),
+    ).toEqual({ kind: "refused", refusal: { kind: "no-active-limit" } });
+  });
+
+  it("throws on a response without an outcome", () => {
+    expect(() =>
+      withdrawOutcomeOf(create(WithdrawProxyLimitResponseSchema, {})),
     ).toThrow();
   });
 });
