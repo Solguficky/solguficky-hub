@@ -188,6 +188,14 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             WHERE identity_id = @IdentityId AND NOT blocked AND @Preset = ANY(presets));
         """;
 
+    // Известный реплике человек не заблокирован и состоит в круге хаба; незнакомый
+    // допускается (см. AddOrganizerNotice).
+    private const string CanReachHubSql = """
+        SELECT NOT EXISTS (
+            SELECT 1 FROM identity_replica
+            WHERE identity_id = @IdentityId AND (blocked OR circle IS DISTINCT FROM 'member'));
+        """;
+
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
@@ -476,6 +484,30 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     notAfter,
                     cancellationToken)),
 
+            // Состав организаторов (PER-746, ADR-076, п. 8): адресат — сам затронутый
+            // человек, а не подписчики сходки.
+            MeetupOccasion.OrganizerAppointed => new ProducedFacts(
+                NotificationFacts.OrganizerAppointedType,
+                await AddOrganizerNotice(
+                    work,
+                    fact,
+                    NotificationFacts.OrganizerAppointedType,
+                    id => NotificationFacts.OrganizerAppointed(id, fact, now, notAfter),
+                    now,
+                    notAfter,
+                    cancellationToken)),
+
+            MeetupOccasion.OrganizerDismissed => new ProducedFacts(
+                NotificationFacts.OrganizerDismissedType,
+                await AddOrganizerNotice(
+                    work,
+                    fact,
+                    NotificationFacts.OrganizerDismissedType,
+                    id => NotificationFacts.OrganizerDismissed(id, fact, now, notAfter),
+                    now,
+                    notAfter,
+                    cancellationToken)),
+
             // Остальные поводы различаются не типом, а разницей: пустая — не
             // повод (ADR-031), непустая — изменение сведений, состояния или
             // того и другого. Следующее изменение прежний неотправленный факт
@@ -580,6 +612,45 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     ? null
                     : new ProducedFacts(NotificationFacts.CircleChangedType, circleChanged);
         }
+    }
+
+    // Адресат — затронутый человек, категории и подписки нет, как у вести о
+    // назначении администратором. Человека, который сам сделал это с собой
+    // (performed_by совпал с затронутым), не извещают: выход по своей воле
+    // сообщения не порождает (ADR-076, п. 8), а о собственном действии не
+    // сообщают вообще. Заблокированному и человеку вне круга хаба весть не
+    // нужна: некому открыть сходку. Человека, которого реплика ещё не знает,
+    // не отсеивают: события двух источников приходят в разном порядке, и
+    // потерянное сообщение хуже лишнего. Повтор события упирается в ключ
+    // повода notification_cause_once_per_recipient.
+    private static async Task<FactCount> AddOrganizerNotice(
+        UnitOfWork work,
+        MeetupFact fact,
+        string type,
+        Func<Guid, Notification> build,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var person = fact.OrganizerId
+            ?? throw new ArgumentException("the occasion names no person", nameof(fact));
+
+        if (fact.PerformedBy == person
+            || !await work.Scalar(CanReachHubSql, new { IdentityId = person }, cancellationToken))
+        {
+            return FactCount.None;
+        }
+
+        var created = await Insert(
+            work,
+            FactCause.Of(fact, type),
+            [new AudienceRow { IdentityId = person, Enabled = true, DeliverySurface = NotificationSubjects.Hub }],
+            (id, _) => build(id),
+            now,
+            notAfter,
+            cancellationToken);
+
+        return created;
     }
 
     private static FactCount Combine(FactCount first, FactCount second) =>

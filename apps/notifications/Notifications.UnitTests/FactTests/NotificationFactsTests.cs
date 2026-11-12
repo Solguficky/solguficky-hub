@@ -447,6 +447,48 @@ public class NotificationFactsTests
         Should.Throw<ArgumentException>(() => NotificationFacts.PresetGranted(NotificationId, fact, Now, NotAfter));
     }
 
+    [Fact]
+    public void OrganizerAppointed_AddressesAppointedPersonWithCard()
+    {
+        var person = EventFactory.NewId();
+        var message = EventFactory.OrganizerChange(
+            EventFactory.NewId(), version: 4, person, appointed: true, performedBy: EventFactory.NewId());
+        message.RequestId = "req-11";
+        var fact = Decode(message);
+
+        var notification = NotificationFacts.OrganizerAppointed(NotificationId, fact, Now, NotAfter);
+
+        notification.RecipientId.ShouldBe(person);
+        notification.Cause.MeetupEventId.ShouldBe(fact.EventId.ToString());
+        notification.RequestId.ShouldBe("req-11");
+        notification.NotAfter.ShouldBe("2026-09-26T10:15:30Z");
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.OrganizerAppointed);
+        notification.OrganizerAppointed.Meetup.ShouldBe(fact.Card);
+    }
+
+    [Fact]
+    public void OrganizerDismissed_AddressesRemovedPersonWithCard()
+    {
+        var person = EventFactory.NewId();
+        var fact = Decode(EventFactory.OrganizerChange(
+            EventFactory.NewId(), version: 4, person, appointed: false, performedBy: EventFactory.NewId()));
+
+        var notification = NotificationFacts.OrganizerDismissed(NotificationId, fact, Now, NotAfter);
+
+        notification.RecipientId.ShouldBe(person);
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.OrganizerDismissed);
+        notification.OrganizerDismissed.Meetup.ShouldBe(fact.Card);
+    }
+
+    [Fact]
+    public void OrganizerAppointed_OtherOccasion_Throws()
+    {
+        var fact = Decode(EventFactory.OrganizerChange(
+            EventFactory.NewId(), version: 4, EventFactory.NewId(), appointed: false, performedBy: null));
+
+        Should.Throw<ArgumentException>(() => NotificationFacts.OrganizerAppointed(NotificationId, fact, Now, NotAfter));
+    }
+
     private static MeetupFact Decode(Meetups.V1.MeetupEvent message) =>
         ReplicaMapping.Meetup(EventFactory.Bytes(message))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<MeetupFact>();

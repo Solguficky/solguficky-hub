@@ -38,6 +38,10 @@ public abstract record ReplicaEvent(Guid EventId, Guid AggregateId, long Version
 /// сохраняют прежнее поведение. На возврате после снятия поле не бывает:
 /// повод тогда не <see cref="MeetupOccasion.FirstPublication" />.
 /// </param>
+/// <param name="OrganizerId">
+/// Человек, чей состав изменился, у поводов <see cref="MeetupOccasion.OrganizerAppointed" />
+/// и <see cref="MeetupOccasion.OrganizerDismissed" />; у остальных поводов <c>null</c>.
+/// </param>
 public sealed record MeetupFact(
     Guid EventId,
     Guid MeetupId,
@@ -49,7 +53,8 @@ public sealed record MeetupFact(
     string? RequestId = null,
     AttachedMaterial? Material = null,
     Guid? PerformedBy = null,
-    bool Silent = false) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
+    bool Silent = false,
+    Guid? OrganizerId = null) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
 {
     public override string Source => ReplicaFeeds.MeetupsSource;
 }
@@ -58,7 +63,8 @@ public sealed record MeetupFact(
 /// Повод события Meetups, сведённый к тому, что различает адресные факты.
 /// </summary>
 /// <remarks>
-/// Своего типа факта удостоены три повода. Остальные — правка, отмена,
+/// Своего типа факта удостоены пять поводов, два из них — состав организаторов
+/// (PER-746, ADR-076). Остальные — правка, отмена,
 /// проведение, возврат в публикацию, отложенная публикация, пустой oneof —
 /// одинаковы: их факт, если он есть, вычисляется сравнением снимка с репликой,
 /// а не выводится из повода (ADR-031).
@@ -75,6 +81,15 @@ public enum MeetupOccasion
 
     /// <summary><c>meetup_material_attached</c>: у сходки появился материал.</summary>
     MaterialAttached,
+
+    /// <summary><c>meetup_organizer_appointed</c>: человека добавили в состав организаторов.</summary>
+    OrganizerAppointed,
+
+    /// <summary>
+    /// <c>meetup_organizer_dismissed</c>: человек покинул состав — снят другим или
+    /// вышел сам; различает их <see cref="MeetupFact.PerformedBy" />.
+    /// </summary>
+    OrganizerDismissed,
 }
 
 /// <summary>Материал из коллекции снимка, названный поводом его появления.</summary>

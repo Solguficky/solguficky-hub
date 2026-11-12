@@ -231,6 +231,16 @@ message Notification {
     // and did not win it, and to nobody else. One fact per person and lot. The
     // final announcement switch turns it off.
     AuctionLotSoldInFinal auction_lot_sold_in_final = 42;
+
+    // Another person added the recipient to the organizer roster of a meetup.
+    // Sent only to the appointed person: a subscription and a category are not
+    // required. Joining the roster by one's own act produces no fact.
+    OrganizerAppointed organizer_appointed = 43;
+
+    // Another person removed the recipient from the organizer roster of a
+    // meetup. Sent only to the removed person: a subscription and a category are
+    // not required. Leaving the roster by one's own will produces no fact.
+    OrganizerDismissed organizer_dismissed = 44;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -992,6 +1002,19 @@ message AccessGranted {
 message PresetGranted {
   // The granted preset.
   identity.v1.Preset preset = 1;
+}
+
+// The recipient became an organizer of the meetup. Who appointed them is
+// deliberately absent. The card is the state of the meetup at the appointment,
+// so that the channel can lead to it and offer to leave the roster.
+message OrganizerAppointed {
+  MeetupCard meetup = 1;
+}
+
+// The recipient was removed from the organizer roster of the meetup by another
+// person. Who removed them is deliberately absent.
+message OrganizerDismissed {
+  MeetupCard meetup = 1;
 }
 
 // The person's active circle changed between guest and member.

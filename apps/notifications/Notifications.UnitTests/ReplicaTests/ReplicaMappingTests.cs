@@ -627,6 +627,59 @@ public class ReplicaMappingTests
         ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
     }
 
+    [Theory]
+    [InlineData(true, MeetupOccasion.OrganizerAppointed)]
+    [InlineData(false, MeetupOccasion.OrganizerDismissed)]
+    public void Meetup_OrganizerChange_NamesPersonAndPerformer(bool appointed, MeetupOccasion expected)
+    {
+        var person = EventFactory.NewId();
+        var performer = EventFactory.NewId();
+        var message = EventFactory.OrganizerChange(MeetupId, version: 3, person, appointed, performer);
+
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(expected);
+        fact.OrganizerId.ShouldBe(Guid.Parse(person));
+        fact.PerformedBy.ShouldBe(Guid.Parse(performer));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Meetup_OrganizerChangeIdNotUuid_IsPoison(bool appointed)
+    {
+        var message = EventFactory.OrganizerChange(MeetupId, version: 3, EventFactory.NewId(), appointed, performedBy: null);
+        if (appointed)
+        {
+            message.MeetupOrganizerAppointed.IdentityId = "x";
+        }
+        else
+        {
+            message.MeetupOrganizerDismissed.IdentityId = "x";
+        }
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Meetup_OrganizerAppointedAbsentFromRoster_IsPoison()
+    {
+        var message = EventFactory.OrganizerChange(MeetupId, version: 3, EventFactory.NewId(), appointed: true, performedBy: null);
+        message.MeetupOrganizerAppointed.IdentityId = EventFactory.NewId();
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    [Fact]
+    public void Meetup_OrganizerDismissedStillOnRoster_IsPoison()
+    {
+        var person = EventFactory.NewId();
+        var message = EventFactory.OrganizerChange(MeetupId, version: 3, person, appointed: false, performedBy: null);
+        message.State.Organizers.Add(person);
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
     [Fact]
     public void Meetup_RequestId_CarriedAsIs()
     {

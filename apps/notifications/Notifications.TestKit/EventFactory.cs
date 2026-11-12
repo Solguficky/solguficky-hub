@@ -99,6 +99,40 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Событие состава организаторов (ADR-076): назначенный остаётся в снимке,
+    /// покинувший его — нет, как это делает Meetups. <paramref name="performedBy" />
+    /// равный <paramref name="person" /> — выход по своей воле.
+    /// </summary>
+    public static MeetupEvent OrganizerChange(
+        string meetupId,
+        long version,
+        string person,
+        bool appointed,
+        string? performedBy,
+        string? eventId = null)
+    {
+        var message = Meetup(meetupId, version, eventId);
+        message.State.Organizers.Add("0199a000-0000-7000-8000-000000000001");
+
+        if (appointed)
+        {
+            message.State.Organizers.Add(person);
+            message.MeetupOrganizerAppointed = new MeetupOrganizerAppointed { IdentityId = person };
+        }
+        else
+        {
+            message.MeetupOrganizerDismissed = new MeetupOrganizerDismissed { IdentityId = person };
+        }
+
+        if (performedBy is not null)
+        {
+            message.PerformedBy = performedBy;
+        }
+
+        return message;
+    }
+
     public static IdentityEvent Identity(string identityId, long version, string? eventId = null, bool blocked = false)
     {
         var message = new IdentityEvent
