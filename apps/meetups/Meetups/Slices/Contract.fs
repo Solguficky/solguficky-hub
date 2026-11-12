@@ -66,6 +66,12 @@ module Inbound =
     let identityId (value: string) : Result<PersonId, InvalidRequest> =
         uuidV7 "identity_id" value |> Result.map PersonId
 
+    /// Смотрящий, который приходит одним идентификатором, а не значением `Viewer`:
+    /// права у него нет, и Meetups спрашивает их у Identity сам (ADR-076, п. 10).
+    let viewerIdentityId (value: string) : Result<PersonId, InvalidRequest> =
+        uuidV7 "viewer_identity_id" value
+        |> Result.map PersonId
+
     /// Принимаемые отношения, в отличие от прав смотрящего, неизвестного значения
     /// не прощают: пустой набор, UNSPECIFIED и значение вне словаря — ошибка
     /// вызывающего, и молчаливый отказ спрятал бы её (ADR-051, п. 2). Отбросить

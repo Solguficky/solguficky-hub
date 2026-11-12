@@ -30,7 +30,7 @@ public class ServiceTokenWiringTests
     private static readonly Dictionary<string, string[]> Callers = new()
     {
         [Identity] = [HubBot, AuctionBot, SupportBot, Meetups, Notifications],
-        [Meetups] = [HubBot, Notifications, Auction],
+        [Meetups] = [HubBot, Notifications, Auction, Identity],
         [Notifications] = [HubBot, AuctionBot],
     };
 
@@ -89,8 +89,10 @@ public class ServiceTokenWiringTests
 
         var expected = new Dictionary<string, string[]>
         {
-            [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION", "IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_HUB_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS", "IDENTITY_CALLER_TOKEN_SUPPORT_BOT"],
-            [Meetups] = ["MEETUPS_CALLER_TOKEN_AUCTION", "MEETUPS_CALLER_TOKEN_HUB_BOT", "MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_SERVICE_TOKEN"],
+            // Identity — ещё и вызывающий Meetups: свой токен он предъявляет, а
+            // Meetups принимает его строкой IDENTITY (ConfirmMeetupContact).
+            [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION", "IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_HUB_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS", "IDENTITY_CALLER_TOKEN_SUPPORT_BOT", "IDENTITY_SERVICE_TOKEN"],
+            [Meetups] = ["MEETUPS_CALLER_TOKEN_AUCTION", "MEETUPS_CALLER_TOKEN_HUB_BOT", "MEETUPS_CALLER_TOKEN_IDENTITY", "MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_SERVICE_TOKEN"],
             [Notifications] = ["NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT", "NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "NOTIFICATIONS_SERVICE_TOKEN"],
             [HubBot] = ["BOT_SERVICE_TOKEN"],
             // Бот поддержки зовёт одну Identity (ADR-068, п. 3).
@@ -108,6 +110,36 @@ public class ServiceTokenWiringTests
         tokens[Meetups]["MEETUPS_CALLER_TOKEN_AUCTION"].Name.ShouldBe("auction-service-token");
     }
 
+    /// <summary>
+    /// Identity зовёт Meetups по одному адресу и без ожидания: Meetups уже ждёт
+    /// Identity, и ожидание в обе стороны было бы циклом, который Aspire отвергает
+    /// только при старте ресурсов.
+    /// </summary>
+    [Fact]
+    public async Task IdentityToMeetups_CarriesTheAddress_WithoutWaitingForMeetups()
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(Hub, cancellationToken);
+        await using var application = await builder.BuildAsync(cancellationToken);
+        var model = application.Services.GetRequiredService<DistributedApplicationModel>();
+
+        var identity = model.Resources.Single(resource => resource.Name == Identity);
+        var meetups = model.Resources.Single(resource => resource.Name == Meetups);
+
+        var executionContext = application.Services.GetRequiredService<DistributedApplicationExecutionContext>();
+        var environment = new Dictionary<string, object>();
+        foreach (var callback in identity.Annotations.OfType<EnvironmentCallbackAnnotation>())
+        {
+            await callback.Callback(new EnvironmentCallbackContext(executionContext, identity, environment, cancellationToken));
+        }
+
+        environment.ShouldContainKey("IDENTITY_MEETUPS_GRPC_URL");
+        identity.Annotations.OfType<WaitAnnotation>().Select(wait => wait.Resource)
+            .ShouldNotContain(meetups);
+        meetups.Annotations.OfType<WaitAnnotation>().Select(wait => wait.Resource)
+            .ShouldContain(identity);
+    }
+
     [Fact]
     public async Task ServiceToken_RunMode_IsGeneratedWithoutInput()
     {
@@ -116,7 +148,7 @@ public class ServiceTokenWiringTests
 
         // Пустой реестр прошёл бы цикл без единой проверки.
         parameters.Select(parameter => parameter.Name).Order(StringComparer.Ordinal).ToArray().ShouldBe(
-            ["auction-bot-service-token", "auction-service-token", "hub-bot-service-token", "meetups-service-token", "notifications-service-token", "support-bot-service-token"]);
+            ["auction-bot-service-token", "auction-service-token", "hub-bot-service-token", "identity-service-token", "meetups-service-token", "notifications-service-token", "support-bot-service-token"]);
         foreach (var parameter in parameters)
         {
             parameter.Secret.ShouldBeTrue(parameter.Name);

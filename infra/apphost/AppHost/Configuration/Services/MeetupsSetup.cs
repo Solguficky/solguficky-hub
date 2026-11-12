@@ -28,7 +28,7 @@ internal static class MeetupsSetup
         // поэтому имя должно отличать его от обычного веб-узла. Ссылка на него
         // в дашборде браузером не открывается — это цена plaintext gRPC, та же,
         // что у Identity.
-        return context.Builder
+        var meetups = context.Builder
             .AddProject<Projects.Meetups>(AppHostNames.Resources.Meetups)
             .WithHttpEndpoint(name: AppHostNames.Endpoints.Grpc)
             .WithGrpcHealthProbe(AppHostNames.Endpoints.Grpc, AppHostNames.Readiness.Meetups)
@@ -47,13 +47,16 @@ internal static class MeetupsSetup
             // общее с ботом (CommunityTime).
             .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             // Meetups и вызывающий (CheckAccessRight в Identity), и вызываемый;
-            // вызывающие — по колонке Caller в integration.md (ADR-056).
+            // вызывающие — по колонке Caller в integration.md (ADR-056). Identity
+            // зовёт один метод — ConfirmMeetupContact (ADR-076, п. 10) — и входит в
+            // таблицу целиком, как остальные: таблица полна всегда.
             .WithServiceToken(context)
             .AcceptCallers(
                 context,
                 AppHostNames.Resources.HubBot,
                 AppHostNames.Resources.Notifications,
-                AppHostNames.Resources.Auction)
+                AppHostNames.Resources.Auction,
+                AppHostNames.Resources.Identity)
             // Источник права для CheckMeetupAuthority: право вести сходки Meetups
             // спрашивает у Identity сам (ADR-051). Профиль без identity оставляет
             // переменную пустой, и метод честно отвечает UNAVAILABLE — остальные
@@ -69,6 +72,17 @@ internal static class MeetupsSetup
                 AppHostNames.Resources.Nats,
                 "MEETUPS_NATS_URL",
                 nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
+
+        // Встречная привязка: Identity зовёт Meetups, а Meetups уже ждёт Identity
+        // (`WaitFor` выше), поэтому адрес едет с этой стороны и без ожидания —
+        // иначе два узла ждали бы друг друга. Узла Identity в запуске нет — привязка
+        // молчит, как остальные.
+        context.Get<IResourceWithEnvironment>(AppHostNames.Resources.Identity)?
+            .WithEnvironment(
+                "IDENTITY_MEETUPS_GRPC_URL",
+                meetups.GetEndpoint(AppHostNames.Endpoints.Grpc));
+
+        return meetups;
     }
 
     /// <summary>

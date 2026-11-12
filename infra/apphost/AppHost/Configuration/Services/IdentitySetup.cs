@@ -91,6 +91,11 @@ internal static class IdentitySetup
 
         return identity
             .WithEnvironment("IDENTITY_MAINTAINER_TOKEN", maintainerToken)
+            // Identity — ещё и вызывающий: перед ником в карточке он спрашивает
+            // Meetups (ConfirmMeetupContact, ADR-076, п. 10). Адрес Meetups кладёт
+            // MeetupsSetup: Meetups уже ждёт Identity, и ожидание в обе стороны
+            // было бы циклом.
+            .WithServiceToken(context)
             // Вызывающие по колонке Caller в integration.md (ADR-056).
             .AcceptCallers(
                 context,
