@@ -60,6 +60,53 @@ type CallerAuthenticationTests(host: MeetupsHostFixture) =
                 && not (frame.Fields.ContainsKey "caller_refusal")
             @>
 
+    /// Вопрос Identity перед ником в карточке допускает одного вызывающего: Identity.
+    /// Допущенный вызов проверяется ответом среза (запрос неверной формы отвергает
+    /// разбор), а не успехом заглушки; остальные не доходят до среза.
+    [<Fact>]
+    member _.``When Identity confirms a contact expect the slice to answer and every other caller UNAUTHENTICATED``() =
+        let status (client: MeetupsService.MeetupsServiceClient) =
+            Rpc.codeOf (fun () ->
+                client.ConfirmMeetupContact(ConfirmMeetupContactRequest())
+                |> ignore
+            )
+
+        let others =
+            [
+                MeetupsService.MeetupsServiceClient host.Channel
+                AuthenticatedClient.bot host.Channel
+                AuthenticatedClient.notifications host.Channel
+                AuthenticatedClient.auction host.Channel
+            ]
+            |> List.map status
+
+        test <@ status (AuthenticatedClient.identity host.Channel) = Some StatusCode.InvalidArgument @>
+        test <@ others = List.replicate 4 (Some StatusCode.Unauthenticated) @>
+
+    [<Fact>]
+    member _.``When Identity asks any other method expect UNAUTHENTICATED``() =
+        let identity = AuthenticatedClient.identity host.Channel
+
+        let statuses =
+            [
+                fun () -> identity.GetMeetup(GetMeetupRequest()) |> ignore
+                fun () ->
+                    identity.CheckMeetupAuthority(CheckMeetupAuthorityRequest())
+                    |> ignore
+                fun () ->
+                    identity.GetMeetupStanding(GetMeetupStandingRequest())
+                    |> ignore
+                fun () ->
+                    identity.ListMeetupStates(ListMeetupStatesRequest())
+                    |> ignore
+                fun () ->
+                    identity.CreateMeetupDraft(CreateMeetupDraftRequest())
+                    |> ignore
+            ]
+            |> List.map Rpc.codeOf
+
+        test <@ statuses = List.replicate 5 (Some StatusCode.Unauthenticated) @>
+
     [<Fact>]
     member _.``When any caller asks enumeration expect UNAUTHENTICATED``() =
         let callers =
@@ -67,6 +114,7 @@ type CallerAuthenticationTests(host: MeetupsHostFixture) =
                 MeetupsService.MeetupsServiceClient host.Channel
                 AuthenticatedClient.bot host.Channel
                 AuthenticatedClient.notifications host.Channel
+                AuthenticatedClient.identity host.Channel
                 AuthenticatedClient.presenting host.Channel AuthenticatedClient.OwnToken
             ]
 
@@ -79,7 +127,7 @@ type CallerAuthenticationTests(host: MeetupsHostFixture) =
                 )
             )
 
-        test <@ statuses = List.replicate 4 (Some StatusCode.Unauthenticated) @>
+        test <@ statuses = List.replicate 5 (Some StatusCode.Unauthenticated) @>
 
     [<Fact>]
     member _.``When a caller is refused expect one safe boundary record with the cause``() =
@@ -121,6 +169,8 @@ type CallerAuthenticationTests(host: MeetupsHostFixture) =
                 "--MEETUPS_CALLER_TOKEN_HUB_BOT="
                 "--MEETUPS_CALLER_TOKEN_NOTIFICATIONS="
                 "--MEETUPS_CALLER_TOKEN_AUCTION="
+                "--MEETUPS_CALLER_TOKEN_IDENTITY="
+                $"--MEETUPS_CALLER_TOKEN_IDENTITY={AuthenticatedClient.BotToken}"
                 $"--MEETUPS_CALLER_TOKEN_NOTIFICATIONS={AuthenticatedClient.BotToken}"
                 "--MEETUPS_SERVICE_TOKEN="
                 $"--MEETUPS_SERVICE_TOKEN={AuthenticatedClient.BotToken}"

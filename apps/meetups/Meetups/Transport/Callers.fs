@@ -10,12 +10,14 @@ type Caller =
     | HubBot
     | Notifications
     | Auction
+    | Identity
 
     member this.Node =
         match this with
         | Caller.HubBot -> "hub-bot"
         | Caller.Notifications -> "notifications"
         | Caller.Auction -> "auction"
+        | Caller.Identity -> "identity"
 
     member this.TokenVariable =
         "MEETUPS_CALLER_TOKEN_"

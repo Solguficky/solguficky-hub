@@ -70,7 +70,9 @@ identity: ExecutableResource
   env: IDENTITY_DATABASE_URL=postgresql://postgres:{postgres-password.value}@{postgres.bindings.tcp.host}:{postgres.bindings.tcp.port}/identity?sslmode=disable
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
+  env: IDENTITY_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: IDENTITY_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
+  env: IDENTITY_SERVICE_TOKEN={identity-service-token.value}
   waits: identity-build WaitForCompletion
   waits: identity-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -80,6 +82,8 @@ identity: ExecutableResource
   relationship: Reference hub-bot-service-token
   relationship: Reference identity
   relationship: Reference identity-maintainer-token
+  relationship: Reference identity-service-token
+  relationship: Reference meetups
   relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference nats-password
@@ -112,6 +116,8 @@ identity-proto: ExecutableResource
   arg: --template
   arg: apps/identity/buf.gen.yaml
   relationship: Parent identity
+identity-service-token: ParameterResource
+  secret: True
 meetups: ProjectResource
   endpoint: grpc http port= target= proxied=True external=False
   env: ASPNETCORE_URLS={meetups.bindings.grpc.scheme}://localhost:{meetups.bindings.grpc.targetPort}
@@ -119,6 +125,7 @@ meetups: ProjectResource
   env: LOGGING__CONSOLE__FORMATTERNAME=simple
   env: MEETUPS_CALLER_TOKEN_AUCTION={auction-service-token.value}
   env: MEETUPS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: MEETUPS_CALLER_TOKEN_IDENTITY={identity-service-token.value}
   env: MEETUPS_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
   env: MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: MEETUPS_DATABASE_URL={postgres.connectionString};Database=meetups;SSL Mode=Disable
@@ -132,6 +139,7 @@ meetups: ProjectResource
   relationship: Reference auction-service-token
   relationship: Reference hub-bot-service-token
   relationship: Reference identity
+  relationship: Reference identity-service-token
   relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference nats-password

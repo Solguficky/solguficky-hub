@@ -51,6 +51,7 @@ Meetups/
   Slices/GetMeetup.fs                 карточка через тот же путь чтения
   Slices/ListMeetupStates.fs          служебная страница состояний без смотрящего
   Slices/GetMeetupStanding.fs         служебное состояние одной сходки без смотрящего
+  Slices/ConfirmMeetupContact.fs      подтверждение автора или состава для Identity перед ником в карточке
   Slices/DispatchMeetupEvents.fs      один тик публикации из журнала
   Slices/PublishDueMeetups.fs         один тик отложенной публикации
   Observability/Failures.fs           счётчик отказов, общий на все границы
@@ -59,7 +60,7 @@ Meetups/
   Observability/BoundaryLog.fs        интерцептор каркаса лога
   Transport/Callers.fs                таблица токенов вызывающих и проверка собственного
   Transport/CallerGate.fs             матрица допуска и интерцептор аутентификации
-  Transport/MeetupsGrpcService.fs     диспетчер девятнадцати операций
+  Transport/MeetupsGrpcService.fs     диспетчер двадцати двух операций
   Transport/OutboxDispatchWorker.fs   фоновая граница журнала: расписание тиков и их запись
   Transport/DuePublicationWorker.fs   фоновая граница отложенной публикации
   Host.fs                             composition root
@@ -152,9 +153,9 @@ Dapper не знает `DateOnly` и `TimeOnly` как параметры, хо�
 
 ## Транспорт и готовность
 
-По [ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) каждый доменный вызов несёт `authorization: Bearer <token>`. Матрица `MethodAccess` повторяет колонку Caller [каталога](../../docs/architecture/integration.md#meetups-grpc): бот хаба вызывает четырнадцать пользовательских RPC, Notifications и Auction — `CheckMeetupAuthority`, Auction ещё `GetMeetupStanding` для экрана зала; `ListMeetupStates` пока закрыт для всех. Нет токена, неизвестный токен или вызывающий не объявлен у метода — `UNAUTHENTICATED` до диспетчера. `PERMISSION_DENIED` остаётся отказом человеку по праву. Логгер стоит снаружи интерцептора допуска и пишет `caller` и `caller_refusal`, никогда значение секрета. Health и reflection токена не требуют, обхода на loopback нет.
+По [ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) каждый доменный вызов несёт `authorization: Bearer <token>`. Матрица `MethodAccess` повторяет колонку Caller [каталога](../../docs/architecture/integration.md#meetups-grpc): бот хаба вызывает четырнадцать пользовательских RPC, Notifications и Auction — `CheckMeetupAuthority`, Auction ещё `GetMeetupStanding` для экрана зала, Identity — только `ConfirmMeetupContact` перед ником организатора в карточке; `ListMeetupStates` пока закрыт для всех. Нет токена, неизвестный токен или вызывающий не объявлен у метода — `UNAUTHENTICATED` до диспетчера. `PERMISSION_DENIED` остаётся отказом человеку по праву. Логгер стоит снаружи интерцептора допуска и пишет `caller` и `caller_refusal`, никогда значение секрета. Health и reflection токена не требуют, обхода на loopback нет.
 
-Четыре обязательных значения: `MEETUPS_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS`, `MEETUPS_CALLER_TOKEN_AUCTION`, `MEETUPS_SERVICE_TOKEN`. Пустота или отсутствие значения, совпадение токенов вызывающих и совпадение собственного с одним из них останавливают запуск до миграций. AppHost генерирует и раздаёт значения сам; при `just meetups-run` их задаёт окружение. Identity-клиент предъявляет собственный токен на `CheckAccessRight`, сохраняя срок, отмену и заголовки цепочки.
+Пять обязательных значений: `MEETUPS_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS`, `MEETUPS_CALLER_TOKEN_AUCTION`, `MEETUPS_CALLER_TOKEN_IDENTITY`, `MEETUPS_SERVICE_TOKEN`. Пустота или отсутствие значения, совпадение токенов вызывающих и совпадение собственного с одним из них останавливают запуск до миграций. AppHost генерирует и раздаёт значения сам; при `just meetups-run` их задаёт окружение. Identity-клиент предъявляет собственный токен на `CheckAccessRight`, сохраняя срок, отмену и заголовки цепочки.
 
 Kestrel настроен на h2c: gRPC без TLS требует HTTP/2, а plaintext-endpoint без ALPN не умеет договариваться о версии. Отсюда два следствия:
 

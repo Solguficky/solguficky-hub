@@ -15,6 +15,9 @@ let NotificationsToken = "meetups-test-notifications-token"
 let AuctionToken = "meetups-test-auction-token"
 
 [<Literal>]
+let IdentityToken = "meetups-test-identity-token"
+
+[<Literal>]
 let OwnToken = "meetups-test-own-token"
 
 let configuration =
@@ -22,6 +25,7 @@ let configuration =
         $"--MEETUPS_CALLER_TOKEN_HUB_BOT={BotToken}"
         $"--MEETUPS_CALLER_TOKEN_NOTIFICATIONS={NotificationsToken}"
         $"--MEETUPS_CALLER_TOKEN_AUCTION={AuctionToken}"
+        $"--MEETUPS_CALLER_TOKEN_IDENTITY={IdentityToken}"
         $"--MEETUPS_SERVICE_TOKEN={OwnToken}"
     |]
 
@@ -41,3 +45,4 @@ let presenting (channel: GrpcChannel) token =
 let bot channel = presenting channel BotToken
 let notifications channel = presenting channel NotificationsToken
 let auction channel = presenting channel AuctionToken
+let identity channel = presenting channel IdentityToken

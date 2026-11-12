@@ -185,7 +185,9 @@ identity: ContainerResource
   env: IDENTITY_DATABASE_URL={identity-db.connectionString}
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
+  env: IDENTITY_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: IDENTITY_NATS_URL={nats.connectionString}
+  env: IDENTITY_SERVICE_TOKEN={identity-service-token.value}
   waits: identity-db WaitUntilHealthy
   waits: nats WaitUntilHealthy
   relationship: Reference auction-bot-service-token
@@ -195,6 +197,8 @@ identity: ContainerResource
   relationship: Reference identity-community-queue
   relationship: Reference identity-db
   relationship: Reference identity-maintainer-token
+  relationship: Reference identity-service-token
+  relationship: Reference meetups
   relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference notifications-service-token
@@ -207,6 +211,8 @@ identity-community-queue: ParameterResource
 identity-db: ConnectionStringParameterResource
   secret: True
 identity-maintainer-token: ParameterResource
+  secret: True
+identity-service-token: ParameterResource
   secret: True
 jetstream-topology: ContainerResource
   image: docker.io/natsio/nats-box@sha256:be25666441c3aee65193aba33d60ff2f06ede7ee9eba58864324b33d7eb94fea
@@ -221,6 +227,7 @@ meetups: ProjectResource
   env: HTTP_PORTS={meetups.bindings.grpc.targetPort}
   env: MEETUPS_CALLER_TOKEN_AUCTION={auction-service-token.value}
   env: MEETUPS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: MEETUPS_CALLER_TOKEN_IDENTITY={identity-service-token.value}
   env: MEETUPS_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
   env: MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: MEETUPS_DATABASE_URL={meetups-db.connectionString}
@@ -233,6 +240,7 @@ meetups: ProjectResource
   relationship: Reference auction-service-token
   relationship: Reference hub-bot-service-token
   relationship: Reference identity
+  relationship: Reference identity-service-token
   relationship: Reference meetups-db
   relationship: Reference meetups-service-token
   relationship: Reference nats

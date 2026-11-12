@@ -16,7 +16,7 @@ module private Chain =
             Cancellation = context.CancellationToken
         }
 
-/// Транспортная граница всех девятнадцати операций контракта.
+/// Транспортная граница всех двадцати двух операций контракта.
 ///
 /// ASP.NET Core требует один класс-наследник сгенерированной базы со всеми
 /// операциями сервиса сразу, поэтому разложить его по срезам нельзя: это
@@ -173,3 +173,12 @@ type MeetupsGrpcService() =
     override _.GetMeetupStanding(request: GetMeetupStandingRequest, context: ServerCallContext) =
         let services = context.GetHttpContext().RequestServices
         GetMeetupStanding.Api.handle (GetMeetupStanding.Composition.buildLoad services) request
+
+    override _.ConfirmMeetupContact(request: ConfirmMeetupContactRequest, context: ServerCallContext) =
+        let services = context.GetHttpContext().RequestServices
+
+        // Права смотрящего Meetups спрашивает у Identity в той же цепочке вызова,
+        // как у CheckMeetupAuthority: срок и отмена входящего вызова ограничивают и их.
+        ConfirmMeetupContact.Api.handle
+            (ConfirmMeetupContact.Composition.buildDeps services (Chain.forwarded context))
+            request

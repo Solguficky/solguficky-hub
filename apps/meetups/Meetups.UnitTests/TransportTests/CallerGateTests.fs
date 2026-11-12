@@ -17,6 +17,7 @@ let private read name =
     | "MEETUPS_CALLER_TOKEN_HUB_BOT" -> "bot-secret"
     | "MEETUPS_CALLER_TOKEN_NOTIFICATIONS" -> "notifications-secret"
     | "MEETUPS_CALLER_TOKEN_AUCTION" -> "auction-secret"
+    | "MEETUPS_CALLER_TOKEN_IDENTITY" -> "identity-secret"
     | "MEETUPS_SERVICE_TOKEN" -> "own-secret"
     | _ -> null
 
@@ -84,20 +85,12 @@ let private interceptWithOutcome method authorization outcome =
 
 let private intercept method authorization = interceptWithOutcome method authorization StatusCode.OK
 
-/// Методы, которые контракт объявил раньше реализации: схема и каталог идут листом
-/// PER-744, обработчики и таблица допуска вызывающих — листами PER-745 и PER-747
-/// (ADR-076). `ConfirmMeetupContact` ждёт вызывающего Identity, которого в
-/// `Caller` ещё нет. Лист реализации удаляет набор, и тест снова сверяет контракт
-/// с таблицей целиком.
-let private declaredBeforeImplementation = set [ "ConfirmMeetupContact" ]
-
 [<Fact>]
 let ``Method access should cover the contract and admit only its declared callers`` () =
     let contract =
         MeetupsService.Descriptor.Methods
         |> Seq.map _.Name
         |> Set.ofSeq
-        |> Set.filter (fun name -> not (declaredBeforeImplementation.Contains name))
 
     let configured = MethodAccess.byMethod |> Map.keys |> Set.ofSeq
 
@@ -110,6 +103,7 @@ let ``Method access should cover the contract and admit only its declared caller
             | "ListMeetupStates" -> Set.empty
             | "CheckMeetupAuthority" -> set [ Caller.Notifications; Caller.Auction ]
             | "GetMeetupStanding" -> set [ Caller.Auction ]
+            | "ConfirmMeetupContact" -> set [ Caller.Identity ]
             | _ -> Set.singleton Caller.HubBot
 
         test <@ callers = expected @>
@@ -160,6 +154,18 @@ let ``Caller gate should refuse known callers on methods that do not declare the
                 Caller.HubBot
             && CallerGate.decide table (path "GetMeetupStanding") "Bearer auction-secret" = GateDecision.Admitted
                 Caller.Auction
+            && CallerGate.decide table (path "ConfirmMeetupContact") "Bearer identity-secret" = GateDecision.Admitted
+                Caller.Identity
+            && CallerGate.decide table (path "ConfirmMeetupContact") "Bearer bot-secret" = GateDecision.NotDeclared
+                Caller.HubBot
+            && CallerGate.decide table (path "ConfirmMeetupContact") "Bearer notifications-secret" = GateDecision.NotDeclared
+                Caller.Notifications
+            && CallerGate.decide table (path "ConfirmMeetupContact") "Bearer auction-secret" = GateDecision.NotDeclared
+                Caller.Auction
+            && CallerGate.decide table (path "GetMeetup") "Bearer identity-secret" = GateDecision.NotDeclared
+                Caller.Identity
+            && CallerGate.decide table (path "CheckMeetupAuthority") "Bearer identity-secret" = GateDecision.NotDeclared
+                Caller.Identity
         @>
 
 [<Fact>]
@@ -170,6 +176,7 @@ let ``Caller gate should close enumeration and future methods to every known cal
                 Caller.HubBot
                 Caller.Notifications
                 Caller.Auction
+                Caller.Identity
             ] do
             let decision =
                 CallerGate.decide table (path method) $"Bearer {read caller.TokenVariable}"
@@ -189,6 +196,7 @@ let ``Caller table should reject every missing or blank declared token without d
             Caller.HubBot
             Caller.Notifications
             Caller.Auction
+            Caller.Identity
         ]
         |> List.collect (fun caller ->
             [ null; ""; "  " ]

@@ -168,6 +168,97 @@ type OrganizerRosterTests() =
         test <@ read key = read missing @>
         test <@ (read key).Value.StatusCode = StatusCode.NotFound @>
 
+    /// Подтверждение контакта для Identity (ADR-076, п. 10) через настоящие gRPC, срез
+    /// и PostgreSQL: скрытая сходка отвечает постороннему тем же NOT_FOUND, что и
+    /// отсутствующая, а право `manage_meetups` смотрящего Meetups спрашивает у Identity.
+    [<Fact>]
+    member _.``Identity gets a contact confirmed for the author and the roster and one NOT_FOUND for everything else``
+        ()
+        =
+        let ask: Meetups.Slices.CheckMeetupAuthority.AskRight =
+            fun (Meetups.Domain.PersonId person) right ->
+                let id = person.ToString "D"
+
+                Threading.Tasks.Task.FromResult(
+                    Ok(
+                        (right = Meetups.Domain.OrganizeMeetups
+                         && (id = authorId || id = coId))
+                        || (right = Meetups.Domain.ManageMeetups
+                            && id = adminId)
+                    )
+                )
+
+        let port (services: Microsoft.Extensions.DependencyInjection.IServiceCollection) =
+            Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<
+                Meetups.Slices.CheckMeetupAuthority.Port
+             >(
+                services,
+                Meetups.Slices.CheckMeetupAuthority.Port.Connected(fun _ -> ask)
+            )
+            |> ignore
+
+        use live = new LiveMeetupsHost(port)
+        let client = AuthenticatedClient.bot live.Channel
+        let identity = AuthenticatedClient.identity live.Channel
+        let me = participant authorId
+        let key, changed = titled client me
+
+        client.AppointMeetupOrganizer(
+            AppointMeetupOrganizerRequest(Viewer = me, Id = key, IdentityId = coId, ExpectedVersion = changed.Version)
+        )
+        |> ignore
+
+        let missing = (Guid.CreateVersion7()).ToString "D"
+
+        let confirm (viewerId: string) (personId: string) (meetupId: string) =
+            status (fun () ->
+                identity.ConfirmMeetupContact(
+                    ConfirmMeetupContactRequest(Id = meetupId, ViewerIdentityId = viewerId, IdentityId = personId)
+                )
+                |> ignore
+            )
+
+        // Скрытая сходка: автор и состав видят её и подтверждаются, администратор
+        // видит её по праву, но ник отдаётся только автору и составу.
+        test <@ confirm coId authorId key = None @>
+        test <@ confirm authorId coId key = None @>
+        test <@ confirm adminId authorId key = None @>
+        test <@ confirm adminId coId key = None @>
+
+        test
+            <@
+                confirm adminId strangerId key
+                |> Option.map _.StatusCode = Some StatusCode.NotFound
+            @>
+
+        // Посторонний: скрытая сходка и отсутствующая неразличимы, как и человек вне состава.
+        let hiddenForStranger = confirm strangerId authorId key
+        let missingForStranger = confirm strangerId authorId missing
+
+        test <@ hiddenForStranger = missingForStranger @>
+        test <@ (hiddenForStranger |> Option.map _.StatusCode) = Some StatusCode.NotFound @>
+        test <@ confirm adminId authorId missing = missingForStranger @>
+
+        // Выход из состава ник не отнимает у автора, но человек, которого нет в составе, не подтверждается.
+        let after =
+            client.LeaveMeetupOrganizers(
+                LeaveMeetupOrganizersRequest(
+                    Viewer = participant coId,
+                    Id = key,
+                    ExpectedVersion = (client.GetMeetup(GetMeetupRequest(Viewer = me, Id = key))).Version
+                )
+            )
+
+        test <@ List.ofSeq after.Organizers = [ authorId ] @>
+
+        test
+            <@
+                confirm authorId coId key
+                |> Option.map _.StatusCode = Some StatusCode.NotFound
+            @>
+
+        test <@ confirm authorId authorId key = None @>
+
     [<Fact>]
     member _.``An appointed co-organizer reads and edits the meetup and a dismissal takes it back``() =
         use live = new LiveMeetupsHost(identityPort (set [ authorId; coId ]))
