@@ -60,6 +60,7 @@ let private SelectSql =
         visibility AS Visibility,
         first_published_at AS FirstPublishedAt,
         scheduled_publish_at AS ScheduledPublishAt,
+        organizers AS Organizers,
         version AS Version,
         schedule_form AS ScheduleForm,
         schedule_precision AS SchedulePrecision,
@@ -76,12 +77,12 @@ let private InsertMeetupSql =
     """
     INSERT INTO meetups (
         id, author, title, description, venue, kind, calendar_link, materials,
-        lifecycle, visibility, first_published_at, scheduled_publish_at, version,
+        lifecycle, visibility, first_published_at, scheduled_publish_at, organizers, version,
         schedule_form, schedule_precision,
         schedule_start_date, schedule_start_time, schedule_end_date, schedule_end_time
     ) VALUES (
         @id, @author, @title, @description, @venue, @kind, @calendar_link, CAST(@materials AS jsonb),
-        @lifecycle, @visibility, @first_published_at, @scheduled_publish_at, @version,
+        @lifecycle, @visibility, @first_published_at, @scheduled_publish_at, @organizers, @version,
         @schedule_form, @schedule_precision,
         @schedule_start_date, @schedule_start_time, @schedule_end_date, @schedule_end_time
     )
@@ -114,6 +115,7 @@ let private UpdateMeetupSql =
         visibility = @visibility,
         scheduled_publish_at = @scheduled_publish_at,
         first_published_at = @first_published_at,
+        organizers = @organizers,
         version = @version,
         schedule_form = @schedule_form,
         schedule_precision = @schedule_precision,
@@ -129,10 +131,11 @@ let private UpdateMeetupSql =
 let private InsertEventSql =
     """
     INSERT INTO meetup_events (
-        event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, request_id, material_id
+        event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, request_id, material_id,
+        person_id
     ) VALUES (
         @event_id, @meetup_id, @version, @event_type, CAST(@payload AS jsonb), @performed_by, @occurred_at,
-        @request_id, @material_id
+        @request_id, @material_id, @person_id
     )
     """
 
@@ -150,6 +153,7 @@ let private stateParameters (row: MeetupRow.MeetupRow) =
         visibility = row.Visibility
         first_published_at = row.FirstPublishedAt
         scheduled_publish_at = row.ScheduledPublishAt
+        organizers = row.Organizers
         version = row.Version
         schedule_form = row.ScheduleForm
         schedule_precision = row.SchedulePrecision
@@ -240,6 +244,7 @@ let commit
                             |> Option.map RequestId.value
                             |> Option.toObj
                         material_id = MeetupEventPayload.materialId event
+                        person_id = MeetupEventPayload.personId event
                     |},
                     transaction
                 )

@@ -32,6 +32,9 @@ type MeetupRow =
         Visibility: string
         FirstPublishedAt: Nullable<DateTimeOffset>
         ScheduledPublishAt: Nullable<DateTimeOffset>
+        /// uuid[] в порядке вступления; NOT NULL по схеме, пустой массив — состав,
+        /// который опустошил администратор.
+        Organizers: Guid[]
         Version: int64
         ScheduleForm: string
         SchedulePrecision: string
@@ -245,6 +248,10 @@ let toSnapshot (row: MeetupRow) : MeetupSnapshot =
         Visibility = visibilityOf row.Id row.Visibility
         FirstPublishedAt = if row.FirstPublishedAt.HasValue then Some row.FirstPublishedAt.Value else None
         ScheduledPublishAt = if row.ScheduledPublishAt.HasValue then Some row.ScheduledPublishAt.Value else None
+        Organizers =
+            row.Organizers
+            |> Array.map PersonId
+            |> List.ofArray
         Version = row.Version
     }
 
@@ -356,6 +363,10 @@ let ofSnapshot (snapshot: MeetupSnapshot) : MeetupRow =
             match snapshot.ScheduledPublishAt with
             | Some at -> Nullable(storedMoment at)
             | None -> Nullable()
+        Organizers =
+            snapshot.Organizers
+            |> List.map (fun (PersonId person) -> person)
+            |> Array.ofList
         Version = snapshot.Version
         ScheduleForm = schedule.Form
         SchedulePrecision = schedule.Precision

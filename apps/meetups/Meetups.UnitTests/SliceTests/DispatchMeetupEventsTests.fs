@@ -38,6 +38,7 @@ let private pendingEvent (n: int) (meetup: int) =
         OccurredAt = now
         RequestId = RequestId.create $"req-{n}"
         MaterialId = None
+        PersonId = None
     }
 
 let private backlog (pending: int64) (oldest: DateTimeOffset option) =

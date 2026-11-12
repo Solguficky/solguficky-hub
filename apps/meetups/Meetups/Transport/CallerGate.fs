@@ -25,6 +25,9 @@ module MethodAccess =
             "RemoveMaterial", bot
             "ReorderMaterials", bot
             "MarkMeetupHeld", bot
+            "AppointMeetupOrganizer", bot
+            "DismissMeetupOrganizer", bot
+            "LeaveMeetupOrganizers", bot
             "ListVisibleMeetups", bot
             "ListArchivedMeetups", bot
             "GetMeetup", bot

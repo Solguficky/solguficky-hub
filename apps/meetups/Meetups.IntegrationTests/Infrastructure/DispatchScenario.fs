@@ -66,10 +66,10 @@ type CommandTransaction(dsn: string) =
                 (Some transaction)
                 """
                 INSERT INTO meetups (
-                    id, author, lifecycle, visibility, version,
+                    id, author, organizers, lifecycle, visibility, version,
                     schedule_form, schedule_precision
                 ) VALUES (
-                    @meetup_id, @actor, 'planned', 'hidden', 1,
+                    @meetup_id, @actor, ARRAY[@actor], 'planned', 'hidden', 1,
                     'no_date', NULL
                 )
                 """
@@ -157,10 +157,10 @@ module DispatchScenario =
                 (Some transaction)
                 """
                 INSERT INTO meetups (
-                    id, author, lifecycle, visibility, version,
+                    id, author, organizers, lifecycle, visibility, version,
                     schedule_form, schedule_precision
                 ) VALUES (
-                    @meetup_id, @actor, 'planned', 'hidden', 1,
+                    @meetup_id, @actor, ARRAY[@actor], 'planned', 'hidden', 1,
                     'no_date', NULL
                 )
                 ON CONFLICT (id) DO NOTHING

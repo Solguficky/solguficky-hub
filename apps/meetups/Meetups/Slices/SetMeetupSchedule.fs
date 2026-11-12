@@ -43,13 +43,14 @@ type Deps =
 
 let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, SetMeetupScheduleError>> =
     task {
-        // Право спрашивается до загрузки: состояние в этом решении не участвует, а
-        // проверка после чтения сделала бы отказ обычному смотрящему зависимым от
-        // того, существует ли сходка.
-        match Access.actOnBehalf command.Viewer with
+        // Загрузка идёт раньше решения о праве: организатор — это запись в составе
+        // сходки. Чужая и отсутствующая сходка проходят одну и ту же последовательность
+        // запросов и получают один отказ (ADR-076, п. 12).
+        let! existing = deps.Load command.Id
+
+        match Access.actOnBehalf command.Viewer existing with
         | Error denied -> return Error(SetMeetupScheduleError.Forbidden denied)
         | Ok() ->
-            let! existing = deps.Load command.Id
             let state = Meetup.restore existing
 
             match Meetup.decideSetSchedule command.Schedule state with
@@ -106,8 +107,8 @@ module Api =
         match error with
         | SetMeetupScheduleError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | SetMeetupScheduleError.Forbidden CannotManageMeetups ->
-            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
+        | SetMeetupScheduleError.Forbidden CannotActOnMeetup ->
+            Status(StatusCode.PermissionDenied, "the viewer may not act on this meetup")
         | SetMeetupScheduleError.Domain MeetupNotFound
         | SetMeetupScheduleError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
         // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение

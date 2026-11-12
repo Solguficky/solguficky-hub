@@ -65,7 +65,7 @@ module private Publish =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.PublishMeetupRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
@@ -281,7 +281,7 @@ module private Change =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.ChangeMeetupAttributesRequest(
@@ -303,7 +303,7 @@ module private Schedule =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.SetMeetupScheduleRequest(
@@ -523,7 +523,7 @@ module private Unpublish =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.UnpublishMeetupRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
@@ -540,7 +540,7 @@ module private Cancel =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.CancelMeetupRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
@@ -557,7 +557,7 @@ module private Held =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.MarkMeetupHeldRequest(Viewer = viewer, Id = meetupId, ExpectedVersion = Sample.expectedVersion)
@@ -719,7 +719,7 @@ module private Attach =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.AttachMaterialRequest(
@@ -743,7 +743,7 @@ module private Remove =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.RemoveMaterialRequest(
@@ -1082,7 +1082,7 @@ module private SchedulePublication =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.ScheduleMeetupPublicationRequest(
@@ -1113,7 +1113,7 @@ module private CancelPublication =
         }
 
     let untouched =
-        deps (fun _ -> unreachable "Load") (fun _ _ _ _ -> unreachable "Commit")
+        deps (fun _ -> System.Threading.Tasks.Task.FromResult None) (fun _ _ _ _ -> unreachable "Commit")
 
     let request viewer =
         Meetups.V1.CancelMeetupPublicationRequest(

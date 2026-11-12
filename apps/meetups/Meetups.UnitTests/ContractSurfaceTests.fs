@@ -627,17 +627,6 @@ let private occasionOneof =
     |> Seq.filter (fun o -> not o.IsSynthetic)
     |> Seq.exactlyOne
 
-/// Поводы, которые контракт объявил раньше доменного юниона: схема и каталог идут
-/// листом PER-744, домен и журнал — листом PER-745 (ADR-076).
-/// Набор нужен ровно до тех пор: лист домена добавляет случаи юниона и удаляет его,
-/// а тесты ниже снова сравнивают проводное множество с доменным без вычитания.
-let private declaredBeforeDomain =
-    set
-        [
-            "MeetupOrganizerAppointed"
-            "MeetupOrganizerDismissed"
-        ]
-
 [<Fact>]
 let ``Every occasion of the domain dictionary has its own message on the wire`` () =
     let domain =
@@ -650,11 +639,7 @@ let ``Every occasion of the domain dictionary has its own message on the wire`` 
         |> Seq.map (fun field -> field.MessageType.Name)
         |> Set.ofSeq
 
-    test
-        <@
-            Set.isSubset declaredBeforeDomain wire
-            && Set.difference wire declaredBeforeDomain = domain
-        @>
+    test <@ wire = domain @>
 
 /// Имя ветки на проводе — то же имя, которое уходит в колонку `event_type`, поэтому
 /// subject публикации получается приписыванием домена к нему, а не второй таблицей
@@ -675,13 +660,14 @@ let ``The name of each occasion on the wire is the name the journal writes`` () 
             Meetups.Domain.MeetupMaterialRemoved Sample.materialId
             Meetups.Domain.MaterialsReordered [ Sample.materialId ]
             Meetups.Domain.MeetupHeld
+            Meetups.Domain.MeetupOrganizerAppointed Sample.coOrganizerId
+            Meetups.Domain.MeetupOrganizerDismissed Sample.coOrganizerId
         ]
         |> List.map MeetupEventPayload.eventType
         |> Set.ofList
 
     let wire =
         occasionOneof.Fields
-        |> Seq.filter (fun field -> not (declaredBeforeDomain.Contains field.MessageType.Name))
         |> Seq.map (fun field -> field.Name)
         |> Set.ofSeq
 

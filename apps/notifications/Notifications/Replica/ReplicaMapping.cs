@@ -120,6 +120,8 @@ public static class ReplicaMapping
             MeetupEvent.OccasionOneofCase.MeetupPublished => MeetupOccasion.FirstPublication,
             MeetupEvent.OccasionOneofCase.MeetupUnpublished => MeetupOccasion.Unpublication,
             MeetupEvent.OccasionOneofCase.MeetupMaterialAttached => MeetupOccasion.MaterialAttached,
+            MeetupEvent.OccasionOneofCase.MeetupOrganizerAppointed => MeetupOccasion.OrganizerAppointed,
+            MeetupEvent.OccasionOneofCase.MeetupOrganizerDismissed => MeetupOccasion.OrganizerDismissed,
             _ => MeetupOccasion.Other,
         };
 
@@ -147,6 +149,30 @@ public static class ReplicaMapping
             material = new AttachedMaterial(materialId, item.Title);
         }
 
+        // Состав организаторов: повод называет человека, и снимок обязан с ним
+        // согласоваться — назначенный в составе, покинувший его нет. Иначе
+        // событие противоречит само себе (тот же довод, что у материала).
+        Guid? organizerId = null;
+        if (occasion is MeetupOccasion.OrganizerAppointed or MeetupOccasion.OrganizerDismissed)
+        {
+            var named = occasion == MeetupOccasion.OrganizerAppointed
+                ? message.MeetupOrganizerAppointed.IdentityId
+                : message.MeetupOrganizerDismissed.IdentityId;
+            if (!Guid.TryParse(named, out var parsedOrganizer))
+            {
+                return new Decoded.Poison($"{occasion} identity_id '{named}' is not a UUID");
+            }
+
+            var onRoster = state.Organizers.Any(item => Guid.TryParse(item, out var member) && member == parsedOrganizer);
+            if (onRoster != (occasion == MeetupOccasion.OrganizerAppointed))
+            {
+                return new Decoded.Poison(
+                    $"{occasion} names {named}, who {(onRoster ? "is" : "is not")} in state.organizers");
+            }
+
+            organizerId = parsedOrganizer;
+        }
+
         return new Decoded.Fact(new MeetupFact(
             Guid.Parse(message.EventId),
             meetupId,
@@ -168,7 +194,8 @@ public static class ReplicaMapping
             message.HasRequestId ? message.RequestId : null,
             material,
             performedBy,
-            occasion == MeetupOccasion.FirstPublication && message.MeetupPublished.Silent));
+            occasion == MeetupOccasion.FirstPublication && message.MeetupPublished.Silent,
+            organizerId));
     }
 
     /// <summary>

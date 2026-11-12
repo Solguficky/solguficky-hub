@@ -44,13 +44,14 @@ type Deps =
 
 let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, PublishMeetupError>> =
     task {
-        // Право спрашивается до загрузки: состояние в этом решении не участвует, а
-        // проверка после чтения сделала бы отказ обычному смотрящему зависимым от
-        // того, существует ли сходка.
-        match Access.actOnBehalf command.Viewer with
+        // Загрузка идёт раньше решения о праве: организатор — это запись в составе
+        // сходки. Чужая и отсутствующая сходка проходят одну и ту же последовательность
+        // запросов и получают один отказ (ADR-076, п. 12).
+        let! existing = deps.Load command.Id
+
+        match Access.actOnBehalf command.Viewer existing with
         | Error denied -> return Error(PublishMeetupError.Forbidden denied)
         | Ok() ->
-            let! existing = deps.Load command.Id
             let state = Meetup.restore existing
 
             // Часы читаются один раз на команду: этот же момент становится отметкой
@@ -116,8 +117,8 @@ module Api =
         match error with
         | PublishMeetupError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | PublishMeetupError.Forbidden CannotManageMeetups ->
-            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
+        | PublishMeetupError.Forbidden CannotActOnMeetup ->
+            Status(StatusCode.PermissionDenied, "the viewer may not act on this meetup")
         | PublishMeetupError.Domain MeetupNotFound
         | PublishMeetupError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
         // Единственный срез, который решает переход к публикации, поэтому единственный,

@@ -106,3 +106,34 @@ let withMaterial = Meetup.apply (Existing titled) (MeetupMaterialAttached materi
 /// Отменённая сходка с материалом: на ней проверяется, что повтор прикрепления
 /// выигрывает у отмены, а новое прикрепление — нет.
 let cancelledWithMaterial = Meetup.apply (Existing withMaterial) MeetupCancelled
+
+let coOrganizerId = PersonId(Guid.Parse "0199c0de-0000-7000-8000-000000000003")
+
+/// Право, которое после ADR-076 держит рядовой участник: `ordinary` выше — тот же
+/// человек с отозванными правами.
+let organizerRights = Set.singleton OrganizeMeetups
+
+/// Автор, он же первый организатор своей сходки, держит право.
+let authorOrganizer =
+    {
+        IdentityId = authorId
+        Rights = organizerRights
+    }
+
+/// Соорганизатор: в составе `withCoOrganizer` и держит право.
+let coOrganizer =
+    {
+        IdentityId = coOrganizerId
+        Rights = organizerRights
+    }
+
+/// Держатель права, которого нет в составе сходки, — «чужая сходка».
+let stranger =
+    {
+        IdentityId = otherAuthorId
+        Rights = organizerRights
+    }
+
+/// Черновик с двумя людьми в составе: автор и соорганизатор.
+let withCoOrganizer =
+    Meetup.apply (Existing draft) (MeetupOrganizerAppointed coOrganizerId)

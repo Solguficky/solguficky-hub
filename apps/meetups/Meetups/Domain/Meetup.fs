@@ -38,6 +38,12 @@ type MeetupEvent =
     | MeetupMaterialRemoved of materialId: MaterialId
     | MaterialsReordered of materialIds: MaterialId list
     | MeetupHeld
+    /// Человек вошёл в состав. Кто выполнил команду, домену не нужен: это
+    /// `performed_by` конверта.
+    | MeetupOrganizerAppointed of person: PersonId
+    /// Человек вышел из состава: снят другим или вышел сам — повод один, их различает
+    /// `performed_by` (integration.md).
+    | MeetupOrganizerDismissed of person: PersonId
 
 /// Отклонённый переход состояния. Отказа по правам здесь нет: право действовать не
 /// является инвариантом перехода, и состояние в решении о нём не участвует. Само
@@ -64,6 +70,20 @@ type DomainError =
     // разные действия — переспросить время или посмотреть состояние сходки.
     | PublicationMomentInThePast
 
+/// Отказы команд состава. Отдельный тип по той же причине, что и у порядка
+/// материалов: у этих команд свой набор причин, и общий DomainError заставил бы
+/// остальные срезы разбирать невозможные для них случаи.
+[<RequireQualifiedAccess>]
+type RosterError =
+    | MeetupNotFound
+    /// Назначение в отменённую сходку; снятие и выход остаются открытыми.
+    | TransitionNotAllowed
+    /// Организатор, не администратор, снимает автора: автора снимает сам автор
+    /// выходом или администратор (ADR-076, п. 6).
+    | AuthorProtected
+    /// Снятие или выход последнего человека в составе без администратора.
+    | LastOrganizer
+
 [<RequireQualifiedAccess>]
 type MaterialOrderError =
     | MeetupNotFound
@@ -89,6 +109,7 @@ type Meetup =
             Visibility: MeetupVisibility
             FirstPublishedAt: DateTimeOffset option
             ScheduledPublishAt: DateTimeOffset option
+            Organizers: PersonId list
             Version: int64
         }
 
@@ -119,6 +140,8 @@ module Meetup =
             Visibility = Hidden
             FirstPublishedAt = None
             ScheduledPublishAt = None
+            // Автор — первый организатор своей сходки той же командой, что её завела.
+            Organizers = [ author ]
             Version = 1L
         }
 
@@ -254,6 +277,20 @@ module Meetup =
             Version = meetup.Version + 1L
         }
 
+    let private appointOrganizer (person: PersonId) (meetup: Meetup) : Meetup =
+        { meetup with
+            Organizers = meetup.Organizers @ [ person ]
+            Version = meetup.Version + 1L
+        }
+
+    let private dismissOrganizer (person: PersonId) (meetup: Meetup) : Meetup =
+        { meetup with
+            Organizers =
+                meetup.Organizers
+                |> List.filter (fun existing -> existing <> person)
+            Version = meetup.Version + 1L
+        }
+
     /// Применение события — единственный путь появления и изменения полей.
     /// Результат всегда существующая сходка: каждый повод оставляет её на месте.
     let apply (state: MeetupState) (event: MeetupEvent) : Meetup =
@@ -270,6 +307,8 @@ module Meetup =
         | Existing meetup, MeetupMaterialRemoved materialId -> removeMaterial materialId meetup
         | Existing meetup, MaterialsReordered materialIds -> reorderMaterials materialIds meetup
         | Existing meetup, MeetupHeld -> hold meetup
+        | Existing meetup, MeetupOrganizerAppointed person -> appointOrganizer person meetup
+        | Existing meetup, MeetupOrganizerDismissed person -> dismissOrganizer person meetup
         | Initial, MeetupChanged _
         | Initial, MeetupPublished _
         | Initial, MeetupUnpublished
@@ -281,6 +320,8 @@ module Meetup =
         | Initial, MeetupMaterialRemoved _
         | Initial, MaterialsReordered _
         | Initial, MeetupHeld
+        | Initial, MeetupOrganizerAppointed _
+        | Initial, MeetupOrganizerDismissed _
         | Existing _, MeetupCreated _ ->
             // Событие решено не из этого состояния. Ни одно решение такой пары не
             // возвращает, поэтому это нарушение внутреннего контракта оболочки, а не
@@ -303,6 +344,7 @@ module Meetup =
             Visibility = meetup.Visibility
             FirstPublishedAt = meetup.FirstPublishedAt
             ScheduledPublishAt = meetup.ScheduledPublishAt
+            Organizers = meetup.Organizers
             Version = meetup.Version
         }
 
@@ -327,6 +369,7 @@ module Meetup =
             Visibility = snapshot.Visibility
             FirstPublishedAt = snapshot.FirstPublishedAt
             ScheduledPublishAt = snapshot.ScheduledPublishAt
+            Organizers = snapshot.Organizers
             Version = snapshot.Version
         }
 
@@ -614,6 +657,54 @@ module Meetup =
             | TransitionOutcome.Allowed -> Ok(Some MeetupHeld)
             | TransitionOutcome.Rejected -> Error TransitionNotAllowed
 
+    /// Назначение — целевое состояние «человек в составе». Человек, который уже там,
+    /// — успех без события, даже потеряв право: опора повтора — запись состава.
+    /// Право назначаемого у Identity спрашивает срез, и только когда решение
+    /// вернуло событие: после отмены и после повтора (integration.md).
+    let decideAppointOrganizer (person: PersonId) (state: MeetupState) : Result<MeetupEvent option, RosterError> =
+        match state with
+        | Initial -> Error RosterError.MeetupNotFound
+        | Existing meetup when List.contains person meetup.Organizers -> Ok None
+        | Existing meetup when meetup.Lifecycle = Cancelled -> Error RosterError.TransitionNotAllowed
+        | Existing _ -> Ok(Some(MeetupOrganizerAppointed person))
+
+    /// Снятие другого человека. Повтор целевого состояния стоит раньше инвариантов:
+    /// снять автора, которого в составе уже нет, — успех без события. Автора снимает
+    /// только администратор; последнего в составе — тоже только он. Инвариант считает
+    /// записи состава, а не живые права (ADR-076, п. 6).
+    let decideDismissOrganizer
+        (byAdministrator: bool)
+        (person: PersonId)
+        (state: MeetupState)
+        : Result<MeetupEvent option, RosterError> =
+        match state with
+        | Initial -> Error RosterError.MeetupNotFound
+        | Existing meetup when not (List.contains person meetup.Organizers) -> Ok None
+        | Existing meetup when person = meetup.Author && not byAdministrator -> Error RosterError.AuthorProtected
+        | Existing meetup when
+            meetup.Organizers = [ person ]
+            && not byAdministrator
+            ->
+            Error RosterError.LastOrganizer
+        | Existing _ -> Ok(Some(MeetupOrganizerDismissed person))
+
+    /// Выход — снятие самого себя, и автор может выйти (он перестаёт командовать, но
+    /// остаётся автором). Последний в составе без администратора выйти не может.
+    let decideLeaveOrganizers
+        (byAdministrator: bool)
+        (person: PersonId)
+        (state: MeetupState)
+        : Result<MeetupEvent option, RosterError> =
+        match state with
+        | Initial -> Error RosterError.MeetupNotFound
+        | Existing meetup when not (List.contains person meetup.Organizers) -> Ok None
+        | Existing meetup when
+            meetup.Organizers = [ person ]
+            && not byAdministrator
+            ->
+            Error RosterError.LastOrganizer
+        | Existing _ -> Ok(Some(MeetupOrganizerDismissed person))
+
     /// Достигнуто ли целевое состояние события текущим состоянием. Вопрос задаёт
     /// безопасный повтор: команда, принятая из показанного снимка, могла разойтись
     /// с записанной версией, но её цель уже в силе — тогда PER-78 разрешает вернуть
@@ -673,3 +764,5 @@ module Meetup =
                 |> List.exists (fun existing -> existing.Id = materialId)
             )
         | Existing meetup, MaterialsReordered materialIds -> hasMaterialOrder materialIds meetup
+        | Existing meetup, MeetupOrganizerAppointed person -> List.contains person meetup.Organizers
+        | Existing meetup, MeetupOrganizerDismissed person -> not (List.contains person meetup.Organizers)

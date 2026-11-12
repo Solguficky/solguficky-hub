@@ -89,14 +89,7 @@ let private intercept method authorization = interceptWithOutcome method authori
 /// (ADR-076). `ConfirmMeetupContact` ждёт вызывающего Identity, которого в
 /// `Caller` ещё нет. Лист реализации удаляет набор, и тест снова сверяет контракт
 /// с таблицей целиком.
-let private declaredBeforeImplementation =
-    set
-        [
-            "AppointMeetupOrganizer"
-            "DismissMeetupOrganizer"
-            "LeaveMeetupOrganizers"
-            "ConfirmMeetupContact"
-        ]
+let private declaredBeforeImplementation = set [ "ConfirmMeetupContact" ]
 
 [<Fact>]
 let ``Method access should cover the contract and admit only its declared callers`` () =
