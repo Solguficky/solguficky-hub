@@ -100,19 +100,30 @@ export type IdentityActor = {
   identityId: string;
 };
 
-// Ник автора сходки для карточки (PER-404). Identity отвечает только про
-// действующего администратора: для остальных, отсутствующих и заблокированных
-// — одинаковый `not-found`. Отсутствие ника — `resolved` без поля, а не отказ.
+// Ник автора или организатора сходки для карточки (PER-404, ADR-076, п. 10).
+// Identity отвечает, только если Meetups подтвердил, что человек — автор или
+// организатор этой сходки, видимой смотрящему, и человек держит
+// `organize-meetups`; иначе — отказ, и строки нет. Отсутствие ника —
+// `resolved` без поля, а не отказ.
 export type OrganizerUsernameResult =
   | { kind: "resolved"; telegramUsername?: string }
   | { kind: "not-found" }
   | { kind: "unavailable"; cause: unknown }
   | { kind: "rejected"; code: string; cause: unknown };
 
+// Кого и на какой карточке назвать: оба идентификатора — UUID, поэтому они
+// едут именованными полями, а не двумя строками подряд, которые легко
+// перепутать местами. `meetupId` — сходка карточки: по ней Identity спрашивает
+// Meetups `ConfirmMeetupContact` (PER-747), без неё вызов — `INVALID_ARGUMENT`.
+export type MeetupContactQuery = {
+  meetupId: string;
+  identityId: string;
+};
+
 export type OrganizerResolver = {
   resolveOrganizerUsername(
     viewer: IdentityActor,
-    identityId: string,
+    contact: MeetupContactQuery,
     meta?: RpcMetadata,
   ): Promise<OrganizerUsernameResult>;
 };

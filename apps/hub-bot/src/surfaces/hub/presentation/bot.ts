@@ -133,8 +133,9 @@ import type {
   LotQuestion,
   LotTierView,
   MeetupAuctionView,
-  MeetupAuthor,
+  MeetupPeople,
   MeetupStateAction,
+  MeetupViewer,
   PaymentTermAskError,
   PaymentTextAskError,
   Person,
@@ -224,12 +225,12 @@ import {
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
-import { withMeetupAuthor } from "./meetup-author.js";
 import {
   meetupStartLink,
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
+import { canOrganizeMeetups, withMeetupPeople } from "./meetup-people.js";
 import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
 import {
   renderNotification as renderOutgoingNotification,
@@ -712,7 +713,10 @@ const formPrompts: Record<FormField, string> = {
 // об этом по общему тексту сбоя.
 const conflictText =
   "Сходка уже изменилась. Твои изменения не сохранены. Проверь актуальные данные и повтори.";
-const materialForbiddenText = "Это действие доступно организатору сходки.";
+// Отказ тому, кто не ведёт эту сходку: ни организатор из её состава, ни
+// администратор (ADR-076, п. 4). Чужая скрытая сходка до него не доходит —
+// Meetups её не отдаёт, и смотрящий видит тот же кадр, что у отсутствующей.
+const organizerOnlyText = "Это действие доступно организатору сходки.";
 // Отказ сервиса по праву человек видит без имени сервиса: ему не нужно знать,
 // кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
 const forbiddenText = "Это действие тебе недоступно.";
@@ -1243,7 +1247,7 @@ type BoundaryOutcome =
 export function createBot(options: BotRuntime): Bot<UpdateContext> {
   const runtime: BotRuntime = {
     ...options,
-    dispatcher: withMeetupAuthor(options.dispatcher, options.identity),
+    dispatcher: withMeetupPeople(options.dispatcher, options.identity),
   };
   const bot = createBotShell<UpdateContext>({
     token: runtime.token,
@@ -1593,9 +1597,12 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!canManageMeetups(identity.person)) {
+      // Вопрос задан с карточки, где отношение уже решалось; здесь бот
+      // проверяет только право, без которого отношения нет, а саму сходку
+      // решает Meetups на команде (ADR-076, п. 4).
+      if (!canOrganizeMeetups(identity.person)) {
         await answered();
-        await showRefusal(ctx, materialForbiddenText, exitToMeetups());
+        await showRefusal(ctx, organizerOnlyText, exitToMeetups());
         outcome = materialForbiddenOutcome(identity.person, pending.meetupId);
         return;
       }
@@ -1705,7 +1712,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!canManageMeetups(identity.person)) {
+      if (!mayBroadcast(audience, identity.person)) {
         await answered();
         await showRefusal(
           ctx,
@@ -2773,7 +2780,6 @@ async function handleMessage(
         result,
         false,
         runtime.presentation ?? "rich",
-        canManageMeetups(person),
       );
       outcome = screenBoundary(result, {
         ok: ["meetup-card"],
@@ -3434,8 +3440,10 @@ async function handleCallback(
     }
     if (action.kind === "move-material") {
       const meetupId = tokenToUuid(action.token);
-      if (!canManageMeetups(person)) {
-        await showRefusal(ctx, materialForbiddenText, exitToCard(action.token));
+      // Кнопка стоит только на экране того, кто ведёт сходку; подделку без
+      // права бот отсекает сам, а чужую сходку — Meetups на команде.
+      if (!canOrganizeMeetups(person)) {
+        await showRefusal(ctx, organizerOnlyText, exitToCard(action.token));
         outcome = materialForbiddenOutcome(person, meetupId);
         return;
       }
@@ -3539,16 +3547,6 @@ async function handleCallback(
       action.kind === "remove-material"
     ) {
       const meetupId = tokenToUuid(action.token);
-      const canManageMaterials = canManageMeetups(person);
-      if (
-        action.kind !== "manage-materials" &&
-        action.kind !== "decline-attach-material" &&
-        !canManageMaterials
-      ) {
-        await showRefusal(ctx, materialForbiddenText, exitToCard(action.token));
-        outcome = materialForbiddenOutcome(person, meetupId);
-        return;
-      }
       const current = await runtime.dispatcher.execute({
         identity: person,
         intent: "view-meetup",
@@ -3561,7 +3559,6 @@ async function handleCallback(
           current,
           true,
           runtime.presentation ?? "rich",
-          true,
         );
         outcome = screenBoundary(current, {
           ok: ["meetup-card"],
@@ -3570,6 +3567,19 @@ async function handleCallback(
           useCase,
           meetupId,
         });
+        return;
+      }
+      // Отношение решается по снимку, который Meetups отдал смотрящему
+      // (ADR-076, п. 4): чужую скрытую сходку он не отдаёт вовсе, и отказ
+      // выше одинаков с отсутствующей.
+      const canManageMaterials = current.viewer?.manages ?? false;
+      if (
+        action.kind !== "manage-materials" &&
+        action.kind !== "decline-attach-material" &&
+        !canManageMaterials
+      ) {
+        await showRefusal(ctx, organizerOnlyText, exitToCard(action.token));
+        outcome = materialForbiddenOutcome(person, meetupId);
         return;
       }
       if (
@@ -4316,13 +4326,7 @@ async function handleCallback(
         meetupId,
         ...rpcCall(ctx, useCase),
       });
-      await renderMeetupCard(
-        ctx,
-        result,
-        true,
-        runtime.presentation ?? "rich",
-        canManageMeetups(person),
-      );
+      await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
       outcome = screenBoundary(result, {
         ok: ["meetup-card"],
         okMessage: "meetup card sent",
@@ -4361,7 +4365,6 @@ async function handleCallback(
           current,
           true,
           runtime.presentation ?? "rich",
-          true,
         );
         outcome = screenBoundary(current, {
           ok: ["meetup-card"],
@@ -4374,6 +4377,14 @@ async function handleCallback(
       }
       const meetup = current.meetup;
       const token = uuidToToken(meetup.id);
+      // Кнопок управления на чужой сходке нет, но `callback_data` можно
+      // прислать и без них: отказ приходит до экрана правки, а не после
+      // ввода, на команде Meetups (ADR-076, п. 4; PER-748).
+      if (current.viewer?.manages !== true) {
+        await showRefusal(ctx, organizerOnlyText, exitToCard(token));
+        outcome = meetupForbiddenOutcome(person, meetupId, useCase);
+        return;
+      }
       if (meetup.lifecycle === "cancelled") {
         await showRefusal(
           ctx,
@@ -4424,7 +4435,6 @@ async function handleCallback(
             current,
             true,
             runtime.presentation ?? "rich",
-            true,
           );
         } else {
           await showScreen(
@@ -4433,6 +4443,7 @@ async function handleCallback(
               meetup,
               presentation: runtime.presentation ?? "rich",
               today: communityToday(ctx),
+              administrator: current.viewer?.administrator ?? false,
             }),
           );
         }
@@ -4452,7 +4463,7 @@ async function handleCallback(
       } else if (action.kind === "manage-status") {
         await showScreen(
           ctx,
-          statusScreen(meetup, current.author, communityToday(ctx)),
+          statusScreen(meetup, current.people, communityToday(ctx)),
         );
       } else if (
         action.kind === "manage-cancel" &&
@@ -4519,7 +4530,6 @@ async function handleCallback(
           current,
           true,
           runtime.presentation ?? "rich",
-          true,
           `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, meetup.id)}`,
         );
       } else if (
@@ -4746,16 +4756,21 @@ async function handleCallback(
           : { kind: "community" };
       const meetupId =
         audience.kind === "meetup" ? audience.meetupId : undefined;
-      // Кнопка входа есть только у администратора, но `callback_data` можно
-      // прислать и без неё. Отказ приходит до набора текста, а окончательное
-      // решение о праве всё равно принимает Notifications на отправке.
-      if (!canManageMeetups(person)) {
+      // Объявление сообществу — только администратору, рассылка подписчикам
+      // — и организатору из состава (ADR-076, п. 5). Кнопки входа есть только
+      // у них, но `callback_data` можно прислать и без неё. Отказ приходит до
+      // набора текста, а окончательное решение о праве всё равно принимает
+      // Notifications на отправке.
+      const refuse = async () => {
         await showRefusal(
           ctx,
           broadcastForbiddenText[audience.kind],
           broadcastExit(audience),
         );
         outcome = broadcastForbiddenOutcome(person, meetupId);
+      };
+      if (!mayBroadcast(audience, person)) {
+        await refuse();
         return;
       }
       let question = communityBroadcastPrompt;
@@ -4773,7 +4788,6 @@ async function handleCallback(
             current,
             true,
             runtime.presentation ?? "rich",
-            true,
           );
           outcome = screenBoundary(current, {
             ok: ["meetup-card"],
@@ -4782,6 +4796,12 @@ async function handleCallback(
             useCase,
             meetupId,
           });
+          return;
+        }
+        // Отношение — по снимку, который Meetups отдал смотрящему: чужая
+        // скрытая сходка сюда не доходит, отказ по ней — «не найдена» выше.
+        if (current.viewer?.manages !== true) {
+          await refuse();
           return;
         }
         meetupTitle = current.meetup.title;
@@ -4980,7 +5000,6 @@ async function handleCallback(
           cardFrom(result),
           true,
           runtime.presentation ?? "rich",
-          true,
           `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`,
         );
       } else {
@@ -5229,7 +5248,6 @@ async function handleCallback(
           result,
           true,
           runtime.presentation ?? "rich",
-          canManageMeetups(person),
         );
       } else {
         await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
@@ -5350,7 +5368,7 @@ async function unversionedConfirmation(
     kind: "material-attached" | "material-removed";
   },
 ): Promise<ExecuteResult> {
-  if (!canManageMeetups(person)) {
+  if (!canOrganizeMeetups(person)) {
     return { kind: "dependency-rejected", reason: "forbidden" };
   }
   const current = await runtime.dispatcher.execute({
@@ -5360,6 +5378,9 @@ async function unversionedConfirmation(
     ...call,
   });
   if (current.kind !== "meetup-card") return current;
+  if (current.viewer?.manages !== true) {
+    return { kind: "dependency-rejected", reason: "forbidden" };
+  }
   if (target.reached(current.meetup)) {
     return { kind: target.kind, meetup: current.meetup };
   }
@@ -5552,11 +5573,28 @@ async function renderMaterialResult(
   }
   const text =
     result.kind === "dependency-rejected" && result.reason === "forbidden"
-      ? materialForbiddenText
+      ? organizerOnlyText
       : result.kind === "dependency-rejected" && result.reason === "invalid"
         ? invalidMeetupText(result)
         : unavailableText;
   await showRefusal(ctx, text, exitToCard(meetupToken));
+}
+
+function meetupForbiddenOutcome(
+  person: Person,
+  meetupId: string,
+  useCase: ProductUseCase,
+): BoundaryOutcome {
+  return {
+    level: "warn",
+    message: "meetup management rejected",
+    result: "error",
+    use_case: useCase,
+    meetup_id: meetupId,
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "meetup_action_forbidden",
+  };
 }
 
 function materialForbiddenOutcome(
@@ -5573,6 +5611,15 @@ function materialForbiddenOutcome(
     error_category: "authorization",
     error: "material_action_forbidden",
   };
+}
+
+// Право, без которого вопрос о тексте рассылки не задаётся: сообществу пишет
+// только администратор, подписчикам сходки — и организатор (ADR-076, п. 5).
+// Сходку решает отношение по снимку, а окончательно — Notifications у Meetups.
+function mayBroadcast(audience: BroadcastAudience, person: Person): boolean {
+  return audience.kind === "community"
+    ? canManageMeetups(person)
+    : canOrganizeMeetups(person);
 }
 
 // Кадры рассылки. Число — сколько человек получит сообщение сейчас. Пока
@@ -5897,9 +5944,10 @@ function managementRefusal(
     case "ask-allowed-username":
       return canManageMembers(person) ? undefined : communityForbiddenText;
     // Вопрос о названии новой сходки Meetups не спрашивает: сходка рождается
-    // ответом, поэтому без права он не задаётся.
+    // ответом, поэтому без права он не задаётся. Заводит держатель
+    // `organize-meetups` или `manage-meetups` (ADR-076, п. 2).
     case "create-meetup":
-      return canManageMeetups(person) ? undefined : managementForbiddenText;
+      return canOrganizeMeetups(person) ? undefined : forbiddenText;
     // Вопрос о нике Identity не спрашивает, поэтому без права он не задаётся.
     // Список, назначение и снятие бот пропускает: право решает Identity и
     // отвечает отказом значением (PER-521).
@@ -6378,7 +6426,7 @@ async function renderMeetupList(
         result.meetups,
         page,
         communityToday(ctx),
-        canManageMeetups(person) ? uuidToToken(createUuidV7()) : undefined,
+        canOrganizeMeetups(person) ? uuidToToken(createUuidV7()) : undefined,
       ),
     );
     return;
@@ -7032,7 +7080,6 @@ async function openNextMeetup(
     result,
     ctx.callbackQuery !== undefined,
     runtime.presentation ?? "rich",
-    canManageMeetups(person),
   );
   return screenBoundary(result, {
     ok: ["meetup-card"],
@@ -7119,13 +7166,15 @@ function subscriptionExplanation(
 // она не отличается от карточки, открытой из списка.
 function cardFrom(result: {
   meetup: MeetupSnapshot;
-  author?: MeetupAuthor;
+  people?: MeetupPeople;
+  viewer?: MeetupViewer;
   auction?: MeetupAuctionView;
 }): Extract<ExecuteResult, { kind: "meetup-card" }> {
   return {
     kind: "meetup-card",
     meetup: result.meetup,
-    ...(result.author === undefined ? {} : { author: result.author }),
+    ...(result.people === undefined ? {} : { people: result.people }),
+    ...(result.viewer === undefined ? {} : { viewer: result.viewer }),
     ...(result.auction === undefined ? {} : { auction: result.auction }),
   };
 }
@@ -12660,7 +12709,6 @@ async function renderMeetupCard(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   edit: boolean,
   presentation: "rich" | "plain",
-  manageable = false,
   note?: string,
 ): Promise<void> {
   if (result.kind === "meetup-not-found") {
@@ -12684,11 +12732,15 @@ async function renderMeetupCard(
       });
       return;
     }
+    // Кнопки управления и возврат решает отношение смотрящего к этой сходке,
+    // которое обёртка `withMeetupPeople` дописала по снимку (ADR-076, п. 4):
+    // без него карточка — как у постороннего.
     const view = {
       meetup: result.meetup,
-      author: result.author,
+      people: result.people,
       subscribed: result.subscribed,
-      manageable,
+      manageable: result.viewer?.manages ?? false,
+      administrator: result.viewer?.administrator ?? false,
       presentation,
       today: communityToday(ctx),
       ...(result.auction?.kind === "open" &&
@@ -12887,13 +12939,12 @@ async function renderStateResult(
       cardFrom(result),
       true,
       presentation,
-      true,
       "Сходка отменена.",
     );
     return;
   }
   if (result.kind === "published" || result.kind === "meetup-state-changed") {
-    await renderMeetupCard(ctx, cardFrom(result), true, presentation, true);
+    await renderMeetupCard(ctx, cardFrom(result), true, presentation);
     return;
   }
   if (result.kind === "meetup-state-unchanged") {
@@ -12908,7 +12959,7 @@ async function renderStateResult(
     return;
   }
   if (result.kind === "meetup-not-found") {
-    await renderMeetupCard(ctx, result, true, presentation, true);
+    await renderMeetupCard(ctx, result, true, presentation);
     return;
   }
   if (result.kind === "conflict" && result.action !== undefined) {
@@ -13251,7 +13302,6 @@ async function renderFormResult(
       cardFrom(result),
       true,
       presentation,
-      true,
       [
         "Изменение сохранено.",
         changedField(result, communityToday(ctx)),
@@ -13293,7 +13343,6 @@ async function renderFormResult(
       cardFrom(result),
       true,
       presentation,
-      true,
       "Изменение сохранено.",
     );
     return;
@@ -13305,6 +13354,7 @@ async function renderFormResult(
         meetup: result.meetup,
         presentation,
         today: communityToday(ctx),
+        administrator: result.viewer?.administrator ?? false,
       }),
     );
     return;
@@ -13360,7 +13410,6 @@ async function renderFormResult(
       cardFrom(result),
       true,
       presentation,
-      true,
       result.meetup.publishAt === undefined
         ? "Публикация назначена."
         : `Публикация назначена на ${formatLocalMoment(result.meetup.publishAt)}. До этого момента сходка остаётся скрытой.`,
@@ -13380,14 +13429,7 @@ async function renderFormResult(
           : result.meetup.title.trim() === ""
             ? untitledPublicationText
             : staleMeetupText;
-    await renderMeetupCard(
-      ctx,
-      cardFrom(result),
-      true,
-      presentation,
-      true,
-      text,
-    );
+    await renderMeetupCard(ctx, cardFrom(result), true, presentation, text);
     return;
   }
   if (result.kind === "published") {
@@ -13403,7 +13445,6 @@ async function renderFormResult(
       cardFrom(result),
       true,
       presentation,
-      true,
       `${published} Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`,
     );
     return;

@@ -355,6 +355,8 @@ describe("telegram recipient resolver", () => {
 
 describe("organizer resolver", () => {
   const organizerId = "0192f0a0-0000-7000-8000-00000000a001";
+  const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";
+  const contact = { meetupId, identityId: organizerId };
   const viewer = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
   };
@@ -365,13 +367,13 @@ describe("organizer resolver", () => {
     });
   }
 
-  it("sends the viewer as the actor and returns the username", async () => {
+  it("sends the viewer as the actor with the meetup and returns the username", async () => {
     const rpc = vi.fn().mockResolvedValue({ telegramUsername: "organizer" });
     const organizers = createOrganizerResolver({
       resolveOrganizerUsername: rpc,
     });
     await expect(
-      organizers.resolveOrganizerUsername(viewer, organizerId, {
+      organizers.resolveOrganizerUsername(viewer, contact, {
         requestId: "req-1",
       }),
     ).resolves.toEqual({ kind: "resolved", telegramUsername: "organizer" });
@@ -381,6 +383,7 @@ describe("organizer resolver", () => {
           identityId: viewer.identityId,
         },
         identityId: organizerId,
+        meetupId,
       },
       expect.objectContaining({ headers: { [requestIdHeader]: "req-1" } }),
     );
@@ -391,7 +394,7 @@ describe("organizer resolver", () => {
       resolveOrganizerUsername: vi.fn().mockResolvedValue({}),
     });
     await expect(
-      organizers.resolveOrganizerUsername(viewer, organizerId),
+      organizers.resolveOrganizerUsername(viewer, contact),
     ).resolves.toEqual({ kind: "resolved" });
   });
 
@@ -399,17 +402,17 @@ describe("organizer resolver", () => {
     await expect(
       failing(
         new ConnectError("not an organizer", Code.NotFound),
-      ).resolveOrganizerUsername(viewer, organizerId),
+      ).resolveOrganizerUsername(viewer, contact),
     ).resolves.toEqual({ kind: "not-found" });
     await expect(
       failing(
         new ConnectError("down", Code.Unavailable),
-      ).resolveOrganizerUsername(viewer, organizerId),
+      ).resolveOrganizerUsername(viewer, contact),
     ).resolves.toMatchObject({ kind: "unavailable" });
     await expect(
       failing(
         new ConnectError("outside the hub", Code.PermissionDenied),
-      ).resolveOrganizerUsername(viewer, organizerId),
+      ).resolveOrganizerUsername(viewer, contact),
     ).resolves.toMatchObject({ kind: "rejected", code: "PermissionDenied" });
   });
 });
@@ -430,7 +433,7 @@ describe("participant username resolver", () => {
     );
   }
 
-  it("sends the viewer as the actor and returns the username", async () => {
+  it("sends the viewer as the actor with the meetup and returns the username", async () => {
     const rpc = vi.fn().mockResolvedValue({ telegramUsername: "owl" });
     const participants = createParticipantUsernameResolver({
       resolveParticipantUsername: rpc,

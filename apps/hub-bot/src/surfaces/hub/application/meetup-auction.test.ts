@@ -28,6 +28,7 @@ const meetup = {
   lifecycle: "planned" as const,
   visibility: "visible" as const,
   author: "0192f0a0-0000-7000-8000-00000000a001",
+  organizers: [],
   version: 1,
   materials: [],
 };

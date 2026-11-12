@@ -23,6 +23,7 @@ function storedMeetup(version: number): MeetupSnapshot {
   return {
     id: "meetup-id",
     author: "author-id",
+    organizers: [],
     title: "Настолки",
     description: "",
     venue: "",
@@ -264,12 +265,16 @@ describe("Meetups client", () => {
     expect(result).toMatchObject({ kind: "ok", meetup: { version: 8 } });
   });
 
-  it("carries the author id from the wire into the snapshot", async () => {
+  it("carries the author and the organizer roster from the wire into the snapshot", async () => {
     const rpc = rpcWithList(vi.fn());
     rpc.changeMeetupAttributes.mockResolvedValue(
       create(MeetupSnapshotSchema, {
         id: "meetup-id",
         author: "0192f0a0-0000-7000-8000-00000000a001",
+        organizers: [
+          "0192f0a0-0000-7000-8000-00000000a001",
+          "0192f0a0-0000-7000-8000-00000000a002",
+        ],
         title: "Настолки",
         lifecycle: MeetupLifecycle.PLANNED,
         visibility: MeetupVisibility.HIDDEN,
@@ -282,7 +287,13 @@ describe("Meetups client", () => {
 
     expect(result).toMatchObject({
       kind: "ok",
-      meetup: { author: "0192f0a0-0000-7000-8000-00000000a001" },
+      meetup: {
+        author: "0192f0a0-0000-7000-8000-00000000a001",
+        organizers: [
+          "0192f0a0-0000-7000-8000-00000000a001",
+          "0192f0a0-0000-7000-8000-00000000a002",
+        ],
+      },
     });
   });
 

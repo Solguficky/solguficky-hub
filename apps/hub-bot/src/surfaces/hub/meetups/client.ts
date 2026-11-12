@@ -519,6 +519,7 @@ function toSnapshot(
     visibility: toVisibility(value.visibility),
     version: Number(value.version),
     materials: value.materials.map(toMaterial),
+    organizers: [...value.organizers],
   };
   const fixed =
     value.schedule?.form.case === "fixed"

@@ -9,7 +9,8 @@ import {
 } from "../../../../core/pictograms.js";
 import type {
   AuctionCancelConsequence,
-  MeetupAuthor,
+  MeetupContact,
+  MeetupPeople,
   MeetupStateAction,
 } from "../../application/types.js";
 import { type CommunityDay, isBeforeDay } from "../../community-time.js";
@@ -68,16 +69,24 @@ export function meetupTitleLabel(title: string): string {
 /**
  * Родитель карточки — список, в котором сходка стоит сейчас, а не путь, которым
  * человек пришёл. Отменённая, состоявшаяся и прошедшая — в архиве, и скрытость
- * здесь ничего не меняет; скрытая из остальных — в «Скрытых».
+ * здесь ничего не меняет; скрытая из остальных — в «Скрытых» у администратора,
+ * а у организатора — в «Сходках»: свои черновики он видит в общем списке с
+ * пометкой «скрыта», а «Скрытые сходки» живут в «Управлении», которого у него
+ * нет (ADR-076, п. 9; PER-748).
  */
 export function meetupParent(
   meetup: Pick<MeetupSnapshot, "lifecycle" | "visibility" | "schedule">,
   today: CommunityDay,
+  administrator = true,
 ): Parent {
   const past =
     meetup.schedule !== undefined && isBeforeDay(meetup.schedule, today);
   if (meetup.lifecycle !== "planned" || past) return toArchive;
-  return meetup.visibility === "hidden" ? toHidden : toMeetups;
+  return hiddenParent(meetup.visibility === "hidden", administrator);
+}
+
+function hiddenParent(hidden: boolean, administrator: boolean): Parent {
+  return hidden && administrator ? toHidden : toMeetups;
 }
 
 function meetupButton(
@@ -150,8 +159,9 @@ export function meetupsScreen(
     ...meetups.filter((meetup) => meetup.schedule === undefined),
   ];
   const page = paginate(ordered, requestedPage);
-  // Скрытую сходку видят только автор и администратор (ADR-022); без пометки
-  // она читалась бы в общем списке как опубликованная.
+  // Скрытую сходку видят только автор, люди из состава и администратор
+  // (ADR-022, ADR-076, п. 9); без пометки она читалась бы в общем списке как
+  // опубликованная.
   const lines = (dated: boolean) =>
     page.items
       .filter((meetup) => (meetup.schedule !== undefined) === dated)
@@ -292,8 +302,43 @@ function displayMaterialTitle(material: MeetupMaterial, index: number): string {
     : `${title.slice(0, materialDisplayTitleLimit - 1)}…`;
 }
 
+// Строки людей карточки (ADR-076, п. 10): организаторы из состава в порядке
+// вступления и отдельной строкой автор. Человека, которого назвать нечем, в
+// строке нет; некого назвать — строки нет, без заглушки (PER-404).
+function peopleLines(people: MeetupPeople | undefined): string[] {
+  if (people === undefined) return [];
+  const names = people.organizers.map((contact) =>
+    contact.kind === "self" ? "ты" : contactName(contact),
+  );
+  const onlySelf =
+    people.organizers.length === 1 && people.organizers[0]?.kind === "self";
+  const organizers =
+    names.length === 0
+      ? []
+      : onlySelf
+        ? ["Ты организатор этой сходки"]
+        : [
+            `${names.length === 1 ? "Организатор" : "Организаторы"}: ${names.join(", ")}`,
+          ];
+  const author =
+    people.author === undefined
+      ? []
+      : [
+          people.author.kind === "self"
+            ? "Ты автор этой сходки"
+            : `Автор: ${contactName(people.author)}`,
+        ];
+  return [...organizers, ...author];
+}
+
+function contactName(
+  contact: Extract<MeetupContact, { kind: "username" }>,
+): string {
+  return `@${escapeHtml(contact.telegramUsername)}`;
+}
+
 /**
- * Строки карточки без заголовка и материалов: статус, автор, когда, где и
+ * Строки карточки без заголовка и материалов: статус, люди, когда, где и
  * описание. Текст уже экранирован. Видимость — «видна» или «скрыта» — в
  * статусе видит только тот, кто управляет сходкой: остальным скрытая сходка
  * не показывается вовсе, а «видна» ничего им не говорит (решение владельца
@@ -301,7 +346,7 @@ function displayMaterialTitle(material: MeetupMaterial, index: number): string {
  */
 function cardLines(
   meetup: MeetupSnapshot,
-  author: MeetupAuthor | undefined,
+  people: MeetupPeople | undefined,
   today: CommunityDay,
   manageable: boolean,
   extensions: readonly string[] = [],
@@ -320,15 +365,8 @@ function cardLines(
     ...(meetup.publishAt === undefined
       ? []
       : [`Публикация назначена на ${readableMoment(meetup.publishAt, today)}`]),
-    // Автор стоит под статусом и только тогда, когда его есть чем назвать:
-    // нет ника или Identity не ответил — строки нет, без заглушки (PER-404).
-    ...(author === undefined
-      ? []
-      : [
-          author.kind === "self"
-            ? "Ты автор этой сходки"
-            : `Автор: @${escapeHtml(author.telegramUsername)}`,
-        ]),
+    // Люди стоят под статусом: организаторы, затем автор.
+    ...peopleLines(people),
     "",
     marked(
       pictogram.when,
@@ -420,11 +458,19 @@ function posterBlock(photos: readonly ScreenPhoto[]): string | undefined {
 
 export type CardView = {
   meetup: MeetupSnapshot;
-  author?: MeetupAuthor | undefined;
+  people?: MeetupPeople | undefined;
   /** Нет — Notifications не ответил, и состояние подписки не показывается. */
   subscribed?: boolean | undefined;
-  /** Смотрящий управляет сходкой: видны правка, статус и рассылка. */
+  /**
+   * Смотрящий управляет сходкой — организатор из состава или администратор
+   * (ADR-076, п. 4): видны правка, статус и рассылка подписчикам.
+   */
   manageable: boolean;
+  /**
+   * Смотрящий — администратор: скрытая сходка возвращает в его «Скрытые».
+   * `false` — организатору, в «Сходки». Нет — как администратору.
+   */
+  administrator?: boolean;
   presentation: "rich" | "plain";
   today: CommunityDay;
   /**
@@ -518,7 +564,7 @@ export function cardScreen(view: CardView): ShownScreen {
     presentation === "rich" && view.posters !== false ? posters(meetup) : [];
   const title = escapeHtml(meetupTitleLabel(meetup.title));
   const body = [
-    ...cardLines(meetup, view.author, today, manageable, auctionLines(view)),
+    ...cardLines(meetup, view.people, today, manageable, auctionLines(view)),
     ...materialLines(
       meetup,
       new Set(
@@ -526,10 +572,13 @@ export function cardScreen(view: CardView): ShownScreen {
       ),
     ),
   ];
-  // Подсказка о подписке стоит под карточкой. Автору её нет: сообщения
-  // организатора этой сходки — его собственные (прогон 14.10, №101).
+  // Подсказка о подписке стоит под карточкой. Автору и организатору из
+  // состава её нет: сообщения организатора этой сходки — их собственные
+  // (прогон 14.10, №101).
   const hint =
-    view.subscribed === false && view.author?.kind !== "self"
+    view.subscribed === false &&
+    view.people?.author?.kind !== "self" &&
+    view.people?.organizers.some((contact) => contact.kind === "self") !== true
       ? unsubscribedHint
       : undefined;
   return {
@@ -541,7 +590,10 @@ export function cardScreen(view: CardView): ShownScreen {
       presentation,
       posters: posterBlock(photos),
     }),
-    keyboard: withNav(keyboard, meetupParent(meetup, today)),
+    keyboard: withNav(
+      keyboard,
+      meetupParent(meetup, today, view.administrator ?? true),
+    ),
     format: presentation === "rich" ? "rich" : "HTML",
     ...(photos.length === 0 ? {} : { media: photos }),
   };
@@ -576,12 +628,14 @@ function cardText(parts: {
 /**
  * Черновик формы создания: та же карточка, а под ней — поля и публикация.
  * Заполненное видно всё время, порядок полей человек выбирает сам; выйти можно
- * в любой момент — черновик остаётся в «Скрытых».
+ * в любой момент — черновик остаётся в «Скрытых» администратора, а у
+ * организатора — в «Сходках» с пометкой «скрыта».
  */
 export function draftScreen(view: {
   meetup: MeetupSnapshot;
   presentation: "rich" | "plain";
   today: CommunityDay;
+  administrator?: boolean;
 }): ShownScreen {
   const { meetup, presentation, today } = view;
   const token = uuidToToken(meetup.id);
@@ -610,7 +664,7 @@ export function draftScreen(view: {
       body: cardLines(meetup, undefined, today, true),
       presentation,
     }),
-    keyboard: withNav(keyboard, toHidden),
+    keyboard: withNav(keyboard, hiddenParent(true, view.administrator ?? true)),
     format: presentation === "rich" ? "rich" : "HTML",
   };
 }
@@ -699,7 +753,7 @@ export function confirmStateCallback(
 
 export function statusScreen(
   meetup: MeetupSnapshot,
-  author: MeetupAuthor | undefined,
+  people: MeetupPeople | undefined,
   today: CommunityDay,
 ): ShownScreen {
   const token = uuidToToken(meetup.id);
@@ -746,7 +800,7 @@ export function statusScreen(
       "Статус",
       meetupTitleLabel(meetup.title),
       // Экран «Статус» открывает только тот, кто управляет сходкой.
-      cardLines(meetup, author, today, true).join("\n"),
+      cardLines(meetup, people, today, true).join("\n"),
     ),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",

@@ -108,6 +108,7 @@ function meetup(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
   return {
     id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
     author: "0192f0a0-0000-7000-8000-00000000a001",
+    organizers: [],
     title: "Настолки",
     description: "Берём свои игры",
     venue: "Циферблат",
@@ -271,6 +272,14 @@ describe("meetupParent", () => {
     expect(meetupParent(meetup({ visibility: "hidden" }), today).name).toBe(
       "Скрытые",
     );
+  });
+
+  // «Скрытые сходки» живут в «Управлении» администратора; организатор видит
+  // свои черновики в «Сходках» (ADR-076, п. 9; PER-748).
+  it("returns an organizer's hidden planned meetup to the meetups list", () => {
+    expect(
+      meetupParent(meetup({ visibility: "hidden" }), today, false).name,
+    ).toBe("Сходки");
   });
 
   it("returns a cancelled, held or past meetup to the archive even when hidden", () => {
@@ -465,11 +474,87 @@ describe("cardScreen", () => {
     const screen = cardScreen({
       ...view,
       meetup: meetup(),
-      author: { kind: "self" },
+      people: { author: { kind: "self" }, organizers: [] },
     });
 
     expect(screen.text).toContain("Когда: 15 августа, сб, 19:00");
     expect(screen.text).toContain("Ты автор этой сходки");
+  });
+
+  // Люди карточки (ADR-076, п. 10): организаторы в порядке состава и
+  // отдельной строкой автор; кого назвать нечем, того нет.
+  it.each([
+    [
+      "names several organizers and the author apart",
+      {
+        author: { kind: "username" as const, telegramUsername: "lesha" },
+        organizers: [
+          { kind: "username" as const, telegramUsername: "lesha" },
+          { kind: "username" as const, telegramUsername: "masha" },
+        ],
+      },
+      ["Организаторы: @lesha, @masha", "Автор: @lesha"],
+    ],
+    [
+      "names a single organizer in the singular",
+      {
+        organizers: [{ kind: "username" as const, telegramUsername: "masha" }],
+      },
+      ["Организатор: @masha"],
+    ],
+    [
+      "addresses the viewer among other organizers",
+      {
+        author: { kind: "self" as const },
+        organizers: [
+          { kind: "self" as const },
+          { kind: "username" as const, telegramUsername: "masha" },
+        ],
+      },
+      ["Организаторы: ты, @masha", "Ты автор этой сходки"],
+    ],
+    [
+      "addresses the only organizer",
+      { organizers: [{ kind: "self" as const }] },
+      ["Ты организатор этой сходки"],
+    ],
+  ])("%s", (_, people, lines) => {
+    const screen = cardScreen({ ...view, meetup: meetup(), people });
+
+    for (const line of lines) expect(screen.text).toContain(line);
+  });
+
+  it("draws no people lines when nobody can be named", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup(),
+      people: { organizers: [] },
+    });
+
+    expect(screen.text).not.toContain("Организатор");
+    expect(screen.text).not.toContain("Автор");
+  });
+
+  it("escapes a username in the people lines", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup(),
+      people: {
+        organizers: [{ kind: "username", telegramUsername: "a<b" }],
+      },
+    });
+
+    expect(screen.text).toContain("Организатор: @a&lt;b");
+  });
+
+  it("returns an organizer's hidden card to the meetups list", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup({ visibility: "hidden" }),
+      administrator: false,
+    });
+
+    expect(rows(screen).at(-1)).toEqual(["‹ Сходки"]);
   });
 
   // Пустое описание — заглушка, одна у карточек сходки и лота (PER-594).
