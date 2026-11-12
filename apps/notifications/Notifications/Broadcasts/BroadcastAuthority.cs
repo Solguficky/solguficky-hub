@@ -106,11 +106,13 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
     /// </summary>
     public static readonly TimeSpan CallDeadline = TimeSpan.FromSeconds(2);
 
-    // Отношения, которые принимает рассылка по сходке. В MVP словарь Meetups
-    // несёт одно — держатель права вести сходки; организаторов конкретной
-    // сходки нет (ADR-031), и выбирать пока не из чего.
+    // Отношения, которые принимает рассылка подписчикам сходки (ADR-076, п. 5):
+    // администратор сообщества и организатор этой сходки. Организатор — человек
+    // из состава сходки, держащий organize_meetups; решает это Meetups, а право
+    // Notifications не спрашивает и не копирует (PER-746). Объявление сообществу
+    // организатору не открыто: оно остаётся за manage_meetups.
     public Task<AuthorityAnswer> MeetupBroadcast(Guid authorId, Guid meetupId, Forwarded forwarded) =>
-        AskMeetups(authorId, meetupId, MeetupRelation.CommunityAdministrator, forwarded);
+        AskMeetups(authorId, meetupId, [MeetupRelation.CommunityAdministrator, MeetupRelation.Organizer], forwarded);
 
     // Объявление аукциона принимает то же отношение, что команды аукциона у
     // Auction, — «ведущий аукциона», держатель run_auctions (ADR-070, PER-652).
@@ -120,7 +122,7 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
     // реплике при приёме (BroadcastStore, PER-780): это положение аукциона, а не
     // право.
     public Task<AuthorityAnswer> AuctionNotice(Guid authorId, Guid meetupId, Forwarded forwarded) =>
-        AskMeetups(authorId, meetupId, MeetupRelation.AuctionRunner, forwarded, standing =>
+        AskMeetups(authorId, meetupId, [MeetupRelation.AuctionRunner], forwarded, standing =>
             standing.Lifecycle == MeetupLifecycle.Cancelled
                 ? new AuthorityAnswer(AuthorityVerdict.Closed, "meetups: meetup cancelled")
                 : AuthorityAnswer.Granted);
@@ -128,7 +130,7 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
     private async Task<AuthorityAnswer> AskMeetups(
         Guid authorId,
         Guid meetupId,
-        MeetupRelation relation,
+        IReadOnlyList<MeetupRelation> relations,
         Forwarded forwarded,
         Func<MeetupAuthority, AuthorityAnswer>? gate = null)
     {
@@ -141,7 +143,7 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
         {
             Id = meetupId.ToString("D"),
             IdentityId = authorId.ToString("D"),
-            AcceptedRelations = { relation },
+            AcceptedRelations = { relations },
         };
 
         try

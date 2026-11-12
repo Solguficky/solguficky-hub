@@ -126,6 +126,67 @@ public class BroadcastTests
         refused.StatusCode.ShouldBe(StatusCode.PermissionDenied);
     }
 
+    /// <summary>
+    /// Организатор пишет подписчикам своей сходки (ADR-076, п. 5); организатор
+    /// другой сходки и посторонний получают тот же отказ, что и всегда, и ничего
+    /// не принимается.
+    /// </summary>
+    [Fact]
+    public async Task When_OrganizerBroadcastsToOwnMeetup_Expect_AcceptedAndOthersDenied()
+    {
+        var owners = new RosterOwners();
+        await using var env = await BroadcastsUnderTest.StartWithRoster(owners);
+        var ownMeetup = await Meetup(env.Db, "Своя");
+        var otherMeetup = await Meetup(env.Db, "Чужая");
+        var organizer = await Person(env.Db, MemberHolding);
+        var ofOtherMeetup = await Person(env.Db, MemberHolding);
+        var stranger = await Person(env.Db, MemberHolding);
+        owners.Appoint(organizer, Guid.Parse(ownMeetup));
+        owners.Appoint(ofOtherMeetup, Guid.Parse(otherMeetup));
+        var subscriber = await Person(env.Db, MemberHolding);
+        await Subscribe(env.Db, subscriber, ownMeetup);
+
+        var acceptedId = NewId();
+        var response = await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(organizer, ownMeetup, acceptedId), Plain);
+
+        response.Created.ShouldBeTrue();
+        (await env.Facts(acceptedId)).Select(fact => fact.RecipientId).ShouldBe(new[] { subscriber });
+
+        foreach (var author in new[] { ofOtherMeetup, stranger })
+        {
+            var id = NewId();
+            var refused = await Should.ThrowAsync<RpcException>(() =>
+                env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, ownMeetup, id), Plain).ResponseAsync);
+
+            refused.StatusCode.ShouldBe(StatusCode.PermissionDenied);
+            (await env.Facts(id)).ShouldBeEmpty();
+        }
+
+        (await env.Accepted()).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Объявление сообществу организатору не открыто: его право — manage_meetups
+    /// у Identity, а у организатора сходки его нет.
+    /// </summary>
+    [Fact]
+    public async Task When_OrganizerWithoutManageMeetupsAnnounces_Expect_PermissionDenied()
+    {
+        var owners = new RosterOwners();
+        await using var env = await BroadcastsUnderTest.StartWithRoster(owners);
+        var meetupId = await Meetup(env.Db);
+        var organizer = await Person(env.Db, MemberHolding);
+        owners.Appoint(organizer, Guid.Parse(meetupId));
+        var id = NewId();
+
+        var refused = await Should.ThrowAsync<RpcException>(() =>
+            env.Client.BroadcastToCommunityAsync(ToCommunity(organizer, id), Plain).ResponseAsync);
+
+        refused.StatusCode.ShouldBe(StatusCode.PermissionDenied);
+        (await env.Facts(id)).ShouldBeEmpty();
+        (await env.Accepted()).ShouldBe(0);
+    }
+
     [Fact]
     public async Task When_OwnerUnavailable_Expect_UnavailableAndNothingAccepted()
     {

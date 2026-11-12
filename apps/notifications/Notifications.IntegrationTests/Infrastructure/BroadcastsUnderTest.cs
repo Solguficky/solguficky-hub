@@ -49,6 +49,49 @@ public sealed class StubAuthority : IBroadcastAuthority
 }
 
 /// <summary>
+/// Meetups и Identity, подставленные на уровне вызова владельца (PER-746): над
+/// ними работает настоящий <see cref="OwnerAuthority" />, поэтому проверяется
+/// то, какие отношения рассылка принимает, а не заданный вердикт. Meetups
+/// отвечает так, как отвечает владелец сходки: администратор подходит всякому
+/// отношению <c>COMMUNITY_ADMINISTRATOR</c>, человек из состава — отношению
+/// <c>ORGANIZER</c> только своей сходки, остальные получают отказ.
+/// </summary>
+public sealed class RosterOwners
+{
+    private readonly HashSet<(Guid Person, Guid Meetup)> roster = [];
+
+    public HashSet<Guid> Administrators { get; } = [];
+
+    public void Appoint(Guid person, Guid meetup) => roster.Add((person, meetup));
+
+    public IBroadcastAuthority Authority { get; }
+
+    public RosterOwners() =>
+        Authority = new OwnerAuthority(
+            (request, _, _, _) =>
+            {
+                var person = Guid.Parse(request.IdentityId);
+                var meetup = Guid.Parse(request.Id);
+                var accepted = request.AcceptedRelations.ToHashSet();
+
+                var granted =
+                    (accepted.Contains(Meetups.V1.MeetupRelation.CommunityAdministrator) && Administrators.Contains(person))
+                    || (accepted.Contains(Meetups.V1.MeetupRelation.Organizer) && roster.Contains((person, meetup)));
+
+                return granted
+                    ? Task.FromResult(new Meetups.V1.MeetupAuthority())
+                    : throw new Grpc.Core.RpcException(new Grpc.Core.Status(Grpc.Core.StatusCode.PermissionDenied, "stub"));
+            },
+            (request, _, _, _) => Task.FromResult(new Identity.V1.CheckAccessRightResponse
+            {
+                Granted = request.Right == Identity.V1.AccessRight.ManageMeetups
+                    && Administrators.Contains(Guid.Parse(request.IdentityId)),
+            }),
+            "notifications-token",
+            TimeProvider.System);
+}
+
+/// <summary>
 /// Auction, подставленный на вопрос «кто вовлечён» (PER-778). Отвечает заданным
 /// чтением и считает вопросы: объявление «всем» спрашивать его не должно.
 /// </summary>
@@ -150,7 +193,17 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
     /// </summary>
     public static Task<BroadcastsUnderTest> StartWithoutAuction() => Launch(new StubAuthority(), auction: null);
 
-    private static async Task<BroadcastsUnderTest> Launch(StubAuthority? owners, StubEngagement? auction)
+    /// <summary>
+    /// Стенд, где над подставленными Meetups и Identity работает настоящий
+    /// <see cref="OwnerAuthority" /> (PER-746).
+    /// </summary>
+    public static Task<BroadcastsUnderTest> StartWithRoster(RosterOwners roster) =>
+        Launch(new StubAuthority(), new StubEngagement(), roster.Authority);
+
+    private static async Task<BroadcastsUnderTest> Launch(
+        StubAuthority? owners,
+        StubEngagement? auction,
+        IBroadcastAuthority? authority = null)
     {
         var database = new IsolatedDatabase();
         SiloUnderTest? silo = null;
@@ -164,7 +217,7 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
                     database.ConnectionString,
                     services =>
                     {
-                        services.AddSingleton<IBroadcastAuthority>(owners);
+                        services.AddSingleton(authority ?? owners);
                         if (auction is not null)
                         {
                             services.AddSingleton<IAuctionEngagement>(auction);

@@ -116,6 +116,12 @@ public static class NotificationFacts
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string CircleChangedType = "circle_changed";
 
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string OrganizerAppointedType = "organizer_appointed";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string OrganizerDismissedType = "organizer_dismissed";
+
     /// <summary>
     /// Единственный набор, выдача которого — повод факта <see cref="PresetGranted" />
     /// (PER-468): назначение администратором. Набор <c>maintainer</c> выдаёт
@@ -280,6 +286,37 @@ public static class NotificationFacts
 
         return notification;
     }
+
+    /// <summary>
+    /// «Вас назначили организатором сходки» самому назначенному (PER-746,
+    /// ADR-076, п. 8). Кто назначил, в факт не попадает.
+    /// </summary>
+    public static Notification OrganizerAppointed(Guid notificationId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter)
+    {
+        Require(fact, MeetupOccasion.OrganizerAppointed);
+
+        var notification = Addressed(notificationId, OrganizerOf(fact), fact, now, notAfter);
+        notification.OrganizerAppointed = new V1.OrganizerAppointed { Meetup = fact.Card.Clone() };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// «Вас сняли с организаторов сходки» самому снятому другим (PER-746). Выход
+    /// по своей воле факта не порождает — это решает разворот повода.
+    /// </summary>
+    public static Notification OrganizerDismissed(Guid notificationId, MeetupFact fact, DateTimeOffset now, DateTimeOffset notAfter)
+    {
+        Require(fact, MeetupOccasion.OrganizerDismissed);
+
+        var notification = Addressed(notificationId, OrganizerOf(fact), fact, now, notAfter);
+        notification.OrganizerDismissed = new V1.OrganizerDismissed { Meetup = fact.Card.Clone() };
+
+        return notification;
+    }
+
+    private static Guid OrganizerOf(MeetupFact fact) =>
+        fact.OrganizerId ?? throw new ArgumentException("the occasion names no person", nameof(fact));
 
     /// <summary>Напоминание о сходке одному получателю.</summary>
     /// <param name="taskId">Сработавшее задание — повод факта.</param>

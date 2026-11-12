@@ -65,7 +65,7 @@ public class OwnerAuthorityTests
     private static Func<Task> Fails(StatusCode code) => () => throw new RpcException(new Status(code, "stub"));
 
     [Fact]
-    public async Task MeetupBroadcast_Granted_AsksMeetupsForAdministratorRelation()
+    public async Task MeetupBroadcast_Granted_AsksMeetupsForAdministratorOrOrganizerRelation()
     {
         var seen = new Recorded();
 
@@ -74,7 +74,25 @@ public class OwnerAuthorityTests
         answer.Verdict.ShouldBe(AuthorityVerdict.Granted);
         seen.Meetups!.IdentityId.ShouldBe(Author.ToString("D"));
         seen.Meetups.Id.ShouldBe(MeetupId.ToString("D"));
-        seen.Meetups.AcceptedRelations.ShouldBe([MeetupRelation.CommunityAdministrator]);
+        seen.Meetups.AcceptedRelations.ShouldBe(
+            [MeetupRelation.CommunityAdministrator, MeetupRelation.Organizer], ignoreOrder: true);
+        seen.Identity.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Объявление сообществу организатору не открыто: его право — manage_meetups
+    /// у Identity, отношение к сходке тут не спрашивается (ADR-076, п. 5).
+    /// </summary>
+    [Fact]
+    public async Task CommunityAnnouncement_AsksIdentityForManageMeetups_AndNeverForOrganizerRelation()
+    {
+        var seen = new Recorded();
+
+        var answer = await Authority(seen, identityOutcome: () => Task.FromResult(false)).CommunityAnnouncement(Author, Chain());
+
+        answer.Verdict.ShouldBe(AuthorityVerdict.Denied);
+        seen.Identity!.Right.ShouldBe(AccessRight.ManageMeetups);
+        seen.Meetups.ShouldBeNull();
     }
 
     [Fact]
