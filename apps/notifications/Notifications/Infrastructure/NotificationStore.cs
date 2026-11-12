@@ -641,7 +641,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             return FactCount.None;
         }
 
-        var created = await Insert(
+        return await Insert(
             work,
             FactCause.Of(fact, type),
             [new AudienceRow { IdentityId = person, Enabled = true, DeliverySurface = NotificationSubjects.Hub }],
@@ -649,8 +649,6 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             now,
             notAfter,
             cancellationToken);
-
-        return created;
     }
 
     private static FactCount Combine(FactCount first, FactCount second) =>
