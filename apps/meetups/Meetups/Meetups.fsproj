@@ -48,6 +48,7 @@
     <Compile Include="Slices/CancelMeetup.fs" />
     <Compile Include="Slices/AttachMaterial.fs" />
     <Compile Include="Slices/RemoveMaterial.fs" />
+    <Compile Include="Slices/ReorderMaterials.fs" />
     <Compile Include="Slices/MarkMeetupHeld.fs" />
     <Compile Include="Slices/ListVisibleMeetups.fs" />
     <Compile Include="Slices/ListArchivedMeetups.fs" />

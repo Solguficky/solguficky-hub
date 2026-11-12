@@ -33,6 +33,11 @@ public abstract record ReplicaEvent(Guid EventId, Guid AggregateId, long Version
 /// (публикация по расписанию) или поля не было. Адресатом факта он не
 /// становится: о собственном действии человеку не сообщают.
 /// </param>
+/// <param name="Silent">
+/// Первая публикация без адресного факта «новая сходка». Unset и false
+/// сохраняют прежнее поведение. На возврате после снятия поле не бывает:
+/// повод тогда не <see cref="MeetupOccasion.FirstPublication" />.
+/// </param>
 public sealed record MeetupFact(
     Guid EventId,
     Guid MeetupId,
@@ -43,7 +48,8 @@ public sealed record MeetupFact(
     MeetupOccasion Occasion = MeetupOccasion.Other,
     string? RequestId = null,
     AttachedMaterial? Material = null,
-    Guid? PerformedBy = null) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
+    Guid? PerformedBy = null,
+    bool Silent = false) : ReplicaEvent(EventId, MeetupId, Version, OccurredAt)
 {
     public override string Source => ReplicaFeeds.MeetupsSource;
 }

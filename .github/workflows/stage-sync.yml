@@ -9,8 +9,9 @@ name: Stage sync
 # Push идёт deploy key'ем этого репозитория с правом записи, а не GITHUB_TOKEN:
 # push под GITHUB_TOKEN не запускает других workflow, и публикации не
 # стартовали бы. Ключ — секрет STAGE_SYNC_KEY в environment `stage-sync`,
-# допущенном только для main: schedule всегда идёт с default branch, а ручной
-# запуск с другой ветки ключа не получит и не перенесёт в stage свой код.
+# допущенном только для develop: schedule всегда идёт с default branch, а это
+# develop (дополнение ADR-055 от 2026-10-27), а ручной запуск с другой ветки
+# пропускается условием джобы, ключа не получит и не перенесёт в stage свой код.
 # Ruleset ветки stage пускает обновление только deploy key'ям и запрещает
 # force push.
 #
@@ -30,7 +31,7 @@ concurrency:
 
 jobs:
   sync:
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.ref == 'refs/heads/develop' }}
     runs-on: ubuntu-latest
     environment: stage-sync
     steps:

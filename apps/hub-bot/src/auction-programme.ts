@@ -3,6 +3,7 @@ import type {
   AuctionStepWindowView,
   AuctionSummaryView,
 } from "./auction-ui/index.js";
+import { shownInstant } from "./core/format.js";
 
 // Программа недели (PER-724; решение владельца 26.10.2026) — короткий абзац
 // текста корня аукциона, общий у обоих ботов, как FAQ: «Счастливые часы»
@@ -46,10 +47,14 @@ export function programmeParagraph(
     ...(root.raffleClosesAt !== undefined &&
     ahead(root.raffleClosesAt) &&
     auction.stage !== "cancelled"
-      ? [`Розыгрыш: ${options.moment(root.raffleClosesAt)}`]
+      ? [
+          `Розыгрыш: ${options.moment(shownInstant(root.raffleClosesAt, options.timeZone))}`,
+        ]
       : []),
     ...(online && auction.closesAt !== undefined && ahead(auction.closesAt)
-      ? [`Онлайн-торги до ${options.moment(auction.closesAt)}`]
+      ? [
+          `Онлайн-торги до ${options.moment(shownInstant(auction.closesAt, options.timeZone))}`,
+        ]
       : []),
     ...(auction.final &&
     auction.finalAt !== undefined &&
@@ -105,7 +110,10 @@ export function auctionStatusLine(
     auction.raffleClosesAt !== undefined &&
     Date.parse(auction.raffleClosesAt) > now
       ? [
-          `розыгрыш: регистрация до ${shortMoment(auction.raffleClosesAt, options)}`,
+          `розыгрыш: регистрация до ${shortMoment(
+            shownInstant(auction.raffleClosesAt, options.timeZone),
+            options,
+          )}`,
         ]
       : []),
   ];
@@ -146,12 +154,13 @@ function windowPart(
   const running = upcoming.find((window) => Date.parse(window.from) <= now);
   if (running !== undefined) {
     // Окно через полночь называет и дату конца: «до 31.10 02:00».
-    const until = timeOf(running.until, options.timeZone);
+    const end = shownInstant(running.until, options.timeZone);
+    const until = timeOf(end, options.timeZone);
     return [
       `🔥 Счастливые часы до ${
-        isToday(running.until, options)
+        isToday(end, options)
           ? until
-          : `${shortDay(running.until, options.timeZone)} ${until}`
+          : `${shortDay(end, options.timeZone)} ${until}`
       }`,
     ];
   }
@@ -223,10 +232,11 @@ function windowLine(
   const running = Date.parse(window.from) <= options.now.getTime();
   // Конец в другой день сообщества называется моментом целиком.
   const start = running ? options.now.toISOString() : window.from;
+  const end = shownInstant(window.until, options.timeZone);
   const until =
-    dayOf(start, options.timeZone) === dayOf(window.until, options.timeZone)
-      ? timeOf(window.until, options.timeZone)
-      : options.moment(window.until);
+    dayOf(start, options.timeZone) === dayOf(end, options.timeZone)
+      ? timeOf(end, options.timeZone)
+      : options.moment(end);
   return running
     ? `Счастливые часы: сейчас, до ${until} — ${lots}`
     : `Счастливые часы: ${options.moment(window.from)}–${until} — ${lots}`;

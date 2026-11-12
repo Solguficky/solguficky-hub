@@ -81,6 +81,7 @@ PROTOC_SHA256="$(pinned PROTOC_SHA256)"
 LEFTHOOK_VERSION="$(pinned LEFTHOOK_VERSION)"
 SKILLSHARE_VERSION="$(pinned SKILLSHARE_VERSION)"
 NODE_MAJOR="$(pinned NODE_MAJOR)"
+NODE_MIN_MINOR="$(pinned NODE_MIN_MINOR)"
 DOTNET_SDK_VERSION="$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' global.json | head -n 1)"
 GO_VERSION="$(awk '/^go [0-9]/ {print $2; exit}' apps/identity/go.mod)"
 JAVA_MAJOR="$(tr -d '[:space:]' < apps/auction/.java-version)"
@@ -90,7 +91,7 @@ ERLANG_SHA256="$(pinned ERLANG_SHA256)"
 ELIXIR_SHA256="$(pinned ELIXIR_SHA256)"
 ASPIRE_SDK_VERSION="$(sed -n 's/.*<Sdk Name="Aspire.AppHost.Sdk" Version="\([^"]*\)".*/\1/p' infra/apphost/AppHost/AppHost.csproj)"
 
-for version in JUST_VERSION PROTOC_VERSION PROTOC_SHA256 LEFTHOOK_VERSION SKILLSHARE_VERSION NODE_MAJOR DOTNET_SDK_VERSION GO_VERSION JAVA_MAJOR ERLANG_VERSION ELIXIR_VERSION ERLANG_SHA256 ELIXIR_SHA256 ASPIRE_SDK_VERSION; do
+for version in JUST_VERSION PROTOC_VERSION PROTOC_SHA256 LEFTHOOK_VERSION SKILLSHARE_VERSION NODE_MAJOR NODE_MIN_MINOR DOTNET_SDK_VERSION GO_VERSION JAVA_MAJOR ERLANG_VERSION ELIXIR_VERSION ERLANG_SHA256 ELIXIR_SHA256 ASPIRE_SDK_VERSION; do
   if [ -z "${!version}" ]; then
     echo "install.sh: $version is not pinned where this script reads it" >&2
     exit 1
@@ -210,13 +211,14 @@ fi
 
 # `|| true`: under pipefail a missing binary would abort the script here.
 node_major="$(node --version 2>/dev/null | sed -n 's/^v\([0-9]*\)\..*/\1/p' || true)"
-if [ "$node_major" != "$NODE_MAJOR" ]; then
-  log "Installing Node.js $NODE_MAJOR"
+node_minor="$(node --version 2>/dev/null | sed -n 's/^v[0-9]*\.\([0-9]*\)\..*/\1/p' || true)"
+if [ "$node_major" != "$NODE_MAJOR" ] || [ "${node_minor:-0}" -lt "$NODE_MIN_MINOR" ]; then
+  log "Installing Node.js $NODE_MAJOR (at least $NODE_MAJOR.$NODE_MIN_MINOR)"
   curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | $SUDO bash -
   apt_updated=yes
   apt_install nodejs
 else
-  log "Node.js $node_major already installed"
+  log "Node.js $node_major.$node_minor already installed"
 fi
 
 # --- JDK and sbt -------------------------------------------------------------

@@ -51,7 +51,6 @@ function invoice(
     winnerId: jay,
     amount,
     paymentDueAt,
-    fulfillment: "unspecified",
     status,
   };
 }
@@ -90,6 +89,7 @@ function fake(answers: {
             status: "finished",
             hidden: false,
             launchedWindows: [],
+            happyHourPeriods: [],
             lotSets: [],
             lots: [
               {

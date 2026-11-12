@@ -14,7 +14,7 @@ namespace Notifications.Infrastructure;
 /// Auction, — а момент выставления считает первое из двух напоминаний.
 /// </remarks>
 public sealed record InvoiceReplica(Guid InvoiceId, long Version, InvoiceStatus Status, Guid WinnerId, Guid LotId,
-    Guid AuctionId, long AmountMinorUnits, string AmountCurrency, DateTimeOffset PaymentDueAt,
+    Guid AuctionId, long AmountMinorUnits, string AmountCurrency, DateTimeOffset? PaymentDueAt,
     DateTimeOffset? IssuedAt);
 
 /// <summary>
@@ -80,7 +80,7 @@ public static class InvoiceReplicaStore
             snapshot.AuctionId,
             snapshot.AmountMinorUnits,
             snapshot.AmountCurrency,
-            PaymentDueAt = snapshot.PaymentDueAt.UtcDateTime,
+            PaymentDueAt = snapshot.PaymentDueAt?.UtcDateTime,
             IssuedAt = snapshot.Issued ? snapshot.OccurredAt.UtcDateTime : (DateTime?)null,
             Now = now.UtcDateTime,
         }, cancellationToken) > 0;
@@ -141,5 +141,5 @@ public static class InvoiceReplicaStore
         value is { } instant ? new DateTimeOffset(DateTime.SpecifyKind(instant, DateTimeKind.Utc)) : null;
 
     private sealed record Row(Guid InvoiceId, long Version, string Status, Guid WinnerId, Guid LotId, Guid AuctionId,
-        long AmountMinorUnits, string AmountCurrency, DateTime PaymentDueAt, DateTime? IssuedAt);
+        long AmountMinorUnits, string AmountCurrency, DateTime? PaymentDueAt, DateTime? IssuedAt);
 }

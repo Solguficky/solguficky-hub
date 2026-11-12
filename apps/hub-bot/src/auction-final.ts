@@ -16,6 +16,13 @@ export function finalBidLabel(amount: Money, money: (m: Money) => string) {
   return `Поставить ${money(amount)}`;
 }
 
+/** Кнопка карточки финала: включает слежение, правку самой карточки по потоку (PER-826, PER-837). */
+export const watchFinalLabel = "Следить за торгами";
+/** Та же кнопка на карточке в слежении: выключает его. */
+export const unwatchFinalLabel = "Не следить";
+/** Строка карточки в слежении, когда аукцион закончился. */
+export const auctionEndedLine = "Аукцион завершён";
+
 /**
  * Строка цены лота в торгах финала — одна (PER-639): цена, которую объявил
  * ведущий, пока она выше текущей — тогда она и есть следующая ставка, — иначе
@@ -63,6 +70,8 @@ export function finalBidLine(
   switch (outcome.kind) {
     case "accepted":
       return `Твоя ставка ${money(outcome.amount)} принята`;
+    case "accepted-unread":
+      return `Ставка ${money(outcome.amount)} принята: обнови карточку, чтобы узнать лидера`;
     case "unknown":
       return "Аукцион не ответил: ставка могла пройти, смотри лидера";
     case "price-changed":
@@ -101,3 +110,141 @@ export function finalBidLine(
     }
   }
 }
+
+/**
+ * Цена, которую назвал ответ «цена ушла»: исход `price-changed` или отказ
+ * «не по цене». Прочие исходы — `undefined`.
+ */
+export function priceMovedTo(outcome: FinalBidOutcome): Money | undefined {
+  if (outcome.kind === "price-changed") return outcome.next;
+  if (
+    outcome.kind === "refused" &&
+    outcome.refusal.kind === "bid-not-at-next-price"
+  )
+    return outcome.refusal.expected;
+  return undefined;
+}
+
+// Исход читает актуальный снимок: принятую ставку уже могли перебить.
+export function finalBidHeadline(
+  block: LotBlock,
+  money: (m: Money) => string,
+): string | undefined {
+  const outcome = block.finalBid;
+  if (outcome === undefined) return undefined;
+  if (outcome.kind === "accepted") {
+    if (block.standing === "leader" || block.standing === "won")
+      return `Ты лидер: ставка ${money(outcome.amount)} принята`;
+    if (block.status.kind === "trading" && outcome.overtaken === true)
+      return `Твою ставку перебила автоставка другого участника — цена уже ${money(block.status.currentPrice)}`;
+    if (block.status.kind === "trading")
+      return `Твою ставку перебили — цена уже ${money(block.status.currentPrice)}`;
+    if (block.status.kind === "sold")
+      return `Твою ставку перебили — цена продажи ${money(block.status.price)}`;
+  }
+  // Ответ «цена ушла» живёт на карточке, пока её правит поток (PER-835), и
+  // цена в нём могла уйти ещё раз: называется следующая цена снимка.
+  const moved = priceMovedTo(outcome);
+  if (moved !== undefined) {
+    // Лот закрыт или человек уже лидер: «следующей цены» больше нет.
+    if (
+      block.status.kind !== "trading" ||
+      block.standing === "leader" ||
+      block.standing === "won"
+    )
+      return undefined;
+    // Не ниже цены, которую назвал отказ: кнопка уже предлагает её, даже если
+    // чтение отстаёт, и строка с кнопкой не должны расходиться.
+    const next =
+      block.nextPrice !== undefined &&
+      block.nextPrice.minorUnits > moved.minorUnits
+        ? block.nextPrice
+        : moved;
+    return `Твоя ставка не прошла — следующая цена ${money(next)}`;
+  }
+  if (
+    outcome.kind === "refused" &&
+    ["bid-below-minimum", "lot-not-open"].includes(outcome.refusal.kind)
+  ) {
+    const price =
+      block.status.kind === "trading"
+        ? block.status.currentPrice
+        : block.status.kind === "sold"
+          ? block.status.price
+          : undefined;
+    return price === undefined
+      ? `Твоя ставка не прошла: ${finalBidLine(outcome, money)}`
+      : `Твоя ставка не прошла — цена уже ${money(price)}`;
+  }
+  return finalBidLine(outcome, money);
+}
+
+/**
+ * Слова лимита автоставки лоту, который ждёт финала (PER-821, ADR-079):
+ * лимит сработает в финале по сетке цен, а остаток лимита, который не доходит
+ * до следующей цены сетки, не добирается (ADR-049). Общие у двух ботов.
+ */
+const gridRemainder = "Остаток лимита, не кратный шагу сетки, не добирается.";
+
+export const heldProxyQuestion = `Пришли лимит в рублях. Лот ждёт финала: лимит сработает там, и бот будет ставить за тебя по сетке цен финала. ${gridRemainder} Лимит видишь только ты.`;
+
+export function heldProxyConfirmation(
+  currentPrice: Money,
+  limit: Money,
+  money: (m: Money) => string,
+): string {
+  return `Цена сейчас ${money(currentPrice)}. Лимит сработает в финале: бот будет ставить за тебя по сетке цен, но не выше ${money(limit)}. ${gridRemainder}`;
+}
+
+export const heldProxyAccepted = `Лимит сработает в финале по сетке цен. ${gridRemainder}`;
+
+/** Слова автоставки на живой карточке финала (PER-823), общие у двух ботов. */
+export const liveProxyQuestion = `Пришли лимит в рублях. Он задаёт верхнюю границу автоставки. Если лимит покрывает следующую цену сетки, Auction сразу пересчитает автоставки; цена и лидер могут измениться из-за лимитов остальных участников. Лидер не ставит против себя: его автоставка ответит, если соперник перебьёт. Если лимита не хватает до следующей цены, твоя автоставка её не поставит. Дальше бот отвечает по сетке, но не выше лимита. ${gridRemainder} Лимит видишь только ты.`;
+
+export function liveProxyConfirmation(input: {
+  currentPrice: Money;
+  nextPrice: Money | undefined;
+  limit: Money;
+  viewerIsLeader: boolean;
+  money: (m: Money) => string;
+}): string {
+  const { currentPrice, nextPrice, limit, viewerIsLeader, money } = input;
+  const next =
+    nextPrice === undefined
+      ? undefined
+      : `Следующая цена сетки — ${money(nextPrice)}.`;
+  const action = viewerIsLeader
+    ? "Ты лидер: бот не ставит против тебя; автоставка ответит, если соперник перебьёт."
+    : nextPrice !== undefined && nextPrice.minorUnits <= limit.minorUnits
+      ? "Лимита хватает на следующую цену сетки. Auction сразу пересчитает автоставки; итоговая цена и лидер зависят от других лимитов."
+      : nextPrice === undefined
+        ? "Auction пересчитает автоставки по актуальному состоянию лота."
+        : "Лимита не хватает на следующую цену сетки: твоя автоставка её не поставит.";
+  return `Цена сейчас ${money(currentPrice)}. ${next ?? "Следующая цена сетки пока не пришла в снимке."} ${action} Дальше бот будет отвечать по сетке, но не выше ${money(limit)}. ${gridRemainder}`;
+}
+
+export const liveProxyAccepted = `Лимит принят. Auction сразу пересчитал автоставки по сетке; цена и лидер могут измениться с учётом лимитов остальных участников. Дальше бот отвечает по сетке, но не выше лимита. ${gridRemainder}`;
+
+/**
+ * Слова снятия своего лимита (PER-822): общие у двух ботов. Лимит, поставленный
+ * на онлайн-неделе, переходит в финал сам (ADR-079, п. 3), поэтому подтверждение
+ * лоту, который ждёт финала, говорит про финал, а недельному — про торги.
+ */
+export const withdrawButtonLabel = "Снять лимит";
+
+export function withdrawQuestion(
+  limit: Money,
+  money: (m: Money) => string,
+): string {
+  return `Снять автоставку до ${money(limit)}?`;
+}
+
+export function withdrawNote(forFinal: boolean): string {
+  return forFinal
+    ? "Лимит не сработает в финале. Поставить его можно снова."
+    : "Бот перестанет ставить за тебя. Поставить лимит можно снова.";
+}
+
+export const withdrawnTitle = "Автоставка снята";
+export const noLimitTitle = "Лимита уже нет";
+export const noLimitDetail = "Автоставки на этом лоте нет.";

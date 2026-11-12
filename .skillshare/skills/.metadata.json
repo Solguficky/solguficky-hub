@@ -35,6 +35,32 @@
         "SKILL.md": "sha256:1cddd028d24ece48cd538fc1d84e49f5922dc8d04ee88caf12666b0557575e09"
       }
     },
+    "ecto": {
+      "source": "https://github.com/georgeguimaraes/elixir-agent-tools.git/plugins/elixir-dev/skills/ecto",
+      "type": "github-subdir",
+      "installed_at": "2026-11-05T15:41:03.4798759+03:00",
+      "repo_url": "https://github.com/georgeguimaraes/elixir-agent-tools.git",
+      "subdir": "plugins/elixir-dev/skills/ecto",
+      "version": "ac3a5a1",
+      "tree_hash": "b1eb4d91b1cd4acd82714fee47db11b0e5ec1d61",
+      "commit": "ac3a5a1661a087158b39d5eb742b3c25fe3c7b44",
+      "file_hashes": {
+        "SKILL.md": "sha256:571d58ffaffca396ac38d790878c18a06206f123e4d8592a6a79753d6f6e84b5"
+      }
+    },
+    "elixir": {
+      "source": "https://github.com/georgeguimaraes/elixir-agent-tools.git/plugins/elixir-dev/skills/elixir",
+      "type": "github-subdir",
+      "installed_at": "2026-11-05T15:41:03.2164179+03:00",
+      "repo_url": "https://github.com/georgeguimaraes/elixir-agent-tools.git",
+      "subdir": "plugins/elixir-dev/skills/elixir",
+      "version": "ac3a5a1",
+      "tree_hash": "104e34b252d9bb66c31b5f34003e86c30b12c4a2",
+      "commit": "ac3a5a1661a087158b39d5eb742b3c25fe3c7b44",
+      "file_hashes": {
+        "SKILL.md": "sha256:b3e9fd328e82654d6d10104aa81717a365d78ffe2dccee6af48b5318de9c2cfb"
+      }
+    },
     "find-skills": {
       "source": "https://github.com/vercel-labs/skills/find-skills",
       "type": "github-subdir",
@@ -94,6 +120,19 @@
       "group": "mattpocock",
       "branch": "main"
     },
+    "oban": {
+      "source": "https://github.com/georgeguimaraes/elixir-agent-tools.git/plugins/elixir-dev/skills/oban",
+      "type": "github-subdir",
+      "installed_at": "2026-11-05T15:41:04.0308828+03:00",
+      "repo_url": "https://github.com/georgeguimaraes/elixir-agent-tools.git",
+      "subdir": "plugins/elixir-dev/skills/oban",
+      "version": "ac3a5a1",
+      "tree_hash": "f974d012b61b042631d8bf17992ad9fa47ed70a8",
+      "commit": "ac3a5a1661a087158b39d5eb742b3c25fe3c7b44",
+      "file_hashes": {
+        "SKILL.md": "sha256:51c6687e322b1ffb4a16b71acd60325f6a0f7a1034677b7a5c55e9ad6cf1676a"
+      }
+    },
     "orleans": {
       "source": "github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans",
       "type": "github-subdir",
@@ -120,6 +159,32 @@
         "references/serialization-api.md": "sha256:206e08d03fcf9e85d494727819a5ddd2ec0cde1f9bf2df500b4763175f20ff29",
         "references/streaming-api.md": "sha256:b4f6cece138c04c66af3bc0940061435808e67019d6db72f432a7af04dfdb002",
         "references/testing-patterns.md": "sha256:deae0357c12c7742a2b6d05746d872d543339158c90b23f348d3da4574b7ccd2"
+      }
+    },
+    "otp": {
+      "source": "https://github.com/georgeguimaraes/elixir-agent-tools.git/plugins/elixir-dev/skills/otp",
+      "type": "github-subdir",
+      "installed_at": "2026-11-05T15:41:02.8069282+03:00",
+      "repo_url": "https://github.com/georgeguimaraes/elixir-agent-tools.git",
+      "subdir": "plugins/elixir-dev/skills/otp",
+      "version": "ac3a5a1",
+      "tree_hash": "27d23c9467c09dd55e412f16b59cd5b4c423dae4",
+      "commit": "ac3a5a1661a087158b39d5eb742b3c25fe3c7b44",
+      "file_hashes": {
+        "SKILL.md": "sha256:5de28bf19a860dc3cd3800c3f82d37f11329f6e2f7deeaee6c11f6a59dc769c6"
+      }
+    },
+    "phoenix": {
+      "source": "https://github.com/georgeguimaraes/elixir-agent-tools.git/plugins/elixir-dev/skills/phoenix",
+      "type": "github-subdir",
+      "installed_at": "2026-11-05T15:41:03.7429117+03:00",
+      "repo_url": "https://github.com/georgeguimaraes/elixir-agent-tools.git",
+      "subdir": "plugins/elixir-dev/skills/phoenix",
+      "version": "ac3a5a1",
+      "tree_hash": "09c5b91d34b19e380a955cf0c55659f1610205db",
+      "commit": "ac3a5a1661a087158b39d5eb742b3c25fe3c7b44",
+      "file_hashes": {
+        "SKILL.md": "sha256:11be9fd4be314521e496f76a60f7df7b1f4067a39f96c7f3131315d7f8a01b30"
       }
     },
     "playwright-cli": {
@@ -197,6 +262,20 @@
         "references/targets.md": "sha256:af644ce92b407d175ac8a14dcaad9db187aa3ce8a439d85f4aa2f93f1a024b2b",
         "references/trash.md": "sha256:9ffc23f6440e20bd1405b17f6124efdb1ad457b998fd2adf8352192916a5c5db",
         "scripts/run.sh": "sha256:e434ebdb7d3ae0b37c00ddc36687bc975da9e766b8cb863f9aed9a624ebbdfa9"
+      }
+    },
+    "typesafe-ai": {
+      "source": "github.com/typesafe-ai/skills/skills/typesafe-ai",
+      "type": "github-subdir",
+      "installed_at": "2026-11-05T15:41:39.4324393+03:00",
+      "repo_url": "https://github.com/typesafe-ai/skills.git",
+      "subdir": "skills/typesafe-ai",
+      "version": "302eea6",
+      "tree_hash": "1d7aa7574f194619b5189d96c6f79bdd4cc452f2",
+      "commit": "302eea662c54bca6730873fe245bec1d69ebc23d",
+      "file_hashes": {
+        "LICENSE": "sha256:0263f48022acba5ef61b8ae8248486b12841d2f3c6f7bdd9ecf321948ae0fb12",
+        "SKILL.md": "sha256:f514998712a1fa13663de7e3c2bd562144ad4bf74b32945aaf74f73b81392800"
       }
     },
     "unslop-ui": {

@@ -38,7 +38,8 @@ final case class RaffleTicketView(number: Int, displayName: Option[String])
  * этого ни одно чтение seed не отдаёт. `drawnAt` заполнен только у проведённой жеребьёвки, а момент её — тот, что
  * записан ядром в `RaffleState.Drawn`. `prize` — приз, объявленный вместе с моментом закрытия регистрации (дополнение
  * ADR-066 от 2026-10-21); пуст у непроведённого и у розыгрыша без приза. `byHand` — итог подводит администратор, а не
- * маяк (дополнение ADR-066 от 2026-10-24): режим известен с фиксации пула.
+ * маяк (дополнение ADR-066 от 2026-10-24): режим известен с фиксации пула. `photo` — фото приза без байтов (PER-772),
+ * пусто у непроведённого и у приза без фото.
  */
 final case class RaffleView(
     status: RaffleStatus,
@@ -51,7 +52,8 @@ final case class RaffleView(
     myTicket: Option[Int],
     reveal: Option[RaffleReveal],
     prize: Option[String] = None,
-    byHand: Boolean = false
+    byHand: Boolean = false,
+    photo: Option[PrizePhoto] = None
 )
 
 object RaffleView {
@@ -90,7 +92,8 @@ object RaffleView {
         myTicket = Raffle.ticketOf(tickets, viewer),
         reveal = reveal,
         prize = terms.prize,
-        byHand = byHand
+        byHand = byHand,
+        photo = terms.photo
       )
 
     raffle.state match {
@@ -110,7 +113,8 @@ object RaffleView {
             myTicket = None,
             reveal = None,
             prize = terms.prize,
-            byHand = byHandAhead
+            byHand = byHandAhead,
+            photo = terms.photo
           )
         )
       case RaffleState.Fixed(terms, tickets) if tickets.isEmpty =>
@@ -143,7 +147,8 @@ object RaffleView {
             tickets = Vector.empty,
             myTicket = None,
             reveal = None,
-            prize = terms.prize
+            prize = terms.prize,
+            photo = terms.photo
           )
         )
     }

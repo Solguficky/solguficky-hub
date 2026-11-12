@@ -51,6 +51,7 @@ function meetups(): Meetups {
     cancelPublication: notUsed,
     attachMaterial: notUsed,
     removeMaterial: notUsed,
+    reorderMaterials: notUsed,
   };
 }
 

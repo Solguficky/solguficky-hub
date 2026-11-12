@@ -47,6 +47,9 @@ JUST_SHA256 := "4a5cc2f53e6f0f8c59092a6cc38291eb729d46a7dd95d3ae582008881b84931d
 LEFTHOOK_VERSION := "2.1.10"
 SKILLSHARE_VERSION := "0.21.10"
 NODE_MAJOR := "22"
+# Node 22 запускает .ts без флага с 22.18 (render.ts Achievements); меньший минор
+# установщик среды обновляет, а не считает установленным.
+NODE_MIN_MINOR := "18"
 
 # Erlang/OTP и Elixir Achievements: версии — apps/achievements/.tool-versions,
 # его же читает erlef/setup-beam в CI, а суммы архивов builds.hex.pm, которые
@@ -195,8 +198,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, Achievements и его формат, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify achievements-build achievements-test achievements-format-check nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, Achievements, его формат и сверка картинок ачивок с шаблоном, nats-tester, наблюдатель ручного гейта и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify achievements-build achievements-test achievements-format-check achievements-images-check nats-tester-check gate-observer-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -228,7 +231,7 @@ verify-changed:
 test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration auction-test-browser achievements-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools achievements-tools nats-tester-tools
+tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools achievements-tools achievements-images-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -264,7 +267,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "160"
+APPHOST_TEST_THRESHOLD := "161"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -333,7 +336,7 @@ identity-test: identity-proto
 # `go test -tags=integration -list . ./...` без базы. Опечатка в теге молча
 # выключает файл, на который не ссылаются соседние файлы пакета, и недобор до
 # порога — единственный её след; файл со ссылками роняет компиляцию пакета.
-IDENTITY_TEST_THRESHOLD := "266"
+IDENTITY_TEST_THRESHOLD := "269"
 
 # Все тесты Identity под тегом integration: unit-файлы тег не исключает, поэтому
 # прогон полный. База обязательна: `testdb` без PostgreSQL роняет тест, а не
@@ -525,12 +528,12 @@ community-site-serve:
 meetups-build:
     dotnet build apps/meetups/Meetups.sln --nologo
 
-# Пороги числа тестов по уровням, в сумме 710. Поднимаются вручную вместе с
+# Пороги числа тестов по уровням, в сумме 732. Поднимаются вручную вместе с
 # набором — добавил тест, обнови число своего уровня здесь тем же изменением.
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "572"
+MEETUPS_UNIT_TEST_THRESHOLD := "592"
 MEETUPS_INTEGRATION_TEST_THRESHOLD := "140"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,
@@ -584,12 +587,12 @@ meetups-image:
 notifications-build:
     dotnet build apps/notifications/Notifications.sln --nologo
 
-# Пороги числа тестов Notifications по уровням, в сумме 935. Поднимаются вручную
+# Пороги числа тестов Notifications по уровням, в сумме 1076. Поднимаются вручную
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "653"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "305"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "738"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "339"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает
@@ -670,6 +673,17 @@ auction-test-integration:
 auction-test-browser:
     cd apps/auction && AUCTION_BROWSER_TESTS=1 sbt -batch test
 
+# Инструмент, а не тест: в `verify`, `test-all` и CI не входит. Сценарий и стенд
+# задают переменные SCREEN_LOAD_*: стенд local (по умолчанию) сам поднимает
+# PostgreSQL в Docker, заглушку Meetups и Auction отдельным процессом, remote идёт
+# против развёрнутого сервиса по адресам и токену вызывающего. Chromium — тот же,
+# что у auction-test-browser. Переменные, сценарии и форма записи результатов —
+# docs/services/auction-screen-load.md; отчёт пишется в apps/auction/target/screen-load/.
+#
+# Прогон экрана зала под залпом ставок (PER-486); нужны Docker и Chromium Playwright
+auction-screen-load:
+    cd apps/auction && sbt -batch "Test/runMain auction.screen.load.ScreenLoad"
+
 # scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
 # отдельная задача — иначе build.sbt остаётся единственным неформатируемым
 # файлом компонента.
@@ -686,7 +700,8 @@ auction-format:
 # оставляет блокировку сервера sbt.
 #
 # Локальный запуск вне Aspire; адреса — AUCTION_HTTP_* и AUCTION_GRPC_*, токены
-# вызывающих — AUCTION_CALLER_TOKEN_HUB_BOT и AUCTION_CALLER_TOKEN_AUCTION_BOT
+# вызывающих — AUCTION_CALLER_TOKEN_HUB_BOT, AUCTION_CALLER_TOKEN_AUCTION_BOT и
+# AUCTION_CALLER_TOKEN_NOTIFICATIONS
 auction-run:
     cd apps/auction && sbt -batch run
 
@@ -728,28 +743,51 @@ auction-verify:
 #
 # Версии Erlang/OTP и Elixir — apps/achievements/.tool-versions, суммы архивов —
 # ERLANG_SHA256 и ELIXIR_SHA256 выше; библиотеки закреплены в mix.lock.
-# Сервис — скелет: база с миграциями Ecto, health по gRPC и релей outbox;
-# правил, определений и контракта в нём пока нет (ADR-077, дополнение
-# 2026-10-26).
+# Сервис — реестр выдач ачивок: определения кодом, акторы над AUCTION_EVENTS,
+# outbox фактов выдачи и чтения по gRPC (ADR-077, дополнение 2026-10-26).
+# Код из contracts/proto генерирует buf (BUF_VERSION выше) плагином
+# protoc-gen-elixir — escript того же hex-пакета protobuf, что в mix.lock, —
+# и в Git он не лежит.
 
-# Hex, rebar и зависимости по mix.lock. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
+# Hex, rebar, зависимости по mix.lock и protoc-gen-elixir версии protobuf из mix.lock в ~/.mix/escripts. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
 achievements-tools:
-    cd apps/achievements && mix local.hex --force --if-missing && mix local.rebar --force --if-missing && mix deps.get
+    cd apps/achievements && mix local.hex --force --if-missing && mix local.rebar --force --if-missing && mix deps.get && mix escript.install hex protobuf "$(sed -n 's/.*"protobuf": {:hex, :protobuf, "\([^"]*\)".*/\1/p' mix.lock)" --force
+
+# Сгенерировать Elixir-модули achievements/v1 и фактов auction/v1 в apps/achievements/lib/generated; нужны buf и плагин из achievements-tools
+achievements-proto:
+    PATH="$HOME/.mix/escripts:$PATH" buf generate --template apps/achievements/buf.gen.yaml
 
 # Сборка сервиса; предупреждение — ошибка сборки
-achievements-build:
+achievements-build: achievements-proto
     cd apps/achievements && mix compile --warnings-as-errors
 
 # Уровень выбирает переменная, а не пропуск: test_helper.exs исключает тег
 # :integration и роняет прогон на пропуске и недоборе до порога своего уровня.
 #
 # Прогон ExUnit L0; Docker не нужен
-achievements-test:
+achievements-test: achievements-proto
     cd apps/achievements && mix test --warnings-as-errors
 
-# L1: миграции, health по gRPC и релей outbox на PostgreSQL и NATS в Testcontainers; нужен Docker
-achievements-test-integration:
+# L1: миграции, health, релей outbox, акторы ачивок над стримом и чтения по gRPC на PostgreSQL и NATS в Testcontainers; нужен Docker
+achievements-test-integration: achievements-proto
     cd apps/achievements && ACHIEVEMENTS_INTEGRATION_TESTS=1 mix test --warnings-as-errors
+
+# Картинки ачивок — PNG в apps/achievements/priv/achievements, их собирает из
+# SVG-шаблона node-единица apps/achievements/images (resvg в wasm и шрифт
+# DejaVu Sans из её package-lock.json). PNG лежат в Git: образ их не
+# пересобирает, а сверку шаблона с файлами держит achievements-images-check.
+
+# npm-зависимости единицы картинок ачивок. Ходит в сеть, поэтому живёт в `tools`, а не в `verify`
+achievements-images-tools:
+    cd apps/achievements/images && npm ci
+
+# Перерисовать PNG ачивок из шаблона и badges.json — после правки знака, рамки, подписи или новой ачивки
+achievements-images:
+    cd apps/achievements/images && npm run render
+
+# Typecheck и lint единицы картинок и сверка PNG в Git с шаблоном побайтно; входит в `verify`
+achievements-images-check:
+    cd apps/achievements/images && npm run typecheck && npm run lint && npm run check
 
 # Гейт форматирования по apps/achievements/.formatter.exs
 achievements-format-check:
@@ -799,6 +837,33 @@ nats-tester-proto:
 # Классы импортируются, состав генерации совпадает со схемами, реестр не врёт
 nats-tester-check:
     cd tools/nats-tester && python -m nats_tester.gate
+
+# --- gate-observer (Go) ----------------------------------------------------
+#
+# Наблюдатель ручного гейта: спрашивает decision-модели Jev и Clef, разрешено
+# ли решение агента уже задачей, ADR и политикой, и печатает P(да) каждой рядом
+# с версией модели. Решение агента от ответа не зависит — правило и точки
+# вызова в docs/development/agent-execution-loop.md, раздел «Ручной гейт».
+# Линтер берёт .golangci.yml Identity: правила Go в репозитории одни.
+
+# Живой вызов: решение на stdin, точка — ask, plan или decided. Ходит в сеть с
+# ключами TYPESAFE_API_KEY, CF_API_TOKEN и CF_ACCOUNT_ID; без ключа модель
+# пишет «недоступен», и рецепт всё равно выходит с 0. В verify не входит.
+# `-dry-run` печатает то, что уйдёт наружу, без отправки.
+gate-observe point *args="":
+    cd tools/gate-observer && go build -o bin/ .
+    tools/gate-observer/bin/gate-observer -point {{point}} {{args}}
+
+# Формат, vet, тесты на заглушке HTTP без сети и линт закреплённой версией.
+# Нужны Go и golangci-lint (`just identity-lint-tools`); входит в `verify` и в
+# джобу CI gate-observer, в `test-all` — нет. Пустой набор тестов `go test`
+# проходит зелёным, поэтому их наличие проверяется отдельно.
+gate-observer-check:
+    cd tools/gate-observer && test -z "$(gofmt -l .)" || { gofmt -l .; echo 'gofmt: файлы выше не отформатированы' >&2; exit 1; }
+    cd tools/gate-observer && go test -list . . | grep -q '^Test' || { echo 'gate-observer: тестов не найдено' >&2; exit 1; }
+    cd tools/gate-observer && go vet ./... && go test ./...
+    @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
+    cd tools/gate-observer && golangci-lint run --allow-parallel-runners --config ../../apps/identity/.golangci.yml ./...
 
 # --- Инструменты -----------------------------------------------------------
 

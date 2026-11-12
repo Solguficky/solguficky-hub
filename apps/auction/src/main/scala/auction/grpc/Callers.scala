@@ -16,6 +16,9 @@ enum Caller(val node: String) {
 
   /** Бот аукциона (ADR-044). */
   case AuctionBot extends Caller("auction-bot")
+
+  /** Notifications: участники розыгрыша и прогнозов для аудитории объявления (PER-777). */
+  case Notifications extends Caller("notifications")
 }
 
 /**

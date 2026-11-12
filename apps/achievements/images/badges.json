@@ -1,0 +1,38 @@
+[
+  {
+    "code": "auction_first_bid",
+    "rarity": "common",
+    "reach": "one_per_event",
+    "sign": "flag"
+  },
+  {
+    "code": "auction_proxy_strategist",
+    "rarity": "rare",
+    "reach": "many",
+    "sign": "gear"
+  },
+  {
+    "code": "auction_comeback",
+    "rarity": "epic",
+    "reach": "few",
+    "sign": "comeback"
+  },
+  {
+    "code": "auction_collector",
+    "rarity": "rare",
+    "reach": "few",
+    "sign": "cards"
+  },
+  {
+    "code": "auction_lucky",
+    "rarity": "common",
+    "reach": "one_per_event",
+    "sign": "ticket"
+  },
+  {
+    "code": "auction_prophet",
+    "rarity": "rare",
+    "reach": "few",
+    "sign": "crystal_ball"
+  }
+]

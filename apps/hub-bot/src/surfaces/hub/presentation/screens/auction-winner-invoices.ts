@@ -4,7 +4,6 @@ import type {
   AuctionButton,
 } from "../../../../auction-ui/index.js";
 import {
-  fulfillmentLabel,
   invoiceLabel,
   invoiceMissingParagraphs,
   invoiceMissingTitle,
@@ -15,7 +14,7 @@ import {
   invoicesTitle,
   invoiceTitle,
 } from "../../../../auction-winner-invoices.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import { type CommunityDay, communityShownTime } from "../../community-time.js";
 import {
   nextRow,
   readableMoment,
@@ -35,7 +34,7 @@ type Keyboard = readonly (readonly AuctionButton[])[];
 type View = { timeZone: string; today: CommunityDay };
 
 const moment = (view: View) => (instant: string) =>
-  readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  readableMoment(communityShownTime(instant, view.timeZone), view.today);
 
 function dataOf(keyboard: Keyboard, action: AuctionButton["action"]): string {
   const button = keyboard.flat().find((each) => each.action === action);
@@ -74,14 +73,6 @@ export function invoiceScreen(
   view: View,
 ): ShownScreen {
   const rows = new InlineKeyboard();
-  for (const button of keyboard.flat()) {
-    if (button.action === "invoice.fulfillment") {
-      nextRow(rows).text(
-        fulfillmentLabel(button.method, block.invoice.fulfillment),
-        button.callbackData,
-      );
-    }
-  }
   return {
     id: "my-invoice",
     text: screenText(

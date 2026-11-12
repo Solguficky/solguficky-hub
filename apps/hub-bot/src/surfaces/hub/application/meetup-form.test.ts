@@ -70,6 +70,9 @@ function harness({ existing = true }: { existing?: boolean } = {}) {
       kind: "ok" as const,
       meetup: snapshot,
     })),
+    reorderMaterials: vi.fn(async () => {
+      throw new Error("unexpected reorderMaterials");
+    }),
     removeMaterial: vi.fn(async () => ({
       kind: "ok" as const,
       meetup: snapshot,
@@ -261,12 +264,14 @@ describe("meetup creation form", () => {
       identity,
       empty,
       undefined,
+      false,
     );
     expect(meetups.publish).toHaveBeenNthCalledWith(
       2,
       identity,
       empty,
       undefined,
+      false,
     );
   });
 
@@ -307,6 +312,22 @@ describe("meetup creation form", () => {
     // Повтор тоже уходит в Meetups: право решает владелец ресурса, а
     // идемпотентная команда события второй раз не пишет.
     expect(meetups.publish).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards a silent first publication to Meetups", async () => {
+    const { dispatcher, meetups } = harness();
+    await dispatcher.execute({
+      identity,
+      intent: "publish-meetup",
+      meetupId: empty.id,
+      silent: true,
+    });
+    expect(meetups.publish).toHaveBeenCalledWith(
+      identity,
+      empty,
+      undefined,
+      true,
+    );
   });
 
   it("forwards an ordinary user and surfaces the Meetups refusal", async () => {

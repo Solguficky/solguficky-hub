@@ -11,6 +11,7 @@ import type {
   RaffleView,
 } from "../../auction-ui/index.js";
 import { encodeAuctionCallback } from "../../auction-ui/index.js";
+import { createLegacyBroadcastCloser } from "../../core/auction/legacy-broadcasts.js";
 import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
 import { notificationMarkup, renderNotification } from "./delivery/message.js";
@@ -699,7 +700,7 @@ const history = (entries: boolean): AuctionScreenBody => ({
 });
 
 // Лист ставки (PER-317): подтверждения, вопросы и выбор имени.
-const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
+const confirm = (command: "bid" | "proxy" | "withdraw"): AuctionScreenBody => ({
   blocks: [
     {
       kind: "confirm",
@@ -882,6 +883,9 @@ const raffles: readonly (RaffleView | undefined)[] = [
   raffleOf("open"),
   raffleOf("open", { registered: true }),
   raffleOf("closing", { registered: true }),
+  // Ручной итог (PER-799): без обещания минут и без проверки по маяку.
+  raffleOf("open", { registered: true, drawnByHand: true }),
+  raffleOf("closing", { registered: true, drawnByHand: true }),
   raffleOf("awaiting-beacon", { registered: true, ...pool }),
   raffleOf("drawn", {
     registered: true,
@@ -922,7 +926,8 @@ const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
       : []),
     ...(raffle === undefined ||
     raffle.status === "not-held" ||
-    raffle.status === "cancelled"
+    raffle.status === "cancelled" ||
+    raffle.drawnByHand === true
       ? []
       : [[{ action: "raffle.proof" as const, callbackData: "v1:auc:rp:a" }]]),
     [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],
@@ -964,7 +969,6 @@ const invoicesBody = (instructions?: string): AuctionScreenBody => ({
           ...winnerInvoice,
           invoiceId: "inv-2",
           status: "paid",
-          fulfillment: "pickup",
         },
       ],
       ...(instructions === undefined
@@ -993,29 +997,16 @@ const invoicesBody = (instructions?: string): AuctionScreenBody => ({
 
 const invoiceBody = (
   status: "awaiting-payment" | "paid" | "handed-over",
-  notice?: "fulfillment-chosen" | "fulfillment-frozen",
 ): AuctionScreenBody => ({
   blocks: [
     {
       kind: "invoice",
       auctionId: "auc-1",
-      invoice: { ...winnerInvoice, status, fulfillment: "delivery" },
+      invoice: { ...winnerInvoice, status },
       paymentInstructions: "Перевод на карту.\nСамовывоз — на сходке.",
-      ...(notice === undefined ? {} : { notice }),
     },
   ],
-  keyboard: [
-    ...(status === "handed-over"
-      ? []
-      : (["pickup", "delivery", "digital"] as const).map((method) => [
-          {
-            action: "invoice.fulfillment" as const,
-            method,
-            callbackData: `v1:auc:im:a:b:${method[0]}`,
-          },
-        ])),
-    [{ action: "invoice.back", callbackData: "v1:auc:iv:a" }],
-  ],
+  keyboard: [[{ action: "invoice.back", callbackData: "v1:auc:iv:a" }]],
 });
 
 // Регистрация принята (прогон 14.10, №69): кадр исхода с отменой и
@@ -1037,28 +1028,55 @@ const raffleRegisteredBody = (
   ],
 });
 
-const predictionResultsAuctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+const auctionResultsAuctionId = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 
-const predictionResultsBody = (
-  results: Extract<
-    AuctionScreenBody["blocks"][number],
-    { kind: "prediction-results" }
-  >["results"],
+const auctionResultsBody = (
+  results: Omit<
+    Extract<AuctionScreenBody["blocks"][number], { kind: "auction-results" }>,
+    "kind" | "auctionId"
+  >,
 ): AuctionScreenBody => ({
   blocks: [
     {
-      kind: "prediction-results",
-      auctionId: predictionResultsAuctionId,
-      results,
+      kind: "auction-results",
+      auctionId: auctionResultsAuctionId,
+      ...results,
     },
   ],
   keyboard: [
     [
       {
-        action: "prediction-results.back",
+        action: "results.back",
         callbackData: encodeAuctionCallback({
           kind: "root",
-          auctionId: predictionResultsAuctionId,
+          auctionId: auctionResultsAuctionId,
+        }),
+      },
+    ],
+  ],
+});
+
+// Статистика аукциона (PER-770): счётчики и номинации всех торгов.
+const auctionChronicleBody = (
+  chronicle: Extract<
+    AuctionScreenBody["blocks"][number],
+    { kind: "auction-chronicle" }
+  >["chronicle"],
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "auction-chronicle",
+      auctionId: auctionResultsAuctionId,
+      chronicle,
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "auction-chronicle.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: auctionResultsAuctionId,
         }),
       },
     ],
@@ -1073,7 +1091,7 @@ const dayChronicleBody = (
   >["chronicle"],
 ): AuctionScreenBody => ({
   blocks: [
-    { kind: "day-chronicle", auctionId: predictionResultsAuctionId, chronicle },
+    { kind: "day-chronicle", auctionId: auctionResultsAuctionId, chronicle },
   ],
   keyboard: [
     [
@@ -1081,7 +1099,7 @@ const dayChronicleBody = (
         action: "day-chronicle.back",
         callbackData: encodeAuctionCallback({
           kind: "root",
-          auctionId: predictionResultsAuctionId,
+          auctionId: auctionResultsAuctionId,
         }),
       },
     ],
@@ -1172,6 +1190,67 @@ const shown: readonly {
   presentation?: "plain";
   supportBotUsername?: string;
 }[] = [
+  ...(["mine", "event"] as const).flatMap((scope) =>
+    (["list", "card"] as const).map((view) => ({
+      screen: {
+        kind: "auction" as const,
+        body: {
+          blocks: [
+            {
+              kind: "achievements" as const,
+              screen: {
+                scope,
+                page: 0,
+                pages: 1,
+                items: [],
+                back: scope === "mine" ? "v1:entry:menu" : "v1:auc:rt:test",
+                ...(view === "list"
+                  ? { view: "list" as const }
+                  : {
+                      view: "card" as const,
+                      achievement: {
+                        code: "first",
+                        title: "Первая ачивка",
+                        description: "За участие",
+                        recipients: "many" as const,
+                        manual: false,
+                      },
+                      holderNames: ["Сова"],
+                      erasedHolders: 0,
+                      holdersPage: 0,
+                      holderPages: 1,
+                      back: "v1:auc:ach:test:0",
+                    }),
+              },
+            },
+          ],
+          keyboard: [],
+        },
+      },
+    })),
+  ),
+  {
+    screen: {
+      kind: "auction",
+      body: {
+        blocks: [
+          {
+            kind: "achievements",
+            screen: {
+              scope: "event",
+              view: "unavailable",
+              retry: "v1:auc:ach:test:0",
+              page: 0,
+              pages: 1,
+              items: [],
+              back: "v1:auc:rt:test",
+            },
+          },
+        ],
+        keyboard: [],
+      },
+    },
+  },
   {
     screen: {
       kind: "notify",
@@ -1317,6 +1396,7 @@ const shown: readonly {
   { screen: { kind: "auction", body: setScreen }, presentation: "plain" },
   { screen: { kind: "auction", body: confirm("bid") } },
   { screen: { kind: "auction", body: confirm("proxy") } },
+  { screen: { kind: "auction", body: confirm("withdraw") } },
   { screen: { kind: "auction", body: accepted("bid", true) } },
   { screen: { kind: "auction", body: accepted("proxy", false) } },
   { screen: { kind: "auction", body: commandResult(true) } },
@@ -1335,23 +1415,30 @@ const shown: readonly {
   {
     screen: {
       kind: "auction" as const,
-      body: predictionResultsBody({ kind: "after-final" }),
+      body: auctionResultsBody({ sold: [], unsoldCount: 0 }),
     },
   },
   {
     screen: {
       kind: "auction" as const,
-      body: predictionResultsBody({
-        kind: "counted",
-        nominations: [
+      body: auctionResultsBody({
+        sold: [
           {
-            nomination: "catalog-total-sales",
-            value: { kind: "number", value: 3_000_000 },
-            winnerNames: ["Сова*"],
-            winnerCount: 1,
-            mine: { kind: "missed", deviation: 10_000 },
+            lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d",
+            title: "Плакат",
+            price: { minorUnits: 300_000, currency: "RUB" },
+            winnerName: "Сыч*",
+            mine: false,
+          },
+          {
+            lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c",
+            price: { minorUnits: 120_000, currency: "RUB" },
+            mine: true,
           },
         ],
+        hiddenSold: 3,
+        unsoldCount: 1,
+        total: { minorUnits: 420_000, currency: "RUB" },
       }),
     },
   },
@@ -1375,6 +1462,53 @@ const shown: readonly {
       body: dayChronicleBody({ kind: "no-bids" }),
     },
   },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: auctionChronicleBody({
+        kind: "counted",
+        bidCount: 42,
+        participantCount: 12,
+        tradedLotCount: 8,
+        lotCount: 10,
+        growthRecord: {
+          title: "Плакат",
+          growth: { minorUnits: 500_000, currency: "RUB" },
+        },
+        contested: { title: "Кружка с совой", leaderChanges: 5 },
+        // Лот без названия: оболочка подставит «лот без названия».
+        duel: { longestDuel: 4 },
+      }),
+    },
+  },
+  {
+    screen: {
+      kind: "auction" as const,
+      body: auctionChronicleBody({ kind: "no-bids" }),
+    },
+  },
+  // Промо-видео (PER-774): подпись копии поста и «‹ Аукцион».
+  {
+    screen: {
+      kind: "auction" as const,
+      body: {
+        blocks: [
+          { kind: "promo", auctionId: auctionResultsAuctionId, postId: 42 },
+        ],
+        keyboard: [
+          [
+            {
+              action: "promo.back",
+              callbackData: encodeAuctionCallback({
+                kind: "root",
+                auctionId: auctionResultsAuctionId,
+              }),
+            },
+          ],
+        ],
+      },
+    },
+  },
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleProofBody(raffle) },
   })),
@@ -1384,13 +1518,13 @@ const shown: readonly {
   {
     screen: {
       kind: "auction",
-      body: invoiceBody("paid", "fulfillment-chosen"),
+      body: invoiceBody("paid"),
     },
   },
   {
     screen: {
       kind: "auction",
-      body: invoiceBody("handed-over", "fulfillment-frozen"),
+      body: invoiceBody("handed-over"),
     },
   },
   {
@@ -1587,6 +1721,32 @@ const notifications = [
   };
 });
 
+// Сообщение трансляции прежней выкладки (PER-826), которое бот правит один раз
+// и говорит, куда слежение переехало (PER-837).
+const bidWatch = await (async () => {
+  const sent: { method: string; payload: unknown }[] = [];
+  const closer = createLegacyBroadcastCloser({
+    api: {
+      editMessageText: async (
+        chatId: number,
+        messageId: number,
+        text: string,
+        other?: object,
+      ) => {
+        sent.push({
+          method: "editMessageText",
+          payload: { chat_id: chatId, message_id: messageId, text, ...other },
+        });
+        return true;
+      },
+    } as never,
+    mark: screenMark("bid-watch"),
+    report: () => {},
+  });
+  await closer.close({ chatId: 42, messageId: 1 });
+  return sent;
+})();
+
 function brokenRules(): Map<ScreenId, Set<string>> {
   const broken = new Map<ScreenId, Set<string>>();
   const calls: [ScreenId, string, unknown][] = [
@@ -1598,6 +1758,11 @@ function brokenRules(): Map<ScreenId, Set<string>> {
       "notification",
       "sendMessage",
       call,
+    ]),
+    ...bidWatch.map((call): [ScreenId, string, unknown] => [
+      "bid-watch",
+      call.method,
+      call.payload,
     ]),
   ];
   for (const [id, method, payload] of calls) {

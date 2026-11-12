@@ -5,7 +5,9 @@ import {
   createLiveScreens,
   type LiveScreenEntry,
   type LiveScreenShown,
+  type LiveScreenStore,
   type LiveScreens,
+  type LiveScreenTarget,
 } from "./live-screens.js";
 import {
   type ConsoleScreenView,
@@ -45,18 +47,25 @@ export const LIVE_CONSOLES_LIMIT = 200;
 export function createLiveConsoles(options: {
   watches: AuctionWatches;
   limiter: EditLimiter;
-  read: (entry: LiveConsoleEntry) => Promise<LiveConsoleRead>;
+  read: (target: LiveScreenTarget) => Promise<LiveConsoleRead>;
   edit: (
     entry: LiveConsoleEntry,
     screen: ShownScreen,
   ) => Promise<LiveEditOutcome>;
   limit?: number;
+  store?: LiveScreenStore;
+  restorePauses?: readonly number[];
 }): LiveConsoles {
   return createLiveScreens<ConsoleScreenView>(
     {
       key: "console",
       live: liveConsole,
       auctionOf: (view) => view.console.auctionId,
+      params: (view) => ({
+        page: view.page,
+        sort: view.sort,
+        ...(view.media === true ? { media: true } : {}),
+      }),
       versions: (view) =>
         new Map(
           view.console.lots.map((each) => [each.lot.lotId, each.lot.version]),
@@ -76,6 +85,10 @@ export function createLiveConsoles(options: {
       },
       edit: options.edit,
       limit: options.limit ?? LIVE_CONSOLES_LIMIT,
+      ...(options.store === undefined ? {} : { store: options.store }),
+      ...(options.restorePauses === undefined
+        ? {}
+        : { restorePauses: options.restorePauses }),
     },
   );
 }

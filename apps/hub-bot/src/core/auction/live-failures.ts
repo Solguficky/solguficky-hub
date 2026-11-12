@@ -52,3 +52,45 @@ export function reportLiveConsoleFailure(logger: Logger, error: string): void {
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
+
+// Экраны, открытые до рестарта (PER-815): исход восстановления записи
+// хранилища. Нечитаемый экран остаётся замёрзшим до первого нажатия, и запись
+// об этом нужна, чтобы это было видно в логах.
+export function reportLiveRestore(
+  logger: Logger,
+  screen: "console" | "floor",
+  outcome: "restored" | "refused" | "unreadable",
+): void {
+  if (outcome === "unreadable") {
+    countFailure("dependency_unavailable");
+    logger.warn("live screen restore failed", {
+      operation: "restore_live_screen",
+      result: "error",
+      error_category: "dependency_unavailable",
+      error: `${screen}: unreadable`,
+    });
+    return;
+  }
+  logger.info("live screen restored", {
+    operation: "restore_live_screen",
+    result: "ok",
+    screen,
+    outcome,
+  });
+}
+
+// Хранилище открытых живых экранов (PER-815) недоступно: экраны живут, пока
+// жив процесс, и рестарт их снова теряет — запись нужна, чтобы это было видно.
+export function reportLiveStoreFailure(
+  logger: Logger,
+  operation: "connect" | "save" | "remove" | "list",
+  cause: unknown,
+): void {
+  countFailure("dependency_unavailable");
+  logger.warn("live screen store failed", {
+    operation: `live_screen_store_${operation}`,
+    result: "error",
+    error_category: "dependency_unavailable",
+    error: messageOf(cause),
+  });
+}

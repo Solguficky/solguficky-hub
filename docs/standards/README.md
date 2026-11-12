@@ -12,6 +12,7 @@ Standards — канонические нормативы для реализа�
 | [testing/naming.md](testing/naming.md) | форма имени теста, файла и группы в Go, TypeScript, F#, C# и Scala |
 | [languages/fsharp.md](languages/fsharp.md) | типы, эффекты, ошибки, interop и порядок компиляции F# |
 | [languages/scala.md](languages/scala.md) | версии и сборка, типы, чистое ядро, ошибки, граница с Pekko и interop ScalaPB |
+| [languages/elixir.md](languages/elixir.md) | сборка, процессы и супервизия, конфигурация, отказы, outbox и Protobuf в Elixir |
 | [data/postgresql.md](data/postgresql.md) | рекомендованный набор для PostgreSQL в .NET: DbUp, Dapper, база на сервис |
 | [architecture/functional-slices.md](architecture/functional-slices.md) | устройство F#-приложения из срезов: чистое ядро, зависимости, error flow, границы |
 | [observability/logging.md](observability/logging.md) | каркас полей структурной записи, correlation и privacy |

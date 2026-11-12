@@ -35,6 +35,7 @@ import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
+import auction.v1.auction_service.GetAuctionChronicleRequest
 import auction.v1.auction_service.GetAuctionDayChronicleRequest
 import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetLotImageRequest
@@ -172,6 +173,16 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       RequestMapping.getAuctionDayChronicle(GetAuctionDayChronicleRequest(None, meetupAuction)).isLeft shouldBe true
     }
 
+    "maps the chronicle of the whole auction to the auction of a meetup" in {
+      val query = RequestMapping.getAuctionChronicle(GetAuctionChronicleRequest(Some(viewer), meetupAuction)).value
+
+      query.auctionId.value.toString shouldBe meetupAuction
+      query.acting.viewer.rights shouldBe Set(AccessRight.PlaceBids)
+      RequestMapping.getAuctionChronicle(GetAuctionChronicleRequest(Some(viewer), lot)).left.value shouldBe
+        FormError("auction_id")
+      RequestMapping.getAuctionChronicle(GetAuctionChronicleRequest(None, meetupAuction)).isLeft shouldBe true
+    }
+
     "names new_ask as the invalid field of an ask without an amount" in {
       RequestMapping.advanceAsk(validAsk.clearNewAsk).left.value shouldBe FormError("new_ask")
     }
@@ -205,7 +216,8 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
           AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS,
           AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS,
           AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS,
-          AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS
+          AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS,
+          AccessRightMessage.ACCESS_RIGHT_ORGANIZE_MEETUPS
         )
       )
       RequestMapping.acting(Some(all)).value.viewer.rights shouldBe AccessRight.values.toSet

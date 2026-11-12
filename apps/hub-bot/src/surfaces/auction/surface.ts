@@ -1,16 +1,26 @@
+import { reportAchievementsFailure } from "../../core/achievements/failures.js";
+import { createLegacyBroadcastStore } from "../../core/auction/legacy-broadcasts-kv.js";
 import {
   reportLiveEditFailure,
   reportWatchFailure,
 } from "../../core/auction/live-failures.js";
+import { createLiveKvLink } from "../../core/auction/live-kv-link.js";
 import { createAuctionWatches } from "../../core/auction/watch.js";
+import { createWatchStore } from "../../core/auction/watch-kv.js";
 import { createEditLimiter } from "../../core/bot/edit-limiter.js";
 import {
   createDeliverNotification,
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
+import { createMediaChat } from "../../core/media-chat.js";
 import { logMissingTitle } from "../../core/notifications/lot-notice.js";
+import {
+  createAnnouncementPhotos,
+  logMissingAnnouncementPhoto,
+} from "../../core/notifications/organizer-announcement.js";
 import type { SurfaceDefinition } from "../../core/process.js";
+import { serviceNames } from "../../core/service.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createBot } from "./bot.js";
 import { createClients } from "./clients.js";
@@ -39,6 +49,15 @@ export const auctionSurface: SurfaceDefinition = ({
   if (!loaded.ok) return loaded;
   const auction = loaded.config;
   const clients = createClients({
+    onAchievementsRefused: (cause, meta) =>
+      reportAchievementsFailure({
+        logger,
+        cause,
+        ...(meta === undefined ? {} : { meta }),
+      }),
+    ...(auction.achievementsUrl === undefined
+      ? {}
+      : { achievementsUrl: auction.achievementsUrl }),
     identityUrl: config.identityUrl,
     auctionUrl: auction.auctionUrl,
     ...(auction.notificationsUrl === undefined
@@ -93,13 +112,36 @@ export const auctionSurface: SurfaceDefinition = ({
         "unexpected",
       ),
   });
+  // Трансляция хода торгов (PER-826): запись открытых сообщений лежит в
+  // bucket'е, который объявляет платформа; нет шины или bucket'а — трансляция
+  // живёт, пока жив процесс.
+  const liveLink = createLiveKvLink({
+    url: config.natsUrl,
+    service: serviceNames.auction,
+    logger,
+  });
+  // Чат медиа ботов (PER-775): своё фото или видео объявления (PER-776) и
+  // промо-видео аукциона (PER-774). Без `BOT_MEDIA_CHANNEL_ID` его нет.
+  const mediaChat =
+    config.mediaChannelId === undefined
+      ? undefined
+      : createMediaChat({ channelId: config.mediaChannelId, logger });
   const bot = createBot({
     token: config.token,
     environment: config.environment,
     tracing,
     presentation: config.presentation,
-    ports: clients.ports,
+    // Корень аукциона ставит «🎬 Промо», только когда пост есть чем показать.
+    ports:
+      mediaChat === undefined
+        ? clients.ports
+        : (requestId, deadlineAt) => ({
+            ...clients.ports(requestId, deadlineAt),
+            media: true as const,
+          }),
+    ...(mediaChat === undefined ? {} : { media: mediaChat }),
     faq: auction.faq,
+    hall: auction.hall,
     logger,
     ...(auction.supportBotUsername === undefined
       ? {}
@@ -108,6 +150,8 @@ export const auctionSurface: SurfaceDefinition = ({
     live: {
       watches,
       limiter,
+      watchStore: createWatchStore(liveLink, logger),
+      legacyBroadcasts: createLegacyBroadcastStore(liveLink, logger),
       // Имена правки вне update: свой `request_id` у каждого чтения.
       names: {
         getDisplayNames: (request) =>
@@ -115,8 +159,22 @@ export const auctionSurface: SurfaceDefinition = ({
       },
     },
   });
+  // Фото лота объявления аукциона (PER-765) — правами получателя: адресата
+  // выбрал издатель по праву ставок, а без него Auction фото не отдаёт.
+  const announcementPhotos = createAnnouncementPhotos(
+    (photo, identityId) =>
+      clients.ports(createUuidV7()).image.getLotPhoto({
+        viewer: { identityId, rights: ["place-bids"] },
+        ...photo,
+      }),
+    logMissingAnnouncementPhoto(logger),
+  );
+  // Своё фото или видео объявления (PER-776) — пост чата медиа ботов; без
+  // `BOT_MEDIA_CHANNEL_ID` объявление с постом уходит текстом.
   const sender = createNotificationSender(
     createNotificationApi(config.token, config.environment),
+    announcementPhotos,
+    mediaChat,
   );
   return {
     ok: true,
@@ -144,6 +202,7 @@ export const auctionSurface: SurfaceDefinition = ({
       close() {
         limiter.close();
         watches.close();
+        void liveLink.close();
         clients.close();
       },
     },

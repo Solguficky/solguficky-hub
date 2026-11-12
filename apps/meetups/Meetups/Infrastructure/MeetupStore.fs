@@ -230,7 +230,7 @@ let commit
                         meetup_id = row.Id
                         version = row.Version
                         event_type = MeetupEventPayload.eventType event
-                        payload = MeetupEventPayload.ofSnapshot snapshot
+                        payload = MeetupEventPayload.ofEvent event snapshot
                         performed_by = performedBy
                         occurred_at = envelope.OccurredAt
                         // Явный NULL, а не отсутствие параметра: Dapper не отличает

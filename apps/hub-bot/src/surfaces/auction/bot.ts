@@ -1,5 +1,7 @@
 import { type Bot, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
+import type { HallLinks } from "../../auction-hall.js";
+import { promoUnavailableText } from "../../auction-promo.js";
 import {
   type AuctionPort,
   encodeAuctionCallback,
@@ -9,11 +11,19 @@ import {
   type Viewer,
 } from "../../auction-ui/index.js";
 import {
+  closeLegacyBroadcasts,
+  createLegacyBroadcastCloser,
+  LEGACY_BROADCAST_STOP_DATA,
+} from "../../core/auction/legacy-broadcasts.js";
+import type { LegacyBroadcastStore } from "../../core/auction/legacy-broadcasts-kv.js";
+import {
   createLiveCards,
+  keepWatching,
   type LiveCardEntry,
   type LiveEditOutcome,
   liveCardOf,
   liveEditFailure,
+  type WatchStore,
 } from "../../core/auction/live-cards.js";
 import { reportLiveEditFailure } from "../../core/auction/live-failures.js";
 import {
@@ -22,6 +32,7 @@ import {
   richPhotoFileIds,
   richPhotoId,
 } from "../../core/auction/lot-photos.js";
+import { auctionRootFrom } from "../../core/auction/origin.js";
 import type { AuctionWatches } from "../../core/auction/watch.js";
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
@@ -30,6 +41,7 @@ import type { Presentation, TelegramEnvironment } from "../../core/config.js";
 import { carriesPersonContent, createHintedAlbums } from "../../core/entry.js";
 import { countFailure } from "../../core/failures.js";
 import type { LogFields, Logger } from "../../core/logging.js";
+import type { MediaChat } from "../../core/media-chat.js";
 import type { Tracing } from "../../core/tracing.js";
 import type { PortsFactory } from "./clients.js";
 import { isTraceCallback, parseTraceCallback } from "./delivery/message.js";
@@ -78,12 +90,17 @@ export type BotOptions = {
   ports: PortsFactory;
   logger: Logger;
   faq?: FaqContent;
+  // Стрим и экран финала (PER-825, PER-832): ряд кнопок-URL в корне аукциона.
+  hall?: HallLinks;
   // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку
   // «Написать в поддержку ↗» (PER-625, ADR-068). Нет — кнопки нет.
   supportBotUsername?: string;
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
   photos?: PhotoCache;
+  // Чат медиа ботов (PER-774): промо-видео аукциона — копия поста. Нет — на
+  // «🎬 Промо» бот отвечает «видео недоступно».
+  media?: MediaChat;
   // Открытые вопросы чатов; по умолчанию своя память процесса.
   questions?: QuestionMemory;
   // Тесты передают его, чтобы не звать getMe.
@@ -94,6 +111,12 @@ export type BotOptions = {
     watches: AuctionWatches;
     limiter: EditLimiter;
     names: Pick<AuctionPort, "getDisplayNames">;
+    // Записи карточек лота в слежении (PER-837); нет — слежение живёт, пока
+    // жив процесс.
+    watchStore?: WatchStore;
+    // Записи отдельных сообщений трансляции прежней выкладки (PER-826): бот
+    // закрывает их один раз после старта.
+    legacyBroadcasts?: LegacyBroadcastStore;
   };
 };
 
@@ -116,6 +139,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ? {}
         : { presentation: options.presentation }),
       ...(options.faq === undefined ? {} : { faq: options.faq }),
+      ...(options.hall === undefined ? {} : { hall: options.hall }),
       ...(options.supportBotUsername === undefined
         ? {}
         : { supportBotUsername: options.supportBotUsername }),
@@ -128,6 +152,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       ? undefined
       : createLiveCards({
           ...options.live,
+          ...(options.live.watchStore === undefined
+            ? {}
+            : { store: options.live.watchStore }),
           edit: (card, body) =>
             editLiveCard(bot.api, {
               card,
@@ -136,8 +163,46 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
               logger,
             }),
         });
+  // Слежение, включённое до рестарта (PER-837): карточки читаются из записи и
+  // правятся дальше.
+  void liveCards?.restore();
+  // Отдельные сообщения трансляции прежней выкладки (PER-826): слежение
+  // переехало на карточку, и их правят один раз.
+  const legacyCloser = createLegacyBroadcastCloser({
+    api: bot.api,
+    mark: screenMark("bid-watch"),
+    report: (error) => reportLiveEditFailure(logger, error),
+  });
+  if (options.live?.legacyBroadcasts !== undefined) {
+    void closeLegacyBroadcasts({
+      store: options.live.legacyBroadcasts,
+      closer: legacyCloser,
+    }).catch(() => {});
+  }
   // Что показало сообщение: карточку финала реестр запоминает, другой экран в
   // том же сообщении её вытесняет (PER-336).
+  const retainFollow = (
+    ctx: UpdateContext,
+    outcome: RouteOutcome,
+  ): RouteOutcome => {
+    const chatId = ctx.chat?.id;
+    if (
+      liveCards === undefined ||
+      chatId === undefined ||
+      outcome.screen.kind !== "auction" ||
+      !liveCards.watching(chatId)
+    ) {
+      return outcome;
+    }
+    return {
+      ...outcome,
+      screen: {
+        ...outcome.screen,
+        body: keepWatching(outcome.screen.body),
+      },
+    };
+  };
+
   const observe = (
     ctx: UpdateContext,
     messageId: number | undefined,
@@ -153,6 +218,21 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ? liveCardOf(outcome.screen.body, outcome.viewer)
         : undefined,
     );
+    if (outcome.screen.kind === "auction") {
+      for (const block of outcome.screen.body.blocks) {
+        if (
+          block.kind === "accepted" &&
+          block.command === "proxy" &&
+          block.liveFinal === true
+        ) {
+          liveCards.proxyLimitSet({
+            chatId,
+            lotId: block.lotId,
+            amount: block.amount,
+          });
+        }
+      }
+    }
   };
 
   // Только личный чат: в группе бот аукциона молчит.
@@ -172,7 +252,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     waiting.begin();
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
-      const outcome = await input.route(ports);
+      const outcome = retainFollow(ctx, await input.route(ports));
       // Команда бросает открытые вопросы чата (дизайн-код, «Вопросы»).
       await dropQuestions(ctx, questions);
       const shown = await deliver(ctx, {
@@ -260,6 +340,16 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     }),
   );
 
+  // «Не следить» под сообщением трансляции прежней выкладки (PER-826): у
+  // сообщения нечем ходить в поток, и оно говорит, куда слежение переехало.
+  direct.callbackQuery(LEGACY_BROADCAST_STOP_DATA, async (ctx) => {
+    const messageId = ctx.callbackQuery.message?.message_id;
+    if (messageId !== undefined) {
+      await legacyCloser.close({ chatId: ctx.chat.id, messageId });
+    }
+    await ctx.answerCallbackQuery().catch(() => undefined);
+  });
+
   direct.on("callback_query:data", async (ctx) => {
     // Ответ на нажатие уходит вместе с результатом, а не до похода к
     // сервисам: пока его нет, клиент сам крутит индикатор на кнопке
@@ -287,10 +377,45 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         firstName: ctx.from.first_name,
         data,
       });
+      if (outcome.screen.kind === "unavailable") {
+        const back = auctionRootFrom([
+          data,
+          ...(ctx.callbackQuery.message?.reply_markup?.inline_keyboard.flatMap(
+            (row) =>
+              row.flatMap((button) =>
+                "callback_data" in button ? [button.callback_data] : [],
+              ),
+          ) ?? []),
+        ]);
+        if (back !== undefined) outcome.screen = { ...outcome.screen, back };
+      }
+      outcome = retainFollow(ctx, outcome);
       const screen = render(outcome.screen);
       // Подтверждение выбора уходит ответом на нажатие до показа экрана:
       // показ ответил бы на нажатие сам, без текста.
       if (outcome.toast !== undefined) await waiting.answer(outcome.toast);
+      // Промо-видео (PER-774): копия поста новым сообщением, а экран, с
+      // которого нажали, остаётся. Поста нет или Telegram его не отдал —
+      // ответ на нажатие «видео недоступно», и корень цел.
+      if (screen.promo !== undefined) {
+        const { postId } = screen.promo;
+        const sent =
+          postId === undefined || options.media === undefined
+            ? undefined
+            : await options.media.show(ctx.api, ctx.chat.id, postId, {
+                caption: screen.text,
+                format: "HTML",
+                markup: markupOf(screen).reply_markup,
+                mark: screenMark(screen.id),
+              });
+        if (sent?.kind !== "shown") {
+          await waiting.answer(promoUnavailableText);
+          logger.info("auction promo video unavailable", {
+            request_id: ctx.requestId,
+          });
+        }
+        return;
+      }
       const delivery = {
         screen,
         photos,
@@ -407,12 +532,15 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
       const { text } = ctx.message;
-      outcome = await routeAuctionReply({
-        ports,
-        user: userOf(ctx.from),
-        data: data.callback_data,
-        ...(text === undefined ? {} : { text }),
-      });
+      outcome = retainFollow(
+        ctx,
+        await routeAuctionReply({
+          ports,
+          user: userOf(ctx.from),
+          data: data.callback_data,
+          ...(text === undefined ? {} : { text }),
+        }),
+      );
       const screen = render(outcome.screen);
       if (screen.asks === true) {
         // Отвергнутый ответ: новый вопрос с причиной, прежний — после него.
@@ -740,9 +868,11 @@ async function deliver(
     input.keepCurrent === true ? undefined : ctx.callbackQuery?.message;
   // Текст у сообщения с файлом Telegram править не даёт: под ним экран
   // приходит новым сообщением, а само оно остаётся в чате без клавиатуры —
-  // действовать можно только на новом экране.
+  // действовать можно только на новом экране. Видео — промо-видео аукциона
+  // (PER-774) с «‹ Аукцион».
   const legacy =
-    current !== undefined && ("photo" in current || "document" in current);
+    current !== undefined &&
+    ("photo" in current || "document" in current || "video" in current);
   let editable = current !== undefined && !legacy;
   const leave = async () => {
     if (legacy) await clearKeyboard(ctx);

@@ -5,9 +5,16 @@ import {
   type OutbidFrequency,
 } from "../../../core/notifications/outbid.js";
 import type {
+  AnnouncementAudience,
+  AnnouncementTemplate,
+  ButtonChoice,
+} from "../application/auction-announcements.js";
+import type {
   CloseQuote,
+  ConsoleSection,
   ConsoleSort,
   FormField,
+  HappyHourField,
   InvoiceMark,
   LaunchDraft,
   LineupPick,
@@ -344,10 +351,10 @@ type PlainAction =
   // о названии. `from` — кнопка стоит в «Сходках» (№45), и «Отмена» вопроса
   // ведёт туда, а не в группу «Сходки и объявления».
   | { kind: "create-meetup"; token: string; from?: "meetups" }
-  // Команда публикации. С версией — «Да» подтверждения с черновика (решение
-  // владельца 10 октября 2026 года); без версии — «Да, опубликовать» кадра
-  // конфликта и кнопки, оставшиеся в чатах до подтверждения.
-  | { kind: "publish-meetup"; token: string; version?: number }
+  // Команда публикации. С версией — выбор с черновика; без версии — кадр
+  // конфликта и кнопки, оставшиеся в чатах до выбора. `silent` — без вести
+  // о новой сходке; отсутствие — оповестить.
+  | { kind: "publish-meetup"; token: string; version?: number; silent?: true }
   | { kind: "manage-edit"; token: string }
   | { kind: "manage-field"; token: string; field: FormField }
   // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
@@ -389,6 +396,19 @@ type PlainAction =
   // «Удалить лот» и «Да» его подтверждения (PER-716).
   | { kind: "lot-remove"; lot: string }
   | { kind: "lot-remove-confirm"; lot: string }
+  // «Счастливые часы» лота (PER-787): периоды аукциона с условиями лота,
+  // условия в периоде, вопрос о стартовой (`t`) или шаге (`s`) и снятие.
+  // Период кнопка называет номером и отпечатком, как окно; аукцион лота
+  // читается из снимка лота.
+  | { kind: "lot-happy-hours"; lot: string }
+  | { kind: "lot-happy-hour"; lot: string; period: WindowRef }
+  | {
+      kind: "lot-happy-hour-ask";
+      lot: string;
+      period: WindowRef;
+      field: HappyHourField;
+    }
+  | { kind: "lot-happy-hour-clear"; lot: string; period: WindowRef }
   // Выбор способа шага (PER-491): цена и режим едут в кнопке, чтобы рестарт
   // не терял цену.
   | {
@@ -416,7 +436,15 @@ type PlainAction =
   | { kind: "lot-view"; lot: string }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
   // финала — ещё лот и страницу пульта, на которую вернуться.
-  | { kind: "console-view"; auction: string; page: number; sort: ConsoleSort }
+  // Разделы под пультом (PER-802) — та же кнопка вида с разделом: «Финал»
+  // листается и сортируется, как пульт.
+  | {
+      kind: "console-view";
+      auction: string;
+      page: number;
+      sort: ConsoleSort;
+      section?: ConsoleSection;
+    }
   | { kind: "console-week"; auction: string }
   // Розыгрыш (PER-593): вопрос о моменте и снятие момента.
   | { kind: "console-raffle"; auction: string }
@@ -489,6 +517,23 @@ type PlainAction =
       auction: string;
       print: string;
     }
+  // Фото приза идущего розыгрыша (PER-773): экран фото, вопрос о фото,
+  // подтверждение снятия и «Да» снятия; ключ снятия — на нажатие.
+  | { kind: "console-raffle-prize-photo"; auction: string }
+  | { kind: "console-raffle-prize-photo-ask"; auction: string }
+  | { kind: "console-raffle-prize-photo-remove"; auction: string }
+  | { kind: "console-raffle-prize-photo-remove-confirm"; auction: string }
+  // Промо-видео аукциона (PER-774): экран, вопрос о видео, подтверждение
+  // снятия и «Да»; ключ снятия рождается на нажатие «Да».
+  | { kind: "console-promo-video"; auction: string }
+  | { kind: "console-promo-video-ask"; auction: string }
+  | { kind: "console-promo-video-remove"; auction: string }
+  | { kind: "console-promo-video-remove-confirm"; auction: string }
+  // Объявление аукциона (PER-765): меню, выбор окна и лота, вопрос о тексте,
+  // кнопка, фото и «Отправить N». Текст едет в сообщении бота, кнопки несут
+  // его отпечаток; лот — номером в реестре по порядку заведения, фото — номером
+  // у лота с нуля.
+  | AnnouncementAction
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -499,6 +544,17 @@ type PlainAction =
       selected: boolean;
     }
   | { kind: "console-window-remove"; auction: string; window: WindowRef }
+  // Периоды «Счастливых часов» (PER-787): список, вопрос о сроках нового,
+  // период, подтверждение удаления и «Да» с ключом, рождённым на нажатие.
+  | { kind: "console-periods"; auction: string }
+  | { kind: "console-period-ask"; auction: string }
+  | { kind: "console-period"; auction: string; period: WindowRef }
+  | { kind: "console-period-remove"; auction: string; period: WindowRef }
+  | {
+      kind: "console-period-remove-confirm";
+      auction: string;
+      period: WindowRef;
+    }
   // Сеты лотов (PER-509): список, вопрос о названии нового сета, сет на
   // странице лотов, лот в сете и вне его, подтверждение удаления и «Да». Сет
   // кнопка называет номером и отпечатком, как окно.
@@ -573,6 +629,7 @@ type PlainAction =
   // нуля: токен лота рядом с аукционом и ключом в 64 байта не помещается.
   | { kind: "console-start-final"; auction: string }
   | { kind: "console-next-lot"; auction: string }
+  | { kind: "console-open-ask"; auction: string }
   | { kind: "console-ask"; auction: string; position: number }
   | { kind: "console-close"; auction: string; position: number }
   // «Да» подтверждения закрытия: ключ рождён, когда подтверждение показано.
@@ -589,6 +646,9 @@ type PlainAction =
   // человек и цена рядом с аукционом в 64 байта не помещаются.
   | { kind: "console-floor"; auction: string; page: number }
   | { kind: "console-floor-search"; auction: string }
+  | { kind: "console-floor-edit"; auction: string }
+  | { kind: "console-floor-add"; auction: string; member: string }
+  | { kind: "console-floor-remove"; auction: string; member: string }
   | {
       kind: "console-floor-pick";
       lot: string;
@@ -615,9 +675,14 @@ type PlainAction =
       person: string;
       version: number;
     }
-  // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
+  // «Опубликовать»: выбор, оповестить или нет. Источник решает, куда вернёт «Отмена».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
-  | { kind: "manage-confirm-publish"; token: string; version: number }
+  | {
+      kind: "manage-confirm-publish";
+      token: string;
+      version: number;
+      silent?: true;
+    }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string; version?: number }
   | { kind: "manage-cancel"; token: string }
@@ -652,6 +717,14 @@ type PlainAction =
   // «Ввести дату»: даты среди заготовок нет, и её спрашивают текстом.
   | { kind: "manage-type-schedule"; token: string; mode: WhenMode }
   | { kind: "manage-materials"; token: string; page?: number }
+  | { kind: "material-edge"; token: string }
+  | {
+      kind: "move-material";
+      token: string;
+      materialToken: string;
+      direction: "up" | "down";
+      version: number;
+    }
   | { kind: "begin-attach-material"; token: string }
   // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
   // файлом остаётся следом с подписью, что прикрепления не было.
@@ -736,8 +809,96 @@ type PlainAction =
 /** Откуда нажата «Создать сходку»: группа управления или «Сходки». */
 export type NewMeetupOrigin = "manage" | "meetups";
 
+/** Кнопки объявления аукциона (PER-765): шаги без состояния. */
+export type AnnouncementAction =
+  | { kind: "console-announcement"; auction: string }
+  | { kind: "console-announcement-windows"; auction: string }
+  | { kind: "console-announcement-lots"; auction: string; page: number }
+  | {
+      kind: "console-announcement-ask";
+      auction: string;
+      template: AnnouncementTemplate;
+      ref?: number;
+    }
+  // `audience` (PER-779) — последняя часть кнопки; у кнопок до неё её нет, и
+  // они значат «всем».
+  | {
+      kind: "console-announcement-button";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      audience: AnnouncementAudience;
+      lot?: number;
+    }
+  | {
+      kind: "console-announcement-photo";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      audience: AnnouncementAudience;
+      lot?: number;
+      photo?: number;
+    }
+  // «Своё фото или видео» шага фото (PER-776): вопрос о медиа.
+  | {
+      kind: "console-announcement-media";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      audience: AnnouncementAudience;
+      lot?: number;
+    }
+  // «Отправить N» и шаг «Кому» (PER-779) — одной формы: кнопка аудитории
+  // ведёт к предпросмотру, а «Нет» подтверждения — обратно в «Кому».
+  | ({ kind: "console-announcement-send" } & AnnouncementSendStep)
+  | ({ kind: "console-announcement-audience" } & AnnouncementSendStep)
+  | ({ kind: "console-announcement-recipients" } & AnnouncementSendStep);
+
+type AnnouncementSendStep = {
+  auction: string;
+  button: ButtonChoice;
+  print: string;
+  audience: AnnouncementAudience;
+  lot?: number;
+  photo?: number;
+  // Только у «Отправить»: отпечаток `photoId` фото предпросмотра (PER-792).
+  photoPrint?: string;
+  post?: number;
+};
+
 /** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
 export type QuestionStep =
+  // Своё фото или видео объявления (PER-776): выбор кнопки, отпечаток текста
+  // и лот шаблона; сам текст едет хвостом вопроса, как в кадре шага.
+  | {
+      kind: "console-announcement-media";
+      auction: string;
+      button: ButtonChoice;
+      print: string;
+      audience: AnnouncementAudience;
+      lot?: number;
+    }
+  // Видео промо аукциона (PER-774): аукцион; ответ — видео, а не текст.
+  | { kind: "console-promo-video"; auction: string }
+  // Сроки нового периода «Счастливых часов» (PER-787): аукцион, а сроки
+  // недели ответ читает у Auction заново.
+  | { kind: "console-period"; auction: string }
+  // Стартовая или шаг лота в периоде (PER-787): лот, период номером и
+  // отпечатком и что спрошено; прежние условия ответ читает заново.
+  | {
+      kind: "happy-hour-lot";
+      lot: string;
+      period: WindowRef;
+      field: HappyHourField;
+    }
+  // Текст объявления аукциона (PER-765): аукцион, шаблон и номер окна или лота
+  // шаблона; черновик ответ читает у Auction заново.
+  | {
+      kind: "console-announcement";
+      auction: string;
+      template: AnnouncementTemplate;
+      ref?: number;
+    }
   // `fresh` — вопрос о названии новой сходки с кнопки «Создать сходку»
   // (прогон 14.10, №14): сходки ещё нет, её рождает ответ. Значение — откуда
   // задан вопрос: группа «Сходки и объявления» (`fg`) или «Сходки» (`fn`);
@@ -806,6 +967,9 @@ export type QuestionStep =
   // Новый приз идущего розыгрыша (PER-737): аукцион, а текущий приз ответ
   // читает у Auction заново.
   | { kind: "console-raffle-prize-change"; auction: string }
+  // Фото приза идущего розыгрыша (PER-773): аукцион, а можно ли ещё ставить
+  // фото, ответ читает у Auction заново.
+  | { kind: "console-raffle-prize-photo"; auction: string }
   // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
   // Auction заново.
   | { kind: "console-raffle-prize"; auction: string }
@@ -978,6 +1142,36 @@ export function consoleViewData(
   return `v1:ac:v:${auction}:${page}:${consoleSortToken(sort)}`;
 }
 
+/** Экран «Розыгрыш» под пультом (PER-802): момент, приз, фото и итог. */
+export function consoleRaffleScreenData(auction: string): string {
+  return `v1:ac:rs:${auction}`;
+}
+
+/**
+ * Экран «Финал» под пультом (PER-802): отбор лотов и время финала. Страница и
+ * сортировка — как у пульта, первая страница по умолчанию — без них.
+ */
+export function consoleFinalScreenData(
+  auction: string,
+  page = 0,
+  sort: ConsoleSort = defaultConsoleSort,
+): string {
+  if (sort.metric === "bids" && sort.direction === "descending") {
+    return page === 0 ? `v1:ac:fl:${auction}` : `v1:ac:fl:${auction}:${page}`;
+  }
+  return `v1:ac:fl:${auction}:${page}:${consoleSortToken(sort)}`;
+}
+
+/** Экран «Оплата» под пультом (PER-834): текст и срок оплаты в одном месте. */
+export function consolePaymentScreenData(auction: string): string {
+  return `v1:ac:ps:${auction}`;
+}
+
+/** Экран «Ещё» под пультом (PER-802): снятие с публикации, удаление, отмена. */
+export function consoleMoreData(auction: string): string {
+  return `v1:ac:es:${auction}`;
+}
+
 /** «Сроки недели»: вопрос о начале и конце онлайн-недели. */
 export function consoleWeekData(auction: string): string {
   return `v1:ac:w:${auction}`;
@@ -1059,12 +1253,371 @@ export function consoleRafflePrizeChangeData(auction: string): string {
   return `v1:ac:rn:${auction}`;
 }
 
+/** Экран промо-видео аукциона (PER-774) из пульта (PER-802). */
+export function consolePromoVideoData(auction: string): string {
+  return `v1:ac:vo:${auction}`;
+}
+
+/** «Прикрепить видео» и «Заменить видео»: вопрос о видео ответом. */
+export function consolePromoVideoAskData(auction: string): string {
+  return `v1:ac:vq:${auction}`;
+}
+
+/** «Убрать видео»: подтверждение снятия. */
+export function consolePromoVideoRemoveData(auction: string): string {
+  return `v1:ac:vr:${auction}`;
+}
+
+/** «Да» снятия промо-видео; ключ — на нажатие. */
+export function consolePromoVideoRemoveConfirmData(auction: string): string {
+  return `v1:ac:vy:${auction}`;
+}
+
 /** «Да» смены приза: аукцион и отпечаток нового текста; ключ — на нажатие. */
 export function consoleRafflePrizeChangeConfirmData(
   auction: string,
   print: string,
 ): string {
   return `v1:ac:rv:${auction}:${print}`;
+}
+
+const templateCodes: Readonly<Record<AnnouncementTemplate, string>> = {
+  own: "o",
+  raffle: "r",
+  windows: "w",
+  lot: "l",
+  chronicle: "c",
+};
+
+const buttonCodes: Readonly<Record<ButtonChoice, string>> = {
+  auction: "a",
+  lots: "s",
+  lot: "l",
+  raffle: "r",
+  predictions: "p",
+  chronicle: "c",
+  none: "n",
+};
+
+const audienceCodes: Readonly<Record<AnnouncementAudience, string>> = {
+  all: "a",
+  "not-in-raffle": "r",
+  "without-predictions": "p",
+  "not-in-raffle-or-without-predictions": "e",
+};
+
+// Аудитория — последняя часть кнопки (PER-779): кнопка без неё, выданная до
+// шага «Кому», значит «всем», как объявление до него.
+function audienceOf(
+  raw: string | undefined,
+): AnnouncementAudience | "malformed" {
+  if (raw === undefined) return "all";
+  return codeOf(audienceCodes, raw) ?? "malformed";
+}
+
+function codeOf<T extends string>(
+  codes: Readonly<Record<T, string>>,
+  code: string | undefined,
+): T | undefined {
+  return (Object.keys(codes) as T[]).find((key) => codes[key] === code);
+}
+
+// Номер окна, лота реестра или фото лота в кнопке объявления: трёх цифр
+// хватает любому реестру; «-» — номера нет.
+const AnnouncementRefSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,2})$/)
+  .transform(Number);
+
+function refOf(raw: string | undefined): number | undefined | "malformed" {
+  if (raw === undefined || raw === "-") return undefined;
+  const parsed = AnnouncementRefSchema.safeParse(raw);
+  return parsed.success ? parsed.data : "malformed";
+}
+
+function refPart(ref: number | undefined): string {
+  return ref === undefined ? "-" : String(ref);
+}
+
+// Место фото в кнопке «Отправить»: номер фото лота или `m` и номер поста чата
+// медиа в base36 (PER-776) — источник фото у объявления один.
+const PostPartSchema = z
+  .string()
+  .regex(/^m[1-9a-z][0-9a-z]{0,9}$/)
+  .transform((raw) => Number.parseInt(raw.slice(1), 36))
+  .refine((post) => Number.isSafeInteger(post));
+
+// Фото с отпечатком `photoId` — `<номер>.<отпечаток>` (PER-792): так его
+// несёт «Отправить», чтобы взять одобренное фото, а не то, что стоит под
+// номером сейчас.
+function mediaPart(
+  photo: number | undefined,
+  post: number | undefined,
+  photoPrint?: string,
+): string {
+  if (post !== undefined) return `m${post.toString(36)}`;
+  return photo !== undefined && photoPrint !== undefined
+    ? `${refPart(photo)}.${photoPrint}`
+    : refPart(photo);
+}
+
+function mediaOf(
+  raw: string | undefined,
+): { photo?: number; photoPrint?: string; post?: number } | "malformed" {
+  if (raw?.startsWith("m") === true) {
+    const post = PostPartSchema.safeParse(raw);
+    return post.success ? { post: post.data } : "malformed";
+  }
+  const [ref, print, ...rest] = (raw ?? "").split(".");
+  if (rest.length > 0) return "malformed";
+  const photo = refOf(raw === undefined ? undefined : ref);
+  if (photo === "malformed") return "malformed";
+  if (print === undefined) return photo === undefined ? {} : { photo };
+  const photoPrint = WindowPrintSchema.safeParse(print);
+  return photo === undefined || !photoPrint.success
+    ? "malformed"
+    : { photo, photoPrint: photoPrint.data };
+}
+
+/** «Объявление» пульта (PER-765, PER-802): своё объявление или шаблон. */
+export function consoleAnnouncementData(auction: string): string {
+  return `v1:ac:na:${auction}`;
+}
+
+/** Выбор окна «Счастливых часов» для шаблона. */
+export function consoleAnnouncementWindowsData(auction: string): string {
+  return `v1:ac:nw:${auction}`;
+}
+
+/** Выбор лота для «Истории лота». */
+export function consoleAnnouncementLotsData(auction: string, page = 0): string {
+  return `v1:ac:nl:${auction}:${page}`;
+}
+
+/** Вопрос о тексте: шаблон и номер окна или лота. */
+export function consoleAnnouncementAskData(
+  auction: string,
+  template: AnnouncementTemplate,
+  ref?: number,
+): string {
+  return `v1:ac:nq:${auction}:${templateCodes[template]}${ref === undefined ? "" : `:${ref}`}`;
+}
+
+/** Кнопка объявления: выбор, отпечаток текста, лот шаблона и аудитория. */
+export function consoleAnnouncementButtonData(
+  auction: string,
+  button: ButtonChoice,
+  print: string,
+  audience: AnnouncementAudience,
+  lot?: number,
+): string {
+  return `v1:ac:nb:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${audienceCodes[audience]}`;
+}
+
+/** Фото лота объявления; без номера — «Пропустить». */
+export function consoleAnnouncementPhotoData(
+  auction: string,
+  button: ButtonChoice,
+  print: string,
+  audience: AnnouncementAudience,
+  lot?: number,
+  photo?: number,
+): string {
+  return `v1:ac:np:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${refPart(photo)}:${audienceCodes[audience]}`;
+}
+
+/** «Своё фото или видео» (PER-776): вопрос о медиа с тем же шагом. */
+export function consoleAnnouncementMediaData(
+  auction: string,
+  button: ButtonChoice,
+  print: string,
+  audience: AnnouncementAudience,
+  lot?: number,
+): string {
+  return `v1:ac:nm:${auction}:${buttonCodes[button]}:${print}:${refPart(lot)}:${audienceCodes[audience]}`;
+}
+
+type SendChoice = {
+  button: ButtonChoice;
+  print: string;
+  audience: AnnouncementAudience;
+  lot?: number | undefined;
+  photo?: number | undefined;
+  photoPrint?: string | undefined;
+  post?: number | undefined;
+};
+
+function sendPart(choice: SendChoice): string {
+  return `${buttonCodes[choice.button]}:${choice.print}:${refPart(choice.lot)}:${mediaPart(choice.photo, choice.post, choice.photoPrint)}:${audienceCodes[choice.audience]}`;
+}
+
+/**
+ * «Отправить N»: всё, кроме текста, — его «Отправить» читает из предпросмотра.
+ * Своё медиа — номером поста на месте фото (PER-776), фото лота — номером с
+ * отпечатком его `photoId` (PER-792).
+ */
+export function consoleAnnouncementSendData(
+  auction: string,
+  choice: SendChoice,
+): string {
+  return `v1:ac:ns:${auction}:${sendPart(choice)}`;
+}
+
+/**
+ * Шаг «Кому» (PER-779) с выбранной аудиторией: так его открывает «Нет»
+ * подтверждения, а текст читается из предпросмотра.
+ */
+export function consoleAnnouncementAudienceData(
+  auction: string,
+  choice: SendChoice,
+): string {
+  return `v1:ac:nc:${auction}:${sendPart(choice)}`;
+}
+
+/** Аудитория шага «Кому»: предпросмотр с числом её получателей. */
+export function consoleAnnouncementRecipientsData(
+  auction: string,
+  choice: SendChoice,
+): string {
+  return `v1:ac:nk:${auction}:${sendPart(choice)}`;
+}
+
+const sendKinds = {
+  ns: "console-announcement-send",
+  nk: "console-announcement-recipients",
+  nc: "console-announcement-audience",
+} as const;
+
+function parseAnnouncement(
+  parts: readonly string[],
+  auction: string,
+): AnnouncementAction | { kind: "malformed" } {
+  const malformed = { kind: "malformed" } as const;
+  switch (parts[2]) {
+    case "na":
+      return parts.length === 4
+        ? { kind: "console-announcement", auction }
+        : malformed;
+    case "nw":
+      return parts.length === 4
+        ? { kind: "console-announcement-windows", auction }
+        : malformed;
+    case "nl": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-announcement-lots", auction, page: page.data }
+        : malformed;
+    }
+    case "nq": {
+      const template = codeOf(templateCodes, parts[4]);
+      const ref = refOf(parts[5]);
+      return (parts.length === 5 || parts.length === 6) &&
+        template !== undefined &&
+        ref !== "malformed"
+        ? {
+            kind: "console-announcement-ask",
+            auction,
+            template,
+            ...(ref === undefined ? {} : { ref }),
+          }
+        : malformed;
+    }
+    default:
+      break;
+  }
+  const button = codeOf(buttonCodes, parts[4]);
+  const print = WindowPrintSchema.safeParse(parts[5]);
+  const lot = refOf(parts[6]);
+  // Части до аудитории: у шагов кнопки и медиа — семь, у фото и «Отправить» —
+  // восемь; кнопка шага «Кому» обязана нести аудиторию.
+  const length = parts[2] === "nb" || parts[2] === "nm" ? 7 : 8;
+  const lengths =
+    parts[2] === "nk" || parts[2] === "nc"
+      ? [length + 1]
+      : [length, length + 1];
+  const media = length === 8 ? mediaOf(parts[7]) : {};
+  const audience = audienceOf(parts[length]);
+  if (
+    !lengths.includes(parts.length) ||
+    button === undefined ||
+    !print.success ||
+    lot === "malformed" ||
+    media === "malformed" ||
+    audience === "malformed"
+  ) {
+    return malformed;
+  }
+  const { photo, photoPrint, post } = media;
+  // Отпечаток фото несёт только «Отправить», и с фото он обязателен: без
+  // него номер снова решал бы, какое фото уйдёт (PER-792).
+  if (
+    (photoPrint !== undefined || photo !== undefined) &&
+    (parts[2] === "ns") !== (photoPrint !== undefined)
+  ) {
+    return malformed;
+  }
+  const common = { auction, button, print: print.data, audience };
+  switch (parts[2]) {
+    case "nb":
+      return {
+        kind: "console-announcement-button",
+        ...common,
+        ...(lot === undefined ? {} : { lot }),
+      };
+    // Без лота шаг фото несёт только «Пропустить» (PER-776).
+    case "np":
+      return post === undefined && (photo === undefined || lot !== undefined)
+        ? {
+            kind: "console-announcement-photo",
+            ...common,
+            ...(lot === undefined ? {} : { lot }),
+            ...(photo === undefined ? {} : { photo }),
+          }
+        : malformed;
+    case "nm":
+      return {
+        kind: "console-announcement-media",
+        ...common,
+        ...(lot === undefined ? {} : { lot }),
+      };
+    case "ns":
+    case "nk":
+    case "nc":
+      return photo === undefined || lot !== undefined
+        ? {
+            kind: sendKinds[parts[2]],
+            ...common,
+            ...(lot === undefined ? {} : { lot }),
+            ...(photo === undefined ? {} : { photo }),
+            ...(photoPrint === undefined ? {} : { photoPrint }),
+            ...(post === undefined ? {} : { post }),
+          }
+        : malformed;
+    default:
+      return malformed;
+  }
+}
+
+/** «Фото приза» идущего розыгрыша (PER-773): экран фото. */
+export function consoleRafflePrizePhotoData(auction: string): string {
+  return `v1:ac:rf:${auction}`;
+}
+
+/** Вопрос о фото приза: прислать или заменить. */
+export function consoleRafflePrizePhotoAskData(auction: string): string {
+  return `v1:ac:rg:${auction}`;
+}
+
+/** «Убрать фото» приза: подтверждение. */
+export function consoleRafflePrizePhotoRemoveData(auction: string): string {
+  return `v1:ac:rd:${auction}`;
+}
+
+/** «Да» снятия фото приза; ключ — на нажатие. */
+export function consoleRafflePrizePhotoRemoveConfirmData(
+  auction: string,
+): string {
+  return `v1:ac:rr:${auction}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1207,7 +1760,75 @@ export function consoleWindowRemoveData(
   return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
 }
 
-/** «🛠 Сеты» корня аукциона: сеты лотов (PER-509). */
+// Что спрошено о лоте в периоде «Счастливых часов» (PER-787): стартовая или
+// шаг.
+const happyHourFieldCodes: Readonly<Record<HappyHourField, string>> = {
+  start: "t",
+  step: "s",
+};
+
+function happyHourFieldOf(
+  code: string | undefined,
+): HappyHourField | undefined {
+  return code === "t" ? "start" : code === "s" ? "step" : undefined;
+}
+
+/** «Периоды» экрана «Счастливые часы» (PER-787). */
+export function consolePeriodsData(auction: string): string {
+  return `v1:ac:hh:${auction}`;
+}
+
+/** «Создать период»: вопрос о сроках периода. */
+export function consolePeriodAskData(auction: string): string {
+  return `v1:ac:hq:${auction}`;
+}
+
+/** Период: номер в списке и отпечаток его идентификатора. */
+export function consolePeriodData(auction: string, period: WindowRef): string {
+  return `v1:ac:hv:${auction}:${period.index}:${period.print}`;
+}
+
+/** «🗑 Удалить период» — подтверждение. */
+export function consolePeriodRemoveData(
+  auction: string,
+  period: WindowRef,
+): string {
+  return `v1:ac:hr:${auction}:${period.index}:${period.print}`;
+}
+
+/** «Да, удалить» подтверждения: ключ команды рождается на нажатие. */
+export function consolePeriodRemoveConfirmData(
+  auction: string,
+  period: WindowRef,
+): string {
+  return `v1:ac:hy:${auction}:${period.index}:${period.print}`;
+}
+
+/** «🛠 Счастливые часы» карточки лота: периоды с условиями лота. */
+export function lotHappyHoursData(lot: string): string {
+  return `v1:lot:hh:${lot}`;
+}
+
+/** Условия лота в периоде. */
+export function lotHappyHourData(lot: string, period: WindowRef): string {
+  return `v1:lot:hv:${lot}:${period.index}:${period.print}`;
+}
+
+/** «Стартовая цена» и «Шаг» — вопрос о значении. */
+export function lotHappyHourAskData(
+  lot: string,
+  period: WindowRef,
+  field: HappyHourField,
+): string {
+  return `v1:lot:hk:${lot}:${period.index}:${period.print}:${happyHourFieldCodes[field]}`;
+}
+
+/** «🗑 Снять условия» без подтверждения: условия задаются заново ответом. */
+export function lotHappyHourClearData(lot: string, period: WindowRef): string {
+  return `v1:lot:hc:${lot}:${period.index}:${period.print}`;
+}
+
+/** «Сеты» пульта: сеты лотов (PER-509, PER-802). */
 export function consoleSetsData(auction: string): string {
   return `v1:ac:t:${auction}`;
 }
@@ -1394,6 +2015,11 @@ export function consoleNextLotData(auction: string): string {
   return `v1:ac:n:${auction}`;
 }
 
+/** Подтверждение открытия лота финала (PER-816). */
+export function consoleOpenAskData(auction: string): string {
+  return `v1:ac:go:${auction}`;
+}
+
 /** «Поднять цену» лота финала с номером `position` в составе. */
 export function consoleAskData(auction: string, position: number): string {
   return `v1:ac:a:${auction}:${position}`;
@@ -1429,9 +2055,24 @@ export function floorData(auction: string, page = 0): string {
   return page === 0 ? `v1:ac:b:${auction}` : `v1:ac:b:${auction}:${page}`;
 }
 
-/** «Другой человек…»: вопрос об имени. */
+/** «Добавить человека…»: вопрос о нике (PER-816). */
 export function floorSearchData(auction: string): string {
   return `v1:ac:bs:${auction}`;
+}
+
+/** «Состав»: правка состава зала, кнопки людей убирают их (PER-816). */
+export function floorEditData(auction: string): string {
+  return `v1:ac:be:${auction}`;
+}
+
+/** Найденный по нику — в состав зала. */
+export function floorAddData(auction: string, member: string): string {
+  return `v1:ac:ba:${auction}:${member}`;
+}
+
+/** Человек состава — из состава. */
+export function floorRemoveData(auction: string, member: string): string {
+  return `v1:ac:bd:${auction}:${member}`;
 }
 
 /** Кнопка лидера: ставка за него не нужна, Auction её не видит. */
@@ -1540,6 +2181,10 @@ function stepData(step: QuestionStep): string {
       return `v1:q:${lotLead(step)}i:${step.lot}`;
     case "lot-copies":
       return `v1:q:lc:${step.lot}`;
+    case "console-period":
+      return `v1:q:hh:${step.auction}`;
+    case "happy-hour-lot":
+      return `v1:q:hk:${step.lot}:${step.period.index}:${step.period.print}:${happyHourFieldCodes[step.field]}`;
     case "console-week":
       return `v1:q:aw:${step.auction}`;
     case "console-raffle":
@@ -1556,12 +2201,20 @@ function stepData(step: QuestionStep): string {
       return `v1:q:rw:${step.auction}`;
     case "console-raffle-prize-change":
       return `v1:q:rn:${step.auction}`;
+    case "console-raffle-prize-photo":
+      return `v1:q:rf:${step.auction}`;
+    case "console-promo-video":
+      return `v1:q:vp:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
       return `v1:q:al:${step.auction}`;
     case "console-set":
       return `v1:q:as:${step.auction}`;
+    case "console-announcement-media":
+      return `v1:q:am:${step.auction}:${buttonCodes[step.button]}:${step.print}:${refPart(step.lot)}:${audienceCodes[step.audience]}`;
+    case "console-announcement":
+      return `v1:q:ao:${step.auction}:${templateCodes[step.template]}${step.ref === undefined ? "" : `:${step.ref}`}`;
     case "console-section":
       return step.section === undefined
         ? `v1:q:aq:${step.auction}`
@@ -1633,6 +2286,54 @@ function stateConfirm<
   return version.success
     ? { kind, token, version: version.data }
     : { kind: "malformed" };
+}
+
+function silentFlag(
+  parts: readonly string[],
+  index: number,
+): true | undefined | "malformed" {
+  if (parts.length === index) return undefined;
+  if (parts.length === index + 1 && parts[index] === "s") return true;
+  return "malformed";
+}
+
+function parsePublish(
+  token: string,
+  parts: readonly string[],
+): Extract<CallbackAction, { kind: "publish-meetup" }> | { kind: "malformed" } {
+  if (parts.length === 4) return { kind: "publish-meetup", token };
+  if (parts[4] === "s") {
+    return parts.length === 5
+      ? { kind: "publish-meetup", token, silent: true }
+      : { kind: "malformed" };
+  }
+  const version = VersionSchema.safeParse(parts[4]);
+  if (!version.success) return { kind: "malformed" };
+  const silent = silentFlag(parts, 5);
+  if (silent === "malformed") return { kind: "malformed" };
+  return silent === true
+    ? { kind: "publish-meetup", token, version: version.data, silent: true }
+    : { kind: "publish-meetup", token, version: version.data };
+}
+
+function parseConfirmPublish(
+  token: string,
+  parts: readonly string[],
+):
+  | Extract<CallbackAction, { kind: "manage-confirm-publish" }>
+  | { kind: "malformed" } {
+  const version = VersionSchema.safeParse(parts[4]);
+  if (!version.success) return { kind: "malformed" };
+  const silent = silentFlag(parts, 5);
+  if (silent === "malformed") return { kind: "malformed" };
+  return silent === true
+    ? {
+        kind: "manage-confirm-publish",
+        token,
+        version: version.data,
+        silent: true,
+      }
+    : { kind: "manage-confirm-publish", token, version: version.data };
 }
 
 export function parseCallback(raw: unknown): CallbackAction {
@@ -1722,8 +2423,23 @@ export function parseCallback(raw: unknown): CallbackAction {
     if (parts.length === 4 && parts[2] === "no") {
       return { kind: "decline-attach-material", token: meetupToken.data };
     }
+    if (parts.length === 4 && parts[2] === "e") {
+      return { kind: "material-edge", token: meetupToken.data };
+    }
     const materialToken = TokenSchema.safeParse(parts[4]);
     if (!materialToken.success) return { kind: "malformed" };
+    if (parts.length === 6 && (parts[2] === "u" || parts[2] === "d")) {
+      const version = VersionSchema.safeParse(parts[5]);
+      return version.success
+        ? {
+            kind: "move-material",
+            token: meetupToken.data,
+            materialToken: materialToken.data,
+            direction: parts[2] === "u" ? "up" : "down",
+            version: version.data,
+          }
+        : { kind: "malformed" };
+    }
     // Подтверждения несут версию шестым сегментом. Прежние `confirm-add` и
     // `confirm-rm` версии не несли, и Meetups отвергал их с 22.09: такая кнопка
     // разбирается без версии, и экран перечитывает карточку вместо команды.
@@ -1828,14 +2544,7 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "create-meetup", token: token.data };
   if (parts.length === 5 && parts[2] === "new" && parts[4] === "s")
     return { kind: "create-meetup", token: token.data, from: "meetups" };
-  if (parts.length === 4 && parts[2] === "publish")
-    return { kind: "publish-meetup", token: token.data };
-  if (parts.length === 5 && parts[2] === "publish") {
-    const version = VersionSchema.safeParse(parts[4]);
-    return version.success
-      ? { kind: "publish-meetup", token: token.data, version: version.data }
-      : { kind: "malformed" };
-  }
+  if (parts[2] === "publish") return parsePublish(token.data, parts);
   if (parts.length === 4 && parts[2] === "edit")
     return { kind: "manage-edit", token: token.data };
   if (parts.length === 5 && parts[2] === "field") {
@@ -1919,19 +2628,11 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "enable-auction", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
     return { kind: "manage-publish", token: token.data, origin: "status" };
-  // `d` — «Опубликовать» на черновике: «Нет» подтверждения вернёт на него.
+  // `d` — «Опубликовать» на черновике: «Отмена» выбора вернёт на него.
   if (parts.length === 5 && parts[2] === "republish" && parts[4] === "d")
     return { kind: "manage-publish", token: token.data, origin: "draft" };
-  if (parts.length === 5 && parts[2] === "confirm-publish") {
-    const version = VersionSchema.safeParse(parts[4]);
-    return version.success
-      ? {
-          kind: "manage-confirm-publish",
-          token: token.data,
-          version: version.data,
-        }
-      : { kind: "malformed" };
-  }
+  if (parts[2] === "confirm-publish")
+    return parseConfirmPublish(token.data, parts);
   if (parts.length === 4 && parts[2] === "unpublish")
     return { kind: "manage-unpublish", token: token.data };
   if (parts[2] === "confirm-unpublish")
@@ -1993,6 +2694,26 @@ function parseLot(parts: readonly string[]): CallbackAction {
   }
   if (parts.length === 4 && parts[2] === "dy") {
     return { kind: "lot-remove-confirm", lot: token.data };
+  }
+  // «Счастливые часы» лота (PER-787).
+  if (parts.length === 4 && parts[2] === "hh") {
+    return { kind: "lot-happy-hours", lot: token.data };
+  }
+  if (parts[2] === "hv" || parts[2] === "hk" || parts[2] === "hc") {
+    const index = WindowIndexSchema.safeParse(parts[4]);
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    if (!index.success || !print.success) return { kind: "malformed" };
+    const period = { index: index.data, print: print.data };
+    if (parts[2] === "hk") {
+      const field = happyHourFieldOf(parts[6]);
+      return parts.length === 7 && field !== undefined
+        ? { kind: "lot-happy-hour-ask", lot: token.data, period, field }
+        : { kind: "malformed" };
+    }
+    if (parts.length !== 6) return { kind: "malformed" };
+    return parts[2] === "hv"
+      ? { kind: "lot-happy-hour", lot: token.data, period }
+      : { kind: "lot-happy-hour-clear", lot: token.data, period };
   }
   if (parts.length === 6 && parts[2] === "sr" && parts[4] === "image") {
     const print = WindowPrintSchema.safeParse(parts[5]);
@@ -2100,7 +2821,10 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`, итог вручную (PER-727):
 // `v1:ac:rw:<аукцион>[:<страница>]`, `v1:ac:ra:<аукцион>` и
 // `v1:ac:<rc|ry>:<аукцион>:<билет>`, смена приза (PER-737): `v1:ac:rn:<аукцион>`
-// и `v1:ac:rv:<аукцион>:<отпечаток>`. Видимость (PER-673):
+// и `v1:ac:rv:<аукцион>:<отпечаток>`, фото приза (PER-773):
+// `v1:ac:<rf|rg|rd|rr>:<аукцион>`. Видимость (PER-673):
+// и `v1:ac:rv:<аукцион>:<отпечаток>`, промо-видео (PER-774):
+// `v1:ac:<vo|vq|vr|vy>:<аукцион>`. Видимость (PER-673):
 // `v1:ac:p:<аукцион>:<0|1>`. «Ставки зала» (PER-565):
 // `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
 // `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
@@ -2113,6 +2837,10 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     index.success && print.success
       ? { index: index.data, print: print.data }
       : undefined;
+  // Объявление аукциона (PER-765): двухбуквенные коды на «n».
+  if (parts[2]?.length === 2 && parts[2].startsWith("n")) {
+    return parseAnnouncement(parts, auction.data);
+  }
   switch (parts[2]) {
     case "b": {
       const page = PageSchema.safeParse(parts[4] ?? "0");
@@ -2124,6 +2852,22 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-floor-search", auction: auction.data }
         : { kind: "malformed" };
+    case "be":
+      return parts.length === 4
+        ? { kind: "console-floor-edit", auction: auction.data }
+        : { kind: "malformed" };
+    case "ba":
+    case "bd": {
+      const member = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && member.success
+        ? {
+            kind:
+              parts[2] === "ba" ? "console-floor-add" : "console-floor-remove",
+            auction: auction.data,
+            member: member.data,
+          }
+        : { kind: "malformed" };
+    }
     case "bl":
       return parts.length === 4
         ? { kind: "console-floor-leader", auction: auction.data }
@@ -2194,6 +2938,25 @@ function parseConsole(parts: readonly string[]): CallbackAction {
         ticket: ticket.data,
       };
     }
+    // Промо-видео (PER-774): экран `vo`, вопрос `vq`, подтверждение снятия
+    // `vr` и «Да» `vy`.
+    case "vo":
+    case "vq":
+    case "vr":
+    case "vy":
+      return parts.length === 4
+        ? {
+            kind:
+              parts[2] === "vo"
+                ? "console-promo-video"
+                : parts[2] === "vq"
+                  ? "console-promo-video-ask"
+                  : parts[2] === "vr"
+                    ? "console-promo-video-remove"
+                    : "console-promo-video-remove-confirm",
+            auction: auction.data,
+          }
+        : { kind: "malformed" };
     // Смена приза идущего розыгрыша (PER-737): вопрос `rn` и «Да» `rv` с
     // отпечатком текста.
     case "rn":
@@ -2210,6 +2973,25 @@ function parseConsole(parts: readonly string[]): CallbackAction {
           }
         : { kind: "malformed" };
     }
+    // Фото приза идущего розыгрыша (PER-773): экран `rf`, вопрос `rg`,
+    // подтверждение снятия `rd` и «Да» `rr`.
+    case "rf":
+    case "rg":
+    case "rd":
+    case "rr":
+      return parts.length === 4
+        ? {
+            kind: (
+              {
+                rf: "console-raffle-prize-photo",
+                rg: "console-raffle-prize-photo-ask",
+                rd: "console-raffle-prize-photo-remove",
+                rr: "console-raffle-prize-photo-remove-confirm",
+              } as const
+            )[parts[2]],
+            auction: auction.data,
+          }
+        : { kind: "malformed" };
     // Текст «Как оплатить и получить» (PER-322): вопрос `it` и снятие `ix`.
     case "it":
       return parts.length === 4
@@ -2301,6 +3083,31 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "hx":
       return parts.length === 6 && window !== undefined
         ? { kind: "console-window-remove", auction: auction.data, window }
+        : { kind: "malformed" };
+    // Периоды «Счастливых часов» (PER-787): номер и отпечаток периода стоят
+    // там же, где у окна.
+    case "hh":
+      return parts.length === 4
+        ? { kind: "console-periods", auction: auction.data }
+        : { kind: "malformed" };
+    case "hq":
+      return parts.length === 4
+        ? { kind: "console-period-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "hv":
+    case "hr":
+    case "hy":
+      return parts.length === 6 && window !== undefined
+        ? {
+            kind:
+              parts[2] === "hv"
+                ? "console-period"
+                : parts[2] === "hr"
+                  ? "console-period-remove"
+                  : "console-period-remove-confirm",
+            auction: auction.data,
+            period: window,
+          }
         : { kind: "malformed" };
     // Сеты лотов (PER-509): номер и отпечаток сета стоят там же, где у окна.
     case "t":
@@ -2473,6 +3280,38 @@ function parseConsole(parts: readonly string[]): CallbackAction {
           }
         : { kind: "malformed" };
     }
+    case "rs":
+    case "es":
+    case "ps":
+      return parts.length === 4
+        ? {
+            kind: "console-view",
+            auction: auction.data,
+            page: 0,
+            sort: defaultConsoleSort,
+            section:
+              parts[2] === "rs"
+                ? "raffle"
+                : parts[2] === "ps"
+                  ? "payment"
+                  : "more",
+          }
+        : { kind: "malformed" };
+    case "fl": {
+      if (parts.length > 6) return { kind: "malformed" };
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      const sort =
+        parts.length === 6 ? parseConsoleSort(parts[5]) : defaultConsoleSort;
+      return page.success && sort !== undefined
+        ? {
+            kind: "console-view",
+            auction: auction.data,
+            page: page.data,
+            sort,
+            section: "final",
+          }
+        : { kind: "malformed" };
+    }
     case "v": {
       if (parts.length > 6) return { kind: "malformed" };
       const page = PageSchema.safeParse(parts[4] ?? "0");
@@ -2609,6 +3448,10 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-next-lot", auction: auction.data }
         : { kind: "malformed" };
+    case "go":
+      return parts.length === 4
+        ? { kind: "console-open-ask", auction: auction.data }
+        : { kind: "malformed" };
     case "a":
     case "c": {
       const position = PositionSchema.safeParse(parts[4]);
@@ -2719,6 +3562,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-image", lot: token.data, set: true };
       case "lc":
         return { kind: "lot-copies", lot: token.data };
+      case "hh":
+        return { kind: "console-period", auction: token.data };
       case "aw":
         return { kind: "console-week", auction: token.data };
       case "ar":
@@ -2735,6 +3580,10 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-raffle-winner", auction: token.data };
       case "rn":
         return { kind: "console-raffle-prize-change", auction: token.data };
+      case "rf":
+        return { kind: "console-raffle-prize-photo", auction: token.data };
+      case "vp":
+        return { kind: "console-promo-video", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":
@@ -2756,6 +3605,62 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       default:
         return undefined;
     }
+  }
+  // Стартовая или шаг лота в периоде (PER-787): лот, номер и отпечаток
+  // периода и что спрошено.
+  if (parts[2] === "hk") {
+    const index = WindowIndexSchema.safeParse(parts[4]);
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    const field = happyHourFieldOf(parts[6]);
+    return parts.length === 7 &&
+      index.success &&
+      print.success &&
+      field !== undefined
+      ? {
+          kind: "happy-hour-lot",
+          lot: token.data,
+          period: { index: index.data, print: print.data },
+          field,
+        }
+      : undefined;
+  }
+  // Своё медиа объявления (PER-776): кнопка, отпечаток текста и лот — семь
+  // частей, восьмая — аудитория (PER-779); вопрос до неё значит «всем».
+  if (parts[2] === "am") {
+    const button = codeOf(buttonCodes, parts[4]);
+    const print = WindowPrintSchema.safeParse(parts[5]);
+    const lot = refOf(parts[6]);
+    const audience = audienceOf(parts[7]);
+    return (parts.length === 7 || parts.length === 8) &&
+      button !== undefined &&
+      print.success &&
+      lot !== "malformed" &&
+      audience !== "malformed"
+      ? {
+          kind: "console-announcement-media",
+          auction: token.data,
+          button,
+          print: print.data,
+          audience,
+          ...(lot === undefined ? {} : { lot }),
+        }
+      : undefined;
+  }
+  // Текст объявления (PER-765): шаблон и, у окна и лота, номер — шагу нужно
+  // пять или шесть частей.
+  if (parts[2] === "ao") {
+    const template = codeOf(templateCodes, parts[4]);
+    const ref = refOf(parts[5]);
+    return (parts.length === 5 || parts.length === 6) &&
+      template !== undefined &&
+      ref !== "malformed"
+      ? {
+          kind: "console-announcement",
+          auction: token.data,
+          template,
+          ...(ref === undefined ? {} : { ref }),
+        }
+      : undefined;
   }
   if (parts.length !== 5) return undefined;
   if (parts[2] === "ln") {

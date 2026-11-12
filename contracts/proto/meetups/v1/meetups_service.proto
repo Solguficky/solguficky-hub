@@ -16,14 +16,38 @@ service MeetupsService {
   rpc CancelMeetup(CancelMeetupRequest) returns (MeetupSnapshot);
   rpc AttachMaterial(AttachMaterialRequest) returns (MeetupSnapshot);
   rpc RemoveMaterial(RemoveMaterialRequest) returns (MeetupSnapshot);
+  rpc ReorderMaterials(ReorderMaterialsRequest) returns (MeetupSnapshot);
   rpc MarkMeetupHeld(MarkMeetupHeldRequest) returns (MeetupSnapshot);
+  rpc AppointMeetupOrganizer(AppointMeetupOrganizerRequest) returns (MeetupSnapshot);
+  rpc DismissMeetupOrganizer(DismissMeetupOrganizerRequest) returns (MeetupSnapshot);
+  rpc LeaveMeetupOrganizers(LeaveMeetupOrganizersRequest) returns (MeetupSnapshot);
   rpc ListVisibleMeetups(ListVisibleMeetupsRequest) returns (ListVisibleMeetupsResponse);
   rpc ListArchivedMeetups(ListArchivedMeetupsRequest) returns (ListArchivedMeetupsResponse);
   rpc GetMeetup(GetMeetupRequest) returns (MeetupSnapshot);
   rpc ListMeetupStates(ListMeetupStatesRequest) returns (ListMeetupStatesResponse);
   rpc CheckMeetupAuthority(CheckMeetupAuthorityRequest) returns (MeetupAuthority);
   rpc GetMeetupStanding(GetMeetupStandingRequest) returns (MeetupStanding);
+  rpc ConfirmMeetupContact(ConfirmMeetupContactRequest) returns (MeetupContactConfirmation);
 }
+
+// The question Identity asks before it names a person on a meetup card: is this
+// person the author or an organizer of this meetup, as seen by the viewer. It
+// carries no roles and no rights; the answer is the status alone.
+message ConfirmMeetupContactRequest {
+  // Canonical lowercase UUIDv7 with hyphens: the meetup the card shows.
+  string id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the person who looks at the card.
+  string viewer_identity_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the person whose contact the card
+  // would show. Confirmed when they are the author or in the organizer roster.
+  string identity_id = 3;
+}
+
+// Empty on purpose: the status is the whole answer, and there is no body to read
+// from a refusal.
+message MeetupContactConfirmation {}
 
 // Deliberately carries no description of the caller's scenario and no roles of
 // the person: the question is only whether the person stands in one of the
@@ -56,6 +80,11 @@ enum MeetupRelation {
   // Holder of identity.v1.ACCESS_RIGHT_RUN_AUCTIONS; the relation holds for
   // every meetup.
   MEETUP_RELATION_AUCTION_RUNNER = 2;
+
+  // The person is in the organizer roster of this meetup and holds
+  // the right organize_meetups. It holds for one meetup, not for every meetup,
+  // and the administrator is not covered by it.
+  MEETUP_RELATION_ORGANIZER = 3;
 }
 
 // The status is the whole answer to "does the relation hold"; the body carries
@@ -168,6 +197,11 @@ message PublishMeetupRequest {
   // Aggregate version the caller's decision was based on. Required; see
   // ChangeMeetupAttributesRequest.expected_version.
   int64 expected_version = 3;
+
+  // When true, the first publication does not produce the "new meetup"
+  // addressable fact. Absence and false keep the current behaviour. A return
+  // after unpublish ignores the field: that occasion is meetup_republished.
+  bool silent = 4;
 }
 
 // The moment is a local community date and time; Meetups interprets it in the
@@ -235,6 +269,17 @@ message AttachMaterialRequest {
   int64 expected_version = 6;
 }
 
+message ReorderMaterialsRequest {
+  Viewer viewer = 1;
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+  // The complete target order, each current material exactly once.
+  // Every id is a canonical lowercase UUIDv7 with hyphens.
+  repeated string material_ids = 3;
+  // Version of the snapshot shown to the caller when deciding the target order.
+  int64 expected_version = 4;
+}
+
 message RemoveMaterialRequest {
   Viewer viewer = 1;
 
@@ -251,6 +296,49 @@ message RemoveMaterialRequest {
 }
 
 message MarkMeetupHeldRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
+}
+
+// Adds one person to the organizer roster.
+message AppointMeetupOrganizerRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the person to add.
+  string identity_id = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
+}
+
+// Removes one person other than the viewer from the organizer roster.
+message DismissMeetupOrganizerRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: the person to remove.
+  string identity_id = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
+}
+
+// The viewer removes themselves from the organizer roster. It names no other
+// person, so it cannot be read as a removal by someone else.
+message LeaveMeetupOrganizersRequest {
   Viewer viewer = 1;
 
   // Canonical lowercase UUIDv7 with hyphens.
@@ -323,6 +411,12 @@ message MeetupSnapshot {
   // RFC 3339 UTC instant of the planned publication. Unset when no publication
   // is scheduled; a visible meetup never carries a moment.
   optional string scheduled_publish_at = 14;
+
+  // Canonical lowercase UUIDv7 with hyphens: the internal Identity ids of the
+  // organizer roster, in the order the people joined it. Field 2, author, is
+  // not a roster entry by itself. An empty collection is a roster with no
+  // people, not an absent state.
+  repeated string organizers = 15;
 }
 
 // Server-produced state. Every field is set; there is no absent state here.

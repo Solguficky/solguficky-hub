@@ -12,7 +12,7 @@ import type {
   RemovalPerson,
   RemovalRefusal,
 } from "../../application/types.js";
-import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import { type CommunityDay, communityShownTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   removalConfirmData,
@@ -141,7 +141,7 @@ function forecastLines(
       ? []
       : [
           `Торги продлятся до ${readableMoment(
-            communityLocalTime(forecast.extendedDeadline, view.timeZone),
+            communityShownTime(forecast.extendedDeadline, view.timeZone),
             view.today,
           )}.`,
         ]),

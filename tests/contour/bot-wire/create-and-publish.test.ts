@@ -50,7 +50,7 @@ describe("провод бота", () => {
     await organizer.presses("Описание");
     await organizer.says("Берём свои игры");
     await organizer.presses("Опубликовать");
-    await organizer.presses("✔️ Да, опубликовать сходку");
+    await organizer.presses("Опубликовать и оповестить");
 
     expect(organizer.sees()).toContain("Сходка опубликована");
     const stored = await direct.readAsAdmin(

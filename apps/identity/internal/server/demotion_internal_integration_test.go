@@ -41,7 +41,7 @@ func TestDemoteMemberLeavesGuestWithAuctionAndRecordsDecline(t *testing.T) {
 	}
 	assertEvents(t, db, targetID,
 		"v1 profile_registered() {}[] blocked=false",
-		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
+		"v2 circle_changed() member{access_hub,organize_meetups,place_bids}[] blocked=false",
 		"v3 circle_changed(member) guest{place_bids}[] blocked=false",
 	)
 	assertJournalSummary(t, db, targetID, "grant:member", "grant:guest@"+adminID, "revoke:member@"+adminID)
@@ -68,7 +68,7 @@ FOR EACH ROW EXECUTE FUNCTION reject_application()`)
 	_, err := svc.DemoteCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(adminID), IdentityId: targetID})
 	assertCode(t, err, codes.Internal)
 
-	assertRightSet(t, resolveDirect(t, svc, 8412, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resolveDirect(t, svc, 8412, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	if got := len(outboxEvents(t, db, targetID)); got != eventsBefore {
 		t.Fatalf("events = %d after failed demotion, want %d", got, eventsBefore)
 	}
@@ -95,7 +95,7 @@ func TestDemoteMemberRequiresAdminActor(t *testing.T) {
 		assertCode(t, err, codes.PermissionDenied)
 	}
 
-	assertRightSet(t, resolveDirect(t, svc, 8422, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resolveDirect(t, svc, 8422, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	if got := applicationCount(t, db, targetID); got != 0 {
 		t.Fatalf("applications = %d, want 0", got)
 	}
@@ -153,8 +153,8 @@ func TestDemoteAndBlockOfPresetHolderFailPrecondition(t *testing.T) {
 			t.Fatalf("preset holder %s was blocked", targetID)
 		}
 	}
-	assertRightSet(t, resolveDirect(t, svc, 8441, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS)
-	assertRightSet(t, resolveDirect(t, svc, 8442, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS)
+	assertRightSet(t, resolveDirect(t, svc, 8441, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS)
+	assertRightSet(t, resolveDirect(t, svc, 8442, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS)
 
 	// Снятый набор защиту снимает: администратор, лишённый набора, понижается.
 	mustChange(t)(svc.revokePreset(t.Context(), maintainerID, presetMaintainer, uuid.NullUUID{}))
@@ -181,7 +181,7 @@ func TestReconsiderDemotionRestoresMember(t *testing.T) {
 	if err != nil || !reconsidered.GetChanged() {
 		t.Fatalf("reconsider: changed=%t error=%v", reconsidered.GetChanged(), err)
 	}
-	assertRightSet(t, resolveDirect(t, svc, 8452, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
+	assertRightSet(t, resolveDirect(t, svc, 8452, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_ORGANIZE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	assertRefused(t, svc, adminID)
 }
 

@@ -30,6 +30,38 @@ export const auctionLists = ["auctions", "past"] as const;
 // родителей каждого экрана доходит до корня, держит проверка графа
 // `inspectCatalog` test kit.
 export const screenCatalog = {
+  "my-achievements": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивки",
+    parent: "menu",
+    backName: "Ачивки",
+  },
+  "my-achievement": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивка",
+    parent: "my-achievements",
+  },
+  "auction-achievements": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивки",
+    parent: "root",
+    backName: "Ачивки",
+  },
+  "auction-achievement": {
+    class: "screen",
+    nav: "tree",
+    title: "Ачивка",
+    parent: "auction-achievements",
+  },
+  "achievements-unavailable": {
+    class: "screen",
+    nav: "exit",
+    title: "Ачивки недоступны",
+  },
+
   menu: {
     class: "screen",
     nav: "root",
@@ -145,12 +177,12 @@ export const screenCatalog = {
     parent: "feed",
     backName: "Лоты",
   },
-  // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
-  // корня аукциона и возврат туда же (PER-644).
-  "prediction-results": {
+  // Итоги завершённого аукциона (PER-813) — тело общего аукционного дерева,
+  // вход из корня аукциона и возврат туда же.
+  "auction-results": {
     class: "screen",
     nav: "tree",
-    title: "Итоги прогнозов",
+    title: "Итоги аукциона",
     parent: "root",
     backName: "Итоги",
   },
@@ -162,6 +194,16 @@ export const screenCatalog = {
     title: "Хроники дня",
     parent: "root",
     backName: "Хроники дня",
+  },
+  // Статистика аукциона (PER-770) — тело общего аукционного дерева. Входа в
+  // этом боте нет (PER-800): шлюз пускает её только ведущему в хабе, а запись
+  // остаётся, потому что тело у двух оболочек общее.
+  "auction-chronicle": {
+    class: "screen",
+    nav: "tree",
+    title: "Статистика аукциона",
+    parent: "root",
+    backName: "Статистика",
   },
   predictions: {
     class: "screen",
@@ -175,6 +217,8 @@ export const screenCatalog = {
     nav: "tree",
     title: "Выбрать лот",
     parent: "predictions",
+    // До двенадцати лотов страницы, «Очистить», стрелки и возврат (PER-836).
+    maxRows: 15,
   },
   "prediction-name-choice": {
     class: "screen",
@@ -191,14 +235,15 @@ export const screenCatalog = {
   // Ряды под карточкой складываются по смыслу (PER-594, PER-644, PER-669):
   // ставка по шагу, своя сумма с автоставкой, «Ставки» с избранным (PER-495),
   // «Лоты сета» (ADR-073, п. 7), листание `[◀️][🔄 Обновить][▶️]` и навигация —
-  // шесть; в хабе к ним добавляется «🛠 Изменить лот».
+  // шесть, а в хабе добавляется «🛠 Изменить лот». Ссылок «Стрим финала ↗» и
+  // «Экран финала ↗» на карточке нет: они в корне аукциона (PER-832).
   lot: {
     class: "screen",
     nav: "tree",
     parent: "feed",
     backName: "Лот",
     refresh: true,
-    maxRows: 6,
+    maxRows: 8,
   },
   // Сет лотов (ADR-073, п. 7): экран-раздел карточки лота — лоты сета и,
   // после итога, кто его собрал. Открывается с карточки лота сета.
@@ -232,6 +277,13 @@ export const screenCatalog = {
     nav: "confirm",
     title: "Включить автоставку",
     irreversible: true,
+  },
+  // Снять свой лимит (PER-822): подтверждение с вопросом-заголовком; поставить
+  // лимит можно снова, поэтому «необратимого» в нём нет.
+  "withdraw-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Снять автоставку",
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
@@ -331,6 +383,12 @@ export const screenCatalog = {
   // Уведомление из шины — след: клавиатура принадлежит самому сообщению, а
   // метку несёт отправитель доставки (`delivery/message.ts`), не адаптер.
   notification: { class: "trace", nav: "free" },
+  // Трансляция хода торгов живого финала (PER-826): одно сообщение подписчика,
+  // которое бот правит на каждую ставку; одна кнопка «Не следить».
+  "bid-watch": { class: "trace", nav: "free" },
+  // Промо-видео под «🎬 Промо» (PER-774): копия поста чата медиа ботов с
+  // подписью и одной кнопкой «‹ Аукцион».
+  promo: { class: "trace", nav: "tree", parent: "root" },
 } as const;
 
 export type ScreenId = keyof typeof screenCatalog;

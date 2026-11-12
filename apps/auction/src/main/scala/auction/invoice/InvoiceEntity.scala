@@ -16,6 +16,7 @@ import org.apache.pekko.persistence.typed.scaladsl.Effect
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
 import org.apache.pekko.util.Timeout
 
+import java.time.Instant
 import java.time.Clock
 import java.util.UUID
 import scala.concurrent.Future
@@ -37,7 +38,11 @@ object InvoiceEntity {
 
   final case class Issue(terms: InvoiceTerms, replyTo: ActorRef[Done]) extends Command
 
+  final case class ChangeDue(expected: Option[Instant], dueAt: Option[Instant], replyTo: ActorRef[Done]) extends Command
+
   final case class MarkPaid(opId: OpId, replyTo: ActorRef[Either[InvoiceRefusal, Done]]) extends Command
+
+  final case class MarkUnredeemed(opId: OpId, replyTo: ActorRef[Either[InvoiceRefusal, Done]]) extends Command
 
   final case class MarkHandedOver(opId: OpId, replyTo: ActorRef[Either[InvoiceRefusal, Done]]) extends Command
 
@@ -72,7 +77,14 @@ object InvoiceEntity {
                 Effect.persist(InvoiceJournal.store(newId(), clock.instant())(event)).thenReply(replyTo)(_ => Done)
               case None => Effect.reply(replyTo)(Done)
             }
+          case ChangeDue(expected, dueAt, replyTo) =>
+            Invoice.changeDue(state, expected, dueAt) match {
+              case Some(event) =>
+                Effect.persist(InvoiceJournal.store(newId(), clock.instant())(event)).thenReply(replyTo)(_ => Done)
+              case None => Effect.reply(replyTo)(Done)
+            }
           case MarkPaid(opId, replyTo) => answer(Invoice.markPaid(state, opId), replyTo)
+          case MarkUnredeemed(opId, replyTo) => answer(Invoice.markUnredeemed(state, opId), replyTo)
           case MarkHandedOver(opId, replyTo) => answer(Invoice.markHandedOver(state, opId), replyTo)
           case ChooseFulfillment(viewer, method, opId, replyTo) =>
             answer(Invoice.chooseFulfillment(state, viewer, method, opId), replyTo)
@@ -97,7 +109,12 @@ object InvoiceEntity {
  * ответ.
  */
 trait InvoiceGateway {
+  def markUnredeemed(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]]
+
   def issue(invoice: InvoiceId, terms: InvoiceTerms): Future[Done]
+
+  def changeDue(invoice: InvoiceId, expected: Option[Instant], dueAt: Option[Instant]): Future[Done] =
+    Future.failed(new IllegalStateException("payment clock is not wired"))
 
   def get(invoice: InvoiceId): Future[Invoice]
 
@@ -139,6 +156,7 @@ object InvoiceGateway {
     private def missing[T]: Future[T] = Future.failed(new IllegalStateException("invoices are not wired in this node"))
     def issue(invoice: InvoiceId, terms: InvoiceTerms) = missing
     def get(invoice: InvoiceId) = missing
+    def markUnredeemed(invoice: InvoiceId, opId: OpId) = missing
     def markPaid(invoice: InvoiceId, opId: OpId) = missing
     def markHandedOver(invoice: InvoiceId, opId: OpId) = missing
     def chooseFulfillment(invoice: InvoiceId, viewer: ParticipantId, method: FulfillmentMethod, opId: OpId) = missing
@@ -160,10 +178,16 @@ object InvoiceGateway {
       def issue(invoice: InvoiceId, terms: InvoiceTerms): Future[Done] =
         entity(invoice).ask(InvoiceEntity.Issue(terms, _))
 
+      override def changeDue(invoice: InvoiceId, expected: Option[Instant], dueAt: Option[Instant]): Future[Done] =
+        entity(invoice).ask(InvoiceEntity.ChangeDue(expected, dueAt, _))
+
       def get(invoice: InvoiceId): Future[Invoice] = entity(invoice).ask(InvoiceEntity.Get(_))
 
       def markPaid(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
         entity(invoice).ask(InvoiceEntity.MarkPaid(opId, _))
+
+      override def markUnredeemed(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
+        entity(invoice).ask(InvoiceEntity.MarkUnredeemed(opId, _))
 
       def markHandedOver(invoice: InvoiceId, opId: OpId): Future[Either[InvoiceRefusal, Done]] =
         entity(invoice).ask(InvoiceEntity.MarkHandedOver(opId, _))

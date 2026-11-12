@@ -20,6 +20,8 @@ inputs:
       - contracts/proto/auction/v1/auction.proto
       - contracts/proto/auction/v1/auction_events.proto
       - contracts/proto/auction/v1/auction_service.proto
+      - contracts/proto/achievements/v1/achievements.proto
+      - contracts/proto/achievements/v1/achievements_service.proto
       - contracts/proto/identity
       - contracts/proto/meetups
       - contracts/proto/notifications

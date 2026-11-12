@@ -23,6 +23,7 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import { auctionCancelConsequence, auctionStateLine } from "./auction-stage.js";
 import {
   buttonText,
+  cancelLabel,
   confirmKeyboard,
   dayLabel,
   escapeHtml,
@@ -36,7 +37,6 @@ import {
   paginate,
   readableDay,
   readableMoment,
-  removeLabel,
   screenText,
   subjectLine,
   submenuText,
@@ -592,7 +592,7 @@ export function draftScreen(view: {
     .row()
     .text("Описание", `v1:manage:draft:${token}:description`)
     .row()
-    // `d` — источник подтверждения: «Нет» под ним вернёт на черновик.
+    // `d` — источник выбора: «Отмена» под ним вернёт на черновик.
     .text("Опубликовать", `v1:manage:republish:${token}:d`)
     .row()
     .text(
@@ -754,12 +754,11 @@ export function statusScreen(
 }
 
 /**
- * Подтверждение публикации (решение владельца 10 октября 2026 года): публикация
- * выходит наружу — сходку видят участники, уведомления уходят. «Да» несёт
- * версию, которую человек видит; «Нет» возвращает туда, где нажали
- * «Опубликовать». Первая публикация уведомляет подписчиков новых сходок, возврат
- * скрытой — подписчиков самой сходки (Notifications, PER-216 и PER-218); с
- * черновика бывает только первая.
+ * Выбор публикации (PER-844): сходка станет видна участникам. Оповещение о
+ * новой сходке уходит только по первой кнопке и только при первой публикации;
+ * возврат после снятия по-прежнему оповещает подписчиков самой сходки.
+ * Кнопки несут версию, которую человек видит; «Отмена» возвращает туда, где
+ * нажали «Опубликовать». С черновика бывает только первая публикация.
  */
 export function publishConfirmScreen(confirm: {
   meetup: Pick<MeetupSnapshot, "id" | "title" | "version">;
@@ -767,29 +766,41 @@ export function publishConfirmScreen(confirm: {
   origin: "draft" | "status";
 }): ShownScreen {
   const token = uuidToToken(confirm.meetup.id);
+  const notifyData =
+    confirm.origin === "draft"
+      ? `v1:manage:publish:${token}:${confirm.meetup.version}`
+      : `v1:manage:confirm-publish:${token}:${confirm.meetup.version}`;
   return {
     id: "publish-confirm",
     text: [
       heading("Опубликовать сходку?"),
       "",
       subjectLine(meetupTitleLabel(confirm.meetup.title)),
-      confirm.origin === "draft"
-        ? "Сходка станет видна участникам, подписчики новых сходок получат уведомление."
-        : "Сходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
+      "Сходка станет видна участникам. Оповещение о новой сходке уходит только по первой кнопке и только при первой публикации.",
     ].join("\n"),
-    keyboard: confirmKeyboard({
-      yes: "Да, опубликовать сходку",
-      yesData:
-        confirm.origin === "draft"
-          ? `v1:manage:publish:${token}:${confirm.meetup.version}`
-          : `v1:manage:confirm-publish:${token}:${confirm.meetup.version}`,
-      noData:
+    keyboard: publishChoiceKeyboard({
+      notifyData,
+      silentData: `${notifyData}:s`,
+      cancelData:
         confirm.origin === "draft"
           ? `v1:manage:draft:${token}`
           : `v1:manage:status:${token}`,
     }),
     format: "HTML",
   };
+}
+
+export function publishChoiceKeyboard(choice: {
+  notifyData: string;
+  silentData: string;
+  cancelData: string;
+}): InlineKeyboard {
+  return new InlineKeyboard()
+    .text("Опубликовать и оповестить", choice.notifyData)
+    .row()
+    .text("Опубликовать без оповещения", choice.silentData)
+    .row()
+    .text(cancelLabel, choice.cancelData);
 }
 
 /** Подтверждение смены состояния по снимку, который человек видит. */
@@ -851,16 +862,31 @@ export function materialsScreen(
     const number = first + index + 1;
     const materialToken = uuidToToken(material.id);
     const title = displayMaterialTitle(material, number);
+    const canReorder =
+      canManage &&
+      meetup.lifecycle !== "cancelled" &&
+      /^[1-9]\d{0,8}$/.test(String(meetup.version));
     if (material.source.kind === "message-link") {
       keyboard.url(buttonText(`${title} ↗`), material.source.url);
     } else {
       keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
     }
-    if (canManage) {
+    if (canReorder) {
       keyboard.text(
-        removeLabel("Убрать"),
-        `v1:mm:rm:${token}:${materialToken}`,
+        "↑",
+        first + index > 0
+          ? `v1:mm:u:${token}:${materialToken}:${meetup.version}`
+          : `v1:mm:e:${token}`,
       );
+      keyboard.text(
+        "↓",
+        first + index < meetup.materials.length - 1
+          ? `v1:mm:d:${token}:${materialToken}:${meetup.version}`
+          : `v1:mm:e:${token}`,
+      );
+    }
+    if (canManage) {
+      keyboard.text(pictogram.remove, `v1:mm:rm:${token}:${materialToken}`);
     }
     keyboard.row();
   }

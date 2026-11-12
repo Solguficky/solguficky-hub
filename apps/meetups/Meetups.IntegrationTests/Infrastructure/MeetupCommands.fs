@@ -211,6 +211,7 @@ let publish (source: NpgsqlDataSource) (eventId: Guid) (id: MeetupId) =
             Id = id
             Viewer = administrator
             ExpectedVersion = expectedVersionOf source id
+            Silent = false
         }
     |> run
 

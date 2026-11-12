@@ -315,6 +315,51 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
       change("другой", 3).reply shouldBe Left(ChangePrizeRejected.AlreadyDrawn(1))
     }
 
+    "sets, replaces and removes the prize photo before the result across a restart and refuses it after" in {
+      val clock = new MovableClock(closesAt.minusSeconds(60))
+      val raffle = entity(
+        clock,
+        _ => Future.successful(true),
+        _ => Future.failed(new AssertionError("a pool waiting for the winner by hand must not ask the beacon")),
+        new Tickets,
+        settings.copy(byHand = true)
+      )
+      raffle.runCommand[Done](RaffleEntity.Open(OpenRaffle(closesAt, Some("кружка")), _))
+      register(raffle, 1, 1)
+      val photo = PrizePhoto(uuid(3101), "a" * 64)
+      val other = PrizePhoto(uuid(3102), "b" * 64)
+      def set(value: PrizePhoto) =
+        raffle.runCommand[Either[ChangePrizeRejected, Raffle]](
+          RaffleEntity.SetPhoto(SetPrizePhoto(value, OpId(value.photoId)), _)
+        )
+      def remove(opN: Int) =
+        raffle.runCommand[Either[ChangePrizeRejected, Raffle]](
+          RaffleEntity.RemovePhoto(RemovePrizePhoto(OpId(uuid(3200 + opN))), _)
+        )
+      val first = set(photo)
+      first.events.map(_.event.kind) shouldBe Seq("PrizePhotoSet")
+      first.reply.map(raffle => Raffle.prizePhoto(raffle.state)) shouldBe Right(Some(photo))
+      set(photo).events shouldBe empty
+
+      clock.now = closesAt.plusSeconds(1)
+      raffle.runCommand(RaffleEntity.CloseDue)
+      eventually(raffle.getState().raffle.state shouldBe a[RaffleState.AwaitingWinner])
+      raffle.restart()
+      Raffle.prizePhoto(raffle.getState().raffle.state) shouldBe Some(photo)
+      set(other).events.map(_.event.kind) shouldBe Seq("PrizePhotoSet")
+      remove(1).events.map(_.event.kind) shouldBe Seq("PrizePhotoRemoved")
+      remove(2).events shouldBe empty
+      // Id фото — ключ повтора: прежнее фото снова ставит только новый id.
+      val replayed = set(photo)
+      replayed.events shouldBe empty
+      replayed.reply.map(raffle => Raffle.prizePhoto(raffle.state)) shouldBe Right(None)
+      set(other.copy(photoId = uuid(3103))).events.map(_.event.kind) shouldBe Seq("PrizePhotoSet")
+
+      raffle.runCommand[Either[AssignRejected, Raffle]](RaffleEntity.Assign(AssignWinner(1, OpId(uuid(2001))), _))
+      remove(3).reply shouldBe Left(ChangePrizeRejected.AlreadyDrawn(1))
+      Raffle.prizePhoto(raffle.getState().raffle.state).map(_.photoId) shouldBe Some(uuid(3103))
+    }
+
     "fixes an empty pool without asking the beacon" in {
       val clock = new MovableClock(closesAt.minusSeconds(60))
       val raffle = entity(

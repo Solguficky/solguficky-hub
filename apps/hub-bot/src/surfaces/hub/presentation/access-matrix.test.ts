@@ -75,6 +75,9 @@ function updateOf({ from, firstName, action }: AccessMatrixInput): Update {
   };
 }
 
+// Отказ хаба на кнопку аукциона, которую он не читает или больше не ставит.
+const unreadableAuctionButtonText = "Не получилось прочитать эту кнопку.";
+
 describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
   const { bot, calls, records } = createHarness(
     {
@@ -148,6 +151,10 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
   // узнаётся раньше него — по заголовку.
   if (shown.some((text) => text.includes(invitationOnlyHub.title))) {
     return "invitation-only";
+  }
+  // Устаревшая кнопка аукциона (PER-800) — отказ шлюза дерева.
+  if (shown.some((text) => text.includes(unreadableAuctionButtonText))) {
+    return "outdated";
   }
   // Приветствие узнаётся по его кнопке: заявку ставит только она.
   const welcomed = calls.some((call) =>
