@@ -27,6 +27,7 @@ type Option func(*config)
 type config struct {
 	tracerProvider trace.TracerProvider
 	communityQueue CommunityQueue
+	contacts       ContactConfirmer
 }
 
 // WithTracerProvider задаёт провайдер серверных спанов. Без опции спаны идут в
@@ -34,6 +35,13 @@ type config struct {
 // обработчика, но ничего не экспортируется.
 func WithTracerProvider(tp trace.TracerProvider) Option {
 	return func(c *config) { c.tracerProvider = tp }
+}
+
+// WithContactConfirmer задаёт клиента Meetups для ResolveOrganizerUsername. Без
+// опции метод отвечает UNAVAILABLE: подтвердить связь с сходкой нечем, а ответ
+// «ника нет» выдал бы отсутствие настройки за отказ Meetups.
+func WithContactConfirmer(c ContactConfirmer) Option {
+	return func(cfg *config) { cfg.contacts = c }
 }
 
 // New собирает сервер. callers — таблица вызывающих из LoadCallers; нулевое
@@ -70,6 +78,7 @@ func New(log *slog.Logger, db *sql.DB, maintainerToken string, callers Callers, 
 		log:             log,
 		maintainerToken: maintainerToken,
 		communityQueue:  cfg.communityQueue,
+		contacts:        cfg.contacts,
 	})
 
 	healthSrv := health.NewServer()
