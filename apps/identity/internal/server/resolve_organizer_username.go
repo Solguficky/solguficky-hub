@@ -6,7 +6,6 @@ import (
 	"errors"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
-	"github.com/google/uuid"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -45,7 +44,7 @@ func (s identityService) ResolveOrganizerUsername(ctx context.Context, req *iden
 	if err != nil {
 		return nil, err
 	}
-	meetupID, err := canonicalMeetupID(req.GetMeetupId())
+	meetupID, err := canonicalUUID(req.GetMeetupId(), "meetup_id")
 	if err != nil {
 		return nil, err
 	}
@@ -67,7 +66,6 @@ func (s identityService) ResolveOrganizerUsername(ctx context.Context, req *iden
 	confirmed, err := s.contacts.ConfirmContact(ctx, meetupID, viewer.UUID.String(), identityID)
 	switch {
 	case err != nil:
-		s.log.WarnContext(ctx, "meetup contact not confirmed: meetups unavailable", "error", err)
 		return nil, status.Error(codes.Unavailable, "meetups unavailable")
 	case !confirmed:
 		return nil, status.Error(codes.NotFound, "organizer not found")
@@ -78,12 +76,4 @@ func (s identityService) ResolveOrganizerUsername(ctx context.Context, req *iden
 		response.TelegramUsername = &username.String
 	}
 	return response, nil
-}
-
-func canonicalMeetupID(raw string) (string, error) {
-	id, err := uuid.Parse(raw)
-	if err != nil || id.String() != raw {
-		return "", status.Error(codes.InvalidArgument, "meetup_id must be a canonical UUID")
-	}
-	return raw, nil
 }

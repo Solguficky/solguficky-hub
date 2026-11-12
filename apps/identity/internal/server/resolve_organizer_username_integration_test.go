@@ -6,8 +6,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log/slog"
-	"net"
 	"strings"
 	"sync"
 	"testing"
@@ -15,11 +13,8 @@ import (
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/server"
 	"github.com/google/uuid"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 )
 
 // memberActor — зритель карточки; access_hub Identity читает у него сама.
@@ -69,25 +64,11 @@ func newMeetupsID(t *testing.T) string {
 // настроенного клиента Meetups.
 func organizerClient(t *testing.T, db *sql.DB, confirmer server.ContactConfirmer) identityv1.IdentityServiceClient {
 	t.Helper()
-	lis := bufconn.Listen(1024 * 1024)
-	t.Cleanup(func() { _ = lis.Close() })
 	var opts []server.Option
 	if confirmer != nil {
 		opts = append(opts, server.WithContactConfirmer(confirmer))
 	}
-	srv := server.New(slog.New(slog.DiscardHandler), db, "", server.NewTestCallers(t, ""), opts...)
-	t.Cleanup(srv.Stop)
-	go func() { _ = srv.Serve(lis) }()
-	conn, err := grpc.NewClient("passthrough:///bufconn",
-		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		server.PresentDeclaredCaller(),
-	)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
-	t.Cleanup(func() { _ = conn.Close() })
-	return identityv1.NewIdentityServiceClient(conn)
+	return identityv1.NewIdentityServiceClient(newConnWithOptions(t, db, "", opts...))
 }
 
 func TestResolveOrganizerUsernameReturnsUsernameOfConfirmedOrganizer(t *testing.T) {
@@ -124,7 +105,8 @@ func TestResolveOrganizerUsernameLeavesFieldAbsentWithoutUsername(t *testing.T) 
 	organizer := resolve(t, setup, 9101, nil)
 	insertCircle(t, db, organizer.GetIdentityId(), "member")
 	meetupID := newMeetupsID(t)
-	client := organizerClient(t, db, &fakeMeetups{confirmed: map[string]bool{meetupID + "/" + organizer.GetIdentityId(): true}})
+	meetups := &fakeMeetups{confirmed: map[string]bool{meetupID + "/" + organizer.GetIdentityId(): true}}
+	client := organizerClient(t, db, meetups)
 
 	resp, err := client.ResolveOrganizerUsername(t.Context(), &identityv1.ResolveOrganizerUsernameRequest{
 		Actor: memberActor(organizer.GetIdentityId()), IdentityId: organizer.GetIdentityId(), MeetupId: meetupID,
@@ -134,6 +116,9 @@ func TestResolveOrganizerUsernameLeavesFieldAbsentWithoutUsername(t *testing.T) 
 	}
 	if resp.TelegramUsername != nil {
 		t.Fatalf("telegram_username: got %q want absent", resp.GetTelegramUsername())
+	}
+	if got := meetups.asked(); len(got) != 1 {
+		t.Fatalf("Meetups was asked %d times, want once", len(got))
 	}
 }
 

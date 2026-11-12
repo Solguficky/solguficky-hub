@@ -21,8 +21,7 @@ service IdentityService {
   // guards.
   rpc CheckAccessRight(CheckAccessRightRequest) returns (CheckAccessRightResponse);
   // Resolves the Telegram username of the author or an organizer of a meetup for
-  // the meetup card, only when Meetups confirms that relation to the meetup as
-  // the viewer sees it and the person holds ACCESS_RIGHT_ORGANIZE_MEETUPS.
+  // the meetup card.
   rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
   // Resolves an identity id to that person's Telegram username for the screens
   // of an auction organizer.
@@ -565,9 +564,7 @@ message ResolveOrganizerUsernameRequest {
   string identity_id = 2;
 
   // Canonical lowercase UUIDv7 string with hyphens: the meetup whose card names
-  // the person. Identity asks Meetups to confirm the relation to it; a person
-  // Meetups does not confirm is NOT_FOUND, and a Meetups that cannot answer is
-  // UNAVAILABLE.
+  // the person.
   string meetup_id = 3;
 }
 
