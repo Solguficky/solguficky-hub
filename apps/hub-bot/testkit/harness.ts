@@ -225,6 +225,7 @@ export type HarnessOptions = Partial<
     | "proxyExplainer"
     | "live"
     | "mediaChat"
+    | "communityChat"
   >
 > & {
   respond?: Respond;

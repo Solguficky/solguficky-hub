@@ -87,4 +87,31 @@ describe("readHubConfig", () => {
     const result = readHubConfig({});
     expect(result.ok && "supportBotUsername" in result.config).toBe(false);
   });
+
+  // Чат сообщества (ADR-078, п. 2): обычная группа и супергруппа после
+  // миграции. Без переменной группы, как прежде, не обрабатываются.
+  it("reads the community chat id of a group or a supergroup", () => {
+    for (const raw of ["-4012345678", "-1001234567890"]) {
+      const result = readHubConfig({ BOT_COMMUNITY_CHAT_ID: raw });
+      expect(result.ok && result.config.communityChatId).toBe(Number(raw));
+    }
+    for (const env of [{}, { BOT_COMMUNITY_CHAT_ID: "" }]) {
+      const result = readHubConfig(env);
+      expect(result.ok && "communityChatId" in result.config).toBe(false);
+    }
+  });
+
+  it("refuses a community chat id that is not a group id", () => {
+    for (const raw of [
+      "4012345678",
+      "-12a",
+      "@community",
+      "-99999999999999999",
+    ]) {
+      expect(readHubConfig({ BOT_COMMUNITY_CHAT_ID: raw })).toEqual({
+        ok: false,
+        error: "BOT_COMMUNITY_CHAT_ID must be a group id like -…",
+      });
+    }
+  });
 });

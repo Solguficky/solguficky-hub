@@ -22,6 +22,7 @@ hub-bot: ExecutableResource
   command: node
   workdir: <repo>/apps/hub-bot
   arg: dist/src/main.js
+  env: BOT_COMMUNITY_CHAT_ID=-4012345678
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
   env: BOT_HALL_SCREEN_URL=https://hall.example.org/screen

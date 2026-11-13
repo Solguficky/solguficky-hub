@@ -11,7 +11,7 @@ namespace AppHost.UnitTests;
 
 /// <summary>
 /// Имя бота аукциона для ссылок каналов прихода (PER-441), имя бота поддержки
-/// (ADR-068, п. 2) и канал медиа ботов — необязательные настройки: заданная
+/// (ADR-068, п. 2), канал медиа ботов и чат сообщества — необязательные настройки: заданная
 /// доезжает до бота хаба, незаданная не появляется вовсе.
 /// </summary>
 public class HubBotWiringTests
@@ -69,6 +69,24 @@ public class HubBotWiringTests
         environment.ShouldNotContainKey("BOT_MEDIA_CHANNEL_ID");
     }
 
+    /// <summary>Чат сообщества (ADR-078, п. 2): id как есть, без пробелов.</summary>
+    [Fact]
+    public async Task HubBot_GetsTheConfiguredCommunityChat()
+    {
+        var environment = await EnvironmentAsync(null, communityChatId: " -4012345678 ");
+
+        environment["BOT_COMMUNITY_CHAT_ID"].ShouldBe("-4012345678");
+    }
+
+    /// <summary>Без чата сообщества бот, как прежде, групп не обрабатывает.</summary>
+    [Fact]
+    public async Task HubBot_WithoutCommunityChat_GetsNoVariable()
+    {
+        var environment = await EnvironmentAsync(null);
+
+        environment.ShouldNotContainKey("BOT_COMMUNITY_CHAT_ID");
+    }
+
     /// <summary>Экран зала и стрим (PER-825): адреса как есть, без пробелов.</summary>
     [Fact]
     public async Task HubBot_GetsTheConfiguredHallLinks()
@@ -107,7 +125,8 @@ public class HubBotWiringTests
         string? supportBotUsername = null,
         string? mediaChannelId = null,
         string? hallScreenUrl = null,
-        string? hallStreamUrl = null)
+        string? hallStreamUrl = null,
+        string? communityChatId = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -120,6 +139,7 @@ public class HubBotWiringTests
             [BotMediaChannel.ChannelIdKey] = mediaChannelId,
             [BotHallLinks.ScreenUrlKey] = hallScreenUrl,
             [BotHallLinks.StreamUrlKey] = hallStreamUrl,
+            [HubBotCommunityChat.ChatIdKey] = communityChatId,
         });
         var profile = new ProfileConfig { Name = "hub", Services = ["hub-bot"], Infrastructure = [] };
         var bot = HubBotSetup.Configure(new ServiceGraphContext(builder, profile)).Resource;

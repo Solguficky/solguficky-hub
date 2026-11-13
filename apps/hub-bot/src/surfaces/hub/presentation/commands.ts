@@ -28,6 +28,23 @@ export const botCommands = [
 ] as const satisfies readonly BotCommand[];
 
 /**
+ * Невидимые команды чата сообщества (ADR-078; развилка D-2 плана эпика
+ * PER-679): команду и ответ на неё видит только отправитель. Сходки — та же
+ * команда, что в личке; лот финала — только у бота с Auction (PER-685). Ответы
+ * на них — свои листья зонта: PER-683 и PER-685.
+ */
+export function communityChatCommands(options: {
+  auction: boolean;
+}): readonly BotCommand[] {
+  return [
+    { ...meetups, is_ephemeral: true },
+    ...(options.auction
+      ? [{ command: "lot", description: "Лот финала", is_ephemeral: true }]
+      : []),
+  ];
+}
+
+/**
  * Список чата держателя права управления: «Управление» стоит перед «Помощью».
  * Его ставит `/start` и сообщение о назначении администратором — список
  * администраторов живёт в Identity, и общий список на старте его не знает.

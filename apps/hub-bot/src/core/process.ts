@@ -36,6 +36,10 @@ export type SurfaceProcess = {
   };
   // Команды кнопки меню клиента этой поверхности.
   commands: readonly BotCommand[];
+  // Списки команд отдельных чатов, которые поверхность пишет на старте рядом
+  // с общим, — у хаба невидимые команды чата сообщества (ADR-078). Отказ
+  // Telegram функция пишет в лог сама и не выбрасывает.
+  registerChatCommands?: () => Promise<void>;
   // Второй вход: адресные факты Notifications. Поверхность связывает разбор
   // своих веток и отправителя с общей механикой доставки. Поверхность без
   // фактов — поддержка — открывает здесь своё соединение с шиной ради bucket'а
@@ -214,6 +218,7 @@ async function main(
     // Меню пишется без ожидания: медленный или отказавший Telegram не должен
     // задерживать polling и остановку, а отказ registerCommands пишет в лог сам.
     void registerCommands(bot.api, defined.config.commands, logger);
+    void defined.config.registerChatCommands?.();
     try {
       await bot.start({
         onStart: () => {

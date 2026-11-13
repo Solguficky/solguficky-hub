@@ -53,7 +53,8 @@ import { createLiveScreensNats } from "./live-screens-nats.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
 import { createBot } from "./presentation/bot.js";
-import { botCommands } from "./presentation/commands.js";
+import { botCommands, communityChatCommands } from "./presentation/commands.js";
+import { createCommunityChat } from "./presentation/community-chat.js";
 import {
   createNotificationApi,
   createNotificationSender,
@@ -222,6 +223,16 @@ export const hubSurface: SurfaceDefinition = ({
         "unexpected",
       ),
   });
+  // Чат сообщества (ADR-078, п. 2): допуск групп и невидимые команды в его
+  // scope. Лот финала в меню — только у бота с Auction (PER-685).
+  const communityChat =
+    hub.communityChatId === undefined
+      ? undefined
+      : createCommunityChat({
+          chatId: hub.communityChatId,
+          commands: communityChatCommands({ auction: auction !== undefined }),
+          logger,
+        });
   const bot = createBot({
     token,
     dispatcher,
@@ -235,6 +246,7 @@ export const hubSurface: SurfaceDefinition = ({
     today,
     build,
     mediaChat,
+    ...(communityChat === undefined ? {} : { communityChat }),
     ...(hub.auctionBotUsername === undefined
       ? {}
       : { auctionBotUsername: hub.auctionBotUsername }),
@@ -406,6 +418,11 @@ export const hubSurface: SurfaceDefinition = ({
     config: {
       bot,
       commands: botCommands,
+      ...(communityChat === undefined
+        ? {}
+        : {
+            registerChatCommands: () => communityChat.registerCommands(bot.api),
+          }),
       startDelivery: (options) =>
         startNatsDelivery({
           ...options,
@@ -512,6 +529,8 @@ export const hubSurface: SurfaceDefinition = ({
       // записи старта видно, задумано это или настройка потерялась.
       startFields: {
         auction_bot_links: hub.auctionBotUsername !== undefined,
+        // Без чата сообщества бот групп не обрабатывает и из них не выходит.
+        community_chat: communityChat !== undefined,
       },
     },
   };
