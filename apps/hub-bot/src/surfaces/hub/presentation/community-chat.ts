@@ -15,6 +15,14 @@ import {
 // `migrate_from_chat_id`, равным id сообщества, выхода не вызывает, а новый id
 // уходит в лог: настройку среды обновляет человек.
 //
+// Новый id процесс помнит до рестарта (ADR-078, дополнение 2026-11-13): из
+// новой супергруппы бот не выходит и ничего в ней не обрабатывает — иначе
+// первое же служебное событие после миграции вывело бы его из самого чата
+// сообщества. Связь старого и нового id берётся только из служебных полей
+// сообщения о миграции: `migrate_from_chat_id` в новой супергруппе и
+// `migrate_to_chat_id` в старой группе. После рестарта без обновлённой
+// настройки память пуста, и бот из новой супергруппы выйдет.
+//
 // Каналы под правило не подпадают: в канале медиа ботов бот хаба —
 // администратор, и посты оттуда он показывает людям (ADR-057, дополнение
 // 2026-10-27).
@@ -23,7 +31,8 @@ export type ChatAdmission =
   // Личка, канал или update без чата: всё идёт, как прежде.
   | { kind: "other" }
   | { kind: "community" }
-  // Супергруппа, в которую перевели чат сообщества: её id — в лог.
+  // Супергруппа, в которую перевели чат сообщества: о ней говорит сообщение
+  // о миграции или память процесса.
   | { kind: "migrated"; chatId: number }
   // Чужая группа. `leave` ложно, когда бота в ней уже нет: его вывели или он
   // вышел сам, и о выходе Telegram сообщил этим же update.
@@ -34,6 +43,7 @@ type AdmissionInput = Pick<Context, "chat" | "message" | "myChatMember">;
 export function admitChat(
   ctx: AdmissionInput,
   communityChatId: number,
+  migrated: ReadonlySet<number> = new Set(),
 ): ChatAdmission {
   const chat = ctx.chat;
   if (chat === undefined) return { kind: "other" };
@@ -41,7 +51,10 @@ export function admitChat(
     return { kind: "other" };
   }
   if (chat.id === communityChatId) return { kind: "community" };
-  if (ctx.message?.migrate_from_chat_id === communityChatId) {
+  if (
+    ctx.message?.migrate_from_chat_id === communityChatId ||
+    migrated.has(chat.id)
+  ) {
     return { kind: "migrated", chatId: chat.id };
   }
   const status = ctx.myChatMember?.new_chat_member.status;
@@ -77,24 +90,44 @@ export function createCommunityChat(options: {
   const sync = createChatCommandsSync(logger);
   const registerCommands: CommunityChat["registerCommands"] = (api) =>
     sync(api, chatId, commands);
+  // Супергруппы, в которые перевели чат сообщества, — до рестарта.
+  const migrated = new Set<number>();
+  // Id группы — не Telegram id человека (logging.md): без него человек не
+  // узнает, на что поменять настройку среды. Пишется один раз на супергруппу.
+  const remember = (ctx: ShellContext, newChatId: number): void => {
+    if (migrated.has(newChatId)) return;
+    migrated.add(newChatId);
+    logger.warn("community chat migrated", {
+      ...boundaryFields(ctx, "ok"),
+      community_chat_id: newChatId,
+    });
+  };
   const gate: MiddlewareFn<ShellContext> = async (ctx, next) => {
-    const admission = admitChat(ctx, chatId);
+    const admission = admitChat(ctx, chatId, migrated);
     switch (admission.kind) {
       case "other":
         await next();
         return;
-      case "community":
+      case "community": {
+        // Старая группа тоже сообщает о миграции — полем `migrate_to_chat_id`.
+        const movedTo = ctx.message?.migrate_to_chat_id;
+        if (movedTo !== undefined) remember(ctx, movedTo);
         await next();
         // После ответа: шёпот укладывается в 15 секунд от команды (ADR-078).
         await registerCommands(ctx.api);
         return;
+      }
       case "migrated":
-        // Id группы — не Telegram id человека (logging.md): без него человек
-        // не узнает, на что поменять настройку среды.
-        logger.warn("community chat migrated", {
-          ...boundaryFields(ctx, "ok"),
-          community_chat_id: admission.chatId,
-        });
+        // Команды здесь не обрабатываются до обновления настройки: это не
+        // чат сообщества, пока среда его так не назвала.
+        if (migrated.has(admission.chatId)) {
+          logger.info(
+            "migrated community chat update ignored",
+            boundaryFields(ctx, "ok"),
+          );
+          return;
+        }
+        remember(ctx, admission.chatId);
         return;
       case "foreign":
         await leaveForeignGroup(ctx, admission, logger);

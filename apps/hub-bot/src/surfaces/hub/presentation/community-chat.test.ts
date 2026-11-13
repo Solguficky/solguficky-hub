@@ -196,6 +196,85 @@ describe("community chat admission", () => {
     ]);
   });
 
+  // Новый id процесс помнит до рестарта (ADR-078, дополнение 2026-11-13):
+  // служебное событие и команда новой супергруппы выхода не вызывают и до
+  // юзкейсов не доходят, а лог называет id один раз.
+  it("remembers the supergroup the community chat migrated to until restart", async () => {
+    const supergroup: Chat = { id: migrated, type: "supergroup", title: "чат" };
+    const migration = {
+      update_id: 1,
+      message: {
+        message_id: 1,
+        date: 0,
+        chat: supergroup,
+        from: person,
+        migrate_from_chat_id: community,
+      },
+    } as Update;
+    const { bot, calls, commands, identity, gateRecords } = harness();
+    await bot.init();
+    await bot.handleUpdate(migration);
+    await bot.handleUpdate(
+      message(supergroup, "", {
+        new_chat_members: [{ id: 7, is_bot: false, first_name: "new" }],
+      }),
+    );
+    await bot.handleUpdate(message(supergroup, "/meetups"));
+    expect(calls).toEqual([]);
+    expect(commands).toEqual([]);
+    expect(identity.resolved).toBe(0);
+    expect(gateRecords.map((record) => record.message)).toEqual([
+      "community chat migrated",
+      "migrated community chat update ignored",
+      "migrated community chat update ignored",
+    ]);
+    // Рестарт без обновлённой настройки: память пуста, и супергруппа для
+    // бота — чужая группа.
+    const restarted = harness();
+    await restarted.bot.init();
+    await restarted.bot.handleUpdate(message(supergroup, "/meetups"));
+    expect(restarted.calls).toEqual([
+      { method: "leaveChat", payload: { chat_id: migrated } },
+    ]);
+  });
+
+  // Старая группа сообщает о миграции полем `migrate_to_chat_id`: оно приходит
+  // и раньше сообщения новой супергруппы.
+  it("learns the new id from the migration message of the old group", async () => {
+    const supergroup: Chat = { id: migrated, type: "supergroup", title: "чат" };
+    const { bot, calls, gateRecords } = harness();
+    await bot.init();
+    await bot.handleUpdate(
+      message(group(community), "", { migrate_to_chat_id: migrated }),
+    );
+    await bot.handleUpdate(message(supergroup, "/meetups"));
+    expect(methods(calls)).not.toContain("leaveChat");
+    expect(gateRecords).toContainEqual(
+      expect.objectContaining({
+        message: "community chat migrated",
+        fields: expect.objectContaining({ community_chat_id: migrated }),
+      }),
+    );
+  });
+
+  // Связь — только из служебного поля: другое значение `migrate_to_chat_id` в
+  // чужой группе ничего не открывает.
+  it("still leaves a foreign group after a migration", async () => {
+    const { bot, calls } = harness();
+    await bot.init();
+    await bot.handleUpdate(
+      message(group(community), "", { migrate_to_chat_id: migrated }),
+    );
+    await bot.handleUpdate(
+      message(group(foreign), "", { migrate_to_chat_id: migrated }),
+    );
+    await bot.handleUpdate(message(group(foreign), "/meetups"));
+    expect(calls).toEqual([
+      { method: "leaveChat", payload: { chat_id: foreign } },
+      { method: "leaveChat", payload: { chat_id: foreign } },
+    ]);
+  });
+
   it("stays in the community chat and writes its invisible commands", async () => {
     const { bot, calls, commands } = harness();
     await bot.init();

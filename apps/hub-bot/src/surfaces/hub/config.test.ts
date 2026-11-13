@@ -107,6 +107,9 @@ describe("readHubConfig", () => {
       "-12a",
       "@community",
       "-99999999999999999",
+      "-0",
+      "-000",
+      "-0123",
     ]) {
       expect(readHubConfig({ BOT_COMMUNITY_CHAT_ID: raw })).toEqual({
         ok: false,
