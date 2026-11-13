@@ -123,8 +123,6 @@ module Api =
         // отвечает отказом по праву.
         | LeaveMeetupOrganizersError.Roster RosterError.MeetupNotFound ->
             Status(StatusCode.NotFound, "meetup not found")
-        | LeaveMeetupOrganizersError.Roster RosterError.AuthorProtected ->
-            Status(StatusCode.PermissionDenied, "only the author or an administrator removes the author")
         | LeaveMeetupOrganizersError.Roster RosterError.LastOrganizer ->
             Status(StatusCode.FailedPrecondition, "the last person in the roster stays")
         // Отменённая сходка закрывает только назначение: снятие и выход открыты.

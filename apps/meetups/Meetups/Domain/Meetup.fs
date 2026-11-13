@@ -78,10 +78,9 @@ type RosterError =
     | MeetupNotFound
     /// Назначение в отменённую сходку; снятие и выход остаются открытыми.
     | TransitionNotAllowed
-    /// Организатор, не администратор, снимает автора: автора снимает сам автор
-    /// выходом или администратор (ADR-076, п. 6).
-    | AuthorProtected
-    /// Снятие или выход последнего человека в составе без администратора.
+    /// Выход последнего человека в составе без администратора. Снятие этого
+    /// отказа не знает: снимает только администратор (ADR-076, дополнение
+    /// 2026-11-13 к п. 6).
     | LastOrganizer
 
 [<RequireQualifiedAccess>]
@@ -668,24 +667,15 @@ module Meetup =
         | Existing meetup when meetup.Lifecycle = Cancelled -> Error RosterError.TransitionNotAllowed
         | Existing _ -> Ok(Some(MeetupOrganizerAppointed person))
 
-    /// Снятие другого человека. Повтор целевого состояния стоит раньше инвариантов:
-    /// снять автора, которого в составе уже нет, — успех без события. Автора снимает
-    /// только администратор; последнего в составе — тоже только он. Инвариант считает
-    /// записи состава, а не живые права (ADR-076, п. 6).
-    let decideDismissOrganizer
-        (byAdministrator: bool)
-        (person: PersonId)
-        (state: MeetupState)
-        : Result<MeetupEvent option, RosterError> =
+    /// Снятие другого человека. Снимает только администратор (ADR-076, дополнение
+    /// 2026-11-13 к п. 6), поэтому у решения нет ни защиты автора, ни инварианта
+    /// последнего в составе: администратор снимает любого и может опустошить
+    /// состав. Право решает срез до загрузки; снять того, кого в составе уже нет,
+    /// — успех без события.
+    let decideDismissOrganizer (person: PersonId) (state: MeetupState) : Result<MeetupEvent option, RosterError> =
         match state with
         | Initial -> Error RosterError.MeetupNotFound
         | Existing meetup when not (List.contains person meetup.Organizers) -> Ok None
-        | Existing meetup when person = meetup.Author && not byAdministrator -> Error RosterError.AuthorProtected
-        | Existing meetup when
-            meetup.Organizers = [ person ]
-            && not byAdministrator
-            ->
-            Error RosterError.LastOrganizer
         | Existing _ -> Ok(Some(MeetupOrganizerDismissed person))
 
     /// Выход — снятие самого себя, и автор может выйти (он перестаёт командовать, но

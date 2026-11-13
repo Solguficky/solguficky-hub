@@ -61,50 +61,45 @@ let ``A new person is appointed with one event`` () =
 
 [<Fact>]
 let ``Dismissing a person who is not in the roster gives no event`` () =
-    test <@ Meetup.decideDismissOrganizer false Sample.coOrganizerId (Existing Sample.draft) = Ok None @>
+    test <@ Meetup.decideDismissOrganizer Sample.coOrganizerId (Existing Sample.draft) = Ok None @>
 
 [<Fact>]
 let ``A co-organizer is dismissed with one event`` () =
     test
         <@
-            Meetup.decideDismissOrganizer false Sample.coOrganizerId (Existing Sample.withCoOrganizer) = Ok(
+            Meetup.decideDismissOrganizer Sample.coOrganizerId (Existing Sample.withCoOrganizer) = Ok(
                 Some(MeetupOrganizerDismissed Sample.coOrganizerId)
             )
         @>
 
-/// Соорганизатор не снимает автора (ADR-076, п. 6).
+/// Снимает только администратор (ADR-076, дополнение 2026-11-13 к п. 6), поэтому
+/// защиты автора у снятия нет: право решает срез до загрузки.
 [<Fact>]
-let ``An organizer cannot dismiss the author`` () =
+let ``The author is dismissed like anyone else`` () =
     test
         <@
-            Meetup.decideDismissOrganizer false Sample.authorId (Existing Sample.withCoOrganizer) = Error
-                RosterError.AuthorProtected
-        @>
-
-[<Fact>]
-let ``An administrator can dismiss the author`` () =
-    test
-        <@
-            Meetup.decideDismissOrganizer true Sample.authorId (Existing Sample.withCoOrganizer) = Ok(
+            Meetup.decideDismissOrganizer Sample.authorId (Existing Sample.withCoOrganizer) = Ok(
                 Some(MeetupOrganizerDismissed Sample.authorId)
             )
         @>
 
-/// Повтор целевого состояния стоит раньше защиты автора: автора в составе уже нет.
 [<Fact>]
 let ``Dismissing an author who already left is a repeat`` () =
-    test <@ Meetup.decideDismissOrganizer false Sample.authorId (Existing withoutAuthor) = Ok None @>
+    test <@ Meetup.decideDismissOrganizer Sample.authorId (Existing withoutAuthor) = Ok None @>
 
+/// Инвариант последнего в составе держит только выход: снимающий — администратор.
 [<Fact>]
-let ``Nobody but an administrator dismisses the last person in the roster`` () =
+let ``The last person in the roster is dismissed`` () =
     test
         <@
-            Meetup.decideDismissOrganizer false Sample.coOrganizerId (Existing withoutAuthor) = Error
-                RosterError.LastOrganizer
-            && Meetup.decideDismissOrganizer true Sample.coOrganizerId (Existing withoutAuthor) = Ok(
+            Meetup.decideDismissOrganizer Sample.coOrganizerId (Existing withoutAuthor) = Ok(
                 Some(MeetupOrganizerDismissed Sample.coOrganizerId)
             )
         @>
+
+[<Fact>]
+let ``Dismissing from a missing meetup is not found`` () =
+    test <@ Meetup.decideDismissOrganizer Sample.coOrganizerId Initial = Error RosterError.MeetupNotFound @>
 
 [<Fact>]
 let ``An author can leave while a co-organizer stays`` () =

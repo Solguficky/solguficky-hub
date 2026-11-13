@@ -19,12 +19,13 @@ import {
   titleFor,
 } from "./steps.js";
 
-// ADR-076, п. 6–8, и PER-749: организатор назначает участника по нику,
-// соорганизатор не снимает автора, последний в составе не выходит. Всё —
-// против настоящих Identity и Meetups: ник Identity находит методом
-// `FindOrganizerCandidate`, состав держит Meetups. Доставку вести о назначении
-// провод не проверяет — Notifications в контуре нет; её текст и кнопки держит
-// L0 бота (`notification-message.test.ts`).
+// ADR-076, п. 6–8, PER-749 и PER-879 (дополнение 2026-11-13 к п. 6):
+// организатор назначает участника по нику, снимает только администратор,
+// последний в составе не выходит. Всё — против настоящих Identity и Meetups:
+// ник Identity находит методом `FindOrganizerCandidate`, состав держит
+// Meetups. Доставку вестей о назначении и снятии провод не проверяет —
+// Notifications в контуре нет; их текст и кнопки держит L0 бота
+// (`notification-message.test.ts`), а снявшего в журнале — L1 Meetups.
 const environment = readContourEnvironment();
 const direct = openDirectClients(environment);
 const wire = openBotWire(environment);
@@ -143,20 +144,60 @@ describe("meetup organizers over the wire", () => {
     });
   });
 
-  it("refuses a co-organizer dismissing the author by a forged press", async () => {
+  it("hides dismissing from organizers", async () => {
     await withMeetup(
-      async ({ admin, author, authorNick, member, memberNick, meetupId }) => {
+      async ({ author, authorNick, member, memberNick, meetupId }) => {
         await appoints(author, meetupId, memberNick);
 
+        await author.opensLink(meetupId);
+        await author.presses("🛠 Организаторы");
+        expect(author.buttons()).not.toContain(`Снять @${memberNick}`);
         await member.opensLink(meetupId);
         await member.presses("🛠 Организаторы");
         expect(member.sees()).toContain(`${authorNick} · автор`);
         expect(member.buttons()).not.toContain(`Снять ${authorNick}`);
+      },
+    );
+  });
+
+  it("refuses organizers' forged dismissals and keeps the roster", async () => {
+    await withMeetup(
+      async ({ admin, author, authorNick, member, memberNick, meetupId }) => {
+        await appoints(author, meetupId, memberNick);
 
         await admin.opensLink(meetupId);
         await admin.presses("🛠 Организаторы");
         await member.pressesRaw(targetOf(admin, `Снять ${authorNick}`));
-        expect(member.sees()).toContain("Автора снимает только администратор.");
+        expect(member.sees()).toContain(
+          "Снимать организаторов может только администратор.",
+        );
+        await author.pressesRaw(targetOf(admin, `Снять @${memberNick}`));
+        expect(author.sees()).toContain(
+          "Снимать организаторов может только администратор.",
+        );
+
+        await member.opensLink(meetupId);
+        expect(member.buttons()).toContain("🛠 Организаторы");
+      },
+    );
+  });
+
+  it("lets the administrator dismiss the author", async () => {
+    await withMeetup(
+      async ({ admin, author, authorNick, member, memberNick, meetupId }) => {
+        await appoints(author, meetupId, memberNick);
+
+        await admin.opensLink(meetupId);
+        await admin.presses("🛠 Организаторы");
+        await admin.presses(`Снять ${authorNick}`);
+        expect(admin.sees()).toContain("Снять организатора?");
+        await admin.presses("✔️ Да, снять");
+        expect(admin.sees()).toContain("Организатор снят");
+
+        await author.opensLink(meetupId);
+        expect(author.buttons()).not.toContain("🛠 Организаторы");
+        await member.opensLink(meetupId);
+        expect(member.buttons()).toContain("🛠 Организаторы");
       },
     );
   });

@@ -15,10 +15,11 @@ import type {
 import type { MeetupResult, MeetupSnapshot, Meetups } from "../meetups/port.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 
-// «Организаторы» сходки (PER-749; ADR-076, п. 6–8). Meetups подменён одним
-// составом с правилами команд из integration.md: право смотрящего, защита
-// автора, «последний в составе» и отменённая сходка. Identity — люди по нику:
-// поиск отвечает отказом значением, как сервис, и ничего не заводит.
+// «Организаторы» сходки (PER-749, PER-879; ADR-076, п. 6–8 и дополнение
+// 2026-11-13 к п. 6). Meetups подменён одним составом с правилами команд из
+// integration.md: право смотрящего, снятие только администратором,
+// «последний в составе» у выхода и отменённая сходка. Identity — люди по
+// нику: поиск отвечает отказом значением, как сервис, и ничего не заводит.
 
 const meetupId = "0192f0a0-0000-7000-8000-00000000e001";
 const token = uuidToToken(meetupId);
@@ -108,14 +109,10 @@ function fakeMeetups(state: {
         viewer: person.identityId,
         target: identityId,
       });
-      const viewer = relation(person.identityId);
-      if (viewer === undefined) return { kind: "forbidden" };
+      // Снимает только администратор, отказ — до загрузки сходки.
+      if (relation(person.identityId) !== "admin") return { kind: "forbidden" };
       if (!state.meetup.organizers.includes(identityId))
         return ok(state.meetup.organizers);
-      if (identityId === state.meetup.author && viewer !== "admin")
-        return { kind: "forbidden" };
-      if (state.meetup.organizers.length === 1 && viewer !== "admin")
-        return precondition();
       return ok(state.meetup.organizers.filter((id) => id !== identityId));
     },
     async leaveOrganizers(person) {
@@ -352,13 +349,8 @@ describe("meetup organizers in the hub bot", () => {
     expect(plain(screen)).toContain("Организаторы\nНастолки");
     expect(plain(screen)).toContain("• ты · автор");
     expect(plain(screen)).toContain("• @masha");
-    // Себе — «Выйти», а не «Снять».
-    expect(labels(screen)).toEqual([
-      "Снять @masha",
-      "Добавить",
-      "Выйти",
-      "‹ Сходка",
-    ]);
+    // Автор назначает, но не снимает: «Снять» видит только администратор.
+    expect(labels(screen)).toEqual(["Добавить", "Выйти", "‹ Сходка"]);
   });
 
   it("keeps the entry from a member outside the roster", async () => {
@@ -373,30 +365,53 @@ describe("meetup organizers in the hub bot", () => {
     );
   });
 
-  // Критерий PER-749: соорганизатор не видит «Снять» у автора, а поддельное
+  // Критерий PER-879: организатор не видит «Снять» ни у кого, а поддельное
   // нажатие получает отказ и до Meetups не доходит.
-  it("hides dismissing the author from a co-organizer", async () => {
+  it("hides dismissing from a co-organizer", async () => {
     const harness = await started(masha);
 
     await harness.bot.handleUpdate(press(`v1:mo:l:${token}`));
     const screen = last(harness.calls);
     expect(plain(screen)).toContain("• @lesha · автор");
-    expect(labels(screen)).not.toContain("Снять @lesha");
     expect(labels(screen)).toEqual(["Добавить", "Выйти", "‹ Сходка"]);
   });
 
-  it("refuses a co-organizer's forged press dismissing the author before Meetups", async () => {
-    const harness = await started(masha);
+  it.each([
+    ["the author dismissing a co-organizer", lesha, mashaId],
+    ["a co-organizer dismissing the author", masha, leshaId],
+  ])(
+    "refuses %s by a forged press before Meetups",
+    async (_case, viewer, target) => {
+      const harness = await started(viewer);
 
-    const forged = `v1:mo:dy:${token}:${uuidToToken(leshaId)}`;
-    for (const data of [`v1:mo:dq:${token}:${uuidToToken(leshaId)}`, forged]) {
-      await harness.bot.handleUpdate(press(data));
-      expect(plain(last(harness.calls))).toContain(
-        "Автора снимает только администратор.",
-      );
-    }
-    expect(harness.commands).toEqual([]);
-    expect(harness.state.meetup.organizers).toEqual([leshaId, mashaId]);
+      for (const step of ["dq", "dy"]) {
+        await harness.bot.handleUpdate(
+          press(`v1:mo:${step}:${token}:${uuidToToken(target)}`),
+        );
+        expect(plain(last(harness.calls))).toContain(
+          "Снимать организаторов может только администратор.",
+        );
+      }
+      expect(harness.commands).toEqual([]);
+      expect(harness.state.meetup.organizers).toEqual([leshaId, mashaId]);
+    },
+  );
+
+  it("lets the administrator dismiss a co-organizer", async () => {
+    const harness = await started(admin);
+
+    await harness.bot.handleUpdate(
+      press(`v1:mo:dq:${token}:${uuidToToken(mashaId)}`),
+    );
+    await harness.bot.handleUpdate(
+      press(dataOf(last(harness.calls), "✔️ Да, снять")),
+    );
+
+    expect(plain(last(harness.calls))).toContain("Организатор снят");
+    expect(harness.commands).toEqual([
+      { kind: "dismiss", viewer: adminId, target: mashaId },
+    ]);
+    expect(harness.state.meetup.organizers).toEqual([leshaId]);
   });
 
   it("lets the administrator dismiss the author", async () => {
@@ -531,7 +546,7 @@ describe("meetup organizers in the hub bot", () => {
   });
 
   // Человек, которого Identity не называет, остаётся в составе своей строкой,
-  // и администратор может его снять.
+  // и администратор может его снять (R-9).
   it("names a person without a username by place and offers dismissing them", async () => {
     const harness = await started(
       admin,
@@ -542,6 +557,19 @@ describe("meetup organizers in the hub bot", () => {
     const screen = last(harness.calls);
     expect(plain(screen)).toContain("• организатор №2, без ника");
     expect(labels(screen)).toContain("Снять №2");
+  });
+
+  // Критерий PER-879: строка без ника у организатора тоже без «Снять».
+  it("hides dismissing a person without a username from an organizer", async () => {
+    const harness = await started(
+      lesha,
+      meetup({ organizers: [leshaId, ghostId] }),
+    );
+
+    await harness.bot.handleUpdate(press(`v1:mo:l:${token}`));
+    const screen = last(harness.calls);
+    expect(plain(screen)).toContain("• организатор №2, без ника");
+    expect(labels(screen)).not.toContain("Снять №2");
   });
 
   it("does not offer appointing in a cancelled meetup", async () => {
@@ -585,14 +613,29 @@ describe("meetup organizers on repeats and races", () => {
     expect(plain(last(harness.calls))).toContain("Ты уже не в составе");
   });
 
-  it("answers dismissing an author who already left as already out", async () => {
-    const harness = await started(masha, meetup({ organizers: [mashaId] }));
+  it("answers the administrator dismissing an author who already left as already out", async () => {
+    const harness = await started(admin, meetup({ organizers: [mashaId] }));
 
     await harness.bot.handleUpdate(
       press(`v1:mo:dy:${token}:${uuidToToken(leshaId)}`),
     );
 
     expect(plain(last(harness.calls))).toContain("Уже не в составе");
+  });
+
+  // Право на снятие не зависит от состава: поддельное «Да, снять» без права
+  // получает отказ, даже если человека в составе уже нет.
+  it("refuses an organizer's forged dismissal of someone already out", async () => {
+    const harness = await started(masha, meetup({ organizers: [mashaId] }));
+
+    await harness.bot.handleUpdate(
+      press(`v1:mo:dy:${token}:${uuidToToken(leshaId)}`),
+    );
+
+    expect(plain(last(harness.calls))).toContain(
+      "Снимать организаторов может только администратор.",
+    );
+    expect(harness.commands).toEqual([]);
   });
 
   it("offers to send the username again when Identity does not answer", async () => {

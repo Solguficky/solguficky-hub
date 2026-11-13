@@ -260,7 +260,7 @@ type OrganizerRosterTests() =
         test <@ confirm authorId authorId key = None @>
 
     [<Fact>]
-    member _.``An appointed co-organizer reads and edits the meetup and a dismissal takes it back``() =
+    member _.``An appointed co-organizer reads and edits the meetup and an administrator's dismissal takes it back``() =
         use live = new LiveMeetupsHost(identityPort (set [ authorId; coId ]))
         let client = AuthenticatedClient.bot live.Channel
         let me = participant authorId
@@ -292,7 +292,7 @@ type OrganizerRosterTests() =
         let dismissed =
             client.DismissMeetupOrganizer(
                 DismissMeetupOrganizerRequest(
-                    Viewer = me,
+                    Viewer = administrator (),
                     Id = key,
                     IdentityId = coId,
                     ExpectedVersion = edited.Version
@@ -315,7 +315,8 @@ type OrganizerRosterTests() =
         test <@ List.ofSeq dismissed.Organizers = [ authorId ] @>
         test <@ (readAfter |> Option.map _.StatusCode) = Some StatusCode.NotFound @>
 
-        // Назначение и снятие — два повода журнала с затронутым человеком.
+        // Назначение и снятие — два повода журнала с затронутым человеком. Снявший
+        // администратор стоит в конверте, и по нему снятый получает весть (п. 8).
         let journal = eventTypes live.ConnectionString key
 
         let organizerEvents =
@@ -326,12 +327,14 @@ type OrganizerRosterTests() =
             <@
                 organizerEvents = [
                     "meetup_organizer_appointed", Some coId, authorId
-                    "meetup_organizer_dismissed", Some coId, authorId
+                    "meetup_organizer_dismissed", Some coId, adminId
                 ]
             @>
 
+    /// Снимает только администратор (ADR-076, дополнение 2026-11-13 к п. 6): ни автор,
+    /// ни соорганизатор другого не снимают, и состав не меняется.
     [<Fact>]
-    member _.``A co-organizer cannot dismiss the author and nobody but an administrator dismisses the last one``() =
+    member _.``An organizer dismisses nobody and the roster stays``() =
         use live = new LiveMeetupsHost(identityPort (set [ authorId; coId ]))
         let client = AuthenticatedClient.bot live.Channel
         let me = participant authorId
@@ -361,7 +364,90 @@ type OrganizerRosterTests() =
                 |> ignore
             )
 
-        // Автор выходит сам: остаётся соорганизатор, которого теперь не снять и не выпустить.
+        let coDismissed =
+            status (fun () ->
+                client.DismissMeetupOrganizer(
+                    DismissMeetupOrganizerRequest(
+                        Viewer = me,
+                        Id = key,
+                        IdentityId = coId,
+                        ExpectedVersion = appointed.Version
+                    )
+                )
+                |> ignore
+            )
+
+        let unchanged = client.GetMeetup(GetMeetupRequest(Viewer = me, Id = key))
+
+        test <@ (authorDismissed |> Option.map _.StatusCode) = Some StatusCode.PermissionDenied @>
+        test <@ (coDismissed |> Option.map _.StatusCode) = Some StatusCode.PermissionDenied @>
+
+        test
+            <@
+                List.ofSeq unchanged.Organizers = [ authorId; coId ]
+                && unchanged.Version = appointed.Version
+            @>
+
+    /// Администратор снимает любого: автора, а затем и последнего в составе.
+    [<Fact>]
+    member _.``An administrator dismisses the author and then the last person in the roster``() =
+        use live = new LiveMeetupsHost(identityPort (set [ authorId; coId ]))
+        let client = AuthenticatedClient.bot live.Channel
+        let me = participant authorId
+        let key, changed = titled client me
+
+        let appointed =
+            client.AppointMeetupOrganizer(
+                AppointMeetupOrganizerRequest(
+                    Viewer = me,
+                    Id = key,
+                    IdentityId = coId,
+                    ExpectedVersion = changed.Version
+                )
+            )
+
+        let authorGone =
+            client.DismissMeetupOrganizer(
+                DismissMeetupOrganizerRequest(
+                    Viewer = administrator (),
+                    Id = key,
+                    IdentityId = authorId,
+                    ExpectedVersion = appointed.Version
+                )
+            )
+
+        let emptied =
+            client.DismissMeetupOrganizer(
+                DismissMeetupOrganizerRequest(
+                    Viewer = administrator (),
+                    Id = key,
+                    IdentityId = coId,
+                    ExpectedVersion = authorGone.Version
+                )
+            )
+
+        test <@ List.ofSeq authorGone.Organizers = [ coId ] @>
+        test <@ emptied.Organizers.Count = 0 @>
+
+    /// Выход не меняется: последний человек в составе выйти не может.
+    [<Fact>]
+    member _.``The last person in the roster cannot leave``() =
+        use live = new LiveMeetupsHost(identityPort (set [ authorId; coId ]))
+        let client = AuthenticatedClient.bot live.Channel
+        let me = participant authorId
+        let co = participant coId
+        let key, changed = titled client me
+
+        let appointed =
+            client.AppointMeetupOrganizer(
+                AppointMeetupOrganizerRequest(
+                    Viewer = me,
+                    Id = key,
+                    IdentityId = coId,
+                    ExpectedVersion = changed.Version
+                )
+            )
+
         let left =
             client.LeaveMeetupOrganizers(
                 LeaveMeetupOrganizersRequest(Viewer = me, Id = key, ExpectedVersion = appointed.Version)
@@ -375,20 +461,9 @@ type OrganizerRosterTests() =
                 |> ignore
             )
 
-        let byAdministrator =
-            client.DismissMeetupOrganizer(
-                DismissMeetupOrganizerRequest(
-                    Viewer = administrator (),
-                    Id = key,
-                    IdentityId = coId,
-                    ExpectedVersion = left.Version
-                )
-            )
-
-        test <@ (authorDismissed |> Option.map _.StatusCode) = Some StatusCode.PermissionDenied @>
         test <@ List.ofSeq left.Organizers = [ coId ] @>
         test <@ (lastLeaves |> Option.map _.StatusCode) = Some StatusCode.FailedPrecondition @>
-        test <@ byAdministrator.Organizers.Count = 0 @>
+
 
     /// Организатор, потерявший право, получает отказ на команде, оставаясь в составе.
     [<Fact>]
