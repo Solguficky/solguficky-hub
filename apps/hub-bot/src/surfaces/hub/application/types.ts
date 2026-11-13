@@ -50,7 +50,13 @@ export type MeetupContact =
 export type MeetupPeople = {
   author?: MeetupContact;
   organizers: readonly MeetupContact[];
+  // Весь состав в порядке вступления, с идентификатором у каждого, — для экрана
+  // «Организаторы» (PER-749): там у человека без ника своя строка и «Снять».
+  // Нет `contact` — Identity человека не назвала.
+  roster?: readonly RosterEntry[];
 };
+
+export type RosterEntry = { identityId: string; contact?: MeetupContact };
 
 // Отношение смотрящего к сходке для экрана (ADR-076, п. 4): `manages` —
 // держит `manage-meetups` либо стоит в составе и держит `organize-meetups`;
@@ -252,6 +258,14 @@ export type LotRefusal =
   | "photo-limit";
 // `unschedule` снимает назначенную публикацию: это не ось видимости, но
 // механика та же — отдельное действие с подтверждением и повтором по версии.
+// Изменение состава организаторов (ADR-076, п. 6): назначить человека по
+// `identityId`, который бот нашёл у Identity по нику, снять другого или выйти
+// самому.
+export type OrganizerChange =
+  | { kind: "appoint"; identityId: string }
+  | { kind: "dismiss"; identityId: string }
+  | { kind: "leave" };
+
 export type MeetupStateAction = "unpublish" | "cancel" | "hold" | "unschedule";
 // Почему вопрос о моменте публикации задан снова: ввод не разобран (E-02),
 // момент уже прошёл (E-02 с отдельным текстом) или сходку успели изменить.
@@ -399,6 +413,15 @@ export type ExecuteRequest =
       materialId: string;
       direction: "up" | "down";
       expectedVersion: number;
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
+  | {
+      identity: Person;
+      intent: "change-meetup-organizers";
+      meetupId: string;
+      change: OrganizerChange;
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;
@@ -2502,6 +2525,16 @@ export type ExecuteResult =
     }
   | { kind: "material-attached"; meetup: MeetupSnapshot }
   | { kind: "material-removed"; meetup: MeetupSnapshot }
+  // Состав изменён или уже был таким: команды состава заданы целевым
+  // состоянием, и повтор — тот же успех.
+  | {
+      kind: "organizers-changed";
+      meetup: MeetupSnapshot;
+      change: OrganizerChange["kind"];
+      // `false` — состав уже был таким до команды: событие не записано, и
+      // сообщения человеку не будет.
+      changed: boolean;
+    }
   | { kind: "materials-reordered"; meetup: MeetupSnapshot }
   | {
       kind: "edit-unavailable";

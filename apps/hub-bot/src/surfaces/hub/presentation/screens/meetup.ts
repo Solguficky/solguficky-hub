@@ -31,6 +31,7 @@ import {
   extensionsData,
   heading,
   nextRow,
+  organizersData,
   type Page,
   type Parent,
   pagedTitle,
@@ -501,6 +502,7 @@ const statusLabel = adminLabel("Статус");
 const materialsLabel = (count: number) =>
   marked(pictogram.materials, `Материалы (${count})`);
 const broadcastLabel = adminLabel("Написать подписчикам");
+const organizersLabel = adminLabel("Организаторы");
 const subscribeLabel = marked(pictogram.on, "Подписаться на сходку");
 const unsubscribeLabel = marked(pictogram.off, "Отписаться");
 export const meetupNotificationsLabel = marked(
@@ -540,8 +542,15 @@ export function cardScreen(view: CardView): ShownScreen {
   nextRow(keyboard);
   // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
   // — законный повод, и Notifications жизненный цикл при рассылке не фильтрует.
+  // «Организаторы» (ADR-076, п. 6; PER-749) стоят в ряду рассылки: оба —
+  // действия того, кто ведёт сходку, и отдельным рядом они вывели бы карточку
+  // организатора за пять рядов. Отменённой сходке состав тоже открыт: снятие
+  // и выход Meetups принимает и у неё.
   if (manageable) {
-    keyboard.text(broadcastLabel, `v1:bc:m:${token}`).row();
+    keyboard
+      .text(broadcastLabel, `v1:bc:m:${token}`)
+      .text(organizersLabel, organizersData(token))
+      .row();
   }
   // Кнопка подписки рисуется только тогда, когда Notifications ответил:
   // состояние на ней — факт, а не заглушка. Настройки сходки решают, что

@@ -2388,7 +2388,7 @@
               <div class="kb">
                 <div class="kb-row"><div class="key">Изменить</div><div class="key">Статус</div></div>
                 <div class="kb-row"><div class="key">Материалы (3)</div><div class="key">🧩 Расширения</div></div>
-                <div class="kb-row"><div class="key">Написать подписчикам</div></div>
+                <div class="kb-row"><div class="key">Написать подписчикам</div><div class="key">🛠 Организаторы</div></div>
                 <div class="kb-row"><div class="key">Отписаться</div><div class="key">Уведомления сходки</div></div>
                 <div class="kb-row"><div class="key muted">‹ Сходки</div></div>
               </div>
@@ -2402,7 +2402,7 @@
           <dt>Роль</dt><dd>Организатор конкретной сходки</dd>
           <dt>Контекст</dt><dd>Сценарий 2: актуализировать сходку</dd>
           <dt>Действие</dt><dd>Идёт менять данные или статус, к материалам, лотам или пишет подписчикам</dd>
-          <dt>Переход</dt><dd>-> A-09 / A-10 / A-11; «Написать подписчикам» -> вопрос, затем подтверждение и A-16 по «Нет»</dd>
+          <dt>Переход</dt><dd>-> A-09 / A-10 / A-11; «Написать подписчикам» -> вопрос, затем подтверждение и A-16 по «Нет»; «🛠 Организаторы» -> A-18</dd>
           <dt>Механика</dt><dd>та же карточка P-04 плюс ряды управления; права проверяются при нажатии</dd>
         </dl>
         <div class="decided">
@@ -2868,6 +2868,175 @@
       </div>
     </div>
   </article>
+
+  <article class="frame t-a" id="A-18">
+    <div class="frame-head"><span class="fid">A-18</span><h3>Организаторы сходки</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">«🛠 Организаторы» с карточки A-08: смотрит соорганизатор</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Организаторы</b>
+<i>Настолки у Лёши</i>
+
+• @lesha · автор
+• ты
+• @nina
+• организатор №4, без ника
+
+Организаторы ведут сходку наравне и назначают других. Автора снимает только администратор, а сам автор может выйти.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Снять @nina</div></div>
+                <div class="kb-row"><div class="key">Снять №4</div></div>
+                <div class="kb-row"><div class="key">Добавить</div></div>
+                <div class="kb-row"><div class="key">Выйти</div></div>
+                <div class="kb-row"><div class="key muted">‹ Сходка</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-label" style="margin-top: 16px;">после «Выйти»: подтверждение</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Выйти из организаторов?</b>
+
+<b>Настолки у Лёши</b>
+
+Ты перестанешь вести эту сходку. Вернуть тебя может другой организатор или администратор.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">✔️ Да, выйти</div><div class="key">✖️ Нет</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Последнему в составе Meetups выйти не даёт: кадр отказа «Ты последний в составе. Сходка не останется без организатора: сначала добавь другого, а снять последнего может только администратор.» с «‹ Сходка».</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Тот, кто ведёт сходку: организатор из состава или администратор</dd>
+          <dt>Контекст</dt><dd>Состав организаторов (<a href="../../decisions/ADR-076-meetup-organizers.md">ADR-076</a>, п. 6–8; <a href="https://linear.app/anticnvm/issue/per-749">PER-749</a>)</dd>
+          <dt>Действие</dt><dd>Снимает другого, добавляет по нику, выходит сам</dd>
+          <dt>Переход</dt><dd>«Снять …» -> подтверждение «Снять организатора?», его «Да» -> исход «Организатор снят» с «‹ Организаторы»; «Добавить» -> A-19; «Выйти» -> подтверждение, его «Да» -> исход с «‹ Сходка»; «Нет» -> карточка</dd>
+          <dt>Механика</dt><dd>кнопки <code>v1:mo:*</code> несут токен сходки и человека, состояния нет; каждое нажатие читает сходку заново, право решает Meetups на команде</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>«Снять» у каждого, кроме себя и автора; автора снимает только администратор — у него «Снять @lesha» есть. Поддельное нажатие соорганизатора получает отказ «Автора снимает только администратор» до Meetups.</li>
+            <li>Человек, которого Identity не называет, — «организатор №N, без ника» и «Снять №N»: иначе администратор не убрал бы заблокированного (решение оркестратора эпика R-9).</li>
+            <li>Все три подтверждения обратимы, «Да» без цвета: назначить снова можно по нику.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-19">
+    <div class="frame-head"><span class="fid">A-19</span><h3>Добавить организатора по нику</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">вопрос и ответ ником</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Кого назначить организатором? Отправь ник с @ или без.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Отмена</div></div>
+              </div>
+            </div>
+            <div class="row user"><div class="bubble">@nina</div></div>
+            <div class="row bot"><div class="bubble"><b>Назначить организатором?</b>
+
+<b>@nina</b>
+
+Человек будет вести сходку «Настолки у Лёши» и сможет назначать других. Ему придёт сообщение о назначении.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">✔️ Да, назначить</div><div class="key">✖️ Нет</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-label" style="margin-top: 16px;">ник не подошёл: свой кадр на каждую причину</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Этот человек не в сообществе</b>
+
+<b>@gwen</b>
+
+Организатором назначают только участника.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Ввести заново</div></div>
+                <div class="kb-row"><div class="key muted">‹ Организаторы</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Остальные причины тем же кадром: «Ник не найден», «Ник не определяет человека», «Профиль заблокирован», «У человека нет права вести сходки».</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Тот, кто ведёт сходку</dd>
+          <dt>Контекст</dt><dd>Назначение по нику (<a href="../../decisions/ADR-076-meetup-organizers.md">ADR-076</a>, дополнение 2026-11-13)</dd>
+          <dt>Действие</dt><dd>Присылает ник и подтверждает назначение</dd>
+          <dt>Переход</dt><dd>«Да, назначить» -> исход «Организатор назначен» с «‹ Организаторы»; «Нет» -> A-18; «Ввести заново» -> вопрос снова</dd>
+          <dt>Механика</dt><dd>ник находит Identity <code>FindOrganizerCandidate</code> только чтением, профиль не заводится; в «Да» едет <code>identity_id</code> найденного, назначает Meetups <code>AppointMeetupOrganizer</code></dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Ник, а не кнопка выбора пользователя Telegram: решение владельца 2026-11-13, кнопка требовала бы завести профиль постороннему.</li>
+            <li>Отказы раздельные, как у назначения администратора: организатор — участник сообщества и знает, кто в нём есть.</li>
+            <li>Подтверждение до команды ловит опечатку в нике (решение оркестратора эпика R-10).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-a" id="A-20">
+    <div class="frame-head"><span class="fid">A-20</span><h3>Весть о назначении и о снятии</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">назначенному другим</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Тебя назначили организатором сходки: Настолки у Лёши
+📅 Когда: 15 августа, сб, 19:00
+Теперь ты ведёшь её вместе с остальными организаторами: меняешь, публикуешь и назначаешь других. Не хочешь — выйди из организаторов.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">К сходке</div></div>
+                <div class="kb-row"><div class="key">Выйти из организаторов</div></div>
+              </div>
+            </div>
+            <div class="row bot"><div class="bubble">Тебя сняли с организаторов сходки: Настолки у Лёши
+📅 Когда: 15 августа, сб, 19:00</div></div>
+          </div>
+        </div>
+        <div class="stage-note">Кто назначил или снял, весть не называет: контракт этого не несёт. Выход по своей воле вести не порождает.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Назначенный или снятый другим участник</dd>
+          <dt>Контекст</dt><dd>Адресные факты Notifications <code>organizer_appointed</code> и <code>organizer_dismissed</code> (<a href="../../decisions/ADR-076-meetup-organizers.md">ADR-076</a>, п. 8)</dd>
+          <dt>Действие</dt><dd>Открывает сходку или выходит из организаторов</dd>
+          <dt>Переход</dt><dd>«К сходке» -> карточка A-08 новым сообщением; «Выйти из организаторов» -> подтверждение выхода A-18 новым сообщением</dd>
+          <dt>Механика</dt><dd>обе кнопки — следы: весть остаётся в истории</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>«Выйти» из вести ведёт в подтверждение, а не выводит сразу: весть живёт долго, и случайное нажатие не должно менять состав.</li>
+            <li>У вести о снятии кнопок нет: черновик снятому больше не виден, и «К сходке» упёрлась бы в «не найдено».</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
 
   </div>
 </section>

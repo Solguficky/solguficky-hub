@@ -163,6 +163,15 @@ export function toCard(token: string): Parent {
   return { name: "Сходка", data: `v1:view:${token}` };
 }
 
+/** «Организаторы» сходки (PER-749): экран состава, токен сходки, 31 байт. */
+export function organizersData(token: string): string {
+  return `v1:mo:l:${token}`;
+}
+
+export function toOrganizers(token: string): Parent {
+  return { name: "Организаторы", data: organizersData(token) };
+}
+
 /**
  * Меню «Расширения» сходки (PER-605): вход в расширения с карточки. Данные —
  * токен сходки, 29 байт.

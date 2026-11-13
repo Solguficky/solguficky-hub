@@ -142,12 +142,16 @@ async function namePeople(
   const contactOf = (id: string): MeetupContact | undefined =>
     id === viewer.identityId ? self : named.get(id);
   const author = meetup.author === "" ? undefined : contactOf(meetup.author);
+  const roster = meetup.organizers.map((identityId) => {
+    const contact = contactOf(identityId);
+    return contact === undefined ? { identityId } : { identityId, contact };
+  });
   return {
     ...(author === undefined ? {} : { author }),
-    organizers: meetup.organizers.flatMap((id) => {
-      const contact = contactOf(id);
-      return contact === undefined ? [] : [contact];
-    }),
+    organizers: roster.flatMap((entry) =>
+      entry.contact === undefined ? [] : [entry.contact],
+    ),
+    roster,
   };
 }
 

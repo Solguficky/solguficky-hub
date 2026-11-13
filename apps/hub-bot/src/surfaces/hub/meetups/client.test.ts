@@ -53,6 +53,9 @@ function rpcWithList(listVisibleMeetups: ListVisibleMeetupsRpc) {
     }),
     removeMaterial: vi.fn(),
     markMeetupHeld: vi.fn(),
+    appointMeetupOrganizer: vi.fn(),
+    dismissMeetupOrganizer: vi.fn(),
+    leaveMeetupOrganizers: vi.fn(),
     scheduleMeetupPublication: vi.fn(),
     cancelMeetupPublication: vi.fn(),
     getMeetup: vi.fn(),
@@ -700,5 +703,56 @@ describe("Meetups client", () => {
       },
       { timeoutMs: 3_000 },
     );
+  });
+  // Состав организаторов (PER-749): человек по identity_id, версия — того
+  // снимка, по которому решали; FAILED_PRECONDITION — инвариант состава.
+  it("sends the organizer roster commands with the expected version", async () => {
+    const rpc = rpcWithList(vi.fn());
+    const snapshot = create(MeetupSnapshotSchema, {
+      id: "meetup-id",
+      lifecycle: MeetupLifecycle.PLANNED,
+      visibility: MeetupVisibility.VISIBLE,
+      version: 3n,
+      organizers: ["person-id"],
+    });
+    rpc.appointMeetupOrganizer.mockResolvedValue(snapshot);
+    rpc.dismissMeetupOrganizer.mockResolvedValue(snapshot);
+    rpc.leaveMeetupOrganizers.mockResolvedValue(snapshot);
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(
+      meetups.appointOrganizer(person, storedMeetup(2), "person-id"),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      meetup: { organizers: ["person-id"] },
+    });
+    await meetups.dismissOrganizer(person, storedMeetup(2), "other-id");
+    await meetups.leaveOrganizers(person, storedMeetup(2));
+
+    const viewer = { identityId: "viewer-id", rights: [] };
+    expect(rpc.appointMeetupOrganizer).toHaveBeenCalledWith(
+      { viewer, id: "meetup-id", identityId: "person-id", expectedVersion: 2n },
+      { timeoutMs: 3_000 },
+    );
+    expect(rpc.dismissMeetupOrganizer).toHaveBeenCalledWith(
+      { viewer, id: "meetup-id", identityId: "other-id", expectedVersion: 2n },
+      { timeoutMs: 3_000 },
+    );
+    expect(rpc.leaveMeetupOrganizers).toHaveBeenCalledWith(
+      { viewer, id: "meetup-id", expectedVersion: 2n },
+      { timeoutMs: 3_000 },
+    );
+  });
+
+  it("reads the last organizer refusal as a precondition", async () => {
+    const rpc = rpcWithList(vi.fn());
+    rpc.leaveMeetupOrganizers.mockRejectedValue(
+      new ConnectError("last in roster", Code.FailedPrecondition),
+    );
+    const meetups = createMeetupsAdapter(rpc);
+
+    await expect(
+      meetups.leaveOrganizers(person, storedMeetup(2)),
+    ).resolves.toMatchObject({ kind: "invalid", precondition: true });
   });
 });

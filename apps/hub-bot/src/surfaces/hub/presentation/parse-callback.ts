@@ -314,6 +314,16 @@ type PlainAction =
   | { kind: "decline-appoint-administrator" }
   | { kind: "ask-dismiss-administrator"; token: string }
   | { kind: "dismiss-administrator"; token: string }
+  // Организаторы сходки (PER-749): `token` — сходки, `person` — токен человека
+  // состава. Экран, вопрос о нике, «Да» назначения, подтверждение снятия и его
+  // «Да», подтверждение выхода и его «Да».
+  | { kind: "meetup-organizers"; token: string }
+  | { kind: "ask-appoint-organizer"; token: string }
+  | { kind: "confirm-appoint-organizer"; token: string; person: string }
+  | { kind: "ask-dismiss-organizer"; token: string; person: string }
+  | { kind: "dismiss-organizer"; token: string; person: string }
+  | { kind: "ask-leave-organizers"; token: string }
+  | { kind: "leave-organizers"; token: string }
   // Отказанные: токен — заявки, а не человека; страница — куда вернуть список.
   // Очередь называет домен кнопки: `cm` — сообщество, `aq` — аукцион.
   | { kind: "refused-applications"; queue: ApplicationQueue; page: number }
@@ -922,6 +932,8 @@ export type QuestionStep =
   | { kind: "username" }
   // Ник назначаемого администратора (PER-521).
   | { kind: "administrator" }
+  // Ник назначаемого организатора сходки (PER-749): токен сходки.
+  | { kind: "organizer"; token: string }
   // Код канала в 64 байта рядом с префиксом не помещается, поэтому подпись,
   // как название материала, принимается только по карте вопросов в памяти.
   | { kind: "channel-code" }
@@ -2238,6 +2250,8 @@ function stepData(step: QuestionStep): string {
       return "v1:q:nick";
     case "administrator":
       return "v1:q:an";
+    case "organizer":
+      return `v1:q:og:${step.token}`;
     case "channel-code":
       return "v1:q:cc";
     case "channel-label":
@@ -2491,6 +2505,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   if (parts[1] === "ad") {
     return parseAdministrators(parts);
+  }
+  if (parts[1] === "mo") {
+    return parseOrganizers(parts);
   }
   if (parts[1] === "aq") {
     return parseApplicationQueue(parts, "auction");
@@ -3594,6 +3611,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-set", auction: token.data };
       case "aq":
         return { kind: "console-section", auction: token.data };
+      case "og":
+        return { kind: "organizer", token: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":
@@ -3797,6 +3816,41 @@ function parseAdministrators(parts: readonly string[]): CallbackAction {
         ? { kind: "ask-dismiss-administrator", token: token.data }
         : { kind: "dismiss-administrator", token: token.data };
     }
+    default:
+      return malformed;
+  }
+}
+
+// Организаторы сходки (PER-749): `l` — экран состава, `a` — вопрос о нике,
+// `ay` — «Да» назначения с токеном найденного человека, `dq` и `dy` —
+// подтверждение снятия и его «Да» с токеном человека, `lq` и `ly` —
+// подтверждение выхода и его «Да». Первая часть после глагола — токен сходки.
+function parseOrganizers(parts: readonly string[]): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  const [, , verb, first, second, ...rest] = parts;
+  if (rest.length > 0) return malformed;
+  const token = TokenSchema.safeParse(first);
+  if (!token.success) return malformed;
+  if (verb === "ay" || verb === "dq" || verb === "dy") {
+    const person = TokenSchema.safeParse(second);
+    if (!person.success) return malformed;
+    const kinds = {
+      ay: "confirm-appoint-organizer",
+      dq: "ask-dismiss-organizer",
+      dy: "dismiss-organizer",
+    } as const;
+    return { kind: kinds[verb], token: token.data, person: person.data };
+  }
+  if (second !== undefined) return malformed;
+  switch (verb) {
+    case "l":
+      return { kind: "meetup-organizers", token: token.data };
+    case "a":
+      return { kind: "ask-appoint-organizer", token: token.data };
+    case "lq":
+      return { kind: "ask-leave-organizers", token: token.data };
+    case "ly":
+      return { kind: "leave-organizers", token: token.data };
     default:
       return malformed;
   }

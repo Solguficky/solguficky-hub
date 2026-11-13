@@ -93,6 +93,7 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 	appoint := identityv1.IdentityService_AppointAdministrator_FullMethodName
 	dismiss := identityv1.IdentityService_DismissAdministrator_FullMethodName
 	listAdmins := identityv1.IdentityService_ListAdministrators_FullMethodName
+	findOrganizer := identityv1.IdentityService_FindOrganizerCandidate_FullMethodName
 	tests := []struct {
 		name          string
 		method        string
@@ -119,6 +120,9 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 		{name: "support bot on appoint", method: appoint, authorization: []string{bearer(CallerSupportBot)}, refusal: refusalNotDeclared, caller: CallerSupportBot},
 		{name: "maintainer secret on dismiss", method: dismiss, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "no header on list administrators", method: listAdmins, refusal: refusalMissingToken},
+		// Поиск по нику для назначения организатора (PER-749) — только бот хаба.
+		{name: "auction bot on find organizer", method: findOrganizer, authorization: []string{bearer(CallerAuctionBot)}, refusal: refusalNotDeclared, caller: CallerAuctionBot},
+		{name: "meetups on find organizer", method: findOrganizer, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

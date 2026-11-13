@@ -58,6 +58,18 @@ function harness({ existing = true }: { existing?: boolean } = {}) {
       snapshot = { ...snapshot, lifecycle: "held" };
       return { kind: "ok" as const, meetup: snapshot };
     }),
+    appointOrganizer: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
+    dismissOrganizer: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
+    leaveOrganizers: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
     schedulePublication: vi.fn(async (_person, meetup, moment) => {
       snapshot = { ...meetup, publishAt: moment };
       return { kind: "ok" as const, meetup: snapshot };

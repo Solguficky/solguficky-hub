@@ -136,6 +136,7 @@ import type {
   MeetupPeople,
   MeetupStateAction,
   MeetupViewer,
+  OrganizerChange,
   PaymentTermAskError,
   PaymentTextAskError,
   Person,
@@ -166,6 +167,7 @@ import {
   type GrantRecordResult,
   type IdentityAdminResult,
   type IdentityResolver,
+  type OrganizerCandidateFinder,
   type OrganizerResolver,
   type ParticipantUsernameResolver,
   type ReconsiderResult,
@@ -475,6 +477,7 @@ import {
   toMaterials,
   toMeetups,
   toMenu,
+  toOrganizers,
   toSourceChannels,
   withNav,
 } from "./screens/kit.js";
@@ -535,6 +538,27 @@ import {
   stateConfirmScreen,
   statusScreen,
 } from "./screens/meetup.js";
+import {
+  appointCancelledText,
+  appointOrganizerConfirmScreen,
+  appointOrganizerPrompt,
+  appointOrganizerRetryScreen,
+  appointPreconditionText,
+  authorDismissForbiddenText,
+  candidateRefusalText,
+  dismissable,
+  dismissOrganizerConfirmScreen,
+  lastDismissText,
+  lastOrganizerText,
+  leaveOrganizersConfirmScreen,
+  type OrganizersView,
+  organizerSearchFailedText,
+  organizersChangedText,
+  organizersConflictText,
+  organizersForbiddenText,
+  organizersOutcomeScreen,
+  organizersScreen,
+} from "./screens/meetup-organizers.js";
 import {
   type ApplicationCounts,
   canAdmitBidders,
@@ -613,6 +637,7 @@ export type BotRuntime = {
     Partial<RightRecordAdministrator> &
     Partial<AdministratorManager> &
     Partial<OrganizerResolver> &
+    Partial<OrganizerCandidateFinder> &
     Partial<ParticipantUsernameResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
@@ -844,6 +869,14 @@ type PendingAdministrator = {
 };
 // `version` — версия карточки, с которой начато прикрепление: она доезжает до
 // кнопки подтверждения и уходит в `expected_version` (PER-393).
+// Ник назначаемого организатора сходки (PER-749): сходка едет в кнопке вопроса,
+// и ответ после рестарта находит её там же.
+type PendingOrganizer = {
+  kind: "organizer-username";
+  meetupId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingMaterialInput = {
   kind: "material-source";
   meetupId: string;
@@ -1088,6 +1121,7 @@ type HubPendingInput =
   | PendingPublishMoment
   | PendingUsername
   | PendingAdministrator
+  | PendingOrganizer
   | PendingChannelCode
   | PendingChannelLabel
   | PendingMaterialInput
@@ -2461,6 +2495,184 @@ async function handleMessage(
       };
       return;
     }
+    // Ник назначаемого организатора сходки (PER-749; ADR-076 п. 7, дополнение
+    // 2026-11-13): Identity находит человека только читая, профиль постороннему
+    // не заводится. Отказ по нику — свой кадр с «Ввести заново», найденный —
+    // подтверждение, в «Да» которого едет его идентификатор, а назначает нажатие.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "organizer-username" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "update_meetup";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign form answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      const person = identity.person;
+      const token = uuidToToken(pending.meetupId);
+      if (!canOrganizeMeetups(person)) {
+        await answered();
+        await showRefusal(
+          ctx,
+          organizersForbiddenText,
+          exitToCard(token),
+          "new",
+        );
+        outcome = organizersForbiddenOutcome(person, pending.meetupId, useCase);
+        return;
+      }
+      const username = appointUsername(ctx.message.text);
+      if (username === undefined) {
+        await refuseAnswer(
+          ctx,
+          questions,
+          bodyOf(pending),
+          "Это не похоже на ник Telegram. Ник присылают с @ или без.",
+          replyId,
+        );
+        outcome = {
+          level: "info",
+          message: "organizer username rejected",
+          result: "ok",
+          use_case: useCase,
+          identity_id: person.identityId,
+          meetup_id: pending.meetupId,
+        };
+        return;
+      }
+      const found =
+        runtime.identity.findOrganizerCandidate === undefined
+          ? {
+              kind: "unavailable" as const,
+              cause: new Error("organizer search is not configured"),
+            }
+          : await runtime.identity.findOrganizerCandidate(
+              person,
+              username,
+              rpcCall(ctx, useCase),
+            );
+      // `invalid` — Identity не разобрал ник, который бот уже проверил, или
+      // метода у неё ещё нет (бот выложен раньше): это сбой, а не отказ по
+      // нику. Ответ получает «Ввести заново», а не тупик: тот же ник можно
+      // прислать, когда Identity ответит.
+      if (found.kind === "unavailable" || found.kind === "invalid") {
+        await refuseAnswer(
+          ctx,
+          questions,
+          bodyOf(pending),
+          organizerSearchFailedText,
+          replyId,
+        );
+        outcome = {
+          level: "error",
+          message: "organizer search failed",
+          result: "error",
+          use_case: useCase,
+          identity_id: person.identityId,
+          meetup_id: pending.meetupId,
+          error_category:
+            found.kind === "invalid" ? "invariant" : "dependency_unavailable",
+          error:
+            found.kind === "invalid"
+              ? "identity_rejected_request"
+              : errorText(found.cause),
+        };
+        return;
+      }
+      await answered();
+      if (found.kind === "forbidden") {
+        await showRefusal(
+          ctx,
+          organizersForbiddenText,
+          exitToCard(token),
+          "new",
+        );
+        outcome = organizersForbiddenOutcome(person, pending.meetupId, useCase);
+        return;
+      }
+      if (found.kind !== "ok") {
+        // Отказ по нику — штатный ответ Identity, а не сбой.
+        await showScreen(ctx, {
+          ...appointOrganizerRetryScreen(
+            candidateRefusalText(found),
+            `@${username}`,
+            token,
+          ),
+          delivery: "new",
+        });
+        outcome = {
+          level: "info",
+          message: "organizer candidate refused",
+          result: "ok",
+          use_case: useCase,
+          identity_id: person.identityId,
+          meetup_id: pending.meetupId,
+        };
+        return;
+      }
+      const current = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "view-meetup",
+        meetupId: pending.meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      if (current.kind !== "meetup-card") {
+        ctx.fresh = true;
+        await renderMeetupCard(
+          ctx,
+          current,
+          true,
+          runtime.presentation ?? "rich",
+        );
+        outcome = screenBoundary(current, {
+          ok: ["meetup-card"],
+          okMessage: "organizer appointment asked",
+          rejectedMessage: "organizer appointment rejected",
+          useCase,
+          meetupId: pending.meetupId,
+        });
+        return;
+      }
+      await showScreen(ctx, {
+        ...appointOrganizerConfirmScreen(
+          current.meetup,
+          found.value,
+          found.value.identityId === person.identityId,
+        ),
+        delivery: "new",
+      });
+      outcome = {
+        level: "info",
+        message: "organizer appointment asked",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+        meetup_id: pending.meetupId,
+      };
+      return;
+    }
     if (
       replyId !== undefined &&
       pending !== undefined &&
@@ -2592,6 +2804,7 @@ async function handleMessage(
       (pending.kind === "meetup" ||
         pending.kind === "allowed-username" ||
         pending.kind === "administrator-username" ||
+        pending.kind === "organizer-username" ||
         pending.kind === "channel-code" ||
         pending.kind === "channel-label" ||
         pending.kind === "publish-moment" ||
@@ -5316,6 +5529,17 @@ async function handleCallback(
       });
       return;
     }
+    if (isOrganizersAction(action)) {
+      outcome = await handleOrganizersAction(
+        ctx,
+        runtime,
+        questions,
+        person,
+        action,
+        useCase,
+      );
+      return;
+    }
     // «Включить аукцион» видит только держатель права вести аукцион, но старая
     // кнопка остаётся в чате: отказ приходит до Auction (PER-654).
     if (action.kind === "enable-auction") {
@@ -5578,6 +5802,403 @@ async function renderMaterialResult(
         ? invalidMeetupText(result)
         : unavailableText;
   await showRefusal(ctx, text, exitToCard(meetupToken));
+}
+
+type OrganizersAction = Extract<
+  CallbackAction,
+  {
+    kind:
+      | "meetup-organizers"
+      | "ask-appoint-organizer"
+      | "confirm-appoint-organizer"
+      | "ask-dismiss-organizer"
+      | "dismiss-organizer"
+      | "ask-leave-organizers"
+      | "leave-organizers";
+  }
+>;
+
+const organizersActionKinds: readonly OrganizersAction["kind"][] = [
+  "meetup-organizers",
+  "ask-appoint-organizer",
+  "confirm-appoint-organizer",
+  "ask-dismiss-organizer",
+  "dismiss-organizer",
+  "ask-leave-organizers",
+  "leave-organizers",
+];
+
+function isOrganizersAction(action: {
+  kind: string;
+}): action is OrganizersAction {
+  return (organizersActionKinds as readonly string[]).includes(action.kind);
+}
+
+// «Организаторы» сходки (ADR-076, п. 6–8; PER-749). Каждое нажатие читает
+// сходку заново тем же `view-meetup`, что карточка: снимок даёт отношение
+// смотрящего и людей состава с их никами. Кнопки, которые заведомо ведут в
+// отказ, экран прячет, а поддельное нажатие получает отказ здесь же, до
+// Meetups; окончательно право решает Meetups на команде.
+async function handleOrganizersAction(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: OrganizersAction,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const meetupId = tokenToUuid(action.token);
+  const current = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-meetup",
+    meetupId,
+    ...rpcCall(ctx, useCase),
+  });
+  if (current.kind !== "meetup-card") {
+    await renderMeetupCard(ctx, current, true, runtime.presentation ?? "rich");
+    return screenBoundary(current, {
+      ok: ["meetup-card"],
+      okMessage: "meetup organizers opened",
+      rejectedMessage: "meetup organizers rejected",
+      useCase,
+      meetupId,
+    });
+  }
+  const meetup = current.meetup;
+  const view: OrganizersView = {
+    meetup,
+    roster:
+      current.people?.roster ??
+      meetup.organizers.map((identityId) => ({ identityId })),
+    viewerId: person.identityId,
+    administrator: current.viewer?.administrator ?? false,
+  };
+  const inRoster = meetup.organizers.includes(person.identityId);
+  // Выйти может и тот, кто остался в составе без права (integration.md):
+  // опора выхода — запись в составе, а не отношение. Повтор выхода тем, кто
+  // уже вышел, — «уже не в составе»: сходку он читает, и Meetups ответил бы
+  // успехом без события.
+  const leaving =
+    action.kind === "ask-leave-organizers" ||
+    action.kind === "leave-organizers";
+  if (!(current.viewer?.manages ?? false) && !leaving) {
+    await showRefusal(ctx, organizersForbiddenText, exitToCard(action.token));
+    return organizersForbiddenOutcome(person, meetupId, useCase);
+  }
+  const ok = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    meetup_id: meetupId,
+    identity_id: person.identityId,
+  });
+  switch (action.kind) {
+    case "meetup-organizers":
+      await showScreen(ctx, organizersScreen(view));
+      return ok("meetup organizers sent");
+    case "ask-appoint-organizer":
+      if (meetup.lifecycle === "cancelled") {
+        await showRefusal(ctx, appointCancelledText, exitToCard(action.token));
+        return organizersRejectedOutcome(
+          person,
+          meetupId,
+          useCase,
+          "invariant",
+          "meetup_cancelled",
+        );
+      }
+      await askQuestion(
+        ctx,
+        questions,
+        {
+          kind: "organizer-username",
+          meetupId,
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        appointOrganizerPrompt,
+      );
+      return ok("organizer username requested");
+    case "ask-dismiss-organizer": {
+      const target = tokenToUuid(action.person);
+      const place = view.roster.findIndex(
+        (entry) => entry.identityId === target,
+      );
+      const entry = view.roster[place];
+      if (entry === undefined) {
+        await showScreen(
+          ctx,
+          organizersOutcomeScreen(
+            organizersChangedText("dismiss", false),
+            meetupTitleLabel(meetup.title),
+            toOrganizers(action.token),
+          ),
+        );
+        return ok("organizer already dismissed");
+      }
+      if (!dismissable(view, target)) {
+        return refuseDismiss(ctx, view, target, person, action.token, useCase);
+      }
+      await showScreen(
+        ctx,
+        dismissOrganizerConfirmScreen(
+          meetup,
+          entry,
+          place + 1,
+          person.identityId,
+        ),
+      );
+      return ok("organizer dismissal asked");
+    }
+    case "ask-leave-organizers":
+    case "leave-organizers":
+      if (!inRoster) {
+        await showScreen(
+          ctx,
+          organizersOutcomeScreen(
+            organizersChangedText("leave", false),
+            meetupTitleLabel(meetup.title),
+            toCard(action.token),
+          ),
+        );
+        return ok("organizer already left");
+      }
+      if (action.kind === "ask-leave-organizers") {
+        await showScreen(ctx, leaveOrganizersConfirmScreen(meetup));
+        return ok("organizer leave asked");
+      }
+      return changeOrganizers(ctx, runtime, person, meetupId, useCase, {
+        kind: "leave",
+      });
+    case "confirm-appoint-organizer":
+    case "dismiss-organizer": {
+      // Снятого уже нет в составе — «уже не в составе» без отказа: защита
+      // автора касается только того, кто в составе стоит.
+      if (
+        action.kind === "dismiss-organizer" &&
+        meetup.organizers.includes(tokenToUuid(action.person)) &&
+        !dismissable(view, tokenToUuid(action.person))
+      ) {
+        return refuseDismiss(
+          ctx,
+          view,
+          tokenToUuid(action.person),
+          person,
+          action.token,
+          useCase,
+        );
+      }
+      return changeOrganizers(
+        ctx,
+        runtime,
+        person,
+        meetupId,
+        useCase,
+        action.kind === "confirm-appoint-organizer"
+          ? { kind: "appoint", identityId: tokenToUuid(action.person) }
+          : { kind: "dismiss", identityId: tokenToUuid(action.person) },
+      );
+    }
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+async function changeOrganizers(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  meetupId: string,
+  useCase: ProductUseCase,
+  change: OrganizerChange,
+): Promise<BoundaryOutcome> {
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "change-meetup-organizers",
+    meetupId,
+    change,
+    ...rpcCall(ctx, useCase),
+  });
+  // FAILED_PRECONDITION назначения не говорит, что мешает: сходку отменили
+  // или у человека больше нет права. Сходка перечитывается, чтобы кадр назвал
+  // причину верно.
+  const cancelled =
+    change.kind === "appoint" &&
+    result.kind === "dependency-rejected" &&
+    result.reason === "invalid" &&
+    result.precondition === true &&
+    (await meetupCancelled(runtime, person, meetupId, ctx, useCase));
+  await renderOrganizersResult(
+    ctx,
+    runtime,
+    result,
+    change,
+    uuidToToken(meetupId),
+    cancelled,
+  );
+  return screenBoundary(result, {
+    ok: ["organizers-changed"],
+    okMessage: organizersOkMessage[change.kind],
+    rejectedMessage: "meetup organizers change rejected",
+    useCase,
+    meetupId,
+  });
+}
+
+async function meetupCancelled(
+  runtime: BotRuntime,
+  person: Person,
+  meetupId: string,
+  ctx: UpdateContext,
+  useCase: ProductUseCase,
+): Promise<boolean> {
+  const current = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-meetup",
+    meetupId,
+    ...rpcCall(ctx, useCase),
+  });
+  return (
+    current.kind === "meetup-card" && current.meetup.lifecycle === "cancelled"
+  );
+}
+
+const organizersOkMessage: Record<OrganizerChange["kind"], string> = {
+  appoint: "organizer appointed",
+  dismiss: "organizer dismissed",
+  leave: "organizers left",
+};
+
+// «Снять» себя или автора без права администратора — поддельное или старое
+// нажатие: отказ до Meetups. Себе на экране стоит «Выйти», автора снимает
+// только администратор (ADR-076, п. 6).
+async function refuseDismiss(
+  ctx: UpdateContext,
+  view: OrganizersView,
+  target: string,
+  person: Person,
+  token: string,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  await showRefusal(
+    ctx,
+    target === view.meetup.author && target !== view.viewerId
+      ? authorDismissForbiddenText
+      : organizersForbiddenText,
+    withNav(new InlineKeyboard(), toOrganizers(token)),
+  );
+  return organizersForbiddenOutcome(person, view.meetup.id, useCase);
+}
+
+async function renderOrganizersResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  change: OrganizerChange,
+  token: string,
+  cancelled: boolean,
+): Promise<void> {
+  if (result.kind === "organizers-changed") {
+    await showScreen(
+      ctx,
+      organizersOutcomeScreen(
+        organizersChangedText(
+          result.change,
+          result.changed,
+          result.meetup.organizers.length === 0,
+        ),
+        meetupTitleLabel(result.meetup.title),
+        result.change === "leave" ? toCard(token) : toOrganizers(token),
+      ),
+    );
+    return;
+  }
+  if (result.kind === "conflict") {
+    await showScreen(
+      ctx,
+      organizersOutcomeScreen(
+        organizersConflictText,
+        meetupTitleLabel(result.meetup.title),
+        toOrganizers(token),
+      ),
+    );
+    return;
+  }
+  if (result.kind === "meetup-not-found") {
+    await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
+    return;
+  }
+  const exit =
+    change.kind === "leave"
+      ? exitToCard(token)
+      : withNav(new InlineKeyboard(), toOrganizers(token));
+  if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
+    await showRefusal(ctx, organizersForbiddenText, exit);
+    return;
+  }
+  // FAILED_PRECONDITION у команд состава (integration.md): у назначения —
+  // отменённая сходка или право назначаемого, у снятия и выхода —
+  // «последний в составе».
+  if (
+    result.kind === "dependency-rejected" &&
+    result.reason === "invalid" &&
+    result.precondition === true
+  ) {
+    await showRefusal(
+      ctx,
+      change.kind === "appoint"
+        ? cancelled
+          ? appointCancelledText
+          : appointPreconditionText
+        : change.kind === "dismiss"
+          ? lastDismissText
+          : lastOrganizerText,
+      exit,
+    );
+    return;
+  }
+  await showRefusal(
+    ctx,
+    result.kind === "dependency-rejected" && result.reason === "invalid"
+      ? invalidMeetupText(result)
+      : unavailableText,
+    exit,
+  );
+}
+
+function organizersForbiddenOutcome(
+  person: Person,
+  meetupId: string,
+  useCase: ProductUseCase,
+): BoundaryOutcome {
+  return organizersRejectedOutcome(
+    person,
+    meetupId,
+    useCase,
+    "authorization",
+    "organizers_action_forbidden",
+  );
+}
+
+function organizersRejectedOutcome(
+  person: Person,
+  meetupId: string,
+  useCase: ProductUseCase,
+  category: "authorization" | "invariant",
+  error: string,
+): BoundaryOutcome {
+  return {
+    level: "warn",
+    message: "meetup organizers rejected",
+    result: "error",
+    use_case: useCase,
+    meetup_id: meetupId,
+    identity_id: person.identityId,
+    error_category: category,
+    error,
+  };
 }
 
 function meetupForbiddenOutcome(
@@ -13545,6 +14166,8 @@ function stepOf(pending: PendingBody): QuestionStep {
       return { kind: "username" };
     case "administrator-username":
       return { kind: "administrator" };
+    case "organizer-username":
+      return { kind: "organizer", token: uuidToToken(pending.meetupId) };
     case "channel-code":
       return { kind: "channel-code" };
     case "channel-label":
@@ -13812,6 +14435,13 @@ function pendingOf(
       return { kind: "allowed-username", telegramUserId, expiresAt };
     case "administrator":
       return { kind: "administrator-username", telegramUserId, expiresAt };
+    case "organizer":
+      return {
+        kind: "organizer-username",
+        meetupId: tokenToUuid(step.token),
+        telegramUserId,
+        expiresAt,
+      };
     case "channel-code":
       return { kind: "channel-code", telegramUserId, expiresAt };
     case "channel-label":
@@ -14025,6 +14655,8 @@ function cancelTarget(step: QuestionStep): ScreenAction {
       return { kind: "community-usernames", page: 0 };
     case "administrator":
       return { kind: "administrators" };
+    case "organizer":
+      return { kind: "meetup-organizers", token: step.token };
     case "channel-code":
     case "channel-label":
       return { kind: "source-channels", page: 0 };
@@ -14244,6 +14876,8 @@ function reopenData(step: QuestionStep): string {
       return "v1:community:allow";
     case "administrator":
       return "v1:ad:n";
+    case "organizer":
+      return `v1:mo:a:${step.token}`;
     case "channel-code":
     case "channel-label":
       return "v1:sc:a";
@@ -14337,6 +14971,8 @@ function answerParent(step: QuestionStep): Parent {
       return { name: "Ники", data: "v1:cm:u" };
     case "administrator":
       return toAdministrators;
+    case "organizer":
+      return toOrganizers(step.token);
     case "channel-code":
     case "channel-label":
       return toSourceChannels;
@@ -14828,6 +15464,13 @@ function callbackUseCase(
     | "confirm-attach-material"
     | "remove-material"
     | "confirm-remove-material"
+    | "meetup-organizers"
+    | "ask-appoint-organizer"
+    | "confirm-appoint-organizer"
+    | "ask-dismiss-organizer"
+    | "dismiss-organizer"
+    | "ask-leave-organizers"
+    | "leave-organizers"
     | "open-material-file"
     | "begin-meetup-broadcast"
     | "begin-community-broadcast"
@@ -14874,6 +15517,13 @@ function callbackUseCase(
     case "confirm-attach-material":
     case "remove-material":
     case "confirm-remove-material":
+    case "meetup-organizers":
+    case "ask-appoint-organizer":
+    case "confirm-appoint-organizer":
+    case "ask-dismiss-organizer":
+    case "dismiss-organizer":
+    case "ask-leave-organizers":
+    case "leave-organizers":
       return "update_meetup";
     case "open-material-file":
       return "view_meetup";

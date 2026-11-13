@@ -15,6 +15,7 @@ import type {
   MeetupWhen,
   NotifiedMeetup,
 } from "../delivery/notification.js";
+import { uuidToToken } from "./meetup-deep-link.js";
 import {
   classifySendFailure,
   createNotificationSender,
@@ -940,6 +941,45 @@ describe("preset granted", () => {
         callback_data: "v1:t:manage:menu",
       }),
     ]);
+  });
+});
+
+// ADR-076, п. 8; PER-749: назначенному — «К сходке» и «Выйти из
+// организаторов» следом, снятому — только текст.
+describe("organizer roster", () => {
+  it("tells the appointed person and leads to the card and to leaving", () => {
+    const appointed: OutgoingNotification = {
+      kind: "organizer-appointed",
+      meetup,
+    };
+    const text = renderNotification(appointed).text;
+    expect(text).toContain(
+      "Тебя назначили организатором сходки: Настолки у Лёши",
+    );
+    expect(text).toContain("Не хочешь — выйди из организаторов.");
+    const token = uuidToToken(meetupId);
+    expect(buttons(appointed)).toEqual([
+      expect.objectContaining({
+        text: "К сходке",
+        callback_data: `v1:t:view:${token}`,
+      }),
+      expect.objectContaining({
+        text: "Выйти из организаторов",
+        callback_data: `v1:t:mo:lq:${token}`,
+      }),
+    ]);
+  });
+
+  it("tells the dismissed person without buttons", () => {
+    const dismissed: OutgoingNotification = {
+      kind: "organizer-dismissed",
+      meetup,
+    };
+    const message = renderNotification(dismissed);
+    expect(message.text).toContain(
+      "Тебя сняли с организаторов сходки: Настолки у Лёши",
+    );
+    expect(message.keyboard).toBeUndefined();
   });
 });
 
