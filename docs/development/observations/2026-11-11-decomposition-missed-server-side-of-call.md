@@ -1,0 +1,9 @@
+# 2026-11-11 — Декомпозиция эпика дала клиентскую сторону нового вызова, а серверную оставила без листа
+
+- **Контекст:** эпик [PER-740](https://linear.app/anticnvm/issue/per-740), лист [PER-747](https://linear.app/anticnvm/issue/per-747) ([PR #708](https://github.com/Solguficky/solguficky-hub/pull/708)): Identity спрашивает Meetups методом `ConfirmMeetupContact`. Его ввёл контракт [PER-744](https://linear.app/anticnvm/issue/per-744) ([PR #705](https://github.com/Solguficky/solguficky-hub/pull/705)).
+- **Наблюдение:** PER-747 делал вызов со стороны Identity. Серверная сторона в Meetups — обработчик, допуск Identity в таблице вызывающих, токен `MEETUPS_CALLER_TOKEN_IDENTITY`, проводка AppHost и чарта — не досталась ни одному листу. Тесты Meetups (`HiddenMeetupReadTests.fs:84`, `CallerGateTests.fs:89`) называли её листом PER-747. Исполнитель PER-745 спросил оркестратора, чья она. Владелец ответил вопросом Q-4: «отдельный лист», так появился [PER-878](https://linear.app/anticnvm/issue/per-878) ([PR #712](https://github.com/Solguficky/solguficky-hub/pull/712)). До его мержа Meetups отвечал Identity `UNAUTHENTICATED`, а ник организатора не приходил.
+- **Последствие:** лишний вопрос владельцу, новый лист и ещё одно звено в порядке выкладки (секрет `identity-service-token` до Meetups).
+- **Адресат:** Скилл — [`proj-run-epic`](../../../.skillshare/skills/proj/proj-run-epic/SKILL.md), шаг плана. Каждый новый межсервисный метод получает в плане две стороны — вызывающую и обслуживающую — с листом у каждой. Второй адресат — [`proj-create-task`](../../../.skillshare/skills/proj/proj-create-task/SKILL.md) при декомпозиции.
+- **Повторение:** первое наблюдение.
+- **Следующий сигнал:** в другом эпике исполнитель находит, что сторона нового метода контракта не принадлежит ни одному листу плана.
+- **Статус:** наблюдение
