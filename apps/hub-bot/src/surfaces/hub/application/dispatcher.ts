@@ -27,6 +27,7 @@ import { createLotSets } from "./lot-sets.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
+import { createMeetupOrganizers } from "./meetup-organizers.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { createParticipantRemoval } from "./participant-removal.js";
 import { createPromoVideo } from "./promo-video.js";
@@ -163,6 +164,8 @@ export function createDispatcher(
       : createNotificationSettings(meetups, notifications);
   const materials =
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
+  const organizers =
+    meetups === undefined ? undefined : createMeetupOrganizers(meetups);
   const broadcasts =
     notifications === undefined ? undefined : createBroadcasts(notifications);
   const releaseNotesView =
@@ -336,6 +339,10 @@ export function createDispatcher(
           return materials === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
             : materials(request);
+        case "change-meetup-organizers":
+          return organizers === undefined
+            ? { kind: "rejected", reason: "meetups-not-configured" }
+            : organizers(request);
         case "create-lot":
         case "view-lot-form":
         case "view-lot-preview":

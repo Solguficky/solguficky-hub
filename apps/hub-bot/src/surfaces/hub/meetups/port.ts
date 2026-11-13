@@ -168,6 +168,25 @@ export type Meetups = {
     meetup: MeetupSnapshot,
     meta?: RpcMetadata,
   ): Promise<MeetupResult>;
+  // Состав организаторов (ADR-076, п. 6): назначить человека по
+  // `identityId`, снять другого и выйти самому. Версия — та, что видел человек.
+  appointOrganizer(
+    person: Person,
+    meetup: MeetupSnapshot,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
+  dismissOrganizer(
+    person: Person,
+    meetup: MeetupSnapshot,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
+  leaveOrganizers(
+    person: Person,
+    meetup: MeetupSnapshot,
+    meta?: RpcMetadata,
+  ): Promise<MeetupResult>;
   // Момент — местная дата и время сообщества; в мгновение его переводит Meetups.
   schedulePublication(
     person: Person,

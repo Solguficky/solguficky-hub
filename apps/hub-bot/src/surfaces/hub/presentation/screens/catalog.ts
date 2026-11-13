@@ -275,6 +275,16 @@ export const screenCatalog = {
     parent: "card",
     backName: "Материалы",
   },
+  // Состав организаторов сходки (ADR-076, п. 6; PER-749): «Снять» у каждого,
+  // кроме недоступных по правилу, «Добавить» по нику и «Выйти».
+  "meetup-organizers": {
+    class: "screen",
+    nav: "tree",
+    title: "Организаторы",
+    subject: true,
+    parent: "card",
+    backName: "Организаторы",
+  },
   // Меню «Расширения» сходки (PER-605): включённый аукцион открывает свой
   // корень, держателю права управлять сходкой у невключённого — «Включить
   // аукцион».
@@ -1051,6 +1061,23 @@ export const screenCatalog = {
     class: "screen",
     nav: "confirm",
     title: "Снять администратора?",
+  },
+  // Назначение уведомляет человека, снятие тоже, а выход отменяет назначение
+  // другой организатор (PER-749): все три обратимы, «Да» цвета не несёт.
+  "organizer-appoint-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Назначить организатором?",
+  },
+  "organizer-dismiss-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Снять организатора?",
+  },
+  "organizer-leave-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Выйти из организаторов?",
   },
   "application-decline-confirm": {
     class: "screen",

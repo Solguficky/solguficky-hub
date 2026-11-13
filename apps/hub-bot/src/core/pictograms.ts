@@ -104,6 +104,8 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
     "Изменить",
     "Статус",
     "Написать подписчикам",
+    // «Организаторы» сходки на её карточке (PER-749).
+    "Организаторы",
     "Включить аукцион",
     "Пульт",
     "Ставки зала",
@@ -167,6 +169,7 @@ export const sectionLabels: Readonly<Record<string, Pictogram>> = {
   "Материалы (#)": pictogram.materials,
   Расширения: pictogram.extensions,
   "Написать подписчикам": pictogram.admin,
+  Организаторы: pictogram.admin,
   Обновить: pictogram.refresh,
   "Подписаться на сходку": pictogram.on,
   Отписаться: pictogram.off,

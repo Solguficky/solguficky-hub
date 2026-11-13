@@ -42,6 +42,7 @@ import type {
   CommunityMember,
   IdentityFailure,
   IdentityResolver,
+  OrganizerCandidateFinder,
   OrganizerResolver,
   OrganizerUsernameResult,
   ApplicationOutcome as Outcome,
@@ -86,6 +87,10 @@ export type OrganizerRpc = Pick<
   Client<typeof IdentityService>,
   "resolveOrganizerUsername"
 >;
+export type OrganizerCandidateRpc = Pick<
+  Client<typeof IdentityService>,
+  "findOrganizerCandidate"
+>;
 export type ParticipantUsernameRpc = Pick<
   Client<typeof IdentityService>,
   "resolveParticipantUsername"
@@ -125,6 +130,7 @@ export type IdentityClient = IdentityResolver &
   AccessRequester &
   TelegramRecipientResolver &
   OrganizerResolver &
+  OrganizerCandidateFinder &
   ParticipantUsernameResolver &
   CommunityAdministrator &
   ApplicationAdministrator &
@@ -176,6 +182,7 @@ export function createIdentityClient(
   const administrators = createAdministratorManager(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
+  const candidates = createOrganizerCandidateFinder(client, timeoutMs);
   const participants = createParticipantUsernameResolver(
     client,
     timeoutMs,
@@ -188,6 +195,8 @@ export function createIdentityClient(
       recipients.resolveTelegramUserId(identityId, meta),
     resolveOrganizerUsername: (viewer, contact, meta) =>
       organizers.resolveOrganizerUsername(viewer, contact, meta),
+    findOrganizerCandidate: (viewer, telegramUsername, meta) =>
+      candidates.findOrganizerCandidate(viewer, telegramUsername, meta),
     resolveParticipantUsername: (viewer, identityId, meta) =>
       participants.resolveParticipantUsername(viewer, identityId, meta),
     ...createPlaceBidsReader(client, timeoutMs),
@@ -985,6 +994,65 @@ export function createOrganizerResolver(
           : { kind: "resolved", telegramUsername: response.telegramUsername };
       } catch (cause) {
         return classifyOrganizerFailure(cause);
+      }
+    },
+  };
+}
+
+// Поиск человека по нику для назначения организатором (ADR-076 п. 7,
+// дополнение 2026-11-13). Отказ — значение ответа; пустой `oneof` и незнакомая
+// причина — рассинхрон с Identity, то есть недоступность с причиной, как у
+// методов администраторов. Identity без метода (бот выложен раньше) отвечает
+// UNIMPLEMENTED — это `invalid`, сбой, а не отказ по нику.
+export function createOrganizerCandidateFinder(
+  rpc: OrganizerCandidateRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): OrganizerCandidateFinder {
+  const unknownAnswer = () => ({
+    kind: "unavailable" as const,
+    cause: new Error(
+      "FindOrganizerCandidate answered an outcome the bot does not know",
+    ),
+  });
+  return {
+    async findOrganizerCandidate(viewer, telegramUsername, meta) {
+      let response: Awaited<
+        ReturnType<OrganizerCandidateRpc["findOrganizerCandidate"]>
+      >;
+      try {
+        response = await rpc.findOrganizerCandidate(
+          { actor: { identityId: viewer.identityId }, telegramUsername },
+          { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      const outcome = response.outcome;
+      if (outcome.case === "found") {
+        return {
+          kind: "ok",
+          value: {
+            identityId: outcome.value.identityId,
+            telegramUsername: outcome.value.telegramUsername,
+          },
+        };
+      }
+      if (outcome.case !== "refused") return unknownAnswer();
+      switch (outcome.value.reason.case) {
+        case "notOrganizerAppointer":
+          return { kind: "forbidden" };
+        case "usernameUnknown":
+          return { kind: "username-unknown" };
+        case "usernameUnresolved":
+          return { kind: "username-unresolved" };
+        case "identityNotMember":
+          return { kind: "not-member" };
+        case "identityBlocked":
+          return { kind: "blocked" };
+        case "organizeMeetupsNotHeld":
+          return { kind: "no-organize-right" };
+        default:
+          return unknownAnswer();
       }
     },
   };

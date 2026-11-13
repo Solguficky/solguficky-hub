@@ -144,6 +144,10 @@ export type RenderableContent =
   // Выданный набор — сегодня только администратора (PER-468, RFC-016).
   // Получает сам человек; кто выдал, контракт не несёт.
   | { kind: "preset-granted"; preset: "admin" }
+  // Назначение в состав организаторов сходки и снятие другим (ADR-076, п. 8;
+  // PER-749). Получает сам человек; кто назначил или снял, контракт не несёт.
+  | { kind: "organizer-appointed"; meetup: NotifiedMeetup }
+  | { kind: "organizer-dismissed"; meetup: NotifiedMeetup }
   // Аукционные факты об участнике сообщества доставляет бот хаба (ADR-064):
   // перебитие, ответ автоставки, покупку и сводку — те же, что у бота аукциона
   // (PER-598).
@@ -250,6 +254,18 @@ function toContent(message: Notification): NotificationContent | undefined {
             meetup,
             materialTitle: type.value.materialTitle,
           };
+    }
+    case "organizerAppointed": {
+      const meetup = toMeetup(type.value.meetup);
+      return meetup === undefined
+        ? undefined
+        : { kind: "organizer-appointed", meetup };
+    }
+    case "organizerDismissed": {
+      const meetup = toMeetup(type.value.meetup);
+      return meetup === undefined
+        ? undefined
+        : { kind: "organizer-dismissed", meetup };
     }
     case "meetupUnpublished": {
       const meetup = toMeetup(type.value.meetup);

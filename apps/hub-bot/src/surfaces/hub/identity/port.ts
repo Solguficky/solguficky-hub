@@ -128,6 +128,31 @@ export type OrganizerResolver = {
   ): Promise<OrganizerUsernameResult>;
 };
 
+// Человек, которого организатор сходки называет ником (ADR-076 п. 7,
+// дополнение 2026-11-13). Identity ищет только читая: профиль постороннему не
+// заводится. Отказы — значения ответа, каждый своим видом, как у назначения
+// администратора. `forbidden` — у смотрящего нет ни organize_meetups, ни
+// manage_meetups: о нике он тогда ничего не узнаёт. `invalid` — Identity не
+// разобрал запрос: ник не ник Telegram.
+export type OrganizerCandidateResult =
+  | { kind: "ok"; value: { identityId: string; telegramUsername: string } }
+  | { kind: "forbidden" }
+  | { kind: "username-unknown" }
+  | { kind: "username-unresolved" }
+  | { kind: "not-member" }
+  | { kind: "blocked" }
+  | { kind: "no-organize-right" }
+  | { kind: "invalid" }
+  | { kind: "unavailable"; cause: unknown };
+
+export type OrganizerCandidateFinder = {
+  findOrganizerCandidate(
+    viewer: IdentityActor,
+    telegramUsername: string,
+    meta?: RpcMetadata,
+  ): Promise<OrganizerCandidateResult>;
+};
+
 // Настоящий аккаунт участника аукциона для экранов организатора (PER-648).
 // Identity отвечает только держателю права `run-auctions`: `denied` — обычный
 // ответ участнику, который открыл карточку проданного лота, и экран остаётся с

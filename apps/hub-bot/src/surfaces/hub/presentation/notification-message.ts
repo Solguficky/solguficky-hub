@@ -462,6 +462,34 @@ export function renderNotification(
         ].join("\n"),
         keyboard: undefined,
       };
+    // Назначенному (ADR-076, п. 8; PER-749): «К сходке» — карточка с кнопками
+    // управления, «Выйти из организаторов» — подтверждение выхода, а не выход
+    // сразу: весть живёт в истории долго. Кто назначил, контракт не несёт.
+    case "organizer-appointed":
+      return {
+        text: [
+          headline("Тебя назначили организатором сходки", meetup),
+          whenLine(meetup.when, day),
+          "Теперь ты ведёшь её вместе с остальными организаторами: меняешь, публикуешь и назначаешь других. Не хочешь — выйди из организаторов.",
+        ].join("\n"),
+        keyboard: new InlineKeyboard()
+          .text("К сходке", traceCallback(`v1:view:${uuidToToken(meetup.id)}`))
+          .row()
+          .text(
+            "Выйти из организаторов",
+            traceCallback(`v1:mo:lq:${uuidToToken(meetup.id)}`),
+          ),
+      };
+    // Снятому: сходка могла быть черновиком, который ему больше не виден, и
+    // кнопка к ней упёрлась бы в «не найдено». Поэтому клавиатуры нет.
+    case "organizer-dismissed":
+      return {
+        text: [
+          headline("Тебя сняли с организаторов сходки", meetup),
+          whenLine(meetup.when, day),
+        ].join("\n"),
+        keyboard: undefined,
+      };
     default: {
       const _exhaustive: never = content;
       return _exhaustive;

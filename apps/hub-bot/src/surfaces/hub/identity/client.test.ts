@@ -14,6 +14,7 @@ import {
   AppointAdministratorResponseSchema,
   DecideApplicationResponseSchema,
   DismissAdministratorResponseSchema,
+  FindOrganizerCandidateResponseSchema,
   GetCommunityMemberResponseSchema,
   ListAdministratorsResponseSchema,
   ListRefusedApplicationsResponseSchema,
@@ -31,6 +32,7 @@ import {
   createCommunityAdministrator,
   createIdentityClient,
   createIdentityResolver,
+  createOrganizerCandidateFinder,
   createOrganizerResolver,
   createParticipantUsernameResolver,
   createPlaceBidsReader,
@@ -1468,5 +1470,84 @@ describe("access requester", () => {
       ),
     ).resolves.toMatchObject({ kind: "unavailable" });
     expect(requestAccess).not.toHaveBeenCalled();
+  });
+});
+
+// Поиск человека по нику для назначения организатором (PER-749): отказы —
+// значения ответа, каждый своим видом; UNIMPLEMENTED Identity без метода —
+// сбой, а не отказ по нику.
+describe("organizer candidate finder", () => {
+  const actor = { identityId: "0192f0a0-0000-7000-8000-00000000f000" };
+  const candidateId = "0192f0a0-0000-7000-8000-00000000f001";
+
+  it("sends the actor and the username and reads the person", async () => {
+    const findOrganizerCandidate = vi.fn().mockResolvedValue(
+      create(FindOrganizerCandidateResponseSchema, {
+        outcome: {
+          case: "found",
+          value: { identityId: candidateId, telegramUsername: "Nina" },
+        },
+      }),
+    );
+    const finder = createOrganizerCandidateFinder({ findOrganizerCandidate });
+
+    await expect(finder.findOrganizerCandidate(actor, "nina")).resolves.toEqual(
+      {
+        kind: "ok",
+        value: { identityId: candidateId, telegramUsername: "Nina" },
+      },
+    );
+    expect(findOrganizerCandidate).toHaveBeenCalledWith(
+      { actor: { identityId: actor.identityId }, telegramUsername: "nina" },
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    ["notOrganizerAppointer", "forbidden"],
+    ["usernameUnknown", "username-unknown"],
+    ["usernameUnresolved", "username-unresolved"],
+    ["identityNotMember", "not-member"],
+    ["identityBlocked", "blocked"],
+    ["organizeMeetupsNotHeld", "no-organize-right"],
+  ] as const)("maps the refusal %s to %s", async (reason, kind) => {
+    const finder = createOrganizerCandidateFinder({
+      findOrganizerCandidate: vi.fn().mockResolvedValue(
+        create(FindOrganizerCandidateResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: reason, value: {} } },
+          },
+        }),
+      ),
+    });
+
+    await expect(finder.findOrganizerCandidate(actor, "x")).resolves.toEqual({
+      kind,
+    });
+  });
+
+  it("reads an empty outcome as an answer it does not know", async () => {
+    const finder = createOrganizerCandidateFinder({
+      findOrganizerCandidate: vi
+        .fn()
+        .mockResolvedValue(create(FindOrganizerCandidateResponseSchema, {})),
+    });
+
+    await expect(
+      finder.findOrganizerCandidate(actor, "x"),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  it("reads UNIMPLEMENTED of an older Identity as a failure, not a refusal", async () => {
+    const finder = createOrganizerCandidateFinder({
+      findOrganizerCandidate: vi
+        .fn()
+        .mockRejectedValue(new ConnectError("no method", Code.Unimplemented)),
+    });
+
+    await expect(
+      finder.findOrganizerCandidate(actor, "x"),
+    ).resolves.toMatchObject({ kind: "invalid" });
   });
 });

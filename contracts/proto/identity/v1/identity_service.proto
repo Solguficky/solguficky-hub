@@ -23,6 +23,10 @@ service IdentityService {
   // Resolves the Telegram username of the author or an organizer of a meetup for
   // the meetup card.
   rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
+  // Finds the person a meetup organizer means by a Telegram username, on behalf
+  // of a holder of ACCESS_RIGHT_ORGANIZE_MEETUPS or ACCESS_RIGHT_MANAGE_MEETUPS.
+  // Reads only: no profile is created and nothing is written.
+  rpc FindOrganizerCandidate(FindOrganizerCandidateRequest) returns (FindOrganizerCandidateResponse);
   // Resolves an identity id to that person's Telegram username for the screens
   // of an auction organizer.
   rpc ResolveParticipantUsername(ResolveParticipantUsernameRequest) returns (ResolveParticipantUsernameResponse);
@@ -717,6 +721,48 @@ message DismissAdministratorRefusal {
     IdentityUnknown identity_unknown = 2;
   }
 }
+
+message FindOrganizerCandidateRequest {
+  IdentityActor actor = 1;
+  // Telegram username, with or without the leading '@'; case is ignored.
+  string telegram_username = 2;
+}
+
+message FindOrganizerCandidateResponse {
+  // Exactly one is set.
+  oneof outcome {
+    OrganizerCandidate found = 1;
+    FindOrganizerCandidateRefusal refused = 2;
+  }
+}
+
+// The person the username resolved to: a member, not blocked, holding
+// ACCESS_RIGHT_ORGANIZE_MEETUPS when the answer was read.
+message OrganizerCandidate {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+  // The username as the profile carries it, without the leading '@'.
+  string telegram_username = 2;
+}
+
+message FindOrganizerCandidateRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotOrganizerAppointer not_organizer_appointer = 1;
+    UsernameUnknown username_unknown = 2;
+    UsernameUnresolved username_unresolved = 3;
+    IdentityNotMember identity_not_member = 4;
+    IdentityBlocked identity_blocked = 5;
+    OrganizeMeetupsNotHeld organize_meetups_not_held = 6;
+  }
+}
+
+// The actor holds neither ACCESS_RIGHT_ORGANIZE_MEETUPS nor
+// ACCESS_RIGHT_MANAGE_MEETUPS. Carries no cause: the causes are not told apart.
+message NotOrganizerAppointer {}
+
+// The person is a member but does not hold ACCESS_RIGHT_ORGANIZE_MEETUPS.
+message OrganizeMeetupsNotHeld {}
 
 // The actor may not grant PRESET_ADMIN. Carries no cause: the causes are not
 // told apart.

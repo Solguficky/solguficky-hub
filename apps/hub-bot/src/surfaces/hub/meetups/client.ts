@@ -44,6 +44,9 @@ type MeetupsRpc = Pick<
   | "removeMaterial"
   | "reorderMaterials"
   | "markMeetupHeld"
+  | "appointMeetupOrganizer"
+  | "dismissMeetupOrganizer"
+  | "leaveMeetupOrganizers"
   | "scheduleMeetupPublication"
   | "cancelMeetupPublication"
   | "getMeetup"
@@ -325,6 +328,50 @@ export function createMeetupsAdapter(
       call(async () =>
         snapshot(
           await rpc.markMeetupHeld(
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              expectedVersion: BigInt(meetup.version),
+            },
+            options(meta),
+          ),
+        ),
+      ),
+    // Команды состава (ADR-076, п. 6) заданы целевым состоянием: повтор —
+    // успех без события. FAILED_PRECONDITION у них — инвариант состава или
+    // право назначаемого, и кадр выбирает экран по команде.
+    appointOrganizer: (person, meetup, identityId, meta) =>
+      call(async () =>
+        snapshot(
+          await rpc.appointMeetupOrganizer(
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              identityId,
+              expectedVersion: BigInt(meetup.version),
+            },
+            options(meta),
+          ),
+        ),
+      ),
+    dismissOrganizer: (person, meetup, identityId, meta) =>
+      call(async () =>
+        snapshot(
+          await rpc.dismissMeetupOrganizer(
+            {
+              viewer: viewer(person),
+              id: meetup.id,
+              identityId,
+              expectedVersion: BigInt(meetup.version),
+            },
+            options(meta),
+          ),
+        ),
+      ),
+    leaveOrganizers: (person, meetup, meta) =>
+      call(async () =>
+        snapshot(
+          await rpc.leaveMeetupOrganizers(
             {
               viewer: viewer(person),
               id: meetup.id,

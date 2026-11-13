@@ -407,6 +407,55 @@ describe("callback parser", () => {
     }
   });
 
+  // Организаторы сходки (PER-749): токен сходки и токен человека — 54 байта у
+  // самой длинной кнопки, с меткой следа из вести — 37.
+  it("parses meetup organizer actions within the callback byte budget", () => {
+    const meetup = "AZLzpLXGfY6fChssPU5fYA";
+    const person = "AZnA3gAAAAAAAABfP4Lqmw";
+    const cases = [
+      [`v1:mo:l:${meetup}`, { kind: "meetup-organizers", token: meetup }],
+      [`v1:mo:a:${meetup}`, { kind: "ask-appoint-organizer", token: meetup }],
+      [
+        `v1:mo:ay:${meetup}:${person}`,
+        { kind: "confirm-appoint-organizer", token: meetup, person },
+      ],
+      [
+        `v1:mo:dq:${meetup}:${person}`,
+        { kind: "ask-dismiss-organizer", token: meetup, person },
+      ],
+      [
+        `v1:mo:dy:${meetup}:${person}`,
+        { kind: "dismiss-organizer", token: meetup, person },
+      ],
+      [`v1:mo:lq:${meetup}`, { kind: "ask-leave-organizers", token: meetup }],
+      [`v1:mo:ly:${meetup}`, { kind: "leave-organizers", token: meetup }],
+      [
+        `v1:t:mo:lq:${meetup}`,
+        { kind: "ask-leave-organizers", token: meetup, trace: true },
+      ],
+      [
+        `v1:q:og:${meetup}:42`,
+        {
+          kind: "question",
+          step: { kind: "organizer", token: meetup },
+          askedBy: 42,
+        },
+      ],
+    ] as const;
+    for (const [data, action] of cases) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    for (const data of [
+      `v1:mo:l:${meetup}:${person}`,
+      `v1:mo:ay:${meetup}`,
+      `v1:mo:x:${meetup}`,
+      "v1:mo:l:not-a-token",
+    ]) {
+      expect(parseCallback(data)).toEqual({ kind: "malformed" });
+    }
+  });
+
   it("carries the shown meetup version in material confirmations", () => {
     const meetup = "AZLzpLXGfY6fChssPU5fYA";
     const material = "AZnA3gAAAAAAAABfP4Lqmw";

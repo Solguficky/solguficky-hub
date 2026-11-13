@@ -861,6 +861,53 @@ describe("decodeNotification", () => {
     });
   });
 
+  // PER-749: назначение и снятие другим — свои ветки, а не `unrendered_type`.
+  it.each([
+    ["organizerAppointed", "organizer-appointed"],
+    ["organizerDismissed", "organizer-dismissed"],
+  ] as const)("decodes %s as its own branch", (branch, kind) => {
+    const decoded = decodeNotification(
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        const meetup = message.type.value.meetup;
+        message.type =
+          branch === "organizerAppointed"
+            ? {
+                case: branch,
+                value: {
+                  $typeName: "notifications.v1.OrganizerAppointed",
+                  meetup,
+                },
+              }
+            : {
+                case: branch,
+                value: {
+                  $typeName: "notifications.v1.OrganizerDismissed",
+                  meetup,
+                },
+              };
+      }),
+    );
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind, meetup: { id: meetupId, title: "Настолки у Лёши" } },
+      },
+    });
+  });
+
+  it("rejects an organizer appointment without the meetup", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        message.type = {
+          case: "organizerAppointed",
+          value: { $typeName: "notifications.v1.OrganizerAppointed" },
+        };
+      }),
+    );
+    expect(decoded.kind).toBe("malformed");
+  });
+
   it("parses the deadline", () => {
     const decoded = decodeNotification(
       published((message) => {
