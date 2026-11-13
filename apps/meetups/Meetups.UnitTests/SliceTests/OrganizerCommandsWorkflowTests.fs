@@ -214,11 +214,10 @@ let private dismiss (viewer: Viewer) (person: PersonId) (stored: MeetupSnapshot 
     |> await
 
 [<Fact>]
-let ``An organizer dismisses a co-organizer`` () =
+let ``An administrator dismisses a co-organizer`` () =
     let calls = Calls()
 
-    let result =
-        dismiss Sample.authorOrganizer Sample.coOrganizerId (Some withTwo) calls
+    let result = dismiss Sample.administrator Sample.coOrganizerId (Some withTwo) calls
 
     test <@ calls |> List.ofSeq = [ "load"; "commit" ] @>
 
@@ -226,31 +225,39 @@ let ``An organizer dismisses a co-organizer`` () =
     | Ok snapshot -> test <@ snapshot.Organizers = [ Sample.authorId ] @>
     | Error error -> failwith $"unexpected {error}"
 
+/// Снимает только администратор (ADR-076, дополнение 2026-11-13 к п. 6): ни автор,
+/// ни соорганизатор другого не снимает, и отказ стоит до загрузки.
 [<Fact>]
-let ``A co-organizer cannot dismiss the author`` () =
-    let result = dismiss Sample.coOrganizer Sample.authorId (Some withTwo) (Calls())
+let ``An organizer cannot dismiss anyone and nothing is read or written`` () =
+    let authorCalls = Calls()
+    let coCalls = Calls()
 
-    test <@ result = Error(DismissMeetupOrganizer.DismissMeetupOrganizerError.Roster RosterError.AuthorProtected) @>
+    let byAuthor =
+        dismiss Sample.authorOrganizer Sample.coOrganizerId (Some withTwo) authorCalls
+
+    let byCo = dismiss Sample.coOrganizer Sample.authorId (Some withTwo) coCalls
+
+    let forbidden: Result<MeetupSnapshot, DismissMeetupOrganizer.DismissMeetupOrganizerError> =
+        Error(DismissMeetupOrganizer.DismissMeetupOrganizerError.Forbidden CannotActOnMeetup)
+
+    test <@ byAuthor = forbidden && byCo = forbidden @>
+
+    test
+        <@
+            List.ofSeq authorCalls = []
+            && List.ofSeq coCalls = []
+        @>
 
 [<Fact>]
 let ``An administrator dismisses the author and the last person`` () =
     let calls = Calls()
     let result = dismiss Sample.administrator Sample.authorId (Some draft) calls
 
-    test <@ Result.isOk result @>
+    match result with
+    | Ok snapshot -> test <@ snapshot.Organizers = [] @>
+    | Error error -> failwith $"unexpected {error}"
+
     test <@ calls.Contains "commit" @>
-
-[<Fact>]
-let ``Nobody but an administrator dismisses the last person`` () =
-    let onlyCo =
-        Meetup.apply (Existing Sample.withCoOrganizer) (MeetupOrganizerDismissed Sample.authorId)
-        |> Meetup.toSnapshot
-
-    let result = dismiss Sample.coOrganizer Sample.coOrganizerId (Some onlyCo) (Calls())
-
-    // Снять самого себя этой командой нельзя на границе, а здесь домен всё равно
-    // защищает последнего: другой организатор в составе не нужен.
-    test <@ result = Error(DismissMeetupOrganizer.DismissMeetupOrganizerError.Roster RosterError.LastOrganizer) @>
 
 [<Fact>]
 let ``Dismissing from a foreign or missing meetup gets the same refusal and requests`` () =
@@ -264,12 +271,18 @@ let ``Dismissing from a foreign or missing meetup gets the same refusal and requ
     test <@ List.ofSeq foreignCalls = List.ofSeq missingCalls @>
 
 [<Fact>]
+let ``An administrator gets not found when dismissing from a missing meetup`` () =
+    let result = dismiss Sample.administrator Sample.coOrganizerId None (Calls())
+
+    test <@ result = Error(DismissMeetupOrganizer.DismissMeetupOrganizerError.Roster RosterError.MeetupNotFound) @>
+
+[<Fact>]
 let ``A cancelled meetup still allows dismissing`` () =
     let cancelledTwo =
         Meetup.toSnapshot (Meetup.apply (Existing Sample.withCoOrganizer) MeetupCancelled)
 
     let result =
-        dismiss Sample.authorOrganizer Sample.coOrganizerId (Some cancelledTwo) (Calls())
+        dismiss Sample.administrator Sample.coOrganizerId (Some cancelledTwo) (Calls())
 
     test <@ Result.isOk result @>
 

@@ -544,11 +544,10 @@ import {
   appointOrganizerPrompt,
   appointOrganizerRetryScreen,
   appointPreconditionText,
-  authorDismissForbiddenText,
   candidateRefusalText,
   dismissable,
+  dismissForbiddenText,
   dismissOrganizerConfirmScreen,
-  lastDismissText,
   lastOrganizerText,
   leaveOrganizersConfirmScreen,
   type OrganizersView,
@@ -5921,6 +5920,9 @@ async function handleOrganizersAction(
       return ok("organizer username requested");
     case "ask-dismiss-organizer": {
       const target = tokenToUuid(action.person);
+      if (!dismissable(view, target)) {
+        return refuseDismiss(ctx, view, person, action.token, useCase);
+      }
       const place = view.roster.findIndex(
         (entry) => entry.identityId === target,
       );
@@ -5935,9 +5937,6 @@ async function handleOrganizersAction(
           ),
         );
         return ok("organizer already dismissed");
-      }
-      if (!dismissable(view, target)) {
-        return refuseDismiss(ctx, view, target, person, action.token, useCase);
       }
       await showScreen(
         ctx,
@@ -5972,21 +5971,13 @@ async function handleOrganizersAction(
       });
     case "confirm-appoint-organizer":
     case "dismiss-organizer": {
-      // Снятого уже нет в составе — «уже не в составе» без отказа: защита
-      // автора касается только того, кто в составе стоит.
+      // Право на снятие не зависит от состава: поддельное «Да, снять» без
+      // права администратора получает отказ раньше, чем «уже не в составе».
       if (
         action.kind === "dismiss-organizer" &&
-        meetup.organizers.includes(tokenToUuid(action.person)) &&
         !dismissable(view, tokenToUuid(action.person))
       ) {
-        return refuseDismiss(
-          ctx,
-          view,
-          tokenToUuid(action.person),
-          person,
-          action.token,
-          useCase,
-        );
+        return refuseDismiss(ctx, view, person, action.token, useCase);
       }
       return changeOrganizers(
         ctx,
@@ -6071,22 +6062,19 @@ const organizersOkMessage: Record<OrganizerChange["kind"], string> = {
   leave: "organizers left",
 };
 
-// «Снять» себя или автора без права администратора — поддельное или старое
-// нажатие: отказ до Meetups. Себе на экране стоит «Выйти», автора снимает
-// только администратор (ADR-076, п. 6).
+// «Снять» без права администратора или «Снять» себя — поддельное или старое
+// нажатие: отказ до Meetups. Снимает только администратор (ADR-076,
+// дополнение 2026-11-13 к п. 6), а себе на экране стоит «Выйти».
 async function refuseDismiss(
   ctx: UpdateContext,
   view: OrganizersView,
-  target: string,
   person: Person,
   token: string,
   useCase: ProductUseCase,
 ): Promise<BoundaryOutcome> {
   await showRefusal(
     ctx,
-    target === view.meetup.author && target !== view.viewerId
-      ? authorDismissForbiddenText
-      : organizersForbiddenText,
+    view.administrator ? organizersForbiddenText : dismissForbiddenText,
     withNav(new InlineKeyboard(), toOrganizers(token)),
   );
   return organizersForbiddenOutcome(person, view.meetup.id, useCase);
@@ -6139,9 +6127,10 @@ async function renderOrganizersResult(
     return;
   }
   // FAILED_PRECONDITION у команд состава (integration.md): у назначения —
-  // отменённая сходка или право назначаемого, у снятия и выхода —
-  // «последний в составе».
+  // отменённая сходка или право назначаемого, у выхода — «последний в
+  // составе». У снятия его нет: снимает администратор, ему можно и последнего.
   if (
+    change.kind !== "dismiss" &&
     result.kind === "dependency-rejected" &&
     result.reason === "invalid" &&
     result.precondition === true
@@ -6152,9 +6141,7 @@ async function renderOrganizersResult(
         ? cancelled
           ? appointCancelledText
           : appointPreconditionText
-        : change.kind === "dismiss"
-          ? lastDismissText
-          : lastOrganizerText,
+        : lastOrganizerText,
       exit,
     );
     return;

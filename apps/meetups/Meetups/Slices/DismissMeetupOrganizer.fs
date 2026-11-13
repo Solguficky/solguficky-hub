@@ -1,8 +1,9 @@
 /// Срез «снять организатора». Целевое состояние «человека в составе нет»: снятие
-/// того, кого уже нет, — успех без события, и оно стоит раньше инвариантов. Автора
-/// снимает только администратор или сам автор выходом; последнего в составе не
-/// снимает никто, кроме администратора (ADR-076, п. 6). Снять самого себя этой
-/// командой нельзя: для этого есть выход, который не называет другого человека.
+/// того, кого уже нет, — успех без события. Снимает только администратор, держатель
+/// `manage_meetups`: любого, в том числе автора и последнего в составе; организатор
+/// назначает, но не снимает (ADR-076, дополнение 2026-11-13 к п. 6). Снять самого
+/// себя этой командой нельзя: для этого есть выход, который не называет другого
+/// человека.
 module Meetups.Slices.DismissMeetupOrganizer
 
 open System
@@ -46,26 +47,24 @@ type Deps =
 
 let execute (deps: Deps) (command: Command) : Task<Result<MeetupSnapshot, DismissMeetupOrganizerError>> =
     task {
-        // Загрузка раньше решения о праве, как у остальных команд: чужая и
-        // отсутствующая сходка проходят одну последовательность запросов.
-        let! existing = deps.Load command.Id
-
-        match Access.actOnBehalf command.Viewer existing with
-        | Error denied -> return Error(DismissMeetupOrganizerError.Forbidden denied)
-        | Ok() ->
+        // Снимает только администратор, и право не зависит от сходки: отказ стоит
+        // до загрузки, как у CreateMeetupDraft, и одинаков для существующей и
+        // отсутствующей сходки без единого запроса.
+        if not (Access.mayDismissOrganizer command.Viewer) then
+            return Error(DismissMeetupOrganizerError.Forbidden CannotActOnMeetup)
+        else
+            let! existing = deps.Load command.Id
             let state = Meetup.restore existing
-            let byAdministrator = Viewer.canManageMeetups command.Viewer
 
-            // Устаревшая версия при недостигнутой цели — конфликт, и он стоит раньше
-            // инвариантов состава: решение принято из снимка, которого уже нет.
+            // Устаревшая версия при недостигнутой цели — конфликт: решение принято из
+            // снимка, которого уже нет.
             let stale =
                 existing
                 |> Option.exists (fun snapshot -> snapshot.Version <> command.ExpectedVersion)
 
-            match Meetup.decideDismissOrganizer byAdministrator command.Person state with
+            match Meetup.decideDismissOrganizer command.Person state with
             | Error RosterError.MeetupNotFound ->
                 return Error(DismissMeetupOrganizerError.Roster RosterError.MeetupNotFound)
-            | Error _ when stale -> return Error DismissMeetupOrganizerError.Conflict
             | Error error -> return Error(DismissMeetupOrganizerError.Roster error)
             | Ok None ->
                 match existing with
@@ -121,17 +120,15 @@ module Api =
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
         | DismissMeetupOrganizerError.Forbidden CannotActOnMeetup ->
             Status(StatusCode.PermissionDenied, "the viewer may not act on this meetup")
-        // Дойти сюда может только администратор: остальным отсутствующая сходка
-        // отвечает отказом по праву.
+        // Дойти сюда может только администратор: остальные получают отказ по праву
+        // до загрузки.
         | DismissMeetupOrganizerError.Roster RosterError.MeetupNotFound ->
             Status(StatusCode.NotFound, "meetup not found")
-        | DismissMeetupOrganizerError.Roster RosterError.AuthorProtected ->
-            Status(StatusCode.PermissionDenied, "only the author or an administrator removes the author")
-        | DismissMeetupOrganizerError.Roster RosterError.LastOrganizer ->
-            Status(StatusCode.FailedPrecondition, "the last person in the roster stays")
-        // Отменённая сходка закрывает только назначение: снятие и выход открыты.
+        // Снимает только администратор, и последнего он снять может; отменённая
+        // сходка закрывает только назначение.
+        | DismissMeetupOrganizerError.Roster RosterError.LastOrganizer
         | DismissMeetupOrganizerError.Roster RosterError.TransitionNotAllowed ->
-            invalidOp "the roster command does not decide the cancelled meetup"
+            invalidOp "dismissing does not decide the roster invariants"
         | DismissMeetupOrganizerError.Conflict -> Status(StatusCode.Aborted, "the meetup changed concurrently")
 
     let private toCommand

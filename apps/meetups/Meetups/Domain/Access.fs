@@ -37,6 +37,11 @@ module Access =
         Viewer.canManageMeetups viewer
         || Set.contains OrganizeMeetups viewer.Rights
 
+    /// Снять другого человека из состава: только администратор (ADR-076, дополнение
+    /// 2026-11-13 к п. 6). Организатор назначает, но не снимает; себя он убирает
+    /// выходом. Состояние в решении не участвует, поэтому проверка стоит до загрузки.
+    let mayDismissOrganizer (viewer: Viewer) : bool = Viewer.canManageMeetups viewer
+
     /// Право действовать от имени сходки для пишущих команд. Права смотрящего
     /// разрешил бот на этом же update (ADR-051, п. 7); другие сервисы задают тот же
     /// вопрос запросом CheckMeetupAuthority, и право для него Meetups спрашивает у

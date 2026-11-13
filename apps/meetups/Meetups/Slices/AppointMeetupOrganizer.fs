@@ -154,8 +154,7 @@ module Api =
             Status(StatusCode.NotFound, "meetup not found")
         | AppointMeetupOrganizerError.Roster RosterError.TransitionNotAllowed ->
             Status(StatusCode.FailedPrecondition, "a cancelled meetup cannot get a new organizer")
-        // Эти два отказа назначение не решает: они принадлежат снятию и выходу.
-        | AppointMeetupOrganizerError.Roster RosterError.AuthorProtected
+        // Этот отказ назначение не решает: он принадлежит выходу.
         | AppointMeetupOrganizerError.Roster RosterError.LastOrganizer ->
             invalidOp "appointing does not decide the roster invariants"
         | AppointMeetupOrganizerError.PersonNotEligible ->

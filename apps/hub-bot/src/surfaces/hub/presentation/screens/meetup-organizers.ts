@@ -21,9 +21,10 @@ import { meetupTitleLabel } from "./meetup.js";
 import type { ShownScreen } from "./show.js";
 
 // «Организаторы» сходки (ADR-076, п. 6–8; PER-749): состав в порядке
-// вступления, «Добавить» по нику, «Снять» у каждого, кроме недоступных по
-// правилу, и «Выйти». Право на каждое действие решает Meetups на команде, а
-// экран прячет только кнопки, которые заведомо ведут в отказ.
+// вступления, «Добавить» по нику, «Снять» — только администратору (дополнение
+// 2026-11-13 к п. 6, PER-879) — и «Выйти». Право на каждое действие решает
+// Meetups на команде, а экран прячет только кнопки, которые заведомо ведут в
+// отказ.
 
 /** «Добавить»: вопрос о нике. */
 export function appointOrganizerData(token: string): string {
@@ -42,7 +43,7 @@ export type OrganizersView = {
   meetup: MeetupSnapshot;
   roster: readonly RosterEntry[];
   viewerId: string;
-  /** Смотрящий держит `manage-meetups`: ему автор снимаем. */
+  /** Смотрящий держит `manage-meetups`: снимать из состава может только он. */
   administrator: boolean;
 };
 
@@ -69,12 +70,12 @@ function dismissButtonLabel(entry: RosterEntry, place: number): string {
 }
 
 /**
- * «Снять» стоит у каждого, кроме самого смотрящего — себе «Выйти» — и автора:
- * автора снимает только администратор, а сам автор выходит (ADR-076, п. 6).
+ * «Снять» видит только администратор: у каждого в составе, в том числе у
+ * автора и у человека без ника, кроме себя — себе «Выйти». Организатор
+ * назначает, но не снимает (ADR-076, дополнение 2026-11-13 к п. 6).
  */
 export function dismissable(view: OrganizersView, identityId: string): boolean {
-  if (identityId === view.viewerId) return false;
-  return identityId !== view.meetup.author || view.administrator;
+  return view.administrator && identityId !== view.viewerId;
 }
 
 export function organizersScreen(view: OrganizersView): ShownScreen {
@@ -110,7 +111,7 @@ export function organizersScreen(view: OrganizersView): ShownScreen {
       "Организаторы",
       meetupTitleLabel(meetup.title),
       lines,
-      "Организаторы ведут сходку наравне и назначают других. Автора снимает только администратор, а сам автор может выйти.",
+      "Организаторы ведут сходку наравне и назначают других. Снимает из состава только администратор, а сам организатор может выйти.",
     ),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",
@@ -257,13 +258,11 @@ export function candidateRefusalText(
 /** Отказ Meetups по праву смотрящего — один кадр на все причины (п. 9 и 12). */
 export const organizersForbiddenText =
   "Это может только организатор сходки или администратор.";
-/** Тот же отказ на «Снять» автора: автора снимает только администратор. */
-export const authorDismissForbiddenText =
-  "Автора снимает только администратор. Сам автор может выйти из организаторов.";
+/** Отказ на «Снять» без права администратора: снимает только он. */
+export const dismissForbiddenText =
+  "Снимать организаторов может только администратор. Сам организатор может выйти из состава.";
 export const lastOrganizerText =
   "Ты последний в составе. Сходка не останется без организатора: сначала добавь другого, а снять последнего может только администратор.";
-export const lastDismissText =
-  "Это последний человек в составе. Сходка не останется без организатора: снять последнего может только администратор.";
 export const appointCancelledText =
   "Сходка отменена. Назначать организаторов отменённой сходки нельзя.";
 export const appointPreconditionText =
