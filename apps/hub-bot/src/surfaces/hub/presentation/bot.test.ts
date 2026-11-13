@@ -39,6 +39,8 @@ import type {
   CommunityAdministrator,
   CommunityMemberResult,
   IdentityResolver,
+  OrganizerResolver,
+  OrganizerUsernameResult,
   RefusedApplication,
   RightRecordAdministrator,
   SourceChannel,
@@ -213,6 +215,7 @@ function publishedMeetup() {
     lifecycle: "planned" as const,
     visibility: "visible" as const,
     author: "0192f0a0-0000-7000-8000-00000000a001",
+    organizers: [],
     version: 1,
     materials: [],
   };
@@ -231,14 +234,20 @@ function draftMeetup() {
 const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 
 // Права участника — по умолчанию у любого незаблокированного: роль нужна
-// только «Управлению» до PER-534, а пускает право. Гостю и постороннему
-// тест передаёт права явно.
-const MEMBER_RIGHTS: readonly AccessRight[] = ["access-hub", "place-bids"];
+// только «Управлению» до PER-534, а пускает право. Право заводить сходки идёт
+// с кругом участника (ADR-076, п. 1). Гостю и постороннему тест передаёт права
+// явно.
+const MEMBER_RIGHTS: readonly AccessRight[] = [
+  "access-hub",
+  "place-bids",
+  "organize-meetups",
+];
 // Участник с набором `admin` (RFC-016): права круга и набора, как их отдаёт
 // Identity, и «Управление» бот показывает по ним.
 const ADMIN_RIGHTS: readonly AccessRight[] = [
   "access-hub",
   "place-bids",
+  "organize-meetups",
   "manage-members",
   "admit-bidders",
   "manage-meetups",
@@ -351,8 +360,17 @@ const strayAnswerText = (() => {
   return `<b>${hint.lead}</b> ${escapeHtml(hint.rest)}`;
 })();
 
+// Участник держит право заводить сходки (ADR-076, п. 1), и пустые «Сходки»
+// зовут его создать первую.
 const emptyMeetupsText =
-  "<b>Сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.";
+  "<b>Сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nНовую создаёт кнопка ниже: сначала это черновик, участники увидят сходку после публикации.";
+// «Создать сходку» несёт id будущей сходки, рождённый при отрисовке.
+const createMeetupRow = [
+  {
+    text: "Создать сходку",
+    callback_data: expect.stringMatching(/^v1:manage:new:[\w-]{22}:s$/),
+  },
+];
 
 function expectBoundary(
   record: LogRecord | undefined,
@@ -703,8 +721,13 @@ describe("presentation adapter", () => {
     );
   });
 
-  it("does not open material attachment for a non-admin", async () => {
-    const execute = vi.fn<Dispatcher["execute"]>();
+  // Участник вне состава сходку читает, но не ведёт (ADR-076, п. 4): отказ
+  // решается по снимку, который Meetups ему отдал.
+  it("does not open material attachment for a member outside the roster", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: publishedMeetup(),
+    });
     const { bot, calls, records } = createHarness(resolvedIdentity("member"), {
       execute,
     });
@@ -712,7 +735,10 @@ describe("presentation adapter", () => {
 
     await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
 
-    expect(execute).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "view-meetup" }),
+    );
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
@@ -1386,11 +1412,12 @@ describe("presentation adapter", () => {
     expect(JSON.stringify(calls)).toContain("Пока ничего не прикреплено.");
   });
 
-  it("refuses a confirmation without a version from a non-admin without reading the meetup", async () => {
+  it("refuses a confirmation without a version from a person without the organizer right without reading the meetup", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls } = createHarness(resolvedIdentity("member"), {
-      execute,
-    });
+    const { bot, calls } = createHarness(
+      resolvedIdentity("member", false, ["access-hub", "place-bids"]),
+      { execute },
+    );
     await bot.init();
 
     await bot.handleUpdate(
@@ -3237,6 +3264,7 @@ describe("presentation adapter", () => {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
+            createMeetupRow,
             [{ text: "🗂 Архив", callback_data: "v1:nav:archive" }],
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
@@ -3298,6 +3326,7 @@ describe("presentation adapter", () => {
         text: "<b>Сходки</b>\n\nС датой\n• 15 августа, сб — Настолки\n\nБез даты\n• Без даты",
         reply_markup: {
           inline_keyboard: [
+            createMeetupRow,
             [
               {
                 text: "15 августа · Настолки",
@@ -3732,6 +3761,7 @@ describe("presentation adapter", () => {
         lifecycle: "planned",
         visibility: "hidden",
         author: "0192f0a0-0000-7000-8000-00000000a001",
+        organizers: [],
         version: 1,
         materials: [],
       },
@@ -4477,7 +4507,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        rights: ["access-hub", "place-bids"],
+        rights: ["access-hub", "place-bids", "organize-meetups"],
       },
       intent: "list-visible-meetups",
       requestId: expect.any(String),
@@ -4829,7 +4859,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        rights: ["access-hub", "place-bids"],
+        rights: ["access-hub", "place-bids", "organize-meetups"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -4875,6 +4905,7 @@ describe("presentation adapter", () => {
         lifecycle: "planned",
         visibility: "visible",
         author: "0192f0a0-0000-7000-8000-00000000a001",
+        organizers: [],
         version: 1,
         materials: [],
       },
@@ -4885,7 +4916,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        rights: ["access-hub", "place-bids"],
+        rights: ["access-hub", "place-bids", "organize-meetups"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -6814,6 +6845,7 @@ describe("notification frames", () => {
     lifecycle: "planned" as const,
     visibility: "visible" as const,
     author: "0192f0a0-0000-7000-8000-00000000a001",
+    organizers: [],
     version: 1,
     materials: [],
   };
@@ -9285,11 +9317,12 @@ describe("broadcast frames", () => {
     });
   });
 
-  it("does not ask a non-admin for broadcast text", async () => {
+  it("does not ask a person without the organizer right for broadcast text", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls, records } = createHarness(resolvedIdentity("member"), {
-      execute,
-    });
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity("member", false, ["access-hub", "place-bids"]),
+      { execute },
+    );
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate(`v1:bc:m:${meetupToken}`));
@@ -9672,98 +9705,340 @@ describe("broadcast frames", () => {
   });
 });
 
-describe("meetup author", () => {
-  const organizer = {
-    kind: "organizer" as const,
-    telegramUsername: "organizer_nick",
-  };
+describe("meetup people and the organizer", () => {
+  const leshaId = "0192f0a0-0000-7000-8000-00000000a001";
+  const mashaId = "0192f0a0-0000-7000-8000-00000000a002";
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+
+  // Identity называет только тех, кого подтвердил Meetups (ADR-076, п. 10):
+  // фейк отвечает ником по id, остальным — отказом.
+  function namingIdentity(
+    holder: Holder,
+    names: Readonly<Record<string, OrganizerUsernameResult>>,
+    rights?: readonly AccessRight[],
+  ) {
+    const resolveOrganizerUsername = vi.fn<
+      OrganizerResolver["resolveOrganizerUsername"]
+    >(async (_, contact) => names[contact.identityId] ?? { kind: "not-found" });
+    return {
+      identity: {
+        ...resolvedIdentity(holder, false, rights),
+        resolveOrganizerUsername,
+      },
+      resolveOrganizerUsername,
+    };
+  }
 
   async function viewCard(
-    card: Awaited<ReturnType<Dispatcher["execute"]>>,
+    meetup: MeetupSnapshot,
+    identity: IdentityResolver & Partial<OrganizerResolver>,
     presentation?: "rich" | "plain",
   ) {
-    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(card);
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-card", meetup });
     const harness = createHarness(
-      resolvedIdentity("member"),
+      identity,
       { execute },
       [],
       undefined,
       presentation,
     );
     await harness.bot.init();
-    await harness.bot.handleUpdate(
-      callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"),
-    );
-    const card_ = harness.calls.find(
+    await harness.bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
+    const card = harness.calls.find(
       (call) => call.method === "editMessageText",
     );
     return {
-      payload: JSON.stringify(card_?.payload),
+      payload: JSON.stringify(card?.payload),
       records: harness.records,
     };
   }
 
-  it("tells the author that the meetup is theirs", async () => {
-    const { payload } = await viewCard({
-      kind: "meetup-card",
-      meetup: publishedMeetup(),
-      author: { kind: "self" },
+  it("names the organizers and the author by the usernames Identity confirms", async () => {
+    const { identity, resolveOrganizerUsername } = namingIdentity("member", {
+      [leshaId]: { kind: "resolved", telegramUsername: "lesha" },
+      [mashaId]: { kind: "resolved", telegramUsername: "masha" },
     });
-    expect(payload).toContain("Ты автор этой сходки");
-    expect(payload).not.toContain("Автор:");
+    const { payload, records } = await viewCard(
+      { ...publishedMeetup(), organizers: [leshaId, mashaId] },
+      identity,
+    );
+
+    expect(payload).toContain("Организаторы: @lesha, @masha");
+    expect(payload).toContain("Автор: @lesha");
+    // Автор стоит и в составе: один человек — один вопрос, и каждый — с
+    // id сходки, без которого Identity отвечает INVALID_ARGUMENT (PER-747).
+    expect(resolveOrganizerUsername).toHaveBeenCalledTimes(2);
+    expect(resolveOrganizerUsername).toHaveBeenCalledWith(
+      { identityId: resolvedId, rights: expect.any(Array) },
+      { meetupId: tokenToUuid(token), identityId: leshaId },
+      expect.anything(),
+    );
+    expect(JSON.stringify(records)).not.toContain("lesha");
   });
 
-  it("names the organizer in the rich card and keeps the username out of the log", async () => {
-    const { payload, records } = await viewCard({
-      kind: "meetup-card",
-      meetup: publishedMeetup(),
-      author: organizer,
+  it("leaves out a person Identity does not name and keeps the card", async () => {
+    const { identity } = namingIdentity("member", {
+      [leshaId]: { kind: "unavailable", cause: new Error("down") },
+      [mashaId]: { kind: "resolved", telegramUsername: "masha" },
     });
-    expect(payload).toContain("Автор: @organizer_nick");
-    expect(JSON.stringify(records)).not.toContain("organizer_nick");
-  });
-
-  it("names the organizer in the plain card", async () => {
     const { payload } = await viewCard(
-      { kind: "meetup-card", meetup: publishedMeetup(), author: organizer },
+      { ...publishedMeetup(), organizers: [leshaId, mashaId] },
+      identity,
+    );
+
+    expect(payload).toContain("Организатор: @masha");
+    expect(payload).not.toContain("Автор:");
+    expect(payload).toContain("Настолки");
+  });
+
+  it("opens the card without people when Identity refuses everyone", async () => {
+    const { identity } = namingIdentity("member", {});
+    const { payload } = await viewCard(
+      { ...publishedMeetup(), organizers: [leshaId] },
+      identity,
+    );
+
+    expect(payload).not.toContain("Организатор");
+    expect(payload).not.toContain("Автор:");
+    expect(payload).toContain("Настолки");
+  });
+
+  it("names the viewer without asking Identity", async () => {
+    const { identity, resolveOrganizerUsername } = namingIdentity("member", {});
+    const { payload } = await viewCard(
+      {
+        ...publishedMeetup(),
+        author: resolvedId,
+        organizers: [resolvedId],
+      },
+      identity,
+    );
+
+    expect(payload).toContain("Ты организатор этой сходки");
+    expect(payload).toContain("Ты автор этой сходки");
+    expect(resolveOrganizerUsername).not.toHaveBeenCalled();
+  });
+
+  it("names the people in the plain card", async () => {
+    const { identity } = namingIdentity("member", {
+      [leshaId]: { kind: "resolved", telegramUsername: "lesha" },
+    });
+    const { payload } = await viewCard(
+      { ...publishedMeetup(), organizers: [leshaId] },
+      identity,
       "plain",
     );
-    expect(payload).toContain("Автор: @organizer_nick");
+
+    expect(payload).toContain("Организатор: @lesha");
+    expect(payload).toContain("Автор: @lesha");
   });
 
-  it("draws no author line when there is nothing to name", async () => {
-    const { payload } = await viewCard({
-      kind: "meetup-card",
-      meetup: publishedMeetup(),
-    });
-    expect(payload).not.toContain("Автор:");
-    expect(payload).not.toContain("Ты автор");
-  });
-
-  it("keeps the author line on the card redrawn after a state change", async () => {
-    const meetup = publishedMeetup();
+  it("keeps the people on the card redrawn after a state change", async () => {
+    const meetup = { ...publishedMeetup(), organizers: [leshaId] };
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "view-meetup"
-        ? { kind: "meetup-card", meetup, author: organizer }
+        ? { kind: "meetup-card", meetup }
         : {
             kind: "meetup-state-changed",
             action: "hold",
             meetup: { ...meetup, lifecycle: "held" as const },
-            author: organizer,
           },
     );
-    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
-      execute,
+    const { identity } = namingIdentity("admin", {
+      [leshaId]: { kind: "resolved", telegramUsername: "lesha" },
     });
+    const { bot, calls } = createHarness(identity, { execute });
     await bot.init();
 
-    await bot.handleUpdate(
-      callbackUpdate("v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA"),
+    await bot.handleUpdate(callbackUpdate(`v1:manage:confirm-hold:${token}`));
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Автор: @lesha");
+  });
+
+  it("shows the management buttons to an organizer from the roster", async () => {
+    const { identity } = namingIdentity("member", {});
+    const { payload } = await viewCard(
+      { ...draftMeetup(), title: "Настолки", organizers: [resolvedId] },
+      identity,
     );
 
-    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      "Автор: @organizer_nick",
+    expect(payload).toContain(`v1:manage:edit:${token}`);
+    expect(payload).toContain(`v1:manage:status:${token}`);
+    expect(payload).toContain(`v1:bc:m:${token}`);
+    expect(payload).toContain("скрыта");
+    // Свой черновик организатор видит в «Сходках»: «Скрытые сходки» живут в
+    // «Управлении», которого у него нет (ADR-076, п. 9).
+    expect(payload).toContain('"callback_data":"v1:nav:hub"');
+    expect(payload).not.toContain("v1:manage:hidden");
+  });
+
+  it("hides the management buttons on a meetup the member does not organize", async () => {
+    const { identity } = namingIdentity("member", {});
+    const { payload } = await viewCard(
+      { ...publishedMeetup(), organizers: [leshaId] },
+      identity,
     );
+
+    expect(payload).not.toContain("v1:manage:");
+    expect(payload).not.toContain("v1:bc:m:");
+  });
+
+  it("does not take a roster entry without the right for the organizer", async () => {
+    const { identity } = namingIdentity("member", {}, [
+      "access-hub",
+      "place-bids",
+    ]);
+    const { payload } = await viewCard(
+      { ...publishedMeetup(), organizers: [resolvedId] },
+      identity,
+    );
+
+    expect(payload).not.toContain("v1:manage:");
+  });
+
+  it("refuses a forged management press on a foreign meetup before the edit screen", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), organizers: [leshaId] },
+    });
+    const { identity } = namingIdentity("member", {});
+    const { bot, calls, records } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:edit:${token}`));
+
+    const payload = JSON.stringify(calls.at(-1)?.payload);
+    expect(payload).toContain("Это действие доступно организатору сходки.");
+    expect(payload).not.toContain("Что меняем?");
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        fields: expect.objectContaining({
+          error_category: "authorization",
+          error: "meetup_action_forbidden",
+        }),
+      }),
+    );
+  });
+
+  it("answers a forged press on a hidden foreign meetup as on an absent one", async () => {
+    // Чужую скрытую сходку Meetups не отдаёт (ADR-076, п. 9): бот отвечает
+    // тем же кадром, что на отсутствующую, и существования не выдаёт.
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValue({ kind: "meetup-not-found" });
+    const { identity } = namingIdentity("member", {});
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:status:${token}`));
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${token}`));
+    await bot.handleUpdate(callbackUpdate(`v1:mm:add:${token}`));
+
+    const texts = calls
+      .filter((call) => call.method === "editMessageText")
+      .map((call) => (call.payload as { text?: string }).text);
+    expect(texts).toHaveLength(3);
+    for (const text of texts) {
+      expect(text).toContain("Сходка не найдена или больше недоступна.");
+    }
+  });
+
+  it("lets an organizer start writing to the subscribers of their meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), organizers: [resolvedId] },
+    });
+    const { identity } = namingIdentity("member", {});
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${token}`));
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
+      "Писать подписчикам может только организатор сходки.",
+    );
+    expect(calls.at(-1)?.method).toBe("sendMessage");
+  });
+
+  it("refuses an organizer writing to the subscribers of another meetup", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...publishedMeetup(), organizers: [leshaId] },
+    });
+    const { identity } = namingIdentity("member", {});
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${token}`));
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Писать подписчикам может только организатор сходки.",
+    );
+  });
+
+  it("lets a member create a meetup from the meetups list", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { identity } = namingIdentity("member", {});
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:new:${token}:s`));
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Как называется сходка?",
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it("returns an organizer from their draft to the meetups list", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...draftMeetup(), organizers: [resolvedId] },
+    });
+    const { identity } = namingIdentity("member", {});
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:draft:${token}`));
+
+    const payload = JSON.stringify(calls.at(-1)?.payload);
+    expect(payload).toContain(`v1:manage:draft:${token}:venue`);
+    expect(payload).toContain('"callback_data":"v1:nav:hub"');
+    expect(payload).not.toContain("v1:manage:hidden");
+  });
+
+  it("returns the administrator from a draft to the hidden list", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: { ...draftMeetup(), organizers: [leshaId] },
+    });
+    const { identity } = namingIdentity("admin", {});
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:manage:draft:${token}`));
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"callback_data":"v1:manage:hidden"',
+    );
+  });
+
+  it("keeps the community announcement for the administrator", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { identity } = namingIdentity("member", {});
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:bc:c"));
+
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Объявления сообществу доступны администратору.",
+    );
+    expect(execute).not.toHaveBeenCalled();
   });
 });
 
@@ -10082,7 +10357,13 @@ describe("auction queue and moderation", () => {
   // `/manage`, ни «Создать сходку», а подделанное создание отказывает до
   // Meetups (решение владельца 20.10.2026).
   it("opens neither management nor /manage nor a new meetup to a holder of the right to run auctions alone", async () => {
-    const runner: readonly AccessRight[] = [...MEMBER_RIGHTS, "run-auctions"];
+    // Одно право вести аукцион, без права заводить сходки: «Создать сходку»
+    // пускает `organize-meetups` (ADR-076, п. 1), а не `run-auctions`.
+    const runner: readonly AccessRight[] = [
+      "access-hub",
+      "place-bids",
+      "run-auctions",
+    ];
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, commands } = createHarness(
       resolvedIdentity("member", false, runner),
@@ -10099,7 +10380,7 @@ describe("auction queue and moderation", () => {
       callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
     );
     expect(JSON.stringify(calls.at(-1))).toContain(
-      "Управление сходками доступно администратору.",
+      "Это действие тебе недоступно.",
     );
     expect(execute).not.toHaveBeenCalled();
   });

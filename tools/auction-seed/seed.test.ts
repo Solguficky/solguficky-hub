@@ -30,6 +30,7 @@ const catalog: Catalog = {
 const draft: MeetupSnapshot = {
   id: "m-1",
   author: "admin",
+  organizers: ["admin"],
   title: "",
   description: "",
   venue: "",

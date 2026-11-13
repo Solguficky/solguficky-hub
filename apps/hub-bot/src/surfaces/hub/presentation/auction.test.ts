@@ -68,6 +68,7 @@ function meetup(materials = 0): MeetupSnapshot {
     lifecycle: "planned",
     visibility: "visible",
     author: "0192f0a0-0000-7000-8000-00000000a001",
+    organizers: [],
     version: 1,
     materials: Array.from({ length: materials }, (_, index) => ({
       id: `0192f0a0-0000-7000-8000-0000000000b${index}`,

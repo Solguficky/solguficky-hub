@@ -14,6 +14,7 @@ const meetup: MeetupSnapshot = {
   lifecycle: "planned",
   visibility: "visible",
   author: "0192f0a0-0000-7000-8000-00000000a001",
+  organizers: [],
   version: 1,
   materials: [],
 };
@@ -182,6 +183,7 @@ describe("material movement", () => {
   const meetup: MeetupSnapshot = {
     id: "meetup",
     author: "person",
+    organizers: [],
     title: "Meetup",
     description: "",
     venue: "",

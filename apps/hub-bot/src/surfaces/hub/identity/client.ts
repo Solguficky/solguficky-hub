@@ -186,8 +186,8 @@ export function createIdentityClient(
     requestAccess: (input, meta) => requester.requestAccess(input, meta),
     resolveTelegramUserId: (identityId, meta) =>
       recipients.resolveTelegramUserId(identityId, meta),
-    resolveOrganizerUsername: (viewer, identityId, meta) =>
-      organizers.resolveOrganizerUsername(viewer, identityId, meta),
+    resolveOrganizerUsername: (viewer, contact, meta) =>
+      organizers.resolveOrganizerUsername(viewer, contact, meta),
     resolveParticipantUsername: (viewer, identityId, meta) =>
       participants.resolveParticipantUsername(viewer, identityId, meta),
     ...createPlaceBidsReader(client, timeoutMs),
@@ -970,12 +970,13 @@ export function createOrganizerResolver(
   timeoutMs = identityRpcTimeoutMs,
 ): OrganizerResolver {
   return {
-    async resolveOrganizerUsername(viewer, identityId, meta) {
+    async resolveOrganizerUsername(viewer, contact, meta) {
       try {
         const response = await rpc.resolveOrganizerUsername(
           {
             actor: { identityId: viewer.identityId },
-            identityId,
+            identityId: contact.identityId,
+            meetupId: contact.meetupId,
           },
           { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
         );

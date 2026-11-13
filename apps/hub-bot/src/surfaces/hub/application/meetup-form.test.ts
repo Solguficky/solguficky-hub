@@ -15,6 +15,7 @@ const empty: MeetupSnapshot = {
   lifecycle: "planned",
   visibility: "hidden",
   author: "0192f0a0-0000-7000-8000-00000000a001",
+  organizers: [],
   version: 1,
   materials: [],
 };

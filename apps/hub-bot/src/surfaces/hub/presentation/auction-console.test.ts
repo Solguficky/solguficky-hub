@@ -3186,6 +3186,7 @@ describe("opening the week while another auction is trading", () => {
               meetup: {
                 id: meetupId,
                 author: identityId,
+                organizers: [],
                 title: "Осенняя сходка",
                 description: "",
                 venue: "",
@@ -3451,6 +3452,7 @@ describe("opening the online week", () => {
         meetup: {
           id: meetupId,
           author: identityId,
+          organizers: [],
           title: "Осенняя сходка",
           description: "",
           venue: "",

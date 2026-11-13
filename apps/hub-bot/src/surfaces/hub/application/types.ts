@@ -36,13 +36,31 @@ export type Person = {
   identityId: string;
   rights: readonly AccessRight[];
 };
-// Как карточка называет автора (PER-404): самому автору — «вы», остальным —
-// ник, который Identity отдаёт только для действующего администратора.
-// Отсутствие поля в результате — строки автора нет: ника нет, Identity
-// отказал или не ответил.
-export type MeetupAuthor =
+// Как карточка называет автора и организатора (PER-404, ADR-076, п. 10): самого
+// смотрящего — «ты», остальных — ником, который Identity отдаёт по
+// подтверждению Meetups. Человека, которого назвать нечем — ника нет, Identity
+// отказал или не ответил, — карточка не называет вовсе.
+export type MeetupContact =
   | { kind: "self" }
-  | { kind: "organizer"; telegramUsername: string };
+  | { kind: "username"; telegramUsername: string };
+
+// Люди карточки: автор отдельной строкой и организаторы из состава в порядке
+// вступления (ADR-076, п. 10). Нет `author` — строки автора нет; в
+// `organizers` только те, кого есть чем назвать.
+export type MeetupPeople = {
+  author?: MeetupContact;
+  organizers: readonly MeetupContact[];
+};
+
+// Отношение смотрящего к сходке для экрана (ADR-076, п. 4): `manages` —
+// держит `manage-meetups` либо стоит в составе и держит `organize-meetups`;
+// `administrator` — держит `manage-meetups`, и у него есть «Скрытые сходки»
+// в «Управлении». Решает бот по снимку и своим правам, без вызова: сервис
+// всё равно проверит отношение на команде.
+export type MeetupViewer = {
+  manages: boolean;
+  administrator: boolean;
+};
 // Аукцион сходки в её меню «Расширения» (PER-605) и строке карточки
 // (PER-594). `none` — ответ Auction «аукциона нет», а не отказ: только тогда
 // администратор видит «Включить». `unavailable` — Auction не ответил: меню
@@ -1818,7 +1836,8 @@ export type ExecuteResult =
       meetup: MeetupSnapshot;
       subscribed?: boolean;
       categories?: readonly CategoryState<MeetupCategory>[];
-      author?: MeetupAuthor;
+      people?: MeetupPeople;
+      viewer?: MeetupViewer;
       auction?: MeetupAuctionView;
       cancelConsequence?: AuctionCancelConsequence;
     }
@@ -2397,7 +2416,12 @@ export type ExecuteResult =
   // выбирает, какое поле заполнить, и публикует с того же экрана. Если сходку
   // успели опубликовать, пока вопрос висел, бот показывает её карточкой, и
   // диспетчер дописывает `auction` только в этом случае.
-  | { kind: "draft"; meetup: MeetupSnapshot; auction?: MeetupAuctionView }
+  | {
+      kind: "draft";
+      meetup: MeetupSnapshot;
+      auction?: MeetupAuctionView;
+      viewer?: MeetupViewer;
+    }
   // Введённая дата раньше сегодняшнего дня сообщества: сходка с ней сразу
   // уйдёт в архив. Команда в Meetups не отправлена и ждёт подтверждения.
   | {
@@ -2414,7 +2438,8 @@ export type ExecuteResult =
       meetup: MeetupSnapshot;
       repeated?: true;
       archived?: true;
-      author?: MeetupAuthor;
+      people?: MeetupPeople;
+      viewer?: MeetupViewer;
       auction?: MeetupAuctionView;
     }
   | {
@@ -2425,7 +2450,8 @@ export type ExecuteResult =
   | {
       kind: "publication-scheduled";
       meetup: MeetupSnapshot;
-      author?: MeetupAuthor;
+      people?: MeetupPeople;
+      viewer?: MeetupViewer;
       auction?: MeetupAuctionView;
     }
   // Назначить публикацию нельзя в текущем состоянии сходки: она уже
@@ -2434,7 +2460,8 @@ export type ExecuteResult =
   | {
       kind: "publication-unavailable";
       meetup: MeetupSnapshot;
-      author?: MeetupAuthor;
+      people?: MeetupPeople;
+      viewer?: MeetupViewer;
       auction?: MeetupAuctionView;
     }
   | {
@@ -2444,14 +2471,16 @@ export type ExecuteResult =
       // 14.10, №56). Нет у ответа формы, пришедшего после публикации.
       field?: FormField;
       archived?: true;
-      author?: MeetupAuthor;
+      people?: MeetupPeople;
+      viewer?: MeetupViewer;
       auction?: MeetupAuctionView;
     }
   | {
       kind: "meetup-state-changed";
       action: MeetupStateAction;
       meetup: MeetupSnapshot;
-      author?: MeetupAuthor;
+      people?: MeetupPeople;
+      viewer?: MeetupViewer;
       auction?: MeetupAuctionView;
     }
   | {
