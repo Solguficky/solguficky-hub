@@ -84,10 +84,12 @@ export type AuctionCancelConsequence =
   | { kind: "unknown" };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
-// до него код доносит операция входа `RequestAccess`.
+// до него код доносит операция входа `RequestAccess`. `lot` — ссылка на лот
+// `l_<токен>` (PER-685): открывает карточку лота в аукционном дереве хаба.
 export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "source"; code: string }
+  | { kind: "lot"; lotId: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
 

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { botCommands } from "./commands.js";
+import { uuidToToken } from "./meetup-deep-link.js";
 import { parseUpdate } from "./parse-update.js";
 
 const botUsername = "stub_bot";
@@ -73,6 +74,25 @@ describe("parseUpdate", () => {
       telegramUserId: 42n,
       deepLink: { kind: "source", code: "tg_ads" },
     });
+  });
+
+  it("reads a lot link as the lot id (PER-685)", () => {
+    const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+    expect(messageText(`/start l_${uuidToToken(lotId)}`)).toEqual({
+      kind: "start",
+      firstName: "tester",
+      telegramUserId: 42n,
+      deepLink: { kind: "lot", lotId },
+    });
+  });
+
+  it("keeps a lot link with a broken token unclassified", () => {
+    // Последний — 22 знака, но не каноническая запись 16 байт.
+    for (const payload of ["l_short", "l_", "l_AZKbflwdej-OSy1snwobPB"]) {
+      expect(messageText(`/start ${payload}`)).toMatchObject({
+        deepLink: { kind: "unclassified", payload },
+      });
+    }
   });
 
   it("passes an empty source code as received", () => {

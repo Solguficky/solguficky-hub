@@ -4,6 +4,7 @@ import {
   type ResolveIdentityInput,
   toResolveIdentityInput,
 } from "../identity/port.js";
+import { lotIdOfPayload } from "./lot-deep-link.js";
 import {
   IncomingUpdateSchema,
   MeetupDeepLinkPayloadSchema,
@@ -141,6 +142,10 @@ function classifyDeepLink(payload: string): DeepLink {
   if (payload.startsWith(sourceDeepLinkPrefix)) {
     return { kind: "source", code: payload.slice(sourceDeepLinkPrefix.length) };
   }
+  // Лот с токеном, который не разобрался, остаётся без цели: `/start` откроет
+  // меню, а не отказ.
+  const lotId = lotIdOfPayload(payload);
+  if (lotId !== undefined) return { kind: "lot", lotId };
   return { kind: "unclassified", payload };
 }
 

@@ -3145,3 +3145,63 @@ describe("sold lot card in the hub", () => {
     expect(text(calls)).not.toContain("@owl");
   });
 });
+
+// Ссылка на лот `l_<токен>` в боте хаба (PER-685): шёпот лота финала в чате
+// сообщества ведёт ею в личку, и `/start` открывает карточку лота новым
+// сообщением тем же шлюзом дерева, что нажатие.
+describe("lot link in the hub", () => {
+  function start(payload: string): Update {
+    const text = `/start ${payload}`;
+    return {
+      update_id: 5,
+      message: {
+        message_id: 11,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text,
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      },
+    } as never;
+  }
+
+  it("opens the lot card for a member", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(start(`l_${uuidToToken(lotId)}`));
+
+    expect(auction.getLot).toHaveBeenCalledWith(
+      expect.objectContaining({ lotId }),
+    );
+    expect(calls.some((call) => call.method === "editMessageText")).toBe(false);
+    expect(lastScreen(calls).text).toContain("Кружка с совой");
+  });
+
+  it("does not show the lot to a person without the hub right", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("guest", auction, {
+      presentation: "plain",
+      rights: ["place-bids"],
+    });
+    await bot.init();
+    await bot.handleUpdate(start(`l_${uuidToToken(lotId)}`));
+
+    expect(auction.getLot).not.toHaveBeenCalled();
+    expect(lastScreen(calls).text ?? "").not.toContain("Кружка с совой");
+  });
+
+  it("opens the menu for a broken lot token", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(start("l_AZKbflwdej-OSy1snwobPB"));
+
+    expect(auction.getLot).not.toHaveBeenCalled();
+    expect(labels(lastScreen(calls)).flat()).toContain("Сходки");
+  });
+});

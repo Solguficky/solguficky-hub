@@ -2957,6 +2957,22 @@ async function handleMessage(
       return;
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
+    // Ссылка на лот `l_<токен>` (PER-685): шёпот лота финала в чате сообщества
+    // ведёт ею в личку. Карточка приходит новым сообщением тем же путём, что
+    // кнопка «К лоту» под вестью: аукционное дерево само разрешает личность и
+    // пускает по праву хаба, а человеку без права отвечает кадр входа.
+    if (deepLink?.kind === "lot") {
+      useCase = "view_auction";
+      ctx.fresh = true;
+      outcome = await handleAuctionCallback(
+        ctx,
+        runtime,
+        encodeAuctionCallback({ kind: "lot", lotId: deepLink.lotId, page: 0 }),
+        lotPhotos,
+        { questions },
+      );
+      return;
+    }
     useCase = deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
     // `/start` заявку не ставит (PER-592, дополнение ADR-060 от 2026-10-12):
     // личность разрешается, как у нажатия, и белый список Identity гасит в том
