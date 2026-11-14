@@ -270,6 +270,10 @@ describe("whisper to an invisible /meetups in the community chat", () => {
       "19 ноября · Сходка 5 ↗",
       "Все сходки в боте ↗",
     ]);
+    // Ряд ведёт в раздел «Сходки», а не в пустой чат с ботом (PER-683, Q-7).
+    expect(buttons(onlyWhisper(calls)).at(-1)?.url).toBe(
+      `https://t.me/${botInfo.username}?start=meetups`,
+    );
   });
 
   // Заявка из чата не ставится (ADR-078, п. 3): её ставит кнопка кадра в

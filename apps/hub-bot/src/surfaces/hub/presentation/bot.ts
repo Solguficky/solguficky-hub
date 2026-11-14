@@ -3029,6 +3029,10 @@ async function handleMessage(
         rejectedMessage: "meetup card rejected",
         useCase,
       });
+    } else if (deepLink?.kind === "meetups") {
+      // Вход в «Сходки» из шёпота чата сообщества (PER-683): тот же раздел,
+      // что у команды `/meetups`, новым сообщением.
+      outcome = await openNavScreen(ctx, runtime, person, "hub", useCase);
     } else {
       // Вход без ссылки на сходку открывает корневое меню: из него видно
       // всё, что доступно человеку (PER-592).

@@ -9,7 +9,7 @@ import {
   type WhisperLink,
 } from "./community-whisper.js";
 import { dependencyCategory } from "./failure-category.js";
-import { meetupStartLink } from "./meetup-deep-link.js";
+import { meetupStartLink, meetupsStartLink } from "./meetup-deep-link.js";
 import { dayLabel, screenText } from "./screens/kit.js";
 import { meetupTitleLabel } from "./screens/meetup.js";
 
@@ -68,7 +68,12 @@ export function meetupsWhisperFrame(
       url: meetupStartLink(botUsername, meetup.id),
     }));
   if (meetups.length > whisperMeetupLimit) {
-    links.push({ label: "Все сходки в боте", url: botLink(botUsername) });
+    // Ссылка без payload открыла бы чат без нового сообщения у того, кто
+    // уже писал боту: `/start meetups` присылает сам раздел «Сходки».
+    links.push({
+      label: "Все сходки в боте",
+      url: meetupsStartLink(botUsername),
+    });
   }
   return { id: "whisper-meetups", text: screenText(title), links };
 }
