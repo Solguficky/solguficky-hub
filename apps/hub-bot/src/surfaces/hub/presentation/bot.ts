@@ -207,6 +207,7 @@ import {
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { CommunityChat } from "./community-chat.js";
 import { createCommunityWhisper } from "./community-whisper.js";
+import { lotWhisper } from "./community-whisper-lot.js";
 import { meetupsWhisper } from "./community-whisper-meetups.js";
 import {
   dependencyCategory,
@@ -1306,7 +1307,13 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     // мимо пути лички. Команда чата — запись реестра.
     bot.use(
       createCommunityWhisper({
-        commands: { meetups: meetupsWhisper(runtime.dispatcher) },
+        commands: {
+          meetups: meetupsWhisper(runtime.dispatcher),
+          // Лот финала (PER-685) — только у бота с Auction, как и в меню.
+          ...(runtime.auction === undefined
+            ? {}
+            : { lot: lotWhisper(runtime.auction) }),
+        },
         identity: runtime.identity,
         logger: runtime.logger,
         today: runtime.today ?? utcToday,

@@ -1118,6 +1118,9 @@ export const screenCatalog = {
     nav: "links",
     title: "Ближайшие сходки",
   },
+  // Лот живого финала (PER-685): название и цена, без имени лидера, и ссылка
+  // в бот на карточку лота; без лота на торгах — «Открыть бота».
+  "whisper-lot": { class: "screen", nav: "links", title: "Лот финала" },
   "whisper-invitation-only": { class: "screen", nav: "links" },
   "whisper-no-access": { class: "screen", nav: "none" },
   "whisper-unavailable": { class: "screen", nav: "none" },
