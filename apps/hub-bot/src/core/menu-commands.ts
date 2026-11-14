@@ -2,7 +2,13 @@ import type { Api } from "grammy";
 import { countFailure } from "./failures.js";
 import type { Logger } from "./logging.js";
 
-export type BotCommand = { command: string; description: string };
+// `is_ephemeral` — невидимая команда (Bot API 10.2): в группе её и ответ на неё
+// видит только отправитель (ADR-078).
+export type BotCommand = {
+  command: string;
+  description: string;
+  is_ephemeral?: boolean;
+};
 
 // Список команд кнопки меню клиента — у каждой поверхности свой
 // (`botCommands` рядом с её экранами), запись — общая. Команды — постоянный

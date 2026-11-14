@@ -29,8 +29,8 @@ public class GraphSnapshotTests
         MatchAsync(HubArgs, "hub.run.txt");
 
     /// <summary>
-    /// Имя бота поддержки и канал медиа ботов — настройки, которых в CI нет
-    /// (SupportBotLink, BotMediaChannel, BotHallLinks): без них снимок не показал бы
+    /// Имя бота поддержки, канал медиа ботов и чат сообщества — настройки, которых в CI нет
+    /// (SupportBotLink, BotMediaChannel, BotHallLinks, HubBotCommunityChat): без них снимок не показал бы
     /// переменных, которые получают два других бота.
     /// </summary>
     private static readonly string[] HubArgs =
@@ -39,6 +39,7 @@ public class GraphSnapshotTests
         "hub",
         "--SupportBot:Username=solguficky_support_bot",
         "--BotMedia:ChannelId=-1001234567890",
+        "--HubBot:CommunityChatId=-4012345678",
         "--HallLinks:ScreenUrl=https://hall.example.org/screen",
         "--HallLinks:StreamUrl=https://stream.example.org/live",
     ];

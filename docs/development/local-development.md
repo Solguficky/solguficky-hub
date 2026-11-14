@@ -76,6 +76,12 @@ aspire run -- --profile support-bot
 dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "BotMedia:ChannelId" "<id канала медиа, -100…>"
 ```
 
+Чат сообщества бота хаба ([ADR-078](../decisions/ADR-078-hub-bot-whispers-in-community-chat.md), п. 2) — необязательная настройка `HubBot:CommunityChatId`, id группы той среды Telegram, в которую ходит запуск: отрицательное число, у супергруппы вида `-100…`. С ней бот хаба получает `BOT_COMMUNITY_CHAT_ID`, пишет в этой группе невидимые команды и выходит из любой другой группы на первом update из неё. Без неё групп бот не обрабатывает и ни из одной не выходит.
+
+```powershell
+dotnet user-secrets --project infra/apphost/AppHost/AppHost.csproj set "HubBot:CommunityChatId" "<id тестовой группы>"
+```
+
 Профиль `hub-auction` — живой прогон ботов с Auction в одном запуске: состав `hub` целиком, с ботом поддержки, плюс `auction` и `auction-bot` на той же инфраструктуре. Это единственный локальный профиль, где бот хаба получает `AUCTION_GRPC_URL` и показывает ряд аукциона у сходки, а бот аукциона — факты, которые порождает Notifications, и с ними настройку их частоты. Запуск спрашивает оба токена, `hub-bot-token` и `auction-bot-token`, и те же гейты, что в `auction-bot`: пустой или совпавший с ботом хаба токен роняет граф до старта ресурсов. Ник бота аукциона для второй ссылки экрана каналов прихода задаётся ключом `HubBot:AuctionBotUsername` ([hub-bot.md](../services/hub-bot.md)). Из-за Auction профилю нужны JDK и sbt, как `auction`; `hub` этого требования по-прежнему не несёт, и аукцион в него не входит. Живым прогоном профиль подтверждён 6 октября 2026 года ([PER-468](https://linear.app/anticnvm/issue/per-468), пункт 66 списка ниже) — до переезда ботов в один пакет; узлы из одного пакета с общим шагом `bot-build` живым прогоном не подтверждены. Состав держит тест `HubAuctionProfile_IsHubPlusAuctionBotProfile` AppHost.
 
 ```powershell

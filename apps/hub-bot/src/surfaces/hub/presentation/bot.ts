@@ -205,6 +205,7 @@ import {
   packageIdentity,
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
+import type { CommunityChat } from "./community-chat.js";
 import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
 import {
   createLiveConsoles,
@@ -655,6 +656,9 @@ export type BotRuntime = {
   // Чат медиа ботов (PER-776): своё фото или видео объявления аукциона. Нет
   // или выключен — шаг фото своего медиа не предлагает.
   mediaChat?: MediaChat;
+  // Чат сообщества (ADR-078, п. 2): допуск групп и невидимые команды. Нет —
+  // группы, как прежде, не обрабатываются, и бот ни из одной не выходит.
+  communityChat?: CommunityChat;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -1287,6 +1291,11 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     environment: runtime.environment ?? defaultTelegramEnvironment,
     tracing: runtime.tracing,
   });
+  // Чужая группа и миграция чата сообщества дальше допуска не идут: ни
+  // память процесса, ни юзкейсы их не видят.
+  if (runtime.communityChat !== undefined) {
+    bot.use(runtime.communityChat.gate);
+  }
   const questions = new Map<string, PendingInput>();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
   const lotPhotos = runtime.lotPhotos ?? createLotPhotos();
@@ -1401,9 +1410,13 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     // Запись идёт после ответа и его не задерживает; отказ Telegram пишется в
     // лог, а вызов уходит, только когда список расходится с тем, что процесс
     // уже записал.
+    // Список по правам человека — только у его личного чата: в чате
+    // сообщества стоят невидимые команды (ADR-078), и чужой список их бы
+    // заменил.
     const person = ctx.commandsPerson;
     const chatId = ctx.chat?.id;
     if (person === undefined || chatId === undefined) return;
+    if (ctx.chat?.type !== "private") return;
     await syncCommands(
       ctx.api,
       chatId,

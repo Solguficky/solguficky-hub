@@ -27,7 +27,31 @@ export type HubConfig = {
   // Имя бота поддержки без «@» для «Написать в поддержку ↗» в «Помощи» и в
   // кадре ожидания допуска (PER-625, ADR-068). Без него ряда и кнопки нет.
   supportBotUsername?: string;
+  // Чат сообщества (ADR-078, п. 2): единственная группа, где бот хаба
+  // работает. Из других групп он выходит. Нет — группы бот, как прежде, не
+  // обрабатывает и ни из одной не выходит.
+  communityChatId?: number;
 };
+
+// Id группы в Bot API отрицательный: у обычной группы — минус и номер, у
+// супергруппы — `-100` и номер. Чат сообщества — обычная группа, а после
+// миграции — супергруппа, поэтому годятся обе формы. Значение в чужой форме —
+// отказ старта: иначе бот вышел бы из самого чата сообщества. Ноль группой
+// не бывает: `-0` дал бы id, которому не равен ни один чат.
+const groupId = /^-[1-9]\d*$/;
+
+function readCommunityChatId(env: Env): Loaded<number | undefined> {
+  const raw = reader(env)("BOT_COMMUNITY_CHAT_ID");
+  if (raw === undefined) return { ok: true, config: undefined };
+  const id = Number(raw);
+  if (!groupId.test(raw) || !Number.isSafeInteger(id)) {
+    return {
+      ok: false,
+      error: "BOT_COMMUNITY_CHAT_ID must be a group id like -…",
+    };
+  }
+  return { ok: true, config: id };
+}
 
 export function readHubConfig(env: Env): Loaded<HubConfig> {
   const read = reader(env);
@@ -44,6 +68,8 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
   // в чужой бот так же молча (PER-625, ADR-068).
   const supportBot = readBotUsername(env, "BOT_SUPPORT_BOT_USERNAME");
   if (!supportBot.ok) return supportBot;
+  const communityChat = readCommunityChatId(env);
+  if (!communityChat.ok) return communityChat;
   const auctionUrl = read("AUCTION_GRPC_URL");
   return {
     ok: true,
@@ -61,6 +87,9 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
       ...(supportBot.config === undefined
         ? {}
         : { supportBotUsername: supportBot.config }),
+      ...(communityChat.config === undefined
+        ? {}
+        : { communityChatId: communityChat.config }),
     },
   };
 }

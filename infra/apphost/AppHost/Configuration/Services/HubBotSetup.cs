@@ -39,6 +39,7 @@ internal static class HubBotSetup
             SupportBotLink.Local(context.Builder.Configuration),
             BotMediaChannel.Local(context.Builder.Configuration),
             BotHallLinks.Local(context.Builder.Configuration),
+            HubBotCommunityChat.Local(context.Builder.Configuration),
             BotBuild.Process(context.Builder, AppHostNames.Resources.HubBot));
 
     /// <summary>
@@ -53,6 +54,7 @@ internal static class HubBotSetup
                 SupportBotLink.Published(context.Builder),
                 BotMediaChannel.Published(context.Builder),
                 BotHallLinks.Published(context.Builder),
+                HubBotCommunityChat.Published(context.Builder),
                 context.Builder.AddDockerfile(
                     AppHostNames.Resources.HubBot,
                     RepositoryPaths.Root(context.Builder),
@@ -66,6 +68,7 @@ internal static class HubBotSetup
         SupportBotLink? support,
         BotMediaChannel? media,
         BotHallLinks? hall,
+        HubBotCommunityChat? community,
         IResourceBuilder<T> bot)
         where T : IResourceWithEnvironment, IResourceWithWaitSupport
     {
@@ -90,6 +93,9 @@ internal static class HubBotSetup
 
         // Экран зала и стрим: кнопки-ссылки под карточкой лота (PER-825).
         hall?.Urls(bot);
+
+        // Чат сообщества: допуск групп и невидимые команды (ADR-078, п. 2).
+        community?.ChatId(bot);
 
         return bot
             // Один пакет на три бота (ADR-064, п. 18): поверхность — параметр
