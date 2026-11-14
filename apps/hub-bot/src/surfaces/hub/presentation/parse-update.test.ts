@@ -66,6 +66,16 @@ describe("parseUpdate", () => {
     });
   });
 
+  // Вход в «Сходки» из шёпота чата сообщества (PER-683).
+  it("reads the meetups section payload", () => {
+    expect(messageText("/start meetups")).toEqual({
+      kind: "start",
+      firstName: "tester",
+      telegramUserId: 42n,
+      deepLink: { kind: "meetups" },
+    });
+  });
+
   it("reads a source channel payload as its code without the prefix", () => {
     expect(messageText("/start s_tg_ads")).toEqual({
       kind: "start",

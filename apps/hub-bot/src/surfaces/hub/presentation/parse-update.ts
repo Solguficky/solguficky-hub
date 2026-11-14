@@ -4,6 +4,7 @@ import {
   type ResolveIdentityInput,
   toResolveIdentityInput,
 } from "../identity/port.js";
+import { meetupsSectionPayload } from "./meetup-deep-link.js";
 import {
   IncomingUpdateSchema,
   MeetupDeepLinkPayloadSchema,
@@ -103,7 +104,9 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
 
 type Command = { name: string; argument: string | undefined };
 
-function parseCommand(
+// Общий у лички и невидимых команд чата сообщества (`community-whisper.ts`):
+// хвост `@бот` сверяется одинаково, и команда другому боту — `foreign`.
+export function parseCommand(
   text: string,
   botUsername: string | undefined,
 ): Command | "foreign" | undefined {
@@ -140,6 +143,9 @@ function classifyDeepLink(payload: string): DeepLink {
   }
   if (payload.startsWith(sourceDeepLinkPrefix)) {
     return { kind: "source", code: payload.slice(sourceDeepLinkPrefix.length) };
+  }
+  if (payload === meetupsSectionPayload) {
+    return { kind: "meetups" };
   }
   return { kind: "unclassified", payload };
 }
