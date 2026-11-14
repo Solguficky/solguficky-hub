@@ -206,6 +206,13 @@ import {
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { CommunityChat } from "./community-chat.js";
+import { createCommunityWhisper } from "./community-whisper.js";
+import { meetupsWhisper } from "./community-whisper-meetups.js";
+import {
+  dependencyCategory,
+  grpcFailureCategory,
+  unavailableCategory,
+} from "./failure-category.js";
 import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
 import {
   createLiveConsoles,
@@ -1295,6 +1302,16 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   // память процесса, ни юзкейсы их не видят.
   if (runtime.communityChat !== undefined) {
     bot.use(runtime.communityChat.gate);
+    // Невидимые команды чата сообщества — шёпотом (ADR-078, п. 3; PER-683),
+    // мимо пути лички. Команда чата — запись реестра.
+    bot.use(
+      createCommunityWhisper({
+        commands: { meetups: meetupsWhisper(runtime.dispatcher) },
+        identity: runtime.identity,
+        logger: runtime.logger,
+        today: runtime.today ?? utcToday,
+      }),
+    );
   }
   const questions = new Map<string, PendingInput>();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
@@ -16043,48 +16060,6 @@ function writeBoundary(
 
 function boundaryOperation(ctx: UpdateContext): "message" | "callback_query" {
   return ctx.update.callback_query === undefined ? "message" : "callback_query";
-}
-
-function grpcFailureCategory(code: string): FailureCategory {
-  switch (code) {
-    case "PermissionDenied":
-    case "Unauthenticated":
-      return "authorization";
-    case "DeadlineExceeded":
-      return "timeout";
-    case "Unavailable":
-      return "dependency_unavailable";
-    case "InvalidArgument":
-    case "FailedPrecondition":
-    case "Aborted":
-    case "AlreadyExists":
-    case "NotFound":
-    case "OutOfRange":
-      return "invariant";
-    default:
-      return "unexpected";
-  }
-}
-
-function dependencyCategory(reason: string): FailureCategory {
-  switch (reason) {
-    case "forbidden":
-      return "authorization";
-    case "invalid":
-    case "conflict":
-      return "invariant";
-    case "timeout":
-      return "timeout";
-    default:
-      return "dependency_unavailable";
-  }
-}
-
-function unavailableCategory(cause: unknown): FailureCategory {
-  const text = errorText(cause).toLowerCase();
-  return text.includes("deadline") || text.includes("timeout")
-    ? "timeout"
-    : "dependency_unavailable";
 }
 
 // Код gRPC — в том же виде, что у отказа Identity (`InvalidArgument`), а текст

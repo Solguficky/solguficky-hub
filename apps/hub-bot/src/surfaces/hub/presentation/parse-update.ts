@@ -103,7 +103,9 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
 
 type Command = { name: string; argument: string | undefined };
 
-function parseCommand(
+// Общий у лички и невидимых команд чата сообщества (`community-whisper.ts`):
+// хвост `@бот` сверяется одинаково, и команда другому боту — `foreign`.
+export function parseCommand(
   text: string,
   botUsername: string | undefined,
 ): Command | "foreign" | undefined {

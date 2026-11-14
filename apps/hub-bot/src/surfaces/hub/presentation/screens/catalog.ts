@@ -1109,6 +1109,18 @@ export const screenCatalog = {
   "invitation-only": { class: "screen", nav: "apply" },
   // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
   hint: { class: "screen", nav: "exit" },
+  // Шёпот в чате сообщества (ADR-078, п. 3; PER-683) — ответ на невидимую
+  // команду, который видит только её автор. Экраны в чате не живут, поэтому
+  // у шёпота нет навигации: кнопки — только ссылки в бот, а без них кадр
+  // отказа. Нажатий на шёпоте этот лист не знает (подписка — PER-686).
+  "whisper-meetups": {
+    class: "screen",
+    nav: "links",
+    title: "Ближайшие сходки",
+  },
+  "whisper-invitation-only": { class: "screen", nav: "links" },
+  "whisper-no-access": { class: "screen", nav: "none" },
+  "whisper-unavailable": { class: "screen", nav: "none" },
   notification: { class: "trace", nav: "free" },
   // Трансляция хода торгов живого финала (PER-826): одно сообщение подписчика,
   // которое бот правит на каждую ставку; одна кнопка «Не следить».

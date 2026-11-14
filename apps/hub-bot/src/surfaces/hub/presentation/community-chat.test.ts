@@ -280,8 +280,8 @@ describe("community chat admission", () => {
     await bot.init();
     await bot.handleUpdate(message(group(community), "/meetups"));
     await bot.handleUpdate(message(group(community), "/lot"));
-    // Ответы на команды — соседние листья (PER-683, PER-685): здесь только
-    // допуск, поэтому в чате бот пока молчит.
+    // Команды здесь обычные, не невидимые: ответ на них увидели бы все, и
+    // бот молчит. Шёпот на невидимую команду — `community-whisper.test.ts`.
     expect(calls).toEqual([]);
     expect(commands).toEqual([
       {
