@@ -2,14 +2,17 @@ import type { Dispatcher } from "../application/dispatcher.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
 import type { MeetupSummary } from "../meetups/port.js";
 import {
-  botLink,
   openBotLabel,
+  openBotLink,
   type WhisperCommand,
   type WhisperFrame,
   type WhisperLink,
 } from "./community-whisper.js";
 import { dependencyCategory } from "./failure-category.js";
-import { meetupStartLink, meetupsStartLink } from "./meetup-deep-link.js";
+import {
+  meetupStartLink,
+  meetupsSectionStartLink,
+} from "./meetup-deep-link.js";
 import { dayLabel, screenText } from "./screens/kit.js";
 import { meetupTitleLabel } from "./screens/meetup.js";
 
@@ -58,7 +61,7 @@ export function meetupsWhisperFrame(
     return {
       id: "whisper-meetups",
       text: screenText(title, "Ближайших сходок нет."),
-      links: [{ label: openBotLabel, url: botLink(botUsername) }],
+      links: [{ label: openBotLabel, url: openBotLink(botUsername) }],
     };
   }
   const links: WhisperLink[] = meetups
@@ -72,7 +75,7 @@ export function meetupsWhisperFrame(
     // уже писал боту: `/start meetups` присылает сам раздел «Сходки».
     links.push({
       label: "Все сходки в боте",
-      url: meetupsStartLink(botUsername),
+      url: meetupsSectionStartLink(botUsername),
     });
   }
   return { id: "whisper-meetups", text: screenText(title), links };

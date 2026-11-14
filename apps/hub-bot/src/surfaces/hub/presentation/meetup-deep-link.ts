@@ -25,8 +25,8 @@ export function meetupStartLink(botUsername: string, meetupId: string): string {
  * `m_<токен>` или `s_<код>`, поэтому payload — само имя раздела, то же, что у
  * его команды `/meetups`.
  */
-export const meetupsDeepLinkPayload = "meetups";
+export const meetupsSectionPayload = "meetups";
 
-export function meetupsStartLink(botUsername: string): string {
-  return `https://t.me/${botUsername}?start=${meetupsDeepLinkPayload}`;
+export function meetupsSectionStartLink(botUsername: string): string {
+  return `https://t.me/${botUsername}?start=${meetupsSectionPayload}`;
 }

@@ -4,7 +4,7 @@ import {
   type ResolveIdentityInput,
   toResolveIdentityInput,
 } from "../identity/port.js";
-import { meetupsDeepLinkPayload } from "./meetup-deep-link.js";
+import { meetupsSectionPayload } from "./meetup-deep-link.js";
 import {
   IncomingUpdateSchema,
   MeetupDeepLinkPayloadSchema,
@@ -144,7 +144,7 @@ function classifyDeepLink(payload: string): DeepLink {
   if (payload.startsWith(sourceDeepLinkPrefix)) {
     return { kind: "source", code: payload.slice(sourceDeepLinkPrefix.length) };
   }
-  if (payload === meetupsDeepLinkPayload) {
+  if (payload === meetupsSectionPayload) {
     return { kind: "meetups" };
   }
   return { kind: "unclassified", payload };

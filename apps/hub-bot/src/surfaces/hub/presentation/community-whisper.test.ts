@@ -246,7 +246,10 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     const sent = onlyWhisper(calls);
     expect(sent.text).toBe("<b>Ближайшие сходки</b>\n\nБлижайших сходок нет.");
     expect(buttons(sent)).toEqual([
-      { text: "Открыть бота ↗", url: `https://t.me/${botInfo.username}` },
+      {
+        text: "Открыть бота ↗",
+        url: `https://t.me/${botInfo.username}?start=meetups`,
+      },
     ]);
   });
 
@@ -291,7 +294,10 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     );
     expect(sent.text).not.toContain("Настолки");
     expect(buttons(sent)).toEqual([
-      { text: "Открыть бота ↗", url: `https://t.me/${botInfo.username}` },
+      {
+        text: "Открыть бота ↗",
+        url: `https://t.me/${botInfo.username}?start=meetups`,
+      },
     ]);
     expect(requestAccess).not.toHaveBeenCalled();
     expect(execute).not.toHaveBeenCalled();

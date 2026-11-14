@@ -22,6 +22,7 @@ import {
   grpcFailureCategory,
   unavailableCategory,
 } from "./failure-category.js";
+import { meetupsSectionStartLink } from "./meetup-deep-link.js";
 import { parseCommand } from "./parse-update.js";
 import type { ScreenId } from "./screens/catalog.js";
 import { escapeHtml, refusalText, screenText } from "./screens/kit.js";
@@ -91,8 +92,15 @@ export type WhisperCommands = Readonly<Record<string, WhisperCommand>>;
 
 export const openBotLabel = "Открыть бота";
 
-export function botLink(botUsername: string): string {
-  return `https://t.me/${botUsername}`;
+/**
+ * Куда ведёт «Открыть бота» (R-6 оркестратора эпика по Q-7 владельца): голая
+ * ссылка `t.me/<бот>` у того, кто уже писал боту, открывает чат без нового
+ * сообщения. Ссылка со `start` присылает `/start meetups`, и бот отвечает по
+ * праву человека: держателю — «Сходки», без права — приветствие с «Подать
+ * заявку», заблокированному — отказ.
+ */
+export function openBotLink(botUsername: string): string {
+  return meetupsSectionStartLink(botUsername);
 }
 
 // Невидимая команда приходит с `message_id = 0` и своим
@@ -370,7 +378,7 @@ function invitationFrame(botUsername: string): WhisperFrame {
       invitationOnlyHub.title,
       ...invitationWhisper.map(escapeHtml),
     ),
-    links: [{ label: openBotLabel, url: botLink(botUsername) }],
+    links: [{ label: openBotLabel, url: openBotLink(botUsername) }],
   };
 }
 
