@@ -1633,6 +1633,7 @@ describe("presentation adapter", () => {
     ["/start s_tg_ads", "v1:apply:tg_ads"],
     ["/start s_", "v1:apply:"],
     ["/start m_AZLzpLXGfY6fChssPU5fYA", "v1:apply"],
+    ["/start meetups", "v1:apply"],
     ["/start", "v1:apply"],
   ])("welcomes on %s without an application", async (text, data) => {
     const execute = vi.fn<Dispatcher["execute"]>();
@@ -1670,6 +1671,41 @@ describe("presentation adapter", () => {
         inline_keyboard: [[{ callback_data: "v1:apply" }]],
       },
     });
+  });
+
+  // Вход в «Сходки» из шёпота чата сообщества (PER-683): `/start meetups`
+  // открывает раздел, как команда `/meetups`, новым сообщением.
+  it("opens the meetups section from the /start meetups link", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(listing().execute);
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start meetups"));
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "list-visible-meetups",
+        useCase: "find_meetup",
+      }),
+    );
+    expect(sentMessages(calls)).toHaveLength(1);
+    expect(sendMessageText(calls[0])).toMatch(/^<b>Сходки<\/b>/);
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      use_case: "find_meetup",
+    });
+  });
+
+  it("shows the closed frame on /start meetups when the person is blocked", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity("member", true), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start meetups"));
+    expect(sendMessageText(calls[0])).toBe(refusalText(blockedHubAccessText));
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it("shows the closed frame on /start when the person is blocked", async () => {

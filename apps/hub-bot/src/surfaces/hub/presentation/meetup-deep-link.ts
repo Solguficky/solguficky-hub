@@ -19,3 +19,14 @@ export function meetupDeepLinkPayload(meetupId: string): string {
 export function meetupStartLink(botUsername: string, meetupId: string): string {
   return `https://t.me/${botUsername}?start=${meetupDeepLinkPayload(meetupId)}`;
 }
+
+/**
+ * Вход в раздел «Сходки» (PER-683): у раздела нет данных для префикса, как у
+ * `m_<токен>` или `s_<код>`, поэтому payload — само имя раздела, то же, что у
+ * его команды `/meetups`.
+ */
+export const meetupsSectionPayload = "meetups";
+
+export function meetupsSectionStartLink(botUsername: string): string {
+  return `https://t.me/${botUsername}?start=${meetupsSectionPayload}`;
+}

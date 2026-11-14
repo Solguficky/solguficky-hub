@@ -5,6 +5,7 @@ import {
   toResolveIdentityInput,
 } from "../identity/port.js";
 import { lotIdOfPayload } from "./lot-deep-link.js";
+import { meetupsSectionPayload } from "./meetup-deep-link.js";
 import {
   IncomingUpdateSchema,
   MeetupDeepLinkPayloadSchema,
@@ -104,7 +105,9 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
 
 type Command = { name: string; argument: string | undefined };
 
-function parseCommand(
+// Общий у лички и невидимых команд чата сообщества (`community-whisper.ts`):
+// хвост `@бот` сверяется одинаково, и команда другому боту — `foreign`.
+export function parseCommand(
   text: string,
   botUsername: string | undefined,
 ): Command | "foreign" | undefined {
@@ -141,6 +144,9 @@ function classifyDeepLink(payload: string): DeepLink {
   }
   if (payload.startsWith(sourceDeepLinkPrefix)) {
     return { kind: "source", code: payload.slice(sourceDeepLinkPrefix.length) };
+  }
+  if (payload === meetupsSectionPayload) {
+    return { kind: "meetups" };
   }
   // Лот с токеном, который не разобрался, остаётся без цели: `/start` откроет
   // меню, а не отказ.

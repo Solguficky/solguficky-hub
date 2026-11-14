@@ -89,6 +89,9 @@ export type AuctionCancelConsequence =
 export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "source"; code: string }
+  // Раздел «Сходки» (PER-683): вход из шёпота чата сообщества «Все сходки в
+  // боте ↗» открывает список, а не пустой чат с ботом.
+  | { kind: "meetups" }
   | { kind: "lot"; lotId: string }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
