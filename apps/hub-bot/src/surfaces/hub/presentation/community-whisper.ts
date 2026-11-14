@@ -102,6 +102,7 @@ export function botLink(botUsername: string): string {
 const InvisibleCommandSchema = z.object({
   message: z.object({
     ephemeral_message_id: z.number().int(),
+    date: z.number().int(),
     chat: z.object({
       id: z.number().int(),
       type: z.enum(["group", "supergroup"]),
@@ -119,6 +120,8 @@ export type InvisibleCommand = {
   name: string;
   chatId: number;
   ephemeralMessageId: number;
+  /** Момент команды по часам Telegram, в миллисекундах: от него идёт окно. */
+  sentAt: number;
   telegramUserId: number;
   telegramUsername?: string;
 };
@@ -138,6 +141,7 @@ export function parseInvisibleCommand(
     name: command.name,
     chatId: message.chat.id,
     ephemeralMessageId: message.ephemeral_message_id,
+    sentAt: message.date * 1_000,
     telegramUserId: message.from.id,
     ...(message.from.username === undefined
       ? {}
@@ -170,16 +174,35 @@ export function createCommunityWhisper(options: {
       await next();
       return;
     }
+    // Команда, чьё окно уже прошло, — хвост очереди после рестарта или
+    // затора: шёпот на неё сервер отвергнет, и сервисы её не видят.
+    if (Date.now() >= command.sentAt + whisperWindowMs) {
+      writeRecord(logger, ctx, {
+        level: "info",
+        message: "community whisper window expired",
+        useCase: entry.useCase,
+      });
+      return;
+    }
     const record = await whisperBack(ctx, command, entry, identity, today);
     writeRecord(logger, ctx, record);
   };
 }
 
+/**
+ * Окно шёпота: бот без прав администратора шепчет только в ответ, в течение
+ * 15 секунд от команды (ADR-078; RFC-003, «Шёпот в группе»).
+ */
+export const whisperWindowMs = 15_000;
+// Запас окна на сам вызов Telegram после сервисов.
+const sendReserveMs = 1_000;
+
 type WhisperRecord = {
   level: "info" | "warn" | "error";
   message: string;
   useCase: string;
-  screen: WhisperScreenId;
+  // Нет у команды, которая пришла после окна: шёпота на неё не было.
+  screen?: WhisperScreenId;
   identityId?: string;
   failure?: { category: FailureCategory; error: string; grpcCode?: string };
   replyError?: string;
@@ -192,12 +215,15 @@ async function whisperBack(
   identity: IdentityResolver,
   today: () => CommunityDay,
 ): Promise<WhisperRecord> {
-  // Окно шёпота — 15 секунд от команды (ADR-078); бюджет сервисов у действия
-  // тот же, что в личке, и ответ уходит с запасом.
+  // Бюджет сервисов у действия тот же, что в личке, но не дальше окна шёпота:
+  // команда могла ждать в очереди update'ов, а окно идёт от неё самой.
   const meta: RpcMetadata = {
     requestId: ctx.requestId,
     useCase: entry.useCase,
-    deadlineAt: Date.now() + actionBudgetMs,
+    deadlineAt: Math.min(
+      Date.now() + actionBudgetMs,
+      command.sentAt + whisperWindowMs - sendReserveMs,
+    ),
   };
   const botUsername = ctx.me.username;
   const resolved = await identity.resolve(
@@ -366,13 +392,17 @@ const unavailableFrame: WhisperFrame = {
 };
 
 // Подпись кнопки не длиннее, чем Telegram покажет без обрыва (`buttonText`
-// экранов), вместе со знаком ссылки.
+// экранов), вместе со знаком ссылки. Режется по символам, а не по единицам
+// UTF-16: половина эмодзи в названии сделала бы строку невалидной, и Telegram
+// отверг бы весь шёпот.
 const linkSign = " ↗";
 const labelLimit = 64;
 
 function linkText(label: string): string {
   const room = labelLimit - linkSign.length;
-  const fitted = label.length <= room ? label : `${label.slice(0, room - 1)}…`;
+  const symbols = Array.from(label);
+  const fitted =
+    symbols.length <= room ? label : `${symbols.slice(0, room - 1).join("")}…`;
   return `${fitted}${linkSign}`;
 }
 
@@ -411,8 +441,8 @@ function writeRecord(
     operation: "message",
     result: record.failure === undefined ? "ok" : "error",
     use_case: record.useCase,
-    screen: record.screen,
   };
+  if (record.screen !== undefined) fields.screen = record.screen;
   if (ctx.requestId !== "") fields.request_id = ctx.requestId;
   fields.duration_us = Number(
     (process.hrtime.bigint() - ctx.startedAt) / 1000n,

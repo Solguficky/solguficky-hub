@@ -40,13 +40,18 @@ function group(id: number): Chat.GroupChat {
 
 // Невидимая команда: `message_id = 0`, адрес — `ephemeral_message_id`, а
 // получатель — сам бот (docs/learning/telegram-bot-api/ephemeral-messages.md).
-function invisible(text: string, chat: Chat = group(community)): Update {
+// `date` — секунды по часам Telegram; по умолчанию команда пришла только что.
+function invisible(
+  text: string,
+  chat: Chat = group(community),
+  date: number = Math.floor(Date.now() / 1_000),
+): Update {
   return {
     update_id: 1,
     message: {
       message_id: 0,
       ephemeral_message_id: 7,
-      date: 0,
+      date,
       chat,
       from: person,
       receiver_user: hubBot,
@@ -406,6 +411,35 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     expect((deadlineAt ?? 0) - before).toBeLessThanOrEqual(10_000);
   });
 
+  // Окно идёт от команды, а не от начала обработки: команда, которая ждала в
+  // очереди update'ов, получает остаток окна, а не полный бюджет.
+  it("caps the services deadline by what is left of the window", async () => {
+    const { bot, resolve } = harness({ meetups: [sooner] });
+    await bot.init();
+    const sent = Math.floor(Date.now() / 1_000) - 12;
+    await bot.handleUpdate(invisible("/meetups", group(community), sent));
+    const deadlineAt = resolve.mock.calls[0]?.[1]?.deadlineAt;
+    expect(deadlineAt).toBe(sent * 1_000 + 14_000);
+  });
+
+  // Хвост очереди после рестарта: шёпот на такую команду сервер отвергнет,
+  // поэтому ни Identity, ни Meetups её не видят.
+  it("skips a command whose whisper window has passed", async () => {
+    const { bot, calls, resolve, records } = harness({ meetups: [sooner] });
+    await bot.init();
+    const sent = Math.floor(Date.now() / 1_000) - 20;
+    await bot.handleUpdate(invisible("/meetups", group(community), sent));
+    expect(calls).toEqual([]);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        message: "community whisper window expired",
+        fields: expect.objectContaining({ use_case: "find_meetup" }),
+      }),
+    );
+  });
+
   it("answers a command addressed to this bot by name", async () => {
     const { bot, calls } = harness({ meetups: [sooner] });
     await bot.init();
@@ -543,11 +577,15 @@ describe("community whisper registry", () => {
 describe("parseInvisibleCommand", () => {
   it("reads the command, its author and the ephemeral address", () => {
     expect(
-      parseInvisibleCommand(invisible("/meetups extra"), "stub_bot"),
+      parseInvisibleCommand(
+        invisible("/meetups extra", group(community), 1_794_660_000),
+        "stub_bot",
+      ),
     ).toEqual({
       name: "meetups",
       chatId: community,
       ephemeralMessageId: 7,
+      sentAt: 1_794_660_000_000,
       telegramUserId: person.id,
     });
   });
