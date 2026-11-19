@@ -186,6 +186,113 @@ describe("meetup notification settings", () => {
     });
   });
 
+  // Подделанное «Подписаться» по сходке, которой человек не видит: Meetups
+  // отдаёт её ненайденной, и подписка не пишется — иначе уведомления о
+  // невидимой сходке начали бы доходить (PER-896).
+  it("writes no subscription for a meetup the person cannot see", async () => {
+    const setSubscription = vi.fn();
+    const settings = createNotificationSettings(
+      meetupsStub({ kind: "not-found" }),
+      notificationsStub({ setSubscription }),
+    );
+
+    const result = await settings({
+      identity,
+      intent: "set-meetup-subscription",
+      meetupId,
+      subscribed: true,
+    });
+
+    expect(result).toEqual({ kind: "meetup-not-found" });
+    expect(setSubscription).not.toHaveBeenCalled();
+  });
+
+  it("reads the meetup as the person before writing the subscription", async () => {
+    const order: string[] = [];
+    const meetups = {
+      get: vi.fn(async () => {
+        order.push("get");
+        return { kind: "ok", meetup };
+      }),
+    } as unknown as Meetups;
+    const setSubscription = vi.fn(async () => {
+      order.push("set");
+      return {
+        kind: "ok" as const,
+        preferences: { meetupId, subscribed: true, categories: [] },
+      };
+    });
+    const settings = createNotificationSettings(
+      meetups,
+      notificationsStub({ setSubscription }),
+    );
+
+    const result = await settings({
+      identity,
+      intent: "set-meetup-subscription",
+      meetupId,
+      subscribed: true,
+    });
+
+    expect(meetups.get).toHaveBeenCalledWith(identity, meetupId, undefined);
+    expect(order).toEqual(["get", "set"]);
+    expect(meetups.get).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({
+      kind: "meetup-card",
+      subscribed: true,
+      meetup: { title: "Настолки у Лёши" },
+    });
+  });
+
+  it("writes no subscription when Meetups cannot be read", async () => {
+    const setSubscription = vi.fn();
+    const settings = createNotificationSettings(
+      meetupsStub({ kind: "unavailable", cause: new Error("down") }),
+      notificationsStub({ setSubscription }),
+    );
+
+    const result = await settings({
+      identity,
+      intent: "set-meetup-subscription",
+      meetupId,
+      subscribed: true,
+    });
+
+    expect(result).toEqual({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    expect(setSubscription).not.toHaveBeenCalled();
+  });
+
+  // Отписка уведомлений не открывает: она пишется и со сходки, ставшей
+  // невидимой, а ответ — то же «не найдено».
+  it("still unsubscribes from a meetup that became invisible", async () => {
+    const setSubscription = vi.fn().mockResolvedValue({
+      kind: "ok",
+      preferences: { meetupId, subscribed: false, categories: [] },
+    });
+    const settings = createNotificationSettings(
+      meetupsStub({ kind: "not-found" }),
+      notificationsStub({ setSubscription }),
+    );
+
+    const result = await settings({
+      identity,
+      intent: "set-meetup-subscription",
+      meetupId,
+      subscribed: false,
+    });
+
+    expect(setSubscription).toHaveBeenCalledWith(
+      "identity-id",
+      meetupId,
+      false,
+      undefined,
+    );
+    expect(result).toEqual({ kind: "meetup-not-found" });
+  });
+
   // Сходку сняли между отрисовкой кнопки и нажатием: кадр отвечает тем же
   // «не найдено», что и карточка, а не пустым списком категорий.
   it("answers with meetup-not-found when the meetup disappeared", async () => {
