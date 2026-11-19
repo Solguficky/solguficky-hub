@@ -6,11 +6,15 @@ import {
   createHarness,
   type RecordedCall,
 } from "../../../../testkit/harness.js";
-import type { AccessRight } from "../../../auction-ui/index.js";
+import type {
+  AccessRight,
+  AuctionSummaryView,
+} from "../../../auction-ui/index.js";
 import { createBotShell } from "../../../core/bot/shell.js";
 import { defaultTelegramEnvironment } from "../../../core/config.js";
 import { noopTracing } from "../../../core/tracing.js";
 import type { Dispatcher } from "../application/dispatcher.js";
+import type { AuctionScreens, MeetupAuctionResult } from "../auction/port.js";
 import type {
   IdentityResolver,
   ResolveIdentityResult,
@@ -120,6 +124,7 @@ type Fakes = {
   meetups?: readonly MeetupSummary[];
   execute?: Dispatcher["execute"];
   respond?: (method: string, payload: unknown) => unknown;
+  auction?: AuctionScreens;
 };
 
 function harness(fakes: Fakes = {}) {
@@ -145,7 +150,7 @@ function harness(fakes: Fakes = {}) {
   const { logger } = createCapturingLogger();
   const communityChat = createCommunityChat({
     chatId: community,
-    commands: communityChatCommands({ auction: false }),
+    commands: communityChatCommands,
     logger,
   });
   const harnessed = createHarness(
@@ -157,7 +162,9 @@ function harness(fakes: Fakes = {}) {
     () => today,
     {
       communityChat,
+      communityTimeZone: "Europe/Moscow",
       ...(fakes.respond === undefined ? {} : { respond: fakes.respond }),
+      ...(fakes.auction === undefined ? {} : { auction: fakes.auction }),
     },
   );
   return { ...harnessed, resolve, requestAccess, execute };
@@ -614,4 +621,187 @@ describe("parseInvisibleCommand", () => {
     fromBot.message.from = hubBot;
     expect(parseInvisibleCommand(fromBot, "stub_bot")).toBeUndefined();
   });
+});
+
+// `/events` (PER-884): строки раздела «События» шёпотом и ссылка в раздел.
+describe("whisper to an invisible /events in the community chat", () => {
+  const auctionId = "0198f2a4-0000-7000-8000-00000000a0c1";
+  const hours = (shift: number) =>
+    new Date(Date.now() + shift * 3_600_000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
+  const trading: AuctionSummaryView = {
+    auctionId,
+    stage: "prebidding",
+    opensAt: hours(-30),
+    closesAt: hours(100),
+    final: true,
+    raffleClosesAt: hours(50),
+  };
+
+  // Порт Auction с одним чтением, которое берут «События»: другие методы
+  // шёпот звать не должен, и вызов любого из них уронит тест.
+  function auctionWith(current: MeetupAuctionResult | (() => never)) {
+    const currentAuction = vi.fn(async () =>
+      typeof current === "function" ? current() : current,
+    );
+    return {
+      port: { currentAuction } as unknown as AuctionScreens,
+      currentAuction,
+    };
+  }
+
+  function privateCommand(text: string): Update {
+    return {
+      update_id: 2,
+      message: {
+        message_id: 11,
+        date: Math.floor(Date.now() / 1_000),
+        chat: { id: person.id, type: "private", first_name: "tester" },
+        from: person,
+        text,
+        entities: [{ type: "bot_command", offset: 0, length: text.length }],
+      },
+    } as Update;
+  }
+
+  const eventsLink = `https://t.me/${botInfo.username}?start=events`;
+
+  it("whispers the going events with a link to the events section", async () => {
+    const { port, currentAuction } = auctionWith({
+      kind: "ok",
+      auctionId,
+      auction: trading,
+    });
+    const { bot, calls, records } = harness({ auction: port });
+    await bot.init();
+    await bot.handleUpdate(invisible("/events"));
+    const sent = onlyWhisper(calls);
+    expect(sent).toMatchObject({
+      chat_id: community,
+      reply_parameters: { ephemeral_message_id: 7 },
+      ephemeral_message_parameters: { receiver_user_id: person.id },
+    });
+    expect(sent.text).toMatch(
+      /^<b>События<\/b>\n\n🏷️ Аукцион: идут онлайн-торги до/,
+    );
+    // Строка состояния аукциона — та же, что под строкой в «Событиях».
+    expect(sent.text).toContain("розыгрыш: регистрация до");
+    expect(buttons(sent)).toEqual([
+      { text: "Все события в боте ↗", url: eventsLink },
+    ]);
+    expect(currentAuction).toHaveBeenCalledTimes(1);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        message: "community whisper sent",
+        fields: expect.objectContaining({
+          use_case: "view_auction",
+          screen: "whisper-events",
+        }),
+      }),
+    );
+  });
+
+  // Критерий приёмки: те же события, что раздел «События» у того же
+  // человека, — текст шёпота совпадает с текстом раздела в личке.
+  it("whispers the same text the events section shows in the private chat", async () => {
+    const { port } = auctionWith({ kind: "ok", auctionId, auction: trading });
+    const { bot, calls } = harness({ auction: port });
+    await bot.init();
+    await bot.handleUpdate(invisible("/events"));
+    const sent = onlyWhisper(calls);
+    calls.length = 0;
+    await bot.handleUpdate(privateCommand("/events"));
+    const shown = calls.find((call) => call.method === "sendMessage");
+    expect((shown?.payload as { text?: string } | undefined)?.text).toBe(
+      sent.text,
+    );
+  });
+
+  // Скрытый аукцион событием не бывает ни у кого (ADR-078, п. 4): признак
+  // `hidden` Auction отдаёт только держателю `run_auctions`.
+  it("never whispers a hidden auction, even to its organizer", async () => {
+    const { port } = auctionWith({
+      kind: "ok",
+      auctionId,
+      auction: { ...trading, hidden: true },
+    });
+    const { bot, calls } = harness({
+      rights: ["access-hub", "run-auctions"],
+      auction: port,
+    });
+    await bot.init();
+    await bot.handleUpdate(invisible("/events"));
+    const sent = onlyWhisper(calls);
+    expect(sent.text).toBe(
+      "<b>События</b>\n\nСейчас не идут события, привязанные к сходкам.",
+    );
+    expect(sent.text).not.toContain("Аукцион");
+    expect(buttons(sent)).toEqual([
+      {
+        text: "Открыть бота ↗",
+        url: `https://t.me/${botInfo.username}?start=meetups`,
+      },
+    ]);
+  });
+
+  // Бот без Auction событий не знает: пустой кадр, как раздел в личке.
+  it("whispers no events without Auction", async () => {
+    const { bot, calls } = harness();
+    await bot.init();
+    await bot.handleUpdate(invisible("/events"));
+    const sent = onlyWhisper(calls);
+    expect(sent.text).toBe(
+      "<b>События</b>\n\nСейчас не идут события, привязанные к сходкам.",
+    );
+    // «Открыть бота ↗» шёпота одна у всех команд (R-6): `?start=meetups`.
+    expect(buttons(sent)).toEqual([
+      {
+        text: "Открыть бота ↗",
+        url: `https://t.me/${botInfo.username}?start=meetups`,
+      },
+    ]);
+  });
+
+  it("whispers unavailability when Auction fails", async () => {
+    const { port } = auctionWith({ kind: "unavailable", cause: "down" });
+    const { bot, calls, records } = harness({ auction: port });
+    await bot.init();
+    await bot.handleUpdate(invisible("/events"));
+    const sent = onlyWhisper(calls);
+    expect(sent.text).toContain("Не получилось загрузить данные.");
+    expect(buttons(sent)).toEqual([]);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: "events rejected",
+        fields: expect.objectContaining({
+          use_case: "view_auction",
+          error_category: "dependency_unavailable",
+          error: "auction_unavailable",
+        }),
+      }),
+    );
+  });
+
+  // Без права хаба и заблокированному — кадры каркаса, события не читаются.
+  it.each([
+    ["without hub access", { rights: ["place-bids"] as AccessRight[] }],
+    ["blocked", { blocked: true }],
+  ])(
+    "answers a person %s with the frame and reads no events",
+    async (_, fakes) => {
+      const { port, currentAuction } = auctionWith({
+        kind: "ok",
+        auctionId,
+        auction: trading,
+      });
+      const { bot, calls } = harness({ ...fakes, auction: port });
+      await bot.init();
+      await bot.handleUpdate(invisible("/events"));
+      const sent = onlyWhisper(calls);
+      expect(sent.text).not.toContain("Аукцион:");
+      expect(currentAuction).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -80,7 +80,7 @@ function harness(
       ? undefined
       : createCommunityChat({
           chatId: community,
-          commands: communityChatCommands({ auction: true }),
+          commands: communityChatCommands,
           logger,
         });
   const harnessed = createHarness(
@@ -279,7 +279,7 @@ describe("community chat admission", () => {
     const { bot, calls, commands } = harness();
     await bot.init();
     await bot.handleUpdate(message(group(community), "/meetups"));
-    await bot.handleUpdate(message(group(community), "/lot"));
+    await bot.handleUpdate(message(group(community), "/events"));
     // Команды здесь обычные, не невидимые: ответ на них увидели бы все, и
     // бот молчит. Шёпот на невидимую команду — `community-whisper.test.ts`.
     expect(calls).toEqual([]);
@@ -289,7 +289,7 @@ describe("community chat admission", () => {
         payload: {
           commands: [
             { command: "meetups", description: "Сходки", is_ephemeral: true },
-            { command: "lot", description: "Лот финала", is_ephemeral: true },
+            { command: "events", description: "События", is_ephemeral: true },
           ],
           scope: { type: "chat", chat_id: community },
         },
@@ -319,7 +319,7 @@ describe("community chat admission", () => {
       expect.objectContaining({
         payload: expect.objectContaining({
           scope: { type: "chat", chat_id: community },
-          commands: communityChatCommands({ auction: true }),
+          commands: communityChatCommands,
         }),
       }),
     ]);
@@ -373,13 +373,13 @@ describe("community chat admission", () => {
 });
 
 describe("community chat commands", () => {
-  it("names the final lot only with Auction", () => {
-    expect(communityChatCommands({ auction: false })).toEqual([
-      { command: "meetups", description: "Сходки", is_ephemeral: true },
+  // Лота финала в меню нет: `/lot` отложена (PER-685), а «События» — всегда,
+  // с Auction и без него, как в личке (PER-884).
+  it("names meetups and events, without the final lot", () => {
+    expect(communityChatCommands.map((entry) => entry.command)).toEqual([
+      "meetups",
+      "events",
     ]);
-    expect(
-      communityChatCommands({ auction: true }).map((entry) => entry.command),
-    ).toEqual(["meetups", "lot"]);
   });
 
   // Запись на старте; отказ Telegram в память не попадает, и следующий
@@ -398,7 +398,7 @@ describe("community chat commands", () => {
     const { logger, records } = createCapturingLogger();
     const chat = createCommunityChat({
       chatId: community,
-      commands: communityChatCommands({ auction: false }),
+      commands: communityChatCommands,
       logger,
     });
     await chat.registerCommands(api);

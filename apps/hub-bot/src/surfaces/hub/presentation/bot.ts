@@ -207,7 +207,9 @@ import {
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { CommunityChat } from "./community-chat.js";
 import { createCommunityWhisper } from "./community-whisper.js";
+import { eventsWhisper } from "./community-whisper-events.js";
 import { meetupsWhisper } from "./community-whisper-meetups.js";
+import { type CurrentEvents, readCurrentEvents } from "./current-events.js";
 import {
   dependencyCategory,
   grpcFailureCategory,
@@ -428,11 +430,7 @@ import {
   demoteMemberConfirmScreen,
   firstCommunityPlace,
 } from "./screens/community.js";
-import {
-  eventsScreen,
-  type HubEvent,
-  isAuctionEvent,
-} from "./screens/events.js";
+import { eventsScreen } from "./screens/events.js";
 import {
   auctionEnabledScreen,
   extensionsScreen,
@@ -1306,7 +1304,13 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     // мимо пути лички. Команда чата — запись реестра.
     bot.use(
       createCommunityWhisper({
-        commands: { meetups: meetupsWhisper(runtime.dispatcher) },
+        commands: {
+          meetups: meetupsWhisper(runtime.dispatcher),
+          events: eventsWhisper(
+            runtime.auction,
+            runtime.communityTimeZone ?? "UTC",
+          ),
+        },
         identity: runtime.identity,
         logger: runtime.logger,
         today: runtime.today ?? utcToday,
@@ -3033,6 +3037,10 @@ async function handleMessage(
       // Вход в «Сходки» из шёпота чата сообщества (PER-683): тот же раздел,
       // что у команды `/meetups`, новым сообщением.
       outcome = await openNavScreen(ctx, runtime, person, "hub", useCase);
+    } else if (deepLink?.kind === "events") {
+      // Вход в «События» из шёпота `/events` (PER-884): тот же раздел, что у
+      // команды `/events`, новым сообщением.
+      outcome = await openEvents(ctx, runtime, person, useCase);
     } else {
       // Вход без ссылки на сходку открывает корневое меню: из него видно
       // всё, что доступно человеку (PER-592).
@@ -7397,29 +7405,16 @@ async function openMenu(
   };
 }
 
-// Идущие события расширений (PER-669): сегодня — аукцион сообщества в онлайн-
-// торгах, итогах, перерыве или финале. Торги открыты не больше чем у одного
-// аукциона (PER-603), поэтому событие аукциона — одно. Отказ Auction меню не
-// роняет: кнопка и строка событий пропадают, а запись границы называет
-// деградацию.
+// Идущие события расширений (PER-669) — одно чтение с шёпотом `/events`
+// (`current-events.ts`). Отказ Auction меню не роняет: кнопка и строка событий
+// пропадают, а запись границы называет деградацию.
 async function currentEvents(
   ctx: UpdateContext,
   runtime: BotRuntime,
   person: Person,
   useCase: ProductUseCase,
-): Promise<{ kind: "ok"; events: HubEvent[] } | { kind: "unavailable" }> {
-  if (runtime.auction === undefined) return { kind: "ok", events: [] };
-  const current = await runtime.auction.currentAuction(
-    person,
-    rpcCall(ctx, useCase),
-  );
-  if (current.kind !== "ok") return { kind: "unavailable" };
-  const { auctionId, auction } = current;
-  return auctionId === undefined ||
-    auction === undefined ||
-    !isAuctionEvent(auction)
-    ? { kind: "ok", events: [] }
-    : { kind: "ok", events: [{ kind: "auction", auctionId, auction }] };
+): Promise<CurrentEvents> {
+  return readCurrentEvents(runtime.auction, person, rpcCall(ctx, useCase));
 }
 
 const menuEventsBudgetMs = 1_500;

@@ -4,7 +4,10 @@ import {
   type ResolveIdentityInput,
   toResolveIdentityInput,
 } from "../identity/port.js";
-import { meetupsSectionPayload } from "./meetup-deep-link.js";
+import {
+  eventsSectionPayload,
+  meetupsSectionPayload,
+} from "./meetup-deep-link.js";
 import {
   IncomingUpdateSchema,
   MeetupDeepLinkPayloadSchema,
@@ -146,6 +149,9 @@ function classifyDeepLink(payload: string): DeepLink {
   }
   if (payload === meetupsSectionPayload) {
     return { kind: "meetups" };
+  }
+  if (payload === eventsSectionPayload) {
+    return { kind: "events" };
   }
   return { kind: "unclassified", payload };
 }
