@@ -21,6 +21,7 @@ import type {
   MeetupSnapshot,
   MeetupSummary,
 } from "../../meetups/port.js";
+import { plainDescription, richDescription } from "../description-markup.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { auctionCancelConsequence, auctionStateLine } from "./auction-stage.js";
 import {
@@ -355,6 +356,7 @@ function cardLines(
   people: MeetupPeople | undefined,
   today: CommunityDay,
   manageable: boolean,
+  presentation: "rich" | "plain",
   extensions: readonly string[] = [],
 ): string[] {
   const lifecycle =
@@ -384,9 +386,13 @@ function cardLines(
     ),
     "",
     ...(extensions.length === 0 ? [] : [...extensions, ""]),
+    // Описание хранится HTML Telegram (PER-902): rich-карточка раскладывает
+    // его строками и блоками, плоская берёт как есть.
     meetup.description === ""
       ? emptyDescription
-      : escapeHtml(meetup.description),
+      : presentation === "rich"
+        ? richDescription(meetup.description)
+        : plainDescription(meetup.description),
   ];
 }
 
@@ -578,7 +584,14 @@ export function cardScreen(view: CardView): ShownScreen {
     presentation === "rich" && view.posters !== false ? posters(meetup) : [];
   const title = escapeHtml(meetupTitleLabel(meetup.title));
   const body = [
-    ...cardLines(meetup, view.people, today, manageable, auctionLines(view)),
+    ...cardLines(
+      meetup,
+      view.people,
+      today,
+      manageable,
+      presentation,
+      auctionLines(view),
+    ),
     ...materialLines(
       meetup,
       new Set(
@@ -633,7 +646,13 @@ function cardText(parts: {
   // (прогон 14.10, №101).
   if (presentation === "rich") {
     const lines = hint === undefined ? body : [...body, "", escapeHtml(hint)];
-    return `${parts.posters ?? ""}<h1>${title}</h1><p>${lines.join("<br>")}</p>`;
+    // Цитата или блок кода описания разрезают абзац (PER-902): пустой абзац
+    // и переносы у его краёв не рисуются.
+    const paragraphs = `<p>${lines.join("<br>")}</p>`
+      .replace(/(<br>)+<\/p>/g, "</p>")
+      .replace(/<p>(<br>)+/g, "<p>")
+      .replaceAll("<p></p>", "");
+    return `${parts.posters ?? ""}<h1>${title}</h1>${paragraphs}`;
   }
   const card = `<b>${title}</b>\n\n${body.join("\n")}`;
   return hint === undefined ? card : `${card}\n\n${escapeHtml(hint)}`;
@@ -675,7 +694,7 @@ export function draftScreen(view: {
     text: cardText({
       title: escapeHtml(meetupTitleLabel(meetup.title)),
       // Черновик видит только организатор.
-      body: cardLines(meetup, undefined, today, true),
+      body: cardLines(meetup, undefined, today, true, presentation),
       presentation,
     }),
     keyboard: withNav(keyboard, hiddenParent(true, view.administrator ?? true)),
@@ -814,7 +833,7 @@ export function statusScreen(
       "Статус",
       meetupTitleLabel(meetup.title),
       // Экран «Статус» открывает только тот, кто управляет сходкой.
-      cardLines(meetup, people, today, true).join("\n"),
+      cardLines(meetup, people, today, true, "plain").join("\n"),
     ),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",

@@ -215,6 +215,12 @@ import {
 } from "./community-whisper-meetups.js";
 import { type CurrentEvents, readCurrentEvents } from "./current-events.js";
 import {
+  descriptionHtml,
+  descriptionLimit,
+  plainDescription,
+  visibleDescription,
+} from "./description-markup.js";
+import {
   dependencyCategory,
   grpcFailureCategory,
   unavailableCategory,
@@ -2800,12 +2806,34 @@ async function handleMessage(
         outcome = denied;
         return;
       }
+      // Описание хранится HTML Telegram с разметкой ответа (PER-902). Предел —
+      // по видимому тексту: теги в предел сообщения Telegram не идут.
+      const description = pending.field === "description";
+      if (description && [...ctx.message.text].length > descriptionLimit) {
+        await refuseAnswer(
+          ctx,
+          questions,
+          pending,
+          `Описание длиннее ${descriptionLimit} знаков. Сократи его и пришли ещё раз.`,
+          replyId,
+        );
+        outcome = {
+          level: "info",
+          message: "meetup description too long",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+        };
+        return;
+      }
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
         intent:
           pending.mode === "edit" ? "update-meetup-field" : "set-meetup-field",
         field: pending.field,
-        value: ctx.message.text,
+        value: description
+          ? descriptionHtml(ctx.message.text, ctx.message.entities)
+          : ctx.message.text,
         meetupId: pending.meetupId,
         ...(pending.fresh === undefined ? {} : { fresh: true as const }),
         ...rpcCall(ctx, useCase),
@@ -13851,6 +13879,23 @@ async function renderFormResult(
       return;
     }
     const ask = formPrompts[result.field];
+    // Текущее описание показывается с разметкой (PER-902): вопрос уходит HTML.
+    if (
+      result.kind === "edit-ask" &&
+      result.field === "description" &&
+      result.meetup.description !== ""
+    ) {
+      await askQuestion(
+        ctx,
+        questions,
+        pending,
+        `Сейчас: ${plainDescription(result.meetup.description)}\n${escapeHtml(ask)}`,
+        undefined,
+        undefined,
+        "HTML",
+      );
+      return;
+    }
     await askQuestion(
       ctx,
       questions,
@@ -13867,10 +13912,15 @@ async function renderFormResult(
       `Сейчас: ${stored.title}`,
       formatSchedule(stored),
       stored.venue,
-      stored.description,
+      // Экран конфликта экранирует строки целиком: описание идёт видимым
+      // текстом, без тегов (PER-902).
+      visibleDescription(stored.description),
       ...(result.input === undefined
         ? []
-        : ["", `Твоё значение: ${result.input}`]),
+        : [
+            "",
+            `Твоё значение: ${result.field === "description" ? visibleDescription(result.input) : result.input}`,
+          ]),
     ];
     // Публикация выбирается повторно по обновлённым данным: кнопки снова
     // несут снимок, который человек только что видел.
