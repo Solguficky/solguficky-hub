@@ -286,6 +286,27 @@ export function createDispatcher(
                 }
               : { kind: "dependency-rejected", reason: result.kind };
         }
+        // Чтения по сходке идут параллельно, и отказ одного убирает только её
+        // запись; без Notifications записей нет вовсе.
+        case "read-meetup-subscriptions": {
+          const read = await Promise.all(
+            request.meetupIds.map(async (meetupId) => ({
+              meetupId,
+              result: await notifications?.getMeetupPreferences(
+                request.identity.identityId,
+                meetupId,
+                rpcMeta(request),
+              ),
+            })),
+          );
+          const subscribed: Record<string, boolean> = {};
+          for (const { meetupId, result } of read) {
+            if (result?.kind === "ok") {
+              subscribed[meetupId] = result.preferences.subscribed;
+            }
+          }
+          return { kind: "meetup-subscriptions", subscribed };
+        }
         case "list-archived-meetups": {
           if (meetups === undefined) {
             return { kind: "rejected", reason: "meetups-not-configured" };

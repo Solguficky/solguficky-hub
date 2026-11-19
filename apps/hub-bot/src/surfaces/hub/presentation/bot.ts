@@ -208,7 +208,11 @@ import { parseBroadcastPreview } from "./broadcast-input.js";
 import type { CommunityChat } from "./community-chat.js";
 import { createCommunityWhisper } from "./community-whisper.js";
 import { eventsWhisper } from "./community-whisper-events.js";
-import { meetupsWhisper } from "./community-whisper-meetups.js";
+import {
+  meetupsWhisper,
+  subscriptionAction,
+  subscriptionWhisper,
+} from "./community-whisper-meetups.js";
 import { type CurrentEvents, readCurrentEvents } from "./current-events.js";
 import {
   dependencyCategory,
@@ -1301,7 +1305,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   if (runtime.communityChat !== undefined) {
     bot.use(runtime.communityChat.gate);
     // Невидимые команды чата сообщества — шёпотом (ADR-078, п. 3; PER-683),
-    // мимо пути лички. Команда чата — запись реестра.
+    // мимо пути лички. Команда чата — запись реестра, нажатие на шёпоте —
+    // запись реестра действий (PER-686); оба идут здесь, раньше обработчиков
+    // лички.
     bot.use(
       createCommunityWhisper({
         commands: {
@@ -1310,6 +1316,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
             runtime.auction,
             runtime.communityTimeZone ?? "UTC",
           ),
+        },
+        actions: {
+          [subscriptionAction]: subscriptionWhisper(runtime.dispatcher),
         },
         identity: runtime.identity,
         logger: runtime.logger,

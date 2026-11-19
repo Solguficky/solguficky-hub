@@ -34,7 +34,7 @@ export function eventsWhisperFrame(
     return {
       id: "whisper-events",
       text: screenText(eventsTitle, noEventsText),
-      links: [{ label: openBotLabel, url: openBotLink(botUsername) }],
+      buttons: [{ label: openBotLabel, url: openBotLink(botUsername) }],
     };
   }
   return {
@@ -45,7 +45,7 @@ export function eventsWhisperFrame(
     ),
     // Ссылка со `start` присылает сам раздел «События» и у того, кто уже
     // писал боту: голая `t.me/<бот>` открыла бы чат без нового сообщения.
-    links: [
+    buttons: [
       { label: "Все события в боте", url: eventsSectionStartLink(botUsername) },
     ],
   };

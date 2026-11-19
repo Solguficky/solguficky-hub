@@ -503,8 +503,8 @@ const materialsLabel = (count: number) =>
   marked(pictogram.materials, `Материалы (${count})`);
 const broadcastLabel = adminLabel("Написать подписчикам");
 const organizersLabel = adminLabel("Организаторы");
-const subscribeLabel = marked(pictogram.on, "Подписаться на сходку");
-const unsubscribeLabel = marked(pictogram.off, "Отписаться");
+export const subscribeLabel = marked(pictogram.on, "Подписаться на сходку");
+export const unsubscribeLabel = marked(pictogram.off, "Отписаться");
 export const meetupNotificationsLabel = marked(
   pictogram.settings,
   "Уведомления сходки",

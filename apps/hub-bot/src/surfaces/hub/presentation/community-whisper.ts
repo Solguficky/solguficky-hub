@@ -39,8 +39,10 @@ import { actionBudgetMs } from "./waiting.js";
 // Что шёпот несёт (ADR-078, п. 4): только то, что человек и так видит в боте,
 // и вход в бот. Деньги, ставки, данные других людей и то, что может стать
 // скрытым позже, шёпотом не уходят — это правило каждого кадра команды.
-// Кнопки шёпота — только ссылки: нажатия из чата этот каркас не обрабатывает
-// (подписка кнопкой на шёпоте — PER-686).
+// Кнопки шёпота — ссылки в бот и действия на самом шёпоте (PER-686). Нажатие
+// каркас забирает раньше обработчиков лички, проводит тем же путём Identity и
+// допуска и отдаёт записи реестра `WhisperActions`; её кадр правит шёпот на
+// месте. Следующее действие встаёт записью рядом, как команда.
 //
 // Доставку шёпота бот не наблюдает и не дублирует (ADR-078, п. 5): `200` —
 // это «принято». Повтора нет: человек повторяет команду сам.
@@ -51,12 +53,17 @@ export type WhisperScreenId = Extract<ScreenId, `whisper-${string}`>;
 /** Кнопка шёпота — ссылка в бот. Знак «↗» ставит отправитель. */
 export type WhisperLink = { label: string; url: string };
 
+/** Кнопка действия на самом шёпоте; данные — из `whisperActionData`. */
+export type WhisperPress = { label: string; data: string };
+
+export type WhisperButton = WhisperLink | WhisperPress;
+
 export type WhisperFrame = {
   id: WhisperScreenId;
   /** HTML: заголовок жирным первой строкой и абзацы, как у экрана лички. */
   text: string;
-  /** По ссылке в ряд; пусто — шёпот без клавиатуры. */
-  links: readonly WhisperLink[];
+  /** По кнопке в ряд; пусто — шёпот без клавиатуры. */
+  buttons: readonly WhisperButton[];
 };
 
 /** Что команда получает от каркаса: человек уже допущен к хабу. */
@@ -70,7 +77,9 @@ export type WhisperRequest = {
 };
 
 export type WhisperAnswer =
-  | { kind: "frame"; frame: WhisperFrame }
+  // `refused` — действие отказало подделке или устаревшей кнопке: шёпот
+  // показывает кадр, а причина уходит в запись границы предупреждением.
+  | { kind: "frame"; frame: WhisperFrame; refused?: string }
   // Сбой сервиса команды: человек получает шёпот о недоступности, а причина
   // уходит в запись границы.
   | {
@@ -89,6 +98,26 @@ export type WhisperCommand = {
 
 /** Реестр невидимых команд чата сообщества: имя команды без «/». */
 export type WhisperCommands = Readonly<Record<string, WhisperCommand>>;
+
+export type WhisperAction = {
+  /** `use_case` записи границы и заголовка вызова сервисов. */
+  useCase: string;
+  /** `argument` — хвост данных кнопки после имени действия, недоверенный. */
+  answer(
+    request: WhisperRequest & { argument: string },
+  ): Promise<WhisperAnswer>;
+};
+
+/** Реестр действий на шёпоте: имя действия в данных кнопки. */
+export type WhisperActions = Readonly<Record<string, WhisperAction>>;
+
+// Домен данных кнопок шёпота.
+const actionPrefix = "v1:w:";
+
+/** Данные кнопки действия шёпота: `v1:w:<действие>:<аргумент>`. */
+export function whisperActionData(action: string, argument: string): string {
+  return `${actionPrefix}${action}:${argument}`;
+}
 
 export const openBotLabel = "Открыть бота";
 
@@ -157,6 +186,68 @@ export function parseInvisibleCommand(
   };
 }
 
+// Нажатие на шёпоте приходит с `message.ephemeral_message_id` самого шёпота,
+// а `date` у нажатия нет: окно считается от приёма (ephemeral-messages.md).
+const WhisperPressSchema = z.object({
+  callback_query: z.object({
+    id: z.string(),
+    data: z.string().optional(),
+    from: z.object({
+      id: z.number().int(),
+      is_bot: z.boolean(),
+      username: z.string().optional(),
+    }),
+    message: z.object({
+      ephemeral_message_id: z.number().int(),
+      chat: z.object({
+        id: z.number().int(),
+        type: z.enum(["group", "supergroup"]),
+      }),
+    }),
+  }),
+});
+
+export type WhisperPressUpdate = {
+  callbackQueryId: string;
+  /** Имя действия и хвост; нет — данные не из домена шёпота. */
+  action?: { name: string; argument: string };
+  chatId: number;
+  ephemeralMessageId: number;
+  telegramUserId: number;
+  telegramUsername?: string;
+};
+
+/** Нажатие кнопки на шёпоте в группе; всё остальное — `undefined`. */
+export function parseWhisperPress(
+  raw: unknown,
+): WhisperPressUpdate | undefined {
+  const parsed = WhisperPressSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  const { callback_query: query } = parsed.data;
+  const data = query.data ?? "";
+  const rest = data.startsWith(actionPrefix)
+    ? data.slice(actionPrefix.length)
+    : undefined;
+  const split = rest === undefined ? -1 : rest.indexOf(":");
+  return {
+    callbackQueryId: query.id,
+    ...(rest === undefined || split <= 0
+      ? {}
+      : {
+          action: {
+            name: rest.slice(0, split),
+            argument: rest.slice(split + 1),
+          },
+        }),
+    chatId: query.message.chat.id,
+    ephemeralMessageId: query.message.ephemeral_message_id,
+    telegramUserId: query.from.id,
+    ...(query.from.username === undefined
+      ? {}
+      : { telegramUsername: query.from.username }),
+  };
+}
+
 /**
  * Ответ на невидимые команды чата сообщества. Стоит сразу за допуском чата
  * (`community-chat.ts`): до него из групп доходит только чат сообщества.
@@ -164,15 +255,27 @@ export function parseInvisibleCommand(
  *
  * Путь лички шёпот не проходит: ни ожидания с «печатает…» — в группе его
  * увидели бы все, — ни вопросов, ни списка команд по правам.
+ *
+ * Нажатие на шёпоте (PER-686) каркас забирает целиком, с любыми данными: к
+ * обработчикам лички оно не идёт — правка сообщения по нему задела бы шёпот,
+ * у которого `message_id` нет.
  */
 export function createCommunityWhisper(options: {
   commands: WhisperCommands;
+  actions?: WhisperActions;
   identity: IdentityResolver;
   logger: Logger;
   today: () => CommunityDay;
 }): MiddlewareFn<ShellContext> {
   const { commands, identity, logger, today } = options;
+  const actions = options.actions ?? {};
   return async (ctx, next) => {
+    const press = parseWhisperPress(ctx.update);
+    if (press !== undefined) {
+      const record = await pressBack(ctx, press, actions, identity, today);
+      writeRecord(logger, ctx, record);
+      return;
+    }
     const command = parseInvisibleCommand(ctx.update, ctx.me.username);
     const entry =
       command === undefined || !Object.hasOwn(commands, command.name)
@@ -241,7 +344,7 @@ async function whisperBack(
     ),
     meta,
   );
-  const decided = await decide(resolved, entry, {
+  const decided = await decide(resolved, entry.answer, {
     meta,
     botUsername,
     today,
@@ -269,6 +372,80 @@ async function whisperBack(
   }
 }
 
+async function pressBack(
+  ctx: ShellContext,
+  press: WhisperPressUpdate,
+  actions: WhisperActions,
+  identity: IdentityResolver,
+  today: () => CommunityDay,
+): Promise<WhisperRecord> {
+  // Окно правки идёт от нажатия, а `date` у нажатия нет: отсчёт от приёма.
+  const receivedAt = Date.now();
+  const action = press.action;
+  const entry =
+    action === undefined || !Object.hasOwn(actions, action.name)
+      ? undefined
+      : actions[action.name];
+  // Ответ на нажатие снимает часы с кнопки; его отказ шёпоту не мешает.
+  const answered = ctx.api
+    .answerCallbackQuery(press.callbackQueryId)
+    .catch(() => undefined);
+  if (action === undefined || entry === undefined) {
+    // Кнопка не из реестра — подделка или кнопка прежней выкладки: шёпот не
+    // трогается, сервисы не зовутся.
+    await answered;
+    return {
+      level: "info",
+      message: "community whisper press ignored",
+      useCase: "community_whisper",
+    };
+  }
+  const meta: RpcMetadata = {
+    requestId: ctx.requestId,
+    useCase: entry.useCase,
+    deadlineAt: Math.min(
+      receivedAt + actionBudgetMs,
+      receivedAt + whisperWindowMs - sendReserveMs,
+    ),
+  };
+  const resolved = await identity.resolve(
+    toResolveIdentityInput(
+      BigInt(press.telegramUserId),
+      press.telegramUsername,
+    ),
+    meta,
+  );
+  const decided = await decide(
+    resolved,
+    (request) => entry.answer({ ...request, argument: action.argument }),
+    { meta, botUsername: ctx.me.username, today },
+  );
+  await answered;
+  const record: WhisperRecord = {
+    ...decided.record,
+    useCase: entry.useCase,
+    screen: decided.frame.id,
+  };
+  try {
+    await editWhisper(ctx, press, decided.frame);
+    return record;
+  } catch (cause) {
+    const error = cause instanceof Error ? cause.message : String(cause);
+    // Тот же кадр уже на шёпоте — правка ничего не меняет, и это не отказ.
+    if (error.includes("message is not modified")) return record;
+    // Отказ Telegram — окно прошло, шёпот исчез: повтора нет, человек
+    // повторит команду сам. Прежняя причина записи остаётся главной.
+    return record.failure === undefined
+      ? {
+          ...record,
+          level: "warn",
+          message: "community whisper not edited",
+          failure: { category: "dependency_unavailable", error },
+        }
+      : { ...record, replyError: error };
+  }
+}
+
 type Decided = {
   frame: WhisperFrame;
   record: Omit<WhisperRecord, "useCase" | "screen">;
@@ -276,7 +453,7 @@ type Decided = {
 
 async function decide(
   resolved: ResolveIdentityResult,
-  entry: WhisperCommand,
+  answerFor: (request: WhisperRequest) => Promise<WhisperAnswer>,
   context: {
     meta: RpcMetadata;
     botUsername: string;
@@ -328,7 +505,7 @@ async function decide(
   const person: Person = { identityId, rights: resolved.rights };
   let answer: WhisperAnswer;
   try {
-    answer = await entry.answer({
+    answer = await answerFor({
       person,
       meta: context.meta,
       botUsername: context.botUsername,
@@ -345,7 +522,15 @@ async function decide(
   if (answer.kind === "frame") {
     return {
       frame: answer.frame,
-      record: { level: "info", message: "community whisper sent", identityId },
+      record:
+        answer.refused === undefined
+          ? { level: "info", message: "community whisper sent", identityId }
+          : {
+              level: "warn",
+              message: "community whisper action refused",
+              identityId,
+              failure: { category: "visibility", error: answer.refused },
+            },
     };
   }
   return {
@@ -378,7 +563,7 @@ function invitationFrame(botUsername: string): WhisperFrame {
       invitationOnlyHub.title,
       ...invitationWhisper.map(escapeHtml),
     ),
-    links: [{ label: openBotLabel, url: openBotLink(botUsername) }],
+    buttons: [{ label: openBotLabel, url: openBotLink(botUsername) }],
   };
 }
 
@@ -386,17 +571,18 @@ function invitationFrame(botUsername: string): WhisperFrame {
 const blockedFrame: WhisperFrame = {
   id: "whisper-no-access",
   text: refusalText(blockedHubAccessText),
-  links: [],
+  buttons: [],
 };
 
-// Кнопки «Повторить» у шёпота нет: нажатие из чата этот лист не обрабатывает,
-// и повтор — сама команда (ADR-078, п. 5).
+// Кнопки «Повторить» у шёпота нет: повтор — сама команда (ADR-078, п. 5). Тем
+// же кадром правится шёпот, когда действие на нём не удалось: исход тогда не
+// подтверждён, и прежний кадр мог бы показывать состояние неверно.
 const unavailableFrame: WhisperFrame = {
   id: "whisper-unavailable",
   text: refusalText(
     "Не получилось загрузить данные. Это на моей стороне.\n\nПовтори команду через минуту.",
   ),
-  links: [],
+  buttons: [],
 };
 
 // Подпись кнопки не длиннее, чем Telegram покажет без обрыва (`buttonText`
@@ -426,16 +612,39 @@ async function sendWhisper(
     // прав администратора получает `400 BOT_NOT_ADMIN` (RFC-003).
     reply_parameters: { ephemeral_message_id: command.ephemeralMessageId },
     ephemeral_message_parameters: { receiver_user_id: command.telegramUserId },
-    ...(frame.links.length === 0
-      ? {}
-      : {
-          reply_markup: InlineKeyboard.from(
-            frame.links.map((link) => [
-              InlineKeyboard.url(linkText(link.label), link.url),
-            ]),
-          ),
-        }),
+    ...keyboardOf(frame),
   });
+}
+
+// Шёпот правится своим методом по трём адресным параметрам, а не
+// `editMessageText`: `message_id` у него нет (ephemeral-messages.md). Шёпот
+// видит только адресат, поэтому нажавший и есть получатель.
+async function editWhisper(
+  ctx: ShellContext,
+  press: WhisperPressUpdate,
+  frame: WhisperFrame,
+): Promise<void> {
+  await ctx.api.editEphemeralMessageText(
+    press.chatId,
+    press.telegramUserId,
+    press.ephemeralMessageId,
+    frame.text,
+    { ...screenMark(frame.id), parse_mode: "HTML", ...keyboardOf(frame) },
+  );
+}
+
+function keyboardOf(frame: WhisperFrame): { reply_markup?: InlineKeyboard } {
+  return frame.buttons.length === 0
+    ? {}
+    : {
+        reply_markup: InlineKeyboard.from(
+          frame.buttons.map((button) => [
+            "url" in button
+              ? InlineKeyboard.url(linkText(button.label), button.url)
+              : InlineKeyboard.text(button.label, button.data),
+          ]),
+        ),
+      };
 }
 
 // Каркас записи границы (logging.md): Telegram id человека и id чата в запись
