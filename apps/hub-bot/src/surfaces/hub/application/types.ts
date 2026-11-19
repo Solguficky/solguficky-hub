@@ -91,6 +91,8 @@ export type DeepLink =
   // Раздел «Сходки» (PER-683): вход из шёпота чата сообщества «Все сходки в
   // боте ↗» открывает список, а не пустой чат с ботом.
   | { kind: "meetups" }
+  // Раздел «События» (PER-884): вход из шёпота `/events` «Все события в боте ↗».
+  | { kind: "events" }
   | { kind: "unclassified"; payload: string };
 export type FormField = "title" | "schedule" | "venue" | "description";
 

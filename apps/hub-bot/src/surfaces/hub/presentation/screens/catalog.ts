@@ -1120,6 +1120,8 @@ export const screenCatalog = {
     nav: "whisper",
     title: "Ближайшие сходки",
   },
+  // Шёпот `/events` (PER-884): строки раздела «События» и ссылка в него.
+  "whisper-events": { class: "screen", nav: "links", title: "События" },
   "whisper-invitation-only": { class: "screen", nav: "links" },
   "whisper-no-access": { class: "screen", nav: "none" },
   "whisper-unavailable": { class: "screen", nav: "none" },

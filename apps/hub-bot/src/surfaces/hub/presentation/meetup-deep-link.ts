@@ -30,3 +30,10 @@ export const meetupsSectionPayload = "meetups";
 export function meetupsSectionStartLink(botUsername: string): string {
   return `https://t.me/${botUsername}?start=${meetupsSectionPayload}`;
 }
+
+/** Вход в раздел «События» из шёпота `/events` (PER-884): имя раздела. */
+export const eventsSectionPayload = "events";
+
+export function eventsSectionStartLink(botUsername: string): string {
+  return `https://t.me/${botUsername}?start=${eventsSectionPayload}`;
+}

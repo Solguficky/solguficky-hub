@@ -224,13 +224,13 @@ export const hubSurface: SurfaceDefinition = ({
       ),
   });
   // Чат сообщества (ADR-078, п. 2): допуск групп и невидимые команды в его
-  // scope. Лот финала в меню — только у бота с Auction (PER-685).
+  // scope: сходки и события, у бота с Auction и без него (PER-884).
   const communityChat =
     hub.communityChatId === undefined
       ? undefined
       : createCommunityChat({
           chatId: hub.communityChatId,
-          commands: communityChatCommands({ auction: auction !== undefined }),
+          commands: communityChatCommands,
           logger,
         });
   const bot = createBot({
