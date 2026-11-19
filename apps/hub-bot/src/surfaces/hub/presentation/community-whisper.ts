@@ -529,7 +529,7 @@ async function decide(
               level: "warn",
               message: "community whisper action refused",
               identityId,
-              failure: { category: "authorization", error: answer.refused },
+              failure: { category: "visibility", error: answer.refused },
             },
     };
   }
@@ -575,8 +575,8 @@ const blockedFrame: WhisperFrame = {
 };
 
 // Кнопки «Повторить» у шёпота нет: повтор — сама команда (ADR-078, п. 5). Тем
-// же кадром правится шёпот, когда действие на нём не удалось: исход тогда
-// неизвестен, и прежний кадр показывал бы состояние неверно.
+// же кадром правится шёпот, когда действие на нём не удалось: исход тогда не
+// подтверждён, и прежний кадр мог бы показывать состояние неверно.
 const unavailableFrame: WhisperFrame = {
   id: "whisper-unavailable",
   text: refusalText(

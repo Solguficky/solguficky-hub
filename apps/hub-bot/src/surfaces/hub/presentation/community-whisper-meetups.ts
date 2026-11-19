@@ -164,6 +164,18 @@ export function subscriptionWhisper(dispatcher: Dispatcher): WhisperAction {
         subscribed: matched?.[2] === "1",
         ...request.meta,
       });
+      // Намерение лички пишет подписку до чтения сходки: сходку, которую
+      // скрыли между списком и записью, оно не находит уже после записи.
+      // Исход тогда известен Notifications — шёпот показывает текущий список
+      // с прочитанным состоянием, а не недоступность.
+      if (changed.kind === "meetup-not-found") {
+        const fresh = await listWhisperable(dispatcher, request);
+        if (fresh.kind === "failed") return fresh;
+        const shown = await frameOf(dispatcher, request, fresh.meetups);
+        return shown.kind === "frame"
+          ? { ...shown, refused: "meetup is not whisperable" }
+          : shown;
+      }
       if (changed.kind !== "meetup-card" || changed.subscribed === undefined) {
         return failed("meetup subscription rejected", changed);
       }

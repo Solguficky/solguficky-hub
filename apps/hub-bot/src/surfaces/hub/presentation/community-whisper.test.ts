@@ -655,6 +655,9 @@ describe("subscription toggle on the meetups whisper", () => {
     // Сходка, чтение подписки которой отказывает.
     unreadable?: string;
     failWrite?: boolean;
+    // Сходка, которую Meetups перестал отдавать карточкой: её скрыли между
+    // списком и записью.
+    vanished?: string;
   };
 
   function subscriptionHarness(setup: Setup = {}) {
@@ -672,7 +675,7 @@ describe("subscription toggle on the meetups whisper", () => {
       listVisible: async () => ({ kind: "ok" as const, meetups: listed }),
       get: async (_person: unknown, id: string) => {
         const found = listed.find((entry) => entry.id === id);
-        return found === undefined
+        return found === undefined || id === setup.vanished
           ? { kind: "not-found" as const }
           : { kind: "ok" as const, meetup: snapshot(found) };
       },
@@ -907,7 +910,7 @@ describe("subscription toggle on the meetups whisper", () => {
         level: "warn",
         message: "community whisper action refused",
         fields: expect.objectContaining({
-          error_category: "authorization",
+          error_category: "visibility",
           error: "meetup is not whisperable",
         }),
       }),
@@ -942,6 +945,27 @@ describe("subscription toggle on the meetups whisper", () => {
           screen: "whisper-unavailable",
           error_category: "dependency_unavailable",
         }),
+      }),
+    );
+  });
+
+  // Намерение лички пишет до чтения сходки: запись прошла, а сходку скрыли.
+  // Исход известен Notifications, и шёпот показывает его, а не недоступность.
+  it("shows the written state when the meetup vanished after the write", async () => {
+    const { bot, calls, setSubscription, records } = subscriptionHarness({
+      vanished: sooner.id,
+    });
+    await bot.init();
+    await bot.handleUpdate(whisperPress(subscribe(sooner.id)));
+    expect(setSubscription).toHaveBeenCalledTimes(1);
+    const edited = lastEdit(calls);
+    expect(edited.text).toBe("<b>Ближайшие сходки</b>");
+    expect(keys(edited)[1]?.text).toBe("🔕 Отписаться");
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: "community whisper action refused",
+        fields: expect.objectContaining({ error_category: "visibility" }),
       }),
     );
   });
