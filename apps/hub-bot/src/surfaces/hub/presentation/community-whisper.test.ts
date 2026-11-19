@@ -1,14 +1,22 @@
+import { create } from "@bufbuild/protobuf";
 import type { Chat, Update } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
+import { AuctionState_ScheduledSchema } from "../../../../gen/auction/v1/auction_events_pb.js";
+import {
+  AuctionSnapshotSchema,
+  ListAuctionsResponseSchema,
+} from "../../../../gen/auction/v1/auction_service_pb.js";
+import { AccessRight as WireAccessRight } from "../../../../gen/identity/v1/access_pb.js";
 import {
   botInfo,
   createCapturingLogger,
   createHarness,
   type RecordedCall,
 } from "../../../../testkit/harness.js";
-import type {
-  AccessRight,
-  AuctionSummaryView,
+import {
+  type AccessRight,
+  type AuctionSummaryView,
+  encodeAuctionCallback,
 } from "../../../auction-ui/index.js";
 import { createBotShell } from "../../../core/bot/shell.js";
 import { defaultTelegramEnvironment } from "../../../core/config.js";
@@ -17,6 +25,7 @@ import {
   createDispatcher,
   type Dispatcher,
 } from "../application/dispatcher.js";
+import { createAuctionAdapter } from "../auction/client.js";
 import type { AuctionScreens, MeetupAuctionResult } from "../auction/port.js";
 import type {
   IdentityResolver,
@@ -1240,4 +1249,139 @@ describe("whisper to an invisible /events in the community chat", () => {
       expect(currentAuction).not.toHaveBeenCalled();
     },
   );
+});
+
+// PER-895: скрытый черновик держателя `run_auctions`, который стоит раньше
+// опубликованного аукциона, не заслоняет его ни в одном потребителе общего
+// чтения `currentAuction`: шёпот `/events`, «События», «Меню» и «Имя в
+// аукционе» настроек. Чтение идёт настоящим адаптером поверх `ListAuctions`,
+// который, как Auction, отдаёт скрытый только держателю `run_auctions`.
+describe("readers of the current auction", () => {
+  const draftId = "0198f2a4-0000-7000-8000-00000000d0c1";
+  const publishedId = "0198f2a4-0000-7000-8000-00000000d0c2";
+  const days = (shift: number) =>
+    new Date(Date.now() + shift * 86_400_000)
+      .toISOString()
+      .replace(/\.\d{3}Z$/, "Z");
+  const scheduled = (id: string, opensIn: number, hidden: boolean) =>
+    create(AuctionSnapshotSchema, {
+      id,
+      hidden,
+      config: {
+        onlinePhase: {
+          opensAt: days(opensIn),
+          closesAt: days(opensIn + 7),
+          closesLots: true,
+        },
+      },
+      status: {
+        case: "scheduled",
+        value: create(AuctionState_ScheduledSchema, {}),
+      },
+    });
+
+  function listing(options: { published: boolean }): AuctionScreens {
+    const listAuctions = async (request: {
+      viewer?: { rights: readonly WireAccessRight[] };
+    }) => {
+      const organizer =
+        request.viewer?.rights.includes(WireAccessRight.RUN_AUCTIONS) ?? false;
+      return create(ListAuctionsResponseSchema, {
+        auctions: [
+          ...(organizer ? [scheduled(draftId, 2, true)] : []),
+          ...(options.published ? [scheduled(publishedId, 5, false)] : []),
+        ],
+        nextPageToken: "",
+      });
+    };
+    return createAuctionAdapter({ listAuctions } as unknown as Parameters<
+      typeof createAuctionAdapter
+    >[0]);
+  }
+
+  function settingsAuction(): Update {
+    return {
+      update_id: 3,
+      callback_query: {
+        id: "callback-1",
+        chat_instance: "chat-1",
+        from: person,
+        data: "v1:nav:exta",
+        message: {
+          message_id: 9,
+          date: 0,
+          chat: { id: person.id, type: "private", first_name: "tester" },
+        },
+      },
+    } as Update;
+  }
+
+  function privateCommand(text: string): Update {
+    return {
+      update_id: 2,
+      message: {
+        message_id: 11,
+        date: Math.floor(Date.now() / 1_000),
+        chat: { id: person.id, type: "private", first_name: "tester" },
+        from: person,
+        text,
+        entities: [{ type: "bot_command", offset: 0, length: text.length }],
+      },
+    } as Update;
+  }
+
+  const texts = (calls: readonly RecordedCall[]) =>
+    calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => (call.payload as { text?: string }).text ?? "");
+
+  async function seen(rights: readonly AccessRight[], published: boolean) {
+    const { bot, calls } = harness({ rights, auction: listing({ published }) });
+    await bot.init();
+    await bot.handleUpdate(invisible("/events"));
+    await bot.handleUpdate(privateCommand("/events"));
+    await bot.handleUpdate(privateCommand("/menu"));
+    const [whisper, events, menu] = texts(calls);
+    calls.length = 0;
+    await bot.handleUpdate(settingsAuction());
+    // Нажатие правит сообщение под кнопкой: смотрим последний экран.
+    const settings = JSON.stringify(
+      calls.findLast((call) => call.method !== "answerCallbackQuery")?.payload,
+    );
+    return { whisper, events, menu, settings };
+  }
+
+  // «Имя в аукционе» несёт аукцион в данных кнопки домена `auc`.
+  const nameOf = (auctionId: string) =>
+    encodeAuctionCallback({ kind: "name", auctionId });
+
+  const organizer: readonly AccessRight[] = ["access-hub", "run-auctions"];
+  const participant: readonly AccessRight[] = ["access-hub", "place-bids"];
+  const auctionLine = "🏷️ Аукцион:";
+  const noEvents = "Сейчас не идут события, привязанные к сходкам.";
+
+  it.each([
+    ["the organizer", organizer],
+    ["a participant", participant],
+  ])(
+    "show %s a published auction behind an earlier hidden draft",
+    async (_, rights) => {
+      const { whisper, events, menu, settings } = await seen(rights, true);
+      expect(whisper).toContain(auctionLine);
+      expect(events).toContain(auctionLine);
+      expect(menu).toContain(auctionLine);
+      expect(events).toBe(whisper);
+      expect(settings).toContain(nameOf(publishedId));
+      expect(settings).not.toContain(nameOf(draftId));
+    },
+  );
+
+  it("show no events for a hidden draft alone", async () => {
+    for (const rights of [organizer, participant]) {
+      const { whisper, events, menu } = await seen(rights, false);
+      expect(whisper).toContain(noEvents);
+      expect(events).toContain(noEvents);
+      expect(menu).not.toContain(auctionLine);
+    }
+  });
 });
