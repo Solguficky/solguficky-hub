@@ -880,6 +880,13 @@ telegram-rich-probe:
 telegram-whisper-probe:
     node tools/telegram-rich-probe/whisper.mjs
 
+# Зонд прикрепления из чата (PER-885): невидимая `/attach <ссылка> <название>`,
+# шёпот с кнопками выбора сходки и правка шёпота сразу, через 12 и 20 секунд
+# после нажатия. HUB_BOT_TOKEN и GROUP_CHAT_ID без умолчаний, бот без второго
+# поллера, команды в группе набирает человек; не входит в verify, test-all и CI
+telegram-attach-probe:
+    node tools/telegram-rich-probe/attach.mjs
+
 # Сквозной контур (L2): Identity и Meetups вместе на топологии, поднятой
 # AppHost через Aspire.Hosting.Testing. В `verify` намеренно не входит —
 # стандарт держит в механическом гейте только L0. Входит в `test-all`.

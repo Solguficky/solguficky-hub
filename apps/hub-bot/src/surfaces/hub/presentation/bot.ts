@@ -209,6 +209,12 @@ import type { CommunityChat } from "./community-chat.js";
 import { createCommunityWhisper } from "./community-whisper.js";
 import { eventsWhisper } from "./community-whisper-events.js";
 import {
+  attachAction,
+  attachCommand,
+  attachMaterialWhisper,
+  attachWhisper,
+} from "./community-whisper-materials.js";
+import {
   meetupsWhisper,
   subscriptionAction,
   subscriptionWhisper,
@@ -244,6 +250,7 @@ import {
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationHtml,
   materialRefusal,
+  materialTitleLimit,
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
@@ -1322,9 +1329,13 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
             runtime.auction,
             runtime.communityTimeZone ?? "UTC",
           ),
+          // Без обёртки людей карточки: шёпоту прикрепления нужны снимок и
+          // отношение, а имена организаторов — лишние вызовы Identity в окне.
+          [attachCommand]: attachWhisper(options.dispatcher),
         },
         actions: {
           [subscriptionAction]: subscriptionWhisper(runtime.dispatcher),
+          [attachAction]: attachMaterialWhisper(options.dispatcher),
         },
         identity: runtime.identity,
         logger: runtime.logger,
@@ -1728,7 +1739,11 @@ async function handleMessage(
         return;
       }
       const title = ctx.message?.text?.trim();
-      if (title === undefined || title === "" || title.length > 200) {
+      if (
+        title === undefined ||
+        title === "" ||
+        title.length > materialTitleLimit
+      ) {
         await refuseAnswer(
           ctx,
           questions,

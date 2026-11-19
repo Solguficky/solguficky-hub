@@ -314,6 +314,17 @@ export type ExecuteRequest =
       deadlineAt?: number;
     }
   | {
+      // Только снимок сходки, без соседей (PER-885): шёпот прикрепления
+      // решает по нему отношение и версию в 15-секундном окне, и чтения
+      // аукциона и подписки ему не нужны.
+      identity: Person;
+      intent: "read-meetup";
+      meetupId: string;
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
+  | {
       // Меню «Расширения» сходки (PER-605): сходка и её аукцион.
       identity: Person;
       intent: "view-meetup-extensions";

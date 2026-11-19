@@ -78,6 +78,9 @@ const LinkInPhrasePattern = new RegExp(
 );
 const CommentIdPattern = /^[1-9]\d*$/;
 
+/** Предел названия материала — у вопроса в личке и у `/attach` в чате. */
+export const materialTitleLimit = 200;
+
 /**
  * Пересылка из группы чат и номер сообщения не несёт, поэтому сообщение чата
  * приходит набранной ссылкой на него (PER-762).
@@ -85,8 +88,17 @@ const CommentIdPattern = /^[1-9]\d*$/;
 function parseMessageLink(raw: unknown): string | undefined {
   const parsed = TypedTextSchema.safeParse(raw);
   if (!parsed.success) return undefined;
+  return messageLinkOf(parsed.data.text);
+}
+
+/**
+ * Ссылка на сообщение, набранная руками, в том виде, в каком она уходит в
+ * материал; иначе `undefined`. Тот же разбор у сообщения лички и у ссылки из
+ * `/attach` в чате сообщества (PER-885).
+ */
+export function messageLinkOf(text: string): string | undefined {
   const match = MessageLinkPattern.exec(
-    parsed.data.text.trim().replace(TrailingPunctuation, ""),
+    text.trim().replace(TrailingPunctuation, ""),
   );
   if (match === null) return undefined;
   const [, chatId, username, topicId, messageId, query] = match;

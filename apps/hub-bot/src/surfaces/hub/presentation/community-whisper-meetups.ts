@@ -1,5 +1,4 @@
 import type { Dispatcher } from "../application/dispatcher.js";
-import type { ExecuteResult } from "../application/types.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
 import type { MeetupSummary } from "../meetups/port.js";
 import {
@@ -12,8 +11,8 @@ import {
   type WhisperFrame,
   type WhisperRequest,
   whisperActionData,
+  whisperFailure,
 } from "./community-whisper.js";
-import { dependencyCategory } from "./failure-category.js";
 import {
   meetupStartLink,
   meetupsSectionStartLink,
@@ -177,7 +176,7 @@ export function subscriptionWhisper(dispatcher: Dispatcher): WhisperAction {
           : shown;
       }
       if (changed.kind !== "meetup-card" || changed.subscribed === undefined) {
-        return failed("meetup subscription rejected", changed);
+        return whisperFailure("meetup subscription rejected", changed);
       }
       return frameOf(dispatcher, request, listed.meetups, {
         [meetupId]: changed.subscribed,
@@ -203,7 +202,7 @@ async function listWhisperable(
         kind: "listed",
         meetups: whisperableMeetups(result.meetups, request.today),
       }
-    : failed("meetup list rejected", result);
+    : whisperFailure("meetup list rejected", result);
 }
 
 // Подписку читает только у названных сходок; `known` — то, что уже ответила
@@ -239,21 +238,5 @@ async function frameOf(
       request.botUsername,
       subscribed,
     ),
-  };
-}
-
-function failed(
-  message: string,
-  result: ExecuteResult,
-): Extract<WhisperAnswer, { kind: "failed" }> {
-  const reason = "reason" in result ? String(result.reason) : result.kind;
-  return {
-    kind: "failed",
-    message,
-    category:
-      result.kind === "dependency-rejected"
-        ? dependencyCategory(reason)
-        : "unexpected",
-    error: reason,
   };
 }

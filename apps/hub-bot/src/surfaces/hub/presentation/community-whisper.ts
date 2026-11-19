@@ -11,7 +11,7 @@ import {
   hubAccessErrors,
   invitationOnlyHub,
 } from "../application/hub-access.js";
-import type { Person } from "../application/types.js";
+import type { ExecuteResult, Person } from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
 import {
   type IdentityResolver,
@@ -19,6 +19,7 @@ import {
   toResolveIdentityInput,
 } from "../identity/port.js";
 import {
+  dependencyCategory,
   grpcFailureCategory,
   unavailableCategory,
 } from "./failure-category.js";
@@ -81,32 +82,80 @@ export type WhisperAnswer =
   // показывает кадр, а причина уходит в запись границы предупреждением.
   | { kind: "frame"; frame: WhisperFrame; refused?: string }
   // Сбой сервиса команды: человек получает шёпот о недоступности, а причина
-  // уходит в запись границы.
+  // уходит в запись границы. `frame` — свой кадр вместо недоступности: так
+  // действие, чей исход неизвестен, оставляет человеку повтор на том же шёпоте.
   | {
       kind: "failed";
       message: string;
       category: FailureCategory;
       error: string;
       grpcCode?: string;
+      frame?: WhisperFrame;
     };
 
 export type WhisperCommand = {
   /** `use_case` записи границы и заголовка вызова сервисов. */
   useCase: string;
-  answer(request: WhisperRequest): Promise<WhisperAnswer>;
+  /** `argument` — текст команды после её имени, без краевых пробелов. */
+  answer(
+    request: WhisperRequest & { argument: string },
+  ): Promise<WhisperAnswer>;
 };
 
 /** Реестр невидимых команд чата сообщества: имя команды без «/». */
 export type WhisperCommands = Readonly<Record<string, WhisperCommand>>;
 
+/**
+ * Невидимая команда, на которую ответил шёпот: Telegram приносит её с
+ * нажатием в `reply_to_message` (RFC-003, «Шёпот в группе», прогон
+ * 2026-11-19). Каркас отдаёт её действию, только если команду написал тот же
+ * человек и этому боту: то, что не помещается в 64 байта данных кнопки, —
+ * ссылку и название `/attach` (PER-885), — действие читает отсюда.
+ */
+export type WhisperCommandEcho = {
+  name: string;
+  argument: string;
+  ephemeralMessageId: number;
+  /** Момент команды по часам Telegram, в миллисекундах. */
+  sentAt: number;
+};
+
 export type WhisperAction = {
   /** `use_case` записи границы и заголовка вызова сервисов. */
   useCase: string;
-  /** `argument` — хвост данных кнопки после имени действия, недоверенный. */
+  /**
+   * `argument` — хвост данных кнопки после имени действия, недоверенный;
+   * `chatId` — чат шёпота; `command` — команда, на которую он ответил.
+   */
   answer(
-    request: WhisperRequest & { argument: string },
+    request: WhisperRequest & {
+      argument: string;
+      chatId: number;
+      command?: WhisperCommandEcho;
+    },
   ): Promise<WhisperAnswer>;
 };
+
+/**
+ * Сбой сервиса команды или действия: шёпот о недоступности, а причина — в
+ * запись границы. Отказ зависимости получает её категорию, остальное —
+ * `unexpected`.
+ */
+export function whisperFailure(
+  message: string,
+  result: ExecuteResult,
+): Extract<WhisperAnswer, { kind: "failed" }> {
+  const reason = "reason" in result ? String(result.reason) : result.kind;
+  return {
+    kind: "failed",
+    message,
+    category:
+      result.kind === "dependency-rejected"
+        ? dependencyCategory(reason)
+        : "unexpected",
+    error: reason,
+  };
+}
 
 /** Реестр действий на шёпоте: имя действия в данных кнопки. */
 export type WhisperActions = Readonly<Record<string, WhisperAction>>;
@@ -155,6 +204,8 @@ const InvisibleCommandSchema = z.object({
 
 export type InvisibleCommand = {
   name: string;
+  /** Текст после имени команды, без краевых пробелов; пусто — без аргумента. */
+  argument: string;
   chatId: number;
   ephemeralMessageId: number;
   /** Момент команды по часам Telegram, в миллисекундах: от него идёт окно. */
@@ -162,6 +213,25 @@ export type InvisibleCommand = {
   telegramUserId: number;
   telegramUsername?: string;
 };
+
+/**
+ * Имя команды этому боту и текст после него. Имя читается по первой строке:
+ * разбор лички ждёт команду в одну строку, а аргумент `/attach` может
+ * переноситься. Desktop дописывает к команде имя бота (`/attach@бот`), и оно
+ * в аргумент не попадает.
+ */
+function commandOf(
+  text: string,
+  botUsername: string | undefined,
+): { name: string; argument: string } | undefined {
+  const [head = ""] = text.split("\n", 1);
+  const command = parseCommand(head, botUsername);
+  if (command === undefined || command === "foreign") return undefined;
+  return {
+    name: command.name,
+    argument: text.replace(/^\/\S*/, "").trim(),
+  };
+}
 
 /** Невидимая команда этому боту из группы; всё остальное — `undefined`. */
 export function parseInvisibleCommand(
@@ -172,10 +242,10 @@ export function parseInvisibleCommand(
   if (!parsed.success) return undefined;
   const { message } = parsed.data;
   if (message.from.is_bot) return undefined;
-  const command = parseCommand(message.text, botUsername);
-  if (command === undefined || command === "foreign") return undefined;
+  const command = commandOf(message.text, botUsername);
+  if (command === undefined) return undefined;
   return {
-    name: command.name,
+    ...command,
     chatId: message.chat.id,
     ephemeralMessageId: message.ephemeral_message_id,
     sentAt: message.date * 1_000,
@@ -203,14 +273,26 @@ const WhisperPressSchema = z.object({
         id: z.number().int(),
         type: z.enum(["group", "supergroup"]),
       }),
+      // Команда, на которую ответил шёпот. Неразборчивая не роняет нажатие:
+      // действие без неё получает только данные кнопки.
+      reply_to_message: z.unknown().optional(),
     }),
   }),
+});
+
+const RepliedCommandSchema = z.object({
+  ephemeral_message_id: z.number().int(),
+  date: z.number().int(),
+  from: z.object({ id: z.number().int() }),
+  text: z.string(),
 });
 
 export type WhisperPressUpdate = {
   callbackQueryId: string;
   /** Имя действия и хвост; нет — данные не из домена шёпота. */
   action?: { name: string; argument: string };
+  /** Невидимая команда того же человека этому боту, на которую ответил шёпот. */
+  command?: WhisperCommandEcho;
   chatId: number;
   ephemeralMessageId: number;
   telegramUserId: number;
@@ -220,10 +302,28 @@ export type WhisperPressUpdate = {
 /** Нажатие кнопки на шёпоте в группе; всё остальное — `undefined`. */
 export function parseWhisperPress(
   raw: unknown,
+  botUsername?: string,
 ): WhisperPressUpdate | undefined {
   const parsed = WhisperPressSchema.safeParse(raw);
   if (!parsed.success) return undefined;
   const { callback_query: query } = parsed.data;
+  const replied = RepliedCommandSchema.safeParse(
+    query.message.reply_to_message,
+  );
+  // Чужая команда — не повод: шёпот видит только его адресат, но данные
+  // нажатия недоверенные, а автор команды Telegram подтверждает сам.
+  const named =
+    replied.success && replied.data.from.id === query.from.id
+      ? commandOf(replied.data.text, botUsername)
+      : undefined;
+  const command: WhisperCommandEcho | undefined =
+    named === undefined || !replied.success
+      ? undefined
+      : {
+          ...named,
+          ephemeralMessageId: replied.data.ephemeral_message_id,
+          sentAt: replied.data.date * 1_000,
+        };
   const data = query.data ?? "";
   const rest = data.startsWith(actionPrefix)
     ? data.slice(actionPrefix.length)
@@ -239,6 +339,7 @@ export function parseWhisperPress(
             argument: rest.slice(split + 1),
           },
         }),
+    ...(command === undefined ? {} : { command }),
     chatId: query.message.chat.id,
     ephemeralMessageId: query.message.ephemeral_message_id,
     telegramUserId: query.from.id,
@@ -270,7 +371,7 @@ export function createCommunityWhisper(options: {
   const { commands, identity, logger, today } = options;
   const actions = options.actions ?? {};
   return async (ctx, next) => {
-    const press = parseWhisperPress(ctx.update);
+    const press = parseWhisperPress(ctx.update, ctx.me.username);
     if (press !== undefined) {
       const record = await pressBack(ctx, press, actions, identity, today);
       writeRecord(logger, ctx, record);
@@ -344,11 +445,11 @@ async function whisperBack(
     ),
     meta,
   );
-  const decided = await decide(resolved, entry.answer, {
-    meta,
-    botUsername,
-    today,
-  });
+  const decided = await decide(
+    resolved,
+    (request) => entry.answer({ ...request, argument: command.argument }),
+    { meta, botUsername, today },
+  );
   const record: WhisperRecord = {
     ...decided.record,
     useCase: entry.useCase,
@@ -417,7 +518,13 @@ async function pressBack(
   );
   const decided = await decide(
     resolved,
-    (request) => entry.answer({ ...request, argument: action.argument }),
+    (request) =>
+      entry.answer({
+        ...request,
+        argument: action.argument,
+        chatId: press.chatId,
+        ...(press.command === undefined ? {} : { command: press.command }),
+      }),
     { meta, botUsername: ctx.me.username, today },
   );
   await answered;
@@ -534,7 +641,7 @@ async function decide(
     };
   }
   return {
-    frame: unavailableFrame,
+    frame: answer.frame ?? unavailableFrame,
     record: {
       level: "error",
       message: answer.message,
@@ -612,6 +719,9 @@ async function sendWhisper(
     // прав администратора получает `400 BOT_NOT_ADMIN` (RFC-003).
     reply_parameters: { ephemeral_message_id: command.ephemeralMessageId },
     ephemeral_message_parameters: { receiver_user_id: command.telegramUserId },
+    // Ссылка из текста шёпота — например, присланная в `/attach` — не
+    // разворачивается в карточку чужого поста.
+    link_preview_options: { is_disabled: true },
     ...keyboardOf(frame),
   });
 }
@@ -629,7 +739,12 @@ async function editWhisper(
     press.telegramUserId,
     press.ephemeralMessageId,
     frame.text,
-    { ...screenMark(frame.id), parse_mode: "HTML", ...keyboardOf(frame) },
+    {
+      ...screenMark(frame.id),
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+      ...keyboardOf(frame),
+    },
   );
 }
 

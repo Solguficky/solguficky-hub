@@ -618,6 +618,7 @@ describe("parseInvisibleCommand", () => {
       ),
     ).toEqual({
       name: "meetups",
+      argument: "extra",
       chatId: community,
       ephemeralMessageId: 7,
       sentAt: 1_794_660_000_000,
@@ -965,18 +966,19 @@ describe("subscription toggle on the meetups whisper", () => {
     );
   });
 
-  // Намерение лички пишет до чтения сходки: запись прошла, а сходку скрыли.
-  // Исход известен Notifications, и шёпот показывает его, а не недоступность.
-  it("shows the written state when the meetup vanished after the write", async () => {
+  // Намерение лички читает сходку до записи (PER-896): сходку скрыли между
+  // списком и нажатием — подписка не пишется, и шёпот показывает текущий
+  // список с прежним состоянием, а не недоступность.
+  it("writes no subscription when the meetup vanished before the write", async () => {
     const { bot, calls, setSubscription, records } = subscriptionHarness({
       vanished: sooner.id,
     });
     await bot.init();
     await bot.handleUpdate(whisperPress(subscribe(sooner.id)));
-    expect(setSubscription).toHaveBeenCalledTimes(1);
+    expect(setSubscription).not.toHaveBeenCalled();
     const edited = lastEdit(calls);
     expect(edited.text).toBe("<b>Ближайшие сходки</b>");
-    expect(keys(edited)[1]?.text).toBe("🔕 Отписаться");
+    expect(keys(edited)[1]?.text).toBe("🔔 Подписаться на сходку");
     expect(records).toContainEqual(
       expect.objectContaining({
         level: "warn",
@@ -1056,6 +1058,43 @@ describe("parseWhisperPress", () => {
       ephemeralMessageId: 8,
       telegramUserId: person.id,
     });
+  });
+
+  // Шёпот приходит с командой, на которую ответил (RFC-003, прогон
+  // 2026-11-19): действие получает её, только если это команда того же
+  // человека этому боту.
+  it("brings the command the whisper answered, only from the same person", () => {
+    const command = {
+      message_id: 0,
+      ephemeral_message_id: 7,
+      date: 1_794_660_000,
+      chat: group(community),
+      from: person,
+      text: "/attach@stub_bot https://t.me/c/1/2 Фото",
+    };
+    const press = (replied: unknown) =>
+      parseWhisperPress(
+        {
+          callback_query: {
+            ...base,
+            data: "v1:w:att:x",
+            message: { ...base.message, reply_to_message: replied },
+          },
+        },
+        "stub_bot",
+      );
+    expect(press(command)?.command).toEqual({
+      name: "attach",
+      argument: "https://t.me/c/1/2 Фото",
+      ephemeralMessageId: 7,
+      sentAt: 1_794_660_000_000,
+    });
+    expect(press({ ...command, from: { id: 7 } })?.command).toBeUndefined();
+    expect(
+      press({ ...command, text: "/attach@other_bot x y" })?.command,
+    ).toBeUndefined();
+    expect(press("мусор")?.command).toBeUndefined();
+    expect(press("мусор")?.action).toEqual({ name: "att", argument: "x" });
   });
 
   it("ignores a press under an ordinary message", () => {

@@ -33,11 +33,18 @@ export const botCommands = [
  * те же команды, что в личке (PER-683, PER-884); «События» — всегда, с
  * Auction и без него, как в личке (PER-669). Лота финала нет: `/lot` отложена
  * (PER-685; дополнение ADR-078 от 2026-11-19) и вернётся записью сюда и в
- * реестр шёпота.
+ * реестр шёпота. `/attach` — прикрепить ссылку на сообщение чата к сходке
+ * (PER-885): своей команды в личке у неё нет, там материал прикрепляется из
+ * карточки.
  */
 export const communityChatCommands = [
   { ...meetups, is_ephemeral: true },
   { ...events, is_ephemeral: true },
+  {
+    command: "attach",
+    description: "Прикрепить к сходке: /attach ссылка название",
+    is_ephemeral: true,
+  },
 ] as const satisfies readonly BotCommand[];
 
 /**

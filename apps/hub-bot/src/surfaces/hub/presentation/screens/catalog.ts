@@ -1122,6 +1122,30 @@ export const screenCatalog = {
   },
   // Шёпот `/events` (PER-884): строки раздела «События» и ссылка в него.
   "whisper-events": { class: "screen", nav: "links", title: "События" },
+  // Шёпот `/attach` (PER-885): кнопки сходок для прикрепления ссылки и
+  // «Открыть бота», подсказка формата без кнопок, «нет сходок» со ссылкой в
+  // бот, исход со ссылкой на сходку и устаревший выбор без кнопок.
+  "whisper-attach": {
+    class: "screen",
+    nav: "whisper",
+    title: "Прикрепить материал",
+  },
+  "whisper-attach-hint": {
+    class: "screen",
+    nav: "none",
+    title: "Прикрепить материал",
+  },
+  "whisper-attach-none": {
+    class: "screen",
+    nav: "links",
+    title: "Прикрепить материал",
+  },
+  "whisper-attach-stale": {
+    class: "screen",
+    nav: "none",
+    title: "Прикрепить материал",
+  },
+  "whisper-attached": { class: "screen", nav: "links" },
   "whisper-invitation-only": { class: "screen", nav: "links" },
   "whisper-no-access": { class: "screen", nav: "none" },
   "whisper-unavailable": { class: "screen", nav: "none" },
