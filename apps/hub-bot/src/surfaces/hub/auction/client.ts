@@ -224,6 +224,13 @@ function pendingOf(stage: AuctionStageView): number {
   return stage === "scheduled" || stage === "draft" ? 1 : 0;
 }
 
+// Скрытый аукцион — после опубликованного (PER-895): его видит только
+// держатель `run_auctions` (PER-609), и событием он не бывает, поэтому выбор
+// не отдаёт ему место идущего. Один скрытый — по-прежнему выбран.
+function hiddenOf(auction: AuctionSummaryView): number {
+  return auction.hidden === true ? 1 : 0;
+}
+
 export type AuctionClient = MeetupAuctions &
   AuctionScreens &
   LotAdministration &
@@ -459,8 +466,11 @@ export function createAuctionAdapter(
         const auctions = await listActive(person, meta);
         // Открытый аукцион идёт раньше запланированного (PER-669): аукцион,
         // которому слот торгов не дал открыться, не заслоняет идущий финал.
+        // Скрытый черновик не заслоняет опубликованный (PER-895): публикация
+        // решает до стадии и начала торгов.
         const [current] = auctions.sort(
           (a, b) =>
+            hiddenOf(a) - hiddenOf(b) ||
             pendingOf(a.stage) - pendingOf(b.stage) ||
             openingOf(a.opensAt) - openingOf(b.opensAt),
         );

@@ -1408,6 +1408,68 @@ describe("auction console adapter", () => {
     });
   });
 
+  // PER-895: скрытый черновик держатель `run_auctions` получает в списке, и
+  // он не встаёт раньше опубликованного ни по месту в списке, ни по началу
+  // торгов. Без опубликованного выбран скрытый.
+  describe("currentAuction", () => {
+    const published = "0190f2a0-0000-7000-8000-000000000031";
+    const scheduled = (
+      id: string,
+      opensAt: string,
+      hidden: boolean,
+    ): MessageInitShape<typeof AuctionSnapshotSchema> => ({
+      id,
+      hidden,
+      config: {
+        onlinePhase: {
+          opensAt,
+          closesAt: "2026-12-07T18:00:00Z",
+          closesLots: true,
+        },
+      },
+      status: {
+        case: "scheduled",
+        value: create(AuctionState_ScheduledSchema, {}),
+      },
+    });
+    const hiddenDraft = scheduled(auctionId, "2026-11-25T09:00:00Z", true);
+    const publishedAuction = scheduled(
+      published,
+      "2026-11-30T09:00:00Z",
+      false,
+    );
+    const listing = (
+      ...auctions: MessageInitShape<typeof AuctionSnapshotSchema>[]
+    ) =>
+      adapter({
+        listAuctions: async () =>
+          create(ListAuctionsResponseSchema, { auctions, nextPageToken: "" }),
+      });
+
+    it("puts a published auction ahead of a hidden draft listed and opening earlier", async () => {
+      const result = await listing(
+        hiddenDraft,
+        publishedAuction,
+      ).currentAuction(admin);
+      expect(result).toMatchObject({
+        kind: "ok",
+        auctionId: published,
+        auction: { auctionId: published, stage: "scheduled" },
+      });
+      expect(result).not.toHaveProperty("auction.hidden");
+    });
+
+    it("keeps a hidden draft current when nothing is published", async () => {
+      await expect(
+        listing(hiddenDraft).currentAuction(admin),
+      ).resolves.toMatchObject({
+        kind: "ok",
+        auctionId,
+        auction: { auctionId, hidden: true },
+      });
+    });
+  });
+
   it("reads a refused list of the active auctions as a failure", async () => {
     const reading = adapter({
       listAuctions: () =>
