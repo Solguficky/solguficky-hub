@@ -125,7 +125,21 @@ export function createNotificationSettings(
       // сравнивать нечего, и лишнего вызова не делается. Действующие значения
       // категорий команда возвращает сама, и карточка называет по ним, что
       // будет приходить: из одной кнопки «Подписаться» этого не видно.
+      //
+      // Включение открывает уведомления о сходке, а Notifications видимость при
+      // подписке не проверяет: поэтому сходка сначала читается глазами этого
+      // человека, и запись идёт только после того, как он её увидел. Скрытую
+      // Meetups отдаёт как ненайденную, и подделанное нажатие по ней получает
+      // тот же ответ, что по снятой, без записи (PER-896). Карточка рисуется
+      // по этому же чтению — второго вызова нет. Отписка уведомлений не
+      // открывает и пишется первой, как прежде: снять подписку можно и со
+      // сходки, ставшей невидимой.
       case "set-meetup-subscription": {
+        const read = () =>
+          meetups.get(request.identity, request.meetupId, meta);
+        const seen = request.subscribed ? await read() : undefined;
+        if (seen?.kind === "not-found") return { kind: "meetup-not-found" };
+        if (seen !== undefined && seen.kind !== "ok") return rejection(seen);
         const changed = await notifications.setSubscription(
           identityId,
           request.meetupId,
@@ -133,11 +147,7 @@ export function createNotificationSettings(
           meta,
         );
         if (changed.kind !== "ok") return rejection(changed);
-        const card = await meetups.get(
-          request.identity,
-          request.meetupId,
-          meta,
-        );
+        const card = seen ?? (await read());
         if (card.kind === "not-found") return { kind: "meetup-not-found" };
         if (card.kind !== "ok") return rejection(card);
         return {

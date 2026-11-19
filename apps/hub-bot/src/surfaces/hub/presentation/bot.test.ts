@@ -46,8 +46,12 @@ import type {
   SourceChannel,
   SourceChannelAdministrator,
 } from "../identity/port.js";
-import type { MeetupSnapshot } from "../meetups/port.js";
-import type { CategoryState, MeetupCategory } from "../notifications/port.js";
+import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
+import type {
+  CategoryState,
+  MeetupCategory,
+  Notifications,
+} from "../notifications/port.js";
 import { createBot } from "./bot.js";
 import { managerCommands } from "./commands.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
@@ -7003,6 +7007,36 @@ describe("notification frames", () => {
       ],
       [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
     ]);
+  });
+
+  // Подделанное «Подписаться» по сходке, которой человек не видит (PER-896):
+  // нажатие проходит настоящий диспетчер, Meetups отдаёт скрытую сходку
+  // ненайденной, запись в Notifications не идёт, а человек видит тот же кадр,
+  // что на «сходка не найдена».
+  it("writes no subscription for a forged press on a meetup the person cannot see", async () => {
+    const setSubscription = vi.fn();
+    const meetups = {
+      get: vi.fn().mockResolvedValue({ kind: "not-found" }),
+    } as unknown as Meetups;
+    const notifications = { setSubscription } as unknown as Notifications;
+    const forged = createHarness(
+      resolvedIdentity(),
+      createDispatcher(meetups, notifications),
+    );
+    await forged.bot.init();
+    await forged.bot.handleUpdate(callbackUpdate(`v1:notify:sub:${token}:1`));
+
+    expect(setSubscription).not.toHaveBeenCalled();
+    const notFound = createHarness(resolvedIdentity(), {
+      execute: vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-not-found" }),
+    });
+    await notFound.bot.init();
+    await notFound.bot.handleUpdate(callbackUpdate(`v1:notify:sub:${token}:1`));
+    expect(forged.calls.map((call) => [call.method, call.payload])).toEqual(
+      notFound.calls.map((call) => [call.method, call.payload]),
+    );
   });
 
   // Отписка устроена так же, без продолжения: настраивать больше нечего.
