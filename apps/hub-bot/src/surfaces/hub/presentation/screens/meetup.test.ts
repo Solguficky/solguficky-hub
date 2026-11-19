@@ -318,20 +318,43 @@ describe("meetupsScreen", () => {
     const last = meetupsScreen(summaries(17), 2, today);
 
     expect(first.text).toContain("<b>Сходки · 1 из 3</b>");
-    // «Сходки» — раздел под меню (PER-592): «Архив» — последним рядом
-    // содержимого, затем листание, последним — «‹ Меню».
+    // «Сходки» — раздел под меню (PER-592): под сходками листание, затем ряд
+    // действий раздела, последним — «‹ Меню» (PER-900).
     expect(rows(first)).toHaveLength(8 + 3);
-    expect(rows(first).at(-3)).toEqual(["🗂 Архив"]);
-    expect(rows(first).at(-2)).toEqual(["→"]);
+    expect(rows(first).at(-3)).toEqual(["→"]);
+    expect(rows(first).at(-2)).toEqual(["🗂 Архив"]);
     expect(rows(first).at(-1)).toEqual(["‹ Меню"]);
-    expect(first.keyboard.inline_keyboard.at(-2)?.[0]).toMatchObject({
+    expect(first.keyboard.inline_keyboard.at(-3)?.[0]).toMatchObject({
       callback_data: "v1:nav:hub:1",
     });
     expect(last.text).toContain("· 3 из 3");
     expect(rows(last)).toEqual([
       ["17 августа · Сходка 17"],
-      ["🗂 Архив"],
       ["←"],
+      ["🗂 Архив"],
+      ["‹ Меню"],
+    ]);
+  });
+
+  // «Создать сходку» и «Архив» не смешиваются со списком (PER-900): одним
+  // рядом под сходками и листанием, перед «‹ Меню»; данные кнопки создания
+  // прежние, поэтому старая кнопка без знака работает как раньше.
+  it("puts the create and archive buttons into one row above the menu", () => {
+    const screen = meetupsScreen(summaries(9), 0, today, "token");
+
+    expect(rows(screen)[0]).toEqual(["1 августа · Сходка 1"]);
+    expect(rows(screen).at(-3)).toEqual(["→"]);
+    expect(screen.keyboard.inline_keyboard.at(-2)).toEqual([
+      { text: "➕ Создать сходку", callback_data: "v1:manage:new:token:s" },
+      { text: "🗂 Архив", callback_data: "v1:nav:archive" },
+    ]);
+    expect(rows(screen).at(-1)).toEqual(["‹ Меню"]);
+    expect(rows(meetupsScreen([], 0, today, "token"))).toEqual([
+      ["➕ Создать сходку", "🗂 Архив"],
+      ["‹ Меню"],
+    ]);
+    expect(rows(meetupsScreen([], 0, today))).toEqual([
+      ["🗂 Архив"],
       ["‹ Меню"],
     ]);
   });

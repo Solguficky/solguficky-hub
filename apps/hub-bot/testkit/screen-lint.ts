@@ -18,6 +18,7 @@ import { invoicesButtonLabel } from "../src/auction-winner-invoices.js";
 import {
   adminLabel,
   admitLabel,
+  createMeetupLabel,
   declineLabel,
   extensionsLabel,
   marked,
@@ -123,6 +124,9 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   `${adminLabel("Изменить")}|${adminLabel("Статус")}`,
   `${marked(pictogram.off, "Отписаться")}|${marked(pictogram.settings, "Уведомления сходки")}`,
   `${marked(pictogram.materials, "Материалы (#)")}|${extensionsLabel}`,
+  // Ряд действий «Сходок» (PER-900): создание и архив — действия раздела над
+  // списком, одним рядом под листанием, чтобы не смешиваться со сходками.
+  `${createMeetupLabel}|${marked(pictogram.history, "Архив")}`,
   // Действия того, кто ведёт сходку (PER-749): рассылка и состав одним рядом,
   // иначе карточка организатора вышла бы за пять рядов.
   `${adminLabel("Написать подписчикам")}|${adminLabel("Организаторы")}`,
