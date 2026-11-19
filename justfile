@@ -883,7 +883,7 @@ telegram-whisper-probe:
 # Зонд прикрепления из чата (PER-885): невидимая `/attach <ссылка> <название>`,
 # шёпот с кнопками выбора сходки и правка шёпота сразу, через 12 и 20 секунд
 # после нажатия. HUB_BOT_TOKEN и GROUP_CHAT_ID без умолчаний, бот без второго
-# поллера; не входит в verify
+# поллера, команды в группе набирает человек; не входит в verify, test-all и CI
 telegram-attach-probe:
     node tools/telegram-rich-probe/attach.mjs
 

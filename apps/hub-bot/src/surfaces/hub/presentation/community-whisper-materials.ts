@@ -1,6 +1,5 @@
 import { uuidV7Of } from "../../../core/uuid-v7.js";
 import type { Dispatcher } from "../application/dispatcher.js";
-import type { ExecuteResult } from "../application/types.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
 import {
@@ -14,9 +13,9 @@ import {
   type WhisperFrame,
   type WhisperRequest,
   whisperActionData,
+  whisperFailure,
 } from "./community-whisper.js";
 import { whisperableMeetups } from "./community-whisper-meetups.js";
-import { dependencyCategory } from "./failure-category.js";
 import { materialTitleLimit, messageLinkOf } from "./material-input.js";
 import {
   meetupStartLink,
@@ -24,7 +23,7 @@ import {
   uuidToToken,
 } from "./meetup-deep-link.js";
 import { canOrganizeMeetups, meetupViewer } from "./meetup-people.js";
-import { dayLabel, escapeHtml, screenText } from "./screens/kit.js";
+import { buttonText, dayLabel, escapeHtml, screenText } from "./screens/kit.js";
 import { meetupTitleLabel } from "./screens/meetup.js";
 
 // `/attach <ссылка> <название>` в чате сообщества (PER-885; ADR-078, п. 5 и
@@ -35,18 +34,18 @@ import { meetupTitleLabel } from "./screens/meetup.js";
 // «Материал» лички, и правит шёпот на «прикреплено». Ссылку и название кнопка
 // не несёт — в 64 байта они не помещаются: нажатие читает их из самой команды,
 // которую Telegram приносит с ним (RFC-003, «Шёпот в группе»). Прошедшие
-// сходки сюда не идут (решение владельца Q-24): к ним материал прикрепляется
+// сходки сюда не идут (решение владельца 19 ноября 2026 года): к ним материал прикрепляется
 // в личке.
 
 /** Имя команды и действия в данных кнопки шёпота. */
 export const attachCommand = "attach";
 export const attachAction = "att";
 
-/** Столько сходок шёпот предлагает; снимки читаются по ним параллельно. */
+/** Столько сходок шёпот предлагает. */
 const attachMeetupLimit = 5;
-// Столько ближайших сходок проверяется на отношение: организатор ведёт не
-// каждую, а снимок — вызов Meetups в 15-секундном окне.
-const attachCandidateLimit = 10;
+// Столько снимков читается параллельно за один заход: организатор ведёт не
+// каждую сходку, а снимок — вызов Meetups в 15-секундном окне.
+const attachReadBatch = 10;
 
 const title = "Прикрепить материал";
 const useCase = "update_meetup";
@@ -141,7 +140,10 @@ function listFrame(
 ): WhisperFrame {
   if (candidates.length === 0) return noneFrame(request.botUsername);
   const buttons: WhisperButton[] = candidates.map(({ meetup, day }) => ({
-    label: `${dayLabel(day, request.today)} · ${meetupTitleLabel(meetup.title)}`,
+    // Подпись не длиннее предела экранов: Telegram отверг бы весь шёпот.
+    label: buttonText(
+      `${dayLabel(day, request.today)} · ${meetupTitleLabel(meetup.title)}`,
+    ),
     data: whisperActionData(
       attachAction,
       `${uuidToToken(meetup.id)}:${meetup.version}`,
@@ -231,10 +233,9 @@ export function attachMaterialWhisper(dispatcher: Dispatcher): WhisperAction {
       }
       const read = await readSnapshot(dispatcher, request, meetupId);
       if (read.kind === "failed") return read;
-      if (
-        read.kind === "missing" ||
-        candidateOf(request, read.meetup) === undefined
-      ) {
+      const candidate =
+        read.kind === "read" ? candidateOf(request, read.meetup) : undefined;
+      if (read.kind === "missing" || candidate === undefined) {
         return refusedList(
           dispatcher,
           request,
@@ -304,7 +305,18 @@ export function attachMaterialWhisper(dispatcher: Dispatcher): WhisperAction {
           "meetup is not attachable",
         );
       }
-      return failed("material attach rejected", result);
+      // Исход записи неизвестен: Meetups мог принять её до таймаута. Повтор
+      // команды дал бы другой id и второй материал, а повтор на этом шёпоте
+      // несёт тот же id — поэтому шёпот оставляет кнопку этой сходки.
+      return {
+        ...whisperFailure("material attach rejected", result),
+        frame: listFrame(
+          parsed,
+          [candidate],
+          request,
+          "Не получилось прикрепить. Нажми сходку ещё раз — второй раз материал не прикрепится.",
+        ),
+      };
     },
   };
 }
@@ -358,23 +370,38 @@ async function listed(
     intent: "list-visible-meetups",
     ...request.meta,
   });
-  if (list.kind !== "meetup-list") return failed("meetup list rejected", list);
-  const nearest = whisperableMeetups(list.meetups, request.today).slice(
-    0,
-    attachCandidateLimit,
-  );
-  const reads = await Promise.all(
-    nearest.map((meetup) => readSnapshot(dispatcher, request, meetup.id)),
-  );
-  const failure = reads.find((read) => read.kind === "failed");
-  if (failure?.kind === "failed") return failure;
-  const candidates = reads
-    .flatMap((read) => {
-      if (read.kind !== "read") return [];
+  if (list.kind !== "meetup-list")
+    return whisperFailure("meetup list rejected", list);
+  // Отношение известно только по снимку, поэтому ближайшие сходки читаются
+  // пачками, пока не наберётся предел или не кончится список: сходку, которую
+  // человек ведёт, не скрывают десять чужих перед ней. Бюджет вызовов — общий
+  // дедлайн окна в `request.meta`.
+  const nearest = whisperableMeetups(list.meetups, request.today);
+  const candidates: Candidate[] = [];
+  for (
+    let start = 0;
+    start < nearest.length && candidates.length < attachMeetupLimit;
+    start += attachReadBatch
+  ) {
+    const reads = await Promise.all(
+      nearest
+        .slice(start, start + attachReadBatch)
+        .map((meetup) => readSnapshot(dispatcher, request, meetup.id)),
+    );
+    const failure = reads.find((read) => read.kind === "failed");
+    // Сбой поздней пачки не отнимает найденное: человек видит его, а не
+    // недоступность. Сбой без найденного — недоступность, а не «нет сходок».
+    if (failure?.kind === "failed") {
+      if (candidates.length === 0) return failure;
+      break;
+    }
+    for (const read of reads) {
+      if (read.kind !== "read") continue;
       const candidate = candidateOf(request, read.meetup);
-      return candidate === undefined ? [] : [candidate];
-    })
-    .slice(0, attachMeetupLimit);
+      if (candidate !== undefined) candidates.push(candidate);
+    }
+  }
+  candidates.splice(attachMeetupLimit);
   return {
     kind: "frame",
     frame: listFrame(parsed, candidates, request, notice),
@@ -411,21 +438,5 @@ async function readSnapshot(
     return { kind: "read", meetup: result.meetup };
   }
   if (result.kind === "meetup-not-found") return { kind: "missing" };
-  return failed("meetup read rejected", result);
-}
-
-function failed(
-  message: string,
-  result: ExecuteResult,
-): Extract<WhisperAnswer, { kind: "failed" }> {
-  const reason = "reason" in result ? String(result.reason) : result.kind;
-  return {
-    kind: "failed",
-    message,
-    category:
-      result.kind === "dependency-rejected"
-        ? dependencyCategory(reason)
-        : "unexpected",
-    error: reason,
-  };
+  return whisperFailure("meetup read rejected", result);
 }

@@ -91,7 +91,8 @@ const cancelled = snapshot("55555555-5555-4555-8555-555555555555", "Отмена
 type Setup = {
   meetups?: readonly MeetupSnapshot[];
   rights?: readonly AccessRight[];
-  failAttach?: boolean;
+  // Первая запись принята Meetups, но ответ не дошёл: бот видит таймаут.
+  timeoutAfterFirstAttach?: boolean;
 };
 
 function attachHarness(setup: Setup = {}) {
@@ -99,10 +100,8 @@ function attachHarness(setup: Setup = {}) {
     (setup.meetups ?? [own, foreign]).map((meetup) => [meetup.id, meetup]),
   );
   const reads = { list: 0, get: 0 };
+  let timeouts = setup.timeoutAfterFirstAttach === true ? 1 : 0;
   const attachMaterial = vi.fn(async (request: AttachMaterialRequest) => {
-    if (setup.failAttach === true) {
-      return { kind: "unavailable" as const, cause: new Error("down") };
-    }
     const current = stored.get(request.meetupId);
     if (current === undefined) return { kind: "forbidden" as const };
     if (current.version !== request.expectedVersion) {
@@ -114,6 +113,10 @@ function attachHarness(setup: Setup = {}) {
       materials: [...current.materials, request.material],
     };
     stored.set(next.id, next);
+    if (timeouts > 0) {
+      timeouts -= 1;
+      return { kind: "timeout" as const, cause: new Error("deadline") };
+    }
     return { kind: "ok" as const, meetup: next };
   });
   const meetups = {
@@ -310,6 +313,38 @@ describe("attach a chat message to a meetup from the community chat", () => {
     ]);
   });
 
+  // Отношение известно только по снимку: десять чужих сходок впереди не
+  // скрывают ту, что человек ведёт.
+  it("finds the meetup the person runs behind ten meetups of others", async () => {
+    const others = Array.from({ length: 11 }, (_, index) =>
+      snapshot(
+        `66666666-6666-4666-8666-${String(index).padStart(12, "0")}`,
+        `Чужая ${index}`,
+        { day: 15, organizers: [otherId] },
+      ),
+    );
+    const mine = snapshot("88888888-8888-4888-8888-888888888888", "Своя", {
+      day: 25,
+    });
+    const { bot, calls } = attachHarness({ meetups: [...others, mine] });
+    await bot.init();
+    await bot.handleUpdate(invisibleCommand(`/attach ${link} Фото`));
+    expect(keys(whisper(calls)).map((key) => key.text)).toEqual([
+      "25 ноября · Своя",
+      "Открыть бота ↗",
+    ]);
+  });
+
+  it("keeps a long meetup title within the button limit", async () => {
+    const long = snapshot(own.id, "Очень ".repeat(20), { day: 15 });
+    const { bot, calls } = attachHarness({ meetups: [long] });
+    await bot.init();
+    await bot.handleUpdate(invisibleCommand(`/attach ${link} Фото`));
+    const [first] = keys(whisper(calls));
+    expect(first?.text.length).toBeLessThanOrEqual(64);
+    expect(first?.text.endsWith("…")).toBe(true);
+  });
+
   it("attaches the link on a press and shows it in the meetup card in the bot", async () => {
     const { bot, calls, attachMaterial, stored } = attachHarness();
     await bot.init();
@@ -467,23 +502,46 @@ describe("attach a chat message to a meetup from the community chat", () => {
     expect(keys(edited)[0]?.callback_data).toBe(pick(own));
   });
 
-  it("turns the whisper into unavailability when the material is not written", async () => {
-    const { bot, calls, records } = attachHarness({ failAttach: true });
+  // Исход записи неизвестен: повтор команды дал бы новый id и второй
+  // материал, поэтому шёпот оставляет кнопку той же сходки с тем же id.
+  it("keeps the meetup button when the write times out, and a press again attaches once", async () => {
+    const { bot, calls, records, stored } = attachHarness({
+      timeoutAfterFirstAttach: true,
+    });
     await bot.init();
     await bot.handleUpdate(attachPress(pick(own)));
     const edited = lastEdit(calls);
-    expect(edited.text).toContain("Не получилось загрузить данные.");
-    expect(edited.reply_markup).toBeUndefined();
+    expect(edited.text).toContain(
+      "Не получилось прикрепить. Нажми сходку ещё раз — второй раз материал не прикрепится.",
+    );
+    expect(keys(edited).map((key) => key.text)).toEqual([
+      "15 ноября · Настолки",
+      "Открыть бота ↗",
+    ]);
     expect(records).toContainEqual(
       expect.objectContaining({
         level: "error",
         message: "material attach rejected",
         fields: expect.objectContaining({
           use_case: "update_meetup",
-          screen: "whisper-unavailable",
+          screen: "whisper-attach",
         }),
       }),
     );
+    await bot.handleUpdate(attachPress(pick(own)));
+    expect(lastEdit(calls).text).toContain("Прикреплено к «Настолки»");
+    expect(stored.get(own.id)?.materials).toHaveLength(1);
+  });
+
+  it("turns off the link preview in the whisper", async () => {
+    const { bot, calls } = attachHarness();
+    await bot.init();
+    await bot.handleUpdate(
+      invisibleCommand("/attach https://t.me/solguficky/15 Пост"),
+    );
+    expect(
+      calls.find((call) => call.method === "sendMessage")?.payload,
+    ).toMatchObject({ link_preview_options: { is_disabled: true } });
   });
 });
 

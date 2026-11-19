@@ -11,7 +11,7 @@ import {
   hubAccessErrors,
   invitationOnlyHub,
 } from "../application/hub-access.js";
-import type { Person } from "../application/types.js";
+import type { ExecuteResult, Person } from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
 import {
   type IdentityResolver,
@@ -19,6 +19,7 @@ import {
   toResolveIdentityInput,
 } from "../identity/port.js";
 import {
+  dependencyCategory,
   grpcFailureCategory,
   unavailableCategory,
 } from "./failure-category.js";
@@ -81,13 +82,15 @@ export type WhisperAnswer =
   // показывает кадр, а причина уходит в запись границы предупреждением.
   | { kind: "frame"; frame: WhisperFrame; refused?: string }
   // Сбой сервиса команды: человек получает шёпот о недоступности, а причина
-  // уходит в запись границы.
+  // уходит в запись границы. `frame` — свой кадр вместо недоступности: так
+  // действие, чей исход неизвестен, оставляет человеку повтор на том же шёпоте.
   | {
       kind: "failed";
       message: string;
       category: FailureCategory;
       error: string;
       grpcCode?: string;
+      frame?: WhisperFrame;
     };
 
 export type WhisperCommand = {
@@ -132,6 +135,27 @@ export type WhisperAction = {
     },
   ): Promise<WhisperAnswer>;
 };
+
+/**
+ * Сбой сервиса команды или действия: шёпот о недоступности, а причина — в
+ * запись границы. Отказ зависимости получает её категорию, остальное —
+ * `unexpected`.
+ */
+export function whisperFailure(
+  message: string,
+  result: ExecuteResult,
+): Extract<WhisperAnswer, { kind: "failed" }> {
+  const reason = "reason" in result ? String(result.reason) : result.kind;
+  return {
+    kind: "failed",
+    message,
+    category:
+      result.kind === "dependency-rejected"
+        ? dependencyCategory(reason)
+        : "unexpected",
+    error: reason,
+  };
+}
 
 /** Реестр действий на шёпоте: имя действия в данных кнопки. */
 export type WhisperActions = Readonly<Record<string, WhisperAction>>;
@@ -617,7 +641,7 @@ async function decide(
     };
   }
   return {
-    frame: unavailableFrame,
+    frame: answer.frame ?? unavailableFrame,
     record: {
       level: "error",
       message: answer.message,
@@ -695,6 +719,9 @@ async function sendWhisper(
     // прав администратора получает `400 BOT_NOT_ADMIN` (RFC-003).
     reply_parameters: { ephemeral_message_id: command.ephemeralMessageId },
     ephemeral_message_parameters: { receiver_user_id: command.telegramUserId },
+    // Ссылка из текста шёпота — например, присланная в `/attach` — не
+    // разворачивается в карточку чужого поста.
+    link_preview_options: { is_disabled: true },
     ...keyboardOf(frame),
   });
 }
@@ -712,7 +739,12 @@ async function editWhisper(
     press.telegramUserId,
     press.ephemeralMessageId,
     frame.text,
-    { ...screenMark(frame.id), parse_mode: "HTML", ...keyboardOf(frame) },
+    {
+      ...screenMark(frame.id),
+      parse_mode: "HTML",
+      link_preview_options: { is_disabled: true },
+      ...keyboardOf(frame),
+    },
   );
 }
 
