@@ -76,6 +76,16 @@ describe("parseUpdate", () => {
     });
   });
 
+  // Вход в «События» из шёпота `/events` (PER-884).
+  it("reads the events section payload", () => {
+    expect(messageText("/start events")).toEqual({
+      kind: "start",
+      firstName: "tester",
+      telegramUserId: 42n,
+      deepLink: { kind: "events" },
+    });
+  });
+
   it("reads a source channel payload as its code without the prefix", () => {
     expect(messageText("/start s_tg_ads")).toEqual({
       kind: "start",

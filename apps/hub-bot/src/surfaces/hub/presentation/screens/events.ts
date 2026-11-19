@@ -51,7 +51,7 @@ export function isAuctionEvent(auction: AuctionSummaryView): boolean {
 }
 
 export const eventsTitle = "События";
-const noEventsText = "Сейчас не идут события, привязанные к сходкам.";
+export const noEventsText = "Сейчас не идут события, привязанные к сходкам.";
 const auctionEventLabel = marked(pictogram.auction, "Аукцион");
 
 /**

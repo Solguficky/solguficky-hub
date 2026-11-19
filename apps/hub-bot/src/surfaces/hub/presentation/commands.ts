@@ -29,20 +29,16 @@ export const botCommands = [
 
 /**
  * Невидимые команды чата сообщества (ADR-078; развилка D-2 плана эпика
- * PER-679): команду и ответ на неё видит только отправитель. Сходки — та же
- * команда, что в личке; лот финала — только у бота с Auction (PER-685). Ответы
- * на них — свои листья зонта: PER-683 и PER-685.
+ * PER-679): команду и ответ на неё видит только отправитель. Сходки и события —
+ * те же команды, что в личке (PER-683, PER-884); «События» — всегда, с
+ * Auction и без него, как в личке (PER-669). Лота финала нет: `/lot` отложена
+ * (PER-685; дополнение ADR-078 от 2026-11-19) и вернётся записью сюда и в
+ * реестр шёпота.
  */
-export function communityChatCommands(options: {
-  auction: boolean;
-}): readonly BotCommand[] {
-  return [
-    { ...meetups, is_ephemeral: true },
-    ...(options.auction
-      ? [{ command: "lot", description: "Лот финала", is_ephemeral: true }]
-      : []),
-  ];
-}
+export const communityChatCommands = [
+  { ...meetups, is_ephemeral: true },
+  { ...events, is_ephemeral: true },
+] as const satisfies readonly BotCommand[];
 
 /**
  * Список чата держателя права управления: «Управление» стоит перед «Помощью».

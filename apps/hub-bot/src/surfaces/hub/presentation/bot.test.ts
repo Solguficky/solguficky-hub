@@ -1634,6 +1634,7 @@ describe("presentation adapter", () => {
     ["/start s_", "v1:apply:"],
     ["/start m_AZLzpLXGfY6fChssPU5fYA", "v1:apply"],
     ["/start meetups", "v1:apply"],
+    ["/start events", "v1:apply"],
     ["/start", "v1:apply"],
   ])("welcomes on %s without an application", async (text, data) => {
     const execute = vi.fn<Dispatcher["execute"]>();
@@ -1695,6 +1696,24 @@ describe("presentation adapter", () => {
       result: "ok",
       use_case: "find_meetup",
     });
+  });
+
+  // Вход в «События» из шёпота `/events` (PER-884): `/start events`
+  // открывает раздел, как команда `/events`, новым сообщением. Бот без
+  // Auction событий не знает — раздел с пустым состоянием.
+  it("opens the events section from the /start events link", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(messageUpdate("/start events"));
+    expect(sentMessages(calls)).toHaveLength(1);
+    expect(sendMessageText(calls[0])).toBe(
+      "<b>События</b>\n\nСейчас не идут события, привязанные к сходкам.",
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(records[0]?.message).toBe("events sent");
   });
 
   it("shows the closed frame on /start meetups when the person is blocked", async () => {
