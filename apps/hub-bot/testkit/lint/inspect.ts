@@ -75,6 +75,8 @@ const carryingMethods: ReadonlySet<string> = new Set([
   "editMessageCaption",
   "editMessageMedia",
   "editMessageReplyMarkup",
+  // Шёпот правится своим методом по трём адресным параметрам (PER-686).
+  "editEphemeralMessageText",
 ]);
 
 // Словарь у обоих ботов один (дизайн-код, «Аукцион: тело, шлюз, оболочка»).
@@ -285,6 +287,31 @@ function checkRules(
         found.push([
           "nav",
           `здесь хотя бы одна кнопка и только ссылки со знаком «↗», а пришло ${describeRows(rows)}`,
+        ]);
+      }
+      break;
+    }
+    case "whisper": {
+      // Шёпот с действиями (PER-686): ссылки в бот и действия на самом
+      // шёпоте. Возврата нет, как у `links`, а действие стоит своим рядом.
+      const links = buttons.filter(
+        (button) => button.url !== undefined && button.text.endsWith(linkSign),
+      );
+      const stray = rows.filter(
+        (row) =>
+          row.length > 1 ||
+          row.some(
+            (button) =>
+              button.text.startsWith(backSign) ||
+              (button.url === undefined) ===
+                (button.callback_data === undefined) ||
+              (button.url !== undefined && !button.text.endsWith(linkSign)),
+          ),
+      );
+      if (links.length === 0 || stray.length > 0) {
+        found.push([
+          "nav",
+          `здесь ссылки «↗» и действия шёпота по одной в ряд, без возврата, а пришло ${describeRows(rows)}`,
         ]);
       }
       break;
