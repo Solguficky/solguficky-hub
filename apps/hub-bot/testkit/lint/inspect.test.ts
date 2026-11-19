@@ -53,6 +53,7 @@ const catalog = {
   },
   bid: { class: "screen", nav: "confirm", title: "Ставка", irreversible: true },
   hide: { class: "screen", nav: "confirm", title: "Скрыть" },
+  whisper: { class: "screen", nav: "whisper", title: "Шёпот" },
 } as const satisfies Catalog;
 
 const config: LintConfig = {
@@ -62,7 +63,12 @@ const config: LintConfig = {
   namedPairs: new Set(["Правка|Итог", "Файлы (#)|Ставки"]),
 };
 
-type Key = { text: string; callback_data?: string; style?: string };
+type Key = {
+  text: string;
+  callback_data?: string;
+  url?: string;
+  style?: string;
+};
 
 const key = (text: string, extra: Partial<Key> = {}): Key => ({
   text,
@@ -288,6 +294,27 @@ describe("inspectCall configuration", () => {
       confirm("hide", "Скрыть", key("✔️ Да, скрыть", { style: "danger" })),
     ).toEqual(["style"]);
     expect(confirm("hide", "Скрыть", key("✔️ Да, скрыть"))).toEqual([]);
+  });
+
+  // Шёпот с действиями (PER-686): ссылки «↗» и действия на самом шёпоте по
+  // одной в ряд, без возврата.
+  it("lets a whisper carry links and actions, one per row, without a return", () => {
+    const link = { text: "Сходка ↗", url: "https://t.me/bot" };
+    const action = key("🔔 Подписаться на сходку", {
+      callback_data: "v1:w:sub:x:1",
+    });
+    const whisper = (rows: Key[][]) =>
+      rulesOf(
+        "editEphemeralMessageText",
+        call("whisper", "<b>Шёпот</b>", rows),
+      );
+    expect(whisper([[link], [action]])).toEqual([]);
+    expect(whisper([[link, action]])).toContain("nav");
+    expect(whisper([[action]])).toContain("nav");
+    expect(whisper([[link], [key("‹ Сходки")]])).toContain("nav");
+    expect(whisper([[{ text: "Сходка", url: "https://t.me/bot" }]])).toContain(
+      "nav",
+    );
   });
 
   it("keeps the confirmation answers in one row", () => {

@@ -283,6 +283,16 @@ export type ExecuteRequest =
       useCase?: string;
       deadlineAt?: number;
     }
+  // Подписка на каждую из названных сходок (PER-686): шёпот `/meetups` рисует
+  // переключатель у каждой сходки, которую называет.
+  | {
+      identity: Person;
+      intent: "read-meetup-subscriptions";
+      meetupIds: readonly string[];
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
   | {
       identity: Person;
       intent: "list-archived-meetups";
@@ -1848,6 +1858,12 @@ export type ExecuteResult =
   // Объявление аукциона в пульте (PER-765): шаги и исходы.
   | AuctionAnnouncementResult
   | { kind: "meetup-list"; meetups: readonly MeetupSummary[] }
+  // Сходки без ответа Notifications в записи нет: состояние подписки тогда не
+  // показывается, по тому же правилу, что у карточки.
+  | {
+      kind: "meetup-subscriptions";
+      subscribed: Readonly<Record<string, boolean>>;
+    }
   | { kind: "archived-meetup-list"; meetups: readonly ArchivedMeetupSummary[] }
   // `subscribed` отсутствует, когда Notifications не ответил или не настроен:
   // состояние подписки тогда не показывается вовсе, а не подставляется

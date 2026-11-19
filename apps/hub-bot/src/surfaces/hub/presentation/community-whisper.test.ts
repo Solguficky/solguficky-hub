@@ -10,20 +10,29 @@ import type { AccessRight } from "../../../auction-ui/index.js";
 import { createBotShell } from "../../../core/bot/shell.js";
 import { defaultTelegramEnvironment } from "../../../core/config.js";
 import { noopTracing } from "../../../core/tracing.js";
-import type { Dispatcher } from "../application/dispatcher.js";
+import {
+  createDispatcher,
+  type Dispatcher,
+} from "../application/dispatcher.js";
 import type {
   IdentityResolver,
   ResolveIdentityResult,
 } from "../identity/port.js";
-import type { MeetupSummary } from "../meetups/port.js";
+import type {
+  MeetupSnapshot,
+  MeetupSummary,
+  Meetups,
+} from "../meetups/port.js";
+import type { Notifications } from "../notifications/port.js";
 import { communityChatCommands } from "./commands.js";
 import { createCommunityChat } from "./community-chat.js";
 import {
   createCommunityWhisper,
   parseInvisibleCommand,
+  parseWhisperPress,
   type WhisperCommand,
 } from "./community-whisper.js";
-import { meetupDeepLinkPayload } from "./meetup-deep-link.js";
+import { meetupDeepLinkPayload, uuidToToken } from "./meetup-deep-link.js";
 
 // Шёпот в чате сообщества (ADR-078, пп. 3–5; PER-683): невидимая `/meetups`
 // получает ответ, который видит только её автор, по праву хаба человека.
@@ -537,7 +546,7 @@ describe("community whisper registry", () => {
       frame: {
         id: "whisper-meetups",
         text: "<b>Ближайшие сходки</b>",
-        links: [],
+        buttons: [],
       },
     }));
     const identity: IdentityResolver = {
@@ -613,5 +622,408 @@ describe("parseInvisibleCommand", () => {
     const fromBot = invisible("/meetups") as { message: { from: unknown } };
     fromBot.message.from = hubBot;
     expect(parseInvisibleCommand(fromBot, "stub_bot")).toBeUndefined();
+  });
+});
+
+// Подписка кнопкой на шёпоте (PER-686; ADR-078, п. 5): тот же
+// `SetSubscription`, что у карточки в личке, через настоящий диспетчер над
+// Meetups и Notifications в памяти — состояние после нажатия видно повтором
+// команды и в карточке сходки.
+describe("subscription toggle on the meetups whisper", () => {
+  function snapshot(summary: MeetupSummary): MeetupSnapshot {
+    return {
+      id: summary.id,
+      author: identityId,
+      title: summary.title,
+      description: "",
+      venue: "",
+      lifecycle: "planned",
+      visibility: summary.visibility,
+      version: 1,
+      materials: [],
+      organizers: [],
+      ...(summary.schedule === undefined
+        ? {}
+        : { schedule: { ...summary.schedule, hours: 19, minutes: 0 } }),
+    };
+  }
+
+  type Setup = {
+    meetups?: readonly MeetupSummary[];
+    rights?: readonly AccessRight[];
+    resolve?: ResolveIdentityResult;
+    // Сходка, чтение подписки которой отказывает.
+    unreadable?: string;
+    failWrite?: boolean;
+  };
+
+  function subscriptionHarness(setup: Setup = {}) {
+    const listed = setup.meetups ?? [sooner, later];
+    const subscribed = new Set<string>();
+    const preferences = (meetupId: string) => ({
+      kind: "ok" as const,
+      preferences: {
+        meetupId,
+        subscribed: subscribed.has(meetupId),
+        categories: [],
+      },
+    });
+    const meetups = {
+      listVisible: async () => ({ kind: "ok" as const, meetups: listed }),
+      get: async (_person: unknown, id: string) => {
+        const found = listed.find((entry) => entry.id === id);
+        return found === undefined
+          ? { kind: "not-found" as const }
+          : { kind: "ok" as const, meetup: snapshot(found) };
+      },
+    } as unknown as Meetups;
+    const setSubscription = vi.fn(
+      async (_identityId: string, meetupId: string, value: boolean) => {
+        if (setup.failWrite === true) {
+          return { kind: "unavailable" as const, cause: new Error("down") };
+        }
+        if (value) subscribed.add(meetupId);
+        else subscribed.delete(meetupId);
+        return preferences(meetupId);
+      },
+    );
+    const notifications = {
+      getMeetupPreferences: async (_identityId: string, meetupId: string) =>
+        meetupId === setup.unreadable
+          ? { kind: "unavailable" as const, cause: new Error("down") }
+          : preferences(meetupId),
+      setSubscription,
+    } as unknown as Notifications;
+    const resolve = vi.fn<IdentityResolver["resolve"]>(
+      async () =>
+        setup.resolve ?? {
+          kind: "resolved",
+          identityId,
+          rights: setup.rights ?? ["access-hub"],
+          blocked: false,
+        },
+    );
+    const { logger } = createCapturingLogger();
+    const communityChat = createCommunityChat({
+      chatId: community,
+      commands: communityChatCommands({ auction: false }),
+      logger,
+    });
+    const harnessed = createHarness(
+      { resolve },
+      createDispatcher(meetups, notifications),
+      [],
+      undefined,
+      undefined,
+      () => today,
+      { communityChat },
+    );
+    return { ...harnessed, resolve, setSubscription, subscribed };
+  }
+
+  type Key = { text: string; url?: string; callback_data?: string };
+  type Edited = {
+    chat_id: number;
+    receiver_user_id: number;
+    ephemeral_message_id: number;
+    text: string;
+    reply_markup?: { inline_keyboard: Key[][] };
+  };
+
+  function keys(sent: { reply_markup?: { inline_keyboard: Key[][] } }) {
+    return (sent.reply_markup?.inline_keyboard ?? []).flat();
+  }
+
+  function edits(calls: readonly RecordedCall[]): Edited[] {
+    return calls
+      .filter((call) => call.method === "editEphemeralMessageText")
+      .map((call) => call.payload as unknown as Edited);
+  }
+
+  function lastEdit(calls: readonly RecordedCall[]): Edited {
+    const edited = edits(calls).at(-1);
+    if (edited === undefined) throw new Error("шёпот не правился");
+    return edited;
+  }
+
+  // Нажатие на шёпоте: адрес — `ephemeral_message_id` самого шёпота в чате
+  // сообщества, `date` у нажатия нет.
+  function whisperPress(data: string): Update {
+    return {
+      update_id: 2,
+      callback_query: {
+        id: "press-1",
+        chat_instance: "chat-1",
+        from: person,
+        data,
+        message: {
+          message_id: 0,
+          ephemeral_message_id: 8,
+          date: 0,
+          chat: group(community),
+          from: hubBot,
+          text: "Ближайшие сходки",
+        },
+      },
+    } as unknown as Update;
+  }
+
+  function privatePress(data: string): Update {
+    return {
+      update_id: 3,
+      callback_query: {
+        id: "press-2",
+        chat_instance: "chat-2",
+        from: person,
+        data,
+        message: {
+          message_id: 9,
+          date: 0,
+          chat: { id: person.id, type: "private", first_name: "tester" },
+          text: "Сходки",
+        },
+      },
+    } as unknown as Update;
+  }
+
+  const subscribe = (id: string) => `v1:w:sub:${uuidToToken(id)}:1`;
+  const unsubscribe = (id: string) => `v1:w:sub:${uuidToToken(id)}:0`;
+
+  it("puts a subscribe toggle under the link of every meetup", async () => {
+    const { bot, calls } = subscriptionHarness();
+    await bot.init();
+    await bot.handleUpdate(invisible("/meetups"));
+    expect(keys(onlyWhisper(calls) as never)).toEqual([
+      { text: "15 ноября · Настолки ↗", url: startLink(sooner.id) },
+      { text: "🔔 Подписаться на сходку", callback_data: subscribe(sooner.id) },
+      { text: "22 ноября · Прогулка ↗", url: startLink(later.id) },
+      { text: "🔔 Подписаться на сходку", callback_data: subscribe(later.id) },
+    ]);
+  });
+
+  it("subscribes on a press, unsubscribes on the next and shows the state", async () => {
+    const { bot, calls, setSubscription, subscribed, records } =
+      subscriptionHarness();
+    await bot.init();
+    await bot.handleUpdate(whisperPress(subscribe(sooner.id)));
+    expect(setSubscription).toHaveBeenLastCalledWith(
+      identityId,
+      sooner.id,
+      true,
+      expect.anything(),
+    );
+    expect(subscribed.has(sooner.id)).toBe(true);
+    // Шёпот правится по трём адресным параметрам, а не `editMessageText`.
+    const first = lastEdit(calls);
+    expect(first).toMatchObject({
+      chat_id: community,
+      receiver_user_id: person.id,
+      ephemeral_message_id: 8,
+      text: "<b>Ближайшие сходки</b>",
+    });
+    expect(keys(first)[1]).toEqual({
+      text: "🔕 Отписаться",
+      callback_data: unsubscribe(sooner.id),
+    });
+    expect(keys(first)[3]?.text).toBe("🔔 Подписаться на сходку");
+    expect(calls.map((call) => call.method)).toContain("answerCallbackQuery");
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        message: "community whisper sent",
+        fields: expect.objectContaining({
+          use_case: "manage_notifications",
+          screen: "whisper-meetups",
+          identity_id: identityId,
+        }),
+      }),
+    );
+
+    await bot.handleUpdate(whisperPress(unsubscribe(sooner.id)));
+    expect(setSubscription).toHaveBeenLastCalledWith(
+      identityId,
+      sooner.id,
+      false,
+      expect.anything(),
+    );
+    expect(subscribed.has(sooner.id)).toBe(false);
+    expect(keys(lastEdit(calls))[1]).toEqual({
+      text: "🔔 Подписаться на сходку",
+      callback_data: subscribe(sooner.id),
+    });
+  });
+
+  it("shows the same state in a repeated command and in the card in the bot", async () => {
+    const { bot, calls } = subscriptionHarness();
+    await bot.init();
+    await bot.handleUpdate(whisperPress(subscribe(later.id)));
+    calls.length = 0;
+    await bot.handleUpdate(invisible("/meetups"));
+    expect(keys(onlyWhisper(calls) as never)[3]?.text).toBe("🔕 Отписаться");
+    calls.length = 0;
+    await bot.handleUpdate(privatePress(`v1:view:${uuidToToken(later.id)}`));
+    const card = calls
+      .filter((call) =>
+        ["sendMessage", "editMessageText", "sendRichMessage"].includes(
+          call.method,
+        ),
+      )
+      .map(
+        (call) =>
+          call.payload as { reply_markup?: { inline_keyboard: Key[][] } },
+      )
+      .at(-1);
+    expect(card).toBeDefined();
+    const labels = keys(card ?? {}).map((key) => key.text);
+    expect(labels).toContain("🔕 Отписаться");
+    expect(labels).not.toContain("🔔 Подписаться на сходку");
+  });
+
+  // Подделанная кнопка: скрытая сходка, которую Meetups отдаёт автору и
+  // администратору, прошедшая, невидимая человеку и мусор вместо токена.
+  it("leaves the subscription alone on a forged press of a meetup the whisper could not show", async () => {
+    const { bot, calls, setSubscription, records } = subscriptionHarness({
+      rights: ["access-hub", "manage-members", "manage-meetups"],
+      meetups: [sooner, hidden, past],
+    });
+    await bot.init();
+    const foreign = "77777777-7777-4777-8777-777777777777";
+    for (const data of [
+      subscribe(hidden.id),
+      subscribe(past.id),
+      subscribe(foreign),
+      "v1:w:sub:not-a-token:1",
+      `v1:w:sub:${uuidToToken(sooner.id)}:2`,
+    ]) {
+      await bot.handleUpdate(whisperPress(data));
+    }
+    expect(setSubscription).not.toHaveBeenCalled();
+    // Шёпот показывает текущий список — в нём только то, что можно шепнуть.
+    const shown = JSON.stringify(lastEdit(calls));
+    expect(shown).toContain("Настолки");
+    expect(shown).not.toContain(hidden.title);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "warn",
+        message: "community whisper action refused",
+        fields: expect.objectContaining({
+          error_category: "authorization",
+          error: "meetup is not whisperable",
+        }),
+      }),
+    );
+  });
+
+  // Тот же порядок, что у карточки: состояние на кнопке — факт, и без ответа
+  // Notifications переключателя нет, а список уходит.
+  it("drops only the toggle of a meetup whose subscription did not read", async () => {
+    const { bot, calls } = subscriptionHarness({ unreadable: later.id });
+    await bot.init();
+    await bot.handleUpdate(invisible("/meetups"));
+    expect(keys(onlyWhisper(calls) as never).map((key) => key.text)).toEqual([
+      "15 ноября · Настолки ↗",
+      "🔔 Подписаться на сходку",
+      "22 ноября · Прогулка ↗",
+    ]);
+  });
+
+  it("turns the whisper into unavailability when the subscription is not written", async () => {
+    const { bot, calls, records } = subscriptionHarness({ failWrite: true });
+    await bot.init();
+    await bot.handleUpdate(whisperPress(subscribe(sooner.id)));
+    const edited = lastEdit(calls);
+    expect(edited.text).toContain("Не получилось загрузить данные.");
+    expect(edited.reply_markup).toBeUndefined();
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "error",
+        message: "meetup subscription rejected",
+        fields: expect.objectContaining({
+          screen: "whisper-unavailable",
+          error_category: "dependency_unavailable",
+        }),
+      }),
+    );
+  });
+
+  it("answers a press of a person without hub access with «invitation only» and writes nothing", async () => {
+    const { bot, calls, setSubscription } = subscriptionHarness({
+      rights: ["place-bids"],
+    });
+    await bot.init();
+    await bot.handleUpdate(whisperPress(subscribe(sooner.id)));
+    expect(setSubscription).not.toHaveBeenCalled();
+    expect(lastEdit(calls).text).toContain(
+      "<b>Бот сообщества — только по приглашению.</b>",
+    );
+  });
+
+  // Нажатие на шёпоте забирает каркас целиком: с данными не из домена шёпота
+  // оно не доходит до обработчиков лички и шёпот не трогает.
+  it("only answers a press with data outside the whisper actions", async () => {
+    const { bot, calls, resolve } = subscriptionHarness();
+    await bot.init();
+    for (const data of [
+      `v1:view:${uuidToToken(sooner.id)}`,
+      "v1:w:lot:x",
+      "v1:w:",
+    ]) {
+      await bot.handleUpdate(whisperPress(data));
+    }
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "answerCallbackQuery",
+      "answerCallbackQuery",
+    ]);
+    expect(resolve).not.toHaveBeenCalled();
+  });
+
+  // У нажатия нет `date`: окно идёт от приёма, и бюджет сервисов не выходит
+  // за него.
+  it("keeps the services deadline inside the window of the press", async () => {
+    const { bot, resolve } = subscriptionHarness();
+    await bot.init();
+    const before = Date.now();
+    await bot.handleUpdate(whisperPress(subscribe(sooner.id)));
+    const deadlineAt = resolve.mock.calls[0]?.[1]?.deadlineAt ?? 0;
+    expect(deadlineAt - before).toBeLessThanOrEqual(14_000);
+    expect(deadlineAt).toBeGreaterThan(before);
+  });
+});
+
+describe("parseWhisperPress", () => {
+  const base = {
+    id: "q",
+    chat_instance: "c",
+    from: person,
+    message: {
+      message_id: 0,
+      ephemeral_message_id: 8,
+      date: 0,
+      chat: group(community),
+    },
+  };
+
+  it("reads the action, its argument and the whisper address", () => {
+    expect(
+      parseWhisperPress({
+        callback_query: { ...base, data: "v1:w:sub:abc:1" },
+      }),
+    ).toEqual({
+      callbackQueryId: "q",
+      action: { name: "sub", argument: "abc:1" },
+      chatId: community,
+      ephemeralMessageId: 8,
+      telegramUserId: person.id,
+    });
+  });
+
+  it("ignores a press under an ordinary message", () => {
+    const { ephemeral_message_id: _, ...message } = base.message;
+    expect(
+      parseWhisperPress({
+        callback_query: { ...base, message: { ...message, message_id: 5 } },
+      }),
+    ).toBeUndefined();
   });
 });
