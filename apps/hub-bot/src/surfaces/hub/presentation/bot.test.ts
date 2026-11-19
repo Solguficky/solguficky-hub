@@ -179,6 +179,8 @@ function replyUpdate(options: {
   replyFromId: number;
   replyText?: string | undefined;
   replyEntities?: unknown;
+  // Разметка самого ответа: Telegram отдаёт её сущностями (PER-902).
+  entities?: unknown;
   // Клавиатура вопроса: Telegram возвращает её в ответе, и по кнопке «Отмена»
   // бот читает шаг вопроса.
   replyMarkup?: unknown;
@@ -191,6 +193,9 @@ function replyUpdate(options: {
       chat: { id: 42, type: "private", first_name: "tester" },
       from: { id: options.fromId, is_bot: false, first_name: "tester" },
       text: options.text,
+      ...(options.entities === undefined
+        ? {}
+        : { entities: options.entities as never }),
       reply_to_message: {
         message_id: options.replyMessageId,
         date: 0,
@@ -8428,6 +8433,120 @@ describe("deferred publication frames", () => {
     for (const [request] of execute.mock.calls) {
       expect(request.intent).toBe("view-meetup");
     }
+  });
+
+  describe("description markup", () => {
+    const draft = draftMeetup();
+    const draftToken = uuidToToken(draft.id);
+
+    it("keeps the answer's formatting and shows it on the draft card", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "set-meetup-field"
+          ? { kind: "draft", meetup: { ...draft, description: request.value } }
+          : { kind: "meetup-card", meetup: draft },
+      );
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:draft:${draftToken}:description`),
+      );
+      // «Берём игры» жирным, ссылка под «тут», вторая строка цитатой.
+      const text = "Берём игры, правила тут\nДо встречи!";
+      await bot.handleUpdate(
+        replyUpdate({
+          text,
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+          entities: [
+            { type: "bold", offset: 0, length: 10 },
+            {
+              type: "text_link",
+              offset: 20,
+              length: 3,
+              url: "https://example.org/rules",
+            },
+            { type: "blockquote", offset: 24, length: 11 },
+          ],
+        }),
+      );
+
+      const answer = execute.mock.calls.find(
+        ([request]) => request.intent === "set-meetup-field",
+      )?.[0];
+      expect(answer).toMatchObject({
+        field: "description",
+        value:
+          '<b>Берём игры</b>, правила <a href="https://example.org/rules">тут</a>\n<blockquote>До встречи!</blockquote>',
+      });
+      const card = calls.findLast((call) => call.method === "sendRichMessage");
+      const html = (
+        card?.payload as { rich_message?: { html?: string } } | undefined
+      )?.rich_message?.html;
+      expect(html).toContain(
+        '<b>Берём игры</b>, правила <a href="https://example.org/rules">тут</a></p><blockquote>До встречи!</blockquote>',
+      );
+    });
+
+    it("refuses a description longer than the limit without a command", async () => {
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-card", meetup: draft });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:draft:${draftToken}:description`),
+      );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "а".repeat(3001),
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      expect(
+        execute.mock.calls.some(
+          ([request]) => request.intent === "set-meetup-field",
+        ),
+      ).toBe(false);
+      expect(
+        calls.some((call) =>
+          JSON.stringify(call.payload).includes("Описание длиннее 3000 знаков"),
+        ),
+      ).toBe(true);
+    });
+
+    it("shows the current description with its markup when editing", async () => {
+      const meetup = {
+        ...publishedMeetup(),
+        description: "<b>Свои</b> игры &amp; чай",
+      };
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-card", meetup });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:field:${uuidToToken(meetup.id)}:description`),
+      );
+
+      const question = calls.findLast((call) => call.method === "sendMessage");
+      expect(question?.payload).toMatchObject({
+        text: "Сейчас: <b>Свои</b> игры &amp; чай\nДобавь короткое описание сходки.",
+        parse_mode: "HTML",
+      });
+    });
   });
 
   describe("date presets", () => {
