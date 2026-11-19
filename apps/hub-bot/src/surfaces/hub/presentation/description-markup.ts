@@ -136,11 +136,14 @@ function tokens(stored: string): Token[] {
         if (stack.pop() !== name) return legacy(stored);
         result.push({ kind: "close", tag: name });
       } else {
+        if (!nestable(stack, name)) return legacy(stored);
         stack.push(name);
         result.push({ kind: "open", tag: name, html: whole });
       }
     } else if (href !== undefined) {
-      if (!linkSchemes.test(href)) return legacy(stored);
+      if (!linkSchemes.test(href) || !nestable(stack, "a")) {
+        return legacy(stored);
+      }
       stack.push("a");
       result.push({ kind: "open", tag: "a", html: whole });
     } else if (whole === "</a>") {
@@ -155,6 +158,17 @@ function tokens(stored: string): Token[] {
   if (stack.length > 0) return legacy(stored);
   text(stored.slice(cursor));
   return result;
+}
+
+// Вложенность, которую Telegram не принимает: внутри кода и блока кода тегов
+// нет, блок в блоке — отказ Bot API. Сущности ответа такой не дают, она
+// бывает только в старом описании простым текстом.
+function nestable(stack: readonly Tag[], tag: Tag): boolean {
+  if (stack.includes("code") || stack.includes("pre")) return false;
+  return !(
+    (tag === "pre" || tag === "blockquote") &&
+    stack.includes("blockquote")
+  );
 }
 
 function legacy(stored: string): Token[] {

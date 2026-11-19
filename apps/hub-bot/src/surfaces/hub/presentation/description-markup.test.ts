@@ -85,6 +85,17 @@ describe("description markup", () => {
     }
   });
 
+  it("reads nesting Telegram refuses as a legacy plain description", () => {
+    for (const legacy of [
+      "<blockquote><blockquote>x</blockquote></blockquote>",
+      "<code><b>x</b></code>",
+      "<blockquote><pre>x</pre></blockquote>",
+    ]) {
+      expect(visibleDescription(legacy)).toBe(legacy);
+      expect(richDescription(legacy)).not.toContain("<blockquote>");
+    }
+  });
+
   it("lays out lines and blocks for the rich card", () => {
     expect(richDescription("Первая\nвторая\n\nабзац")).toBe(
       "Первая<br>вторая<br><br>абзац",
