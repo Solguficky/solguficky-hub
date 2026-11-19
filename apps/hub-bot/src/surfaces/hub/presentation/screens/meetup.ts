@@ -2,6 +2,7 @@ import { InlineKeyboard } from "grammy";
 import type { AuctionSummaryView } from "../../../../auction-ui/index.js";
 import {
   adminLabel,
+  createMeetupLabel,
   emptyDescription,
   extensionsLabel,
   marked,
@@ -117,13 +118,11 @@ function listLine(
     : `• ${readableDay(meetup.schedule, today)} — ${title}${tail}`;
 }
 
-// `head` — ряд действия над списком: он идёт первым.
 function listRows(
   page: Page<MeetupSummary>,
   today: CommunityDay,
-  head?: InlineKeyboard,
 ): InlineKeyboard {
-  const keyboard = head === undefined ? new InlineKeyboard() : head.row();
+  const keyboard = new InlineKeyboard();
   for (const meetup of page.items) {
     keyboard.text(...meetupButton(meetup, today)).row();
   }
@@ -141,10 +140,11 @@ function listKeyboard(
 
 /**
  * «Сходки» — основной раздел (прежде «Ближайшие сходки»), ребёнок корневого
- * меню (PER-592): «Архив» — его дочерний экран последним рядом содержимого,
- * перед листанием, а последний ряд — «‹ Меню». Держателю права вести сходки
- * первым рядом — «Создать сходку» (прогон 12.10 №45, 14.10 №55): `newMeetupToken`
- * — id будущей сходки, рождённый при отрисовке.
+ * меню (PER-592), последний ряд — «‹ Меню». Над ним, ниже сходок и листания,
+ * — ряд действий раздела: «Архив», его дочерний экран, а держателю права
+ * заводить сходки слева от него «➕ Создать сходку» (PER-900; прежде она стояла
+ * первым рядом, а «Архив» — над листанием, и обе смешивались со списком):
+ * `newMeetupToken` — id будущей сходки, рождённый при отрисовке.
  */
 export function meetupsScreen(
   meetups: readonly MeetupSummary[],
@@ -192,26 +192,31 @@ export function meetupsScreen(
             section("Без даты", lines(false)),
           ),
     keyboard: withNav(
-      withPager(
-        nextRow(
-          listRows(
-            page,
-            today,
-            newMeetupToken === undefined
-              ? undefined
-              : new InlineKeyboard().text(
-                  "Создать сходку",
-                  `v1:manage:new:${newMeetupToken}:s`,
-                ),
-          ),
-        ).text(marked(pictogram.history, toArchive.name), toArchive.data),
-        page,
-        (to) => `v1:nav:hub:${to}`,
+      sectionActions(
+        withPager(listRows(page, today), page, (to) => `v1:nav:hub:${to}`),
+        newMeetupToken,
       ),
       toMenu,
     ),
     format: "HTML",
   };
+}
+
+// Ряд действий «Сходок» одним рядом: «➕ Создать сходку» и «🗂 Архив» — пара
+// дизайн-кода. Данные кнопки создания прежние, поэтому старая кнопка без знака
+// в уже отправленных сообщениях работает как раньше.
+function sectionActions(
+  keyboard: InlineKeyboard,
+  newMeetupToken: string | undefined,
+): InlineKeyboard {
+  nextRow(keyboard);
+  if (newMeetupToken !== undefined) {
+    keyboard.text(createMeetupLabel, `v1:manage:new:${newMeetupToken}:s`);
+  }
+  return keyboard.text(
+    marked(pictogram.history, toArchive.name),
+    toArchive.data,
+  );
 }
 
 const archiveStatusLabels: Record<ArchivedMeetupSummary["status"], string> = {

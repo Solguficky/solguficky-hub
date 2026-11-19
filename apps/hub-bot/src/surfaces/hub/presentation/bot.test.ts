@@ -364,12 +364,14 @@ const strayAnswerText = (() => {
 // зовут его создать первую.
 const emptyMeetupsText =
   "<b>Сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nНовую создаёт кнопка ниже: сначала это черновик, участники увидят сходку после публикации.";
-// «Создать сходку» несёт id будущей сходки, рождённый при отрисовке.
-const createMeetupRow = [
+// Ряд действий «Сходок» (PER-900): «➕ Создать сходку» несёт id будущей
+// сходки, рождённый при отрисовке, и стоит одним рядом с «🗂 Архив».
+const meetupActionsRow = [
   {
-    text: "Создать сходку",
+    text: "➕ Создать сходку",
     callback_data: expect.stringMatching(/^v1:manage:new:[\w-]{22}:s$/),
   },
+  { text: "🗂 Архив", callback_data: "v1:nav:archive" },
 ];
 
 function expectBoundary(
@@ -3319,8 +3321,7 @@ describe("presentation adapter", () => {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            createMeetupRow,
-            [{ text: "🗂 Архив", callback_data: "v1:nav:archive" }],
+            meetupActionsRow,
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
@@ -3381,7 +3382,6 @@ describe("presentation adapter", () => {
         text: "<b>Сходки</b>\n\nС датой\n• 15 августа, сб — Настолки\n\nБез даты\n• Без даты",
         reply_markup: {
           inline_keyboard: [
-            createMeetupRow,
             [
               {
                 text: "15 августа · Настолки",
@@ -3394,7 +3394,7 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [{ text: "🗂 Архив", callback_data: "v1:nav:archive" }],
+            meetupActionsRow,
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
