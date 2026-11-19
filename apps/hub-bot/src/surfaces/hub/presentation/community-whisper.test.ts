@@ -618,6 +618,7 @@ describe("parseInvisibleCommand", () => {
       ),
     ).toEqual({
       name: "meetups",
+      argument: "extra",
       chatId: community,
       ephemeralMessageId: 7,
       sentAt: 1_794_660_000_000,
@@ -1056,6 +1057,43 @@ describe("parseWhisperPress", () => {
       ephemeralMessageId: 8,
       telegramUserId: person.id,
     });
+  });
+
+  // Шёпот приходит с командой, на которую ответил (RFC-003, прогон
+  // 2026-11-19): действие получает её, только если это команда того же
+  // человека этому боту.
+  it("brings the command the whisper answered, only from the same person", () => {
+    const command = {
+      message_id: 0,
+      ephemeral_message_id: 7,
+      date: 1_794_660_000,
+      chat: group(community),
+      from: person,
+      text: "/attach@stub_bot https://t.me/c/1/2 Фото",
+    };
+    const press = (replied: unknown) =>
+      parseWhisperPress(
+        {
+          callback_query: {
+            ...base,
+            data: "v1:w:att:x",
+            message: { ...base.message, reply_to_message: replied },
+          },
+        },
+        "stub_bot",
+      );
+    expect(press(command)?.command).toEqual({
+      name: "attach",
+      argument: "https://t.me/c/1/2 Фото",
+      ephemeralMessageId: 7,
+      sentAt: 1_794_660_000_000,
+    });
+    expect(press({ ...command, from: { id: 7 } })?.command).toBeUndefined();
+    expect(
+      press({ ...command, text: "/attach@other_bot x y" })?.command,
+    ).toBeUndefined();
+    expect(press("мусор")?.command).toBeUndefined();
+    expect(press("мусор")?.action).toEqual({ name: "att", argument: "x" });
   });
 
   it("ignores a press under an ordinary message", () => {

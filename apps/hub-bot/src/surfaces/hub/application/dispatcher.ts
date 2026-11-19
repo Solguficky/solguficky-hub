@@ -178,7 +178,7 @@ export function createDispatcher(
   async function viewMeetup(
     request: Extract<
       ExecuteRequest,
-      { intent: "view-meetup" | "view-meetup-extensions" }
+      { intent: "view-meetup" | "view-meetup-extensions" | "read-meetup" }
     >,
     readPreferences: boolean,
   ): Promise<ExecuteResult> {
@@ -194,6 +194,7 @@ export function createDispatcher(
         kind: "meetup-card",
         meetup: result.meetup,
       };
+      if (request.intent === "read-meetup") return card;
       // Аукцион нужен и карточке, и меню «Расширения» (PER-605, PER-594),
       // подписка — только карточке; вторичные чтения не роняют экран и идут
       // параллельно друг другу.
@@ -331,6 +332,7 @@ export function createDispatcher(
         case "view-meetup":
           return viewMeetup(request, true);
         case "view-meetup-extensions":
+        case "read-meetup":
           return viewMeetup(request, false);
         case "enable-auction":
           if (meetupAuction === undefined)

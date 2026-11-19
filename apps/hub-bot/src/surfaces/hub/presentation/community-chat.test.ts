@@ -290,6 +290,11 @@ describe("community chat admission", () => {
           commands: [
             { command: "meetups", description: "Сходки", is_ephemeral: true },
             { command: "events", description: "События", is_ephemeral: true },
+            {
+              command: "attach",
+              description: "Прикрепить к сходке: /attach ссылка название",
+              is_ephemeral: true,
+            },
           ],
           scope: { type: "chat", chat_id: community },
         },
@@ -375,10 +380,11 @@ describe("community chat admission", () => {
 describe("community chat commands", () => {
   // Лота финала в меню нет: `/lot` отложена (PER-685), а «События» — всегда,
   // с Auction и без него, как в личке (PER-884).
-  it("names meetups and events, without the final lot", () => {
+  it("names meetups, events and attach, without the final lot", () => {
     expect(communityChatCommands.map((entry) => entry.command)).toEqual([
       "meetups",
       "events",
+      "attach",
     ]);
   });
 
