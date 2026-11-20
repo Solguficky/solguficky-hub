@@ -22,11 +22,13 @@ import {
 } from "./community-whisper-materials.js";
 import { meetupDeepLinkPayload, uuidToToken } from "./meetup-deep-link.js";
 
-// `/attach <ссылка> <название>` в чате сообщества (PER-885; ADR-078, п. 5 и
-// дополнение 2026-11-19): шёпот с кнопками сходок, где человек правит
-// материалы, и нажатие, которое прикрепляет ссылку тем же `attach-material`,
-// что личка, — через настоящий диспетчер над Meetups в памяти, поэтому
-// материал виден и в карточке сходки в боте.
+// `/attach` в чате сообщества (PER-885, PER-914; ADR-078, п. 5 и
+// дополнение 2026-11-19): ссылка и название идут в любом порядке, годится
+// только ссылка на сообщение этого чата или публичного канала. Шёпот с
+// кнопками сходок, где человек правит материалы, и нажатие, которое
+// прикрепляет ссылку тем же `attach-material`, что личка, — через настоящий
+// диспетчер над Meetups в памяти, поэтому материал виден и в карточке сходки
+// в боте.
 
 const community = -4012345678;
 const person = { id: 42, is_bot: false, first_name: "tester" } as const;
@@ -34,7 +36,9 @@ const hubBot = { id: 999, is_bot: true, first_name: "hub" } as const;
 const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 const otherId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab0000";
 const today = { year: 2026, month: 11, day: 14 } as const;
-const link = "https://t.me/c/1234567890/42";
+// Публичный канал: ссылка из чата сообщества принимается (PER-914). Ссылку
+// в другой закрытый чат (`t.me/c/<другой чат>/…`) проверяют отдельно.
+const link = "https://t.me/solguficky/15";
 
 function group(id: number): Chat.GroupChat {
   return { id, type: "group", title: "чат" };
@@ -293,10 +297,29 @@ describe("attach a chat message to a meetup from the community chat", () => {
     expect(keys(shown)).toEqual([
       { text: "15 ноября · Настолки", callback_data: pick(own) },
       {
-        text: "Открыть бота ↗",
+        text: "Сходки в боте ↗",
         url: `https://t.me/${botInfo.username}?start=meetups`,
       },
     ]);
+  });
+
+  // Критерий приёмки PER-914: ссылка и название в любом порядке дают один
+  // и тот же шёпот — и текст, и кнопки.
+  it("reads the link and the title in either order", async () => {
+    const titleFirst = attachHarness();
+    await titleFirst.bot.init();
+    await titleFirst.bot.handleUpdate(
+      invisibleCommand(`/attach Фото со сходки ${link}`),
+    );
+    const titleWhisper = whisper(titleFirst.calls);
+    const linkFirst = attachHarness();
+    await linkFirst.bot.init();
+    await linkFirst.bot.handleUpdate(
+      invisibleCommand(`/attach ${link} Фото со сходки`),
+    );
+    const linkWhisper = whisper(linkFirst.calls);
+    expect(titleWhisper.text).toBe(linkWhisper.text);
+    expect(titleWhisper.reply_markup).toEqual(linkWhisper.reply_markup);
   });
 
   it("offers an administrator every nearest published meetup", async () => {
@@ -309,7 +332,7 @@ describe("attach a chat message to a meetup from the community chat", () => {
     expect(keys(whisper(calls)).map((key) => key.text)).toEqual([
       "15 ноября · Настолки",
       "22 ноября · Прогулка",
-      "Открыть бота ↗",
+      "Сходки в боте ↗",
     ]);
   });
 
@@ -331,7 +354,7 @@ describe("attach a chat message to a meetup from the community chat", () => {
     await bot.handleUpdate(invisibleCommand(`/attach ${link} Фото`));
     expect(keys(whisper(calls)).map((key) => key.text)).toEqual([
       "25 ноября · Своя",
-      "Открыть бота ↗",
+      "Сходки в боте ↗",
     ]);
   });
 
@@ -415,7 +438,7 @@ describe("attach a chat message to a meetup from the community chat", () => {
     expect(shown.text).toContain(
       "К прошедшей сходке материал прикрепляется в боте",
     );
-    expect(keys(shown).map((key) => key.text)).toEqual(["Открыть бота ↗"]);
+    expect(keys(shown).map((key) => key.text)).toEqual(["Сходки в боте ↗"]);
     expect(reads).toEqual({ list: 0, get: 0 });
     calls.length = 0;
     await bot.handleUpdate(attachPress(pick(own)));
@@ -427,16 +450,24 @@ describe("attach a chat message to a meetup from the community chat", () => {
     await bot.init();
     for (const [text, reason] of [
       ["/attach", "Напиши после команды ссылку на сообщение"],
-      ["/attach Фото со сходки", "Первым словом после команды нужна ссылка"],
-      ["/attach https://example.com/1 Фото", "Первым словом"],
-      [`/attach ${link}`, "После ссылки напиши название материала."],
+      ["/attach Фото со сходки", "Нужна ссылка на сообщение"],
+      ["/attach https://example.com/1 Фото", "Нужна ссылка на сообщение"],
+      [
+        "/attach https://t.me/c/1234567890/42 Тест",
+        "Нужна ссылка на сообщение этого чата",
+      ],
+      [
+        `/attach ${link} Фото https://t.me/c/1234567890/42`,
+        "В команде несколько ссылок",
+      ],
+      [`/attach ${link}`, "К ссылке допиши название материала."],
       [`/attach ${link} ${"я".repeat(201)}`, "Название длиннее 200 символов"],
     ] as const) {
       await bot.handleUpdate(invisibleCommand(text));
       const shown = whisper(calls);
       expect(shown.text).toContain(reason);
       expect(shown.text).toContain(
-        "Например: /attach https://t.me/c/1234567890/42 Фото со сходки",
+        "Например: /attach Фото со сходки https://t.me/solguficky/15",
       );
       expect(shown.reply_markup).toBeUndefined();
     }
@@ -464,7 +495,7 @@ describe("attach a chat message to a meetup from the community chat", () => {
     expect(attachMaterial).not.toHaveBeenCalled();
     expect(keys(lastEdit(calls)).map((key) => key.text)).toEqual([
       "15 ноября · Настолки",
-      "Открыть бота ↗",
+      "Сходки в боте ↗",
     ]);
     expect(records).toContainEqual(
       expect.objectContaining({
@@ -486,6 +517,19 @@ describe("attach a chat message to a meetup from the community chat", () => {
       }),
     );
     expect(attachMaterial).not.toHaveBeenCalled();
+    expect(lastEdit(calls).text).toContain("Этот выбор устарел.");
+  });
+
+  it("attaches nothing on a press whose command carries a foreign private chat link", async () => {
+    const { bot, calls, attachMaterial, reads } = attachHarness();
+    await bot.init();
+    await bot.handleUpdate(
+      attachPress(pick(own), {
+        text: "/attach https://t.me/c/1234567890/42 Тест",
+      }),
+    );
+    expect(attachMaterial).not.toHaveBeenCalled();
+    expect(reads).toEqual({ list: 0, get: 0 });
     expect(lastEdit(calls).text).toContain("Этот выбор устарел.");
   });
 
@@ -516,7 +560,7 @@ describe("attach a chat message to a meetup from the community chat", () => {
     );
     expect(keys(edited).map((key) => key.text)).toEqual([
       "15 ноября · Настолки",
-      "Открыть бота ↗",
+      "Сходки в боте ↗",
     ]);
     expect(records).toContainEqual(
       expect.objectContaining({
@@ -546,24 +590,99 @@ describe("attach a chat message to a meetup from the community chat", () => {
 });
 
 describe("parseAttachArgument", () => {
-  it("reads the link as the first word and the title as the rest", () => {
-    expect(parseAttachArgument(`${link} Фото со сходки`)).toEqual({
+  it("reads the link and the title in either order", () => {
+    expect(parseAttachArgument(`${link} Фото со сходки`, community)).toEqual({
       kind: "ok",
       url: link,
       title: "Фото со сходки",
     });
-    expect(parseAttachArgument("t.me/solguficky/15 Итоги\nвстречи")).toEqual({
+    expect(parseAttachArgument(`Фото со сходки ${link}`, community)).toEqual({
+      kind: "ok",
+      url: link,
+      title: "Фото со сходки",
+    });
+    expect(
+      parseAttachArgument("t.me/solguficky/15 Итоги\nвстречи", community),
+    ).toEqual({
       kind: "ok",
       url: "https://t.me/solguficky/15",
       title: "Итоги\nвстречи",
     });
   });
 
+  it("accepts a link to the community chat or a public channel only", () => {
+    expect(
+      parseAttachArgument("https://t.me/c/4012345678/42 Тест", community),
+    ).toEqual({
+      kind: "ok",
+      url: "https://t.me/c/4012345678/42",
+      title: "Тест",
+    });
+    expect(
+      parseAttachArgument("https://t.me/c/1234567890/42 Тест", community),
+    ).toEqual({ kind: "hint", reason: "chat" });
+  });
+
   it("keeps the title limit of the private chat", () => {
-    expect(parseAttachArgument(`${link} ${"я".repeat(200)}`).kind).toBe("ok");
-    expect(parseAttachArgument(`${link} ${"я".repeat(201)}`)).toEqual({
+    expect(
+      parseAttachArgument(`${link} ${"я".repeat(200)}`, community).kind,
+    ).toBe("ok");
+    expect(
+      parseAttachArgument(`${link} ${"я".repeat(201)}`, community),
+    ).toEqual({
       kind: "hint",
       reason: "long",
+    });
+  });
+
+  it("refuses several links instead of guessing which one is the source", () => {
+    expect(
+      parseAttachArgument(
+        `${link} Фото https://t.me/c/1234567890/42`,
+        community,
+      ),
+    ).toEqual({ kind: "hint", reason: "many" });
+  });
+
+  it("keeps a middle link from adding a character to the title", () => {
+    expect(parseAttachArgument(`Фото ${link} сходки`, community)).toEqual({
+      kind: "ok",
+      url: link,
+      title: "Фото сходки",
+    });
+    expect(
+      parseAttachArgument(`Фото ${link} ${"я".repeat(195)}`, community).kind,
+    ).toBe("ok");
+  });
+
+  it("reads a basic group id that merely starts with -100 as its own chat", () => {
+    const basic = -1001234567;
+    expect(
+      parseAttachArgument("Фото https://t.me/c/1001234567/42", basic),
+    ).toEqual({
+      kind: "ok",
+      url: "https://t.me/c/1001234567/42",
+      title: "Фото",
+    });
+    expect(
+      parseAttachArgument("Фото https://t.me/c/1234567/42", basic),
+    ).toEqual({ kind: "hint", reason: "chat" });
+  });
+
+  it("converts a supergroup id numerically without a leading zero", () => {
+    expect(
+      parseAttachArgument("Фото https://t.me/c/123456789/42", -1000123456789),
+    ).toEqual({
+      kind: "ok",
+      url: "https://t.me/c/123456789/42",
+      title: "Фото",
+    });
+    expect(
+      parseAttachArgument("Фото https://t.me/c/1234567890/42", -1001234567890),
+    ).toEqual({
+      kind: "ok",
+      url: "https://t.me/c/1234567890/42",
+      title: "Фото",
     });
   });
 });

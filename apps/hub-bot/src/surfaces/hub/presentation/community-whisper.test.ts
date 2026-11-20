@@ -336,7 +336,9 @@ describe("whisper to an invisible /meetups in the community chat", () => {
       reply_parameters: { ephemeral_message_id: 7 },
       ephemeral_message_parameters: { receiver_user_id: person.id },
     });
-    expect(sent.text).toBe("<b>Ближайшие сходки</b>");
+    expect(sent.text).toBe(
+      "<b>Ближайшие сходки</b>\n\nИ ещё 1 без даты — в боте",
+    );
     // По ссылке `m_…` на каждую видимую сходку, ближайшая первой; скрытая,
     // прошедшая и сходка без даты в шёпот не идут (ADR-078, п. 4).
     expect(buttons(sent)).toEqual([
@@ -362,6 +364,53 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     );
   });
 
+  // PER-914: сходки без даты в шёпот не идут, но кадр называет их числом —
+  // только видимые, скрытая в счёт не попадает (ADR-078, п. 4).
+  it("counts only visible meetups without a date in the rest line", async () => {
+    const { bot, calls } = harness({
+      meetups: [
+        undated,
+        meetup("66666666-6666-4666-8666-666666666666", "Тоже без даты"),
+        meetup("77777777-7777-4777-8777-777777777777", "Скрытая без даты", {
+          visibility: "hidden",
+        }),
+      ],
+    });
+    await bot.init();
+    await bot.handleUpdate(invisible("/meetups"));
+    const sent = onlyWhisper(calls);
+    expect(sent.text).toBe(
+      "<b>Ближайшие сходки</b>\n\nБлижайших сходок нет.\n\nИ ещё 2 без даты — в боте",
+    );
+    expect(buttons(sent)).toEqual([
+      {
+        text: "Сходки в боте ↗",
+        url: `https://t.me/${botInfo.username}?start=meetups`,
+      },
+    ]);
+  });
+
+  // PER-914: общего «Открыть бота» нет ни в одном кадре шёпота — пустые
+  // кадры /meetups, /events и кадр без права хаба несут подпись по месту
+  // назначения.
+  it("never labels a whisper link with the generic «Открыть бота»", async () => {
+    const { bot, calls } = harness({ meetups: [] });
+    await bot.init();
+    await bot.handleUpdate(invisible("/meetups"));
+    await bot.handleUpdate(invisible("/events"));
+    const denied = harness({ rights: ["place-bids"], meetups: [] });
+    await denied.bot.init();
+    await denied.bot.handleUpdate(invisible("/meetups"));
+    const sent = [...whispers(calls), ...whispers(denied.calls)];
+    expect(sent).toHaveLength(3);
+    expect(JSON.stringify(sent)).not.toContain("Открыть бота");
+    for (const whisper of sent) {
+      expect(buttons(whisper).map((key) => key.text)).toEqual([
+        "Сходки в боте ↗",
+      ]);
+    }
+  });
+
   // Видимость решает Meetups: автору и администратору он отдаёт и скрытую, а
   // шёпот её не несёт ни у кого.
   it("never whispers a hidden meetup, even to an administrator", async () => {
@@ -375,7 +424,7 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     expect(sent.text).toBe("<b>Ближайшие сходки</b>\n\nБлижайших сходок нет.");
     expect(buttons(sent)).toEqual([
       {
-        text: "Открыть бота ↗",
+        text: "Сходки в боте ↗",
         url: `https://t.me/${botInfo.username}?start=meetups`,
       },
     ]);
@@ -408,7 +457,7 @@ describe("whisper to an invisible /meetups in the community chat", () => {
   });
 
   // Заявка из чата не ставится (ADR-078, п. 3): её ставит кнопка кадра в
-  // личке, куда ведёт «Открыть бота».
+  // личке, куда ведёт ссылка шёпота в «Сходки».
   it("whispers «invitation only» without meetups to a person without hub access", async () => {
     const { bot, calls, requestAccess, execute } = harness({
       rights: ["place-bids"],
@@ -423,7 +472,7 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     expect(sent.text).not.toContain("Настолки");
     expect(buttons(sent)).toEqual([
       {
-        text: "Открыть бота ↗",
+        text: "Сходки в боте ↗",
         url: `https://t.me/${botInfo.username}?start=meetups`,
       },
     ]);
@@ -992,15 +1041,50 @@ describe("subscription toggle on the meetups whisper", () => {
   const subscribe = (id: string) => `v1:w:sub:${uuidToToken(id)}:1`;
   const unsubscribe = (id: string) => `v1:w:sub:${uuidToToken(id)}:0`;
 
-  it("puts a subscribe toggle under the link of every meetup", async () => {
+  it("puts a textless subscribe bell in the same row as each meetup link", async () => {
     const { bot, calls } = subscriptionHarness();
     await bot.init();
     await bot.handleUpdate(invisible("/meetups"));
     expect(keys(onlyWhisper(calls) as never)).toEqual([
       { text: "15 ноября · Настолки ↗", url: startLink(sooner.id) },
-      { text: "🔔 Подписаться на сходку", callback_data: subscribe(sooner.id) },
+      { text: "🔔", callback_data: subscribe(sooner.id) },
       { text: "22 ноября · Прогулка ↗", url: startLink(later.id) },
-      { text: "🔔 Подписаться на сходку", callback_data: subscribe(later.id) },
+      { text: "🔔", callback_data: subscribe(later.id) },
+    ]);
+  });
+
+  // Критерий приёмки PER-914: пять сходок дают пять рядов «ссылка + 🔔»
+  // и ряд «Все сходки в боте ↗», всего не больше 12 рядов.
+  it("keeps five paired rows and the meetups link within the row limit", async () => {
+    const many = Array.from({ length: 7 }, (_, index) =>
+      meetup(
+        `66666666-6666-4666-8666-66666666666${index}`,
+        `Сходка ${index + 1}`,
+        { day: 15 + index },
+      ),
+    );
+    const { bot, calls } = subscriptionHarness({ meetups: many });
+    await bot.init();
+    await bot.handleUpdate(invisible("/meetups"));
+    const rows = (
+      onlyWhisper(calls) as unknown as {
+        reply_markup: { inline_keyboard: Key[][] };
+      }
+    ).reply_markup.inline_keyboard;
+    expect(rows).toHaveLength(6);
+    expect(rows.length).toBeLessThanOrEqual(12);
+    for (const row of rows.slice(0, 5)) {
+      expect(row).toHaveLength(2);
+      expect(row[0]?.text.endsWith(" ↗")).toBe(true);
+      expect(row[0]?.url).toBeDefined();
+      expect(row[1]?.text).toBe("🔔");
+      expect(row[1]?.callback_data).toMatch(/^v1:w:sub:/);
+    }
+    expect(rows[5]).toEqual([
+      {
+        text: "Все сходки в боте ↗",
+        url: `https://t.me/${botInfo.username}?start=meetups`,
+      },
     ]);
   });
 
@@ -1025,10 +1109,10 @@ describe("subscription toggle on the meetups whisper", () => {
       text: "<b>Ближайшие сходки</b>",
     });
     expect(keys(first)[1]).toEqual({
-      text: "🔕 Отписаться",
+      text: "🔕",
       callback_data: unsubscribe(sooner.id),
     });
-    expect(keys(first)[3]?.text).toBe("🔔 Подписаться на сходку");
+    expect(keys(first)[3]?.text).toBe("🔔");
     expect(calls.map((call) => call.method)).toContain("answerCallbackQuery");
     expect(records).toContainEqual(
       expect.objectContaining({
@@ -1051,7 +1135,7 @@ describe("subscription toggle on the meetups whisper", () => {
     );
     expect(subscribed.has(sooner.id)).toBe(false);
     expect(keys(lastEdit(calls))[1]).toEqual({
-      text: "🔔 Подписаться на сходку",
+      text: "🔔",
       callback_data: subscribe(sooner.id),
     });
   });
@@ -1062,7 +1146,7 @@ describe("subscription toggle on the meetups whisper", () => {
     await bot.handleUpdate(whisperPress(subscribe(later.id)));
     calls.length = 0;
     await bot.handleUpdate(invisible("/meetups"));
-    expect(keys(onlyWhisper(calls) as never)[3]?.text).toBe("🔕 Отписаться");
+    expect(keys(onlyWhisper(calls) as never)[3]?.text).toBe("🔕");
     calls.length = 0;
     await bot.handleUpdate(privatePress(`v1:view:${uuidToToken(later.id)}`));
     const card = calls
@@ -1125,7 +1209,7 @@ describe("subscription toggle on the meetups whisper", () => {
     await bot.handleUpdate(invisible("/meetups"));
     expect(keys(onlyWhisper(calls) as never).map((key) => key.text)).toEqual([
       "15 ноября · Настолки ↗",
-      "🔔 Подписаться на сходку",
+      "🔔",
       "22 ноября · Прогулка ↗",
     ]);
   });
@@ -1161,7 +1245,7 @@ describe("subscription toggle on the meetups whisper", () => {
     expect(setSubscription).not.toHaveBeenCalled();
     const edited = lastEdit(calls);
     expect(edited.text).toBe("<b>Ближайшие сходки</b>");
-    expect(keys(edited)[1]?.text).toBe("🔔 Подписаться на сходку");
+    expect(keys(edited)[1]?.text).toBe("🔔");
     expect(records).toContainEqual(
       expect.objectContaining({
         level: "warn",
@@ -1406,7 +1490,7 @@ describe("whisper to an invisible /events in the community chat", () => {
     expect(sent.text).not.toContain("Аукцион");
     expect(buttons(sent)).toEqual([
       {
-        text: "Открыть бота ↗",
+        text: "Сходки в боте ↗",
         url: `https://t.me/${botInfo.username}?start=meetups`,
       },
     ]);
@@ -1421,10 +1505,10 @@ describe("whisper to an invisible /events in the community chat", () => {
     expect(sent.text).toBe(
       "<b>События</b>\n\nСейчас не идут события, привязанные к сходкам.",
     );
-    // «Открыть бота ↗» шёпота одна у всех команд (R-6): `?start=meetups`.
+    // «Сходки в боте ↗» шёпота одна у всех команд (R-6): `?start=meetups`.
     expect(buttons(sent)).toEqual([
       {
-        text: "Открыть бота ↗",
+        text: "Сходки в боте ↗",
         url: `https://t.me/${botInfo.username}?start=meetups`,
       },
     ]);

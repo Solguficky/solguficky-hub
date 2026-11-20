@@ -1,8 +1,7 @@
 import type { AuctionScreens } from "../auction/port.js";
 import type { CommunityDay } from "../community-time.js";
 import {
-  openBotLabel,
-  openBotLink,
+  meetupsInBotButton,
   type WhisperCommand,
   type WhisperFrame,
 } from "./community-whisper.js";
@@ -31,10 +30,12 @@ export function eventsWhisperFrame(
 ): WhisperFrame {
   const lines = eventLines(events, timeZone, today, now);
   if (lines.length === 0) {
+    // Пустые «События» ведут в «Сходки» (PER-914): подпись называет раздел,
+    // а не общее «Открыть бота».
     return {
       id: "whisper-events",
       text: screenText(eventsTitle, noEventsText),
-      buttons: [{ label: openBotLabel, url: openBotLink(botUsername) }],
+      buttons: [meetupsInBotButton(botUsername)],
     };
   }
   return {

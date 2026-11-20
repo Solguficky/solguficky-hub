@@ -1333,11 +1333,17 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
           ),
           // Без обёртки людей карточки: шёпоту прикрепления нужны снимок и
           // отношение, а имена организаторов — лишние вызовы Identity в окне.
-          [attachCommand]: attachWhisper(options.dispatcher),
+          [attachCommand]: attachWhisper(
+            options.dispatcher,
+            runtime.communityChat.chatId,
+          ),
         },
         actions: {
           [subscriptionAction]: subscriptionWhisper(runtime.dispatcher),
-          [attachAction]: attachMaterialWhisper(options.dispatcher),
+          [attachAction]: attachMaterialWhisper(
+            options.dispatcher,
+            runtime.communityChat.chatId,
+          ),
         },
         identity: runtime.identity,
         logger: runtime.logger,

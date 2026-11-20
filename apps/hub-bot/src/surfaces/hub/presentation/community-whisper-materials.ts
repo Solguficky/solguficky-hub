@@ -3,8 +3,7 @@ import type { Dispatcher } from "../application/dispatcher.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
 import {
-  openBotLabel,
-  openBotLink,
+  meetupsInBotButton,
   type WhisperAction,
   type WhisperAnswer,
   type WhisperButton,
@@ -26,16 +25,20 @@ import { canOrganizeMeetups, meetupViewer } from "./meetup-people.js";
 import { buttonText, dayLabel, escapeHtml, screenText } from "./screens/kit.js";
 import { meetupTitleLabel } from "./screens/meetup.js";
 
-// `/attach <ссылка> <название>` в чате сообщества (PER-885; ADR-078, п. 5 и
-// дополнение 2026-11-19): ссылка на сообщение чата становится материалом
-// сходки, не уходя из чата. Шёпот на команду — кнопки ближайших опубликованных
+// `/attach` в чате сообщества (PER-885, PER-914; ADR-078, п. 5 и дополнение
+// 2026-11-19): ссылка на сообщение чата становится материалом сходки, не
+// уходя из чата. Ссылка и название идут в любом порядке: ссылкой считается то
+// слово аргумента, которое разбирается как ссылка на сообщение, остальное
+// становится названием. Годится только ссылка на сообщение чата сообщества
+// или публичного канала: ссылка из другого закрытого чата даёт подсказку до
+// всякого вызова Meetups. Шёпот на команду — кнопки ближайших опубликованных
 // сходок, где человек правит материалы (то же отношение `meetupViewer`, что у
 // карточки), нажатие прикрепляет ссылку тем же `attach-material`, что шаг
 // «Материал» лички, и правит шёпот на «прикреплено». Ссылку и название кнопка
 // не несёт — в 64 байта они не помещаются: нажатие читает их из самой команды,
 // которую Telegram приносит с ним (RFC-003, «Шёпот в группе»). Прошедшие
-// сходки сюда не идут (решение владельца 19 ноября 2026 года): к ним материал прикрепляется
-// в личке.
+// сходки сюда не идут (решение владельца 19 ноября 2026 года): к ним материал
+// прикрепляется в личке.
 
 /** Имя команды и действия в данных кнопки шёпота. */
 export const attachCommand = "attach";
@@ -52,25 +55,79 @@ const useCase = "update_meetup";
 
 export type AttachArgument =
   | { kind: "ok"; url: string; title: string }
-  | { kind: "hint"; reason: "empty" | "link" | "title" | "long" };
+  | {
+      kind: "hint";
+      reason: "empty" | "link" | "many" | "chat" | "title" | "long";
+    };
 
 /**
- * Аргумент `/attach`: ссылка — первое слово, название — остальное, до 200
- * символов, как в личке. Невалидное даёт подсказку до любого вызова Meetups.
+ * Число чата из ссылки `t.me/c/<чат>/…`. Id супергруппы Bot API равен
+ * `-1000000000000 - <номер>`, поэтому номер берётся вычитанием, а не снятием
+ * строкового префикса `-100`: у `-1000123456789` номер `123456789`, а строка
+ * дала бы `0123456789` с ведущим нулём. Id обычной группы — минус и номер,
+ * он больше этого порога, и номером служит его модуль.
  */
-export function parseAttachArgument(argument: string): AttachArgument {
+function communityChatPart(chatId: number): string {
+  const supergroupFloor = -1000000000000;
+  return chatId < supergroupFloor
+    ? String(-chatId - 1000000000000)
+    : String(Math.abs(chatId));
+}
+
+/**
+ * Из чата годится только ссылка на сообщение самого чата сообщества или
+ * публичного канала (PER-914): `t.me/<имя>/…` открыта всем, `t.me/c/<чат>/…`
+ * — только когда её чат совпадает с настроенным. Ссылка в другой закрытый
+ * чат источником материала не становится.
+ */
+function allowedMessageLink(url: string, communityChatId: number): boolean {
+  const privateChat = /^https:\/\/t\.me\/c\/([1-9]\d*)\//.exec(url);
+  return privateChat === null
+    ? /^https:\/\/t\.me\/[A-Za-z][A-Za-z0-9_]{3,31}\//.test(url)
+    : privateChat[1] === communityChatPart(communityChatId);
+}
+
+/**
+ * Аргумент `/attach`: ссылка — то слово, что разбирается как ссылка на
+ * сообщение, остальной текст в любом порядке — название, до 200 символов, как
+ * в личке (PER-914). Невалидное и ссылка из чужого закрытого чата дают
+ * подсказку до любого вызова Meetups.
+ */
+export function parseAttachArgument(
+  argument: string,
+  communityChatId: number,
+): AttachArgument {
   const text = argument.trim();
   if (text === "") return { kind: "hint", reason: "empty" };
-  const space = text.search(/\s/);
-  const link = space === -1 ? text : text.slice(0, space);
-  const named = space === -1 ? "" : text.slice(space).trim();
-  const url = messageLinkOf(link);
-  if (url === undefined) return { kind: "hint", reason: "link" };
+  let found: { start: number; end: number; url: string } | undefined;
+  let links = 0;
+  for (const word of text.matchAll(/\S+/g)) {
+    const start = word.index;
+    if (start === undefined) continue;
+    const url = messageLinkOf(word[0]);
+    if (url === undefined) continue;
+    links += 1;
+    if (found === undefined) {
+      found = { start, end: start + word[0].length, url };
+    }
+  }
+  if (found === undefined) return { kind: "hint", reason: "link" };
+  // Несколько ссылок — выбор неоднозначен: не угадываем, какая из них
+  // источник, и не даём чужой ссылке уехать в название материала.
+  if (links > 1) return { kind: "hint", reason: "many" };
+  if (!allowedMessageLink(found.url, communityChatId)) {
+    return { kind: "hint", reason: "chat" };
+  }
+  // Название — остаток аргумента без слова-ссылки. Убираем пробелы сразу
+  // после ссылки, а не вставляем свой: предел в 200 символов тогда не
+  // зависит от того, стояла ссылка в начале, в конце или посредине.
+  const named =
+    `${text.slice(0, found.start)}${text.slice(found.end).replace(/^\s+/, "")}`.trim();
   if (named === "") return { kind: "hint", reason: "title" };
   if (named.length > materialTitleLimit) {
     return { kind: "hint", reason: "long" };
   }
-  return { kind: "ok", url, title: named };
+  return { kind: "ok", url: found.url, title: named };
 }
 
 const hintReasons: Record<
@@ -78,8 +135,10 @@ const hintReasons: Record<
   string
 > = {
   empty: "Напиши после команды ссылку на сообщение и название материала.",
-  link: "Первым словом после команды нужна ссылка на сообщение вида https://t.me/…",
-  title: "После ссылки напиши название материала.",
+  link: "Нужна ссылка на сообщение вида https://t.me/…",
+  many: "В команде несколько ссылок — оставь одну и повтори /attach.",
+  chat: "Нужна ссылка на сообщение этого чата или публичного канала. Ссылка из другого закрытого чата не подходит.",
+  title: "К ссылке допиши название материала.",
   long: `Название длиннее ${materialTitleLimit} символов — сократи его.`,
 };
 
@@ -91,9 +150,7 @@ function hintFrame(
     text: screenText(
       title,
       escapeHtml(hintReasons[reason]),
-      escapeHtml(
-        "Например: /attach https://t.me/c/1234567890/42 Фото со сходки",
-      ),
+      escapeHtml("Например: /attach Фото со сходки https://t.me/solguficky/15"),
       escapeHtml(
         `Ссылку даёт «Копировать ссылку» в меню сообщения. Название — до ${materialTitleLimit} символов.`,
       ),
@@ -112,7 +169,7 @@ function noneFrame(botUsername: string): WhisperFrame {
         "К прошедшей сходке материал прикрепляется в боте: «Материалы» в её карточке.",
       ),
     ),
-    buttons: [{ label: openBotLabel, url: openBotLink(botUsername) }],
+    buttons: [meetupsInBotButton(botUsername)],
   };
 }
 
@@ -149,10 +206,7 @@ function listFrame(
       `${uuidToToken(meetup.id)}:${meetup.version}`,
     ),
   }));
-  buttons.push({
-    label: openBotLabel,
-    url: openBotLink(request.botUsername),
-  });
+  buttons.push(meetupsInBotButton(request.botUsername));
   return {
     id: "whisper-attach",
     text: screenText(
@@ -185,11 +239,14 @@ function attachedFrame(
   };
 }
 
-export function attachWhisper(dispatcher: Dispatcher): WhisperCommand {
+export function attachWhisper(
+  dispatcher: Dispatcher,
+  communityChatId: number,
+): WhisperCommand {
   return {
     useCase,
     async answer(request) {
-      const parsed = parseAttachArgument(request.argument);
+      const parsed = parseAttachArgument(request.argument, communityChatId);
       if (parsed.kind === "hint") {
         return { kind: "frame", frame: hintFrame(parsed.reason) };
       }
@@ -209,14 +266,17 @@ const attachArgument = /^([A-Za-z0-9_-]{22}):(0|[1-9]\d{0,8})$/;
  * человек выбирает заново. Id материала выводится из команды и сходки, поэтому
  * повтор нажатия второго материала не заводит.
  */
-export function attachMaterialWhisper(dispatcher: Dispatcher): WhisperAction {
+export function attachMaterialWhisper(
+  dispatcher: Dispatcher,
+  communityChatId: number,
+): WhisperAction {
   return {
     useCase,
     async answer(request) {
       const command = request.command;
       const parsed =
         command?.name === attachCommand
-          ? parseAttachArgument(command.argument)
+          ? parseAttachArgument(command.argument, communityChatId)
           : undefined;
       if (command === undefined || parsed?.kind !== "ok") {
         return {
