@@ -25,14 +25,24 @@
 const token = process.env["HUB_BOT_TOKEN"];
 const messageLink = process.env["MESSAGE_LINK"];
 const targetChat = process.env["TARGET_CHAT_ID"];
-const scanRange = /^(\d+)-(\d+)$/.exec(process.env["SCAN_RANGE"] ?? "");
+const scanSpec = process.env["SCAN_RANGE"] ?? "";
+const scanRange = /^(\d+)-(\d+)$/.exec(scanSpec);
 
 if (token === undefined || token === "" || messageLink === undefined || messageLink === "") {
   process.stderr.write("HUB_BOT_TOKEN and MESSAGE_LINK are required\n");
   process.exit(2);
 }
-if (targetChat !== undefined && targetChat !== "" && !Number.isFinite(Number(targetChat))) {
+if (
+  targetChat !== undefined &&
+  targetChat !== "" &&
+  !(/^-?\d+$/.test(targetChat) && Number.isSafeInteger(Number(targetChat)))
+) {
   process.stderr.write("TARGET_CHAT_ID must be a numeric chat id\n");
+  process.exit(2);
+}
+// Опечатка в SCAN_RANGE не должна выглядеть как прогон без находок.
+if (scanSpec !== "" && (scanRange === null || Number(scanRange[1]) > Number(scanRange[2]))) {
+  process.stderr.write("SCAN_RANGE must look like 18-30, from <= to\n");
   process.exit(2);
 }
 
@@ -81,6 +91,22 @@ function contentOf(message) {
   return ["photo", "document", "video", "sticker", "animation", "voice", "audio", "poll", "text"].filter(
     (kind) => message[kind] !== undefined,
   );
+}
+
+// Взять сообщение пересылкой в `toChat` и тут же удалить пересылку. Сырой ответ
+// не печатается. Возвращает ответ пересылки и результат удаления.
+async function peek(fromChat, toChat, messageId) {
+  const forward = await call(
+    "forwardMessage",
+    { chat_id: toChat, from_chat_id: fromChat, message_id: messageId },
+    true,
+  );
+  const forwarded = forward.payload.result;
+  const deleted =
+    forwarded === undefined
+      ? undefined
+      : await call("deleteMessage", { chat_id: toChat, message_id: forwarded.message_id });
+  return { forward: forward.payload, forwarded, deleted: deleted?.payload };
 }
 
 const parsed = parseLink(messageLink);
@@ -148,28 +174,23 @@ print("probe", {
 });
 if (copied !== undefined) {
   // Тип копии узнаём пересылкой её же в тот же чат: `forwardMessage` отвечает
-  // полным `Message`, а копия лежит в чате цели и бот её видит. Сырой ответ не
-  // печатается.
-  const forward = await call(
-    "forwardMessage",
-    { chat_id: targetChatId, from_chat_id: targetChatId, message_id: copied.message_id },
-    true,
-  );
-  const forwarded = forward.payload.result;
+  // полным `Message`, а копия лежит в чате цели и бот её видит.
+  const peeked = await peek(targetChatId, targetChatId, copied.message_id);
   print("probe", {
     question: 3,
-    ok: forward.payload.ok === true,
-    description: forward.payload.description,
-    content: forwarded === undefined ? undefined : contentOf(forwarded),
-    has_caption: forwarded === undefined ? undefined : forwarded.caption !== undefined,
+    ok: peeked.forward.ok === true,
+    description: peeked.forward.description,
+    content: peeked.forwarded === undefined ? undefined : contentOf(peeked.forwarded),
+    has_caption: peeked.forwarded === undefined ? undefined : peeked.forwarded.caption !== undefined,
+    forward_deleted: peeked.deleted === undefined ? undefined : peeked.deleted.ok === true,
   });
-  // Копия и её пересылка — след прогона; удаляются, если Telegram разрешает
-  // боту удалить своё сообщение в этом чате. Результат удаления печатается.
-  for (const messageId of [forwarded?.message_id, copied.message_id]) {
-    if (messageId === undefined) continue;
-    const deleted = await call("deleteMessage", { chat_id: targetChatId, message_id: messageId });
-    print("probe", { question: 3, deleted_message_id: messageId, ok: deleted.payload.ok === true });
-  }
+  // Копия тоже след прогона: удаляется, если Telegram разрешает боту удалить
+  // своё сообщение в этом чате.
+  const deletedCopy = await call("deleteMessage", {
+    chat_id: targetChatId,
+    message_id: copied.message_id,
+  });
+  print("probe", { question: 3, copy_deleted: deletedCopy.payload.ok === true });
 }
 
 // Контроль: номер, которого в чате заведомо нет. Тот же текст отказа, что и у
@@ -181,41 +202,42 @@ const control = await call("copyMessage", {
 });
 print("probe", {
   question: 4,
+  // Контроль что-то значит, только если чат-источник виден боту.
+  source_chat_ok: chat.payload.ok === true,
   nonexistent_message_ok: control.payload.ok === true,
   description: control.payload.description,
 });
 
 // Обход соседей. `forwardMessage` отвечает полным `Message`, из него видно,
-// чьё сообщение бот смог взять и что в нём. Форвард тут же удаляется.
+// что бот смог взять и что в нём. Поле `forward_origin` называет исходного
+// автора, а не того, кто переслал: у сообщения бота, которое само было
+// пересылкой, `sender_is_this_bot` будет ложным, поэтому печатается и тип
+// origin. Пересылка тут же удаляется; сбой сети посреди обхода может оставить
+// последнюю в чате цели.
 if (scanRange !== null && targetChatId === sourceChatId) {
-  process.stderr.write("SCAN_RANGE skipped: set TARGET_CHAT_ID to another chat\n");
+  process.stderr.write("SCAN_RANGE needs TARGET_CHAT_ID of another chat\n");
+  process.exit(2);
 }
-if (scanRange !== null && targetChatId !== sourceChatId) {
+if (scanRange !== null) {
   for (let id = Number(scanRange[1]); id <= Number(scanRange[2]); id += 1) {
-    const forward = await call(
-      "forwardMessage",
-      { chat_id: targetChatId, from_chat_id: sourceChatId, message_id: id },
-      true,
-    );
-    const forwarded = forward.payload.result;
-    const sender = forwarded?.forward_origin?.sender_user;
+    const peeked = await peek(sourceChatId, targetChatId, id);
+    const sender = peeked.forwarded?.forward_origin?.sender_user;
     print("probe", {
       question: 5,
       message_id: id,
-      ok: forward.payload.ok === true,
-      description: forward.payload.description,
-      content: forwarded === undefined ? undefined : contentOf(forwarded),
+      ok: peeked.forward.ok === true,
+      error_code: peeked.forward.error_code,
+      description: peeked.forward.description,
+      content: peeked.forwarded === undefined ? undefined : contentOf(peeked.forwarded),
+      origin_type: peeked.forwarded?.forward_origin?.type,
       sender_is_bot: sender?.is_bot,
       sender_is_this_bot: sender === undefined ? undefined : sender.id === botId,
+      forward_deleted: peeked.deleted === undefined ? undefined : peeked.deleted.ok === true,
     });
-    if (forwarded !== undefined) {
-      const deleted = await call("deleteMessage", {
-        chat_id: targetChatId,
-        message_id: forwarded.message_id,
-      });
-      if (deleted.payload.ok !== true) {
-        print("probe", { question: 5, message_id: id, delete_failed: deleted.payload.description });
-      }
+    // Лимит запросов: остаток диапазона ушёл бы одними отказами.
+    if (peeked.forward.error_code === 429 || peeked.deleted?.error_code === 429) {
+      process.stderr.write("SCAN_RANGE stopped: Telegram answered 429\n");
+      break;
     }
   }
 }
