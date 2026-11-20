@@ -895,6 +895,14 @@ telegram-attach-probe:
 telegram-copy-probe:
     node tools/telegram-rich-probe/copy.mjs
 
+# Зонд поста-анонса в группе (PER-918): невидимая `/announce` в группе ставит
+# видимый всем пост бота с кнопками «Подписаться» (шёпот), «Править» и
+# «Удалить» и шепчет кандидатов ссылки на пост. HUB_BOT_TOKEN без умолчания,
+# бот без второго поллера; EDIT_POST=<chat_id>:<message_id> — разовая правка
+# старого поста без long polling; не входит в verify, test-all и CI
+telegram-announce-probe:
+    node tools/telegram-rich-probe/announce.mjs
+
 # Сквозной контур (L2): Identity и Meetups вместе на топологии, поднятой
 # AppHost через Aspire.Hosting.Testing. В `verify` намеренно не входит —
 # стандарт держит в механическом гейте только L0. Входит в `test-all`.
