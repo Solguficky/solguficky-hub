@@ -302,11 +302,13 @@ describe("community chat admission", () => {
     ]);
   });
 
-  // Нажатие из чата сообщества доходит до юзкейсов и разрешает личность, но
-  // список команд по правам человека пишется только в его личный чат: в чате
-  // сообщества он заменил бы невидимые команды.
-  it("keeps the person's command list out of the community chat", async () => {
-    const { bot, commands } = harness({
+  // Из чата сообщества дальше каркаса шёпота не идёт ничего, кроме невидимых
+  // команд реестра и нажатий на шёпотах (PER-906): нажатие под обычным
+  // сообщением молчит, личность и юзкейсы не зовутся, а в чате сообщества
+  // список по правам человека не появлялся бы и не появляется — там стоят
+  // невидимые команды, и их пишет только допуск.
+  it("stays silent on a press under an ordinary message in the chat", async () => {
+    const { bot, calls, commands, identity, records } = harness({
       rights: ["access-hub", "manage-members", "manage-meetups"],
     });
     await bot.init();
@@ -320,6 +322,17 @@ describe("community chat admission", () => {
         message: { message_id: 9, date: 0, chat: group(community) },
       },
     } as Update);
+    // Единственный вызов — пустое подтверждение нажатия, снимающее часы
+    // кнопки: оно ничего не показывает никому.
+    expect(calls.map((call) => call.method)).toEqual(["answerCallbackQuery"]);
+    expect(identity.resolved).toBe(0);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        level: "info",
+        message: "update ignored",
+        fields: expect.objectContaining({ result: "ok" }),
+      }),
+    );
     expect(commands).toEqual([
       expect.objectContaining({
         payload: expect.objectContaining({
