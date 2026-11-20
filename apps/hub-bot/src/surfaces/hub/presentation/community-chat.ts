@@ -162,8 +162,12 @@ async function leaveForeignGroup(
 }
 
 // Каркас записи границы (logging.md): операция — вид update, а id чужой
-// группы в запись не идёт — он не нужен никому, кроме самого выхода.
-function boundaryFields(ctx: ShellContext, result: "ok" | "error"): LogFields {
+// группы в запись не идёт — он не нужен никому, кроме самого выхода. Берёт
+// и каркас шёпота для молчания чата сообщества (PER-906).
+export function boundaryFields(
+  ctx: ShellContext,
+  result: "ok" | "error",
+): LogFields {
   const operation =
     Object.keys(ctx.update).find((key) => key !== "update_id") ?? "update";
   const fields: LogFields = { operation, result };

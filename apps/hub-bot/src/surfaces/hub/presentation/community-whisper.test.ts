@@ -135,6 +135,83 @@ const past = meetup("44444444-4444-4444-8444-444444444444", "Прошлая", {
 });
 const undated = meetup("55555555-5555-4555-8555-555555555555", "Когда-нибудь");
 
+// Снимок сходки для карточки: вопрос о материале к ней задаёт путь лички.
+function publishedCard(): MeetupSnapshot {
+  return {
+    id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+    title: "Настолки",
+    description: "Берём свои игры",
+    venue: "Циферблат",
+    lifecycle: "planned",
+    visibility: "visible",
+    author: "0192f0a0-0000-7000-8000-00000000a001",
+    organizers: [],
+    version: 1,
+    materials: [],
+  };
+}
+
+function privateChat(): Chat.PrivateChat {
+  return { id: person.id, type: "private", first_name: "tester" };
+}
+
+// Ответ человека в чате сообщества на сообщение бота: Telegram приносит его
+// боту невидимым для остальных (RFC-003, «Шёпот в группе», прогон PER-906),
+// и молчание на нём держит каркас шёпота.
+function groupReply(text: string): Update {
+  return {
+    update_id: 9,
+    message: {
+      message_id: 30,
+      date: Math.floor(Date.now() / 1_000),
+      chat: group(community),
+      from: person,
+      text,
+      reply_to_message: {
+        message_id: 29,
+        date: 0,
+        chat: group(community),
+        from: { id: 1, is_bot: true, first_name: "hub" },
+        text: "шёпот бота",
+      },
+    },
+  } as Update;
+}
+
+// Нажатие кнопки в личке: открывает шаг «Материалы» карточки сходки.
+function sectionPress(data: string): Update {
+  return {
+    update_id: 10,
+    callback_query: {
+      id: "callback-1",
+      chat_instance: "chat-1",
+      from: person,
+      data,
+      message: { message_id: 9, date: 0, chat: privateChat() },
+    },
+  } as Update;
+}
+
+// Ответ в личке на сообщение бота с номером вопроса.
+function privateReply(text: string, replyMessageId: number): Update {
+  return {
+    update_id: 11,
+    message: {
+      message_id: 10,
+      date: 0,
+      chat: privateChat(),
+      from: person,
+      text,
+      reply_to_message: {
+        message_id: replyMessageId,
+        date: 0,
+        chat: privateChat(),
+        from: { id: 1, is_bot: true, first_name: "hub" },
+      },
+    },
+  } as Update;
+}
+
 type Fakes = {
   resolve?: ResolveIdentityResult;
   rights?: readonly AccessRight[];
@@ -216,6 +293,32 @@ function buttons(sent: Sent): { text: string; url?: string }[] {
 
 function startLink(id: string): string {
   return `https://t.me/${botInfo.username}?start=${meetupDeepLinkPayload(id)}`;
+}
+
+// Номер последнего сообщения бота: фикстура отвечает на sendMessage
+// идентификатором `100 + номер вызова`, вопрос — всегда новое сообщение.
+function lastQuestionId(calls: readonly RecordedCall[]): number {
+  const index = calls.findLastIndex((call) => call.method === "sendMessage");
+  return 100 + index + 1;
+}
+
+function lastSentText(calls: readonly RecordedCall[]): string {
+  const sent = [...calls]
+    .reverse()
+    .find((call) => call.method === "sendMessage");
+  return sent === undefined
+    ? ""
+    : String((sent.payload as { text?: string }).text);
+}
+
+// Запись молчания: update из чата сообщества, который каркас не разобрал
+// (PER-906), — читается одинаково во всех сценариях тишины.
+function silenceRecord(operation: string) {
+  return expect.objectContaining({
+    level: "info",
+    message: "update ignored",
+    fields: expect.objectContaining({ operation, result: "ok" }),
+  });
 }
 
 describe("whisper to an invisible /meetups in the community chat", () => {
@@ -492,21 +595,23 @@ describe("whisper to an invisible /meetups in the community chat", () => {
 
   // Обычную команду и ответ на неё увидели бы все: бот на неё молчит.
   it("stays silent on a visible /meetups in the chat", async () => {
-    const { bot, calls, resolve } = harness({ meetups: [sooner] });
+    const { bot, calls, resolve, records } = harness({ meetups: [sooner] });
     await bot.init();
     await bot.handleUpdate(visibleCommand("/meetups"));
     expect(calls).toEqual([]);
     expect(resolve).not.toHaveBeenCalled();
+    expect(records).toContainEqual(silenceRecord("message"));
   });
 
   // Команда, которой нет в реестре, — например, `/lot` до PER-685, — без
   // ответа.
   it("stays silent on an invisible command outside the registry", async () => {
-    const { bot, calls, resolve } = harness();
+    const { bot, calls, resolve, records } = harness();
     await bot.init();
     await bot.handleUpdate(invisible("/lot"));
     expect(calls).toEqual([]);
     expect(resolve).not.toHaveBeenCalled();
+    expect(records).toContainEqual(silenceRecord("message"));
   });
 
   // Недоставку бот не наблюдает и не дублирует (ADR-078, п. 5): отказ
@@ -553,6 +658,83 @@ describe("whisper to an invisible /meetups in the community chat", () => {
   });
 });
 
+describe("community whisper", () => {
+  // Из чата сообщества дальше каркаса идут только невидимые команды реестра
+  // и нажатия на шёпотах (PER-906): остальное молчит с записью update ignored.
+
+  // Прогон stage 20.11.2026: ответ на шёпот уходил в путь устаревшего
+  // вопроса, и бот отвечал в чат видимым всем сообщением. Теперь он молчит.
+  it("stays silent on a reply to the whisper, without a single new call", async () => {
+    const { bot, calls, records, resolve } = harness({ meetups: [sooner] });
+    await bot.init();
+    await bot.handleUpdate(invisible("/meetups"));
+    expect(whispers(calls)).toHaveLength(1);
+    await bot.handleUpdate(groupReply("а когда настолки?"));
+    // Вызов остаётся один — сам шёпот: ни ответа в чат, ни правки шёпота.
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(records).toContainEqual(silenceRecord("message"));
+  });
+
+  it("stays silent on a press under an ordinary message in the chat", async () => {
+    const { bot, calls, records, resolve } = harness({ meetups: [sooner] });
+    await bot.init();
+    await bot.handleUpdate({
+      update_id: 12,
+      callback_query: {
+        id: "callback-2",
+        chat_instance: "chat-2",
+        from: person,
+        data: "v1:nav:start",
+        message: {
+          message_id: 29,
+          date: 0,
+          chat: group(community),
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "Меню", callback_data: "v1:nav:start" }],
+            ],
+          },
+        },
+      },
+    } as Update);
+    // Единственный вызов — пустое подтверждение нажатия: оно снимает часы
+    // кнопки и ничего не показывает никому (PER-906).
+    expect(calls.map((call) => call.method)).toEqual(["answerCallbackQuery"]);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(records).toContainEqual(silenceRecord("callback_query"));
+  });
+
+  // Ответ в чате на сообщение бота не трогает открытый вопрос лички того же
+  // человека: ответ в личке после него принимается.
+  it("keeps the private question open when the same person replies in the chat", async () => {
+    const card = publishedCard();
+    const { bot, calls, records } = harness({
+      rights: ["access-hub", "manage-meetups"],
+      execute: async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card" as const, meetup: card }
+          : { kind: "rejected" as const, reason: "unexpected" },
+    });
+    await bot.init();
+    // Вопрос об источнике материала открыт в личке.
+    await bot.handleUpdate(sectionPress(`v1:mm:add:${uuidToToken(card.id)}`));
+    expect(lastSentText(calls)).toContain("ссылку на сообщение чата");
+    const question = lastQuestionId(calls);
+    const sentBefore = calls.length;
+    // Ответ в чате сообщества молчит и вопрос не трогает.
+    await bot.handleUpdate(groupReply("вот"));
+    expect(calls).toHaveLength(sentBefore);
+    expect(records).toContainEqual(silenceRecord("message"));
+    // Ответ в личке после этого принимается: источник принят, спрашивает
+    // название.
+    await bot.handleUpdate(
+      privateReply("https://t.me/c/1234567890/77", question),
+    );
+    expect(lastSentText(calls)).toContain("Как назвать материал");
+  });
+});
+
 describe("community whisper registry", () => {
   // Команда — запись реестра со своим кадром: каркас её не знает, а
   // допуск по праву хаба и сам шёпот — его (PER-685 встаёт так же).
@@ -582,6 +764,7 @@ describe("community whisper registry", () => {
     });
     bot.use(
       createCommunityWhisper({
+        chatId: community,
         commands: { lot: { useCase: "view_auction", answer } },
         identity,
         logger,

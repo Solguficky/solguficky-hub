@@ -18,6 +18,7 @@ import {
   type ResolveIdentityResult,
   toResolveIdentityInput,
 } from "../identity/port.js";
+import { boundaryFields } from "./community-chat.js";
 import {
   dependencyCategory,
   grpcFailureCategory,
@@ -47,6 +48,14 @@ import { actionBudgetMs } from "./waiting.js";
 //
 // Доставку шёпота бот не наблюдает и не дублирует (ADR-078, п. 5): `200` —
 // это «принято». Повтора нет: человек повторяет команду сам.
+//
+// Дальше каркаса из чата сообщества не идёт ничего (PER-906, тишина по
+// прогону stage 20.11.2026): невидимую команду реестра и нажатие на шёпоте
+// каркас разбирает здесь, а остальное — ответ на шёпот или любое сообщение
+// бота, обычную команду, нажатие под обычным сообщением, — оставляет без
+// ответа с записью `update ignored`. До заслона такой update доходил до
+// обработчиков лички, и ответ на сообщение бота получал видимый всем отказ
+// «Этот вопрос уже устарел» (RFC-003, «Шёпот в группе»).
 
 /** Кадр шёпота — запись каталога с префиксом `whisper-`. */
 export type WhisperScreenId = Extract<ScreenId, `whisper-${string}`>;
@@ -352,7 +361,10 @@ export function parseWhisperPress(
 /**
  * Ответ на невидимые команды чата сообщества. Стоит сразу за допуском чата
  * (`community-chat.ts`): до него из групп доходит только чат сообщества.
- * Команду не из реестра, обычную команду и всё остальное отдаёт дальше.
+ * Команду не из реестра, обычную команду и всё остальное из чата сообщества
+ * дальше не пускает (`update ignored`, PER-906): из чата идут только
+ * невидимые команды реестра и нажатия на шёпотах. Из лички, каналов и update
+ * без чата всё идёт дальше, как прежде.
  *
  * Путь лички шёпот не проходит: ни ожидания с «печатает…» — в группе его
  * увидели бы все, — ни вопросов, ни списка команд по правам.
@@ -362,13 +374,15 @@ export function parseWhisperPress(
  * у которого `message_id` нет.
  */
 export function createCommunityWhisper(options: {
+  /** Id чата сообщества: из него дальше идёт только разобранное каркасом. */
+  chatId: number;
   commands: WhisperCommands;
   actions?: WhisperActions;
   identity: IdentityResolver;
   logger: Logger;
   today: () => CommunityDay;
 }): MiddlewareFn<ShellContext> {
-  const { commands, identity, logger, today } = options;
+  const { chatId, commands, identity, logger, today } = options;
   const actions = options.actions ?? {};
   return async (ctx, next) => {
     const press = parseWhisperPress(ctx.update, ctx.me.username);
@@ -383,6 +397,22 @@ export function createCommunityWhisper(options: {
         ? undefined
         : commands[command.name];
     if (command === undefined || entry === undefined) {
+      // Из чата сообщества дальше каркаса идёт только разобранное им
+      // (PER-906): остальное — ответ на шёпот или любое сообщение бота,
+      // обычная команда, нажатие под обычным сообщением, — остаётся без
+      // ответа. До заслона оно доходило до обработчиков лички, и ответ на
+      // сообщение бота получал видимый всем отказ «этот вопрос устарел».
+      // Нажатию часы с кнопки снимает пустое подтверждение — как нажатию с
+      // чужими данными на шёпоте: подтверждение ничего не показывает никому.
+      if (ctx.chat?.id === chatId) {
+        if (ctx.callbackQuery !== undefined) {
+          await ctx.api
+            .answerCallbackQuery(ctx.callbackQuery.id)
+            .catch(() => undefined);
+        }
+        logger.info("update ignored", boundaryFields(ctx, "ok"));
+        return;
+      }
       await next();
       return;
     }

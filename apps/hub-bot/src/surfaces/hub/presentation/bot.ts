@@ -1320,9 +1320,11 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     // Невидимые команды чата сообщества — шёпотом (ADR-078, п. 3; PER-683),
     // мимо пути лички. Команда чата — запись реестра, нажатие на шёпоте —
     // запись реестра действий (PER-686); оба идут здесь, раньше обработчиков
-    // лички.
+    // лички. Всё остальное из чата дальше каркаса не идёт и остаётся без
+    // ответа (`update ignored`, PER-906).
     bot.use(
       createCommunityWhisper({
+        chatId: runtime.communityChat.chatId,
         commands: {
           meetups: meetupsWhisper(runtime.dispatcher),
           events: eventsWhisper(
