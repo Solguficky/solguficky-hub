@@ -887,6 +887,14 @@ telegram-whisper-probe:
 telegram-attach-probe:
     node tools/telegram-rich-probe/attach.mjs
 
+# Зонд копии сообщения из чата (PER-916): HUB_BOT_TOKEN бота-участника без прав
+# администратора и MESSAGE_LINK на сообщение с фото из этого чата без умолчаний;
+# TARGET_CHAT_ID — куда копировать, без неё в тот же чат. Long polling не
+# запускается, второй поллер не нужен; SCAN_RANGE=18-30 — обход соседних
+# номеров через forwardMessage; не входит в verify, test-all и CI
+telegram-copy-probe:
+    node tools/telegram-rich-probe/copy.mjs
+
 # Сквозной контур (L2): Identity и Meetups вместе на топологии, поднятой
 # AppHost через Aspire.Hosting.Testing. В `verify` намеренно не входит —
 # стандарт держит в механическом гейте только L0. Входит в `test-all`.
