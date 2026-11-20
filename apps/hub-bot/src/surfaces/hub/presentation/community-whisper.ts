@@ -68,12 +68,22 @@ export type WhisperPress = { label: string; data: string };
 
 export type WhisperButton = WhisperLink | WhisperPress;
 
+/**
+ * Ряд из нескольких кнопок шёпота (PER-914): ссылка на сходку и её
+ * колокольчик подписки стоят вместе, чтобы было видно, к какой сходке
+ * относится действие.
+ */
+export type WhisperRow = readonly WhisperButton[];
+
 export type WhisperFrame = {
   id: WhisperScreenId;
   /** HTML: заголовок жирным первой строкой и абзацы, как у экрана лички. */
   text: string;
-  /** По кнопке в ряд; пусто — шёпот без клавиатуры. */
-  buttons: readonly WhisperButton[];
+  /**
+   * По кнопке в ряд; элемент-массив — ряд из нескольких кнопок, как у пары
+   * «ссылка + 🔔». Пусто — шёпот без клавиатуры.
+   */
+  buttons: readonly (WhisperButton | WhisperRow)[];
 };
 
 /** Что команда получает от каркаса: человек уже допущен к хабу. */
@@ -177,17 +187,38 @@ export function whisperActionData(action: string, argument: string): string {
   return `${actionPrefix}${action}:${argument}`;
 }
 
-export const openBotLabel = "Открыть бота";
+/**
+ * Подпись ссылки в раздел «Сходки» (PER-914): называет, куда ведёт кнопка,
+ * вместо общего «Открыть бота» прежних кадров.
+ */
+export const meetupsInBotLabel = "Сходки в боте";
 
 /**
- * Куда ведёт «Открыть бота» (R-6 оркестратора эпика по Q-7 владельца): голая
- * ссылка `t.me/<бот>` у того, кто уже писал боту, открывает чат без нового
- * сообщения. Ссылка со `start` присылает `/start meetups`, и бот отвечает по
- * праву человека: держателю — «Сходки», без права — приветствие с «Подать
- * заявку», заблокированному — отказ.
+ * Кнопка-ссылка в раздел «Сходки» (R-6 оркестратора эпика по Q-7 владельца):
+ * голая ссылка `t.me/<бот>` у того, кто уже писал боту, открывает чат без
+ * нового сообщения. Ссылка со `start` присылает `/start meetups`, и бот
+ * отвечает по праву человека: держателю — «Сходки», без права — приветствие
+ * с «Подать заявку», заблокированному — отказ.
  */
-export function openBotLink(botUsername: string): string {
-  return meetupsSectionStartLink(botUsername);
+export function meetupsInBotButton(botUsername: string): WhisperLink {
+  return {
+    label: meetupsInBotLabel,
+    url: meetupsSectionStartLink(botUsername),
+  };
+}
+
+/**
+ * Подпись той же ссылки у человека без права хаба (PER-914): `/start meetups`
+ * показывает ему приветствие с «Подать заявку», а не сходки, и подпись
+ * называет то, что откроется.
+ */
+export const applyInBotLabel = "Подать заявку в боте";
+
+export function applyInBotButton(botUsername: string): WhisperLink {
+  return {
+    label: applyInBotLabel,
+    url: meetupsSectionStartLink(botUsername),
+  };
 }
 
 // Невидимая команда приходит с `message_id = 0` и своим
@@ -625,7 +656,7 @@ async function decide(
   const access = decideHubAccess(resolved.rights, resolved.blocked);
   if (access !== "admitted") {
     // Из чата заявка не ставится (ADR-078, п. 3): `RequestAccess` зовёт
-    // только кнопка кадра в личке, куда ведёт «Открыть бота».
+    // только кнопка кадра в личке, куда ведёт ссылка шёпота.
     return {
       frame:
         access === "blocked"
@@ -700,7 +731,7 @@ function invitationFrame(botUsername: string): WhisperFrame {
       invitationOnlyHub.title,
       ...invitationWhisper.map(escapeHtml),
     ),
-    buttons: [{ label: openBotLabel, url: openBotLink(botUsername) }],
+    buttons: [applyInBotButton(botUsername)],
   };
 }
 
@@ -778,18 +809,23 @@ async function editWhisper(
   );
 }
 
+function isRow(button: WhisperButton | WhisperRow): button is WhisperRow {
+  return Array.isArray(button);
+}
+
 function keyboardOf(frame: WhisperFrame): { reply_markup?: InlineKeyboard } {
-  return frame.buttons.length === 0
-    ? {}
-    : {
-        reply_markup: InlineKeyboard.from(
-          frame.buttons.map((button) => [
-            "url" in button
-              ? InlineKeyboard.url(linkText(button.label), button.url)
-              : InlineKeyboard.text(button.label, button.data),
-          ]),
-        ),
-      };
+  const rows = frame.buttons
+    .map((button) => {
+      const row: readonly WhisperButton[] = isRow(button) ? button : [button];
+      return row.map((item) =>
+        "url" in item
+          ? InlineKeyboard.url(linkText(item.label), item.url)
+          : InlineKeyboard.text(item.label, item.data),
+      );
+    })
+    // Пустой ряд Telegram отверг бы вместе со всем шёпотом.
+    .filter((row) => row.length > 0);
+  return rows.length === 0 ? {} : { reply_markup: InlineKeyboard.from(rows) };
 }
 
 // Каркас записи границы (logging.md): Telegram id человека и id чата в запись

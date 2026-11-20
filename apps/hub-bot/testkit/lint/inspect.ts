@@ -292,14 +292,22 @@ function checkRules(
       break;
     }
     case "whisper": {
-      // Шёпот с действиями (PER-686): ссылки в бот и действия на самом
-      // шёпоте. Возврата нет, как у `links`, а действие стоит своим рядом.
+      // Шёпот с действиями (PER-686, PER-914): ссылки в бот и действия на
+      // самом шёпоте по одной в ряд, без возврата. Зависимые кнопки — пара одной
+      // группы: у кадра с `pairedContent` ссылка на сходку «↗» и её колокольчик
+      // без текста, относящийся к этой сходке, стоят одним рядом, первой идёт ссылка, вторым — действие шёпота.
+      const paired = (row: readonly Button[]): boolean =>
+        entry.pairedContent === true &&
+        row.length === 2 &&
+        row[0]?.url !== undefined &&
+        row[0]?.text.endsWith(linkSign) &&
+        row[1]?.callback_data !== undefined;
       const links = buttons.filter(
         (button) => button.url !== undefined && button.text.endsWith(linkSign),
       );
       const stray = rows.filter(
         (row) =>
-          row.length > 1 ||
+          (row.length > 1 && !paired(row)) ||
           row.some(
             (button) =>
               button.text.startsWith(backSign) ||
@@ -311,7 +319,7 @@ function checkRules(
       if (links.length === 0 || stray.length > 0) {
         found.push([
           "nav",
-          `здесь ссылки «↗» и действия шёпота по одной в ряд, без возврата, а пришло ${describeRows(rows)}`,
+          `здесь ссылки «↗» и действия шёпота по одной в ряд, а пара «ссылка + действие» — только у кадра с pairedContent, без возврата, а пришло ${describeRows(rows)}`,
         ]);
       }
       break;

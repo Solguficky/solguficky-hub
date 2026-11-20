@@ -54,6 +54,12 @@ const catalog = {
   bid: { class: "screen", nav: "confirm", title: "Ставка", irreversible: true },
   hide: { class: "screen", nav: "confirm", title: "Скрыть" },
   whisper: { class: "screen", nav: "whisper", title: "Шёпот" },
+  pairedWhisper: {
+    class: "screen",
+    nav: "whisper",
+    title: "Шёпот",
+    pairedContent: true,
+  },
 } as const satisfies Catalog;
 
 const config: LintConfig = {
@@ -297,10 +303,11 @@ describe("inspectCall configuration", () => {
   });
 
   // Шёпот с действиями (PER-686): ссылки «↗» и действия на самом шёпоте по
-  // одной в ряд, без возврата.
+  // одной в ряд, без возврата; пара в одном ряду — только у `pairedContent`
+  // (PER-914).
   it("lets a whisper carry links and actions, one per row, without a return", () => {
     const link = { text: "Сходка ↗", url: "https://t.me/bot" };
-    const action = key("🔔 Подписаться на сходку", {
+    const action = key("🔔", {
       callback_data: "v1:w:sub:x:1",
     });
     const whisper = (rows: Key[][]) =>
@@ -315,6 +322,28 @@ describe("inspectCall configuration", () => {
     expect(whisper([[{ text: "Сходка", url: "https://t.me/bot" }]])).toContain(
       "nav",
     );
+  });
+
+  // PER-914: шёпот с `pairedContent` держит ссылку на сходку и её
+  // колокольчик без текста одним рядом; без пометки пара — нарушение, и
+  // первым в паре идёт именно ссылка.
+  it("lets a paired whisper keep a link and its bell in one row", () => {
+    const link = { text: "Сходка ↗", url: "https://t.me/bot" };
+    const bell = key("🔔", { callback_data: "v1:w:sub:x:1" });
+    const paired = (rows: Key[][]) =>
+      rulesOf(
+        "editEphemeralMessageText",
+        call("pairedWhisper", "<b>Шёпот</b>", rows),
+      );
+    expect(paired([[link, bell]])).toEqual([]);
+    expect(paired([[link], [bell]])).toEqual([]);
+    expect(paired([[bell, link]])).toContain("nav");
+    expect(
+      rulesOf(
+        "editEphemeralMessageText",
+        call("whisper", "<b>Шёпот</b>", [[link, bell]]),
+      ),
+    ).toContain("nav");
   });
 
   it("keeps the confirmation answers in one row", () => {
