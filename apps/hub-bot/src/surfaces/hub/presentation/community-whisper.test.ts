@@ -404,11 +404,16 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     const sent = [...whispers(calls), ...whispers(denied.calls)];
     expect(sent).toHaveLength(3);
     expect(JSON.stringify(sent)).not.toContain("Открыть бота");
-    for (const whisper of sent) {
-      expect(buttons(whisper).map((key) => key.text)).toEqual([
-        "Сходки в боте ↗",
-      ]);
-    }
+    // Человеку без права хаба `?start=meetups` открывает приветствие с
+    // «Подать заявку», а не сходки, и подпись называет то, что откроется.
+    const labels = sent.map((whisper) =>
+      buttons(whisper).map((key) => key.text),
+    );
+    expect(labels).toEqual([
+      ["Сходки в боте ↗"],
+      ["Сходки в боте ↗"],
+      ["Подать заявку в боте ↗"],
+    ]);
   });
 
   // Видимость решает Meetups: автору и администратору он отдаёт и скрытую, а
@@ -472,7 +477,7 @@ describe("whisper to an invisible /meetups in the community chat", () => {
     expect(sent.text).not.toContain("Настолки");
     expect(buttons(sent)).toEqual([
       {
-        text: "Сходки в боте ↗",
+        text: "Подать заявку в боте ↗",
         url: `https://t.me/${botInfo.username}?start=meetups`,
       },
     ]);

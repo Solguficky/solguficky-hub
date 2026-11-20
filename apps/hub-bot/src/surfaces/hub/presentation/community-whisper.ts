@@ -207,6 +207,20 @@ export function meetupsInBotButton(botUsername: string): WhisperLink {
   };
 }
 
+/**
+ * Подпись той же ссылки у человека без права хаба (PER-914): `/start meetups`
+ * показывает ему приветствие с «Подать заявку», а не сходки, и подпись
+ * называет то, что откроется.
+ */
+export const applyInBotLabel = "Подать заявку в боте";
+
+export function applyInBotButton(botUsername: string): WhisperLink {
+  return {
+    label: applyInBotLabel,
+    url: meetupsSectionStartLink(botUsername),
+  };
+}
+
 // Невидимая команда приходит с `message_id = 0` и своим
 // `ephemeral_message_id`: по нему шёпот отвечает на неё. Обычная команда в
 // чате сообщества его не несёт, и ответ на неё увидели бы все — она остаётся
@@ -717,7 +731,7 @@ function invitationFrame(botUsername: string): WhisperFrame {
       invitationOnlyHub.title,
       ...invitationWhisper.map(escapeHtml),
     ),
-    buttons: [meetupsInBotButton(botUsername)],
+    buttons: [applyInBotButton(botUsername)],
   };
 }
 
