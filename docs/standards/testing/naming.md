@@ -55,11 +55,12 @@
 
 ## Scala
 
-- Форма — `AnyWordSpec`: внешняя строка называет SUT, внутренняя грамматически её продолжает, и вместе они читаются одним предложением. `"health route" should { "answers 200 with an ok status as json" in … }`.
+- Форма — `AnyWordSpec`: внешняя строка называет SUT, внутренняя грамматически её продолжает, и вместе они читаются одним предложением. `"health route" should { "answer 200 with an ok status as json" in … }`.
 - SUT называется либо именем объекта ровно как в коде, либо ролью модуля строчными буквами — тот же выбор, что у `describe` в TypeScript: `operation frame`, `health route`, `generated identity contract`.
-- Внутреннее имя начинается с глагола в третьем лице настоящего времени, со строчной буквы, без `should` внутри и без повторения имени SUT: `should` уже стоит в конструкции блока, и второй раз он ломает фразу.
-- Отрицательный случай называет наблюдаемое бездействие: `leaves a path it does not serve unhandled`, `omits request_id when the caller did not send one`.
-- Property-тест остаётся в том же блоке и формулирует инвариант декларативно: `carries an error category exactly when the result is an error`.
+- Внутреннее имя начинается с глагола в инфинитиве, со строчной буквы, без `should` внутри и без повторения имени SUT: `should` уже стоит в конструкции блока, и фраза читается «health route should answer…». Это форма документации ScalaTest для `AnyWordSpec`; третье лицо, как в Go, TypeScript и Elixir, после `should` грамматически неверно. Выбор владельца 2026-11-21.
+- Отрицательный случай называет наблюдаемое бездействие: `leave a path it does not serve unhandled`, `omit request_id when the caller did not send one`.
+- Property-тест остаётся в том же блоке и формулирует инвариант декларативно: `carry an error category exactly when the result is an error`.
+- Переходное состояние: спеки Auction, написанные в третьем лице, приводятся к инфинитиву одной правкой в [PER-922](https://linear.app/anticnvm/issue/per-922). До неё ревью не считает третье лицо в старых спеках нарушением, а срез других задач чужие имена не переписывает; новые имена — в инфинитиве, а правило «одна форма на файл» в файле со старыми именами уступает этому.
 - Файл `<SUT>Spec.scala` лежит в `src/test/scala/` по пути пакета SUT, рядом с ним в дереве тестов. Суффикс `Spec` — форма ScalaTest; `Tests` не используется, чтобы имя не читалось как .NET-проект. Интеграционный сьют (L1) называется `<SUT>IntegrationSpec.scala`: суффикс отбирает уровень в сборке, поэтому он часть имени, а не украшение. Раскладку уровней задаёт [testing-strategy.md](testing-strategy.md).
 
 ## Elixir
