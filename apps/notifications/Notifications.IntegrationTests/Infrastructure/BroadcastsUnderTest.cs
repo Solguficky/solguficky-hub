@@ -4,6 +4,9 @@ using Grpc.Net.Client;
 using Microsoft.Extensions.DependencyInjection;
 using Notifications.Auction;
 using Notifications.Broadcasts;
+using Notifications.Infrastructure;
+using Notifications.Replica;
+using Notifications.TestKit;
 using Notifications.V1;
 using Npgsql;
 using Shouldly;
@@ -288,6 +291,25 @@ public sealed class BroadcastsUnderTest : IAsyncDisposable
         };
 
         application.Outcome.ShouldNotBe(AuctionOutcome.Duplicate);
+    }
+
+    /// <summary>
+    /// Применяет факт сходки так же, как потребитель <c>MEETUPS_EVENTS</c>: разбор
+    /// и хранилище реплики те же, шины нет. Нужен автоподписке организатора
+    /// (PER-909), от которой зависит разворот рассылки.
+    /// </summary>
+    public async Task ApplyMeetupFact(Meetups.V1.MeetupEvent fact)
+    {
+        var decoded = ReplicaMapping.Meetup(EventFactory.Bytes(fact));
+
+        var meetup = decoded is Decoded.Fact { Event: MeetupFact value }
+            ? value
+            : throw new InvalidOperationException($"meetup fact is not a fact: {decoded}");
+
+        var application = await silo.Service<ReplicaStore>()
+            .Apply(meetup, DateTimeOffset.UtcNow, TestContext.Current.CancellationToken);
+
+        application.Outcome.ShouldNotBe(ReplicaOutcome.Duplicate);
     }
 
     /// <summary>Строки фактов рассылки со снятием и выносом.</summary>

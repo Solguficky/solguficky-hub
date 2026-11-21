@@ -170,6 +170,16 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
                 ? MeetupDiff.Between(before[0].State(), meetup.State)
                 : [];
 
+            // Вход в состав подписывает человека на его сходку (PER-909,
+            // ADR-076, п. 5): автор — созданием сходки, назначенный —
+            // назначением. Подписка пишется той же транзакцией, что ключ
+            // события и снимок, и не зависит от того, сдвинул ли событие
+            // снимок: запоздавшее назначение даёт тот же итог, что обработка
+            // по порядку, потому что снятие подписку не снимает. Повтор сюда
+            // не доходит вовсе. Явная отписка сильнее входа, и решает это SQL
+            // автоподписки вместе с блокировкой пары.
+            await SubscribeEnteredOrganizer(work, meetup, now, cancellationToken);
+
             // Повод со своим типом не зависит от того, тронул ли снимок
             // реплику: запоздавшее событие версию не двигает, но первая
             // публикация, снятие и материал от этого не перестают быть
@@ -264,6 +274,25 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         return last is { } moment ? new DateTimeOffset(DateTime.SpecifyKind(moment, DateTimeKind.Utc)) : null;
     }
+
+    // Вход в состав: автор входит в него созданием сходки, назначенный —
+    // назначением (PER-909, ADR-076, п. 2 и п. 5). Остальные поводы состава не
+    // трогают: выход и снятие подписку не снимают, и заново никого не подписывают.
+    private static Task SubscribeEnteredOrganizer(
+        UnitOfWork work,
+        MeetupFact fact,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        fact.Occasion switch
+        {
+            MeetupOccasion.Created =>
+                SubscriptionStore.AutoSubscribe(work, fact.State.Author, fact.MeetupId, now, cancellationToken),
+
+            MeetupOccasion.OrganizerAppointed when fact.OrganizerId is { } person =>
+                SubscriptionStore.AutoSubscribe(work, person, fact.MeetupId, now, cancellationToken),
+
+            _ => Task.CompletedTask,
+        };
 
     private static object MeetupRow(MeetupFact fact, DateTimeOffset now)
     {

@@ -1,6 +1,7 @@
 using Grpc.Core;
 using Notifications.Broadcasts;
 using Notifications.IntegrationTests.Infrastructure;
+using Notifications.TestKit;
 using Notifications.V1;
 using Shouldly;
 using Xunit;
@@ -90,6 +91,38 @@ public class BroadcastTests
 
         // Спросили владельца сходки, о нужном человеке и с цепочкой команды.
         env.Owners.Asked.ShouldHaveSingleItem().ShouldBe(("meetups", author, (Guid?)Guid.Parse(meetupId), (string?)requestId));
+    }
+
+    /// <summary>
+    /// Организатор входит в состав уже подписанным (PER-909): рассылка второго
+    /// организатора доходит до первого без ручной подписки, а сам отправитель
+    /// своего сообщения не получает.
+    /// </summary>
+    [Fact]
+    public async Task When_OrganizerBroadcastsToFellowOrganizer_Expect_AuthorNotifiedAndSenderExcluded()
+    {
+        await using var env = await BroadcastsUnderTest.Start();
+        var creation = EventFactory.Creation(NewId());
+        var meetupId = creation.MeetupId;
+        var author = Guid.Parse(creation.State.Author);
+        await Person(env.Db, blocked: false, MemberHolding, author);
+        var fellow = await Person(env.Db, MemberHolding);
+
+        await env.ApplyMeetupFact(creation);
+        await env.ApplyMeetupFact(
+            EventFactory.OrganizerChange(meetupId, version: 2, fellow.ToString(), appointed: true, author.ToString()));
+
+        // Автоподписка сработала: без неё аудитория всё равно была бы [author],
+        // и тест не отличил бы исключение отправителя от отсутствия подписки.
+        (await FactFixtures.IsSubscribed(env.Db, fellow, meetupId)).ShouldBeTrue();
+        (await FactFixtures.IsSubscribed(env.Db, author, meetupId)).ShouldBeTrue();
+
+        var id = NewId();
+        await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(fellow, meetupId, id), Chain(NewId()));
+
+        var facts = await env.Facts(id);
+        facts.Select(fact => fact.RecipientId).ShouldBe(new[] { author });
+        facts.ShouldAllBe(fact => fact.Type == "organizer_message");
     }
 
     [Fact]
