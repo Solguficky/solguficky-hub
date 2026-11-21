@@ -336,21 +336,22 @@ describe("meetupsScreen", () => {
     ]);
   });
 
-  // «Создать сходку» и «Архив» не смешиваются со списком (PER-900): одним
-  // рядом под сходками и листанием, перед «‹ Меню»; данные кнопки создания
-  // прежние, поэтому старая кнопка без знака работает как раньше.
+  // «Создать» и «Архив» не смешиваются со списком (PER-900): одним рядом под
+  // сходками и листанием, перед «‹ Меню»; подпись короче прежней, чтобы пара
+  // не обрезалась на телефоне (PER-907). Данные кнопки создания прежние,
+  // поэтому старая кнопка без знака работает как раньше.
   it("puts the create and archive buttons into one row above the menu", () => {
     const screen = meetupsScreen(summaries(9), 0, today, "token");
 
     expect(rows(screen)[0]).toEqual(["1 августа · Сходка 1"]);
     expect(rows(screen).at(-3)).toEqual(["→"]);
     expect(screen.keyboard.inline_keyboard.at(-2)).toEqual([
-      { text: "➕ Создать сходку", callback_data: "v1:manage:new:token:s" },
+      { text: "✨ Создать", callback_data: "v1:manage:new:token:s" },
       { text: "🗂 Архив", callback_data: "v1:nav:archive" },
     ]);
     expect(rows(screen).at(-1)).toEqual(["‹ Меню"]);
     expect(rows(meetupsScreen([], 0, today, "token"))).toEqual([
-      ["➕ Создать сходку", "🗂 Архив"],
+      ["✨ Создать", "🗂 Архив"],
       ["‹ Меню"],
     ]);
     expect(rows(meetupsScreen([], 0, today))).toEqual([

@@ -1061,6 +1061,28 @@ describe("notification callbacks", () => {
         `v1:q:fc:${token}:title`,
         { kind: "field", mode: "create", token, field: "title" },
       ],
+      // Вопрос «Ввести время» (PER-907): день занимает место имени поля — поле
+      // у него одно, `schedule`.
+      [
+        `v1:q:fc:${token}:03102026`,
+        {
+          kind: "field",
+          mode: "create",
+          token,
+          field: "schedule",
+          day: "03102026",
+        },
+      ],
+      [
+        `v1:q:fe:${token}:03102026`,
+        {
+          kind: "field",
+          mode: "edit",
+          token,
+          field: "schedule",
+          day: "03102026",
+        },
+      ],
       [`v1:q:pm:${token}`, { kind: "publish-moment", token, origin: "status" }],
       [`v1:q:pd:${token}`, { kind: "publish-moment", token, origin: "draft" }],
       [

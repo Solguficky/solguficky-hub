@@ -89,7 +89,7 @@ describe("time presets", () => {
       ["12:00", "15:00", "17:00", "18:00"],
       ["19:00", "19:30", "20:00", "21:00"],
       ["‹ День"],
-      ["Ввести дату"],
+      ["Ввести время"],
       ["Отмена"],
     ]);
     expect(data(keyboard)).toEqual([
@@ -102,9 +102,23 @@ describe("time presets", () => {
       `v1:manage:when:${token}:e:031020262000`,
       `v1:manage:when:${token}:e:031020262100`,
       `v1:manage:when:${token}:e`,
-      `v1:manage:when:${token}:e:t`,
+      `v1:manage:when:${token}:e:t:03102026`,
       `v1:manage:when:${token}:e:x`,
     ]);
+  });
+
+  // «Ввести время» спрашивает только время выбранного дня (PER-907): день
+  // едет в кнопке, и вопрос о нём не повторяется.
+  it("asks only the time of the day picked on the previous step", () => {
+    expect(parseCallback(`v1:manage:when:${token}:e:t:03102026`)).toEqual({
+      kind: "manage-type-schedule",
+      token,
+      mode: "e",
+      day: "03102026",
+    });
+    expect(parseCallback(`v1:manage:when:${token}:e:t:31132026`)).toEqual({
+      kind: "malformed",
+    });
   });
 
   it("fits every button of every mode into the callback budget and parses it back", () => {

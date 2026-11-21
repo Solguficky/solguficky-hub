@@ -17,8 +17,10 @@ namespace Notifications.Replica;
 /// Повод (<c>occasion</c>) реплике не нужен: она пишет снимок, а не повод.
 /// Разбор узнаёт из него только то, что различает адресные факты, —
 /// <see cref="MeetupOccasion" />: первую публикацию (PER-216), снятие с
-/// публикации и появление материала (PER-218); остальные поводы и пустой oneof
-/// для него одинаковы. Новая ветка <c>oneof</c> — совместимое изменение
+/// публикации и появление материала (PER-218), а с PER-909 — создание сходки и
+/// смену состава, по которым сервис подписывает организатора на его сходку;
+/// остальные поводы и пустой oneof для него одинаковы. Новая ветка <c>oneof</c> —
+/// совместимое изменение
 /// контракта, и сборка, которая её ещё не знает, видит пустой повод; сними она
 /// такое сообщение с доставки, реплика потеряла бы полный снимок из-за поля,
 /// которое ей не нужно. Значения перечислений в снимке — другое дело: их
@@ -117,6 +119,7 @@ public static class ReplicaMapping
         // сходку» значило бы поверить поводу вопреки состоянию.
         var occasion = message.OccasionCase switch
         {
+            MeetupEvent.OccasionOneofCase.MeetupCreated => MeetupOccasion.Created,
             MeetupEvent.OccasionOneofCase.MeetupPublished => MeetupOccasion.FirstPublication,
             MeetupEvent.OccasionOneofCase.MeetupUnpublished => MeetupOccasion.Unpublication,
             MeetupEvent.OccasionOneofCase.MeetupMaterialAttached => MeetupOccasion.MaterialAttached,
@@ -128,6 +131,16 @@ public static class ReplicaMapping
         if (occasion == MeetupOccasion.FirstPublication && firstPublishedAt is null)
         {
             return new Decoded.Poison("meetup_published carries no state.first_published_at");
+        }
+
+        // Создание — вход автора в состав (ADR-076, п. 2), и по этому поводу
+        // сервис подписывает автора на сходку (PER-909). Событие, где автор в
+        // составе не числится, противоречит само себе — тот же довод, что у
+        // материала и смены состава.
+        if (occasion == MeetupOccasion.Created
+            && !state.Organizers.Any(item => Guid.TryParse(item, out var member) && member == author))
+        {
+            return new Decoded.Poison($"meetup_created author {state.Author} is not in state.organizers");
         }
 
         // Тот же довод, что у отметки первой публикации: повод называет
