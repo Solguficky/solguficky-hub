@@ -3,17 +3,29 @@
 // Зонд поста-анонса в группе (PER-918): бот-участник без админки публикует
 // видимый всем пост с кнопками, правит и удаляет его, отвечает на нажатие
 // шёпотом и печатает кандидатов ссылки на пост. Пост ставит команда /announce,
-// набранная в группе; каждый update и ответ сервера печатается строкой JSON,
-// токен в вывод не попадает.
+// набранная в одной из групп GROUP_CHAT_IDS; каждый update и ответ сервера
+// печатается строкой JSON, токен в вывод не попадает.
 //
 // EDIT_POST=<chat_id>:<message_id> — разовая правка ранее опубликованного поста
 // (проверка правки спустя время) без long polling.
 
 const token = process.env["HUB_BOT_TOKEN"];
 const editPost = process.env["EDIT_POST"];
+const groupChatIds = (process.env["GROUP_CHAT_IDS"] ?? "")
+  .split(",")
+  .map((id) => id.trim())
+  .filter((id) => id !== "")
+  .map(Number);
+// Команда старше этого окна поста не ставит: прогон 21.11 получил вчерашние
+// /announce повторно новыми update и опубликовал по ним посты.
+const maxCommandAgeSeconds = 60;
 
 if (token === undefined || token === "") {
   process.stderr.write("HUB_BOT_TOKEN is required\n");
+  process.exit(2);
+}
+if ((editPost === undefined || editPost === "") && (groupChatIds.length === 0 || groupChatIds.some(Number.isNaN))) {
+  process.stderr.write("GROUP_CHAT_IDS (comma-separated chat ids) is required\n");
   process.exit(2);
 }
 
@@ -116,10 +128,19 @@ function commandOf(text) {
   return match === null ? undefined : match[1];
 }
 
+const seenCommands = new Set();
+
 async function onMessage(message) {
-  if (message.chat.type === "private" || commandOf(message.text ?? "") !== "announce") {
+  if (!groupChatIds.includes(message.chat.id) || commandOf(message.text ?? "") !== "announce") {
     return;
   }
+  const age = Math.floor(Date.now() / 1000) - message.date;
+  const key = `${message.chat.id}:${message.ephemeral_message_id ?? message.message_id}`;
+  if (age > maxCommandAgeSeconds || seenCommands.has(key)) {
+    print("skip", { reason: age > maxCommandAgeSeconds ? "stale" : "replayed", age_seconds: age, key });
+    return;
+  }
+  seenCommands.add(key);
   const chat = await call("getChat", { chat_id: message.chat.id });
   const member = await call("getChatMember", { chat_id: message.chat.id, user_id: me.result.id });
   print("probe", {
@@ -171,17 +192,22 @@ async function onCallback(query) {
   }
 }
 
-// /announce ставится невидимой командой во всех группах только на время
-// прогона: при остановке возвращается прежний список этого scope.
-const scope = { type: "all_group_chats" };
-const previous = await call("getMyCommands", { scope });
-const previousCommands = previous.ok === true ? previous.result : [];
+// /announce ставится невидимой командой только в тестовых группах и только на
+// время прогона: при остановке каждой возвращается её прежний список.
+const scopes = [];
+for (const chatId of groupChatIds) {
+  const scope = { type: "chat", chat_id: chatId };
+  const previous = await call("getMyCommands", { scope });
+  scopes.push({ scope, previousCommands: previous.ok === true ? previous.result : [] });
+}
 
 async function restoreCommands() {
-  if (previousCommands.length === 0) {
-    await call("deleteMyCommands", { scope });
-  } else {
-    await call("setMyCommands", { scope, commands: previousCommands });
+  for (const { scope, previousCommands } of scopes) {
+    if (previousCommands.length === 0) {
+      await call("deleteMyCommands", { scope });
+    } else {
+      await call("setMyCommands", { scope, commands: previousCommands });
+    }
   }
 }
 
@@ -191,12 +217,15 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 
-const installed = await call("setMyCommands", {
-  scope,
-  commands: [{ command: "announce", description: "PER-918 опубликовать пост-анонс", is_ephemeral: true }],
-});
-if (installed.ok !== true) {
-  process.exit(1);
+for (const { scope } of scopes) {
+  const installed = await call("setMyCommands", {
+    scope,
+    commands: [{ command: "announce", description: "PER-918 опубликовать пост-анонс", is_ephemeral: true }],
+  });
+  if (installed.ok !== true) {
+    await restoreCommands();
+    process.exit(1);
+  }
 }
 
 let offset = 0;

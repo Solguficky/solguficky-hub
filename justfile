@@ -897,9 +897,10 @@ telegram-copy-probe:
 
 # Зонд поста-анонса в группе (PER-918): невидимая `/announce` в группе ставит
 # видимый всем пост бота с кнопками «Подписаться» (шёпот), «Править» и
-# «Удалить» и шепчет кандидатов ссылки на пост. HUB_BOT_TOKEN без умолчания,
-# бот без второго поллера; EDIT_POST=<chat_id>:<message_id> — разовая правка
-# старого поста без long polling; не входит в verify, test-all и CI
+# «Удалить» и шепчет кандидатов ссылки на пост. HUB_BOT_TOKEN и GROUP_CHAT_IDS
+# (id тестовых групп через запятую) без умолчаний, бот без второго поллера;
+# команда старше минуты или повторная пост не ставит; EDIT_POST=<chat_id>:<message_id>
+# — разовая правка старого поста без long polling; не входит в verify, test-all и CI
 telegram-announce-probe:
     node tools/telegram-rich-probe/announce.mjs
 
