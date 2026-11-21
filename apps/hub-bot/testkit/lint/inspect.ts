@@ -90,6 +90,15 @@ const adminSign = `${pictogram.admin} `;
 const linkSign = " ↗";
 const callbackDataLimit = 64;
 const defaultMaxRows = 12;
+// Предел подписи в ряду из двух кнопок (PER-907). Выведен из двух подписей
+// прогона 20.11, обрезавшихся на телефоне: «➕ Создать сходку» и «Ближайшая
+// сходка» — по 16 знаков. Подпись длиннее встаёт своим рядом, а не парой.
+const pairCaptionLimit = 15;
+
+// Длина подписи в знаках: знак эмодзи и его селектор начертания — один знак.
+function captionWidth(text: string): number {
+  return [...text.replaceAll("\uFE0F", "")].length;
+}
 
 function isMaterialManageRow(row: readonly Button[]): boolean {
   const removeCount = row.filter(
@@ -405,6 +414,24 @@ function checkRules(
     }
     if (row.length === 2 && !allowed) {
       found.push(["rows", `пара вне дизайн-кода: ${describeRow(row)}`]);
+    }
+    // Длинная подпись в паре обрезается на телефоне (PER-907): у экрана дерева
+    // пара без имени в дизайн-коде ставится только с подписями не длиннее
+    // предела. Поимённая пара и содержимое парами — решение дизайна, и их
+    // подписи держит дизайн-код; кадры подтверждения, шёпота и сообщений вне
+    // дерева ряд не делят по смыслу — их пара и есть сам кадр.
+    if (
+      row.length === 2 &&
+      !named &&
+      !materialRow &&
+      entry.pairedContent !== true &&
+      (entry.nav === "root" || entry.nav === "tree") &&
+      row.some((button) => captionWidth(button.text) > pairCaptionLimit)
+    ) {
+      found.push([
+        "rows",
+        `подпись в ряду из двух длиннее ${pairCaptionLimit} знаков: ${describeRow(row)}`,
+      ]);
     }
     // Бинарная пара выбора стоит одним рядом (решение владельца 10 октября
     // 2026 года): допуск — рядом с отказом или закрытием, а не над ним.

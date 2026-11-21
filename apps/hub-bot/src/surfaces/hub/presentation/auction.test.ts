@@ -2895,7 +2895,8 @@ describe("events of the hub", () => {
     await bot.handleUpdate(press(menuData));
     const menu = lastScreen(calls);
     expect(labels(menu)).toEqual([
-      ["Сходки", "Ближайшая сходка"],
+      ["Сходки"],
+      ["Ближайшая сходка"],
       ["События"],
       ["Настройки", "Помощь"],
     ]);
@@ -3033,7 +3034,8 @@ describe("events of the hub", () => {
     await bot.init();
     await bot.handleUpdate(press(menuData));
     expect(labels(lastScreen(calls))).toEqual([
-      ["Сходки", "Ближайшая сходка"],
+      ["Сходки"],
+      ["Ближайшая сходка"],
       ["Настройки", "Помощь"],
     ]);
   });
@@ -3063,7 +3065,8 @@ describe("events of the hub", () => {
     await bot.handleUpdate(press(menuData));
     const menu = lastScreen(calls);
     expect(labels(menu)).toEqual([
-      ["Сходки", "Ближайшая сходка"],
+      ["Сходки"],
+      ["Ближайшая сходка"],
       ["Настройки", "Помощь"],
     ]);
     expect(menu.text).not.toContain("Идут события");
@@ -3087,7 +3090,8 @@ describe("events of the hub", () => {
     await bot.init();
     await bot.handleUpdate(press(menuData));
     expect(labels(lastScreen(calls))).toEqual([
-      ["Сходки", "Ближайшая сходка"],
+      ["Сходки"],
+      ["Ближайшая сходка"],
       ["Настройки", "Помощь"],
       ["🛠 Управление"],
     ]);

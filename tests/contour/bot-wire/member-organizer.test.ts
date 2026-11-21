@@ -56,7 +56,7 @@ describe("сходка участника", () => {
 
     await author.says("/start");
     await author.says("/meetups");
-    await author.presses("➕ Создать сходку");
+    await author.presses("✨ Создать");
     await fillsMeetupForm(author, title);
 
     // Свой черновик участник видит в общем списке «Сходок» с пометкой

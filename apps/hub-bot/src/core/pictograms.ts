@@ -69,11 +69,12 @@ export const pictogram = {
    */
   history: "🗂",
   /**
-   * «Создать сходку» в ряду действий «Сходок» хаба рядом с «🗂 Архив»
-   * (PER-900). В группе «Сходки и объявления» «Управления» экран админский,
+   * «Создать» в ряду действий «Сходок» хаба рядом с «🗂 Архив» (PER-900;
+   * знак и подпись по прогону 20.11 — PER-907: «➕ Создать сходку» обрезалась
+   * на телефоне). В группе «Сходки и объявления» «Управления» экран админский,
    * и кнопка знака не несёт.
    */
-  create: "➕",
+  create: "✨",
   /** Промо-видео аукциона в корне аукциона обоих ботов (PER-774). */
   promo: "🎬",
   /**
@@ -142,7 +143,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.description]: ["Описание"],
   [pictogram.photo]: ["Фото"],
   [pictogram.history]: ["Архив", "Прошедшие"],
-  [pictogram.create]: ["Создать сходку"],
+  [pictogram.create]: ["Создать"],
   [pictogram.promo]: ["Промо"],
   // Знак группы лота стоит перед названием лота организатора, а не перед
   // словом бота: слов у него нет.
@@ -222,8 +223,11 @@ export const admitLabel = marked(pictogram.yes, "Допустить");
 export const declineLabel = marked(pictogram.no, "Отказать");
 /** Вход в расширения сходки и в их настройки (ADR-064, дополнение 2026-10-12). */
 export const extensionsLabel = marked(pictogram.extensions, "Расширения");
-/** «Создать сходку» в ряду действий «Сходок» хаба (PER-900). */
-export const createMeetupLabel = marked(pictogram.create, "Создать сходку");
+/**
+ * «Создать» в ряду действий «Сходок» хаба (PER-900, PER-907): подпись
+ * короче — пара с «🗂 Архив» не обрезается на телефоне.
+ */
+export const createMeetupLabel = marked(pictogram.create, "Создать");
 
 /** «✔️ Да, …» по глаголу с предметом: «отменить сходку». */
 export function confirmYesLabel(action: string): string {

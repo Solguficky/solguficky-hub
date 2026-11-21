@@ -373,11 +373,11 @@ const strayAnswerText = (() => {
 // зовут его создать первую.
 const emptyMeetupsText =
   "<b>Сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nНовую создаёт кнопка ниже: сначала это черновик, участники увидят сходку после публикации.";
-// Ряд действий «Сходок» (PER-900): «➕ Создать сходку» несёт id будущей
+// Ряд действий «Сходок» (PER-900, PER-907): «✨ Создать» несёт id будущей
 // сходки, рождённый при отрисовке, и стоит одним рядом с «🗂 Архив».
 const meetupActionsRow = [
   {
-    text: "➕ Создать сходку",
+    text: "✨ Создать",
     callback_data: expect.stringMatching(/^v1:manage:new:[\w-]{22}:s$/),
   },
   { text: "🗂 Архив", callback_data: "v1:nav:archive" },
@@ -8351,6 +8351,12 @@ describe("deferred publication frames", () => {
         inline_keyboard: [
           [
             {
+              text: "Название",
+              callback_data: `v1:manage:draft:${draftToken}:title`,
+            },
+          ],
+          [
+            {
               text: "Дата и время",
               callback_data: `v1:manage:draft:${draftToken}:schedule`,
             },
@@ -8750,7 +8756,7 @@ describe("deferred publication frames", () => {
         ["12:00", "15:00", "17:00", "18:00"],
         ["19:00", "19:30", "20:00", "21:00"],
         ["‹ День"],
-        ["Ввести дату"],
+        ["Ввести время"],
         ["Отмена"],
       ]);
       expect(JSON.stringify(edited?.payload)).toContain(
@@ -8855,6 +8861,367 @@ describe("deferred publication frames", () => {
           value: "03.10.2026 19:30",
         }),
       );
+    });
+
+    // «Ввести время» (PER-907): день уже выбран, и вопрос спрашивает только
+    // `ЧЧ:ММ`. День едет в кнопке вопроса, поэтому ответ принимается и после
+    // рестарта, а к выбранному дню его приставляет бот.
+    it("asks only the time from the time step and takes it as the day's moment", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "draft",
+        meetup: {
+          ...draft,
+          schedule: {
+            year: 2026,
+            month: 10,
+            day: 3,
+            hours: 19,
+            minutes: 45,
+          },
+        },
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:t:03102026`),
+      );
+
+      expect(sentMessages(calls).at(-1)).toMatchObject({
+        method: "sendMessage",
+        payload: {
+          text: "Во сколько встречаемся? Напиши время: ЧЧ:ММ",
+          reply_markup: {
+            force_reply: true,
+            inline_keyboard: [
+              [
+                {
+                  text: "Отмена",
+                  callback_data: `v1:q:fc:${draftToken}:03102026:42`,
+                },
+              ],
+            ],
+          },
+        },
+      });
+
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "19:45",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-meetup-field",
+          field: "schedule",
+          value: "03.10.2026 19:45",
+          meetupId: draft.id,
+        }),
+      );
+      // Принятый ответ возвращает черновик новым сообщением: карточка называет
+      // выбранный день и время.
+      const shown = calls.findLast(
+        (call) =>
+          call.method === "sendMessage" || call.method === "sendRichMessage",
+      );
+      expect(JSON.stringify(shown?.payload)).toContain("19:45");
+    });
+
+    it.each(["25:00", "abc"])(
+      "keeps the meetup when the time %s cannot be parsed",
+      async (text) => {
+        const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+          kind: "draft",
+          meetup: draft,
+        });
+        const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+          execute,
+        });
+        await bot.init();
+
+        await bot.handleUpdate(
+          callbackUpdate(`v1:manage:when:${draftToken}:c:t:03102026`),
+        );
+        await bot.handleUpdate(
+          replyUpdate({
+            text,
+            fromId: 42,
+            replyMessageId: lastQuestionId(calls),
+            replyFromId: 1,
+          }),
+        );
+
+        expect(
+          execute.mock.calls.some(
+            ([request]) => request.intent === "set-meetup-field",
+          ),
+        ).toBe(false);
+        expect(
+          calls.some((call) =>
+            JSON.stringify(call.payload).includes(
+              "Не получилось разобрать время",
+            ),
+          ),
+        ).toBe(true);
+        expect(
+          calls.some((call) =>
+            JSON.stringify(call.payload).includes("Напиши, например: 19:45"),
+          ),
+        ).toBe(true);
+      },
+    );
+
+    // День вопроса «Ввести время» едет в кнопке «Отмена», поэтому ответ
+    // принимается и после рестарта процесса (PER-907).
+    it("recovers the time question with its day after restart", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card", meetup: draft }
+          : { kind: "draft", meetup: draft },
+      );
+      const first = createHarness(resolvedIdentity("admin"), { execute });
+      await first.bot.init();
+      await first.bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:t:03102026`),
+      );
+      const question = sentMessages(first.calls).at(-1);
+      const questionText = sendMessageText(question);
+
+      const restarted = createHarness(resolvedIdentity("admin"), { execute });
+      await restarted.bot.init();
+      await restarted.bot.handleUpdate(
+        replyUpdate({
+          text: "19:45",
+          fromId: 42,
+          replyMessageId: lastQuestionId(first.calls),
+          replyFromId: 1,
+          replyText: questionText,
+          replyMarkup: (
+            question?.payload as { reply_markup?: unknown } | undefined
+          )?.reply_markup,
+        }),
+      );
+
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "set-meetup-field",
+          field: "schedule",
+          value: "03.10.2026 19:45",
+          meetupId: draft.id,
+        }),
+      );
+    });
+
+    // «Ввести заново» после неразобранного времени спрашивает тот же вопрос, а
+    // не открывает заготовки (PER-907).
+    it("asks the same time again after a rejected answer", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "draft",
+        meetup: draft,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:c:t:03102026`),
+      );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "25:00",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      const retry = calls.findLast((call) => call.method === "sendMessage")
+        ?.payload as
+        | {
+            reply_markup?: {
+              inline_keyboard?: { text: string; callback_data: string }[][];
+            };
+          }
+        | undefined;
+      const data = retry?.reply_markup?.inline_keyboard
+        ?.flat()
+        .find((button) => button.text === "Ввести заново")?.callback_data;
+      expect(data).toBe(`v1:manage:when:${draftToken}:c:t:03102026`);
+
+      await bot.handleUpdate(callbackUpdate(data ?? ""));
+
+      expect(sentMessages(calls).at(-1)).toMatchObject({
+        method: "sendMessage",
+        payload: { text: "Во сколько встречаемся? Напиши время: ЧЧ:ММ" },
+      });
+    });
+
+    // Тот же шаг у отложенной публикации (PER-907): день едет в кнопке, ответ
+    // несёт только время, а Auction получает полный момент.
+    it("asks only the time of the publication moment and sends it whole", async () => {
+      const titled = { ...draft, title: "Настолки" };
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card", meetup: titled }
+          : {
+              kind: "publication-scheduled",
+              meetup: {
+                ...titled,
+                publishAt: {
+                  year: 2026,
+                  month: 10,
+                  day: 3,
+                  hours: 19,
+                  minutes: 45,
+                },
+              },
+            },
+      );
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:d:t:03102026`),
+      );
+
+      expect(sentMessages(calls).at(-1)).toMatchObject({
+        method: "sendMessage",
+        payload: {
+          text: "Во сколько опубликовать? Напиши время: ЧЧ:ММ",
+          reply_markup: {
+            force_reply: true,
+            inline_keyboard: [
+              [
+                {
+                  text: "Отмена",
+                  callback_data: `v1:q:pd:${draftToken}:03102026:42`,
+                },
+              ],
+            ],
+          },
+        },
+      });
+
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "19:45",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "schedule-publication",
+          value: "03.10.2026 19:45",
+          meetupId: draft.id,
+        }),
+      );
+    });
+
+    it("keeps the publication moment when its time cannot be parsed", async () => {
+      const titled = { ...draft, title: "Настолки" };
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card", meetup: titled }
+          : { kind: "publication-scheduled", meetup: titled },
+      );
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:when:${draftToken}:d:t:03102026`),
+      );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "9 часов",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      expect(
+        execute.mock.calls.some(
+          ([request]) => request.intent === "schedule-publication",
+        ),
+      ).toBe(false);
+      expect(
+        calls.some((call) =>
+          JSON.stringify(call.payload).includes(
+            "Не получилось разобрать время",
+          ),
+        ),
+      ).toBe(true);
+    });
+  });
+
+  // Черновик получает «Название» сразу после создания (PER-907): переименовать
+  // сходку можно до публикации, тем же вопросом, что и в «Изменить».
+  describe("draft title", () => {
+    const draft = draftMeetup();
+    const token = uuidToToken(draft.id);
+
+    it("renames the draft from its own row", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card", meetup: draft }
+          : { kind: "draft", meetup: { ...draft, title: "Новое имя" } },
+      );
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:manage:draft:${token}`));
+
+      expect(buttonLabels(calls.at(-1))).toContain("Название");
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        `v1:manage:draft:${token}:title`,
+      );
+
+      await bot.handleUpdate(callbackUpdate(`v1:manage:draft:${token}:title`));
+      expect(sentMessages(calls).at(-1)).toMatchObject({
+        method: "sendMessage",
+        payload: { text: "Как называется сходка?" },
+      });
+
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "Новое имя",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-meetup-field",
+          field: "title",
+          value: "Новое имя",
+          meetupId: draft.id,
+        }),
+      );
+      // Принятый ответ возвращает черновик новым сообщением: подпись вопроса
+      // снимает `answered` после отправки.
+      const shown = calls.findLast(
+        (call) =>
+          call.method === "sendMessage" || call.method === "sendRichMessage",
+      );
+      expect(JSON.stringify(shown?.payload)).toContain("Новое имя");
     });
   });
 

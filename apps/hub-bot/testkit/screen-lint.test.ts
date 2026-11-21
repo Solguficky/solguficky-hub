@@ -46,6 +46,13 @@ const catalog: Record<string, ScreenEntry> = {
     maxRows: 5,
   },
   status: { class: "screen", nav: "tree", title: "Статус", parent: "card" },
+  floor: {
+    class: "screen",
+    nav: "tree",
+    title: "Ставки зала",
+    parent: "meetups",
+    pairedContent: true,
+  },
   community: {
     class: "screen",
     nav: "tree",
@@ -312,6 +319,56 @@ describe("inspectCall", () => {
     expect(tree([[key("• Участники"), key("Гости")]])).toEqual([]);
     expect(tree([[key("Модераторы"), key("Разрешённые ники")]])).toEqual([]);
     expect(tree([[key("←"), key("→")]])).toEqual([]);
+  });
+
+  // Предел подписи в ряду из двух (PER-907): выведен из двух подписей прогона
+  // 20.11, которые обрезались на телефоне, — «Создать сходку» и «Ближайшая
+  // сходка» по 16 знаков. Пара, названная дизайн-кодом поимённо, и содержимое
+  // парами решают ширину своим экраном, и предел на них не действует.
+  it("flags a caption longer than the pair limit on a tree screen", () => {
+    const root = (rows: unknown[][]) =>
+      rulesOf("editMessageText", {
+        text: "<b>Сходки</b>\n\nРазделы бота.",
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: rows },
+        [screenTag]: "meetups",
+      });
+
+    expect(root([[key("Сходки"), key("Ближайшая сходка")]])).toEqual(["rows"]);
+    // В своём ряду та же подпись проходит: ряд из одной кнопки шириной не
+    // делится.
+    expect(root([[key("Сходки")], [key("Ближайшая сходка")]])).toEqual([]);
+    // Знак с селектором начертания считается за один: пятнадцать видимых
+    // знаков проходят, хотя кодовых точек в подписи шестнадцать.
+    expect(root([[key("🗂 Архив за день"), key("Ещё")]])).toEqual([]);
+    // Пара, названная поимённо, держит подписи сама: у карточки текст широкий.
+    expect(
+      rulesOf("editMessageText", {
+        text: "<b>Архив</b>",
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [key("🛠 Написать подписчикам"), key("🛠 Организаторы")],
+            [key("‹ Сходки")],
+          ],
+        },
+        [screenTag]: "archive",
+      }),
+    ).toEqual([]);
+    // Содержимое парами — тоже решение экрана: люди зала стоят по два в ряд.
+    expect(
+      rulesOf("editMessageText", {
+        text: "<b>Ставки зала</b>\n\nЛюди зала.",
+        parse_mode: "HTML",
+        reply_markup: {
+          inline_keyboard: [
+            [key("Гость 01 — 1 300 ₽"), key("Гость 02 — 1 300 ₽")],
+            [key("‹ Сходки")],
+          ],
+        },
+        [screenTag]: "floor",
+      }),
+    ).toEqual([]);
   });
 
   it("holds a question to the reply mode and a cancel button", () => {
