@@ -32,11 +32,40 @@ const timePresets = [
 ] as const;
 
 export const otherDateLabel = "Ввести дату";
+// Шаг времени спрашивает только время выбранного дня (PER-907): день уже
+// выбран, и «Ввести дату» здесь значило бы «введи всё заново».
+export const otherTimeLabel = "Ввести время";
 const otherDayLabel = "‹ День";
 
-/** Вопрос о дате сходки текстом: его задаёт «Ввести дату». */
+/** Вопрос о дате сходки текстом: его задаёт «Ввести дату» на шаге дня. */
 export const scheduleTypePrompt =
   "Когда встречаемся? Напиши дату и время: ДД.ММ.ГГГГ ЧЧ:ММ";
+
+/** Вопрос о времени выбранного дня: его задаёт «Ввести время» (PER-907). */
+export const scheduleTimePrompt = "Во сколько встречаемся? Напиши время: ЧЧ:ММ";
+
+/** Тот же вопрос о времени для момента отложенной публикации. */
+export const publishMomentTimePrompt =
+  "Во сколько опубликовать? Напиши время: ЧЧ:ММ";
+
+/** Отказ на неразобранное время шага «Ввести время» (PER-907). */
+export const timeFormatHint =
+  "Не получилось разобрать время. Напиши, например: 19:45";
+
+/**
+ * Время, написанное в ответ на «Ввести время»: `ЧЧ:ММ` в пределах суток.
+ * Разбирается здесь, а не в форме: к выбранному дню его приставляет тот, кто
+ * задал вопрос, и форме уходит уже полный момент.
+ */
+export function parseTimeOfDay(value: string): string | undefined {
+  const match = /^(\d{2}):(\d{2})$/.exec(value.trim());
+  if (match === null) return undefined;
+  const [, hours, minutes] = match;
+  if (hours === undefined || minutes === undefined) return undefined;
+  return Number(hours) <= 23 && Number(minutes) <= 59
+    ? `${hours}:${minutes}`
+    : undefined;
+}
 
 function addDays(day: CommunityDay, offset: number): Date {
   return new Date(Date.UTC(day.year, day.month - 1, day.day + offset));
@@ -67,19 +96,25 @@ export type DatePicker = {
   mode: WhenMode;
 };
 
-// Хвост данных: цифры дня или момента, `t` — «Ввести дату», `x` — «Отмена».
+// Хвост данных: цифры дня или момента, `t` — «Ввести дату», `t:<цифры>` —
+// «Ввести время» выбранного дня (PER-907), `x` — «Отмена».
 function whenData(picker: DatePicker, tail?: string): string {
   const base = `v1:manage:when:${picker.token}:${picker.mode}`;
   return tail === undefined ? base : `${base}:${tail}`;
 }
 
 // «Отмена» здесь — возврат на экран, с которого дату открыли: режима ответа у
-// выбора кнопками нет, и снимать нечего.
+// выбора кнопками нет, и снимать нечего. Вопрос «Ввести время» задаётся с
+// выбранным днём: он и уходит в хвост кнопки, чтобы вопрос пережил рестарт.
 function withExit(
   keyboard: InlineKeyboard,
   picker: DatePicker,
+  picked?: string,
 ): InlineKeyboard {
-  nextRow(keyboard).text(otherDateLabel, whenData(picker, "t"));
+  nextRow(keyboard).text(
+    picked === undefined ? otherDateLabel : otherTimeLabel,
+    whenData(picker, picked === undefined ? "t" : `t:${picked}`),
+  );
   nextRow(keyboard).text(cancelLabel, whenData(picker, "x"));
   return keyboard;
 }
@@ -125,7 +160,7 @@ export function timePresetKeyboard(
     }
   }
   nextRow(keyboard).text(otherDayLabel, whenData(picker));
-  return withExit(keyboard, picker);
+  return withExit(keyboard, picker, digits);
 }
 
 /**

@@ -724,8 +724,15 @@ type PlainAction =
       mode: WhenMode;
       value: string;
     }
-  // «Ввести дату»: даты среди заготовок нет, и её спрашивают текстом.
-  | { kind: "manage-type-schedule"; token: string; mode: WhenMode }
+  // «Ввести дату»: даты среди заготовок нет, и её спрашивают текстом. `day` —
+  // «Ввести время»: день уже выбран, и вопрос спрашивает только `ЧЧ:ММ`
+  // (PER-907).
+  | {
+      kind: "manage-type-schedule";
+      token: string;
+      mode: WhenMode;
+      day?: string;
+    }
   | { kind: "manage-materials"; token: string; page?: number }
   | { kind: "material-edge"; token: string }
   | {
@@ -919,8 +926,17 @@ export type QuestionStep =
       token: string;
       field: FormField;
       fresh?: NewMeetupOrigin;
+      // День, к которому относится вопрос «Ввести время» (PER-907):
+      // `ДДММГГГГ`, как в заготовках. Вопрос спрашивает только `ЧЧ:ММ`.
+      day?: string;
     }
-  | { kind: "publish-moment"; token: string; origin: PublishOrigin }
+  | {
+      kind: "publish-moment";
+      token: string;
+      origin: PublishOrigin;
+      // Тот же день вопроса «Ввести время» у отложенной публикации (PER-907).
+      day?: string;
+    }
   // Версия карточки, с которой начато прикрепление: она доезжает до кнопки
   // подтверждения и уходит в `expected_version` (PER-393).
   | { kind: "material-source"; token: string; version: number }
@@ -2236,10 +2252,16 @@ function stepData(step: QuestionStep): string {
     case "floor-search":
       return `v1:q:fs:${step.auction}`;
     case "field":
+      // День вопроса «Ввести время» занимает место имени поля: поле у него
+      // одно — `schedule`, — и `callback_data` выходит на девять байт короче
+      // (PER-907).
+      if (step.day !== undefined) {
+        return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.day}`;
+      }
       return `v1:q:${step.mode === "edit" ? "fe" : step.fresh === "meetups" ? "fn" : step.fresh === "manage" ? "fg" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
       // `pd` — вопрос задан с черновика: «Отмена» возвращает на него.
-      return `v1:q:${step.origin === "draft" ? "pd" : "pm"}:${step.token}`;
+      return `v1:q:${step.origin === "draft" ? "pd" : "pm"}:${step.token}${step.day === undefined ? "" : `:${step.day}`}`;
     case "material-source":
       return `v1:q:ms:${step.token}:${step.version}`;
     case "material-title":
@@ -2590,17 +2612,33 @@ export function parseCallback(raw: unknown): CallbackAction {
         }
       : { kind: "malformed" };
   }
-  if ((parts.length === 5 || parts.length === 6) && parts[2] === "when") {
+  if (
+    (parts.length === 5 || parts.length === 6 || parts.length === 7) &&
+    parts[2] === "when"
+  ) {
     const parsedMode = WhenModeSchema.safeParse(parts[4]);
     if (!parsedMode.success) return { kind: "malformed" };
     const mode = parsedMode.data;
     const digits = parts[5];
     if (digits === undefined) {
-      return { kind: "manage-pick-day", token: token.data, mode };
+      return parts.length === 5
+        ? { kind: "manage-pick-day", token: token.data, mode }
+        : { kind: "malformed" };
     }
+    // «Ввести время» несёт выбранный день: вопрос спрашивает только `ЧЧ:ММ`
+    // (PER-907). Без дня — «Ввести дату», полный `ДД.ММ.ГГГГ ЧЧ:ММ`.
     if (digits === "t") {
-      return { kind: "manage-type-schedule", token: token.data, mode };
+      if (parts.length === 6) {
+        return { kind: "manage-type-schedule", token: token.data, mode };
+      }
+      const day = parts[6];
+      if (day === undefined || dayFromDigits(day) === undefined) {
+        return { kind: "malformed" };
+      }
+      return { kind: "manage-type-schedule", token: token.data, mode, day };
     }
+    // Лишняя часть у заготовки дня — не заготовка: длину проверяем до разбора.
+    if (parts.length === 7) return { kind: "malformed" };
     // «Отмена» экрана выбора даты — обычный возврат на экран, с которого дату
     // открыли: режима ответа у него нет, и снимать нечего.
     if (digits === "x") {
@@ -3550,6 +3588,18 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (parts.length === 3 && parts[2] === "cl") return { kind: "channel-label" };
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return undefined;
+  // Момент публикации с днём: вопрос «Ввести время» отложенной публикации
+  // (PER-907) — день едет вслед за токеном.
+  if (parts.length === 5 && (parts[2] === "pm" || parts[2] === "pd")) {
+    const day = parts[4];
+    if (day === undefined || dayFromDigits(day) === undefined) return undefined;
+    return {
+      kind: "publish-moment",
+      token: token.data,
+      origin: parts[2] === "pd" ? "draft" : "status",
+      day,
+    };
+  }
   if (parts.length === 4) {
     switch (parts[2]) {
       case "lt":
@@ -3727,6 +3777,19 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
     parts[2] === "fn" ||
     parts[2] === "fg"
   ) {
+    // У вопроса «Ввести время» поле одно — `schedule`, и на его месте стоит
+    // день вопроса (PER-907): `callback_data` от этого короче на девять байт,
+    // а поле читается из самого шага.
+    const day = dayFromDigits(parts[4] ?? "");
+    if (day !== undefined && (parts[2] === "fe" || parts[2] === "fc")) {
+      return {
+        kind: "field",
+        mode: parts[2] === "fe" ? "edit" : "create",
+        token: token.data,
+        field: "schedule",
+        day: parts[4] as string,
+      };
+    }
     const field = FormFieldSchema.safeParse(parts[4]);
     return field.success
       ? {

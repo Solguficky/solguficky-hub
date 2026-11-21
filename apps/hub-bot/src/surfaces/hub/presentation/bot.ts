@@ -621,7 +621,11 @@ import {
 } from "./screens/release-notes.js";
 import {
   datePresetsScreen,
+  parseTimeOfDay,
+  publishMomentTimePrompt,
+  scheduleTimePrompt,
   scheduleTypePrompt,
+  timeFormatHint,
 } from "./screens/schedule-presets.js";
 import {
   clearCallbackKeyboard,
@@ -878,6 +882,9 @@ type PendingQuestion = {
   meetupId: string;
   // Вопрос о названии новой сходки и откуда он задан (`fn`, `fg`).
   fresh?: NewMeetupOrigin;
+  // День вопроса «Ввести время» (PER-907): ответ — только `ЧЧ:ММ`, момент
+  // собирается из этого дня и ответа.
+  day?: string;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -922,6 +929,9 @@ type PendingPublishMoment = {
   meetupId: string;
   // Экран, с которого вопрос задан: туда возвращает «Отмена».
   origin: PublishOrigin;
+  // День вопроса «Ввести время» (PER-907): у отложенной публикации он тоже
+  // едет в кнопке вопроса, а ответ несёт только `ЧЧ:ММ`.
+  day?: string;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -1637,10 +1647,28 @@ async function handleMessage(
         outcome = denied;
         return;
       }
+      // «Ввести время»: ответ несёт только `ЧЧ:ММ`, день выбран раньше и лежит
+      // в вопросе (PER-907). Неразобранное время переспрашивают тем же шагом.
+      let value = ctx.message.text;
+      if (pending.day !== undefined) {
+        const time = parseTimeOfDay(ctx.message.text);
+        if (time === undefined) {
+          await refuseAnswer(ctx, questions, pending, timeFormatHint, replyId);
+          outcome = {
+            level: "info",
+            message: "publish moment time rejected",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+          };
+          return;
+        }
+        value = momentOf(pending.day, time);
+      }
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
         intent: "schedule-publication",
-        value: ctx.message.text,
+        value,
         meetupId: pending.meetupId,
         ...rpcCall(ctx, useCase),
       });
@@ -2849,14 +2877,32 @@ async function handleMessage(
         };
         return;
       }
+      // «Ввести время»: ответ — только время выбранного дня (PER-907), момент
+      // собирается здесь и уходит форме в том же виде, что и написанный текст.
+      let value = ctx.message.text;
+      if (description) {
+        value = descriptionHtml(ctx.message.text, ctx.message.entities);
+      } else if (pending.day !== undefined) {
+        const time = parseTimeOfDay(ctx.message.text);
+        if (time === undefined) {
+          await refuseAnswer(ctx, questions, pending, timeFormatHint, replyId);
+          outcome = {
+            level: "info",
+            message: "meetup time rejected",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+          };
+          return;
+        }
+        value = momentOf(pending.day, time);
+      }
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
         intent:
           pending.mode === "edit" ? "update-meetup-field" : "set-meetup-field",
         field: pending.field,
-        value: description
-          ? descriptionHtml(ctx.message.text, ctx.message.entities)
-          : ctx.message.text,
+        value,
         meetupId: pending.meetupId,
         ...(pending.fresh === undefined ? {} : { fresh: true as const }),
         ...rpcCall(ctx, useCase),
@@ -4932,31 +4978,44 @@ async function handleCallback(
       return;
     }
     if (action.kind === "manage-type-schedule") {
-      // «Ввести дату»: экран выбора уступает место вопросу. Он удаляется, а не
-      // остаётся без кнопок — иначе над вопросом висел бы тот же вопрос.
-      // Удаление идёт после отправки вопроса: упавшая отправка не должна
-      // оставить человека без обоих.
+      // «Ввести дату» и «Ввести время» (PER-907): экран выбора уступает место
+      // вопросу. Он удаляется, а не остаётся без кнопок — иначе над вопросом
+      // висел бы тот же вопрос. Удаление идёт после отправки вопроса: упавшая
+      // отправка не должна оставить человека без обоих.
       const meetupId = tokenToUuid(action.token);
       ctx.pressedGone = true;
       const origin = publishOriginOf(action.mode);
-      await askQuestion(
-        ctx,
-        questions,
+      // Выбранный день ответ на вопрос не повторяет: он едет в кнопке, и
+      // вопрос спрашивает только время (PER-907).
+      const time = action.day !== undefined;
+      const pending: PendingBody =
         origin === undefined
           ? {
               kind: "meetup",
               mode: action.mode === "e" ? "edit" : "create",
               field: "schedule",
               meetupId,
+              ...(action.day === undefined ? {} : { day: action.day }),
               telegramUserId: ctx.from?.id ?? 0,
             }
           : {
               kind: "publish-moment",
               meetupId,
               origin,
+              ...(action.day === undefined ? {} : { day: action.day }),
               telegramUserId: ctx.from?.id ?? 0,
-            },
-        origin === undefined ? formPrompts.schedule : publishMomentPrompt,
+            };
+      await askQuestion(
+        ctx,
+        questions,
+        pending,
+        origin === undefined
+          ? time
+            ? scheduleTimePrompt
+            : formPrompts.schedule
+          : time
+            ? publishMomentTimePrompt
+            : publishMomentPrompt,
       );
       if (!(await deletePressed(ctx))) await clearCallbackKeyboard(ctx);
       outcome = {
@@ -14232,6 +14291,12 @@ type PendingBody = HubPendingInput extends infer Each
     : never
   : never;
 
+// Момент из дня заготовок (`ДДММГГГГ`) и времени `ЧЧ:ММ`: так ответ «Ввести
+// время» доезжает до формы в том же виде, в котором его пишут текстом (PER-907).
+function momentOf(day: string, time: string): string {
+  return `${day.slice(0, 2)}.${day.slice(2, 4)}.${day.slice(4, 8)} ${time}`;
+}
+
 function stepOf(pending: PendingBody): QuestionStep {
   switch (pending.kind) {
     case "meetup":
@@ -14241,12 +14306,14 @@ function stepOf(pending: PendingBody): QuestionStep {
         token: uuidToToken(pending.meetupId),
         field: pending.field,
         ...(pending.fresh === undefined ? {} : { fresh: pending.fresh }),
+        ...(pending.day === undefined ? {} : { day: pending.day }),
       };
     case "publish-moment":
       return {
         kind: "publish-moment",
         token: uuidToToken(pending.meetupId),
         origin: pending.origin,
+        ...(pending.day === undefined ? {} : { day: pending.day }),
       };
     case "material-source":
       return {
@@ -14498,6 +14565,7 @@ function pendingOf(
         field: step.field,
         meetupId: tokenToUuid(step.token),
         ...(step.fresh === undefined ? {} : { fresh: step.fresh }),
+        ...(step.day === undefined ? {} : { day: step.day }),
         telegramUserId,
         expiresAt,
       };
@@ -14506,6 +14574,7 @@ function pendingOf(
         kind: "publish-moment",
         meetupId: tokenToUuid(step.token),
         origin: step.origin,
+        ...(step.day === undefined ? {} : { day: step.day }),
         telegramUserId,
         expiresAt,
       };
@@ -14958,10 +15027,18 @@ function reopenData(step: QuestionStep): string {
       if (step.fresh !== undefined) {
         return `v1:manage:new:${step.token}${step.fresh === "meetups" ? ":s" : ""}`;
       }
+      // Вопрос «Ввести время» повторяется тем же вопросом того же дня
+      // (PER-907): «Ввести заново» спрашивает время, а не открывает заготовки.
+      if (step.day !== undefined) {
+        return `v1:manage:when:${step.token}:${step.mode === "edit" ? "e" : "c"}:t:${step.day}`;
+      }
       return step.mode === "create"
         ? `v1:manage:draft:${step.token}:${step.field}`
         : `v1:manage:field:${step.token}:${step.field}`;
     case "publish-moment":
+      if (step.day !== undefined) {
+        return `v1:manage:when:${step.token}:${step.origin === "draft" ? "d" : "p"}:t:${step.day}`;
+      }
       return step.origin === "draft"
         ? `v1:manage:publish-later:${step.token}:d`
         : `v1:manage:publish-later:${step.token}`;
