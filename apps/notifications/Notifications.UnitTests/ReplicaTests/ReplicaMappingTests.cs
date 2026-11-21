@@ -41,11 +41,35 @@ public class ReplicaMappingTests
     public void Meetup_NeverPublished_LeavesFirstPublicationUnset()
     {
         // Черновик: сходка создана и ещё не публиковалась, поэтому отметки нет.
-        var message = EventFactory.Meetup(MeetupId, version: 1);
-        message.MeetupCreated = new MeetupCreated();
-        message.State.ClearFirstPublishedAt();
+        var message = EventFactory.Creation(MeetupId);
 
         Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message))).State.FirstPublishedAt.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Создание сходки — вход автора в состав организаторов (ADR-076, п. 2), и по
+    /// этому поводу сервис подписывает его на сходку (PER-909).
+    /// </summary>
+    [Fact]
+    public void Meetup_Created_NamesCreation()
+    {
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(EventFactory.Creation(MeetupId))));
+
+        fact.Occasion.ShouldBe(MeetupOccasion.Created);
+    }
+
+    /// <summary>
+    /// Автора вне состава создание не описывает: событие противоречит само себе,
+    /// как и назначение человека, которого в снимке нет (PER-909).
+    /// </summary>
+    [Fact]
+    public void Meetup_CreatedWithoutAuthorInRoster_IsPoison()
+    {
+        var message = EventFactory.Creation(MeetupId);
+        message.State.Organizers.Clear();
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>()
+            .Reason.ShouldContain("is not in state.organizers");
     }
 
     [Fact]

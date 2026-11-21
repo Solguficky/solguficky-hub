@@ -42,9 +42,13 @@ public static class FactFixtures
     /// Заблокированный хранится так, как его пишет Identity: без круга, наборов
     /// и прав. Владение здесь — то, что у него было, и в реплику оно не попадает.
     /// </summary>
-    public static async Task<Guid> Person(IsolatedDatabase db, bool blocked, Holding holding)
+    /// <param name="identityId">
+    /// Идентификатор, который тест уже назвал, — например автор события сходки;
+    /// иначе новый.
+    /// </param>
+    public static async Task<Guid> Person(IsolatedDatabase db, bool blocked, Holding holding, Guid? identityId = null)
     {
-        var id = Guid.CreateVersion7();
+        var id = identityId ?? Guid.CreateVersion7();
         await Execute(
             db,
             """
@@ -92,6 +96,49 @@ public static class FactFixtures
             VALUES (@Person, @MeetupId, now());
             """,
             new { Person = person, MeetupId = Guid.Parse(meetupId) });
+
+    /// <summary>Следит ли человек за сходкой: строка подписки есть или нет.</summary>
+    public static async Task<bool> IsSubscribed(IsolatedDatabase db, Guid person, string meetupId)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+
+        return await connection.ExecuteScalarAsync<bool>(
+            """
+            SELECT EXISTS (
+                SELECT 1 FROM meetup_subscription
+                WHERE identity_id = @Person AND meetup_id = @MeetupId
+            );
+            """,
+            new { Person = person, MeetupId = Guid.Parse(meetupId) });
+    }
+
+    /// <summary>
+    /// Сколько backend'ов ждут транзакционную блокировку пары «человек и
+    /// сходка». Положительное доказательство, что автоподписка встала за
+    /// отпиской, а не разминулась с ней (PER-909).
+    /// </summary>
+    public static async Task<long> WaitingOnPairLock(IsolatedDatabase db)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+
+        return await connection.ExecuteScalarAsync<long>(
+            """
+            SELECT count(*) FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock'
+              AND query LIKE '%notifications.meetup_subscription%';
+            """);
+    }
+
+    /// <summary>Все подписки базы: пары «человек и сходка».</summary>
+    public static async Task<IReadOnlyList<(Guid Person, Guid Meetup)>> SubscribedPeople(IsolatedDatabase db)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+
+        var rows = await connection.QueryAsync<(Guid, Guid)>(
+            "SELECT identity_id, meetup_id FROM meetup_subscription;");
+
+        return rows.ToList();
+    }
 
     /// <summary>
     /// Настройка категории: без <paramref name="meetupId" /> — глобальная,

@@ -77,6 +77,33 @@ public static class EventFactory
     }
 
     /// <summary>
+    /// Событие создания сходки: черновик без отметки публикации, с пустыми
+    /// сведениями и без даты — так его заводит Meetups, — а автор — первый
+    /// организатор (ADR-076, п. 2). По этому поводу сервис подписывает автора
+    /// на его сходку (PER-909), поэтому снимок несёт его же в составе.
+    /// </summary>
+    public static MeetupEvent Creation(
+        string meetupId,
+        long version = 1,
+        string? author = null,
+        string? eventId = null)
+    {
+        var message = Meetup(meetupId, version, eventId);
+        message.State.Author = author ?? "0199a000-0000-7000-8000-000000000001";
+        message.State.Title = string.Empty;
+        message.State.Description = string.Empty;
+        message.State.Venue = string.Empty;
+        message.State.Kind = string.Empty;
+        message.State.Schedule = new Schedule { NoDate = new NoDate() };
+        message.State.ClearFirstPublishedAt();
+        message.State.Visibility = MeetupVisibility.Hidden;
+        message.State.Organizers.Add(message.State.Author);
+        message.MeetupCreated = new MeetupCreated();
+
+        return message;
+    }
+
+    /// <summary>
     /// Событие появления материала: снимок несёт материал в коллекции, а повод
     /// называет его идентификатор, как это делает Meetups.
     /// </summary>
@@ -104,16 +131,24 @@ public static class EventFactory
     /// покинувший его — нет, как это делает Meetups. <paramref name="performedBy" />
     /// равный <paramref name="person" /> — выход по своей воле.
     /// </summary>
+    /// <param name="author">
+    /// Автор сходки, который уже в составе; по умолчанию тот же, что у
+    /// <see cref="Meetup" />. Снимок черновика назначения не описывает: его
+    /// предмет — состав, а не публикация.
+    /// </param>
     public static MeetupEvent OrganizerChange(
         string meetupId,
         long version,
         string person,
         bool appointed,
         string? performedBy,
-        string? eventId = null)
+        string? eventId = null,
+        string? author = null)
     {
         var message = Meetup(meetupId, version, eventId);
-        message.State.Organizers.Add("0199a000-0000-7000-8000-000000000001");
+        var rosterOwner = author ?? "0199a000-0000-7000-8000-000000000001";
+        message.State.Author = rosterOwner;
+        message.State.Organizers.Add(rosterOwner);
 
         if (appointed)
         {
@@ -122,6 +157,7 @@ public static class EventFactory
         }
         else
         {
+            message.State.Organizers.Remove(person);
             message.MeetupOrganizerDismissed = new MeetupOrganizerDismissed { IdentityId = person };
         }
 
