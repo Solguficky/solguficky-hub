@@ -34,7 +34,17 @@ public sealed class ContourHost : IAsyncDisposable
     // Каждый предел отдельный и со своим сообщением. Один общий таймаут на
     // подъём показывал бы неудачный `go build` как молчаливое зависание
     // Identity: ждали бы сервис, а упал узел сборки перед ним.
-    private static readonly TimeSpan BuilderStart = TimeSpan.FromSeconds(120);
+    // Старт AppHost ждёт применения топологии JetStream, а холодный контейнер
+    // NATS отвечает не сразу: дважды (2026-10-10 и 2026-10-11) 120 с не хватило,
+    // NATS сыпал «Failed to connect», а повтор того же рецепта проходил. Предел
+    // — с запасом на холодный NATS, а отказ называет его первым подозреваемым.
+    private static readonly TimeSpan BuilderStart = TimeSpan.FromSeconds(300);
+    private const string BuilderStartHint =
+        "Первым делом смотри узел nats: старт AppHost ждёт применения топологии JetStream, " +
+        "и строки «Failed to connect NATS» в выводе AppHost.Resources.nats значат холодный " +
+        "контейнер, а не правку. Затем — узлы сборки: identity-proto, identity-build, auction-build.";
+    private const string DefaultHint =
+        "первым делом смотри узлы сборки: identity-proto, identity-build, auction-build.";
     private static readonly TimeSpan PostgresReady = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan IdentityProtoDone = TimeSpan.FromSeconds(120);
     private static readonly TimeSpan IdentityBuildDone = TimeSpan.FromSeconds(240);
@@ -144,7 +154,7 @@ public sealed class ContourHost : IAsyncDisposable
 
         try
         {
-            await WaitAsync("запуск AppHost", BuilderStart, application.StartAsync, cancellationToken);
+            await WaitAsync("запуск AppHost", BuilderStart, application.StartAsync, cancellationToken, BuilderStartHint);
 
             var notifications = application.Services.GetRequiredService<ResourceNotificationService>();
 
@@ -281,7 +291,8 @@ public sealed class ContourHost : IAsyncDisposable
         string what,
         TimeSpan limit,
         Func<CancellationToken, Task> wait,
-        CancellationToken cancellationToken) =>
+        CancellationToken cancellationToken,
+        string hint = DefaultHint) =>
         WaitAsync<object?>(
             what,
             limit,
@@ -290,13 +301,15 @@ public sealed class ContourHost : IAsyncDisposable
                 await wait(token);
                 return null;
             },
-            cancellationToken);
+            cancellationToken,
+            hint);
 
     private static async Task<T> WaitAsync<T>(
         string what,
         TimeSpan limit,
         Func<CancellationToken, Task<T>> wait,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string hint = DefaultHint)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(limit);
@@ -310,7 +323,7 @@ public sealed class ContourHost : IAsyncDisposable
             throw new ContourNotReady(
                 $"{what}: не уложилось в {limit.TotalSeconds:0} с. " +
                 "Вывод ресурсов — выше в этом же логе, категория AppHost.Resources.*; " +
-                "первым делом смотри узлы сборки: identity-proto, identity-build, auction-build.");
+                hint);
         }
         catch (ContourFailure)
         {
