@@ -16,7 +16,7 @@ failed=0
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
-always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready"
+always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready check-delivery-facts"
 verify_deps=$(tr -d '\r' < "$root/justfile" | sed -n 's/^verify:[[:space:]]*//p')
 
 [ -n "$verify_deps" ] || { echo "no verify recipe in justfile" >&2; exit 1; }
@@ -98,6 +98,38 @@ assert_selects "achievements selects achievements" \
     "$always achievements-build achievements-test achievements-format-check achievements-images-check" apps/achievements/lib/achievements/application.ex
 mode="--full --deferred"
 assert_selects "full selection defers nothing" "" apps/auction/build.sbt
+
+# A justfile change with both versions of the file selects only the groups
+# whose recipes it can affect. The variants edit an LF copy of the justfile.
+tr -d '\r' < "$root/justfile" > "$scratch/justfile"
+justfile_variant() {
+    sed "$1" "$scratch/justfile" > "$scratch/justfile.$2"
+}
+justfile_variant 's/^# Сборка Aspire AppHost$/# Сборка Aspire AppHost, другими словами/' comment
+justfile_variant 's/^\(NOTIFICATIONS_UNIT_TEST_THRESHOLD := "\)[0-9]*"/\1999999"/' threshold
+justfile_variant 's/^\(    cd tools\/nats-tester && {{NATS_TESTER_PYTHON}} -m nats_tester.gate\)$/\1 --strict/' body
+justfile_variant 's/^\(verify: check-agent-tools\) /\1 check-mcp /' verify
+justfile_variant '1i set positional-arguments' setting
+for variant in comment threshold body verify setting; do
+    cmp -s "$scratch/justfile" "$scratch/justfile.$variant" && {
+        echo "justfile variant '$variant' changed nothing: its sed no longer matches the justfile" >&2
+        failed=1
+    }
+done
+assert_justfile() {
+    name=$1 variant=$2 expected=$3
+    mode="--full --justfile-before $scratch/justfile --justfile-after $scratch/justfile.$variant"
+    assert_selects "$name" "$expected" justfile
+}
+assert_justfile "a justfile comment selects only the cheap checks" comment "$always"
+assert_justfile "a test threshold selects only its component" threshold \
+    "$always notifications-contracts-check notifications-build notifications-test"
+assert_justfile "a recipe body selects its own group" body "$always nats-tester-check"
+assert_justfile "the verify recipe selects all of verify" verify "$verify_deps"
+assert_justfile "a setting selects all of verify" setting "$verify_deps"
+mode="--justfile-before $scratch/justfile --justfile-after $scratch/justfile.threshold"
+assert_selects "a heavy threshold leaves only the cheap checks locally" "$always" justfile
+assert_notice "a heavy threshold is named as left to CI" "уходит в CI: notifications"
 
 # Local selection: the default. Heavy groups leave the recipe list, are named
 # on stderr and come back by --deferred; light groups select as in full.

@@ -17,13 +17,15 @@
 #   unauthorized  declared, but the tool itself reports it cannot be used:
 #                 not logged in, not approved, disabled
 #   unverified    this check cannot see whether it is usable
+#   outdated      installed, but older than the version a component pins in
+#                 its .tool-versions
 # Level is `open` (without it the loop is not opened), `deliver` (the loop
 # opens, but no pull request comes out of it) or `optional`. Hosts are compared
 # on the first three columns: the detail may differ between machines.
 #
 # Exit code:
 #   0  every open and deliver tool is ok
-#   1  an open or deliver tool is missing or unauthorized
+#   1  an open or deliver tool is missing, unauthorized or outdated
 #   2  the check itself failed: unknown harness or a tool the check needs
 #   3  nothing is red, but an open or deliver tool is unverified. This is not
 #      green: the state was not seen, the same way a gate that stopped before
@@ -52,7 +54,7 @@ case $harness in
     *) echo "agent-ready: unknown harness '$harness'" >&2; usage ;;
 esac
 
-for tool in grep sed tr; do
+for tool in grep sed tr sort head basename dirname; do
     command -v "$tool" > /dev/null || { echo "agent-ready: $tool is not in PATH" >&2; exit 2; }
 done
 
@@ -67,7 +69,7 @@ report() {
     printf '%s\t%s\t%s\t%s\n' "$state" "$level" "$tool" "$detail"
     [ "$level" = optional ] && return 0
     case $state in
-        missing | unauthorized) red=yes ;;
+        missing | unauthorized | outdated) red=yes ;;
         unverified) unverified=yes ;;
     esac
 }
@@ -242,10 +244,63 @@ check_cli optional skillshare "proj- skills and subagent roles for claude and op
 check_cli optional lefthook "local commit-msg hook"
 check_cli optional aspire "Aspire MCP and the live gate"
 
+# Versions pinned in a component's .tool-versions. A tool that is absent is
+# named, but optional: only the gate of that component needs it, and the gate
+# names it itself. A tool older than the pin is red: it is installed, so
+# nothing else names it before the component's build fails after the work is
+# done. A newer one is named and passes. Only the tools whose version this
+# check can read are compared; any other entry is named unverified.
+tool_version() {
+    case $1 in
+        erlang) probe erl -noshell -eval 'io:fwrite("~s", [erlang:system_info(otp_release)]), halt().' 2> /dev/null ;;
+        elixir) probe elixir --version 2> /dev/null | sed -n 's/^Elixir \([0-9][0-9.]*\).*/\1/p' ;;
+    esac
+}
+
+# Compares dotted versions: prints the older of the two.
+older_version() {
+    printf '%s\n%s\n' "$1" "$2" | sort -t. -k1,1n -k2,2n -k3,3n -k4,4n | head -n 1
+}
+
+check_tool_versions() {
+    for pins in "$root"/apps/*/.tool-versions; do
+        [ -f "$pins" ] || continue
+        component=$(basename "$(dirname "$pins")")
+        while read -r tool pinned _; do
+            case $tool in "" | "#"*) continue ;; esac
+            # erlang 28.5.0.8 is compared by its OTP release, the only part
+            # the runtime reports; elixir 1.20.4-otp-28 by 1.20.4.
+            case $tool in
+                erlang) required=${pinned%%.*}; command=erl ;;
+                elixir) required=${pinned%%-*}; command=elixir ;;
+                *)
+                    report unverified optional "$tool" "pinned $pinned in apps/$component/.tool-versions; this check cannot read its version"
+                    continue ;;
+            esac
+            if ! command -v "$command" > /dev/null; then
+                report missing optional "$tool" "not in PATH; apps/$component/.tool-versions pins $pinned"
+                continue
+            fi
+            actual=$(tool_version "$tool")
+            if [ -z "$actual" ]; then
+                report unverified deliver "$tool" "$command did not report a version; apps/$component/.tool-versions pins $pinned"
+            elif [ "$actual" = "$required" ]; then
+                report ok deliver "$tool" "$actual as pinned in apps/$component/.tool-versions"
+            elif [ "$(older_version "$actual" "$required")" = "$actual" ]; then
+                report outdated deliver "$tool" "$actual is older than $pinned pinned in apps/$component/.tool-versions"
+            else
+                report ok deliver "$tool" "$actual is newer than $pinned pinned in apps/$component/.tool-versions"
+            fi
+        done < "$pins"
+    done
+}
+
+check_tool_versions
+
 echo "not checked: component tooling (just tools), push rights, Linear write access"
 
 if [ "$red" = yes ]; then
-    echo "agent-ready: not ready — see missing and unauthorized above"
+    echo "agent-ready: not ready — see missing, unauthorized and outdated above"
     exit 1
 fi
 if [ "$unverified" = yes ]; then

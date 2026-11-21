@@ -17,6 +17,15 @@
 #   --full         heavy groups are selected too, as CI selects them
 #   --deferred     prints the heavy groups the change hits instead of recipes,
 #                  on one line; they are the CI jobs a delivery waits for
+#   --justfile-before F, --justfile-after F
+#                  the justfile at the merge base and now; the fixture test
+#                  passes them with --paths, without --paths they come from git
+#
+# `justfile` is in every CI filter, and CI still starts every job on it. Here
+# it selects only the groups whose recipes the change can affect:
+# tools/verify/justfile-recipes.py names them from the two versions of the
+# file, so a comment or a test threshold does not turn the gate into the whole
+# of `verify`. Without both versions or without python3 it selects every group.
 #
 # By default the selection is local: heavy groups — JVM and .NET builds that
 # exhaust a laptop shared with other trees — are left to CI, and their names
@@ -37,7 +46,7 @@ workflow=${VERIFY_SELECT_WORKFLOW:-$root/.github/workflows/ci.yml}
 # Recipes per CI filter, in the order of `verify`. A filter of ci.yml missing
 # here fails the selection: a new CI job without local recipes is a decision,
 # not a default. `contour` is not part of `verify` and is skipped on purpose.
-always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready"
+always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready check-delivery-facts"
 groups="contracts identity hub-bot community-site-api bot-console auction-seed apphost meetups notifications auction achievements nats-tester gate-observer"
 skipped_filters="contour"
 # Groups that run only in CI unless --full. Each name is also the id of the
@@ -71,10 +80,17 @@ filters="$scratch/filters"
 full=0
 deferred_only=0
 paths_from=""
+justfile_before=""
+justfile_after=""
 while [ $# -gt 0 ]; do
     case $1 in
         --full) full=1 ;;
         --deferred) deferred_only=1 ;;
+        --justfile-before | --justfile-after)
+            [ -n "${2:-}" ] || { echo "select-recipes: $1 needs a file" >&2; exit 2; }
+            if [ "$1" = --justfile-before ]; then justfile_before=$2; else justfile_after=$2; fi
+            shift
+            ;;
         --paths)
             [ -n "${2:-}" ] || { echo "select-recipes: --paths needs a file" >&2; exit 2; }
             paths_from=$2
@@ -101,6 +117,30 @@ else
         git -c core.quotepath=off diff --name-only --no-renames "$base"
         git -c core.quotepath=off ls-files --others --exclude-standard
     } > "$paths"
+    if git cat-file -e "$base:justfile" 2> /dev/null; then
+        git show "$base:justfile" > "$scratch/justfile.before"
+        justfile_before="$scratch/justfile.before"
+        justfile_after="$root/justfile"
+    fi
+fi
+
+# Recipes a justfile change can affect, or "*" for all of them. A justfile
+# among the changed paths is then taken out of the path map, and its groups
+# are added by these recipes below.
+justfile_recipes="*"
+if grep -qx 'justfile' "$paths"; then
+    if [ -n "$justfile_before" ] && [ -n "$justfile_after" ] && command -v python3 > /dev/null; then
+        justfile_recipes=$(python3 "$root/tools/verify/justfile-recipes.py" "$justfile_before" "$justfile_after" | tr -d '\r') || {
+            echo "select-recipes: cannot read the justfile change" >&2
+            exit 1
+        }
+    else
+        echo "select-recipes: justfile changed, its recipes are not named — every group is selected" >&2
+    fi
+    if [ "$justfile_recipes" != "*" ]; then
+        grep -vx 'justfile' "$paths" > "$scratch/paths.rest" || true
+        mv "$scratch/paths.rest" "$paths"
+    fi
 fi
 
 [ -f "$workflow" ] || { echo "select-recipes: no workflow at $workflow" >&2; exit 1; }
@@ -178,6 +218,16 @@ hit=$(awk -F '\t' '
     }
     END { if (bad) exit 1; for (f in selected) print f }
 ' "$filters" "$paths") || { echo "select-recipes: cannot read the filters of $workflow" >&2; exit 1; }
+
+if [ "$justfile_recipes" != "*" ]; then
+    for group in $groups; do
+        for recipe in $(recipes_of "$group"); do
+            case " $justfile_recipes " in
+                *" $recipe "*) hit=$(printf '%s\n%s' "$hit" "$group"); break ;;
+            esac
+        done
+    done
+fi
 
 out=$always
 deferred=""

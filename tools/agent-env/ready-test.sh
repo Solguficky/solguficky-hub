@@ -17,7 +17,7 @@ set -eu
 root=$(git rev-parse --show-toplevel)
 check="$root/tools/agent-env/ready.sh"
 sh_path=$(command -v sh)
-utilities="grep sed tr"
+utilities="grep sed tr sort head basename dirname"
 failed=0
 
 scratch=$(mktemp -d)
@@ -30,6 +30,12 @@ mkdir -p "$declared/.rulesync" "$undeclared/.rulesync" "$commented/.rulesync"
 printf '{\n  "mcpServers": {\n    "linear": { "type": "http" }\n  }\n}\n' > "$declared/.rulesync/mcp.jsonc"
 printf '{\n  "mcpServers": {\n    "aspire": { "command": "aspire" }\n  }\n}\n' > "$undeclared/.rulesync/mcp.jsonc"
 printf '{\n  "mcpServers": {\n    // "linear": { "type": "http" },\n    "aspire": { "command": "aspire", "args": ["linear"] }\n  }\n}\n' > "$commented/.rulesync/mcp.jsonc"
+
+# A component that pins its toolchain, as apps/achievements does.
+pinned="$scratch/pinned"
+mkdir -p "$pinned/.rulesync" "$pinned/apps/otp"
+cp "$declared/.rulesync/mcp.jsonc" "$pinned/.rulesync/mcp.jsonc"
+printf 'erlang 28.5.0.8\nelixir 1.20.4-otp-28\nrebar 3.24.0\n' > "$pinned/apps/otp/.tool-versions"
 
 stub() {
     printf '#!/bin/sh\n%s\n' "$2" > "$1"
@@ -47,6 +53,8 @@ make_bin() {
     for tool in git just skillshare lefthook aspire; do
         stub "$bin/$tool" 'exit 0'
     done
+    stub "$bin/erl" 'printf "%s" "${STUB_OTP:-28}"'
+    stub "$bin/elixir" 'printf "Erlang/OTP 28 [erts-16.0]\n\nElixir %s (compiled with Erlang/OTP 28)\n" "${STUB_ELIXIR-1.20.4}"'
     # Offline and with a revoked token gh auth status prints the same failure;
     # only gh api tells them apart (seen live on 2026-09-26).
     stub "$bin/gh" '
@@ -169,6 +177,16 @@ expect 'gh is not installed' 1 "$(row missing deliver gh)" codex -- gh
 expect 'gh is logged out' 1 "$(row unauthorized deliver gh)" codex STUB_GH=out
 expect 'gh token is revoked' 1 "$(row unauthorized deliver gh)" codex STUB_GH=revoked
 expect 'optional aspire is not installed' 0 "$(row missing optional aspire)" codex -- aspire
+
+# Toolchains pinned by a component: older is red, absent is named but optional.
+expect 'pinned versions match' 0 "$(row ok deliver elixir)" codex AGENT_ENV_ROOT="$pinned"
+expect 'elixir older than the pin' 1 "$(row outdated deliver elixir)" codex AGENT_ENV_ROOT="$pinned" STUB_ELIXIR=1.19.1
+expect 'otp older than the pin' 1 "$(row outdated deliver erlang)" codex AGENT_ENV_ROOT="$pinned" STUB_OTP=27
+expect 'elixir newer than the pin' 0 "$(row ok deliver elixir)" codex AGENT_ENV_ROOT="$pinned" STUB_ELIXIR=1.21.0
+expect 'a minor version compares as a number' 0 "$(row ok deliver elixir)" codex AGENT_ENV_ROOT="$pinned" STUB_ELIXIR=1.100.0
+expect 'elixir is not installed' 0 "$(row missing optional elixir)" codex AGENT_ENV_ROOT="$pinned" -- elixir
+expect 'elixir reports no version' 3 "$(row unverified deliver elixir)" codex AGENT_ENV_ROOT="$pinned" STUB_ELIXIR=
+expect 'a pinned tool the check cannot read' 0 "$(row unverified optional rebar)" codex AGENT_ENV_ROOT="$pinned"
 
 expect 'unknown harness' 2 "unknown harness 'zed'" zed
 expect 'a utility of the check is missing' 2 'sed is not in PATH' codex -- sed

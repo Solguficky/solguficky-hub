@@ -25,6 +25,11 @@
 *.scala text eol=lf
 *.sbt text eol=lf
 
+# Классы nats-tester генерирует protoc с переводом строки LF. Без eol=lf
+# рабочее дерево Windows держит их в CRLF, и после `just nats-tester-proto`
+# изменёнными выглядят классы всех доменов, а не только тех, чья схема менялась.
+tools/nats-tester/nats_tester/generated/** text eol=lf
+
 # Версию JDK читает setup-java как содержимое файла целиком: хвостовой \r
 # из рабочего дерева Windows доехал бы до него частью номера версии.
 .java-version text eol=lf

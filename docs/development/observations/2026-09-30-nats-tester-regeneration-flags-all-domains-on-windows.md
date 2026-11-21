@@ -8,4 +8,5 @@
 - **Следующий сигнал:** на Windows после `just nats-tester-proto` в `git status` появляются сгенерированные классы домена, схему которого правка не трогала.
 - **Третий случай (2026-11-12):** [PER-746](https://linear.app/anticnvm/issue/per-746), [PR #710](https://github.com/Solguficky/solguficky-hub/pull/710), Orca worker эпика PER-740. Схема менялась только в `notifications/v1`, а после `just nats-tester-proto` `git status --short` показал 10 изменённых файлов. По `git diff --stat` в 8 из них поменялись только концы строк. Значимо менялся один `notifications_pb2.py`, остальное откатили `git checkout`. Правила `eol=lf` для `*.py` в `.gitattributes` по-прежнему нет.
 - **Правило из двух случаев:** сгенерированные классы nats-tester хранятся в рабочем дереве с LF — строка `tools/nats-tester/nats_tester/generated/** text eol=lf` в корневом `.gitattributes` рядом с правилами для Go, TypeScript и Scala, так что регенерация меняет только файлы доменов, схема которых изменилась.
-- **Статус:** вынесено на обсуждение
+- **Перенесено:** строка `tools/nats-tester/nats_tester/generated/** text eol=lf` в [.gitattributes](../../../.gitattributes). Формулировку утвердил владелец 2026-11-21.
+- **Статус:** переведено в правило.
