@@ -55,7 +55,8 @@ fact() {
 }
 
 # Case is spelled out in the patterns: -i does not fold Cyrillic in every
-# locale the check may run in.
+# locale the check may run in. For the same reason no pattern has a Cyrillic
+# range: GNU grep in the C locale rejects [а-я] as an invalid collation.
 has() {
     grep -Eq -- "$1" "$report"
 }
@@ -72,7 +73,7 @@ fact "review: specification" "the specification axis is not named" has '[Сс]п
 fact "review: correctness" "the correctness axis is not named" has '[Кк]орректност'
 # A heading alone is not a fact: the line names a result after a colon, or
 # says the review did not run.
-fact "external review" "neither its result after «Внешнее ревью:» nor «внешнее ревью не шло» with the reason" has '[Вв]нешн[а-я]* ревью( не шло|: *[^ ])'
+fact "external review" "neither its result after «Внешнее ревью:» nor «внешнее ревью не шло» with the reason" has '[Вв]нешн[^ ]* ревью( не шло|: *[^ ])'
 fact checkpoint "no output of just gate-observe plan" has 'вопрос plan@'
 fact "manual gate" "no gate-observe decided or ask output and no «решений гейта не было»" has 'вопрос (decided|ask)@|[Рр]ешений гейта не было'
 
