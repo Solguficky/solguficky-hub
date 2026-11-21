@@ -281,7 +281,14 @@ check_tool_versions() {
                 report missing optional "$tool" "not in PATH; apps/$component/.tool-versions pins $pinned"
                 continue
             fi
-            actual=$(tool_version "$tool")
+            # A probe that fails or prints something other than a version is
+            # unverified, not an exit of the whole check under `set -e`. Its
+            # stdin is closed: the loop reads the pins file from stdin, and a
+            # runtime that reads its own input would swallow the next lines.
+            actual=$(tool_version "$tool" < /dev/null) || actual=""
+            case $actual in
+                "" | *[!0-9.]*) actual="" ;;
+            esac
             if [ -z "$actual" ]; then
                 report unverified deliver "$tool" "$command did not report a version; apps/$component/.tool-versions pins $pinned"
             elif [ "$actual" = "$required" ]; then

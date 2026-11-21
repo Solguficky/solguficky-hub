@@ -53,7 +53,11 @@ make_bin() {
     for tool in git just skillshare lefthook aspire; do
         stub "$bin/$tool" 'exit 0'
     done
-    stub "$bin/erl" 'printf "%s" "${STUB_OTP:-28}"'
+    stub "$bin/erl" '
+case ${STUB_OTP:-28} in
+    broken) echo "erl: cannot load the runtime" >&2; exit 1 ;;
+    *) printf "%s" "${STUB_OTP:-28}" ;;
+esac'
     stub "$bin/elixir" 'printf "Erlang/OTP 28 [erts-16.0]\n\nElixir %s (compiled with Erlang/OTP 28)\n" "${STUB_ELIXIR-1.20.4}"'
     # Offline and with a revoked token gh auth status prints the same failure;
     # only gh api tells them apart (seen live on 2026-09-26).
@@ -185,6 +189,7 @@ expect 'otp older than the pin' 1 "$(row outdated deliver erlang)" codex AGENT_E
 expect 'elixir newer than the pin' 0 "$(row ok deliver elixir)" codex AGENT_ENV_ROOT="$pinned" STUB_ELIXIR=1.21.0
 expect 'a minor version compares as a number' 0 "$(row ok deliver elixir)" codex AGENT_ENV_ROOT="$pinned" STUB_ELIXIR=1.100.0
 expect 'elixir is not installed' 0 "$(row missing optional elixir)" codex AGENT_ENV_ROOT="$pinned" -- elixir
+expect 'a broken erl is unverified, not an exit of the check' 3 "$(row unverified deliver erlang)" codex AGENT_ENV_ROOT="$pinned" STUB_OTP=broken
 expect 'elixir reports no version' 3 "$(row unverified deliver elixir)" codex AGENT_ENV_ROOT="$pinned" STUB_ELIXIR=
 expect 'a pinned tool the check cannot read' 0 "$(row unverified optional rebar)" codex AGENT_ENV_ROOT="$pinned"
 
