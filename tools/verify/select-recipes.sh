@@ -25,7 +25,8 @@
 # it selects only the groups whose recipes the change can affect:
 # tools/verify/justfile-recipes.py names them from the two versions of the
 # file, so a comment or a test threshold does not turn the gate into the whole
-# of `verify`. Without both versions or without python3 it selects every group.
+# of `verify`. Without both versions, or when the parser does not run or fails,
+# it selects every group.
 #
 # By default the selection is local: heavy groups — JVM and .NET builds that
 # exhaust a laptop shared with other trees — are left to CI, and their names
@@ -129,11 +130,12 @@ fi
 # are added by these recipes below.
 justfile_recipes="*"
 if grep -qx 'justfile' "$paths"; then
-    if [ -n "$justfile_before" ] && [ -n "$justfile_after" ] && command -v python3 > /dev/null; then
-        justfile_recipes=$(python3 "$root/tools/verify/justfile-recipes.py" "$justfile_before" "$justfile_after" | tr -d '\r') || {
-            echo "select-recipes: cannot read the justfile change" >&2
-            exit 1
-        }
+    # The parser writes to a file and its own exit code is read: behind a
+    # pipe a python3 that cannot run (the WindowsApps alias) would leave an
+    # empty answer, and empty means "only comments changed".
+    if [ -n "$justfile_before" ] && [ -n "$justfile_after" ] \
+        && python3 "$root/tools/verify/justfile-recipes.py" "$justfile_before" "$justfile_after" > "$scratch/justfile.recipes" 2> /dev/null; then
+        justfile_recipes=$(tr -d '\r' < "$scratch/justfile.recipes")
     else
         echo "select-recipes: justfile changed, its recipes are not named — every group is selected" >&2
     fi

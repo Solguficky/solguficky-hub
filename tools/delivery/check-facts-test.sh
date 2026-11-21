@@ -55,6 +55,12 @@ expect 'no pull request link' 1 "$(printf 'missing\tpull request')" "$(without n
 expect 'no gate verdict' 1 "$(printf 'missing\tgate')" "$(without nogate 'EXIT=')"
 expect 'no review axes' 1 "$(printf 'missing\treview: correctness')" "$(without noaxes '^Ревью')"
 expect 'no external review' 1 "$(printf 'missing\texternal review')" "$(without noext 'Внешнее')"
+{ grep -v 'Внешнее' "$scratch/complete.md"; echo '## Внешнее ревью'; } > "$scratch/heading.md"
+expect 'an external review heading alone is not a result' 1 "$(printf 'missing\texternal review')" "$scratch/heading.md"
+{ grep -v 'Внешнее' "$scratch/complete.md"; echo 'Внешнее ревью:'; } > "$scratch/emptyext.md"
+expect 'an external review line without a result' 1 "$(printf 'missing\texternal review')" "$scratch/emptyext.md"
+{ grep -v 'Внешнее' "$scratch/complete.md"; echo 'Внешнее ревью не шло: codex не в PATH.'; } > "$scratch/norun.md"
+expect 'an external review that did not run is a fact' 0 'carries every fact' "$scratch/norun.md"
 expect 'no checkpoint observers' 1 "$(printf 'missing\tcheckpoint')" "$(without noplan 'plan@')"
 expect 'no manual gate line' 1 "$(printf 'missing\tmanual gate')" "$(without nomanual 'decided@')"
 expect 'no recon artifact' 1 "$(printf 'missing\trecon')" "$scratch/complete.md" PER-2

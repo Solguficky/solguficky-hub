@@ -127,6 +127,11 @@ assert_justfile "a test threshold selects only its component" threshold \
 assert_justfile "a recipe body selects its own group" body "$always nats-tester-check"
 assert_justfile "the verify recipe selects all of verify" verify "$verify_deps"
 assert_justfile "a setting selects all of verify" setting "$verify_deps"
+# A parser that cannot run or fails selects everything, never only the cheap
+# checks: an empty answer means "only comments changed".
+mode="--full --justfile-before $scratch/absent --justfile-after $scratch/justfile.threshold"
+assert_selects "a failed justfile parser selects all of verify" "$verify_deps" justfile
+assert_notice "a failed justfile parser is named" "every group is selected"
 mode="--justfile-before $scratch/justfile --justfile-after $scratch/justfile.threshold"
 assert_selects "a heavy threshold leaves only the cheap checks locally" "$always" justfile
 assert_notice "a heavy threshold is named as left to CI" "уходит в CI: notifications"

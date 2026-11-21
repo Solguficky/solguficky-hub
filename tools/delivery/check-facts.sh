@@ -19,7 +19,7 @@
 #   pull request  a GitHub pull request link
 #   gate          `EXIT=<code>` of the gate, or «гейт не оценил изменение»
 #   review        the three axes by name: стандарт…, спецификац…, корректност…
-#   external      «внешнее ревью» — its result or why it did not run
+#   external      «Внешнее ревью: <итог>» or «внешнее ревью не шло» with why
 #   checkpoint    the output of `just gate-observe plan` («вопрос plan@»)
 #   manual gate   the output of `gate-observe decided` or `ask`, or the line
 #                 «решений гейта не было»
@@ -70,7 +70,9 @@ fact gate "neither EXIT=<code> of the gate nor «гейт не оценил из
 fact "review: standards" "the standards axis is not named" has '[Сс]тандарт'
 fact "review: specification" "the specification axis is not named" has '[Сс]пецификац'
 fact "review: correctness" "the correctness axis is not named" has '[Кк]орректност'
-fact "external review" "neither its result nor «внешнее ревью не шло» with the reason" has '[Вв]нешн[а-я]* ревью'
+# A heading alone is not a fact: the line names a result after a colon, or
+# says the review did not run.
+fact "external review" "neither its result after «Внешнее ревью:» nor «внешнее ревью не шло» with the reason" has '[Вв]нешн[а-я]* ревью( не шло|: *[^ ])'
 fact checkpoint "no output of just gate-observe plan" has 'вопрос plan@'
 fact "manual gate" "no gate-observe decided or ask output and no «решений гейта не было»" has 'вопрос (decided|ask)@|[Рр]ешений гейта не было'
 
