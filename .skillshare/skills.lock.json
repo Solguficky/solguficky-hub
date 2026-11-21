@@ -3,7 +3,7 @@
   "skills": {
     "_aspire-skills": {
       "source": "https://github.com/microsoft/aspire-skills.git",
-      "commit": "a83ca78b9d35b8238f9c4fdba72cb779defe2a90"
+      "commit": "e529b608336cd41c1b1262aa76d00d9e4ef1bff8"
     },
     "akka-streams": {
       "source": "github.com/alexandru/skills/skills/akka-streams",
