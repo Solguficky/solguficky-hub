@@ -59,7 +59,7 @@ async function meetupOfMember() {
   const title = titleFor("Организаторы", creator.telegramUserId);
   await author.says("/start");
   await author.says("/meetups");
-  await author.presses("➕ Создать сходку");
+  await author.presses("✨ Создать");
   await fillsMeetupForm(author, title);
   await author.says("/meetups");
   await author.presses(listedAs(title));
