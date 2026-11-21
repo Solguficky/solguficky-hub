@@ -48,7 +48,9 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 # --- System packages ---------------------------------------------------------
 
-APT_PACKAGES="ca-certificates curl gnupg unzip git pkg-config libssl-dev libicu-dev python3 python3-pip python-is-python3"
+# python3-venv: `just nats-tester-tools` installs into a venv of the tree, and
+# without this package Debian and Ubuntu refuse `python -m venv` (no ensurepip).
+APT_PACKAGES="ca-certificates curl gnupg unzip git pkg-config libssl-dev libicu-dev python3 python3-pip python3-venv python-is-python3"
 apt_updated=no
 apt_install() {
   if [ "$apt_updated" = no ]; then
@@ -349,16 +351,13 @@ fi
 
 # --- Repository recipes ------------------------------------------------------
 
-# Debian marks the system Python externally managed (PEP 668); the image is
-# disposable, so nats-tester goes into it directly, as it did before.
-export PIP_BREAK_SYSTEM_PACKAGES=1
-
 log "Installing component tooling (just tools)"
 just tools
 
-# The recipes install into GOPATH/bin and ~/.local/bin; later shells of the
-# agent do not source this script, so the binaries are linked into PATH.
-for bin in "$GOBIN_DIR"/* "$HOME/.local/bin/nats-tester"; do
+# The recipes install into GOPATH/bin and, for nats-tester, into the venv of
+# this tree; later shells of the agent do not source this script, so the
+# binaries are linked into PATH.
+for bin in "$GOBIN_DIR"/* "$REPO_ROOT/tools/nats-tester/.venv/bin/nats-tester"; do
   if [ -x "$bin" ]; then
     $SUDO ln -sf "$bin" "/usr/local/bin/$(basename "$bin")"
   fi

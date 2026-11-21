@@ -21,12 +21,7 @@ CLI для ручной проверки сообщений на шине: пу�
 just nats-tester-tools
 ```
 
-Или напрямую:
-
-```bash
-cd tools/nats-tester
-python -m pip install -e .
-```
+Рецепт ставит пакет в venv своего рабочего дерева, `tools/nats-tester/.venv`, а не в общий site-packages пользователя: editable-установка там общая на все деревья и указывает на то, что поставило её последним. CLI лежит в этом venv — `.venv/bin/nats-tester` (на Windows `.venv\Scripts\nats-tester.exe`), либо активируйте окружение.
 
 Сгенерированные Protobuf-классы лежат в репозитории, поэтому `protoc` для установки не нужен. Он нужен только для регенерации.
 
@@ -191,11 +186,11 @@ nats-tester/
 
 ## Troubleshooting
 
-**`command not found: nats-tester`** — `just nats-tester-tools`, либо `$HOME/.local/bin` не в `PATH`.
+**`command not found: nats-tester`** — `just nats-tester-tools`, затем CLI из venv дерева: `tools/nats-tester/.venv/bin/nats-tester` или активированное окружение.
 
 **`Generated protobuf files not found`** — `just nats-tester-proto`, затем `just nats-tester-tools`.
 
-**`ImportError: cannot import name 'runtime_version'`** или **`VersionError: gencode ... runtime ...`** — рантайм `protobuf` старше закоммиченных классов. Их gencode проверяет версию рантайма на импорте, а `cli.py` импортирует классы на уровне модуля, поэтому падает любая команда, включая `list-types`. Нижняя граница объявлена в `pyproject.toml`: `pip install -e . --upgrade`. Тот же случай краснеет в `just nats-tester-check` и в джобе `nats-tester`.
+**`ImportError: cannot import name 'runtime_version'`** или **`VersionError: gencode ... runtime ...`** — рантайм `protobuf` старше закоммиченных классов. Их gencode проверяет версию рантайма на импорте, а `cli.py` импортирует классы на уровне модуля, поэтому падает любая команда, включая `list-types`. Нижняя граница объявлена в `pyproject.toml`: `.venv/bin/python -m pip install -e . --upgrade` из `tools/nats-tester` (на Windows — `.venv/Scripts/python.exe`). Тот же случай краснеет в `just nats-tester-check` и в джобе `nats-tester`.
 
 **`gencode` новее или старше вашего `protoc`** — регенерация требует `protoc` той линии, что объявленный рантайм `protobuf`: `protoc` 33.0 даёт gencode `6.33.0`. Версия закреплена в `justfile` (`PROTOC_VERSION`); релиз с [github.com/protocolbuffers/protobuf/releases](https://github.com/protocolbuffers/protobuf/releases).
 

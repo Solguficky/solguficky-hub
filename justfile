@@ -198,14 +198,32 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, Achievements, его формат и сверка картинок ачивок с шаблоном, nats-tester, наблюдатель ручного гейта и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify achievements-build achievements-test achievements-format-check achievements-images-check nats-tester-check gate-observer-check
+# Факты контура в отчёте шага 11 до его отправки: артефакт разведки, ссылка на
+# pull request, EXIT гейта, три оси и внешнее ревью, вывод наблюдателей plan и
+# ручного гейта. Отчёт по умолчанию — .work/<ID>/report.md. Исполнитель листа
+# эпика запускает её до worker_done. В verify не входит: проверяет отчёт сдачи,
+# а не дерево; её фикстуры — check-delivery-facts.
+# Факты контура в отчёте сдачи: код 0 — все на месте, 1 — названо, чего нет
+delivery-check id report="":
+    sh tools/delivery/check-facts.sh {{id}} {{report}}
+
+# Проверка фактов сдачи на фикстурах отчёта
+check-delivery-facts:
+    sh tools/delivery/check-facts-test.sh
+
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, проверка фактов сдачи на фикстурах, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, Achievements, его формат и сверка картинок ачивок с шаблоном, nats-tester, наблюдатель ручного гейта и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready check-delivery-facts contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify achievements-build achievements-test achievements-format-check achievements-images-check nats-tester-check gate-observer-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
 # поднимает его джобу в CI. Карта путей одна — джоба changes в ci.yml, её
-# читает tools/verify/select-recipes.sh. Правка justfile или ci.yml поднимает
-# все джобы, и здесь выбирается весь verify. Выбор печатается до прогона.
+# читает tools/verify/select-recipes.sh. Правка ci.yml поднимает все джобы, и
+# здесь выбирается весь verify. Правка justfile в CI тоже поднимает все, а
+# здесь — только группы рецептов, которые она задевает: строки рецепта,
+# переменные, которые он читает, и рецепты, от которых он зависит; комментарии
+# вне рецептов не выбирают ничего (tools/verify/justfile-recipes.py). Правка
+# `set`, `verify` или нераспознанной строки выбирает весь verify. Выбор
+# печатается до прогона.
 # Тяжёлые группы — сборки на JVM и .NET, переменная heavy в селекторе —
 # локально не идут: их печатает строка «уходит в CI», и проверяют джобы CI с
 # теми же именами. Тогда зелёный локальный прогон выходит с кодом 3 —
@@ -230,8 +248,22 @@ verify-changed:
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
 test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration auction-test-browser achievements-test-integration contour-test contour-bot-test
 
+# Рецепты компонентов запускаются независимо: отказ одного не отменяет
+# следующие, в конце печатается список упавших, и код возврата тогда 1.
+# Зависимостями рецепта они не стали намеренно — just обрывает цепочку на
+# первой упавшей, и свежее дерево оставалось без тулинга соседних компонентов.
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools achievements-tools achievements-images-tools nats-tester-tools
+tools:
+    #!/usr/bin/env sh
+    failed=""
+    for recipe in identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools achievements-tools achievements-images-tools nats-tester-tools; do
+        echo "tools: $recipe"
+        "{{ just_executable() }}" "$recipe" || failed="${failed:+$failed }$recipe"
+    done
+    if [ -n "$failed" ]; then
+        echo "tools: упали $failed" >&2
+        exit 1
+    fi
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -826,9 +858,15 @@ achievements-image:
 # CI идёт закреплённым protoc. Схемы для генерации — NATS_PROTO_FILES в
 # nats_tester/proto_sources.py, версии — PYTHON_VERSION и PROTOC_VERSION выше.
 
-# Зависимости инструмента; ходит в сеть, поэтому в `tools`, а не в `verify`
+# Python окружения инструмента, относительно tools/nats-tester. Окружение своё
+# у каждого рабочего дерева: editable-установка в общий site-packages
+# пользователя указывала на дерево, поставившее пакет последним, и
+# `nats-tester-tools` в другом дереве падал на чужом `nats-tester.exe`.
+NATS_TESTER_PYTHON := if os_family() == "windows" { ".venv/Scripts/python.exe" } else { ".venv/bin/python" }
+
+# Зависимости инструмента в venv дерева `tools/nats-tester/.venv`; ходит в сеть, поэтому в `tools`, а не в `verify`
 nats-tester-tools:
-    cd tools/nats-tester && python -m pip install -e .
+    cd tools/nats-tester && python -m venv .venv && {{NATS_TESTER_PYTHON}} -m pip install -e .
 
 # Перегенерация закоммиченных классов; нужен protoc закреплённой версии
 nats-tester-proto:
@@ -836,7 +874,8 @@ nats-tester-proto:
 
 # Классы импортируются, состав генерации совпадает со схемами, реестр не врёт
 nats-tester-check:
-    cd tools/nats-tester && python -m nats_tester.gate
+    @test -x tools/nats-tester/{{NATS_TESTER_PYTHON}} || { echo "nats-tester-check: нет venv дерева — сначала just nats-tester-tools" >&2; exit 1; }
+    cd tools/nats-tester && {{NATS_TESTER_PYTHON}} -m nats_tester.gate
 
 # --- gate-observer (Go) ----------------------------------------------------
 #

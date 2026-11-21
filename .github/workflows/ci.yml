@@ -725,7 +725,7 @@ jobs:
         run: sh tools/env/install-just.sh >> "$GITHUB_PATH"
       # Установка не только для проверки: она же подтверждает, что пакет
       # собирается из pyproject и ставится.
-      - run: python -m pip install -e tools/nats-tester
+      - run: just nats-tester-tools
       - run: just nats-tester-check
       # protoc ставится из релиза, а не пакетом дистрибутива: gencode
       # закоммиченных классов проверяет версию рантайма на импорте, и protoc
@@ -795,6 +795,8 @@ jobs:
         run: sh tools/verify/select-recipes-test.sh
       - name: Agent readiness check names every failing tool
         run: sh tools/agent-env/ready-test.sh
+      - name: Delivery check names every missing fact of the loop
+        run: sh tools/delivery/check-facts-test.sh
 
   # Уровень L2: среду поднимает AppHost через Aspire.Hosting.Testing, набор ею
   # не владеет. Джоба намеренно НЕ входит в обязательные проверки ветки: по

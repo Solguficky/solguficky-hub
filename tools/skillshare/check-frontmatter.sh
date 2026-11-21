@@ -24,7 +24,21 @@ UNIVERSAL_SKILLS='.agents/skills'
 CLAUDE_SKILLS='.claude/skills'
 
 is_ignored() {
-    [ -f "$SKILLIGNORE" ] && grep -Fxq "$1" "$SKILLIGNORE"
+    [ -f "$SKILLIGNORE" ] && tr -d '\r' < "$SKILLIGNORE" | grep -Fxq "$1"
+}
+
+# A line ending in `/` disables a whole path of the source, the way sync reads
+# it: `_aspire-skills/.github/` drops the mirror of the Aspire pack. On Windows
+# that mirror is a tree of symlinks checked out as text files holding the link
+# target, so without this the check failed on files sync never lays out.
+is_ignored_path() {
+    [ -f "$SKILLIGNORE" ] || return 1
+    case $1 in "$SKILLS_ROOT"/*) ;; *) return 1 ;; esac
+    relative=${1#"$SKILLS_ROOT"/}
+    for prefix in $(tr -d '\r' < "$SKILLIGNORE" | grep '/$'); do
+        case $relative in "$prefix"*) return 0 ;; esac
+    done
+    return 1
 }
 
 # The tree is walked with shell globs, not `find`. Called from PowerShell, `sh`
@@ -59,7 +73,7 @@ IFS='
 '
 for skill_file in $found; do
     name=$(basename "$(dirname "$skill_file")")
-    if is_ignored "$name"; then
+    if is_ignored "$name" || is_ignored_path "$skill_file"; then
         continue
     fi
     set -- "$@" "$skill_file"

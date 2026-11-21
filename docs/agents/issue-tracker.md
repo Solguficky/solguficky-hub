@@ -22,7 +22,7 @@
 Что считается занятой задачей и когда ставится отметка, задаёт [контур исполнения](../development/agent-execution-loop.md#захват-задачи); здесь — чем читается каждый сигнал.
 
 - `delegate` и статус — из ответа `get_issue`: поле `delegate` и `statusType`.
-- Открытый pull request — `gh pr list --state open --search "PER-N"` и вложения задачи в том же ответе.
+- Открытый pull request — по ветке и по заголовку: `gh pr list --state open --head feature/PER-N` и `gh pr list --state open --search "PER-N in:title"`, плюс вложения задачи в том же ответе. Свободный поиск по номеру в тексте признаком захвата не считается: он находит чужие pull request, где номер только упомянут.
 - Отметка захвата — `save_issue` с `state: started`. Дальше статус не двигается: его ведёт Linear по связанному pull request либо владелец.
 - Отчёт и вопрос по задаче — `save_comment` на неё.
 
