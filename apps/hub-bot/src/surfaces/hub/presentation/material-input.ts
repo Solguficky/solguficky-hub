@@ -16,6 +16,8 @@ const MaterialInputSchema = z.object({
     .optional(),
 });
 
+const CaptionSchema = z.object({ caption: z.string().optional() });
+
 const ConfirmationSchema = z.object({
   text: z.string().optional(),
   caption: z.string().optional(),
@@ -80,6 +82,22 @@ const CommentIdPattern = /^[1-9]\d*$/;
 
 /** Предел названия материала — у вопроса в личке и у `/attach` в чате. */
 export const materialTitleLimit = 200;
+
+/**
+ * Кандидат на название из подписи сообщения-источника (PER-912): непустая
+ * подпись не длиннее предела годится как title, а длинная отдаётся усечённой
+ * как clipped для подсказки шага названия. Пустой подписи кандидата нет.
+ */
+export function materialCaptionCandidate(raw: unknown): {
+  title?: string;
+  clipped?: string;
+} {
+  const parsed = CaptionSchema.safeParse(raw);
+  const caption = parsed.success ? parsed.data.caption?.trim() : undefined;
+  if (caption === undefined || caption === "") return {};
+  if (caption.length <= materialTitleLimit) return { title: caption };
+  return { clipped: caption.slice(0, materialTitleLimit) };
+}
 
 /**
  * Пересылка из группы чат и номер сообщения не несёт, поэтому сообщение чата

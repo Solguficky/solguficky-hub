@@ -248,6 +248,7 @@ import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
   isTypedText,
   type PendingMaterialSource as MaterialInputSource,
+  materialCaptionCandidate,
   materialConfirmationHtml,
   materialRefusal,
   materialTitleLimit,
@@ -1723,6 +1724,36 @@ async function handleMessage(
           };
           return;
         }
+        // Подпись источника — сразу название: отдельного вопроса нет, и
+        // подтверждение уходит тем же путём, что после введённого названия.
+        // Длинная подпись не становится названием, но показывается в вопросе
+        // усечённой до предела (PER-912).
+        const caption = materialCaptionCandidate(ctx.message);
+        if (caption.title !== undefined) {
+          await answered();
+          await sendMaterialConfirmation(
+            ctx,
+            pending.meetupId,
+            pending.version,
+            caption.title,
+            source,
+          );
+          outcome = {
+            level: "info",
+            message: "material confirmation sent",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+            identity_id: identity.person.identityId,
+          };
+          return;
+        }
+        const titleQuestionBase =
+          "Как назвать материал в карточке? Напиши короткое название.";
+        const titleQuestion =
+          caption.clipped === undefined
+            ? titleQuestionBase
+            : `${titleQuestionBase} Подпись: ${caption.clipped}`;
         await askQuestion(
           ctx,
           questions,
@@ -1733,7 +1764,7 @@ async function handleMessage(
             source,
             telegramUserId: pending.telegramUserId,
           },
-          "Как назвать материал в карточке? Напиши короткое название.",
+          titleQuestion,
           replyId,
         );
         outcome = {
@@ -3941,7 +3972,7 @@ async function handleCallback(
             version: current.meetup.version,
             telegramUserId: ctx.from?.id ?? 0,
           },
-          `Перешли сообщение из канала, пришли ссылку на сообщение чата или отправь фотографию либо документ для сходки «${current.meetup.title}». Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
+          `Перешли сообщение из канала, пришли ссылку на сообщение чата или отправь фотографию либо документ для сходки «${current.meetup.title}». Название можно написать подписью к фото, документу или пересланному сообщению. Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
         );
       } else {
         const materialId = tokenToUuid(action.materialToken);

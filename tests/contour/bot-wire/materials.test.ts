@@ -89,8 +89,10 @@ describe("материалы сходки", () => {
     await organizer.opensLink(meetupIdFromStartLink(organizer.sees()));
     await organizer.presses("📎 Материалы (0)");
     await organizer.presses("Прикрепить материал");
-    await organizer.sendsPhoto();
-    await organizer.says("Афиша");
+    await organizer.sendsPhoto("jpeg", "Афиша");
+    // Подпись стала названием: подтверждение пришло без вопроса о названии.
+    expect(organizer.sees()).toContain("Прикрепить материал?");
+    expect(organizer.sees()).toContain("Название: Афиша");
     await organizer.presses("✔️ Да, прикрепить");
     expect(organizer.sees()).toContain("1. Афиша");
 
