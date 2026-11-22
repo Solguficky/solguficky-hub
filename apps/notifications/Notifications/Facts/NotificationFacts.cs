@@ -122,6 +122,9 @@ public static class NotificationFacts
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string OrganizerDismissedType = "organizer_dismissed";
 
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string OrganizerRosterChangedType = "organizer_roster_changed";
+
     /// <summary>
     /// Единственный набор, выдача которого — повод факта <see cref="PresetGranted" />
     /// (PER-468): назначение администратором. Набор <c>maintainer</c> выдаёт
@@ -317,6 +320,32 @@ public static class NotificationFacts
 
     private static Guid OrganizerOf(MeetupFact fact) =>
         fact.OrganizerId ?? throw new ArgumentException("the occasion names no person", nameof(fact));
+
+    /// <summary>
+    /// «Состав организаторов сходки изменился» каждому оставшемуся организатору
+    /// (PER-930, ADR-076, дополнение 2026-11-22). Повод тот же, что у вести
+    /// снятому; адрес получателя называет вызывающий. Кто вышел, в факт не
+    /// попадает: имя ушедшего не передаётся (п. 10), а число — записи состава по
+    /// снимку события.
+    /// </summary>
+    public static Notification OrganizerRosterChanged(
+        Guid notificationId,
+        Guid recipientId,
+        MeetupFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        Require(fact, MeetupOccasion.OrganizerDismissed);
+
+        var notification = Addressed(notificationId, recipientId, fact, now, notAfter);
+        notification.OrganizerRosterChanged = new V1.OrganizerRosterChanged
+        {
+            Meetup = fact.Card.Clone(),
+            OrganizerCount = (uint)fact.Organizers.Count,
+        };
+
+        return notification;
+    }
 
     /// <summary>Напоминание о сходке одному получателю.</summary>
     /// <param name="taskId">Сработавшее задание — повод факта.</param>

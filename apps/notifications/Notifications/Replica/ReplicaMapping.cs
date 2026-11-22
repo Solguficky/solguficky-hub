@@ -186,6 +186,22 @@ public static class ReplicaMapping
             organizerId = parsedOrganizer;
         }
 
+        // Состав снимка — адресаты вести оставшимся организаторам (PER-930,
+        // ADR-076, дополнение 2026-11-22). Реплика его не хранит, поэтому он идёт
+        // из события, как карточка. Запись, не разбираемая как идентификатор,
+        // делает событие противоречащим контракту: состав — это внутренние
+        // идентификаторы Identity, и число в вести считается по его записям.
+        var organizers = new List<Guid>(state.Organizers.Count);
+        foreach (var member in state.Organizers)
+        {
+            if (!Guid.TryParse(member, out var parsedMember))
+            {
+                return new Decoded.Poison($"state.organizers holds '{member}', which is not a UUID");
+            }
+
+            organizers.Add(parsedMember);
+        }
+
         return new Decoded.Fact(new MeetupFact(
             Guid.Parse(message.EventId),
             meetupId,
@@ -203,6 +219,7 @@ public static class ReplicaMapping
                 firstPublishedAt,
                 schedule),
             Card(state),
+            organizers,
             occasion,
             message.HasRequestId ? message.RequestId : null,
             material,

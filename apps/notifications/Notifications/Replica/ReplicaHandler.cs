@@ -60,7 +60,11 @@ public sealed class ReplicaHandler(
         telemetry.Record(feed.Source, outcomeName, outcome == ReplicaOutcome.Applied ? fact.OccurredAt : null);
         if (application.Facts is { } produced)
         {
-            facts.Record(produced.Type, produced.Facts);
+            foreach (var part in produced.All())
+            {
+                facts.Record(part.Type, part.Facts);
+            }
+
             facts.RecordWithdrawn(produced.WithdrawalReason, produced.Withdrawn ?? []);
         }
 
@@ -123,6 +127,13 @@ public sealed class ReplicaHandler(
             fields["occasion"] = produced.Type;
             fields["facts_created"] = produced.Facts.Created;
             fields["facts_suppressed"] = produced.Facts.Suppressed;
+            if (produced.Others.Count > 0)
+            {
+                fields["other_occasions"] = string.Join(",", produced.Others.Select(other => other.Type));
+                fields["other_facts_created"] = produced.Others.Sum(other => other.Facts.Created);
+                fields["other_facts_suppressed"] = produced.Others.Sum(other => other.Facts.Suppressed);
+            }
+
             if (produced.Withdrawn is { } withdrawn)
             {
                 fields["facts_withdrawn"] = withdrawn.Sum(facts => facts.Count);

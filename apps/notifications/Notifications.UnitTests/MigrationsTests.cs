@@ -96,6 +96,7 @@ public class MigrationsTests
             "invoice_payment_clock",
             "organizer_roster",
             "meetup_unsubscription",
+            "organizer_roster_notice",
         ]);
 
         var main = names.IndexOf("orleans_main");

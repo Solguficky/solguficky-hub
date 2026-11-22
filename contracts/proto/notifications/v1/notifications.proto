@@ -241,6 +241,14 @@ message Notification {
     // meetup. Sent only to the removed person: a subscription and a category are
     // not required. Leaving the roster by one's own will produces no fact.
     OrganizerDismissed organizer_dismissed = 44;
+
+    // One person left the organizer roster of a meetup: they left by their own
+    // will or an administrator removed them. Sent to every organizer who stayed
+    // in the roster, except the one whose command made the change; a
+    // subscription and a category are not required. The person who left gets
+    // organizer_dismissed when another removed them and nothing when they left
+    // by their own will. A change that emptied the roster produces no fact.
+    OrganizerRosterChanged organizer_roster_changed = 45;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -1015,6 +1023,18 @@ message OrganizerAppointed {
 // person. Who removed them is deliberately absent.
 message OrganizerDismissed {
   MeetupCard meetup = 1;
+}
+
+// One person left the organizer roster of the meetup. Who left is deliberately
+// absent: the fact says that the roster changed, and the message names no one.
+// The card is the state of the meetup at the change, so that the channel can
+// lead to it.
+message OrganizerRosterChanged {
+  MeetupCard meetup = 1;
+
+  // How many people the roster holds after the change, counted by the snapshot
+  // of the causing event. At least one: an emptied roster produces no fact.
+  uint32 organizer_count = 2;
 }
 
 // The person's active circle changed between guest and member.
