@@ -259,6 +259,7 @@ import {
   tokenToUuid,
   uuidToToken,
 } from "./meetup-deep-link.js";
+import { meetupFieldEditQuestion } from "./meetup-field-question.js";
 import { canOrganizeMeetups, withMeetupPeople } from "./meetup-people.js";
 import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
 import {
@@ -885,6 +886,10 @@ type PendingQuestion = {
   // День вопроса «Ввести время» (PER-907): ответ — только `ЧЧ:ММ`, момент
   // собирается из этого дня и ответа.
   day?: string;
+  // Показанный в вопросе исходник значения (PER-911): скопированный без правок
+  // ответ принимается как есть. Живёт только в карте вопросов: в `callback_data`
+  // он не помещается, а после рестарта процесса его нет.
+  source?: string;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -2857,10 +2862,41 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      // Описание хранится HTML Telegram с разметкой ответа (PER-902). Предел —
-      // по видимому тексту: теги в предел сообщения Telegram не идут.
+      // Описание хранится HTML Telegram с разметкой ответа (PER-902). Исходник,
+      // показанный в вопросе правки и вставленный без правок, принимается как
+      // есть (PER-911, M1); всё остальное идёт обычным переводом entity в HTML.
       const description = pending.field === "description";
-      if (description && [...ctx.message.text].length > descriptionLimit) {
+      const copied =
+        description &&
+        pending.mode === "edit" &&
+        pending.source !== undefined &&
+        ctx.message.text === pending.source;
+      // «Ввести время»: ответ — только время выбранного дня (PER-907), момент
+      // собирается здесь и уходит форме в том же виде, что и написанный текст.
+      let value = copied ? (pending.source as string) : ctx.message.text;
+      if (description && !copied) {
+        value = descriptionHtml(ctx.message.text, ctx.message.entities);
+      } else if (!description && pending.day !== undefined) {
+        const time = parseTimeOfDay(ctx.message.text);
+        if (time === undefined) {
+          await refuseAnswer(ctx, questions, pending, timeFormatHint, replyId);
+          outcome = {
+            level: "info",
+            message: "meetup time rejected",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+          };
+          return;
+        }
+        value = momentOf(pending.day, time);
+      }
+      // Предел — по видимому тексту: теги и сущности HTML в сообщение Telegram
+      // не идут. Так вставленный исходник с разметкой не отвергается зря.
+      if (
+        description &&
+        [...visibleDescription(value)].length > descriptionLimit
+      ) {
         await refuseAnswer(
           ctx,
           questions,
@@ -2876,26 +2912,6 @@ async function handleMessage(
           meetup_id: pending.meetupId,
         };
         return;
-      }
-      // «Ввести время»: ответ — только время выбранного дня (PER-907), момент
-      // собирается здесь и уходит форме в том же виде, что и написанный текст.
-      let value = ctx.message.text;
-      if (description) {
-        value = descriptionHtml(ctx.message.text, ctx.message.entities);
-      } else if (pending.day !== undefined) {
-        const time = parseTimeOfDay(ctx.message.text);
-        if (time === undefined) {
-          await refuseAnswer(ctx, questions, pending, timeFormatHint, replyId);
-          outcome = {
-            level: "info",
-            message: "meetup time rejected",
-            result: "ok",
-            use_case: useCase,
-            meetup_id: pending.meetupId,
-          };
-          return;
-        }
-        value = momentOf(pending.day, time);
       }
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
@@ -13960,24 +13976,27 @@ async function renderFormResult(
       await refuseAnswer(ctx, questions, pending, result.error);
       return;
     }
-    const ask = formPrompts[result.field];
-    // Текущее описание показывается с разметкой (PER-902): вопрос уходит HTML.
-    if (
-      result.kind === "edit-ask" &&
-      result.field === "description" &&
-      result.meetup.description !== ""
-    ) {
+    // Правка названия, места и описания показывает текущее значение копируемым
+    // блоком (PER-911). Создание и правка даты остаются как были.
+    if (result.kind === "edit-ask" && result.field !== "schedule") {
+      const value = result.meetup[result.field];
+      const source =
+        result.field === "description" ? plainDescription(value) : value;
+      const question = meetupFieldEditQuestion(result.field, value, source);
       await askQuestion(
         ctx,
         questions,
-        pending,
-        `Сейчас: ${plainDescription(result.meetup.description)}\n${escapeHtml(ask)}`,
+        question.source === undefined
+          ? pending
+          : { ...pending, source: question.source },
+        question.text,
         undefined,
         undefined,
-        "HTML",
+        question.format,
       );
       return;
     }
+    const ask = formPrompts[result.field];
     await askQuestion(
       ctx,
       questions,

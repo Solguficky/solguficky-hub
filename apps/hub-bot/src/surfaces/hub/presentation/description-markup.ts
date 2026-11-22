@@ -189,7 +189,8 @@ export function visibleDescription(stored: string): string {
     .join("");
 }
 
-function unescapeHtml(html: string): string {
+/** Обратное `escapeHtml` преобразование для уже показанного исходника. */
+export function unescapeHtml(html: string): string {
   return html
     .replaceAll("&lt;", "<")
     .replaceAll("&gt;", ">")
