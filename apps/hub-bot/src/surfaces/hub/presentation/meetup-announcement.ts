@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { GrammyError } from "grammy";
+import { uuidV7Of } from "../../../core/uuid-v7.js";
 import { checkBroadcastBody } from "../application/broadcasts.js";
 import { fingerprint } from "../application/fingerprint.js";
-import { uuidV7Of } from "../../../core/uuid-v7.js";
 import { escapeHtml } from "./screens/kit.js";
 
 // Анонс сходки (PER-925, ADR-087): пост бота-участника в чате сообщества и
@@ -61,7 +61,8 @@ export const noRightsDescription =
 
 export function communityRightsError(cause: unknown): boolean {
   return (
-    cause instanceof GrammyError && cause.description.includes(noRightsDescription)
+    cause instanceof GrammyError &&
+    cause.description.includes(noRightsDescription)
   );
 }
 

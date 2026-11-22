@@ -1,49 +1,284 @@
 import { GrammyError } from "grammy";
-import { describe, expect, it } from "vitest";
+import type { Update } from "grammy/types";
+import { describe, expect, it, vi } from "vitest";
 import {
-  announcementBodyCheck,
-  announcementKey,
-  announcementMaterialId,
-  announcementPostText,
-  announcementPrint,
-  communityMessageLink,
-  communityRightsError,
-  createAnnouncementPosts,
-} from "./meetup-announcement.js";
+  botInfo,
+  createHarness,
+  type RecordedCall,
+} from "../../../../testkit/harness.js";
+import type { AccessRight } from "../../../auction-ui/index.js";
+import { noopTracing } from "../../../core/tracing.js";
+import type { ExecuteRequest, ExecuteResult } from "../application/types.js";
+import type { MeetupSnapshot } from "../meetups/port.js";
+import type { CommunityChat } from "./community-chat.js";
+import { announcementMaterialId } from "./meetup-announcement.js";
+import { uuidToToken } from "./meetup-deep-link.js";
+import { announceMeetupData } from "./parse-callback.js";
 
-const meetupId = "01800000-0000-7000-8000-000000000001";
+// Анонс сходки (PER-925): сценарии на харнесс без Telegram. Проверяют вход по
+// кругу прав и состоянию сходки, пост с подписью и кнопкой, материал
+// `message-link`, защиту от повтора и сведение после сбоя между шагами.
 
-describe("анонс сходки в чат сообщества", () => {
-  it("ссылка на пост собирается из супергруппы и номера сообщения", () => {
-    expect(communityMessageLink(-1001234567890, 42)).toBe(
-      "https://t.me/c/1234567890/42",
+const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
+const communityChatId = -1001234567890;
+const memberRights: readonly AccessRight[] = [
+  "access-hub",
+  "place-bids",
+  "organize-meetups",
+];
+const body = "Сходка в пятницу!";
+
+function meetupOf(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
+  return {
+    id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+    title: "Настолки",
+    description: "Берём свои игры",
+    venue: "Циферблат",
+    lifecycle: "planned",
+    visibility: "visible",
+    author: "0192f0a0-0000-7000-8000-00000000a001",
+    organizers: [resolvedId],
+    version: 1,
+    materials: [],
+    ...overrides,
+  };
+}
+
+type SetupOptions = {
+  rights?: readonly AccessRight[];
+  withChat?: boolean;
+  initial?: MeetupSnapshot;
+  failAttach?: boolean | "once";
+  respond?: (method: string, payload: unknown) => unknown;
+};
+
+function setup(options: SetupOptions = {}) {
+  const rights = options.rights ?? memberRights;
+  let meetup = options.initial ?? meetupOf();
+  const attached: string[] = [];
+  const attachRequests: ExecuteRequest[] = [];
+  const execute = vi.fn(
+    async (request: ExecuteRequest): Promise<ExecuteResult> => {
+      if (request.intent === "view-meetup") {
+        return { kind: "meetup-card", meetup };
+      }
+      if (request.intent === "attach-material") {
+        attachRequests.push(request);
+        if (
+          options.failAttach === true ||
+          (options.failAttach === "once" && attachRequests.length === 1)
+        ) {
+          return { kind: "dependency-rejected", reason: "unavailable" };
+        }
+        attached.push(request.material.id);
+        meetup = {
+          ...meetup,
+          materials: [...meetup.materials, request.material],
+        };
+        return { kind: "material-attached", meetup };
+      }
+      return { kind: "meetup-not-found" };
+    },
+  );
+  const chat: CommunityChat = {
+    chatId: communityChatId,
+    registerCommands: async () => {},
+    gate: async (_ctx, next) => next(),
+  };
+  const harness = createHarness(
+    {
+      resolve: async () => ({
+        kind: "resolved" as const,
+        identityId: resolvedId,
+        rights,
+        blocked: false,
+      }),
+    },
+    { execute },
+    [],
+    noopTracing(),
+    undefined,
+    undefined,
+    {
+      ...(options.withChat === false ? {} : { communityChat: chat }),
+      ...(options.respond === undefined ? {} : { respond: options.respond }),
+    },
+  );
+  return {
+    ...harness,
+    attached,
+    attachRequests,
+    meetup: () => meetup,
+    token: uuidToToken(meetup.id),
+  };
+}
+
+function callbackUpdate(
+  data: string,
+  message: Record<string, unknown> = {},
+): Update {
+  return {
+    update_id: 2,
+    callback_query: {
+      id: "callback-1",
+      chat_instance: "chat-1",
+      from: { id: 42, is_bot: false, first_name: "tester" },
+      data,
+      message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        ...message,
+      },
+    },
+  } as Update;
+}
+
+function replyUpdate(text: string, replyMessageId: number): Update {
+  return {
+    update_id: 3,
+    message: {
+      message_id: 10,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: 42, is_bot: false, first_name: "Организатор" },
+      text,
+      reply_to_message: {
+        message_id: replyMessageId,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: botInfo.id, is_bot: true, first_name: "stub" },
+        text: "Текст анонса",
+      },
+    },
+  } as Update;
+}
+
+function findData(calls: readonly RecordedCall[], prefix: string): string {
+  for (const call of calls) {
+    const rows = (
+      call.payload as {
+        reply_markup?: { inline_keyboard?: { callback_data?: string }[][] };
+      }
+    ).reply_markup?.inline_keyboard;
+    for (const button of rows?.flat() ?? []) {
+      if (button.callback_data?.startsWith(prefix) === true) {
+        return button.callback_data;
+      }
+    }
+  }
+  throw new Error(`button ${prefix} not found`);
+}
+
+function lastQuestionId(calls: readonly RecordedCall[]): number {
+  const index = calls.findLastIndex((call) => call.method === "sendMessage");
+  return 100 + index + 1;
+}
+
+async function openConfirmation(harness: ReturnType<typeof setup>) {
+  await harness.bot.handleUpdate(
+    callbackUpdate(announceMeetupData(harness.token)),
+  );
+  const questionId = lastQuestionId(harness.calls);
+  await harness.bot.handleUpdate(replyUpdate(body, questionId));
+  return findData(harness.calls, "v1:ma:cf:");
+}
+
+function previewMessage(): Record<string, unknown> {
+  return {
+    text: "Подтверждение",
+    reply_to_message: {
+      message_id: 5,
+      date: 100,
+      from: { id: botInfo.id, is_bot: true, first_name: "stub" },
+      text: body,
+    },
+  };
+}
+
+describe("анонс сходки в чате сообщества", () => {
+  it("вход на карточке есть только у того, кто правит материалы, и только у опубликованной неотменённой сходки", async () => {
+    const hasEntry = (calls: readonly RecordedCall[]): boolean =>
+      calls.some((call) => JSON.stringify(call.payload).includes("v1:ma:an:"));
+    const allowed = setup();
+    await allowed.bot.handleUpdate(callbackUpdate(`v1:view:${allowed.token}`));
+    expect(hasEntry(allowed.calls)).toBe(true);
+
+    for (const variant of [
+      { rights: [] },
+      { initial: meetupOf({ visibility: "hidden" }) },
+      { initial: meetupOf({ lifecycle: "cancelled" }) },
+      { withChat: false },
+    ]) {
+      const h = setup(variant);
+      await h.bot.handleUpdate(callbackUpdate(`v1:view:${h.token}`));
+      expect(hasEntry(h.calls)).toBe(false);
+    }
+  });
+
+  it("пост уходит от бота с подписью и кнопкой в бот, материал ведёт на него", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+
+    const post = h.calls.find(
+      (call) =>
+        call.method === "sendMessage" &&
+        (call.payload as { chat_id?: number }).chat_id === communityChatId,
     );
-    expect(communityMessageLink(-12345, 7)).toBe("https://t.me/c/12345/7");
-  });
-
-  it("id материала детерминирован и различает ключи", () => {
-    const first = announcementMaterialId(meetupId, "key000000001");
-    expect(announcementMaterialId(meetupId, "key000000001")).toBe(first);
-    expect(announcementMaterialId(meetupId, "key000000002")).not.toBe(first);
-    expect(announcementMaterialId("other", "key000000001")).not.toBe(first);
-  });
-
-  it("пост несёт подпись организатора и экранированный текст", () => {
-    expect(announcementPostText("Иван <Иванов>", "Сходка & <друзья>")).toBe(
-      "<b>Иван &lt;Иванов&gt;:</b>\n\nСходка &amp; &lt;друзья&gt;",
+    expect(post).toBeDefined();
+    const payload = post?.payload as {
+      text?: string;
+      reply_markup?: { inline_keyboard: { text: string; url?: string }[][] };
+    };
+    expect(payload.text).toContain("tester");
+    expect(payload.text).toContain(body);
+    expect(payload.reply_markup?.inline_keyboard.flat()[0]?.url).toContain(
+      "?start=m_",
+    );
+    expect(h.attachRequests).toHaveLength(1);
+    const request = h.attachRequests[0];
+    if (request?.intent !== "attach-material")
+      throw new Error("no attach request");
+    expect(request.material.source).toEqual({
+      kind: "message-link",
+      url: expect.stringMatching(/^https:\/\/t\.me\/c\/1234567890\/[1-9]\d*$/),
+    });
+    expect(request.material.id).toBe(
+      announcementMaterialId(h.meetup().id, confirm.split(":")[5] ?? ""),
     );
   });
 
-  it("отпечаток текста короток и следует за текстом", () => {
-    expect(announcementPrint("привет")).toMatch(/^[0-9a-z]{5}$/);
-    expect(announcementPrint("привет")).toBe(announcementPrint("привет"));
+  it("двойное нажатие, повтор после таймаута и повторная доставка update не дают второго поста и материала", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    const update = callbackUpdate(confirm, previewMessage());
+    await h.bot.handleUpdate(update);
+    await h.bot.handleUpdate(update);
+    await h.bot.handleUpdate({ ...update, update_id: 99 });
+
+    const posts = h.calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        (call.payload as { chat_id?: number }).chat_id === communityChatId,
+    );
+    expect(posts).toHaveLength(1);
+    expect(h.attached).toHaveLength(1);
   });
 
-  it("ключ подтверждения короток", () => {
-    expect(announcementKey()).toMatch(/^[A-Za-z0-9_-]{12}$/);
+  it("подделанная кнопка без чата сообщества ничего не публикует", async () => {
+    const h = setup({ withChat: false });
+    await h.bot.handleUpdate(callbackUpdate(announceMeetupData(h.token)));
+    expect(h.attached).toHaveLength(0);
+    expect(
+      h.calls.some(
+        (call) =>
+          (call.payload as { chat_id?: number }).chat_id === communityChatId,
+      ),
+    ).toBe(false);
   });
 
-  it("отказ по правам чата распознаётся по описанию Telegram", () => {
+  it("отказ Telegram по правам чата даёт отказ и не прикрепляет материал", async () => {
     const refusal = new GrammyError(
       "Bad Request: not enough rights to send text messages to the chat",
       {
@@ -54,31 +289,43 @@ describe("анонс сходки в чат сообщества", () => {
       "sendMessage",
       {},
     );
-    expect(communityRightsError(refusal)).toBe(true);
-    expect(communityRightsError(new Error("network"))).toBe(false);
+    const h = setup({
+      respond: (method, payload) => {
+        if (
+          method === "sendMessage" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          throw refusal;
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(h.attachRequests).toHaveLength(0);
+    expect(
+      h.records.some(
+        (record) => record.message === "meetup announcement denied by telegram",
+      ),
+    ).toBe(true);
   });
 
-  it("память поста хранит номер по ключу и имеет предел", () => {
-    const posts = createAnnouncementPosts(2);
-    expect(posts.posted("a")).toBeUndefined();
-    posts.remember("a", 101);
-    expect(posts.posted("a")).toBe(101);
-    posts.remember("a", 102);
-    expect(posts.posted("a")).toBe(102);
-    posts.remember("b", 103);
-    posts.remember("c", 104);
-    expect(posts.posted("a")).toBeUndefined();
-    expect(posts.posted("c")).toBe(104);
-  });
-
-  it("текст анонса проверяется теми же пределами, что и рассылка", () => {
-    expect(announcementBodyCheck("  анонс  ")).toEqual({
-      kind: "ok",
-      body: "анонс",
-    });
-    expect(announcementBodyCheck("   ")).toEqual({ kind: "empty" });
-    expect(announcementBodyCheck("x".repeat(4097))).toEqual({
-      kind: "too-long",
-    });
+  it("сбой записи материала сводится повтором без второго поста", async () => {
+    const h = setup({ failAttach: "once" });
+    const confirm = await openConfirmation(h);
+    const update = callbackUpdate(confirm, previewMessage());
+    await h.bot.handleUpdate(update);
+    expect(h.attached).toHaveLength(0);
+    expect(h.attachRequests).toHaveLength(1);
+    // Повтор после сбоя: тот же ключ, тот же пост, материал записывается.
+    await h.bot.handleUpdate({ ...update, update_id: 100 });
+    const posts = h.calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        (call.payload as { chat_id?: number }).chat_id === communityChatId,
+    );
+    expect(posts).toHaveLength(1);
+    expect(h.attached).toHaveLength(1);
+    expect(h.attachRequests).toHaveLength(2);
   });
 });

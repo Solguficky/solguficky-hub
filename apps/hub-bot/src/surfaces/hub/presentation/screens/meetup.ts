@@ -23,6 +23,7 @@ import type {
 } from "../../meetups/port.js";
 import { plainDescription, richDescription } from "../description-markup.js";
 import { uuidToToken } from "../meetup-deep-link.js";
+import { announceMeetupData } from "../parse-callback.js";
 import { auctionCancelConsequence, auctionStateLine } from "./auction-stage.js";
 import {
   buttonText,
@@ -495,6 +496,11 @@ export type CardView = {
    */
   manageable: boolean;
   /**
+   * Вход «Анонс в чат» (PER-925): чат сообщества задан, сходка опубликована и
+   * не отменена, а смотрящий правит её материалы.
+   */
+  announce?: boolean;
+  /**
    * Смотрящий — администратор: скрытая сходка возвращает в его «Скрытые».
    * `false` — организатору, в «Сходки». Нет — как администратору.
    */
@@ -564,6 +570,9 @@ export function cardScreen(view: CardView): ShownScreen {
   // Auction убирает только её.
   keyboard.text(extensionsLabel, extensionsData(token));
   nextRow(keyboard);
+  if (view.announce === true) {
+    keyboard.text("Анонс в чат", announceMeetupData(token)).row();
+  }
   // Кнопка подписки рисуется только тогда, когда Notifications ответил:
   // состояние на ней — факт, а не заглушка. Настройки сходки решают, что
   // присылать по подписке, поэтому без подписки их входа нет. Когда

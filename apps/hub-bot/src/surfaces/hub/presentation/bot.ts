@@ -262,6 +262,17 @@ import {
   nextPhotoNumber,
 } from "./material-photo.js";
 import {
+  type AnnouncementPosts,
+  announcementBodyCheck,
+  announcementKey,
+  announcementMaterialId,
+  announcementPostText,
+  announcementPrint,
+  communityMessageLink,
+  communityRightsError,
+  createAnnouncementPosts,
+} from "./meetup-announcement.js";
+import {
   meetupStartLink,
   tokenToUuid,
   uuidToToken,
@@ -274,11 +285,14 @@ import {
   telegramTextLimit,
 } from "./notification-message.js";
 import {
+  announceMeetupData,
   applyData,
   auctionFaqData,
   type CallbackAction,
   type CardCursor,
   type CommunityPlace,
+  cancelAnnouncementData,
+  confirmAnnouncementData,
   consoleAnnouncementAskData,
   consoleAnnouncementData,
   consoleAskData,
@@ -964,6 +978,14 @@ type PendingPublishMoment = {
 // Текст рассылки ждёт ответа на вопрос, как название материала. Дальше он
 // живёт уже не здесь, а в сообщении предпросмотра: запись снимается, как только
 // кадр подтверждения отправлен.
+// Текст анонса сходки (PER-925) ждёт ответа на вопрос, как текст рассылки.
+// Дальше он живёт в сообщении предпросмотра, на которое отвечает кадр подтверждения.
+type PendingMeetupAnnouncement = {
+  kind: "meetup-announcement-body";
+  meetupId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingBroadcastBody = {
   kind: "broadcast-body";
   audience: BroadcastAudience;
@@ -1187,6 +1209,7 @@ type HubPendingInput =
   | PendingChannelLabel
   | PendingMaterialInput
   | PendingMaterialTitle
+  | PendingMeetupAnnouncement
   | PendingBroadcastBody
   | PendingLot
   | PendingConsoleWeek
@@ -1294,6 +1317,8 @@ type UpdateContext = ShellContext & {
   today?: CommunityToday;
   // Пояс сообщества: в нём карточка сходки называет срок торгов аукциона.
   communityTimeZone?: string;
+  // Чат сообщества задан: карточка опубликованной сходки несёт «Анонс в чат».
+  announceEnabled?: boolean;
   // Telegram отверг карточку с постерами, и она ушла без них: причина едет в
   // запись границы, иначе деградация оператору не видна.
   postersRejected?: string;
@@ -1388,6 +1413,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     );
   }
   const questions = new Map<string, PendingInput>();
+  const announcementPosts = createAnnouncementPosts();
   const materialAlbums = createMaterialAlbums();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
   const lotPhotos = runtime.lotPhotos ?? createLotPhotos();
@@ -1468,6 +1494,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
+    ctx.announceEnabled = runtime.communityChat !== undefined;
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
     if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
@@ -1526,7 +1553,14 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     await ctx.answerCallbackQuery().catch(() => undefined);
   });
   bot.on("callback_query:data", (ctx) =>
-    handleCallback(ctx, runtime, questions, lotPhotos, materialAlbums),
+    handleCallback(
+      ctx,
+      runtime,
+      questions,
+      announcementPosts,
+      lotPhotos,
+      materialAlbums,
+    ),
   );
   bot.on("message", (ctx) =>
     handleMessage(
@@ -2086,6 +2120,98 @@ async function handleMessage(
       outcome = {
         level: "info",
         message: "material confirmation sent",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: pending.meetupId,
+        identity_id: identity.person.identityId,
+      };
+      return;
+    }
+    if (replyId !== undefined && pending?.kind === "meetup-announcement-body") {
+      useCase = "send_broadcast";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign meetup announcement answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      const checked = announcementBodyCheck(ctx.message?.text ?? "");
+      if (checked.kind !== "ok") {
+        await refuseAnswer(
+          ctx,
+          questions,
+          pending,
+          checked.kind === "empty"
+            ? "Анонс не может быть пустым. Пришли текст ещё раз ответом на вопрос."
+            : checked.kind === "too-long"
+              ? "Анонс длиннее 4096 знаков — Telegram такой не примет. Сократи его и пришли ещё раз."
+              : "В тексте есть запрещённый символ. Пришли анонс ещё раз.",
+          replyId,
+        );
+        outcome = {
+          level: "info",
+          message: "meetup announcement body rejected",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
+      // Версию читаем перед кадром подтверждения: она едет в кнопке, чтобы
+      // сходку, изменившуюся за время набора текста, человек выбрал заново.
+      const current = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "view-meetup",
+        meetupId: pending.meetupId,
+        ...rpcCall(ctx, useCase),
+      });
+      if (current.kind !== "meetup-card") {
+        await showFrame(
+          ctx,
+          "broadcast-result",
+          "Сходку не удалось перечитать. Пришли текст анонса ещё раз ответом на вопрос.",
+          exitToCard(uuidToToken(pending.meetupId)),
+          "new",
+        );
+        outcome = screenBoundary(current, {
+          ok: ["meetup-card"],
+          okMessage: "meetup announcement body reread",
+          rejectedMessage: "meetup announcement body reread rejected",
+          useCase,
+          meetupId: pending.meetupId,
+        });
+        return;
+      }
+      await sendAnnouncementConfirmation(
+        ctx,
+        pending.meetupId,
+        current.meetup.version,
+        checked.body,
+      );
+      await answered();
+      outcome = {
+        level: "info",
+        message: "meetup announcement preview sent",
         result: "ok",
         use_case: useCase,
         meetup_id: pending.meetupId,
@@ -3468,6 +3594,7 @@ async function handleCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
+  announcementPosts: AnnouncementPosts,
   lotPhotos: LotPhotos,
   materialAlbums: ReturnType<typeof createMaterialAlbums>,
 ): Promise<void> {
@@ -5677,6 +5804,119 @@ async function handleCallback(
       });
       return;
     }
+    if (action.kind === "announce-meetup") {
+      const chat = runtime.communityChat;
+      if (chat === undefined) {
+        await showRefusal(
+          ctx,
+          "Чат сообщества не задан, поэтому анонс опубликовать нельзя.",
+          exitToCard(action.token),
+        );
+        outcome = {
+          level: "warn",
+          message: "meetup announcement entry lacks community chat",
+          result: "error",
+          use_case: useCase,
+          error_category: "invariant",
+          error: "community_chat_missing",
+        };
+        return;
+      }
+      const current = await runtime.dispatcher.execute({
+        identity: person,
+        intent: "view-meetup",
+        meetupId: tokenToUuid(action.token),
+        ...rpcCall(ctx, useCase),
+      });
+      if (current.kind !== "meetup-card") {
+        await renderMeetupCard(
+          ctx,
+          current,
+          true,
+          runtime.presentation ?? "rich",
+        );
+        outcome = screenBoundary(current, {
+          ok: ["meetup-card"],
+          okMessage: "meetup announcement entry reread",
+          rejectedMessage: "meetup announcement entry rejected",
+          useCase,
+          meetupId: tokenToUuid(action.token),
+        });
+        return;
+      }
+      if (
+        current.viewer?.manages !== true ||
+        current.meetup.visibility !== "visible" ||
+        current.meetup.lifecycle === "cancelled"
+      ) {
+        await showRefusal(
+          ctx,
+          "Анонсировать можно только опубликованную, не отменённую сходку, материалами которой ты управляешь.",
+          exitToCard(action.token),
+        );
+        outcome = {
+          level: "info",
+          message: "meetup announcement entry rejected",
+          result: "ok",
+          use_case: useCase,
+          identity_id: person.identityId,
+        };
+        return;
+      }
+      await askQuestion(
+        ctx,
+        questions,
+        {
+          kind: "meetup-announcement-body",
+          meetupId: current.meetup.id,
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        screenText(
+          "Анонс в чат",
+          `Напиши текст анонса сходки «${meetupTitleLabel(current.meetup.title)}».`,
+          "Бот опубликует его в чате сообщества от себя с твоей подписью и кнопкой к сходке, затем добавит пост в «Материалы».",
+          "Я покажу предпросмотр и спрошу подтверждение.",
+        ),
+        undefined,
+        undefined,
+        "HTML",
+      );
+      outcome = {
+        level: "info",
+        message: "meetup announcement body requested",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: current.meetup.id,
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (action.kind === "cancel-meetup-announcement") {
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText("Анонс не опубликован. Текст никуда не ушёл."),
+        keyboard: exitToCard(action.token),
+        format: "HTML",
+      });
+      outcome = {
+        level: "info",
+        message: "meetup announcement cancelled",
+        result: "ok",
+        use_case: useCase,
+      };
+      return;
+    }
+    if (action.kind === "confirm-meetup-announcement") {
+      outcome = await publishMeetupAnnouncement(
+        ctx,
+        runtime,
+        announcementPosts,
+        person,
+        action,
+        useCase,
+      );
+      return;
+    }
     if (
       action.kind === "begin-meetup-broadcast" ||
       action.kind === "begin-community-broadcast"
@@ -7112,6 +7352,295 @@ async function sendBroadcastConfirmation(
       }),
     },
   );
+}
+
+// Анонс сходки (PER-925): текст живёт в сообщении предпросмотра, кнопка несёт
+// ключ действия и отпечаток текста. Повтор той же кнопки после таймаута и
+// повторная доставка update несут тот же ключ, поэтому материал выводится из
+// него, а пост, уже отправленный до сбоя записи материала, — из памяти процесса.
+
+/** Текст анонса отдельным сообщением и кадр подтверждения под ним. */
+async function sendAnnouncementConfirmation(
+  ctx: UpdateContext,
+  meetupId: string,
+  version: number,
+  body: string,
+): Promise<void> {
+  const preview = await ctx.reply(body);
+  const token = uuidToToken(meetupId);
+  await ctx.reply(
+    screenText(
+      "Анонс в чат",
+      "Выше — текст, который увидят в чате сообщества.",
+      "Бот опубликует его от себя с твоей подписью и кнопкой к сходке, затем добавит пост в «Материалы» сходки.",
+      "Опубликовать?",
+    ),
+    {
+      reply_parameters: { message_id: preview.message_id },
+      parse_mode: "HTML",
+      ...screenMark("meetup-announcement-confirm"),
+      reply_markup: confirmKeyboard({
+        yes: "Да, опубликовать",
+        yesData: confirmAnnouncementData(
+          token,
+          version,
+          announcementKey(),
+          announcementPrint(body),
+        ),
+        noData: cancelAnnouncementData(token),
+        irreversible: true,
+      }),
+    },
+  );
+}
+
+function announcementRetry(action: {
+  token: string;
+  version: number;
+  key: string;
+  print: string;
+}): ShownScreen {
+  return {
+    id: "meetup-announcement-confirm",
+    text: outcomeText(
+      "Не получилось прикрепить анонс как материал. Повтори нажатие: второй пост не уйдёт.",
+    ),
+    format: "HTML",
+    keyboard: confirmKeyboard({
+      yes: "Да, повторить",
+      yesData: confirmAnnouncementData(
+        action.token,
+        action.version,
+        action.key,
+        action.print,
+      ),
+      noData: cancelAnnouncementData(action.token),
+      irreversible: true,
+    }),
+  };
+}
+
+/**
+ * Публикация анонса: пост в чат сообщества, затем материал `message-link`.
+ * Шаги не транзакционны, поэтому номер поста запоминается до записи материала,
+ * а id материала выводится из ключа подтверждения (ADR-087, п. 4).
+ */
+async function publishMeetupAnnouncement(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  posts: AnnouncementPosts,
+  person: Person,
+  action: { token: string; version: number; key: string; print: string },
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const chat = runtime.communityChat;
+  if (chat === undefined) {
+    await showRefusal(
+      ctx,
+      "Чат сообщества не задан, поэтому анонс опубликовать нельзя.",
+      exitToCard(action.token),
+    );
+    return {
+      level: "warn",
+      message: "meetup announcement lacks community chat",
+      result: "error",
+      use_case: useCase,
+      error_category: "invariant",
+      error: "community_chat_missing",
+    };
+  }
+  const preview = parsePreviewText(
+    ctx.callbackQuery?.message,
+    ctx.me.id,
+    action.print,
+  );
+  if (preview === undefined) {
+    await showRefusal(
+      ctx,
+      "Этот предпросмотр устарел. Открой сходку и напиши анонс заново.",
+      exitToCard(action.token),
+    );
+    return {
+      level: "info",
+      message: "meetup announcement preview stale",
+      result: "ok",
+      use_case: useCase,
+    };
+  }
+  const meetupId = tokenToUuid(action.token);
+  const current = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-meetup",
+    meetupId,
+    ...rpcCall(ctx, useCase),
+  });
+  if (current.kind !== "meetup-card") {
+    await renderMeetupCard(ctx, current, true, runtime.presentation ?? "rich");
+    return screenBoundary(current, {
+      ok: ["meetup-card"],
+      okMessage: "meetup announcement reread",
+      rejectedMessage: "meetup announcement reread rejected",
+      useCase,
+      meetupId,
+    });
+  }
+  if (
+    current.viewer?.manages !== true ||
+    current.meetup.visibility !== "visible" ||
+    current.meetup.lifecycle === "cancelled"
+  ) {
+    await showRefusal(
+      ctx,
+      "Анонсировать можно только опубликованную, не отменённую сходку, материалами которой ты управляешь.",
+      exitToCard(action.token),
+    );
+    return {
+      level: "info",
+      message: "meetup announcement rejected",
+      result: "ok",
+      use_case: useCase,
+      meetup_id: meetupId,
+      identity_id: person.identityId,
+    };
+  }
+  const materialId = announcementMaterialId(meetupId, action.key);
+  const attached = (): boolean =>
+    current.meetup.materials.some((material) => material.id === materialId);
+  if (attached()) {
+    await showScreen(ctx, {
+      id: "outcome",
+      text: outcomeText("Этот анонс уже опубликован и добавлен в «Материалы»."),
+      keyboard: exitToCard(action.token),
+      format: "HTML",
+    });
+    return {
+      level: "info",
+      message: "meetup announcement repeated",
+      result: "ok",
+      use_case: useCase,
+      meetup_id: meetupId,
+      identity_id: person.identityId,
+    };
+  }
+  if (current.meetup.version !== action.version) {
+    await showRefusal(
+      ctx,
+      "Сходка изменилась с того момента, как ты написал анонс. Открой её заново и повтори.",
+      exitToCard(action.token),
+    );
+    return {
+      level: "info",
+      message: "meetup announcement conflict",
+      result: "ok",
+      use_case: useCase,
+      meetup_id: meetupId,
+    };
+  }
+  let messageId = posts.posted(action.key);
+  if (messageId === undefined) {
+    try {
+      const posted = await ctx.api.sendMessage(
+        chat.chatId,
+        announcementPostText(
+          ctx.from?.first_name ?? "Организатор",
+          preview.text,
+        ),
+        {
+          ...screenMark("meetup-announcement-post"),
+          parse_mode: "HTML",
+          reply_markup: new InlineKeyboard().url(
+            "Открыть сходку ↗",
+            meetupStartLink(ctx.me.username, meetupId),
+          ),
+        },
+      );
+      messageId = posted.message_id;
+    } catch (cause) {
+      if (communityRightsError(cause)) {
+        await showRefusal(
+          ctx,
+          "Бот не может писать в чат сообщества: у участников закрыто право отправлять сообщения. Анонс не опубликован, материал не добавлен.",
+          exitToCard(action.token),
+        );
+        return {
+          level: "warn",
+          message: "meetup announcement denied by telegram",
+          result: "error",
+          use_case: useCase,
+          meetup_id: meetupId,
+          identity_id: person.identityId,
+          error_category: "authorization",
+          error: "telegram_no_rights",
+        };
+      }
+      await showScreen(ctx, announcementRetry(action));
+      return {
+        level: "warn",
+        message: "meetup announcement post failed",
+        result: "error",
+        use_case: useCase,
+        meetup_id: meetupId,
+        identity_id: person.identityId,
+        error_category: "dependency_unavailable",
+        error: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
+    posts.remember(action.key, messageId);
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "attach-material",
+    meetupId,
+    material: {
+      id: materialId,
+      title: `Анонс сходки «${meetupTitleLabel(current.meetup.title)}»`,
+      source: {
+        kind: "message-link",
+        url: communityMessageLink(chat.chatId, messageId),
+      },
+    },
+    expectedVersion: action.version,
+    ...rpcCall(ctx, useCase),
+  });
+  if (result.kind === "material-attached" || result.kind === "conflict") {
+    // Конфликт приходит с перечитанным снимком: материал мог записаться до
+    // таймаута, и повтор не должен ни писать его заново, ни публиковать второй пост.
+    const success =
+      result.kind === "material-attached" ||
+      result.meetup.materials.some((material) => material.id === materialId);
+    if (success) {
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText(
+          "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки.",
+        ),
+        keyboard: exitToCard(action.token),
+        format: "HTML",
+      });
+      return {
+        level: "info",
+        message: "meetup announcement published",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: meetupId,
+        identity_id: person.identityId,
+      };
+    }
+  }
+  await showScreen(ctx, announcementRetry(action));
+  return {
+    level: "warn",
+    message: "meetup announcement material failed",
+    result: "error",
+    use_case: useCase,
+    meetup_id: meetupId,
+    identity_id: person.identityId,
+    error_category:
+      result.kind === "dependency-rejected" && retryable(result)
+        ? "dependency_unavailable"
+        : "invariant",
+    error: result.kind,
+  };
 }
 
 // Отказ Notifications отвечает кадром из принятого набора: E-01 по праву, E-05
@@ -14116,6 +14645,13 @@ async function renderMeetupCard(
       people: result.people,
       subscribed: result.subscribed,
       manageable: result.viewer?.manages ?? false,
+      // Анонс (PER-925, ADR-087 п. 2): тот же круг, что правит материалы, и
+      // только сходка, которую видит весь чат. Без чата входа нет.
+      announce:
+        ctx.announceEnabled === true &&
+        (result.viewer?.manages ?? false) &&
+        result.meetup.visibility === "visible" &&
+        result.meetup.lifecycle !== "cancelled",
       administrator: result.viewer?.administrator ?? false,
       presentation,
       today: communityToday(ctx),
@@ -15012,6 +15548,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         token: uuidToToken(pending.meetupId),
         origin: pending.origin,
       };
+    case "meetup-announcement-body":
+      return {
+        kind: "meetup-announcement",
+        token: uuidToToken(pending.meetupId),
+      };
     case "broadcast-body":
       return pending.audience.kind === "meetup"
         ? { kind: "broadcast", token: uuidToToken(pending.audience.meetupId) }
@@ -15278,6 +15819,13 @@ function pendingOf(
       };
     case "material-title":
       return undefined;
+    case "meetup-announcement":
+      return {
+        kind: "meetup-announcement-body",
+        meetupId: tokenToUuid(step.token),
+        telegramUserId,
+        expiresAt,
+      };
     case "broadcast":
       return {
         kind: "broadcast-body",
@@ -15508,6 +16056,8 @@ function cancelTarget(step: QuestionStep): ScreenAction {
         token: step.token,
         origin: step.origin,
       };
+    case "meetup-announcement":
+      return { kind: "view-meetup", token: step.token };
     case "broadcast":
       return step.token === undefined
         ? { kind: "manage-menu" }
@@ -15739,6 +16289,8 @@ function reopenData(step: QuestionStep): string {
     case "material-source":
     case "material-title":
       return materialsAddData(step.origin, step.token);
+    case "meetup-announcement":
+      return announceMeetupData(step.token);
     case "broadcast":
       return step.token === undefined ? "v1:bc:c" : `v1:bc:m:${step.token}`;
     case "username":
@@ -15834,6 +16386,8 @@ function answerParent(step: QuestionStep): Parent {
     case "material-source":
     case "material-title":
       return toMaterials(step.token, step.origin);
+    case "meetup-announcement":
+      return toCard(step.token);
     case "broadcast":
       return step.token === undefined ? toManage : toMeetupManage(step.token);
     case "username":
@@ -16131,6 +16685,9 @@ function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
 
 function callbackUseCase(
   kind:
+    | "announce-meetup"
+    | "confirm-meetup-announcement"
+    | "cancel-meetup-announcement"
     | "home"
     | "apply"
     | "settings"
@@ -16398,6 +16955,9 @@ function callbackUseCase(
       return "update_meetup";
     case "open-material-file":
       return "view_meetup";
+    case "announce-meetup":
+    case "confirm-meetup-announcement":
+    case "cancel-meetup-announcement":
     case "begin-meetup-broadcast":
     case "begin-community-broadcast":
     case "confirm-meetup-broadcast":

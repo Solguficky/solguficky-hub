@@ -804,6 +804,17 @@ type PlainAction =
   // Токен — сходка, с карточки которой рассылку начали: по нему «Нет»
   // возвращает к ней; у объявления сообществу токена нет.
   | { kind: "cancel-broadcast"; token?: string }
+  // Анонс сходки (PER-925): вход с карточки, подтверждение поста с ключом
+  // действия и отпечатком текста, и отказ от предпросмотра.
+  | { kind: "announce-meetup"; token: string }
+  | {
+      kind: "confirm-meetup-announcement";
+      token: string;
+      version: number;
+      key: string;
+      print: string;
+    }
+  | { kind: "cancel-meetup-announcement"; token: string }
   | { kind: "notify-global" }
   // Настройки уведомлений аукциона (PER-552, PER-539, PER-645): экран, режим
   // частоты, выключатели анонса финала и «перебили» в живом финале —
@@ -976,6 +987,9 @@ export type QuestionStep =
   // принимается только по карте вопросов в памяти процесса; кнопка возвращает
   // к материалам.
   | { kind: "material-title"; token: string; origin: MaterialsOrigin }
+  // Анонс сходки в чат сообщества (PER-925): текст вопроса живёт в сообщении,
+  // токен сходки едет в кнопке, чтобы «Отмена» вернула к той же карточке.
+  | { kind: "meetup-announcement"; token: string }
   | { kind: "broadcast"; token?: string }
   | { kind: "username" }
   // Ник назначаемого администратора (PER-521).
@@ -2298,6 +2312,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ms:${step.token}:${step.version}${step.origin === "draft" ? ":d" : ""}`;
     case "material-title":
       return `v1:q:mt:${step.token}${step.origin === "draft" ? ":d" : ""}`;
+    case "meetup-announcement":
+      return `v1:q:ma:${step.token}`;
     case "broadcast":
       return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
     case "username":
@@ -2616,6 +2632,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   // `parts[3]` и домен `manage`, а глобальный кадр токена не несёт вовсе.
   if (parts[1] === "notify") {
     return parseNotify(parts);
+  }
+  if (parts[1] === "ma") {
+    return parseMeetupAnnouncement(parts);
   }
   if (parts[1] === "bc") {
     return parseBroadcast(parts);
@@ -3657,6 +3676,9 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (parts.length === 3 && parts[2] === "cl") return { kind: "channel-label" };
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return undefined;
+  if (parts.length === 4 && parts[2] === "ma") {
+    return { kind: "meetup-announcement", token: token.data };
+  }
   // Момент публикации с днём: вопрос «Ввести время» отложенной публикации
   // (PER-907) — день едет вслед за токеном.
   if (parts.length === 5 && (parts[2] === "pm" || parts[2] === "pd")) {
@@ -4205,6 +4227,60 @@ function parseApplicationQueue(
 /** Домен кнопок очереди: `v1:cm` — сообщество, `v1:aq` — аукцион. */
 export function queueDomain(queue: ApplicationQueue): "v1:cm" | "v1:aq" {
   return queue === "community" ? "v1:cm" : "v1:aq";
+}
+
+/**
+ * Домен кнопок анонса сходки (PER-925): `v1:ma`. Ключ действия — 12 знаков,
+ * отпечаток текста — пять, токен сходки — 22; с версией это укладывается в
+ * 64 байта. Текст поста в кнопку не едет: бот читает его из сообщения
+ * предпросмотра, на которое кадр подтверждения отвечает.
+ */
+export function announceMeetupData(token: string): string {
+  return `v1:ma:an:${token}`;
+}
+
+export function cancelAnnouncementData(token: string): string {
+  return `v1:ma:no:${token}`;
+}
+
+export function confirmAnnouncementData(
+  token: string,
+  version: number,
+  key: string,
+  print: string,
+): string {
+  return `v1:ma:cf:${token}:${version}:${key}:${print}`;
+}
+
+const AnnouncementKeySchema = z.string().regex(/^[A-Za-z0-9_-]{12}$/);
+const AnnouncementVersionSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,8})$/)
+  .transform(Number);
+
+function parseMeetupAnnouncement(parts: readonly string[]): CallbackAction {
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return { kind: "malformed" };
+  if (parts.length === 4 && parts[2] === "an") {
+    return { kind: "announce-meetup", token: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "no") {
+    return { kind: "cancel-meetup-announcement", token: token.data };
+  }
+  if (parts.length !== 7 || parts[2] !== "cf") return { kind: "malformed" };
+  const version = AnnouncementVersionSchema.safeParse(parts[4]);
+  const key = AnnouncementKeySchema.safeParse(parts[5]);
+  const print = WindowPrintSchema.safeParse(parts[6]);
+  if (!version.success || !key.success || !print.success) {
+    return { kind: "malformed" };
+  }
+  return {
+    kind: "confirm-meetup-announcement",
+    token: token.data,
+    version: version.data,
+    key: key.data,
+    print: print.data,
+  };
 }
 
 function parseBroadcast(parts: readonly string[]): CallbackAction {
