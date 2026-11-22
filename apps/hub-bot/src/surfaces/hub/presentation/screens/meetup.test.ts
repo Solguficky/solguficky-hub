@@ -10,12 +10,14 @@ import { parseCallback } from "../parse-callback.js";
 import {
   archiveScreen,
   cardScreen,
+  finishScreen,
   hiddenScreen,
   materialsScreen,
+  meetupManageScreen,
   meetupParent,
   meetupsScreen,
+  publicationScreen,
   publishConfirmScreen,
-  statusScreen,
 } from "./meetup.js";
 
 // L0: сборщики экранов сходки на данных, без бота и Telegram. Что экран
@@ -435,14 +437,13 @@ describe("hiddenScreen", () => {
 describe("cardScreen", () => {
   const view = { manageable: true, presentation: "plain" as const, today };
 
-  it("fits an organizer's card into five rows", () => {
+  it("fits an organizer's card into four rows", () => {
     const screen = cardScreen({ ...view, meetup: meetup(), subscribed: true });
 
     expect(rows(screen)).toEqual([
-      ["🛠 Изменить", "🛠 Статус"],
       ["📎 Материалы (0)", "🧩 Расширения"],
-      ["🛠 Написать подписчикам", "🛠 Организаторы"],
       ["🔕 Отписаться", "⚙️ Уведомления сходки"],
+      ["🛠 Управление"],
       ["‹ Сходки"],
     ]);
   });
@@ -683,7 +684,7 @@ describe("cardScreen", () => {
     );
   });
 
-  it("keeps a cancelled meetup readable but not editable", () => {
+  it("keeps a cancelled meetup readable with the single management entry", () => {
     const screen = cardScreen({
       ...view,
       meetup: meetup({ lifecycle: "cancelled" }),
@@ -691,8 +692,8 @@ describe("cardScreen", () => {
 
     expect(rows(screen)).toEqual([
       ["🧩 Расширения"],
-      ["🛠 Написать подписчикам", "🛠 Организаторы"],
       ["⚙️ Уведомления сходки"],
+      ["🛠 Управление"],
       ["‹ Архив"],
     ]);
   });
@@ -733,10 +734,10 @@ describe("publishConfirmScreen", () => {
     ]);
   });
 
-  it("returns a status publication to the status screen", () => {
+  it("returns a publication confirmation to the publication screen", () => {
     const screen = publishConfirmScreen({
       meetup: meetup({ visibility: "hidden" }),
-      origin: "status",
+      origin: "publication",
     });
     const token = uuidToToken(meetup().id);
 
@@ -758,19 +759,80 @@ describe("publishConfirmScreen", () => {
           callback_data: `v1:manage:confirm-publish:${token}:1:s`,
         },
       ],
-      [{ text: "Отмена", callback_data: `v1:manage:status:${token}` }],
+      [{ text: "Отмена", callback_data: `v1:manage:publication:${token}` }],
     ]);
   });
 });
 
-describe("statusScreen", () => {
-  it("keeps every state action of a planned hidden meetup with a moment", () => {
-    const screen = statusScreen(
+describe("meetupManageScreen", () => {
+  it("keeps the fields, publication and finish rows of a planned meetup", () => {
+    const screen = meetupManageScreen(meetup(), today);
+    const token = uuidToToken(meetup().id);
+
+    expect(rows(screen)).toEqual([
+      ["Название", "Описание"],
+      ["Дата и время", "Место"],
+      ["Публикация", "Завершить или отменить"],
+      ["Написать подписчикам"],
+      ["Организаторы"],
+      ["‹ Сходка"],
+    ]);
+    expect(screen.id).toBe("meetup-manage");
+    expect(screen.text).toContain("<b>Управление</b>");
+    expect(screen.text).toContain("Запланирована · видна в списке");
+    expect(screen.keyboard.inline_keyboard[0]).toEqual([
+      { text: "Название", callback_data: `v1:manage:field:${token}:title` },
+      {
+        text: "Описание",
+        callback_data: `v1:manage:field:${token}:description`,
+      },
+    ]);
+  });
+
+  it("names a hidden meetup and its scheduled publication", () => {
+    const screen = meetupManageScreen(
       meetup({
         visibility: "hidden",
         publishAt: { year: 2026, month: 8, day: 10, hours: 9, minutes: 30 },
       }),
-      undefined,
+      today,
+    );
+
+    expect(screen.text).toContain("Запланирована · скрыта");
+    expect(screen.text).toContain(
+      "Публикация назначена на 10 августа, пн, 09:30",
+    );
+  });
+
+  it("keeps only the mailing and the roster of a cancelled meetup", () => {
+    const screen = meetupManageScreen(
+      meetup({ lifecycle: "cancelled" }),
+      today,
+    );
+
+    expect(rows(screen)).toEqual([
+      ["Написать подписчикам"],
+      ["Организаторы"],
+      ["‹ Сходка"],
+    ]);
+    expect(screen.text).toContain("Отменена");
+  });
+
+  it("leaves the publication row without finish for a held meetup", () => {
+    const screen = meetupManageScreen(meetup({ lifecycle: "held" }), today);
+
+    expect(rows(screen)[2]).toEqual(["Публикация"]);
+    expect(screen.text).toContain("Состоялась");
+  });
+});
+
+describe("publicationScreen", () => {
+  it("keeps the publication actions of a planned hidden meetup with a moment", () => {
+    const screen = publicationScreen(
+      meetup({
+        visibility: "hidden",
+        publishAt: { year: 2026, month: 8, day: 10, hours: 9, minutes: 30 },
+      }),
       today,
     );
 
@@ -778,13 +840,31 @@ describe("statusScreen", () => {
       ["Опубликовать"],
       ["Перенести публикацию"],
       ["Отменить отложенную публикацию"],
-      ["Отметить состоявшейся"],
-      ["Отменить сходку"],
-      ["‹ Сходка"],
+      ["‹ Управление"],
     ]);
     expect(screen.text).toContain(
       "Публикация назначена на 10 августа, пн, 09:30",
     );
+  });
+
+  it("hides a visible meetup and returns to the management screen", () => {
+    const screen = publicationScreen(meetup(), today);
+
+    expect(rows(screen)).toEqual([["Скрыть из списка"], ["‹ Управление"]]);
+    expect(screen.text).toContain("Сходка видна в списке.");
+  });
+});
+
+describe("finishScreen", () => {
+  it("asks for the irreversible actions of a planned meetup", () => {
+    const screen = finishScreen(meetup());
+
+    expect(rows(screen)).toEqual([
+      ["Отметить состоявшейся"],
+      ["Отменить сходку"],
+      ["‹ Управление"],
+    ]);
+    expect(screen.text).toContain("Оба действия необратимы");
   });
 });
 

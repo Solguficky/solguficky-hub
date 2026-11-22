@@ -76,12 +76,13 @@ const TargetStateSchema = z.enum(["0", "1"]);
 // правка. От него зависит следующий шаг после ответа.
 const FormModeSchema = z.enum(["c", "e"]);
 // Чья дата выбирается кнопками: `c` — дата сходки в форме создания, `e` — в
-// правке, `p` — момент отложенной публикации из «Статуса», `d` — он же с
+// правке, `p` — момент отложенной публикации из «Публикации» (прежний
+// «Статус»; буква остаётся ради вопросов прежних релизов), `d` — он же с
 // черновика. От источника зависит, куда возвращает «Отмена».
 const WhenModeSchema = z.enum(["c", "e", "p", "d"]);
 export type WhenMode = z.infer<typeof WhenModeSchema>;
 /** Экран, с которого назначают отложенную публикацию. */
-export type PublishOrigin = "status" | "draft";
+export type PublishOrigin = "publication" | "draft";
 // Прошедшая дата едет в кнопке подтверждения цифрами `ДДММГГГГЧЧММ`: так
 // ответ не зависит от памяти процесса и переживает его рестарт, как вопросы
 // правки, восстановимые по сущностям сообщения.
@@ -365,11 +366,13 @@ type PlainAction =
   // конфликта и кнопки, оставшиеся в чатах до выбора. `silent` — без вести
   // о новой сходке; отсутствие — оповестить.
   | { kind: "publish-meetup"; token: string; version?: number; silent?: true }
-  | { kind: "manage-edit"; token: string }
+  | { kind: "manage-open"; token: string }
   | { kind: "manage-field"; token: string; field: FormField }
   // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
   | { kind: "manage-draft"; token: string; field?: FormField }
-  | { kind: "manage-status"; token: string }
+  // «Публикация» и «Завершить или отменить» — подэкраны «Управления» (PER-910).
+  | { kind: "manage-publication"; token: string }
+  | { kind: "manage-finish"; token: string }
   // «Включить аукцион» в «Расширениях» сходки (PER-307, PER-654). Кнопки
   // входа в аукцион здесь нет: она домена `auc`, и её пишет и разбирает
   // аукционное дерево.
@@ -2584,8 +2587,19 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 5 && parts[2] === "new" && parts[4] === "s")
     return { kind: "create-meetup", token: token.data, from: "meetups" };
   if (parts[2] === "publish") return parsePublish(token.data, parts);
-  if (parts.length === 4 && parts[2] === "edit")
-    return { kind: "manage-edit", token: token.data };
+  // Кнопки `edit` и `status` прежних релизов открывают «Управление» (PER-910).
+  if (
+    parts.length === 4 &&
+    (parts[2] === "open" || parts[2] === "edit" || parts[2] === "status")
+  ) {
+    return { kind: "manage-open", token: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "publication") {
+    return { kind: "manage-publication", token: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "finish") {
+    return { kind: "manage-finish", token: token.data };
+  }
   if (parts.length === 5 && parts[2] === "field") {
     const field = FormFieldSchema.safeParse(parts[4]);
     return field.success
@@ -2643,9 +2657,9 @@ export function parseCallback(raw: unknown): CallbackAction {
     // открыли: режима ответа у него нет, и снимать нечего.
     if (digits === "x") {
       return mode === "e"
-        ? { kind: "view-meetup", token: token.data }
+        ? { kind: "manage-open", token: token.data }
         : mode === "p"
-          ? { kind: "manage-status", token: token.data }
+          ? { kind: "manage-publication", token: token.data }
           : { kind: "manage-draft", token: token.data };
     }
     const day = dayFromDigits(digits.slice(0, 8));
@@ -2677,12 +2691,10 @@ export function parseCallback(raw: unknown): CallbackAction {
         }
       : { kind: "malformed" };
   }
-  if (parts.length === 4 && parts[2] === "status")
-    return { kind: "manage-status", token: token.data };
   if (parts.length === 4 && parts[2] === "auction")
     return { kind: "enable-auction", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
-    return { kind: "manage-publish", token: token.data, origin: "status" };
+    return { kind: "manage-publish", token: token.data, origin: "publication" };
   // `d` — «Опубликовать» на черновике: «Отмена» выбора вернёт на него.
   if (parts.length === 5 && parts[2] === "republish" && parts[4] === "d")
     return { kind: "manage-publish", token: token.data, origin: "draft" };
@@ -2704,9 +2716,9 @@ export function parseCallback(raw: unknown): CallbackAction {
     return {
       kind: "manage-publish-later",
       token: token.data,
-      origin: "status",
+      origin: "publication",
     };
-  // `d` — кнопка стоит на черновике: «Отмена» вернёт на него, а не в «Статус».
+  // `d` — кнопка стоит на черновике: «Отмена» вернёт на него, а не в «Публикацию».
   if (parts.length === 5 && parts[2] === "publish-later" && parts[4] === "d")
     return { kind: "manage-publish-later", token: token.data, origin: "draft" };
   if (parts.length === 4 && parts[2] === "unschedule")
@@ -3596,7 +3608,7 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
     return {
       kind: "publish-moment",
       token: token.data,
-      origin: parts[2] === "pd" ? "draft" : "status",
+      origin: parts[2] === "pd" ? "draft" : "publication",
       day,
     };
   }
@@ -3664,7 +3676,11 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       case "og":
         return { kind: "organizer", token: token.data };
       case "pm":
-        return { kind: "publish-moment", token: token.data, origin: "status" };
+        return {
+          kind: "publish-moment",
+          token: token.data,
+          origin: "publication",
+        };
       case "pd":
         return { kind: "publish-moment", token: token.data, origin: "draft" };
       case "mt":

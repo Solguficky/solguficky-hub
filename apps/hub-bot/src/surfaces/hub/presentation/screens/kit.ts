@@ -173,6 +173,29 @@ export function toOrganizers(token: string): Parent {
 }
 
 /**
+ * Экран «Управление» сходки — единственный вход её управления (PER-910):
+ * поля, публикация, завершение и отмена, рассылка и состав. Старые кнопки
+ * `v1:manage:edit` и `v1:manage:status` открывают его же.
+ */
+export function meetupManageData(token: string): string {
+  return `v1:manage:open:${token}`;
+}
+
+export function toMeetupManage(token: string): Parent {
+  return { name: "Управление", data: meetupManageData(token) };
+}
+
+/** «Публикация» — обратимая смена видимости сходки (PER-910). */
+export function publicationData(token: string): string {
+  return `v1:manage:publication:${token}`;
+}
+
+/** «Завершить или отменить» — необратимые действия над сходкой (PER-910). */
+export function finishData(token: string): string {
+  return `v1:manage:finish:${token}`;
+}
+
+/**
  * Меню «Расширения» сходки (PER-605): вход в расширения с карточки. Данные —
  * токен сходки, 29 байт.
  */

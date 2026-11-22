@@ -31,7 +31,9 @@ import {
   dayLabel,
   escapeHtml,
   extensionsData,
+  finishData,
   heading,
+  meetupManageData,
   nextRow,
   organizersData,
   type Page,
@@ -39,6 +41,7 @@ import {
   pagedTitle,
   pageSize,
   paginate,
+  publicationData,
   readableDay,
   readableMoment,
   screenText,
@@ -48,6 +51,7 @@ import {
   toCard,
   toHidden,
   toManage,
+  toMeetupManage,
   toMeetups,
   toMenu,
   withNav,
@@ -478,7 +482,7 @@ export type CardView = {
   subscribed?: boolean | undefined;
   /**
    * Смотрящий управляет сходкой — организатор из состава или администратор
-   * (ADR-076, п. 4): видны правка, статус и рассылка подписчикам.
+   * (ADR-076, п. 4): виден один вход «🛠 Управление».
    */
   manageable: boolean;
   /**
@@ -509,14 +513,17 @@ const unsubscribedHint =
 
 // Кнопки карточки — входы в разделы сходки, и каждая несёт знак своего
 // раздела, тот же, что в тексте (решение владельца по прогону 14 октября 2026
-// года, PER-644). Действия управления несут один знак 🛠 (PER-669). Возврат
-// «‹ …» знака не несёт.
-const editLabel = adminLabel("Изменить");
-const statusLabel = adminLabel("Статус");
+// года, PER-644). Вход управления на карточке один и несёт знак 🛠 (PER-669,
+// PER-910): всё остальное управление живёт за ним. Возврат «‹ …» знака не
+// несёт.
+const manageLabel = adminLabel("Управление");
 const materialsLabel = (count: number) =>
   marked(pictogram.materials, `Материалы (${count})`);
-const broadcastLabel = adminLabel("Написать подписчикам");
-const organizersLabel = adminLabel("Организаторы");
+// Внутри «Управления» весь экран админский, и знака у его кнопок нет
+// (PER-910): «Написать подписчикам» и «Организаторы» — его ряды.
+const broadcastLabel = "Написать подписчикам";
+const organizersLabel = "Организаторы";
+const finishLabel = "Завершить или отменить";
 export const subscribeLabel = marked(pictogram.on, "Подписаться на сходку");
 export const unsubscribeLabel = marked(pictogram.off, "Отписаться");
 export const meetupNotificationsLabel = marked(
@@ -525,21 +532,15 @@ export const meetupNotificationsLabel = marked(
 );
 
 /**
- * Карточка сходки. Под ней не больше пяти рядов: правка и статус, материалы и
- * расширения, рассылка, подписка с её настройками и возврат. Файлы
- * открываются из «Материалов», а «Отметить состоявшейся» живёт в «Статусе».
+ * Карточка сходки. Под ней не больше пяти рядов: материалы и расширения,
+ * подписка с её настройками, вход «Управление» и возврат. Файлы открываются
+ * из «Материалов», а всё остальное управление живёт за одним входом (PER-910).
  */
 export function cardScreen(view: CardView): ShownScreen {
   const { meetup, manageable, presentation, today } = view;
   const token = uuidToToken(meetup.id);
   const keyboard = new InlineKeyboard();
   const editable = manageable && meetup.lifecycle !== "cancelled";
-  if (editable) {
-    keyboard
-      .text(editLabel, `v1:manage:edit:${token}`)
-      .text(statusLabel, `v1:manage:status:${token}`)
-      .row();
-  }
   if (editable || meetup.materials.length > 0) {
     keyboard.text(
       materialsLabel(meetup.materials.length),
@@ -554,18 +555,6 @@ export function cardScreen(view: CardView): ShownScreen {
   // Auction убирает только её.
   keyboard.text(extensionsLabel, extensionsData(token));
   nextRow(keyboard);
-  // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
-  // — законный повод, и Notifications жизненный цикл при рассылке не фильтрует.
-  // «Организаторы» (ADR-076, п. 6; PER-749) стоят в ряду рассылки: оба —
-  // действия того, кто ведёт сходку, и отдельным рядом они вывели бы карточку
-  // организатора за пять рядов. Отменённой сходке состав тоже открыт: снятие
-  // и выход Meetups принимает и у неё.
-  if (manageable) {
-    keyboard
-      .text(broadcastLabel, `v1:bc:m:${token}`)
-      .text(organizersLabel, organizersData(token))
-      .row();
-  }
   // Кнопка подписки рисуется только тогда, когда Notifications ответил:
   // состояние на ней — факт, а не заглушка. Настройки сходки решают, что
   // присылать по подписке, поэтому без подписки их входа нет. Когда
@@ -580,6 +569,12 @@ export function cardScreen(view: CardView): ShownScreen {
     keyboard
       .text(meetupNotificationsLabel, `v1:notify:settings:${token}`)
       .row();
+  }
+  // Вход управления один (PER-910): поля, публикация, завершение и отмена,
+  // рассылка и состав живут за ним. Он виден и у отменённой сходки — там
+  // остаются рассылка и организаторы.
+  if (manageable) {
+    keyboard.text(manageLabel, meetupManageData(token)).row();
   }
   // Постеры — только в богатой карточке: обычное сообщение несёт либо текст,
   // либо файл, и с файлом оно перестало бы правиться на месте.
@@ -707,26 +702,68 @@ export function draftScreen(view: {
   };
 }
 
-export function editFieldsScreen(meetup: MeetupSnapshot): ShownScreen {
+// Строка состояния «Управления» (PER-910): слова дизайн-кода — «Запланирована»,
+// «Состоялась», «Отменена» и «видна в списке» или «скрыта». У отменённой
+// видимость ничего не значит: она в архиве.
+function manageStateLine(
+  meetup: Pick<MeetupSnapshot, "lifecycle" | "visibility">,
+): string {
+  if (meetup.lifecycle === "cancelled") return "Отменена";
+  const lifecycle =
+    meetup.lifecycle === "held" ? "Состоялась" : "Запланирована";
+  return `${lifecycle} · ${meetup.visibility === "hidden" ? "скрыта" : "видна в списке"}`;
+}
+
+/**
+ * «Управление» сходкой (PER-910): единственный вход её управления. Поля стоят
+ * прямо на экране, публикация — обратимый подэкран, завершение и отмена —
+ * необратимый. У отменённой сходки остаются рассылка и состав, у состоявшейся
+ * нет «Завершить или отменить».
+ */
+export function meetupManageScreen(
+  meetup: MeetupSnapshot,
+  today: CommunityDay,
+): ShownScreen {
   const token = uuidToToken(meetup.id);
+  const keyboard = new InlineKeyboard();
+  if (meetup.lifecycle !== "cancelled") {
+    // Поля — те же вопросы правки, что были за «Изменить» (PER-911).
+    keyboard
+      .text("Название", `v1:manage:field:${token}:title`)
+      .text("Описание", `v1:manage:field:${token}:description`)
+      .row()
+      .text("Дата и время", `v1:manage:field:${token}:schedule`)
+      .text("Место", `v1:manage:field:${token}:venue`)
+      .row();
+    if (meetup.lifecycle === "planned") {
+      keyboard
+        .text("Публикация", publicationData(token))
+        .text(finishLabel, finishData(token))
+        .row();
+    } else {
+      keyboard.text("Публикация", publicationData(token)).row();
+    }
+  }
+  // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
+  // — законный повод, и Notifications жизненный цикл при рассылке не
+  // фильтрует. Состав отменённой сходки тоже открыт: снятие и выход Meetups
+  // принимает и у неё.
+  keyboard
+    .text(broadcastLabel, `v1:bc:m:${token}`)
+    .row()
+    .text(organizersLabel, organizersData(token))
+    .row();
   return {
-    id: "edit",
+    id: "meetup-manage",
     text: submenuText(
-      "Изменить",
+      "Управление",
       meetupTitleLabel(meetup.title),
-      "Что меняем?",
+      manageStateLine(meetup),
+      meetup.publishAt === undefined
+        ? undefined
+        : `Публикация назначена на ${readableMoment(meetup.publishAt, today)}`,
     ),
-    keyboard: withNav(
-      new InlineKeyboard()
-        .text("Название", `v1:manage:field:${token}:title`)
-        .row()
-        .text("Дата и время", `v1:manage:field:${token}:schedule`)
-        .row()
-        .text("Место", `v1:manage:field:${token}:venue`)
-        .row()
-        .text("Описание", `v1:manage:field:${token}:description`),
-      toCard(token),
-    ),
+    keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",
   };
 }
@@ -789,9 +826,13 @@ export function confirmStateCallback(
   return `v1:manage:${stateActionCopy[action].confirmAction}:${token}:${version}`;
 }
 
-export function statusScreen(
+/**
+ * «Публикация» — обратимая часть управления (PER-910): видимость сходки и
+ * момент отложенной публикации. Возврат — в «Управление», «Отмена» выбора
+ * публикации — сюда же.
+ */
+export function publicationScreen(
   meetup: MeetupSnapshot,
-  people: MeetupPeople | undefined,
   today: CommunityDay,
 ): ShownScreen {
   const token = uuidToToken(meetup.id);
@@ -825,6 +866,31 @@ export function statusScreen(
         .row();
     }
   }
+  return {
+    id: "meetup-publication",
+    text: submenuText(
+      "Публикация",
+      meetupTitleLabel(meetup.title),
+      meetup.visibility === "visible"
+        ? "Сходка видна в списке."
+        : "Сходка скрыта из списка.",
+      meetup.publishAt === undefined
+        ? undefined
+        : `Публикация назначена на ${readableMoment(meetup.publishAt, today)}`,
+    ),
+    keyboard: withNav(keyboard, toMeetupManage(token)),
+    format: "HTML",
+  };
+}
+
+/**
+ * «Завершить или отменить» — необратимая часть управления (PER-910): оба
+ * действия уводят сходку из плана, поэтому каждое идёт через своё
+ * подтверждение с красным «Да». Кнопка есть только у запланированной сходки.
+ */
+export function finishScreen(meetup: MeetupSnapshot): ShownScreen {
+  const token = uuidToToken(meetup.id);
+  const keyboard = new InlineKeyboard();
   if (meetup.lifecycle === "planned") {
     keyboard
       .text(stateActionCopy.hold.label, `v1:manage:hold:${token}`)
@@ -833,14 +899,15 @@ export function statusScreen(
       .row();
   }
   return {
-    id: "status",
+    id: "meetup-finish",
     text: submenuText(
-      "Статус",
+      finishLabel,
       meetupTitleLabel(meetup.title),
-      // Экран «Статус» открывает только тот, кто управляет сходкой.
-      cardLines(meetup, people, today, true, "plain").join("\n"),
+      meetup.lifecycle === "planned"
+        ? "Оба действия необратимы: сходка в план не возвращается."
+        : undefined,
     ),
-    keyboard: withNav(keyboard, toCard(token)),
+    keyboard: withNav(keyboard, toMeetupManage(token)),
     format: "HTML",
   };
 }
@@ -854,8 +921,8 @@ export function statusScreen(
  */
 export function publishConfirmScreen(confirm: {
   meetup: Pick<MeetupSnapshot, "id" | "title" | "version">;
-  /** Где нажали «Опубликовать»: на черновике или в «Статусе». */
-  origin: "draft" | "status";
+  /** Где нажали «Опубликовать»: на черновике или в «Публикации». */
+  origin: "draft" | "publication";
 }): ShownScreen {
   const token = uuidToToken(confirm.meetup.id);
   const notifyData =
@@ -876,7 +943,7 @@ export function publishConfirmScreen(confirm: {
       cancelData:
         confirm.origin === "draft"
           ? `v1:manage:draft:${token}`
-          : `v1:manage:status:${token}`,
+          : publicationData(token),
     }),
     format: "HTML",
   };

@@ -340,7 +340,8 @@ describe("auction through both bots", () => {
     // Отмена сходки с идущими торгами называет последствие до подтверждения
     // (PER-606): продаж ещё нет, и число — ноль. «Нет» сходку не отменяет.
     await admin.opensLink(meetupId);
-    await admin.presses("🛠 Статус");
+    await admin.presses("🛠 Управление");
+    await admin.presses("Завершить или отменить");
     await admin.presses("Отменить сходку");
     expect(plain(admin.sees())).toContain(
       "У сходки идут торги: аукцион будет отменён, проданные лоты (0) останутся проданными.",

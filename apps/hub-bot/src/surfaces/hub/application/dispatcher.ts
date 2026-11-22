@@ -242,12 +242,13 @@ export function createDispatcher(
       : { kind: "dependency-rejected", reason: result.kind };
   }
 
-  // Карточка, которую команда показывает сразу, — после публикации и смены
-  // состояния из «Статуса», — несёт и строку аукциона (PER-594): иначе она
-  // пропадала бы до следующего открытия. Остальные команды формы и подписка
-  // отвечают экраном исхода, а не карточкой, и аукцион им не нужен.
-  // Скрытый черновик и вопросы формы карточкой не показываются, и аукцион им
-  // не нужен.
+  // Карточку команда показывает сразу только после публикации с черновика и
+  // отмены сходки, и такая карточка несёт строку аукциона (PER-594): иначе она
+  // пропадала бы до следующего открытия. Исходы скрытия, отметки и снятия
+  // отложенной публикации — свои экраны без строки аукциона (PER-910), и
+  // Auction им не нужен. Остальные команды формы и подписка отвечают экраном
+  // исхода, а не карточкой. Скрытый черновик и вопросы формы карточкой не
+  // показываются, и аукцион им не нужен.
   async function withCardAuction(
     result: ExecuteResult,
     request: { identity: Person; requestId?: string; deadlineAt?: number },
@@ -255,10 +256,14 @@ export function createDispatcher(
     if (meetupAuction === undefined) return result;
     switch (result.kind) {
       case "published":
-      case "meetup-state-changed":
         return result.auction === undefined
           ? meetupAuction.withAuction(result, request)
           : result;
+      case "meetup-state-changed":
+        // Карточкой показывается только отмена сходки.
+        return result.action !== "cancel" || result.auction !== undefined
+          ? result
+          : meetupAuction.withAuction(result, request);
       default:
         return result;
     }
