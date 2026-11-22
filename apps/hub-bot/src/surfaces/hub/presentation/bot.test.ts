@@ -1302,7 +1302,7 @@ describe("presentation adapter", () => {
         messageId: 13,
       }),
     );
-    expect(JSON.stringify(calls)).toContain("Пришли альбом заново целиком");
+    expect(JSON.stringify(calls)).toContain("пришли альбом заново целиком");
     await bot.handleUpdate(
       callbackMessageUpdate(yes, {
         text: visible(String(confirmation.payload.text)),
@@ -1410,7 +1410,8 @@ describe("presentation adapter", () => {
         reply_markup: keyboard,
       }),
     );
-    expect(JSON.stringify(calls)).toContain("Прикреплено 1 из 1");
+    expect(JSON.stringify(calls)).toContain("Фото 1");
+    expect(JSON.stringify(calls)).not.toContain("Прикреплено 1 из 1");
   });
 
   it("leaves an album untouched on no and skips already attached photos after a partial failure", async () => {

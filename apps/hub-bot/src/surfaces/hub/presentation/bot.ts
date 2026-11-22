@@ -1655,20 +1655,36 @@ async function handleMessage(
         await ctx.reply(
           "Этот вопрос устарел после перезапуска. Открой материалы и пришли альбом заново.",
         );
+        outcome = {
+          level: "info",
+          message: "material album question expired",
+          result: "ok",
+          use_case: "update_meetup",
+        };
         return;
       }
       const state = materialAlbums.begin(albumKey);
       if (state !== "accepted") {
         if (state === "late")
           await ctx.reply(
-            "В альбом пришла ещё фотография. Пришли альбом заново целиком.",
+            "В альбом пришла ещё фотография. Открой материалы и пришли альбом заново целиком.",
           );
         if (state === "late-confirmed")
           await ctx.reply(
-            "После подтверждения пришла ещё фотография. Пришли альбом заново целиком, чтобы прикрепить пропущенное.",
+            "После подтверждения пришла ещё фотография. Открой материалы и пришли альбом заново целиком, чтобы прикрепить пропущенное.",
           );
-        if (state === "full")
+        if (
+          state === "full" &&
+          incomingGroup !== undefined &&
+          hintedAlbums.first(incomingGroup)
+        )
           await ctx.reply("Не получилось принять альбом. Попробуй ещё раз.");
+        outcome = {
+          level: "info",
+          message: `material album ${state}`,
+          result: "ok",
+          use_case: "update_meetup",
+        };
         return;
       }
     }
@@ -1823,6 +1839,14 @@ async function handleMessage(
           await ctx.reply(
             "Альбом не принят целиком: нужны фотографии. Пришли его заново.",
           );
+          outcome = {
+            level: "info",
+            message: "material album item rejected",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+            identity_id: identity.person.identityId,
+          };
           return;
         }
         if (photo !== undefined && albumKey !== undefined) {
@@ -1885,6 +1909,8 @@ async function handleMessage(
             message: "material album item received",
             result: "ok",
             use_case: useCase,
+            meetup_id: pending.meetupId,
+            identity_id: identity.person.identityId,
           };
           return;
         }
@@ -4001,6 +4027,21 @@ async function handleCallback(
           outcome = materialForbiddenOutcome(person, meetupId);
           return;
         }
+        if (current.meetup.lifecycle === "cancelled") {
+          await showRefusal(
+            ctx,
+            "Сходка уже отменена. Изменять её материалы больше нельзя.",
+            exitToCard(action.token),
+          );
+          outcome = {
+            level: "info",
+            message: "material album rejected for cancelled meetup",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: meetupId,
+          };
+          return;
+        }
         if (current.meetup.version !== album.version) {
           await showRefusal(
             ctx,
@@ -4032,6 +4073,10 @@ async function handleCallback(
                     material.id === materialPhotoId(meetupId, item.uniqueId),
                 ),
               ).length;
+              if (count === album.photos.length) {
+                await renderMaterialManagement(ctx, latest.meetup, true, 0);
+                return;
+              }
             }
           } catch {
             // The write may have succeeded even though its reply was lost.
@@ -4042,7 +4087,7 @@ async function handleCallback(
               : `Прикреплено ${count} из ${album.photos.length}.`;
           await showRefusal(
             ctx,
-            `${status} Пришли альбом ещё раз, чтобы прикрепить остальные фотографии.`,
+            `${status} Открой материалы и пришли альбом ещё раз, чтобы прикрепить остальные фотографии.`,
             exitToCard(action.token),
           );
         };
