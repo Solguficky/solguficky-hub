@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { maxLotRubles } from "../application/lot-form.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
+  announceMeetupData,
   auctionFaqData,
   type CallbackAction,
+  cancelAnnouncementData,
   cardCursorData,
+  confirmAnnouncementData,
   consoleAnnouncementAudienceData,
   consoleAnnouncementButtonData,
   consoleAnnouncementRecipientsData,
@@ -2290,6 +2293,70 @@ describe("auction announcement audience callbacks", () => {
       `v1:lot:hv:${lot}:99a:z0a9q`,
       `v1:ac:hv:${auction}:1`,
       `v1:ac:hh:${auction}:1`,
+    ]) {
+      expect(parseCallback(broken)).toEqual({ kind: "malformed" });
+    }
+  });
+});
+
+describe("meetup announcement callbacks", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+  const key = "AbCdEf012345";
+  const print = "a1b2c";
+  const actions: readonly [string, CallbackAction][] = [
+    [announceMeetupData(token), { kind: "announce-meetup", token }],
+    [
+      cancelAnnouncementData(token),
+      { kind: "cancel-meetup-announcement", token },
+    ],
+    [
+      cancelAnnouncementData(token, key),
+      { kind: "cancel-meetup-announcement", token, key },
+    ],
+    [
+      confirmAnnouncementData(token, 0, key, print),
+      { kind: "confirm-meetup-announcement", token, version: 0, key, print },
+    ],
+    [
+      confirmAnnouncementData(token, 123456789, key, print),
+      {
+        kind: "confirm-meetup-announcement",
+        token,
+        version: 123456789,
+        key,
+        print,
+      },
+    ],
+  ];
+
+  it("parses its own buttons within the 64-byte budget", () => {
+    for (const [data, action] of actions) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+  });
+
+  it("parses the question step with the asking user", () => {
+    const step: QuestionStep = { kind: "meetup-announcement", token };
+    const asked = questionData(step, 42);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({
+      kind: "question",
+      step,
+      askedBy: 42,
+    });
+  });
+
+  it("rejects a broken key, version, print and arity", () => {
+    for (const broken of [
+      "v1:ma:an:short",
+      "v1:ma:no:short",
+      `v1:ma:no:${token}:short`,
+      `v1:ma:cf:${token}:x:${key}:${print}`,
+      `v1:ma:cf:${token}:1234567890:${key}:${print}`,
+      `v1:ma:cf:${token}:1:short:${print}`,
+      `v1:ma:cf:${token}:1:${key}:SHORT`,
+      `v1:ma:cf:${token}:1:${key}`,
     ]) {
       expect(parseCallback(broken)).toEqual({ kind: "malformed" });
     }

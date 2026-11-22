@@ -47,6 +47,7 @@ function meetupOf(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
 type SetupOptions = {
   rights?: readonly AccessRight[];
   withChat?: boolean;
+  chatId?: number;
   initial?: MeetupSnapshot;
   failAttach?: boolean | "once";
   respond?: (method: string, payload: unknown) => unknown;
@@ -81,7 +82,7 @@ function setup(options: SetupOptions = {}) {
     },
   );
   const chat: CommunityChat = {
-    chatId: communityChatId,
+    chatId: options.chatId ?? communityChatId,
     registerCommands: async () => {},
     gate: async (_ctx, next) => next(),
   };
@@ -109,6 +110,9 @@ function setup(options: SetupOptions = {}) {
     attached,
     attachRequests,
     meetup: () => meetup,
+    setVersion: (version: number) => {
+      meetup = { ...meetup, version };
+    },
     token: uuidToToken(meetup.id),
   };
 }
@@ -168,6 +172,26 @@ function findData(calls: readonly RecordedCall[], prefix: string): string {
     }
   }
   throw new Error(`button ${prefix} not found`);
+}
+
+function findCancelWithKey(calls: readonly RecordedCall[]): string {
+  for (const call of calls) {
+    const rows = (
+      call.payload as {
+        reply_markup?: { inline_keyboard?: { callback_data?: string }[][] };
+      }
+    ).reply_markup?.inline_keyboard;
+    for (const button of rows?.flat() ?? []) {
+      const data = button.callback_data;
+      if (
+        data?.startsWith("v1:ma:no:") === true &&
+        data.split(":").length === 5
+      ) {
+        return data;
+      }
+    }
+  }
+  throw new Error("cancel with key not found");
 }
 
 function lastQuestionId(calls: readonly RecordedCall[]): number {
@@ -327,5 +351,133 @@ describe("анонс сходки в чате сообщества", () => {
     expect(posts).toHaveLength(1);
     expect(h.attached).toHaveLength(1);
     expect(h.attachRequests).toHaveLength(2);
+  });
+
+  it("название сходки экранируется в вопросе с разметкой HTML", async () => {
+    const h = setup({
+      initial: meetupOf({ title: "Настолки <b> & друзья" }),
+    });
+    await h.bot.handleUpdate(callbackUpdate(announceMeetupData(h.token)));
+    const question = h.calls
+      .filter((call) => call.method === "sendMessage")
+      .map((call) => String((call.payload as { text?: string }).text ?? ""))
+      .find((text) => text.includes("Напиши текст анонса"));
+    expect(question).toContain("Настолки &lt;b&gt; &amp; друзья");
+  });
+
+  it("участник без права править материалы не видит входа и не публикует по подделанной кнопке", async () => {
+    const h = setup({ rights: ["access-hub", "place-bids"] });
+    await h.bot.handleUpdate(callbackUpdate(`v1:view:${h.token}`));
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("v1:ma:an:"),
+      ),
+    ).toBe(false);
+    await h.bot.handleUpdate(callbackUpdate(announceMeetupData(h.token)));
+    expect(h.attachRequests).toHaveLength(0);
+    expect(
+      h.calls.some(
+        (call) =>
+          (call.payload as { chat_id?: number }).chat_id === communityChatId,
+      ),
+    ).toBe(false);
+  });
+
+  it("простая группа не даёт входа: ссылки на пост там нет", async () => {
+    const h = setup({ chatId: -12345 });
+    await h.bot.handleUpdate(callbackUpdate(`v1:view:${h.token}`));
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("v1:ma:an:"),
+      ),
+    ).toBe(false);
+    await h.bot.handleUpdate(callbackUpdate(announceMeetupData(h.token)));
+    expect(h.attachRequests).toHaveLength(0);
+  });
+
+  it("предпросмотр с чужим отпечатком не публикует", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(
+      callbackUpdate(confirm, {
+        reply_to_message: {
+          message_id: 5,
+          date: 100,
+          from: { id: botInfo.id, is_bot: true, first_name: "stub" },
+          text: "Другой текст",
+        },
+      }),
+    );
+    expect(h.attachRequests).toHaveLength(0);
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "предпросмотр устарел",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("слишком длинный анонс отвергается до поста", async () => {
+    const h = setup();
+    await h.bot.handleUpdate(callbackUpdate(announceMeetupData(h.token)));
+    const questionId = lastQuestionId(h.calls);
+    await h.bot.handleUpdate(replyUpdate("x".repeat(4096), questionId));
+    await h.bot.handleUpdate(callbackUpdate(announceMeetupData(h.token)));
+    expect(() => findData(h.calls, "v1:ma:cf:")).toThrow();
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "не помещается в сообщение Telegram",
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("конфликт версии после поста дозаписывает материал, а не публикует второй пост", async () => {
+    const h = setup({ failAttach: "once" });
+    const confirm = await openConfirmation(h);
+    const update = callbackUpdate(confirm, previewMessage());
+    await h.bot.handleUpdate(update);
+    expect(
+      h.attachRequests[0]?.intent === "attach-material" &&
+        h.attachRequests[0].expectedVersion,
+    ).toBe(1);
+    h.setVersion(2);
+    await h.bot.handleUpdate({ ...update, update_id: 100 });
+    expect(
+      h.attachRequests[1]?.intent === "attach-material" &&
+        h.attachRequests[1].expectedVersion,
+    ).toBe(2);
+    expect(
+      h.calls.filter(
+        (call) =>
+          call.method === "sendMessage" &&
+          (call.payload as { chat_id?: number }).chat_id === communityChatId,
+      ),
+    ).toHaveLength(1);
+    expect(h.attached).toHaveLength(1);
+  });
+
+  it("«Нет» после сбоя записи материала не утверждает, что пост не ушёл", async () => {
+    const h = setup({ failAttach: true });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const cancel = findCancelWithKey(h.calls);
+    await h.bot.handleUpdate(callbackUpdate(cancel));
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "Пост уже опубликован",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "никуда не ушёл",
+        ),
+      ),
+    ).toBe(false);
   });
 });

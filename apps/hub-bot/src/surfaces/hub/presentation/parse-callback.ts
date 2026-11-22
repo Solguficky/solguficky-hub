@@ -814,7 +814,7 @@ type PlainAction =
       key: string;
       print: string;
     }
-  | { kind: "cancel-meetup-announcement"; token: string }
+  | { kind: "cancel-meetup-announcement"; token: string; key?: string }
   | { kind: "notify-global" }
   // Настройки уведомлений аукциона (PER-552, PER-539, PER-645): экран, режим
   // частоты, выключатели анонса финала и «перебили» в живом финале —
@@ -4239,8 +4239,8 @@ export function announceMeetupData(token: string): string {
   return `v1:ma:an:${token}`;
 }
 
-export function cancelAnnouncementData(token: string): string {
-  return `v1:ma:no:${token}`;
+export function cancelAnnouncementData(token: string, key?: string): string {
+  return key === undefined ? `v1:ma:no:${token}` : `v1:ma:no:${token}:${key}`;
 }
 
 export function confirmAnnouncementData(
@@ -4266,6 +4266,12 @@ function parseMeetupAnnouncement(parts: readonly string[]): CallbackAction {
   }
   if (parts.length === 4 && parts[2] === "no") {
     return { kind: "cancel-meetup-announcement", token: token.data };
+  }
+  if (parts.length === 5 && parts[2] === "no") {
+    const key = AnnouncementKeySchema.safeParse(parts[4]);
+    return key.success
+      ? { kind: "cancel-meetup-announcement", token: token.data, key: key.data }
+      : { kind: "malformed" };
   }
   if (parts.length !== 7 || parts[2] !== "cf") return { kind: "malformed" };
   const version = AnnouncementVersionSchema.safeParse(parts[4]);

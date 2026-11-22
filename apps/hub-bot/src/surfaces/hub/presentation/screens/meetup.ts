@@ -571,7 +571,9 @@ export function cardScreen(view: CardView): ShownScreen {
   keyboard.text(extensionsLabel, extensionsData(token));
   nextRow(keyboard);
   if (view.announce === true) {
-    keyboard.text("Анонс в чат", announceMeetupData(token)).row();
+    // Вход виден только тому, кто правит материалы: на общей карточке такой
+    // кнопка несёт знак управления (PER-669, дизайн-код «Клавиатура»).
+    keyboard.text(adminLabel("Анонс в чат"), announceMeetupData(token)).row();
   }
   // Кнопка подписки рисуется только тогда, когда Notifications ответил:
   // состояние на ней — факт, а не заглушка. Настройки сходки решают, что

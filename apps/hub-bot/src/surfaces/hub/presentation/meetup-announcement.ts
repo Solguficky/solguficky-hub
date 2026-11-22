@@ -3,6 +3,7 @@ import { GrammyError } from "grammy";
 import { uuidV7Of } from "../../../core/uuid-v7.js";
 import { checkBroadcastBody } from "../application/broadcasts.js";
 import { fingerprint } from "../application/fingerprint.js";
+import { telegramTextLimit } from "./notification-message.js";
 import { escapeHtml } from "./screens/kit.js";
 
 // Анонс сходки (PER-925, ADR-087): пост бота-участника в чате сообщества и
@@ -48,6 +49,30 @@ export function communityMessageLink(
 /** Пост от бота: подпись организатора и свободный текст, разметка HTML. */
 export function announcementPostText(organizer: string, body: string): string {
   return `<b>${escapeHtml(organizer)}:</b>\n\n${escapeHtml(body)}`;
+}
+
+/**
+ * Telegram считает предел по тексту после разбора разметки, а проверка ввода
+ * видит только тело. Поэтому длину надо мерить по тому, что действительно
+ * уйдёт: подпись и экранирование символов тоже занимают место.
+ */
+export function announcementFits(organizer: string, body: string): boolean {
+  return announcementPostText(organizer, body).length <= telegramTextLimit;
+}
+
+/** Пост старше предела Telegram: это Permanent-отказ, повтор его не исправит. */
+export const tooLongDescription = "message is too long";
+
+export function postTooLongError(cause: unknown): boolean {
+  return (
+    cause instanceof GrammyError &&
+    cause.description.includes(tooLongDescription)
+  );
+}
+
+/** Ссылка на пост есть только у супергруппы (ADR-087, п. «факты»). */
+export function isCommunitySupergroup(chatId: number): boolean {
+  return chatId < -1000000000000;
 }
 
 /** Отпечаток текста едет в кнопке подтверждения: текст в неё не помещается. */

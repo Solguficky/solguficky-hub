@@ -264,6 +264,7 @@ import {
 import {
   type AnnouncementPosts,
   announcementBodyCheck,
+  announcementFits,
   announcementKey,
   announcementMaterialId,
   announcementPostText,
@@ -271,6 +272,8 @@ import {
   communityMessageLink,
   communityRightsError,
   createAnnouncementPosts,
+  isCommunitySupergroup,
+  postTooLongError,
 } from "./meetup-announcement.js";
 import {
   meetupStartLink,
@@ -516,6 +519,7 @@ import {
   refusalText,
   retryLabel,
   screenText,
+  subjectLine,
   toCard,
   toCommunity,
   toEvents,
@@ -866,6 +870,7 @@ type ProductUseCase =
   | "manage_community"
   | "manage_notifications"
   | "send_broadcast"
+  | "announce_meetup"
   | "view_auction"
   | "enable_auction"
   | "manage_lot"
@@ -1494,7 +1499,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
-    ctx.announceEnabled = runtime.communityChat !== undefined;
+    ctx.announceEnabled =
+      runtime.communityChat !== undefined &&
+      isCommunitySupergroup(runtime.communityChat.chatId);
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
     if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
@@ -2128,7 +2135,7 @@ async function handleMessage(
       return;
     }
     if (replyId !== undefined && pending?.kind === "meetup-announcement-body") {
-      useCase = "send_broadcast";
+      useCase = "announce_meetup";
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
           level: "info",
@@ -2155,15 +2162,21 @@ async function handleMessage(
         return;
       }
       const checked = announcementBodyCheck(ctx.message?.text ?? "");
-      if (checked.kind !== "ok") {
+      // Предел Telegram считается по самому посту: подпись и экранирование
+      // занимают место сверх тела, поэтому проверяем собранный текст.
+      const fits =
+        checked.kind === "ok" &&
+        announcementFits(ctx.from?.first_name ?? "Организатор", checked.body);
+      if (checked.kind !== "ok" || !fits) {
+        const reason = checked.kind === "ok" ? "too-long" : checked.kind;
         await refuseAnswer(
           ctx,
           questions,
           pending,
-          checked.kind === "empty"
+          reason === "empty"
             ? "Анонс не может быть пустым. Пришли текст ещё раз ответом на вопрос."
-            : checked.kind === "too-long"
-              ? "Анонс длиннее 4096 знаков — Telegram такой не примет. Сократи его и пришли ещё раз."
+            : reason === "too-long"
+              ? "Анонс с подписью не помещается в сообщение Telegram. Сократи его и пришли ещё раз."
               : "В тексте есть запрещённый символ. Пришли анонс ещё раз.",
           replyId,
         );
@@ -2207,6 +2220,7 @@ async function handleMessage(
         pending.meetupId,
         current.meetup.version,
         checked.body,
+        current.meetup.title,
       );
       await answered();
       outcome = {
@@ -5873,7 +5887,7 @@ async function handleCallback(
         },
         screenText(
           "Анонс в чат",
-          `Напиши текст анонса сходки «${meetupTitleLabel(current.meetup.title)}».`,
+          `Напиши текст анонса сходки «${escapeHtml(meetupTitleLabel(current.meetup.title))}».`,
           "Бот опубликует его в чате сообщества от себя с твоей подписью и кнопкой к сходке, затем добавит пост в «Материалы».",
           "Я покажу предпросмотр и спрошу подтверждение.",
         ),
@@ -5892,17 +5906,31 @@ async function handleCallback(
       return;
     }
     if (action.kind === "cancel-meetup-announcement") {
+      // Ключ в кнопке означает отказ от повтора после сбоя записи материала:
+      // пост к тому моменту уже может быть в чате, и говорить обратное нельзя.
+      const posted =
+        action.key === undefined
+          ? undefined
+          : announcementPosts.posted(action.key);
       await showScreen(ctx, {
         id: "outcome",
-        text: outcomeText("Анонс не опубликован. Текст никуда не ушёл."),
+        text: outcomeText(
+          posted === undefined
+            ? "Анонс не опубликован. Текст никуда не ушёл."
+            : "Пост уже опубликован в чате сообщества, но добавление в «Материалы» могло не завершиться. Проверь «Материалы» сходки.",
+        ),
         keyboard: exitToCard(action.token),
         format: "HTML",
       });
       outcome = {
         level: "info",
-        message: "meetup announcement cancelled",
+        message:
+          posted === undefined
+            ? "meetup announcement cancelled"
+            : "meetup announcement cancelled after post",
         result: "ok",
         use_case: useCase,
+        identity_id: person.identityId,
       };
       return;
     }
@@ -7365,16 +7393,12 @@ async function sendAnnouncementConfirmation(
   meetupId: string,
   version: number,
   body: string,
+  meetupTitle: string,
 ): Promise<void> {
   const preview = await ctx.reply(body);
   const token = uuidToToken(meetupId);
   await ctx.reply(
-    screenText(
-      "Анонс в чат",
-      "Выше — текст, который увидят в чате сообщества.",
-      "Бот опубликует его от себя с твоей подписью и кнопкой к сходке, затем добавит пост в «Материалы» сходки.",
-      "Опубликовать?",
-    ),
+    `${heading("Опубликовать анонс?")}\n\n${subjectLine(meetupTitle)}\n\n${escapeHtml("Выше — текст, который увидят в чате сообщества. Бот опубликует его от себя с твоей подписью и кнопкой к сходке, затем добавит пост в «Материалы».")}`,
     {
       reply_parameters: { message_id: preview.message_id },
       parse_mode: "HTML",
@@ -7394,27 +7418,27 @@ async function sendAnnouncementConfirmation(
   );
 }
 
-function announcementRetry(action: {
-  token: string;
-  version: number;
-  key: string;
-  print: string;
-}): ShownScreen {
+function announcementRetry(
+  action: { token: string; version: number; key: string; print: string },
+  options: { version?: number; postFailed?: boolean } = {},
+): ShownScreen {
   return {
     id: "meetup-announcement-confirm",
     text: outcomeText(
-      "Не получилось прикрепить анонс как материал. Повтори нажатие: второй пост не уйдёт.",
+      options.postFailed === true
+        ? "Не получилось опубликовать анонс в чате. Повтори нажатие: если пост всё же ушёл, второй раз он не отправится."
+        : "Пост опубликован в чате, но не добавлен в «Материалы». Повтори нажатие — материал запишется, второй пост не уйдёт.",
     ),
     format: "HTML",
     keyboard: confirmKeyboard({
       yes: "Да, повторить",
       yesData: confirmAnnouncementData(
         action.token,
-        action.version,
+        options.version ?? action.version,
         action.key,
         action.print,
       ),
-      noData: cancelAnnouncementData(action.token),
+      noData: cancelAnnouncementData(action.token, action.key),
       irreversible: true,
     }),
   };
@@ -7447,6 +7471,21 @@ async function publishMeetupAnnouncement(
       use_case: useCase,
       error_category: "invariant",
       error: "community_chat_missing",
+    };
+  }
+  if (!isCommunitySupergroup(chat.chatId)) {
+    await showRefusal(
+      ctx,
+      "Чат сообщества должен быть супергруппой: только там ссылка на пост становится материалом.",
+      exitToCard(action.token),
+    );
+    return {
+      level: "warn",
+      message: "meetup announcement community chat is not a supergroup",
+      result: "error",
+      use_case: useCase,
+      error_category: "invariant",
+      error: "community_chat_not_supergroup",
     };
   }
   const preview = parsePreviewText(
@@ -7522,21 +7561,28 @@ async function publishMeetupAnnouncement(
       identity_id: person.identityId,
     };
   }
-  if (current.meetup.version !== action.version) {
-    await showRefusal(
-      ctx,
-      "Сходка изменилась с того момента, как ты написал анонс. Открой её заново и повтори.",
-      exitToCard(action.token),
-    );
-    return {
-      level: "info",
-      message: "meetup announcement conflict",
-      result: "ok",
-      use_case: useCase,
-      meetup_id: meetupId,
-    };
-  }
   let messageId = posts.posted(action.key);
+  let expectedVersion = action.version;
+  if (current.meetup.version !== action.version) {
+    if (messageId === undefined) {
+      await showRefusal(
+        ctx,
+        "Сходка изменилась с того момента, как ты написал анонс. Открой её заново и повтори.",
+        exitToCard(action.token),
+      );
+      return {
+        level: "info",
+        message: "meetup announcement conflict",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: meetupId,
+      };
+    }
+    // Пост уже ушёл в чат, поэтому отказ «начни заново» привёл бы ко второму
+    // посту. Повторяем запись материала с текущей версией: по id материала
+    // Meetups дедуплицирует повтор, а пост публиковаться больше не будет.
+    expectedVersion = current.meetup.version;
+  }
   if (messageId === undefined) {
     try {
       const posted = await ctx.api.sendMessage(
@@ -7573,7 +7619,24 @@ async function publishMeetupAnnouncement(
           error: "telegram_no_rights",
         };
       }
-      await showScreen(ctx, announcementRetry(action));
+      if (postTooLongError(cause)) {
+        await showRefusal(
+          ctx,
+          "Анонс с подписью не помещается в сообщение Telegram. Сократи текст и открой сходку заново.",
+          exitToCard(action.token),
+        );
+        return {
+          level: "warn",
+          message: "meetup announcement post too long",
+          result: "error",
+          use_case: useCase,
+          meetup_id: meetupId,
+          identity_id: person.identityId,
+          error_category: "invariant",
+          error: "telegram_post_too_long",
+        };
+      }
+      await showScreen(ctx, announcementRetry(action, { postFailed: true }));
       return {
         level: "warn",
         message: "meetup announcement post failed",
@@ -7599,7 +7662,7 @@ async function publishMeetupAnnouncement(
         url: communityMessageLink(chat.chatId, messageId),
       },
     },
-    expectedVersion: action.version,
+    expectedVersion,
     ...rpcCall(ctx, useCase),
   });
   if (result.kind === "material-attached" || result.kind === "conflict") {
@@ -7627,7 +7690,11 @@ async function publishMeetupAnnouncement(
       };
     }
   }
-  await showScreen(ctx, announcementRetry(action));
+  // Конфликт приходит со свежим снимком: кнопка повтора несёт его версию,
+  // иначе повтор упрется в отказ «сходка изменилась» и пост останется сиротой.
+  const retryVersion =
+    result.kind === "conflict" ? result.meetup.version : expectedVersion;
+  await showScreen(ctx, announcementRetry(action, { version: retryVersion }));
   return {
     level: "warn",
     message: "meetup announcement material failed",
@@ -16958,6 +17025,7 @@ function callbackUseCase(
     case "announce-meetup":
     case "confirm-meetup-announcement":
     case "cancel-meetup-announcement":
+      return "announce_meetup";
     case "begin-meetup-broadcast":
     case "begin-community-broadcast":
     case "confirm-meetup-broadcast":
