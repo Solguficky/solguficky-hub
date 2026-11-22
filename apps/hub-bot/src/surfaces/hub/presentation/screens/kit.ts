@@ -9,6 +9,7 @@ import {
   pictogram,
 } from "../../../../core/pictograms.js";
 import type { CommunityDay } from "../../community-time.js";
+import { type MaterialsOrigin, materialsListData } from "./materials-data.js";
 
 // Словарь и сборщики экранов по дизайн-коду (docs/design/bot/design-code.md).
 // Экран собирается из трёх частей: жирный заголовок, абзацы и клавиатура с
@@ -262,8 +263,8 @@ export function toAuctionRoot(auctionId: string): Parent {
   return { name: "Аукцион", data: auctionRootData(auctionId) };
 }
 
-export function toMaterials(token: string): Parent {
-  return { name: "Материалы", data: `v1:mm:list:${token}` };
+export function toMaterials(token: string, origin: MaterialsOrigin): Parent {
+  return { name: "Материалы", data: materialsListData(origin, token) };
 }
 
 /**

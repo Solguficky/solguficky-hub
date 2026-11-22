@@ -57,6 +57,15 @@ import {
   withNav,
   withPager,
 } from "./kit.js";
+import {
+  type MaterialsOrigin,
+  materialsAddData,
+  materialsEdgeData,
+  materialsFileData,
+  materialsListData,
+  materialsMoveData,
+  materialsRemoveData,
+} from "./materials-data.js";
 import type { ScreenPhoto, ShownScreen } from "./show.js";
 
 // Экраны сходки: списки, карточка и её подэкраны. Каждая функция — чистый
@@ -544,7 +553,7 @@ export function cardScreen(view: CardView): ShownScreen {
   if (editable || meetup.materials.length > 0) {
     keyboard.text(
       materialsLabel(meetup.materials.length),
-      `v1:mm:list:${token}`,
+      materialsListData("card", token),
     );
   }
   // Расширения сходки (PER-605; ADR-064, дополнение 2026-10-12) стоят в ряду
@@ -678,6 +687,13 @@ export function draftScreen(view: {
     .text("Место", `v1:manage:draft:${token}:venue`)
     .row()
     .text("Описание", `v1:manage:draft:${token}:description`)
+    .row()
+    // Материалы прикрепляются до публикации тем же шагом, что с карточки
+    // (PER-913). Возврат с их экрана — «‹ Черновик», поэтому домен `md`.
+    .text(
+      materialsLabel(meetup.materials.length),
+      materialsListData("draft", token),
+    )
     .row()
     // `d` — источник выбора: «Отмена» под ним вернёт на черновик.
     .text("Опубликовать", `v1:manage:republish:${token}:d`)
@@ -1012,6 +1028,7 @@ export function materialsScreen(
   meetup: MeetupSnapshot,
   canManage: boolean,
   requestedPage: number,
+  origin: MaterialsOrigin,
 ): ShownScreen {
   const token = uuidToToken(meetup.id);
   const page = paginate(meetup.materials, requestedPage);
@@ -1028,30 +1045,51 @@ export function materialsScreen(
     if (material.source.kind === "message-link") {
       keyboard.url(buttonText(`${title} ↗`), material.source.url);
     } else {
-      keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
+      keyboard.text(
+        buttonText(title),
+        materialsFileData(origin, token, materialToken),
+      );
     }
     if (canReorder) {
       keyboard.text(
         "↑",
         first + index > 0
-          ? `v1:mm:u:${token}:${materialToken}:${meetup.version}`
-          : `v1:mm:e:${token}`,
+          ? materialsMoveData(
+              origin,
+              token,
+              materialToken,
+              "up",
+              meetup.version,
+            )
+          : materialsEdgeData(origin, token),
       );
       keyboard.text(
         "↓",
         first + index < meetup.materials.length - 1
-          ? `v1:mm:d:${token}:${materialToken}:${meetup.version}`
-          : `v1:mm:e:${token}`,
+          ? materialsMoveData(
+              origin,
+              token,
+              materialToken,
+              "down",
+              meetup.version,
+            )
+          : materialsEdgeData(origin, token),
       );
     }
     if (canManage) {
-      keyboard.text(pictogram.remove, `v1:mm:rm:${token}:${materialToken}`);
+      keyboard.text(
+        pictogram.remove,
+        materialsRemoveData(origin, token, materialToken),
+      );
     }
     keyboard.row();
   }
-  withPager(keyboard, page, (to) => `v1:mm:list:${token}:${to}`);
+  withPager(keyboard, page, (to) => materialsListData(origin, token, to));
   if (canManage) {
-    nextRow(keyboard).text("Прикрепить материал", `v1:mm:add:${token}`);
+    nextRow(keyboard).text(
+      "Прикрепить материал",
+      materialsAddData(origin, token),
+    );
   }
   return {
     id: "materials",
@@ -1067,7 +1105,12 @@ export function materialsScreen(
             )
             .join("\n"),
     ),
-    keyboard: withNav(keyboard, toCard(token)),
+    keyboard: withNav(
+      keyboard,
+      origin === "draft"
+        ? { name: "Черновик", data: `v1:manage:draft:${token}` }
+        : toCard(token),
+    ),
     format: "HTML",
   };
 }

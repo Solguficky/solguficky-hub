@@ -141,6 +141,7 @@ describe("callback parser", () => {
     expect(parseCallback("v1:mm:no:AZLzpLXGfY6fChssPU5fYA")).toEqual({
       kind: "decline-attach-material",
       token: "AZLzpLXGfY6fChssPU5fYA",
+      origin: "card",
     });
     expect(parseCallback("v1:bc:no:AZLzpLXGfY6fChssPU5fYA")).toEqual({
       kind: "cancel-broadcast",
@@ -414,10 +415,18 @@ describe("callback parser", () => {
       [`v1:mm:rm:${meetup}:${material}`, "remove-material"],
       [`v1:mm:cr:${meetup}:${material}:999999999`, "confirm-remove-material"],
       [`v1:mm:file:${meetup}:${material}`, "open-material-file"],
+      [`v1:mm:u:${meetup}:${material}:999999999`, "move-material"],
+      [`v1:mm:d:${meetup}:${material}:999999999`, "move-material"],
+      [`v1:mm:list:${meetup}:3`, "manage-materials"],
     ] as const;
     for (const [data, kind] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
-      expect(parseCallback(data)).toMatchObject({ kind });
+      expect(parseCallback(data)).toMatchObject({ kind, origin: "card" });
+      // Тот же набор с черновика (PER-913): домен `md` длину не меняет —
+      // у подтверждения и перестановки ровно 64 байта в обоих доменах.
+      const draft = data.replace("v1:mm:", "v1:md:");
+      expect(Buffer.byteLength(draft)).toBeLessThanOrEqual(64);
+      expect(parseCallback(draft)).toMatchObject({ kind, origin: "draft" });
     }
   });
 
@@ -477,6 +486,14 @@ describe("callback parser", () => {
       kind: "confirm-attach-material",
       token: meetup,
       materialToken: material,
+      origin: "card",
+      version: 12,
+    });
+    expect(parseCallback(`v1:md:ca:${meetup}:${material}:12`)).toEqual({
+      kind: "confirm-attach-material",
+      token: meetup,
+      materialToken: material,
+      origin: "draft",
       version: 12,
     });
     expect(parseCallback(`v1:mm:cr:${meetup}:${material}:3`)).toMatchObject({
@@ -489,11 +506,13 @@ describe("callback parser", () => {
       kind: "confirm-attach-material",
       token: meetup,
       materialToken: material,
+      origin: "card",
     });
     expect(parseCallback(`v1:mm:confirm-rm:${meetup}:${material}`)).toEqual({
       kind: "confirm-remove-material",
       token: meetup,
       materialToken: material,
+      origin: "card",
     });
     for (const data of [
       `v1:mm:ca:${meetup}:${material}`,
@@ -510,6 +529,13 @@ describe("callback parser", () => {
     expect(parseCallback(`v1:mm:list:${token}:3`)).toEqual({
       kind: "manage-materials",
       token,
+      origin: "card",
+      page: 3,
+    });
+    expect(parseCallback(`v1:md:list:${token}:3`)).toEqual({
+      kind: "manage-materials",
+      token,
+      origin: "draft",
       page: 3,
     });
   });
@@ -1104,9 +1130,17 @@ describe("notification callbacks", () => {
       [`v1:q:pd:${token}`, { kind: "publish-moment", token, origin: "draft" }],
       [
         `v1:q:ms:${token}:999999999`,
-        { kind: "material-source", token, version: 999999999 },
+        { kind: "material-source", token, version: 999999999, origin: "card" },
       ],
-      [`v1:q:mt:${token}`, { kind: "material-title", token }],
+      [
+        `v1:q:ms:${token}:999999999:d`,
+        { kind: "material-source", token, version: 999999999, origin: "draft" },
+      ],
+      [`v1:q:mt:${token}`, { kind: "material-title", token, origin: "card" }],
+      [
+        `v1:q:mt:${token}:d`,
+        { kind: "material-title", token, origin: "draft" },
+      ],
       [`v1:q:bm:${token}`, { kind: "broadcast", token }],
       ["v1:q:bc", { kind: "broadcast" }],
       ["v1:q:nick", { kind: "username" }],
@@ -1129,11 +1163,17 @@ describe("notification callbacks", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     expect(parseCallback(`v1:q:ms:${token}:3`)).toEqual({
       kind: "question",
-      step: { kind: "material-source", token, version: 3 },
+      step: { kind: "material-source", token, version: 3, origin: "card" },
     });
     expect(parseCallback(`v1:q:ms:${token}:3:42`)).toEqual({
       kind: "question",
-      step: { kind: "material-source", token, version: 3 },
+      step: { kind: "material-source", token, version: 3, origin: "card" },
+      askedBy: 42,
+    });
+    // Вопрос с черновика помечен хвостом `d` (PER-913).
+    expect(parseCallback(`v1:q:ms:${token}:3:d:42`)).toEqual({
+      kind: "question",
+      step: { kind: "material-source", token, version: 3, origin: "draft" },
       askedBy: 42,
     });
     expect(parseCallback(`v1:q:fe:${token}:venue:0`)).toEqual({
@@ -1246,6 +1286,8 @@ describe("notification callbacks", () => {
       "v1:q:fx:AZLzpLXGfY6fChssPU5fYA:venue",
       "v1:q:ms:AZLzpLXGfY6fChssPU5fYA",
       "v1:q:ms:AZLzpLXGfY6fChssPU5fYA:x",
+      "v1:q:ms:AZLzpLXGfY6fChssPU5fYA:3:x",
+      "v1:q:mt:AZLzpLXGfY6fChssPU5fYA:x",
       "v1:q:pm:AZLzpLXGfY6fChssPU5fYA:extra",
       "v1:q:bc:AZLzpLXGfY6fChssPU5fYA",
       "v1:q:nick:extra",

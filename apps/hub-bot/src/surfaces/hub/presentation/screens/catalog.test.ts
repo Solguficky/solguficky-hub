@@ -7,6 +7,7 @@ import {
   auctionRootParent,
   auctionRootParents,
   manageParents,
+  materialsParents,
   meetupListParent,
   meetupLists,
   screenCatalog,
@@ -22,6 +23,7 @@ describe("screen catalog", () => {
         const groups: Readonly<Record<string, readonly string[]>> = {
           [meetupListParent]: meetupLists,
           [auctionRootParent]: auctionRootParents,
+          [materialsParents]: ["card", "draft"],
           ...manageParents,
         };
         const parents: readonly string[] = groups[entry.parent ?? ""] ?? [
