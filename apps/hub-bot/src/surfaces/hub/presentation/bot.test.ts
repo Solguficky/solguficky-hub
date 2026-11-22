@@ -4099,11 +4099,14 @@ describe("presentation adapter", () => {
     );
     const question = first.calls.find((call) => call.method === "sendMessage");
     const questionText = sendMessageText(question);
-    expect(questionText).toContain("Сейчас: Циферблат");
+    expect(questionText).toContain("Новое место встречи?");
+    expect(questionText).toContain("нажми, чтобы скопировать");
+    expect(questionText).toContain("<code>Циферблат</code>");
     expect(questionText).not.toContain("Шаг:");
     expect(questionText).not.toContain("v1:manage");
     // Шаг лежит в кнопке «Отмена», а не в тексте вопроса.
     expect(question?.payload).toMatchObject({
+      parse_mode: "HTML",
       reply_markup: {
         force_reply: true,
         inline_keyboard: [
@@ -8779,9 +8782,133 @@ describe("deferred publication frames", () => {
 
       const question = calls.findLast((call) => call.method === "sendMessage");
       expect(question?.payload).toMatchObject({
-        text: "Сейчас: <b>Свои</b> игры &amp; чай\nДобавь короткое описание сходки.",
+        text:
+          "Новое описание сходки?\n" +
+          "нажми, чтобы скопировать:\n" +
+          "<pre>&lt;b&gt;Свои&lt;/b&gt; игры &amp;amp; чай</pre>",
         parse_mode: "HTML",
       });
+    });
+
+    it("accepts the copied source unchanged and keeps its formatting", async () => {
+      const meetup = {
+        ...publishedMeetup(),
+        description:
+          '<b>Свои</b> игры <a href="https://example.org/rules">тут</a>',
+      };
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:field:${uuidToToken(meetup.id)}:description`),
+      );
+      const question = calls.findLast((call) => call.method === "sendMessage");
+      const text = sendMessageText(question);
+      // То, что человек скопировал одним нажатием: видимый текст блока `<pre>`.
+      const copied = meetup.description;
+      expect(text).toContain(`<pre>${escapeHtml(copied)}</pre>`);
+
+      await bot.handleUpdate(
+        replyUpdate({
+          text: copied,
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+      const answer = execute.mock.calls.find(
+        ([request]) => request.intent === "update-meetup-field",
+      )?.[0];
+      expect(answer).toMatchObject({ field: "description", value: copied });
+    });
+
+    it("keeps typed markup as text when the answer is not the copied source", async () => {
+      const meetup = { ...publishedMeetup(), description: "Берём свои игры" };
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:field:${uuidToToken(meetup.id)}:description`),
+      );
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "<b>текст</b>",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+      const answer = execute.mock.calls.find(
+        ([request]) => request.intent === "update-meetup-field",
+      )?.[0];
+      expect(answer).toMatchObject({
+        field: "description",
+        value: "&lt;b&gt;текст&lt;/b&gt;",
+      });
+    });
+  });
+
+  describe("meetup field edit questions", () => {
+    it("asks «Добавь …» without a value block for an empty field", async () => {
+      const meetup = { ...publishedMeetup(), venue: "", description: "" };
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-card", meetup });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:field:${uuidToToken(meetup.id)}:description`),
+      );
+      const descriptionQuestion = sendMessageText(
+        calls.findLast((call) => call.method === "sendMessage"),
+      );
+      expect(descriptionQuestion).toBe("Добавь короткое описание сходки.");
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:field:${uuidToToken(meetup.id)}:venue`),
+      );
+      const venueQuestion = sendMessageText(
+        calls.findLast((call) => call.method === "sendMessage"),
+      );
+      expect(venueQuestion).toBe("Добавь место встречи?");
+      expect(venueQuestion).not.toContain("<code>");
+    });
+
+    it("truncates an oversized value with a marker without breaking the question", async () => {
+      const meetup = { ...publishedMeetup(), title: "а".repeat(5000) };
+      const execute = vi
+        .fn<Dispatcher["execute"]>()
+        .mockResolvedValue({ kind: "meetup-card", meetup });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:manage:field:${uuidToToken(meetup.id)}:title`),
+      );
+      const question = calls.findLast((call) => call.method === "sendMessage");
+      const text = sendMessageText(question);
+      expect(text).toContain("Новое название сходки?");
+      expect(text).toContain("нажми, чтобы скопировать");
+      expect(text).toContain("…</code>");
+      expect(text?.length).toBeLessThanOrEqual(4096);
+      expect(question?.payload).toMatchObject({ parse_mode: "HTML" });
     });
   });
 
