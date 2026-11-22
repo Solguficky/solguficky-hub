@@ -14,6 +14,7 @@ import {
   screenText,
   submenuText,
   toCard,
+  toMeetupManage,
   toOrganizers,
   withNav,
 } from "./kit.js";
@@ -113,7 +114,7 @@ export function organizersScreen(view: OrganizersView): ShownScreen {
       lines,
       "Организаторы ведут сходку наравне и назначают других. Снимает из состава только администратор, а сам организатор может выйти.",
     ),
-    keyboard: withNav(keyboard, toCard(token)),
+    keyboard: withNav(keyboard, toMeetupManage(token)),
     format: "HTML",
   };
 }

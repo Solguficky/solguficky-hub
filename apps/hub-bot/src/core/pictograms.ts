@@ -108,11 +108,8 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.extensions]: ["Расширения"],
   [pictogram.auction]: ["Аукцион", "Лоты"],
   [pictogram.admin]: [
+    // «Изменить лот» и «Изменить приз» — знак перед словом действия.
     "Изменить",
-    "Статус",
-    "Написать подписчикам",
-    // «Организаторы» сходки на её карточке (PER-749).
-    "Организаторы",
     "Включить аукцион",
     "Пульт",
     "Ставки зала",
@@ -122,6 +119,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
     // «Счастливые часы» лота на его карточке (PER-787).
     "Счастливые часы",
     "Добавить лот",
+    // Единственный вход управления сходкой (PER-910).
     "Управление",
   ],
   [pictogram.refresh]: ["Обновить"],
@@ -172,12 +170,8 @@ export const lotGroupSigns: ReadonlySet<string> = new Set([
  * имя экрана, а не вход в раздел.
  */
 export const sectionLabels: Readonly<Record<string, Pictogram>> = {
-  Изменить: pictogram.admin,
-  Статус: pictogram.admin,
   "Материалы (#)": pictogram.materials,
   Расширения: pictogram.extensions,
-  "Написать подписчикам": pictogram.admin,
-  Организаторы: pictogram.admin,
   Обновить: pictogram.refresh,
   "Подписаться на сходку": pictogram.on,
   Отписаться: pictogram.off,

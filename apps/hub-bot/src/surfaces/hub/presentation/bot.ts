@@ -500,6 +500,7 @@ import {
   toExtensions,
   toManage,
   toMaterials,
+  toMeetupManage,
   toMeetups,
   toMenu,
   toOrganizers,
@@ -551,17 +552,18 @@ import {
   archiveScreen,
   cardScreen,
   draftScreen,
-  editFieldsScreen,
+  finishScreen,
   hiddenScreen,
   materialsScreen,
   materialTitle,
+  meetupManageScreen,
   meetupNotificationsLabel,
   meetupsScreen,
   meetupTitleLabel,
+  publicationScreen,
   publishChoiceKeyboard,
   publishConfirmScreen,
   stateConfirmScreen,
-  statusScreen,
 } from "./screens/meetup.js";
 import {
   appointCancelledText,
@@ -744,11 +746,11 @@ const staleMeetupText =
   "Сейчас это действие недоступно. Открой сходку заново и проверь её состояние и название.";
 // Публикация сразу без названия: Meetups отказывает, и подтверждать нечего.
 const untitledPublishText =
-  "У сходки нет названия, а без него сходку не опубликовать. Добавь название через «Изменить» на карточке.";
+  "У сходки нет названия, а без него сходку не опубликовать. Добавь название в «Управлении» сходкой.";
 // Отложенная публикация черновика без названия (PER-457): Meetups отказывает,
 // потому что опубликовать сходку без названия нельзя и по расписанию.
 const untitledPublicationText =
-  "У сходки нет названия, а без него публикацию не назначить. Добавь название через «Изменить» на карточке.";
+  "У сходки нет названия, а без него публикацию не назначить. Добавь название в «Управлении» сходкой.";
 
 // Отказ Meetups по самой команде человеку показывается кадром, а не текстом
 // сервиса: код gRPC и текст уходят в запись границы (PER-397). FAILED_PRECONDITION —
@@ -2959,7 +2961,7 @@ async function handleMessage(
         result,
         questions,
         runtime.presentation ?? "rich",
-        "status",
+        pending.mode === "edit" ? "publication" : "draft",
         pending.fresh,
       );
       await answered(result);
@@ -4744,10 +4746,11 @@ async function handleCallback(
       return;
     }
     if (
-      action.kind === "manage-edit" ||
+      action.kind === "manage-open" ||
       action.kind === "manage-field" ||
       action.kind === "manage-draft" ||
-      action.kind === "manage-status" ||
+      action.kind === "manage-publication" ||
+      action.kind === "manage-finish" ||
       action.kind === "manage-unpublish" ||
       action.kind === "manage-cancel" ||
       action.kind === "manage-hold" ||
@@ -4792,7 +4795,7 @@ async function handleCallback(
         outcome = meetupForbiddenOutcome(person, meetupId, useCase);
         return;
       }
-      if (meetup.lifecycle === "cancelled") {
+      if (meetup.lifecycle === "cancelled" && action.kind !== "manage-open") {
         await showRefusal(
           ctx,
           `Сходка «${meetup.title}» уже отменена. Изменять её больше нельзя.`,
@@ -4807,8 +4810,10 @@ async function handleCallback(
         };
         return;
       }
-      if (action.kind === "manage-edit") {
-        await showScreen(ctx, editFieldsScreen(meetup));
+      if (action.kind === "manage-open") {
+        // «Управление» открывается и у отменённой сходки (PER-910): там
+        // остаются рассылка и состав.
+        await showScreen(ctx, meetupManageScreen(meetup, communityToday(ctx)));
       } else if (action.kind === "manage-field") {
         await renderFormResult(
           ctx,
@@ -4867,11 +4872,24 @@ async function handleCallback(
           questions,
           runtime.presentation ?? "rich",
         );
-      } else if (action.kind === "manage-status") {
-        await showScreen(
+      } else if (action.kind === "manage-publication") {
+        await showScreen(ctx, publicationScreen(meetup, communityToday(ctx)));
+      } else if (
+        action.kind === "manage-finish" &&
+        meetup.lifecycle !== "planned"
+      ) {
+        // «Завершить или отменить» есть только у запланированной сходки:
+        // устаревшая кнопка не задаёт подтверждение действия, которое уже
+        // не изменит состояние.
+        await showRefusal(
           ctx,
-          statusScreen(meetup, current.people, communityToday(ctx)),
+          meetup.lifecycle === "held"
+            ? "Сходка уже отмечена состоявшейся."
+            : `Сходка «${meetup.title}» уже отменена. Изменять её больше нельзя.`,
+          exitToCard(token),
         );
+      } else if (action.kind === "manage-finish") {
+        await showScreen(ctx, finishScreen(meetup));
       } else if (
         action.kind === "manage-cancel" &&
         meetup.lifecycle === "held"
@@ -4907,7 +4925,7 @@ async function handleCallback(
       ) {
         // Черновик без названия Meetups опубликовать не даст ни сразу, ни по
         // расписанию (PER-457): вопрос о моменте закончился бы отказом домена.
-        // Название добавляется на карточке через «Изменить».
+        // Название добавляется в «Управлении» сходкой.
         await showRefusal(ctx, untitledPublicationText, exitToCard(token));
       } else if (action.kind === "manage-publish-later") {
         await renderFormResult(
@@ -4954,14 +4972,21 @@ async function handleCallback(
           publishConfirmScreen({ meetup, origin: action.origin }),
         );
       } else {
-        // Все действия смены состояния живут в «Статусе», и отказ от
-        // подтверждения возвращает туда.
+        // Все действия смены состояния живут в «Публикации» и «Завершить или
+        // отменить», и отказ от подтверждения возвращает в тот же экран.
         await showScreen(
           ctx,
           stateConfirmScreen({
             action: stateActionByCallback[action.kind],
             meetup,
-            back: `v1:manage:status:${token}`,
+            // «Нет» подтверждения возвращает на экран, откуда оно открыто:
+            // скрытие и отложенная публикация живут в «Публикации», отметка и
+            // отмена — в «Завершить или отменить» (PER-910).
+            back:
+              action.kind === "manage-unpublish" ||
+              action.kind === "manage-unschedule"
+                ? `v1:manage:publication:${token}`
+                : `v1:manage:finish:${token}`,
             ...(current.cancelConsequence === undefined
               ? {}
               : { consequence: current.cancelConsequence }),
@@ -5428,6 +5453,7 @@ async function handleCallback(
           result,
           questions,
           runtime.presentation ?? "rich",
+          action.kind === "manage-confirm-publish" ? "publication" : "draft",
         );
       }
       outcome = screenBoundary(result, {
@@ -7338,6 +7364,11 @@ function showRefusal(
 /** Выход к карточке сходки: `[‹ Сходка]`. */
 function exitToCard(token: string): InlineKeyboard {
   return withNav(new InlineKeyboard(), toCard(token));
+}
+
+/** Возврат исхода в «Управление» сходкой (PER-910). */
+function exitToMeetupManage(token: string): InlineKeyboard {
+  return withNav(new InlineKeyboard(), toMeetupManage(token));
 }
 
 function exitToExtensions(token: string): InlineKeyboard {
@@ -13746,7 +13777,26 @@ async function renderStateResult(
     );
     return;
   }
-  if (result.kind === "published" || result.kind === "meetup-state-changed") {
+  if (result.kind === "meetup-state-changed") {
+    // Остальные исходы ведут в «Управление» (PER-910): там видна строка
+    // состояния, и человек продолжает работу, а не ищет карточку. Отмена
+    // сходки — исключение выше: после неё управление может быть недоступно.
+    await showScreen(ctx, {
+      id: "outcome",
+      text: outcomeText(
+        result.action === "unpublish"
+          ? "Сходка скрыта. Теперь она не видна в списке."
+          : result.action === "hold"
+            ? "Сходка отмечена состоявшейся."
+            : "Отложенная публикация отменена. Сходка остаётся скрытой.",
+        meetupTitleLabel(result.meetup.title),
+      ),
+      keyboard: exitToMeetupManage(uuidToToken(result.meetup.id)),
+      format: "HTML",
+    });
+    return;
+  }
+  if (result.kind === "published") {
     await renderMeetupCard(ctx, cardFrom(result), true, presentation);
     return;
   }
@@ -13958,7 +14008,7 @@ async function renderFormResult(
   questions: Map<string, PendingInput>,
   presentation: "rich" | "plain",
   // Экран, с которого назначают публикацию: нужен только вопросу о её моменте.
-  origin: PublishOrigin = "status",
+  origin: PublishOrigin = "publication",
   // Вопрос о названии новой сходки: повтор вопроса сохраняет, откуда он задан.
   fresh?: NewMeetupOrigin,
 ): Promise<void> {
@@ -14123,23 +14173,26 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "meetup-updated") {
-    // После ответа текстом нажатого сообщения нет, и карточка приходит новой;
-    // после выбора кнопкой она правит экран выбора на месте.
-    await renderMeetupCard(
-      ctx,
-      cardFrom(result),
-      true,
-      presentation,
-      [
-        "Изменение сохранено.",
-        changedField(result, communityToday(ctx)),
-        result.archived === true
-          ? "Дата сходки уже прошла, поэтому она в архиве, а не в «Сходках»."
-          : undefined,
-      ]
-        .filter((part) => part !== undefined)
-        .join(" "),
-    );
+    // Исход правки поля — свой экран с возвратом в «Управление» (PER-910,
+    // дизайн-код, «Возвраты»): человек продолжает работу там же, а карточку
+    // открывает «‹ Сходка».
+    await showScreen(ctx, {
+      id: "outcome",
+      text: outcomeText(
+        [
+          "Изменение сохранено.",
+          changedField(result, communityToday(ctx)),
+          result.archived === true
+            ? "Дата сходки уже прошла, поэтому она в архиве, а не в «Сходках»."
+            : undefined,
+        ]
+          .filter((part) => part !== undefined)
+          .join(" "),
+        meetupTitleLabel(result.meetup.title),
+      ),
+      keyboard: exitToMeetupManage(uuidToToken(result.meetup.id)),
+      format: "HTML",
+    });
     return;
   }
   // Старая кнопка «Создать сходку» несёт id уже созданной сходки: её ответ
@@ -14232,16 +14285,29 @@ async function renderFormResult(
   }
   if (result.kind === "publication-scheduled") {
     // О самом срабатывании бот не рассказывает: уведомление о публикации —
-    // блок Notifications. Здесь только подтверждение назначения.
-    await renderMeetupCard(
-      ctx,
-      cardFrom(result),
-      true,
-      presentation,
+    // блок Notifications. Здесь только подтверждение назначения. Из
+    // «Публикации» исход ведёт в «Управление» (PER-910), с черновика —
+    // прежней карточкой.
+    const scheduled =
       result.meetup.publishAt === undefined
         ? "Публикация назначена."
-        : `Публикация назначена на ${formatLocalMoment(result.meetup.publishAt)}. До этого момента сходка остаётся скрытой.`,
-    );
+        : `Публикация назначена на ${formatLocalMoment(result.meetup.publishAt)}. До этого момента сходка остаётся скрытой.`;
+    if (origin === "draft") {
+      await renderMeetupCard(
+        ctx,
+        cardFrom(result),
+        true,
+        presentation,
+        scheduled,
+      );
+    } else {
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText(scheduled, meetupTitleLabel(result.meetup.title)),
+        keyboard: exitToMeetupManage(uuidToToken(result.meetup.id)),
+        format: "HTML",
+      });
+    }
     return;
   }
   if (result.kind === "publication-unavailable") {
@@ -14261,20 +14327,34 @@ async function renderFormResult(
     return;
   }
   if (result.kind === "published") {
-    // Результат нажатия — карточка правкой того же сообщения: одновременный
-    // двойной клик пишет в него же. С прошедшей датой сходка сразу в архиве:
-    // ответ не обещает её в списке «Сходках», где её нет (PER-342).
+    // Исход публикации из «Публикации» ведёт в «Управление» (PER-910), с
+    // черновика — карточкой: там форма создания и закончилась. С прошедшей
+    // датой сходка сразу в архиве: ответ не обещает её в «Сходках», где её
+    // нет (PER-342).
     const published =
       result.archived === true
         ? "Сходка опубликована. Её дата уже прошла, поэтому она сразу в архиве, а не в «Сходках»."
         : "Сходка опубликована. Теперь она видна в списке.";
-    await renderMeetupCard(
-      ctx,
-      cardFrom(result),
-      true,
-      presentation,
-      `${published} Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`,
-    );
+    const link = `Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`;
+    if (origin === "draft") {
+      await renderMeetupCard(
+        ctx,
+        cardFrom(result),
+        true,
+        presentation,
+        `${published} ${link}`,
+      );
+    } else {
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText(
+          `${published} ${link}`,
+          meetupTitleLabel(result.meetup.title),
+        ),
+        keyboard: exitToMeetupManage(uuidToToken(result.meetup.id)),
+        format: "HTML",
+      });
+    }
     return;
   }
   if (result.kind === "dependency-rejected") {
@@ -14855,12 +14935,12 @@ function cancelTarget(step: QuestionStep): ScreenAction {
       }
       return step.mode === "create"
         ? { kind: "manage-draft", token: step.token }
-        : { kind: "view-meetup", token: step.token };
+        : { kind: "manage-open", token: step.token };
     case "publish-moment":
-      // Отложенную публикацию назначают из «Статуса» и с черновика.
+      // Отложенную публикацию назначают из «Публикации» и с черновика.
       return step.origin === "draft"
         ? { kind: "manage-draft", token: step.token }
-        : { kind: "manage-status", token: step.token };
+        : { kind: "manage-publication", token: step.token };
     case "material-source":
     case "material-title":
       return { kind: "manage-materials", token: step.token };
@@ -15182,11 +15262,11 @@ function answerParent(step: QuestionStep): Parent {
       }
       return step.mode === "create"
         ? { name: "Сходка", data: `v1:manage:draft:${step.token}` }
-        : toCard(step.token);
+        : toMeetupManage(step.token);
     case "publish-moment":
       return step.origin === "draft"
         ? { name: "Сходка", data: `v1:manage:draft:${step.token}` }
-        : { name: "Статус", data: `v1:manage:status:${step.token}` };
+        : { name: "Публикация", data: `v1:manage:publication:${step.token}` };
     case "material-source":
     case "material-title":
       return toMaterials(step.token);
@@ -15330,7 +15410,7 @@ function auctionQuestionOf(replied: unknown): string | undefined {
 
 /** Момент публикации выбирают в режимах `p` и `d`; остальные — дата сходки. */
 function publishOriginOf(mode: WhenMode): PublishOrigin | undefined {
-  return mode === "p" ? "status" : mode === "d" ? "draft" : undefined;
+  return mode === "p" ? "publication" : mode === "d" ? "draft" : undefined;
 }
 
 // Тело ожидаемого ответа из записи карты: срок жизни вопрос получит заново.
@@ -15532,10 +15612,11 @@ function callbackUseCase(
     | "decline-application"
     | "create-meetup"
     | "publish-meetup"
-    | "manage-edit"
+    | "manage-open"
     | "manage-field"
     | "manage-draft"
-    | "manage-status"
+    | "manage-publication"
+    | "manage-finish"
     | "enable-auction"
     | "lot-new"
     | "lot-form"
@@ -15715,9 +15796,10 @@ function callbackUseCase(
     case "manage-menu":
     case "manage-group":
       return "create_meetup";
-    case "manage-edit":
+    case "manage-open":
     case "manage-field":
-    case "manage-status":
+    case "manage-publication":
+    case "manage-finish":
     case "manage-publish":
     case "manage-confirm-publish":
     case "manage-unpublish":

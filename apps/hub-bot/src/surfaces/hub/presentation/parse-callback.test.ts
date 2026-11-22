@@ -273,9 +273,10 @@ describe("callback parser", () => {
   it("parses meetup editing and confirmed state actions within the byte budget", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     const callbacks = [
-      `v1:manage:edit:${token}`,
+      `v1:manage:open:${token}`,
       `v1:manage:field:${token}:description`,
-      `v1:manage:status:${token}`,
+      `v1:manage:publication:${token}`,
+      `v1:manage:finish:${token}`,
       `v1:manage:republish:${token}`,
       `v1:manage:unpublish:${token}`,
       `v1:manage:confirm-unpublish:${token}`,
@@ -289,42 +290,55 @@ describe("callback parser", () => {
       expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
     }
 
-    expect(parseCallback(callbacks[0])).toEqual({ kind: "manage-edit", token });
+    expect(parseCallback(callbacks[0])).toEqual({ kind: "manage-open", token });
+    // Кнопки прежних релизов открывают «Управление» (PER-910).
+    expect(parseCallback(`v1:manage:edit:${token}`)).toEqual({
+      kind: "manage-open",
+      token,
+    });
     expect(parseCallback(callbacks[1])).toEqual({
       kind: "manage-field",
       token,
       field: "description",
     });
     expect(parseCallback(callbacks[2])).toEqual({
-      kind: "manage-status",
+      kind: "manage-publication",
+      token,
+    });
+    expect(parseCallback(`v1:manage:status:${token}`)).toEqual({
+      kind: "manage-open",
       token,
     });
     expect(parseCallback(callbacks[3])).toEqual({
-      kind: "manage-publish",
+      kind: "manage-finish",
       token,
-      origin: "status",
     });
     expect(parseCallback(callbacks[4])).toEqual({
+      kind: "manage-publish",
+      token,
+      origin: "publication",
+    });
+    expect(parseCallback(callbacks[5])).toEqual({
       kind: "manage-unpublish",
       token,
     });
-    expect(parseCallback(callbacks[5])).toEqual({
+    expect(parseCallback(callbacks[6])).toEqual({
       kind: "manage-confirm-unpublish",
       token,
     });
-    expect(parseCallback(callbacks[6])).toEqual({
+    expect(parseCallback(callbacks[7])).toEqual({
       kind: "manage-cancel",
       token,
     });
-    expect(parseCallback(callbacks[7])).toEqual({
+    expect(parseCallback(callbacks[8])).toEqual({
       kind: "manage-confirm-cancel",
       token,
     });
-    expect(parseCallback(callbacks[8])).toEqual({
+    expect(parseCallback(callbacks[9])).toEqual({
       kind: "manage-hold",
       token,
     });
-    expect(parseCallback(callbacks[9])).toEqual({
+    expect(parseCallback(callbacks[10])).toEqual({
       kind: "manage-confirm-hold",
       token,
     });
@@ -362,7 +376,7 @@ describe("callback parser", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     // Кнопка черновика несёт источник: «Отмена» под вопросом вернёт на него.
     for (const [callback, origin] of [
-      [`v1:manage:publish-later:${token}`, "status"],
+      [`v1:manage:publish-later:${token}`, "publication"],
       [`v1:manage:publish-later:${token}:d`, "draft"],
     ] as const) {
       expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
@@ -1083,7 +1097,10 @@ describe("notification callbacks", () => {
           day: "03102026",
         },
       ],
-      [`v1:q:pm:${token}`, { kind: "publish-moment", token, origin: "status" }],
+      [
+        `v1:q:pm:${token}`,
+        { kind: "publish-moment", token, origin: "publication" },
+      ],
       [`v1:q:pd:${token}`, { kind: "publish-moment", token, origin: "draft" }],
       [
         `v1:q:ms:${token}:999999999`,
@@ -1171,11 +1188,11 @@ describe("notification callbacks", () => {
       token,
     });
     expect(parseCallback(`v1:manage:when:${token}:e:x`)).toEqual({
-      kind: "view-meetup",
+      kind: "manage-open",
       token,
     });
     expect(parseCallback(`v1:manage:when:${token}:p:x`)).toEqual({
-      kind: "manage-status",
+      kind: "manage-publication",
       token,
     });
   });

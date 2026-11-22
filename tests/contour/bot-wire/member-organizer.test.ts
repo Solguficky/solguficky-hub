@@ -66,7 +66,8 @@ describe("сходка участника", () => {
     expect(author.sees()).toContain(`${title} (скрыта)`);
     await author.presses(listedAs(title));
     expect(author.buttons()).toContain("‹ Сходки");
-    await author.presses("🛠 Статус");
+    await author.presses("🛠 Управление");
+    await author.presses("Публикация");
     await author.presses("Опубликовать");
     await author.presses("Опубликовать и оповестить");
 
@@ -77,11 +78,14 @@ describe("сходка участника", () => {
       visible: true,
     });
 
+    // Исход публикации ведёт в «Управление» (PER-910), а карточку открывает
+    // «‹ Сходка» оттуда.
+    await author.presses("‹ Управление");
     await author.presses("‹ Сходка");
     expect(author.sees()).toContain("Ты организатор этой сходки");
     expect(author.sees()).toContain("Ты автор этой сходки");
-    const edit = targetOf(author, "🛠 Изменить");
-    await author.presses("🛠 Изменить");
+    const edit = targetOf(author, "🛠 Управление");
+    await author.presses("🛠 Управление");
     await author.presses("Название");
     await author.says(`${title} обновлена`);
 
@@ -99,8 +103,8 @@ describe("сходка участника", () => {
     const nick = `@${usernameFor(creator.telegramUserId)}`;
     expect(other.person.sees()).toContain(`Организатор: ${nick}`);
     expect(other.person.sees()).toContain(`Автор: ${nick}`);
-    expect(other.person.buttons()).not.toContain("🛠 Изменить");
-    expect(other.person.buttons()).not.toContain("🛠 Написать подписчикам");
+    expect(other.person.buttons()).not.toContain("🛠 Управление");
+    expect(other.person.buttons()).not.toContain("Написать подписчикам");
 
     // Подделанное нажатие кнопки организатора получает отказ до экрана
     // правки, и сходка не меняется.

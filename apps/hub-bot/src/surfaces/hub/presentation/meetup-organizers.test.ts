@@ -342,22 +342,23 @@ describe("meetup organizers in the hub bot", () => {
 
     await harness.bot.handleUpdate(press(`v1:view:${token}`));
     const card = last(harness.calls);
-    expect(labels(card)).toContain("🛠 Организаторы");
+    expect(labels(card)).toContain("🛠 Управление");
 
-    await harness.bot.handleUpdate(press(dataOf(card, "🛠 Организаторы")));
+    await harness.bot.handleUpdate(press(dataOf(card, "🛠 Управление")));
+    await harness.bot.handleUpdate(press(`v1:mo:l:${token}`));
     const screen = last(harness.calls);
     expect(plain(screen)).toContain("Организаторы\nНастолки");
     expect(plain(screen)).toContain("• ты · автор");
     expect(plain(screen)).toContain("• @masha");
     // Автор назначает, но не снимает: «Снять» видит только администратор.
-    expect(labels(screen)).toEqual(["Добавить", "Выйти", "‹ Сходка"]);
+    expect(labels(screen)).toEqual(["Добавить", "Выйти", "‹ Управление"]);
   });
 
   it("keeps the entry from a member outside the roster", async () => {
     const harness = await started(nina);
 
     await harness.bot.handleUpdate(press(`v1:view:${token}`));
-    expect(labels(last(harness.calls))).not.toContain("🛠 Организаторы");
+    expect(labels(last(harness.calls))).not.toContain("🛠 Управление");
 
     await harness.bot.handleUpdate(press(`v1:mo:l:${token}`));
     expect(plain(last(harness.calls))).toContain(
@@ -373,7 +374,7 @@ describe("meetup organizers in the hub bot", () => {
     await harness.bot.handleUpdate(press(`v1:mo:l:${token}`));
     const screen = last(harness.calls);
     expect(plain(screen)).toContain("• @lesha · автор");
-    expect(labels(screen)).toEqual(["Добавить", "Выйти", "‹ Сходка"]);
+    expect(labels(screen)).toEqual(["Добавить", "Выйти", "‹ Управление"]);
   });
 
   it.each([
@@ -423,7 +424,7 @@ describe("meetup organizers in the hub bot", () => {
       "Снять @lesha",
       "Снять @masha",
       "Добавить",
-      "‹ Сходка",
+      "‹ Управление",
     ]);
 
     await harness.bot.handleUpdate(press(dataOf(screen, "Снять @lesha")));
@@ -463,8 +464,7 @@ describe("meetup organizers in the hub bot", () => {
     harness.switchTo(nina);
     await harness.bot.handleUpdate(press(`v1:view:${token}`));
     const card = last(harness.calls);
-    expect(labels(card)).toContain("🛠 Изменить");
-    expect(labels(card)).toContain("🛠 Организаторы");
+    expect(labels(card)).toContain("🛠 Управление");
   });
 
   // Критерий PER-749: каждый отказ Identity — свой кадр, и команда Meetups

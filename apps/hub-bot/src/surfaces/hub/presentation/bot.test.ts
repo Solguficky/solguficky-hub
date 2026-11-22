@@ -3908,7 +3908,7 @@ describe("presentation adapter", () => {
               },
               {
                 text: "✖️ Нет",
-                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
+                callback_data: "v1:manage:finish:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -4158,7 +4158,7 @@ describe("presentation adapter", () => {
     expect(sendMessageText(answered[0])).toBe(
       "<b>Изменение сохранено</b>\n\n<b>Настолки</b>",
     );
-    expect(JSON.stringify(answered[0]?.payload)).toContain("‹ Сходка");
+    expect(JSON.stringify(answered[0]?.payload)).toContain("‹ Управление");
   });
 
   // Вопрос после рестарта знает, кому задан, из своей кнопки, и чужой ответ
@@ -4224,7 +4224,7 @@ describe("presentation adapter", () => {
               },
               {
                 text: "✖️ Нет",
-                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
+                callback_data: "v1:manage:publication:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
           ],
@@ -4233,7 +4233,7 @@ describe("presentation adapter", () => {
     });
 
     await bot.handleUpdate(
-      callbackUpdate("v1:manage:status:AZLzpLXGfY6fChssPU5fYA"),
+      callbackUpdate("v1:manage:publication:AZLzpLXGfY6fChssPU5fYA"),
     );
     expect(execute).toHaveBeenCalledTimes(2);
     expect(execute).toHaveBeenLastCalledWith(
@@ -4448,7 +4448,7 @@ describe("presentation adapter", () => {
       '"text":"Опубликовать без оповещения","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1:s"',
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      '"text":"Отмена","callback_data":"v1:manage:status:AZLzpLXGfY6fChssPU5fYA"',
+      '"text":"Отмена","callback_data":"v1:manage:publication:AZLzpLXGfY6fChssPU5fYA"',
     );
 
     await bot.handleUpdate(
@@ -4847,7 +4847,7 @@ describe("presentation adapter", () => {
     // Ряды карточки — после «‹ Сходка».
     await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
+      "v1:manage:open:AZLzpLXGfY6fChssPU5fYA",
     );
     const published = records.find(
       (record) => record.message === "meetup published",
@@ -6793,8 +6793,8 @@ describe("questions", () => {
       }),
     );
 
-    // Вопрос удаляется, а карточка приходит новым сообщением: правка вопроса
-    // режим ответа в клиенте не снимает. Значение никуда не ушло.
+    // Вопрос удаляется, а экран «Управление» приходит новым сообщением: правка
+    // вопроса режим ответа в клиенте не снимает. Значение никуда не ушло.
     expect(execute).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenLastCalledWith(
       expect.objectContaining({ intent: "view-meetup" }),
@@ -6802,7 +6802,7 @@ describe("questions", () => {
     expect(calls.map((call) => call.method)).toEqual([
       "deleteMessage",
       "answerCallbackQuery",
-      "sendRichMessage",
+      "sendMessage",
     ]);
     expect(calls[0]?.payload).toMatchObject({ message_id: 9 });
   });
@@ -7081,7 +7081,12 @@ describe("questions", () => {
                 callback_data: `v1:manage:field:${token}:venue`,
               },
             ],
-            [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
+            [
+              {
+                text: "‹ Управление",
+                callback_data: `v1:manage:open:${token}`,
+              },
+            ],
           ],
         },
       });
@@ -9526,7 +9531,7 @@ describe("deferred publication frames", () => {
   });
 
   // Черновик получает «Название» сразу после создания (PER-907): переименовать
-  // сходку можно до публикации, тем же вопросом, что и в «Изменить».
+  // сходку можно до публикации, тем же вопросом, что и в «Управлении».
   describe("draft title", () => {
     const draft = draftMeetup();
     const token = uuidToToken(draft.id);
@@ -9597,7 +9602,7 @@ describe("deferred publication frames", () => {
     );
 
     const shown = JSON.stringify(calls.at(-1)?.payload);
-    expect(shown).toContain("v1:manage:status:");
+    expect(shown).toContain("v1:manage:open:");
     expect(shown).not.toContain("v1:manage:draft:");
   });
 
@@ -9617,7 +9622,7 @@ describe("deferred publication frames", () => {
     });
     await bot.init();
 
-    await bot.handleUpdate(callbackUpdate(`v1:manage:status:${token}`));
+    await bot.handleUpdate(callbackUpdate(`v1:manage:publication:${token}`));
     expect(payloadText(calls.at(-1))).toContain(
       `"callback_data":"v1:manage:publish-later:${token}"`,
     );
@@ -9798,7 +9803,7 @@ describe("deferred publication frames", () => {
       method: "editMessageText",
       payload: {
         text: refusalText(
-          "У сходки нет названия, а без него публикацию не назначить. Добавь название через «Изменить» на карточке.",
+          "У сходки нет названия, а без него публикацию не назначить. Добавь название в «Управлении» сходкой.",
         ),
       },
     });
@@ -9852,7 +9857,7 @@ describe("deferred publication frames", () => {
     // Снятие обратимо и наружу не выходит: кнопка «Статуса» — сразу команда с
     // версией показанного снимка, без подтверждения (решение владельца
     // 10 октября 2026 года).
-    await bot.handleUpdate(callbackUpdate(`v1:manage:status:${token}`));
+    await bot.handleUpdate(callbackUpdate(`v1:manage:publication:${token}`));
     expect(payloadText(calls.at(-1))).toContain(
       `"callback_data":"v1:manage:confirm-unschedule:${token}:1"`,
     );
@@ -9872,7 +9877,10 @@ describe("deferred publication frames", () => {
                 text: "✔️ Да, отменить публикацию",
                 callback_data: `v1:manage:confirm-unschedule:${token}:1`,
               },
-              { text: "✖️ Нет", callback_data: `v1:manage:status:${token}` },
+              {
+                text: "✖️ Нет",
+                callback_data: `v1:manage:publication:${token}`,
+              },
             ],
           ],
         },
@@ -10098,7 +10106,7 @@ describe("broadcast frames", () => {
     };
   }
 
-  it("shows the broadcast entry on the card to an admin only", async () => {
+  it("moves the broadcast entry from the card into management", async () => {
     const meetup = publishedMeetup();
     const execute = vi
       .fn<Dispatcher["execute"]>()
@@ -10111,8 +10119,13 @@ describe("broadcast frames", () => {
     await admin.bot.handleUpdate(callbackUpdate(`v1:view:${meetupToken}`));
     await member.bot.handleUpdate(callbackUpdate(`v1:view:${meetupToken}`));
 
-    expect(JSON.stringify(admin.calls)).toContain(`v1:bc:m:${meetupToken}`);
+    // На карточке рассылки нет: она — ряд «Управления» (PER-910).
+    expect(JSON.stringify(admin.calls)).not.toContain(`v1:bc:m:${meetupToken}`);
+    expect(JSON.stringify(admin.calls)).toContain(
+      `v1:manage:open:${meetupToken}`,
+    );
     expect(JSON.stringify(member.calls)).not.toContain("v1:bc:");
+    expect(JSON.stringify(member.calls)).not.toContain("v1:manage:open:");
   });
 
   it("offers the community announcement in management to an admin only", async () => {
@@ -10784,8 +10797,13 @@ describe("meetup people and the organizer", () => {
     const { bot, calls } = createHarness(identity, { execute });
     await bot.init();
 
+    // Исход отметки ведёт в «Управление» (PER-910), а карточку с людьми
+    // открывает «‹ Сходка».
     await bot.handleUpdate(callbackUpdate(`v1:manage:confirm-hold:${token}`));
-
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      `v1:manage:open:${token}`,
+    );
+    await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Автор: @lesha");
   });
 
@@ -10796,9 +10814,8 @@ describe("meetup people and the organizer", () => {
       identity,
     );
 
-    expect(payload).toContain(`v1:manage:edit:${token}`);
-    expect(payload).toContain(`v1:manage:status:${token}`);
-    expect(payload).toContain(`v1:bc:m:${token}`);
+    expect(payload).toContain(`v1:manage:open:${token}`);
+    expect(payload).not.toContain(`v1:bc:m:${token}`);
     expect(payload).toContain("скрыта");
     // Свой черновик организатор видит в «Сходках»: «Скрытые сходки» живут в
     // «Управлении», которого у него нет (ADR-076, п. 9).

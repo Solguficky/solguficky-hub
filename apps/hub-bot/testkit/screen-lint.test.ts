@@ -291,7 +291,7 @@ describe("inspectCall", () => {
       });
 
     expect(tree([[key("Место"), key("Описание")]])).toEqual(["rows"]);
-    expect(tree([[key("🛠 Изменить"), key("🛠 Статус")]])).toEqual([]);
+    expect(tree([[key("Название"), key("Описание")]])).toEqual([]);
     // Кнопка управления не делит ряд с кнопкой участника (PER-669), даже в
     // паре, которую дизайн-код называет.
     expect(tree([[key("🛠 Пульт"), key("Розыгрыш")]])).toEqual(["rows", "rows"]);
@@ -348,7 +348,7 @@ describe("inspectCall", () => {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [key("🛠 Написать подписчикам"), key("🛠 Организаторы")],
+            [key("Публикация"), key("Завершить или отменить")],
             [key("‹ Сходки")],
           ],
         },
@@ -547,12 +547,12 @@ describe("inspectCall", () => {
         [screenTag]: "card",
       });
 
-    expect(rows([[key("🛠 Изменить"), key("🛠 Статус")]])).toEqual([]);
+    expect(rows([[key("Название"), key("Описание")]])).toEqual([]);
     expect(
       rows([[key("18:00"), key("19:00"), key("20:00"), key("21:00")]]),
     ).toEqual([]);
     expect(
-      rows([[key("🛠 Изменить"), key("🛠 Статус"), key("Материалы")]]),
+      rows([[key("Название"), key("Описание"), key("Материалы")]]),
     ).toEqual(["rows"]);
     expect(
       rows([[key("1")], [key("2")], [key("3")], [key("4")], [key("5")]]),
