@@ -164,7 +164,7 @@ export function toCard(token: string): Parent {
 }
 
 /** «Организаторы» сходки (PER-749): экран состава, токен сходки, 31 байт. */
-export function organizersData(token: string): string {
+export function organizersData(token: string): `v1:mo:l:${string}` {
   return `v1:mo:l:${token}`;
 }
 
