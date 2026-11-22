@@ -792,6 +792,179 @@ describe("presentation adapter", () => {
     });
   });
 
+  // Материалы черновика (PER-913): тот же экран, что с карточки, но возврат
+  // «‹ Черновик», а вход — домен `md`. Вход живёт в `callback_data`, поэтому
+  // переживает рестарт процесса.
+  describe("draft materials", () => {
+    const draft = (): MeetupSnapshot => ({
+      ...draftMeetup(),
+      title: "Настолки",
+      description: "Берём свои игры",
+      venue: "Циферблат",
+    });
+    const attached = (title: string) => ({
+      id: "0199c0de-0000-7000-8000-00000000aa01",
+      title,
+      source: {
+        kind: "file" as const,
+        fileId: "photo-1",
+        fileKind: "photo" as const,
+      },
+    });
+
+    it("opens the materials from the draft and returns to it", async () => {
+      const meetup = { ...draft(), materials: [attached("Афиша")] };
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate(`v1:md:list:${uuidToToken(meetup.id)}`),
+      );
+
+      const shown = calls.at(-1);
+      expect(shown?.method).toBe("editMessageText");
+      const payload = JSON.stringify(shown?.payload);
+      expect(payload).toContain('"text":"‹ Черновик"');
+      expect(payload).toContain(`v1:manage:draft:${uuidToToken(meetup.id)}`);
+      expect(payload).toContain("v1:md:add:");
+    });
+
+    it("leads back to the draft with the counted materials after attaching", async () => {
+      let meetup = draft();
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+        if (request.intent === "view-meetup") {
+          return { kind: "meetup-card", meetup };
+        }
+        if (request.intent === "attach-material") {
+          meetup = { ...meetup, materials: [request.material] };
+          return { kind: "material-attached", meetup };
+        }
+        return { kind: "rejected", reason: "unexpected" };
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+      const token = uuidToToken(meetup.id);
+
+      await bot.handleUpdate(callbackUpdate(`v1:md:add:${token}`));
+      await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
+      await bot.handleUpdate(
+        replyUpdate({
+          text: "Афиша",
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      const confirmation = calls.at(-1);
+      if (
+        confirmation?.method !== "sendMessage" ||
+        !("text" in confirmation.payload) ||
+        !("reply_markup" in confirmation.payload)
+      ) {
+        throw new Error("подтверждение прикрепления не пришло");
+      }
+      const confirmData = JSON.stringify(
+        confirmation.payload.reply_markup,
+      ).match(/v1:md:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/)?.[0];
+      expect(confirmData).toBeDefined();
+      if (confirmData === undefined) return;
+      expect(Buffer.byteLength(confirmData)).toBeLessThanOrEqual(64);
+
+      await bot.handleUpdate(
+        callbackMessageUpdate(confirmData, {
+          text: visible(String(confirmation.payload.text)),
+          reply_markup: confirmation.payload.reply_markup,
+        }),
+      );
+
+      const materials = calls.findLast((call) =>
+        JSON.stringify(call.payload ?? "").includes('"text":"‹ Черновик"'),
+      );
+      expect(materials).toBeDefined();
+
+      await bot.handleUpdate(callbackUpdate(`v1:manage:draft:${token}`));
+      const back = calls.findLast((call) =>
+        JSON.stringify(call.payload ?? "").includes("📎 Материалы (1)"),
+      );
+      expect(back).toBeDefined();
+      expect(JSON.stringify(back?.payload)).toContain(
+        `v1:manage:draft:${token}`,
+      );
+    });
+
+    it("refuses a forged draft action without the right", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup: publishedMeetup(),
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("member"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:md:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: refusalText("Это действие доступно организатору сходки."),
+        },
+      });
+    });
+
+    it("names the card as the way back from a stale draft entry", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup: publishedMeetup(),
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:md:list:AZLzpLXGfY6fChssPU5fYA"),
+      );
+
+      const payload = JSON.stringify(calls.at(-1)?.payload);
+      expect(payload).toContain('"text":"‹ Сходка"');
+      expect(payload).not.toContain('"text":"‹ Черновик"');
+    });
+
+    it("names the card as the way back from a cancelled draft", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup: {
+          ...draftMeetup(),
+          lifecycle: "cancelled" as const,
+          title: "Отменённая",
+        },
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:md:list:AZLzpLXGfY6fChssPU5fYA"),
+      );
+
+      const payload = JSON.stringify(calls.at(-1)?.payload);
+      expect(payload).toContain('"text":"‹ Сходка"');
+    });
+  });
+
   it("paginates a long material collection for every meetup viewer", async () => {
     const materials = Array.from({ length: 25 }, (_, index) => ({
       id: `0199c0de-0000-7000-8000-${(index + 1).toString(16).padStart(12, "0")}`,
@@ -2155,7 +2328,7 @@ describe("presentation adapter", () => {
       method: "sendMessage",
       payload: {
         text: expect.stringContaining(
-          "Начни прикрепление заново из карточки сходки.",
+          "Начни прикрепление заново из материалов сходки.",
         ),
       },
     });
@@ -9273,6 +9446,12 @@ describe("deferred publication frames", () => {
             {
               text: "Описание",
               callback_data: `v1:manage:draft:${draftToken}:description`,
+            },
+          ],
+          [
+            {
+              text: "📎 Материалы (0)",
+              callback_data: `v1:md:list:${draftToken}`,
             },
           ],
           [

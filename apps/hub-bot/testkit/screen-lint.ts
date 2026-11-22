@@ -36,6 +36,7 @@ import {
   auctionRootParents,
   screenCatalog as hubCatalog,
   manageParents,
+  materialsParents,
   meetupListParent,
   meetupLists,
 } from "../src/surfaces/hub/presentation/screens/catalog.js";
@@ -188,6 +189,7 @@ const configFor: Record<ScreenSurface, (catalog: Catalog) => LintConfig> = {
     parentGroups: {
       [meetupListParent]: meetupLists,
       [auctionRootParent]: auctionRootParents,
+      [materialsParents]: ["card", "draft"],
       ...manageParents,
     },
     namedPairs: hubNamedPairs,

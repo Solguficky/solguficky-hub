@@ -30,6 +30,10 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 import { decodeLaunchDraft, encodeLaunchDraft } from "./launch-draft.js";
+import {
+  type MaterialsOrigin,
+  materialsOriginOf,
+} from "./screens/materials-data.js";
 import { type ManageGroup, manageGroupOf } from "./screens/menu.js";
 
 const CallbackSchema = z.string().max(64);
@@ -736,35 +740,53 @@ type PlainAction =
       mode: WhenMode;
       day?: string;
     }
-  | { kind: "manage-materials"; token: string; page?: number }
-  | { kind: "material-edge"; token: string }
+  | {
+      kind: "manage-materials";
+      token: string;
+      origin: MaterialsOrigin;
+      page?: number;
+    }
+  | { kind: "material-edge"; token: string; origin: MaterialsOrigin }
   | {
       kind: "move-material";
       token: string;
+      origin: MaterialsOrigin;
       materialToken: string;
       direction: "up" | "down";
       version: number;
     }
-  | { kind: "begin-attach-material"; token: string }
+  | { kind: "begin-attach-material"; token: string; origin: MaterialsOrigin }
   // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
   // файлом остаётся следом с подписью, что прикрепления не было.
-  | { kind: "decline-attach-material"; token: string }
+  | { kind: "decline-attach-material"; token: string; origin: MaterialsOrigin }
   // `version` отсутствует только у кнопки прошлого релиза, которая версии не
   // несла: команду по ней не отправить, и экран отвечает кадром конфликта.
   | {
       kind: "confirm-attach-material";
       token: string;
+      origin: MaterialsOrigin;
       materialToken: string;
       version?: number;
     }
-  | { kind: "remove-material"; token: string; materialToken: string }
+  | {
+      kind: "remove-material";
+      token: string;
+      origin: MaterialsOrigin;
+      materialToken: string;
+    }
   | {
       kind: "confirm-remove-material";
       token: string;
+      origin: MaterialsOrigin;
       materialToken: string;
       version?: number;
     }
-  | { kind: "open-material-file"; token: string; materialToken: string }
+  | {
+      kind: "open-material-file";
+      token: string;
+      origin: MaterialsOrigin;
+      materialToken: string;
+    }
   | { kind: "view-meetup"; token: string }
   // Расширения (PER-605): меню «Расширения» сходки и «Расширения» в
   // «Настройках».
@@ -941,12 +963,19 @@ export type QuestionStep =
       day?: string;
     }
   // Версия карточки, с которой начато прикрепление: она доезжает до кнопки
-  // подтверждения и уходит в `expected_version` (PER-393).
-  | { kind: "material-source"; token: string; version: number }
+  // подтверждения и уходит в `expected_version` (PER-393). Вход материалов —
+  // `origin`: с черновика «Отмена» и «Ввести заново» возвращают туда же
+  // (PER-913).
+  | {
+      kind: "material-source";
+      token: string;
+      version: number;
+      origin: MaterialsOrigin;
+    }
   // Источник файла в 64 байта не помещается, поэтому ответ на этот вопрос
   // принимается только по карте вопросов в памяти процесса; кнопка возвращает
   // к материалам.
-  | { kind: "material-title"; token: string }
+  | { kind: "material-title"; token: string; origin: MaterialsOrigin }
   | { kind: "broadcast"; token?: string }
   | { kind: "username" }
   // Ник назначаемого администратора (PER-521).
@@ -2266,9 +2295,9 @@ function stepData(step: QuestionStep): string {
       // `pd` — вопрос задан с черновика: «Отмена» возвращает на него.
       return `v1:q:${step.origin === "draft" ? "pd" : "pm"}:${step.token}${step.day === undefined ? "" : `:${step.day}`}`;
     case "material-source":
-      return `v1:q:ms:${step.token}:${step.version}`;
+      return `v1:q:ms:${step.token}:${step.version}${step.origin === "draft" ? ":d" : ""}`;
     case "material-title":
-      return `v1:q:mt:${step.token}`;
+      return `v1:q:mt:${step.token}${step.origin === "draft" ? ":d" : ""}`;
     case "broadcast":
       return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
     case "username":
@@ -2444,26 +2473,48 @@ export function parseCallback(raw: unknown): CallbackAction {
       ? { kind: "view-meetup", token: viewToken.data }
       : { kind: "malformed" };
   }
-  if (parts[1] === "mm") {
+  const materialsOrigin = materialsOriginOf(parts[1] ?? "");
+  if (materialsOrigin !== undefined) {
     const meetupToken = TokenSchema.safeParse(parts[3]);
     if (!meetupToken.success) return { kind: "malformed" };
     if ((parts.length === 4 || parts.length === 5) && parts[2] === "list") {
       if (parts[4] === undefined) {
-        return { kind: "manage-materials", token: meetupToken.data };
+        return {
+          kind: "manage-materials",
+          token: meetupToken.data,
+          origin: materialsOrigin,
+        };
       }
       const page = PageSchema.safeParse(parts[4]);
       return page.success
-        ? { kind: "manage-materials", token: meetupToken.data, page: page.data }
+        ? {
+            kind: "manage-materials",
+            token: meetupToken.data,
+            origin: materialsOrigin,
+            page: page.data,
+          }
         : { kind: "malformed" };
     }
     if (parts.length === 4 && parts[2] === "add") {
-      return { kind: "begin-attach-material", token: meetupToken.data };
+      return {
+        kind: "begin-attach-material",
+        token: meetupToken.data,
+        origin: materialsOrigin,
+      };
     }
     if (parts.length === 4 && parts[2] === "no") {
-      return { kind: "decline-attach-material", token: meetupToken.data };
+      return {
+        kind: "decline-attach-material",
+        token: meetupToken.data,
+        origin: materialsOrigin,
+      };
     }
     if (parts.length === 4 && parts[2] === "e") {
-      return { kind: "material-edge", token: meetupToken.data };
+      return {
+        kind: "material-edge",
+        token: meetupToken.data,
+        origin: materialsOrigin,
+      };
     }
     const materialToken = TokenSchema.safeParse(parts[4]);
     if (!materialToken.success) return { kind: "malformed" };
@@ -2473,6 +2524,7 @@ export function parseCallback(raw: unknown): CallbackAction {
         ? {
             kind: "move-material",
             token: meetupToken.data,
+            origin: materialsOrigin,
             materialToken: materialToken.data,
             direction: parts[2] === "u" ? "up" : "down",
             version: version.data,
@@ -2491,6 +2543,7 @@ export function parseCallback(raw: unknown): CallbackAction {
             ? "confirm-attach-material"
             : "confirm-remove-material",
         token: meetupToken.data,
+        origin: materialsOrigin,
         materialToken: materialToken.data,
         version: version.data,
       };
@@ -2501,24 +2554,28 @@ export function parseCallback(raw: unknown): CallbackAction {
         return {
           kind: "confirm-attach-material",
           token: meetupToken.data,
+          origin: materialsOrigin,
           materialToken: materialToken.data,
         };
       case "rm":
         return {
           kind: "remove-material",
           token: meetupToken.data,
+          origin: materialsOrigin,
           materialToken: materialToken.data,
         };
       case "confirm-rm":
         return {
           kind: "confirm-remove-material",
           token: meetupToken.data,
+          origin: materialsOrigin,
           materialToken: materialToken.data,
         };
       case "file":
         return {
           kind: "open-material-file",
           token: meetupToken.data,
+          origin: materialsOrigin,
           materialToken: materialToken.data,
         };
       default:
@@ -3612,6 +3669,37 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       day,
     };
   }
+  if (parts.length === 4 && parts[2] === "mt") {
+    return { kind: "material-title", token: token.data, origin: "card" };
+  }
+  if (parts.length === 5 && parts[2] === "mt") {
+    // Хвост `d` — вопрос задан с черновика (PER-913).
+    return parts[4] === "d"
+      ? { kind: "material-title", token: token.data, origin: "draft" }
+      : undefined;
+  }
+  if (parts[2] === "ms") {
+    const version = VersionSchema.safeParse(parts[4]);
+    if (!version.success) return undefined;
+    if (parts.length === 5) {
+      return {
+        kind: "material-source",
+        token: token.data,
+        version: version.data,
+        origin: "card",
+      };
+    }
+    // Хвост `d` — вопрос задан с черновика (PER-913).
+    if (parts.length === 6 && parts[5] === "d") {
+      return {
+        kind: "material-source",
+        token: token.data,
+        version: version.data,
+        origin: "draft",
+      };
+    }
+    return undefined;
+  }
   if (parts.length === 4) {
     switch (parts[2]) {
       case "lt":
@@ -3683,8 +3771,6 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         };
       case "pd":
         return { kind: "publish-moment", token: token.data, origin: "draft" };
-      case "mt":
-        return { kind: "material-title", token: token.data };
       case "bm":
         return { kind: "broadcast", token: token.data };
       default:
@@ -3779,12 +3865,6 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
     const position = PositionSchema.safeParse(parts[4]);
     return position.success
       ? { kind: "final-ask", auction: token.data, position: position.data }
-      : undefined;
-  }
-  if (parts[2] === "ms") {
-    const version = VersionSchema.safeParse(parts[4]);
-    return version.success
-      ? { kind: "material-source", token: token.data, version: version.data }
       : undefined;
   }
   if (

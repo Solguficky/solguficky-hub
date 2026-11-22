@@ -23,6 +23,7 @@ describe("material album drafts", () => {
       albums.put("group", "token", {
         meetupId: "m",
         version: 1,
+        origin: "card",
         telegramUserId: 1,
         photos: [first, second],
       }),
@@ -55,6 +56,7 @@ describe("material album drafts", () => {
     const album = {
       meetupId: "m",
       version: 1,
+      origin: "card" as const,
       telegramUserId: 1,
       photos: [photo],
     };

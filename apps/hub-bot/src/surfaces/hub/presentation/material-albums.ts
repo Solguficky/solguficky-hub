@@ -1,3 +1,5 @@
+import type { MaterialsOrigin } from "./screens/materials-data.js";
+
 export type AlbumPhoto = {
   fileId: string;
   uniqueId: string;
@@ -8,6 +10,7 @@ export type AlbumPhoto = {
 export type MaterialAlbum = {
   meetupId: string;
   version: number;
+  origin: MaterialsOrigin;
   telegramUserId: number;
   photos: readonly AlbumPhoto[];
 };

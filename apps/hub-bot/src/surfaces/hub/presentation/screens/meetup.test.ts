@@ -37,7 +37,7 @@ it("moves materials across page boundaries with stable ids and the shown version
     },
   }));
   const value = meetup({ materials, version: 999999999 });
-  const rows = materialsScreen(value, true, 0).keyboard.inline_keyboard;
+  const rows = materialsScreen(value, true, 0, "card").keyboard.inline_keyboard;
   const eighth = rows[7] ?? [];
   const down = eighth.find((button) => button.text === "↓");
   expect(down).toHaveProperty("callback_data");
@@ -47,6 +47,7 @@ it("moves materials across page boundaries with stable ids and the shown version
       kind: "move-material",
       token: uuidToToken(value.id),
       materialToken: uuidToToken(materials[7]?.id ?? ""),
+      origin: "card",
       direction: "down",
       version: 999999999,
     });
@@ -60,6 +61,7 @@ it("moves materials across page boundaries with stable ids and the shown version
     expect(parseCallback(firstUp.callback_data)).toEqual({
       kind: "material-edge",
       token: uuidToToken(value.id),
+      origin: "card",
     });
   }
   expect(
@@ -72,16 +74,18 @@ it("moves materials across page boundaries with stable ids and the shown version
     value,
     true,
     1,
+    "card",
   ).keyboard.inline_keyboard[1]?.find((button) => button.text === "↓");
   expect(lastDown).toHaveProperty("callback_data");
   if (lastDown && "callback_data" in lastDown) {
     expect(parseCallback(lastDown.callback_data)).toEqual({
       kind: "material-edge",
       token: uuidToToken(value.id),
+      origin: "card",
     });
   }
   expect(
-    materialsScreen(value, false, 0)
+    materialsScreen(value, false, 0, "card")
       .keyboard.inline_keyboard.flat()
       .some((button) => button.text === "↓"),
   ).toBe(false);
@@ -883,7 +887,7 @@ describe("materialsScreen", () => {
   }));
 
   it("opens a file by a button and marks a link, with removal for the organizer", () => {
-    const screen = materialsScreen(meetup({ materials }), true, 0);
+    const screen = materialsScreen(meetup({ materials }), true, 0, "card");
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "↑", "↓", "🗑"]);
     expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "↑", "↓", "🗑"]);
@@ -893,16 +897,13 @@ describe("materialsScreen", () => {
       ["Прикрепить материал"],
       ["‹ Сходка"],
     ]);
-    expect(rows(materialsScreen(meetup({ materials }), true, 1))[0]).toEqual([
-      "Материал 9 ↗",
-      "↑",
-      "↓",
-      "🗑",
-    ]);
+    expect(
+      rows(materialsScreen(meetup({ materials }), true, 1, "card"))[0],
+    ).toEqual(["Материал 9 ↗", "↑", "↓", "🗑"]);
   });
 
   it("shows a participant the materials without management", () => {
-    const screen = materialsScreen(meetup({ materials }), false, 1);
+    const screen = materialsScreen(meetup({ materials }), false, 1, "card");
 
     expect(rows(screen)).toEqual([["Материал 9 ↗"], ["←"], ["‹ Сходка"]]);
     expect(screen.text).toContain("<b>Материалы · 2 из 2</b>\n<i>Настолки</i>");
@@ -913,6 +914,7 @@ describe("materialsScreen", () => {
       meetup({ materials: materials.slice(0, 2), lifecycle: "cancelled" }),
       true,
       0,
+      "card",
     );
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "🗑"]);

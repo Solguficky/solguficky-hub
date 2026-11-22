@@ -557,6 +557,14 @@ import {
   lotSetsScreen,
 } from "./screens/lot-sets.js";
 import {
+  type MaterialsOrigin,
+  materialsAddData,
+  materialsConfirmAttachData,
+  materialsConfirmRemoveData,
+  materialsDeclineData,
+  materialsListData,
+} from "./screens/materials-data.js";
+import {
   archiveScreen,
   cardScreen,
   draftScreen,
@@ -929,6 +937,7 @@ type PendingMaterialInput = {
   kind: "material-source";
   meetupId: string;
   version: number;
+  origin: MaterialsOrigin;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -936,6 +945,7 @@ type PendingMaterialTitle = {
   kind: "material-title";
   meetupId: string;
   version: number;
+  origin: MaterialsOrigin;
   source: MaterialInputSource;
   telegramUserId: number;
   expiresAt: number;
@@ -1874,6 +1884,7 @@ async function handleMessage(
                   !materialAlbums.put(albumKey, token, {
                     meetupId: pending.meetupId,
                     version: pending.version,
+                    origin: pending.origin,
                     telegramUserId: pending.telegramUserId,
                     photos: items,
                   })
@@ -1889,6 +1900,7 @@ async function handleMessage(
                     ...screenMark("material-confirm"),
                     parse_mode: "HTML",
                     reply_markup: materialConfirmationKeyboard(
+                      pending.origin,
                       uuidToToken(pending.meetupId),
                       token,
                       pending.version,
@@ -1956,6 +1968,7 @@ async function handleMessage(
             pending.version,
             `Фото ${nextPhotoNumber(current.meetup.materials)}`,
             source,
+            pending.origin,
             materialPhotoId(pending.meetupId, photo.uniqueId),
           );
           outcome = {
@@ -1974,6 +1987,7 @@ async function handleMessage(
             pending.version,
             caption.clipped,
             source,
+            pending.origin,
             materialPhotoId(pending.meetupId, photo.uniqueId),
           );
           outcome = {
@@ -1992,6 +2006,7 @@ async function handleMessage(
             pending.version,
             caption.title,
             source,
+            pending.origin,
             photo === undefined
               ? undefined
               : materialPhotoId(pending.meetupId, photo.uniqueId),
@@ -2019,6 +2034,7 @@ async function handleMessage(
             kind: "material-title",
             meetupId: pending.meetupId,
             version: pending.version,
+            origin: pending.origin,
             source,
             telegramUserId: pending.telegramUserId,
           },
@@ -2065,6 +2081,7 @@ async function handleMessage(
         pending.version,
         title,
         pending.source,
+        pending.origin,
       );
       outcome = {
         level: "info",
@@ -3299,8 +3316,12 @@ async function handleMessage(
           : askedStep?.kind === "channel-label"
             ? "Этот вопрос уже устарел. Заведи канал заново."
             : "Этот вопрос уже устарел. Открой раздел заново и повтори действие.",
-        askedStep?.kind === "material-title"
-          ? withNav(new InlineKeyboard(), toMaterials(askedStep.token))
+        askedStep?.kind === "material-source" ||
+          askedStep?.kind === "material-title"
+          ? withNav(
+              new InlineKeyboard(),
+              toMaterials(askedStep.token, askedStep.origin),
+            )
           : askedStep?.kind === "channel-label"
             ? withNav(new InlineKeyboard(), toSourceChannels)
             : exitToMeetups(),
@@ -3928,8 +3949,8 @@ async function handleCallback(
       if (material === undefined || material.source.kind !== "file") {
         await showRefusal(
           ctx,
-          "Материал больше не найден. Открой актуальную карточку сходки.",
-          exitToCard(action.token),
+          "Материал больше не найден. Открой актуальные материалы сходки.",
+          exitToMaterials(action.token, action.origin),
         );
         outcome = {
           level: "warn",
@@ -3948,12 +3969,13 @@ async function handleCallback(
         material.source,
         material.title,
         action.token,
+        action.origin,
       );
       if (delivery.kind === "failed") {
         await showRefusal(
           ctx,
           "Не получилось показать материал. Возможно, файл больше недоступен или Telegram временно не отвечает.",
-          exitToCard(action.token),
+          exitToMaterials(action.token, action.origin),
         );
         outcome = unexpectedOutcome(
           delivery.cause,
@@ -3990,8 +4012,8 @@ async function handleCallback(
         if (album === undefined) {
           await showRefusal(
             ctx,
-            "Этот альбом устарел. Пришли альбом заново из карточки сходки.",
-            exitToCard(action.token),
+            "Этот альбом устарел. Пришли альбом заново из материалов сходки.",
+            exitToMaterials(action.token, action.origin),
           );
           outcome = {
             level: "info",
@@ -4049,8 +4071,8 @@ async function handleCallback(
         if (current.meetup.version !== album.version) {
           await showRefusal(
             ctx,
-            `${conflictText}\n\nПришли альбом заново из карточки сходки.`,
-            exitToCard(action.token),
+            `${conflictText}\n\nПришли альбом заново из материалов сходки.`,
+            exitToMaterials(action.token, action.origin),
           );
           outcome = {
             level: "info",
@@ -4078,7 +4100,13 @@ async function handleCallback(
                 ),
               ).length;
               if (count === album.photos.length) {
-                await renderMaterialManagement(ctx, latest.meetup, true, 0);
+                await renderMaterialManagement(
+                  ctx,
+                  latest.meetup,
+                  true,
+                  0,
+                  album.origin,
+                );
                 return;
               }
             }
@@ -4092,7 +4120,7 @@ async function handleCallback(
           await showRefusal(
             ctx,
             `${status} Открой материалы и пришли альбом ещё раз, чтобы прикрепить остальные фотографии.`,
-            exitToCard(action.token),
+            exitToMaterials(action.token, action.origin),
           );
         };
         const albumCaption = album.photos
@@ -4151,7 +4179,7 @@ async function handleCallback(
           }
           snapshot = result.meetup;
         }
-        await renderMaterialManagement(ctx, snapshot, true, 0);
+        await renderMaterialManagement(ctx, snapshot, true, 0, album.origin);
         outcome = {
           level: "info",
           message: "material album attached",
@@ -4167,8 +4195,8 @@ async function handleCallback(
       if (confirmation === undefined) {
         await showRefusal(
           ctx,
-          "Этот экран прикрепления устарел. Начни действие заново из карточки сходки.",
-          exitToCard(action.token),
+          "Этот экран прикрепления устарел. Начни действие заново из материалов сходки.",
+          exitToMaterials(action.token, action.origin),
         );
         outcome = {
           level: "warn",
@@ -4217,6 +4245,7 @@ async function handleCallback(
         const renewed = await renewConfirmationKeyboard(
           ctx,
           materialConfirmationKeyboard(
+            action.origin,
             action.token,
             action.materialToken,
             result.meetup.version,
@@ -4226,13 +4255,14 @@ async function handleCallback(
         await ctx.reply(
           renewed
             ? `${conflictText}\n\nПроверь материал и подтверди прикрепление ещё раз.`
-            : `${conflictText}\n\nНачни прикрепление заново из карточки сходки.`,
+            : `${conflictText}\n\nНачни прикрепление заново из материалов сходки.`,
         );
       } else {
         await renderMaterialResult(
           ctx,
           result,
           action.token,
+          action.origin,
           `Прикреплено: ${confirmation.title}`,
         );
       }
@@ -4278,7 +4308,10 @@ async function handleCallback(
         await showScreen(ctx, {
           id: "outcome",
           text: outcomeText(conflictText, result.meetup.title),
-          keyboard: withNav(new InlineKeyboard(), toMaterials(action.token)),
+          keyboard: withNav(
+            new InlineKeyboard(),
+            toMaterials(action.token, action.origin),
+          ),
           format: "HTML",
         });
       } else if (result.kind === "materials-reordered") {
@@ -4290,9 +4323,10 @@ async function handleCallback(
           result.meetup,
           true,
           Math.floor(Math.max(0, index) / pageSize),
+          action.origin,
         );
       } else {
-        await renderMaterialResult(ctx, result, action.token);
+        await renderMaterialResult(ctx, result, action.token, action.origin);
       }
       outcome = screenBoundary(result, {
         ok: ["materials-reordered"],
@@ -4343,11 +4377,14 @@ async function handleCallback(
             conflictText,
             material === undefined ? undefined : materialTitle(material, 1),
           ),
-          keyboard: withNav(new InlineKeyboard(), toMaterials(action.token)),
+          keyboard: withNav(
+            new InlineKeyboard(),
+            toMaterials(action.token, action.origin),
+          ),
           format: "HTML",
         });
       } else {
-        await renderMaterialResult(ctx, result, action.token);
+        await renderMaterialResult(ctx, result, action.token, action.origin);
       }
       outcome = screenBoundary(result, {
         ok: ["material-removed"],
@@ -4411,11 +4448,14 @@ async function handleCallback(
           exitToCard(action.token),
         );
       } else if (action.kind === "manage-materials") {
+        // «‹ Черновик» — только тому, кто ведёт сходку: подделанная кнопка
+        // домена `md` участнику открывает список с обычным возвратом на карточку.
         await renderMaterialManagement(
           ctx,
           current.meetup,
           canManageMaterials,
           action.page ?? 0,
+          action.origin === "draft" && canManageMaterials ? "draft" : "card",
         );
       } else if (action.kind === "decline-attach-material") {
         const buttons =
@@ -4439,7 +4479,11 @@ async function handleCallback(
         // «Нет» под только что присланным материалом — экран исхода с «Ввести
         // заново» (решение владельца 10 октября 2026 года). Файл в
         // подтверждении остаётся следом с подписью «Не прикреплено.».
-        const step = { kind: "material-title", token: action.token } as const;
+        const step = {
+          kind: "material-title",
+          token: action.token,
+          origin: action.origin,
+        } as const;
         await showScreen(ctx, {
           id: "outcome",
           text: outcomeText(
@@ -4461,6 +4505,7 @@ async function handleCallback(
             kind: "material-source",
             meetupId,
             version: current.meetup.version,
+            origin: action.origin,
             telegramUserId: ctx.from?.id ?? 0,
           },
           `Перешли сообщение из канала, пришли ссылку на сообщение чата или отправь фотографию либо документ для сходки «${current.meetup.title}». Фото можно прислать без названия, а альбом — целиком. Название можно написать подписью к фото, документу или пересланному сообщению. Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
@@ -4474,13 +4519,17 @@ async function handleCallback(
           await showRefusal(
             ctx,
             "Материал уже отсутствует. Оригинал в Telegram не изменён.",
-            withNav(new InlineKeyboard(), toMaterials(action.token)),
+            withNav(
+              new InlineKeyboard(),
+              toMaterials(action.token, action.origin),
+            ),
           );
         } else {
           await showScreen(
             ctx,
             removeConfirmScreen({
               token: action.token,
+              origin: action.origin,
               materialToken: action.materialToken,
               version: current.meetup.version,
               title: materialTitle(material, 1),
@@ -6325,26 +6374,12 @@ async function renewConfirmationKeyboard(
   }
 }
 
-function confirmAttachCallback(
-  meetupToken: string,
-  materialToken: string,
-  version: number,
-): string {
-  return `v1:mm:ca:${meetupToken}:${materialToken}:${version}`;
-}
-
-function confirmRemoveCallback(
-  meetupToken: string,
-  materialToken: string,
-  version: number,
-): string {
-  return `v1:mm:cr:${meetupToken}:${materialToken}:${version}`;
-}
-
 // Клавиатура подтверждения прикрепления. Ключ материала и источник в ней
 // постоянны, меняется только версия: после конфликта та же кнопка несёт версию
-// перечитанной карточки.
+// перечитанной карточки. Вход материалов (`origin`) задаёт домен `callback_data`
+// — с черновика подтверждение возвращает туда же (PER-913).
 function materialConfirmationKeyboard(
+  origin: MaterialsOrigin,
   meetupToken: string,
   materialToken: string,
   version: number,
@@ -6352,8 +6387,13 @@ function materialConfirmationKeyboard(
 ): InlineKeyboard {
   return confirmKeyboard({
     yes: "Да, прикрепить",
-    yesData: confirmAttachCallback(meetupToken, materialToken, version),
-    noData: `v1:mm:no:${meetupToken}`,
+    yesData: materialsConfirmAttachData(
+      origin,
+      meetupToken,
+      materialToken,
+      version,
+    ),
+    noData: materialsDeclineData(origin, meetupToken),
     ...(source.kind === "message-link"
       ? { lead: { text: "Открыть источник ↗", url: source.url } }
       : {}),
@@ -6366,12 +6406,14 @@ async function sendMaterialConfirmation(
   version: number,
   title: string,
   source: MaterialInputSource,
+  origin: MaterialsOrigin,
   materialId?: string,
 ): Promise<void> {
   const other = {
     ...screenMark("material-confirm"),
     parse_mode: "HTML" as const,
     reply_markup: materialConfirmationKeyboard(
+      origin,
       uuidToToken(meetupId),
       uuidToToken(materialId ?? createUuidV7()),
       version,
@@ -6391,6 +6433,7 @@ async function sendMaterialConfirmation(
 // Подтверждение удаления: исчезнет только привязка, оригинал остаётся.
 function removeConfirmScreen(confirm: {
   token: string;
+  origin: MaterialsOrigin;
   materialToken: string;
   version: number;
   title: string;
@@ -6404,12 +6447,13 @@ function removeConfirmScreen(confirm: {
     ].join("\n"),
     keyboard: confirmKeyboard({
       yes: "Да, убрать материал",
-      yesData: confirmRemoveCallback(
+      yesData: materialsConfirmRemoveData(
+        confirm.origin,
         confirm.token,
         confirm.materialToken,
         confirm.version,
       ),
-      noData: `v1:mm:list:${confirm.token}`,
+      noData: materialsListData(confirm.origin, confirm.token),
       irreversible: true,
     }),
     format: "HTML",
@@ -6427,10 +6471,11 @@ async function sendStoredMaterialFile(
   source: Extract<MeetupMaterialSource, { kind: "file" }>,
   title: string,
   token: string,
+  origin: MaterialsOrigin,
 ): Promise<{ kind: "sent" } | { kind: "failed"; cause: unknown }> {
   const other = {
     caption: title,
-    reply_markup: withNav(new InlineKeyboard(), toMaterials(token)),
+    reply_markup: withNav(new InlineKeyboard(), toMaterials(token, origin)),
     ...screenMark("material-file"),
   };
   const asDocument = () => ctx.replyWithDocument(source.fileId, other);
@@ -6456,15 +6501,36 @@ async function sendStoredMaterialFile(
   }
 }
 
+/**
+ * Вход материалов, который честно называет возврат: у опубликованной и у
+ * отменённой сходки черновика нет, и старая кнопка домена `md` возвращает на
+ * карточку (PER-913).
+ */
+function materialsEntryOrigin(
+  meetup: MeetupSnapshot,
+  origin: MaterialsOrigin,
+): MaterialsOrigin {
+  return origin === "draft" &&
+    (meetup.visibility === "visible" || meetup.lifecycle === "cancelled")
+    ? "card"
+    : origin;
+}
+
 async function renderMaterialManagement(
   ctx: UpdateContext,
   meetup: MeetupSnapshot,
   canManage = true,
   requestedPage = 0,
+  origin: MaterialsOrigin,
   fileTrace?: string,
 ): Promise<void> {
   await showScreen(ctx, {
-    ...materialsScreen(meetup, canManage, requestedPage),
+    ...materialsScreen(
+      meetup,
+      canManage,
+      requestedPage,
+      materialsEntryOrigin(meetup, origin),
+    ),
     ...(fileTrace === undefined ? {} : { fileTrace }),
   });
 }
@@ -6473,14 +6539,22 @@ async function renderMaterialResult(
   ctx: UpdateContext,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   meetupToken: string,
+  origin: MaterialsOrigin,
   fileTrace?: string,
 ): Promise<void> {
   if (result.kind === "material-attached") {
-    await renderMaterialManagement(ctx, result.meetup, true, 0, fileTrace);
+    await renderMaterialManagement(
+      ctx,
+      result.meetup,
+      true,
+      0,
+      origin,
+      fileTrace,
+    );
     return;
   }
   if (result.kind === "material-removed") {
-    await renderMaterialManagement(ctx, result.meetup);
+    await renderMaterialManagement(ctx, result.meetup, true, 0, origin);
     return;
   }
   const text =
@@ -6489,7 +6563,7 @@ async function renderMaterialResult(
       : result.kind === "dependency-rejected" && result.reason === "invalid"
         ? invalidMeetupText(result)
         : unavailableText;
-  await showRefusal(ctx, text, exitToCard(meetupToken));
+  await showRefusal(ctx, text, exitToMaterials(meetupToken, origin));
 }
 
 type OrganizersAction = Extract<
@@ -7819,6 +7893,19 @@ function showRefusal(
 /** Выход к карточке сходки: `[‹ Сходка]`. */
 function exitToCard(token: string): InlineKeyboard {
   return withNav(new InlineKeyboard(), toCard(token));
+}
+
+/**
+ * Выход отказа материалов: с черновика — в «Материалы» того же входа, откуда
+ * «‹ Черновик» (PER-913), с карточки — прежняя карточка.
+ */
+function exitToMaterials(
+  token: string,
+  origin: MaterialsOrigin,
+): InlineKeyboard {
+  return origin === "draft"
+    ? withNav(new InlineKeyboard(), toMaterials(token, origin))
+    : exitToCard(token);
 }
 
 /** Возврат исхода в «Управление» сходкой (PER-910). */
@@ -14917,9 +15004,14 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "material-source",
         token: uuidToToken(pending.meetupId),
         version: pending.version,
+        origin: pending.origin,
       };
     case "material-title":
-      return { kind: "material-title", token: uuidToToken(pending.meetupId) };
+      return {
+        kind: "material-title",
+        token: uuidToToken(pending.meetupId),
+        origin: pending.origin,
+      };
     case "broadcast-body":
       return pending.audience.kind === "meetup"
         ? { kind: "broadcast", token: uuidToToken(pending.audience.meetupId) }
@@ -15180,6 +15272,7 @@ function pendingOf(
         kind: "material-source",
         meetupId: tokenToUuid(step.token),
         version: step.version,
+        origin: step.origin,
         telegramUserId,
         expiresAt,
       };
@@ -15410,7 +15503,11 @@ function cancelTarget(step: QuestionStep): ScreenAction {
         : { kind: "manage-publication", token: step.token };
     case "material-source":
     case "material-title":
-      return { kind: "manage-materials", token: step.token };
+      return {
+        kind: "manage-materials",
+        token: step.token,
+        origin: step.origin,
+      };
     case "broadcast":
       return step.token === undefined
         ? { kind: "manage-menu" }
@@ -15641,7 +15738,7 @@ function reopenData(step: QuestionStep): string {
         : `v1:manage:publish-later:${step.token}`;
     case "material-source":
     case "material-title":
-      return `v1:mm:add:${step.token}`;
+      return materialsAddData(step.origin, step.token);
     case "broadcast":
       return step.token === undefined ? "v1:bc:c" : `v1:bc:m:${step.token}`;
     case "username":
@@ -15736,7 +15833,7 @@ function answerParent(step: QuestionStep): Parent {
         : { name: "Публикация", data: publicationData(step.token) };
     case "material-source":
     case "material-title":
-      return toMaterials(step.token);
+      return toMaterials(step.token, step.origin);
     case "broadcast":
       return step.token === undefined ? toManage : toMeetupManage(step.token);
     case "username":
