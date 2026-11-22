@@ -4387,6 +4387,38 @@ describe("presentation adapter", () => {
     );
   });
 
+  // Конфликт и «уже такое состояние» — тоже исходы: у скрытия и отметки они
+  // ведут в «Управление», у отмены — на карточку (PER-910, PER-472).
+  it("returns unchanged and conflicting state actions to management", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockResolvedValueOnce({ kind: "conflict", action: "hold", meetup })
+      .mockResolvedValueOnce({
+        kind: "meetup-state-unchanged",
+        reason: "already-hidden",
+        meetup: { ...meetup, visibility: "hidden" },
+      });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    for (const data of [
+      "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA:1",
+      "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:1",
+    ]) {
+      await bot.handleUpdate(callbackUpdate(data));
+      const shown = calls.findLast(
+        (call) =>
+          call.method === "editMessageText" || call.method === "sendMessage",
+      );
+      expect(JSON.stringify(shown?.payload)).toContain(
+        '"text":"‹ Управление","callback_data":"v1:manage:open:AZLzpLXGfY6fChssPU5fYA"',
+      );
+    }
+  });
+
   it("executes cancellation only from the confirmation callback", async () => {
     const meetup = publishedMeetup();
     const cancelled = { ...meetup, lifecycle: "cancelled" as const };

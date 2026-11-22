@@ -13837,7 +13837,15 @@ async function renderStateResult(
         : result.reason === "not-scheduled"
           ? "Отложенной публикации у сходки уже нет."
           : "Сходка уже скрыта из общего списка.";
-    await showRefusal(ctx, text, exitToCard(token));
+    // Отмена сходки уводит на карточку, остальные действия — в «Управление»
+    // (PER-910): там видно, что состояние уже такое.
+    await showRefusal(
+      ctx,
+      text,
+      result.reason === "already-cancelled"
+        ? exitToCard(token)
+        : exitToMeetupManage(token),
+    );
     return;
   }
   if (result.kind === "meetup-not-found") {
@@ -13845,12 +13853,16 @@ async function renderStateResult(
     return;
   }
   if (result.kind === "conflict" && result.action !== undefined) {
-    // Исход — свой экран (PER-472): сходку перечитывает «‹ Сходка», и
-    // действие человек повторяет по свежим данным.
+    // Исход — свой экран (PER-472): действие человек повторяет по свежим
+    // данным. Отмена сходки отдаёт карточку, остальные — «Управление».
+    const token = uuidToToken(result.meetup.id);
     await showScreen(ctx, {
       id: "outcome",
       text: outcomeText(conflictText, meetupTitleLabel(result.meetup.title)),
-      keyboard: exitToCard(uuidToToken(result.meetup.id)),
+      keyboard:
+        result.action === "cancel"
+          ? exitToCard(token)
+          : exitToMeetupManage(token),
       format: "HTML",
     });
     return;
