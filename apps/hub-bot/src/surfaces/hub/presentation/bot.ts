@@ -245,6 +245,7 @@ import type {
 } from "./live-screens.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
+import { createMaterialAlbums } from "./material-albums.js";
 import {
   isTypedText,
   type PendingMaterialSource as MaterialInputSource,
@@ -255,6 +256,11 @@ import {
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
+import {
+  materialPhoto,
+  materialPhotoId,
+  nextPhotoNumber,
+} from "./material-photo.js";
 import {
   meetupStartLink,
   tokenToUuid,
@@ -1368,6 +1374,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     );
   }
   const questions = new Map<string, PendingInput>();
+  const materialAlbums = createMaterialAlbums();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
   const lotPhotos = runtime.lotPhotos ?? createLotPhotos();
   const files =
@@ -1505,7 +1512,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     await ctx.answerCallbackQuery().catch(() => undefined);
   });
   bot.on("callback_query:data", (ctx) =>
-    handleCallback(ctx, runtime, questions, lotPhotos),
+    handleCallback(ctx, runtime, questions, lotPhotos, materialAlbums),
   );
   bot.on("message", (ctx) =>
     handleMessage(
@@ -1515,6 +1522,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       { files, albums, posts },
       lotPhotos,
       hintedAlbums,
+      materialAlbums,
     ),
   );
   bot.catch((botError) => {
@@ -1534,6 +1542,7 @@ async function handleMessage(
   photos: { files: TelegramFiles; albums: SeenAlbums; posts: PublishedPosts },
   lotPhotos: LotPhotos,
   hintedAlbums: ReturnType<typeof createHintedAlbums>,
+  materialAlbums: ReturnType<typeof createMaterialAlbums>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -1622,6 +1631,63 @@ async function handleMessage(
       (recovered?.askedBy === undefined
         ? undefined
         : pendingOf(recovered.step, recovered.askedBy));
+    const incomingGroup =
+      ctx.message?.forward_origin?.type === "channel"
+        ? undefined
+        : ctx.message?.media_group_id;
+    const possibleAlbumKey =
+      incomingGroup === undefined
+        ? undefined
+        : `${ctx.chat?.id}:${ctx.from?.id}:${incomingGroup}`;
+    const albumKey =
+      possibleAlbumKey !== undefined &&
+      ((pending?.kind === "material-source" &&
+        pending.telegramUserId === ctx.from?.id) ||
+        materialAlbums.has(possibleAlbumKey))
+        ? possibleAlbumKey
+        : undefined;
+    if (albumKey !== undefined) {
+      if (
+        pending?.kind === "material-source" &&
+        storedPending === undefined &&
+        !materialAlbums.has(albumKey)
+      ) {
+        await ctx.reply(
+          "Этот вопрос устарел после перезапуска. Открой материалы и пришли альбом заново.",
+        );
+        outcome = {
+          level: "info",
+          message: "material album question expired",
+          result: "ok",
+          use_case: "update_meetup",
+        };
+        return;
+      }
+      const state = materialAlbums.begin(albumKey);
+      if (state !== "accepted") {
+        if (state === "late")
+          await ctx.reply(
+            "В альбом пришла ещё фотография. Открой материалы и пришли альбом заново целиком.",
+          );
+        if (state === "late-confirmed")
+          await ctx.reply(
+            "После подтверждения пришла ещё фотография. Открой материалы и пришли альбом заново целиком, чтобы прикрепить пропущенное.",
+          );
+        if (
+          state === "full" &&
+          incomingGroup !== undefined &&
+          hintedAlbums.first(incomingGroup)
+        )
+          await ctx.reply("Не получилось принять альбом. Попробуй ещё раз.");
+        outcome = {
+          level: "info",
+          message: `material album ${state}`,
+          result: "ok",
+          use_case: "update_meetup",
+        };
+        return;
+      }
+    }
     if (
       replyId !== undefined &&
       pending?.kind === "publish-moment" &&
@@ -1718,6 +1784,10 @@ async function handleMessage(
       }
       const identity = await resolvePerson(ctx, runtime, useCase);
       if (identity.kind === "failed") {
+        if (albumKey !== undefined) {
+          materialAlbums.fail(albumKey);
+          await ctx.reply("Альбом не принят целиком. Пришли его заново.");
+        }
         outcome = identity.outcome;
         return;
       }
@@ -1729,6 +1799,7 @@ async function handleMessage(
         false,
       );
       if (denied !== undefined) {
+        if (albumKey !== undefined) materialAlbums.fail(albumKey);
         outcome = denied;
         return;
       }
@@ -1736,6 +1807,7 @@ async function handleMessage(
       // проверяет только право, без которого отношения нет, а саму сходку
       // решает Meetups на команде (ADR-076, п. 4).
       if (!canOrganizeMeetups(identity.person)) {
+        if (albumKey !== undefined) materialAlbums.fail(albumKey);
         await answered();
         await showRefusal(ctx, organizerOnlyText, exitToMeetups());
         outcome = materialForbiddenOutcome(identity.person, pending.meetupId);
@@ -1744,6 +1816,7 @@ async function handleMessage(
       if (pending.kind === "material-source") {
         const source = parseMaterialInput(ctx.message);
         if (source === undefined) {
+          if (albumKey !== undefined) materialAlbums.fail(albumKey);
           const refusal = materialRefusal(ctx.message);
           await refuseAnswer(ctx, questions, pending, refusal.text, replyId);
           outcome = {
@@ -1757,11 +1830,156 @@ async function handleMessage(
           };
           return;
         }
-        // Подпись источника — сразу название: отдельного вопроса нет, и
-        // подтверждение уходит тем же путём, что после введённого названия.
-        // Длинная подпись не становится названием, но показывается в вопросе
-        // усечённой до предела (PER-912).
+        const photo =
+          source.kind === "file" && source.fileKind === "photo"
+            ? materialPhoto(ctx.message)
+            : undefined;
+        if (albumKey !== undefined && photo === undefined) {
+          materialAlbums.fail(albumKey);
+          await ctx.reply(
+            "Альбом не принят целиком: нужны фотографии. Пришли его заново.",
+          );
+          outcome = {
+            level: "info",
+            message: "material album item rejected",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+            identity_id: identity.person.identityId,
+          };
+          return;
+        }
+        if (photo !== undefined && albumKey !== undefined) {
+          const accepted = materialAlbums.finish(
+            albumKey,
+            {
+              ...photo,
+              messageId: ctx.message?.message_id ?? 0,
+              ...(ctx.message?.caption === undefined
+                ? {}
+                : { caption: ctx.message.caption }),
+            },
+            async (items) => {
+              try {
+                if (
+                  questions.get(questionKey(ctx.chat?.id, replyId)) !== pending
+                )
+                  return;
+                const token = uuidToToken(createUuidV7());
+                if (
+                  !materialAlbums.put(albumKey, token, {
+                    meetupId: pending.meetupId,
+                    version: pending.version,
+                    telegramUserId: pending.telegramUserId,
+                    photos: items,
+                  })
+                ) {
+                  await ctx.reply(
+                    "Не получилось принять альбом. Попробуй ещё раз.",
+                  );
+                  return;
+                }
+                await ctx.reply(
+                  `<b>Прикрепить альбом?</b>\n\nФотографий: ${items.length}`,
+                  {
+                    ...screenMark("material-confirm"),
+                    parse_mode: "HTML",
+                    reply_markup: materialConfirmationKeyboard(
+                      uuidToToken(pending.meetupId),
+                      token,
+                      pending.version,
+                      source,
+                    ),
+                  },
+                );
+                await answered();
+              } catch (cause) {
+                writeBoundary(
+                  runtime.logger,
+                  ctx,
+                  unexpectedOutcome(cause, undefined, "update_meetup"),
+                );
+              }
+            },
+          );
+          if (!accepted)
+            await ctx.reply("Не получилось принять альбом. Попробуй ещё раз.");
+          outcome = {
+            level: "info",
+            message: "material album item received",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+            identity_id: identity.person.identityId,
+          };
+          return;
+        }
+        // Фото получает подпись или автоматическое имя без вопроса. Длинная
+        // подпись фото обрезается; остальные источники сохраняют вопрос при
+        // пустой или слишком длинной подписи (PER-912, PER-923).
         const caption = materialCaptionCandidate(ctx.message);
+        if (
+          photo !== undefined &&
+          caption.title === undefined &&
+          caption.clipped === undefined
+        ) {
+          const current = await runtime.dispatcher.execute({
+            identity: identity.person,
+            intent: "view-meetup",
+            meetupId: pending.meetupId,
+            ...rpcCall(ctx, useCase),
+          });
+          if (current.kind !== "meetup-card") {
+            await renderMeetupCard(
+              ctx,
+              current,
+              true,
+              runtime.presentation ?? "rich",
+            );
+            outcome = screenBoundary(current, {
+              ok: ["meetup-card"],
+              okMessage: "material viewed",
+              rejectedMessage: "material view rejected",
+              useCase,
+              meetupId: pending.meetupId,
+            });
+            return;
+          }
+          await answered();
+          await sendMaterialConfirmation(
+            ctx,
+            pending.meetupId,
+            pending.version,
+            `Фото ${nextPhotoNumber(current.meetup.materials)}`,
+            source,
+            materialPhotoId(pending.meetupId, photo.uniqueId),
+          );
+          outcome = {
+            level: "info",
+            message: "material confirmation sent",
+            result: "ok",
+            use_case: useCase,
+          };
+          return;
+        }
+        if (photo !== undefined && caption.clipped !== undefined) {
+          await answered();
+          await sendMaterialConfirmation(
+            ctx,
+            pending.meetupId,
+            pending.version,
+            caption.clipped,
+            source,
+            materialPhotoId(pending.meetupId, photo.uniqueId),
+          );
+          outcome = {
+            level: "info",
+            message: "material confirmation sent",
+            result: "ok",
+            use_case: useCase,
+          };
+          return;
+        }
         if (caption.title !== undefined) {
           await answered();
           await sendMaterialConfirmation(
@@ -1770,6 +1988,9 @@ async function handleMessage(
             pending.version,
             caption.title,
             source,
+            photo === undefined
+              ? undefined
+              : materialPhotoId(pending.meetupId, photo.uniqueId),
           );
           outcome = {
             level: "info",
@@ -3223,6 +3444,7 @@ async function handleCallback(
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
   lotPhotos: LotPhotos,
+  materialAlbums: ReturnType<typeof createMaterialAlbums>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -3750,6 +3972,191 @@ async function handleCallback(
     }
     if (action.kind === "confirm-attach-material") {
       const meetupId = tokenToUuid(action.token);
+      const callbackMessage = ctx.callbackQuery?.message;
+      if (
+        callbackMessage !== undefined &&
+        "text" in callbackMessage &&
+        callbackMessage.text?.startsWith("Прикрепить альбом?")
+      ) {
+        const album = materialAlbums.take(
+          action.materialToken,
+          meetupId,
+          ctx.from?.id ?? 0,
+        );
+        if (album === undefined) {
+          await showRefusal(
+            ctx,
+            "Этот альбом устарел. Пришли альбом заново из карточки сходки.",
+            exitToCard(action.token),
+          );
+          outcome = {
+            level: "info",
+            message: "material album expired",
+            result: "ok",
+            use_case: useCase,
+          };
+          return;
+        }
+        const current = await runtime.dispatcher.execute({
+          identity: person,
+          intent: "view-meetup",
+          meetupId,
+          ...rpcCall(ctx, useCase),
+        });
+        if (current.kind !== "meetup-card") {
+          await renderMeetupCard(
+            ctx,
+            current,
+            true,
+            runtime.presentation ?? "rich",
+          );
+          await ctx.reply(
+            "Альбом не прикреплён. Открой материалы и пришли его заново.",
+          );
+          outcome = screenBoundary(current, {
+            ok: ["meetup-card"],
+            okMessage: "material viewed",
+            rejectedMessage: "material view rejected",
+            useCase,
+            meetupId,
+          });
+          return;
+        }
+        if (!(current.viewer?.manages ?? false)) {
+          await showRefusal(ctx, organizerOnlyText, exitToCard(action.token));
+          outcome = materialForbiddenOutcome(person, meetupId);
+          return;
+        }
+        if (current.meetup.lifecycle === "cancelled") {
+          await showRefusal(
+            ctx,
+            "Сходка уже отменена. Изменять её материалы больше нельзя.",
+            exitToCard(action.token),
+          );
+          outcome = {
+            level: "info",
+            message: "material album rejected for cancelled meetup",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: meetupId,
+          };
+          return;
+        }
+        if (current.meetup.version !== album.version) {
+          await showRefusal(
+            ctx,
+            `${conflictText}\n\nПришли альбом заново из карточки сходки.`,
+            exitToCard(action.token),
+          );
+          outcome = {
+            level: "info",
+            message: "material album conflict",
+            result: "ok",
+            use_case: useCase,
+          };
+          return;
+        }
+        let snapshot = current.meetup;
+        const showPartialAlbum = async (): Promise<void> => {
+          let count: number | undefined;
+          try {
+            const latest = await runtime.dispatcher.execute({
+              identity: person,
+              intent: "view-meetup",
+              meetupId,
+              ...rpcCall(ctx, useCase),
+            });
+            if (latest.kind === "meetup-card") {
+              count = album.photos.filter((item) =>
+                latest.meetup.materials.some(
+                  (material) =>
+                    material.id === materialPhotoId(meetupId, item.uniqueId),
+                ),
+              ).length;
+              if (count === album.photos.length) {
+                await renderMaterialManagement(ctx, latest.meetup, true, 0);
+                return;
+              }
+            }
+          } catch {
+            // The write may have succeeded even though its reply was lost.
+          }
+          const status =
+            count === undefined
+              ? "Не удалось уточнить, сколько фотографий прикреплено."
+              : `Прикреплено ${count} из ${album.photos.length}.`;
+          await showRefusal(
+            ctx,
+            `${status} Открой материалы и пришли альбом ещё раз, чтобы прикрепить остальные фотографии.`,
+            exitToCard(action.token),
+          );
+        };
+        const albumCaption = album.photos
+          .map((photo) => {
+            const caption = materialCaptionCandidate({
+              caption: photo.caption,
+            });
+            return caption.title ?? caption.clipped;
+          })
+          .find((title) => title !== undefined);
+        for (const [index, photo] of album.photos.entries()) {
+          const id = materialPhotoId(meetupId, photo.uniqueId);
+          if (snapshot.materials.some((material) => material.id === id)) {
+            continue;
+          }
+          const caption = index === 0 ? albumCaption : undefined;
+          let result: ExecuteResult;
+          try {
+            result = await runtime.dispatcher.execute({
+              identity: person,
+              intent: "attach-material",
+              meetupId,
+              material: {
+                id,
+                title: caption ?? `Фото ${nextPhotoNumber(snapshot.materials)}`,
+                source: {
+                  kind: "file",
+                  fileId: photo.fileId,
+                  fileKind: "photo",
+                },
+              },
+              expectedVersion: snapshot.version,
+              ...rpcCall(ctx, useCase),
+            });
+          } catch (cause) {
+            await showPartialAlbum();
+            outcome = unexpectedOutcome(
+              cause,
+              undefined,
+              useCase,
+              meetupId,
+              person.identityId,
+            );
+            return;
+          }
+          if (result.kind !== "material-attached") {
+            await showPartialAlbum();
+            outcome = screenBoundary(result, {
+              ok: ["material-attached"],
+              okMessage: "material album attached",
+              rejectedMessage: "material album partially attached",
+              useCase,
+              meetupId,
+            });
+            return;
+          }
+          snapshot = result.meetup;
+        }
+        await renderMaterialManagement(ctx, snapshot, true, 0);
+        outcome = {
+          level: "info",
+          message: "material album attached",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: meetupId,
+        };
+        return;
+      }
       const confirmation = parseMaterialConfirmation(
         ctx.callbackQuery?.message,
       );
@@ -4007,6 +4414,24 @@ async function handleCallback(
           action.page ?? 0,
         );
       } else if (action.kind === "decline-attach-material") {
+        const buttons =
+          ctx.callbackQuery?.message?.reply_markup?.inline_keyboard.flat() ??
+          [];
+        for (const button of buttons) {
+          const candidate = parseCallback(
+            "callback_data" in button ? button.callback_data : undefined,
+          );
+          if (
+            candidate.kind === "confirm-attach-material" &&
+            candidate.token === action.token
+          ) {
+            materialAlbums.discard(
+              candidate.materialToken,
+              meetupId,
+              ctx.from?.id ?? 0,
+            );
+          }
+        }
         // «Нет» под только что присланным материалом — экран исхода с «Ввести
         // заново» (решение владельца 10 октября 2026 года). Файл в
         // подтверждении остаётся следом с подписью «Не прикреплено.».
@@ -4034,7 +4459,7 @@ async function handleCallback(
             version: current.meetup.version,
             telegramUserId: ctx.from?.id ?? 0,
           },
-          `Перешли сообщение из канала, пришли ссылку на сообщение чата или отправь фотографию либо документ для сходки «${current.meetup.title}». Название можно написать подписью к фото, документу или пересланному сообщению. Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
+          `Перешли сообщение из канала, пришли ссылку на сообщение чата или отправь фотографию либо документ для сходки «${current.meetup.title}». Фото можно прислать без названия, а альбом — целиком. Название можно написать подписью к фото, документу или пересланному сообщению. Я не читаю чат целиком: связь появится только после твоего подтверждения.`,
         );
       } else {
         const materialId = tokenToUuid(action.materialToken);
@@ -5886,13 +6311,14 @@ async function sendMaterialConfirmation(
   version: number,
   title: string,
   source: MaterialInputSource,
+  materialId?: string,
 ): Promise<void> {
   const other = {
     ...screenMark("material-confirm"),
     parse_mode: "HTML" as const,
     reply_markup: materialConfirmationKeyboard(
       uuidToToken(meetupId),
-      uuidToToken(createUuidV7()),
+      uuidToToken(materialId ?? createUuidV7()),
       version,
       source,
     ),
