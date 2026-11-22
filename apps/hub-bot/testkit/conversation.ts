@@ -94,9 +94,10 @@ export type Person = {
    * Отправляет боту фотографию. Висит вопрос — это ответ на него, как `says`.
    * Вид фото едет в `file_id`: провод по нему решает, какие байты отдать на
    * скачивание — настоящий JPEG, файл сверх предела Auction, не картинку или
-   * отказ Telegram. Для бота это одинаковые фотографии.
+   * отказ Telegram. Для бота это одинаковые фотографии. Подпись становится
+   * названием материала без отдельного вопроса (PER-912).
    */
-  sendsPhoto(variant?: PhotoVariant): Promise<void>;
+  sendsPhoto(variant?: PhotoVariant, caption?: string): Promise<void>;
   /** Два нажатия одной кнопки, быстрее, чем бот успевает ответить на первое. */
   pressesTwice(label: string): Promise<void>;
   /** Нажимает кнопку экрана, отрисованного прошлым релизом бота. */
@@ -191,7 +192,7 @@ export function startConversation(
           forward_origin?: MessageOrigin;
         }
       | Pick<Message.DocumentMessage, "document">
-      | Pick<Message.PhotoMessage, "photo">,
+      | Pick<Message.PhotoMessage, "photo" | "caption">,
     replyTo?: Screen,
   ): Promise<void> => {
     messageId += 1;
@@ -342,13 +343,14 @@ export function startConversation(
         answerable(),
       );
     },
-    async sendsPhoto(variant = "jpeg") {
+    async sendsPhoto(variant = "jpeg", caption) {
       const fileId = `contour-photo-${variant}-${userId}-${messageId + 1}`;
       await write(
         {
           photo: [
             { file_id: fileId, file_unique_id: fileId, width: 1, height: 1 },
           ],
+          ...(caption === undefined ? {} : { caption }),
         },
         answerable(),
       );

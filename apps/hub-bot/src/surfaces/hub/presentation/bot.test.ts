@@ -215,6 +215,95 @@ function replyUpdate(options: {
   };
 }
 
+// Фотография как источник материала: подпись приходит в этом же сообщении (PER-912).
+function photoReplyUpdate(options: {
+  caption?: string | undefined;
+  fromId: number;
+  replyMessageId: number;
+  replyFromId: number;
+}): Update {
+  return {
+    update_id: 6,
+    message: {
+      message_id: 12,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: options.fromId, is_bot: false, first_name: "tester" },
+      photo: [
+        { file_id: "small", file_unique_id: "small", width: 1, height: 1 },
+        { file_id: "large", file_unique_id: "large", width: 2, height: 2 },
+      ],
+      ...(options.caption === undefined ? {} : { caption: options.caption }),
+      reply_to_message: {
+        message_id: options.replyMessageId,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: {
+          id: options.replyFromId,
+          is_bot: options.replyFromId === 1,
+          first_name: "sender",
+        },
+        text: "Пришли материал",
+      } as never,
+    },
+  };
+}
+
+// Документ и пересланное медиа с подписью — те же источники материала (PER-912).
+function documentReplyUpdate(options: {
+  caption: string;
+  replyMessageId: number;
+}): Update {
+  return {
+    update_id: 7,
+    message: {
+      message_id: 14,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: 42, is_bot: false, first_name: "tester" },
+      document: { file_id: "paper", file_unique_id: "paper" },
+      caption: options.caption,
+      reply_to_message: {
+        message_id: options.replyMessageId,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 1, is_bot: true, first_name: "stub" },
+        text: "Пришли материал",
+      } as never,
+    },
+  };
+}
+
+function forwardedPhotoReplyUpdate(options: {
+  caption: string;
+  replyMessageId: number;
+}): Update {
+  return {
+    update_id: 8,
+    message: {
+      message_id: 15,
+      date: 0,
+      chat: { id: 42, type: "private", first_name: "tester" },
+      from: { id: 42, is_bot: false, first_name: "tester" },
+      photo: [{ file_id: "post", file_unique_id: "post", width: 1, height: 1 }],
+      caption: options.caption,
+      forward_origin: {
+        type: "channel",
+        date: 0,
+        chat: { id: -1001234567890, type: "channel", title: "Сообщество" },
+        message_id: 77,
+      },
+      reply_to_message: {
+        message_id: options.replyMessageId,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 1, is_bot: true, first_name: "stub" },
+        text: "Пришли материал",
+      } as never,
+    },
+  };
+}
+
 function publishedMeetup() {
   return {
     id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -838,6 +927,147 @@ describe("presentation adapter", () => {
         }),
       }),
     );
+  });
+
+  it("takes a photo caption as the title and skips the title question", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+      if (request.intent === "view-meetup") {
+        return { kind: "meetup-card", meetup };
+      }
+      if (request.intent === "attach-material") {
+        return {
+          kind: "material-attached",
+          meetup: { ...meetup, materials: [request.material] },
+        };
+      }
+      return { kind: "rejected", reason: "unexpected" };
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(
+      photoReplyUpdate({
+        caption: "Афиша",
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    expect(
+      sentMessages(calls).some((call) =>
+        sendMessageText(call)?.includes("Как назвать материал"),
+      ),
+    ).toBe(false);
+    const confirmation = calls.at(-1);
+    expect(confirmation?.method).toBe("sendPhoto");
+    if (
+      confirmation?.method !== "sendPhoto" ||
+      !("reply_markup" in confirmation.payload) ||
+      !("caption" in confirmation.payload)
+    )
+      return;
+    expect(String(confirmation.payload.caption)).toContain("Название: Афиша");
+    const callbackData = JSON.stringify(
+      confirmation.payload.reply_markup,
+    ).match(/v1:mm:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/)?.[0];
+    expect(callbackData).toBeDefined();
+    if (callbackData === undefined) return;
+    await bot.handleUpdate(
+      callbackMessageUpdate(callbackData, {
+        photo: [{ file_id: "large", file_unique_id: "large" }],
+        caption: visible(String(confirmation.payload.caption)),
+        reply_markup: confirmation.payload.reply_markup,
+      }),
+    );
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "attach-material",
+        material: expect.objectContaining({
+          title: "Афиша",
+          source: {
+            kind: "file",
+            fileId: "large",
+            fileKind: "photo",
+          },
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    ["документа", documentReplyUpdate],
+    ["пересланной фотографии", forwardedPhotoReplyUpdate],
+  ])("takes the caption of %s as the title", async (_label, updateOf) => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(
+      updateOf({
+        caption: "Афиша",
+        replyMessageId: lastQuestionId(calls),
+      }),
+    );
+
+    expect(
+      sentMessages(calls).some((call) =>
+        sendMessageText(call)?.includes("Как назвать материал"),
+      ),
+    ).toBe(false);
+    const confirmation = calls.at(-1);
+    const label =
+      confirmation?.method === "sendDocument" &&
+      "caption" in confirmation.payload
+        ? String(confirmation.payload.caption)
+        : sendMessageText(confirmation);
+    expect(label).toContain("Название: Афиша");
+  });
+
+  it.each([
+    ["без подписи", undefined],
+    ["со слишком длинной подписью", "я".repeat(250)],
+  ])("asks the title for a photo %s", async (_label, caption) => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(
+      photoReplyUpdate({
+        caption,
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    const question = sentMessages(calls).at(-1);
+    expect(sendMessageText(question)).toContain(
+      "Как назвать материал в карточке?",
+    );
+    expect(calls.some((call) => call.method === "sendPhoto")).toBe(false);
+    if (caption !== undefined) {
+      expect(sendMessageText(question)).toContain("я".repeat(200));
+      expect(sendMessageText(question)).not.toContain("я".repeat(201));
+    }
   });
 
   // Источник принимается только ответом на вопрос. Отказ — своё сообщение

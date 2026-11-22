@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  materialCaptionCandidate,
   materialConfirmationText,
   materialRefusal,
+  materialTitleLimit,
   parseMaterialConfirmation,
   parseMaterialInput,
 } from "./material-input.js";
@@ -20,6 +22,24 @@ describe("material input", () => {
       kind: "message-link",
       url: "https://t.me/c/1234567890/77",
     });
+  });
+
+  it("takes a short caption as the material title", () => {
+    expect(materialCaptionCandidate({ caption: " Афиша " })).toEqual({
+      title: "Афиша",
+    });
+  });
+
+  it.each([undefined, "", "   "])(
+    "has no title candidate for an empty caption %s",
+    (caption) => {
+      expect(materialCaptionCandidate({ caption })).toEqual({});
+    },
+  );
+
+  it("clips a caption over the title limit for the title hint", () => {
+    const clipped = materialCaptionCandidate({ caption: "я".repeat(250) });
+    expect(clipped).toEqual({ clipped: "я".repeat(materialTitleLimit) });
   });
 
   it("refuses a forward whose original message cannot be linked", () => {
