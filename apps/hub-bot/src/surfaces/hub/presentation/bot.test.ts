@@ -221,18 +221,28 @@ function photoReplyUpdate(options: {
   fromId: number;
   replyMessageId: number;
   replyFromId: number;
+  group?: string;
+  photoId?: string;
+  messageId?: number;
+  replyMarkup?: unknown;
 }): Update {
   return {
     update_id: 6,
     message: {
-      message_id: 12,
+      message_id: options.messageId ?? 12,
       date: 0,
       chat: { id: 42, type: "private", first_name: "tester" },
       from: { id: options.fromId, is_bot: false, first_name: "tester" },
       photo: [
         { file_id: "small", file_unique_id: "small", width: 1, height: 1 },
-        { file_id: "large", file_unique_id: "large", width: 2, height: 2 },
+        {
+          file_id: options.photoId ?? "large",
+          file_unique_id: options.photoId ?? "large",
+          width: 2,
+          height: 2,
+        },
       ],
+      ...(options.group === undefined ? {} : { media_group_id: options.group }),
       ...(options.caption === undefined ? {} : { caption: options.caption }),
       reply_to_message: {
         message_id: options.replyMessageId,
@@ -244,6 +254,9 @@ function photoReplyUpdate(options: {
           first_name: "sender",
         },
         text: "Пришли материал",
+        ...(options.replyMarkup === undefined
+          ? {}
+          : { reply_markup: options.replyMarkup }),
       } as never,
     },
   };
@@ -286,6 +299,7 @@ function forwardedPhotoReplyUpdate(options: {
       chat: { id: 42, type: "private", first_name: "tester" },
       from: { id: 42, is_bot: false, first_name: "tester" },
       photo: [{ file_id: "post", file_unique_id: "post", width: 1, height: 1 }],
+      media_group_id: "forwarded-channel-album",
       caption: options.caption,
       forward_origin: {
         type: "channel",
@@ -1035,40 +1049,474 @@ describe("presentation adapter", () => {
     expect(label).toContain("Название: Афиша");
   });
 
-  it.each([
-    ["без подписи", undefined],
-    ["со слишком длинной подписью", "я".repeat(250)],
-  ])("asks the title for a photo %s", async (_label, caption) => {
+  it.each([undefined, "я".repeat(250)])(
+    "confirms a photo without asking for a title",
+    async (caption) => {
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "view-meetup"
+          ? { kind: "meetup-card", meetup: publishedMeetup() }
+          : { kind: "rejected", reason: "unexpected" },
+      );
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      await bot.handleUpdate(
+        photoReplyUpdate({
+          caption,
+          fromId: 42,
+          replyMessageId: lastQuestionId(calls),
+          replyFromId: 1,
+        }),
+      );
+
+      const confirmation = calls.findLast(
+        (call) => call.method === "sendPhoto",
+      );
+      expect(confirmation?.payload).toMatchObject({
+        caption: expect.stringContaining(
+          caption === undefined ? "Фото 1" : "я".repeat(200),
+        ),
+      });
+      expect(
+        sentMessages(calls).some((call) =>
+          sendMessageText(call)?.includes("Как назвать материал"),
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("continues photo numbering from materials already attached", async () => {
+    const meetup: MeetupSnapshot = {
+      ...publishedMeetup(),
+      materials: [
+        {
+          id: "previous",
+          title: "Фото 1",
+          source: { kind: "file", fileId: "previous", fileKind: "photo" },
+        },
+      ],
+    };
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "view-meetup"
-        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        ? {
+            kind: "meetup-card",
+            meetup,
+            viewer: { manages: true, administrator: true },
+          }
         : { kind: "rejected", reason: "unexpected" },
     );
     const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
-
     await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
     await bot.handleUpdate(
       photoReplyUpdate({
-        caption,
         fromId: 42,
         replyMessageId: lastQuestionId(calls),
         replyFromId: 1,
       }),
     );
-
-    const question = sentMessages(calls).at(-1);
-    expect(sendMessageText(question)).toContain(
-      "Как назвать материал в карточке?",
-    );
-    expect(calls.some((call) => call.method === "sendPhoto")).toBe(false);
-    if (caption !== undefined) {
-      expect(sendMessageText(question)).toContain("я".repeat(200));
-      expect(sendMessageText(question)).not.toContain("я".repeat(201));
-    }
+    expect(
+      calls.findLast((call) => call.method === "sendPhoto")?.payload,
+    ).toMatchObject({ caption: expect.stringContaining("Фото 2") });
   });
+
+  it("confirms an album once and attaches each photo with its title", async () => {
+    let meetup: MeetupSnapshot = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+      if (request.intent === "view-meetup")
+        return {
+          kind: "meetup-card",
+          meetup,
+          viewer: { manages: true, administrator: true },
+        };
+      if (request.intent === "attach-material") {
+        meetup = {
+          ...meetup,
+          version: meetup.version + 1,
+          materials: [...meetup.materials, request.material],
+        };
+        return { kind: "material-attached", meetup };
+      }
+      return { kind: "rejected", reason: "unexpected" };
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    const questionId = lastQuestionId(calls);
+    for (const [index, photoId] of ["one", "two", "three"].entries()) {
+      await bot.handleUpdate(
+        photoReplyUpdate({
+          fromId: 42,
+          replyMessageId: questionId,
+          replyFromId: 1,
+          group: "group",
+          photoId,
+          messageId: 12 + index,
+          ...(index === 0 ? { caption: "Афиша" } : {}),
+        }),
+      );
+    }
+    await vi.waitFor(
+      () =>
+        expect(
+          sentMessages(calls).some((call) =>
+            sendMessageText(call)?.includes("Прикрепить альбом?"),
+          ),
+        ).toBe(true),
+      { timeout: 5000 },
+    );
+    const confirmation = sentMessages(calls).findLast((call) =>
+      sendMessageText(call)?.includes("Прикрепить альбом?"),
+    );
+    if (
+      confirmation === undefined ||
+      !("reply_markup" in confirmation.payload) ||
+      !("text" in confirmation.payload)
+    )
+      throw new Error("album confirmation missing");
+    const keyboard = confirmation.payload.reply_markup;
+    const callback = JSON.stringify(keyboard).match(
+      /v1:mm:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/,
+    )?.[0];
+    if (callback === undefined) throw new Error("album callback missing");
+    expect(meetup.materials).toHaveLength(0);
+    await bot.handleUpdate(
+      callbackMessageUpdate(callback, {
+        text: visible(String(confirmation.payload.text)),
+        reply_markup: keyboard,
+      }),
+    );
+    expect(meetup.materials.map((material) => material.title)).toEqual([
+      "Афиша",
+      "Фото 1",
+      "Фото 2",
+    ]);
+  });
+
+  it("rejects an entire album when Identity fails on one item", async () => {
+    const base = resolvedIdentity("admin");
+    let resolutions = 0;
+    const identity: IdentityResolver = {
+      resolve: async (input, meta) => {
+        resolutions += 1;
+        return resolutions === 3
+          ? { kind: "unavailable", cause: new Error("unavailable") }
+          : base.resolve(input, meta);
+      },
+    };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? {
+            kind: "meetup-card",
+            meetup: publishedMeetup(),
+            viewer: { manages: true, administrator: true },
+          }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(identity, { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    const questionId = lastQuestionId(calls);
+    for (const [index, photoId] of ["one", "two", "three"].entries()) {
+      await bot.handleUpdate(
+        photoReplyUpdate({
+          fromId: 42,
+          replyMessageId: questionId,
+          replyFromId: 1,
+          group: "failed",
+          photoId,
+          messageId: 12 + index,
+        }),
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2200));
+    expect(JSON.stringify(calls)).toContain("Альбом не принят целиком");
+    expect(JSON.stringify(calls)).not.toContain("Прикрепить альбом?");
+    expect(
+      execute.mock.calls.some(
+        ([request]) => request.intent === "attach-material",
+      ),
+    ).toBe(false);
+  });
+
+  it("invalidates a confirmation when an album item arrives late", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? {
+            kind: "meetup-card",
+            meetup,
+            viewer: { manages: true, administrator: true },
+          }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    const questionId = lastQuestionId(calls);
+    await bot.handleUpdate(
+      photoReplyUpdate({
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+        group: "late",
+        photoId: "one",
+      }),
+    );
+    await vi.waitFor(
+      () => expect(JSON.stringify(calls)).toContain("Прикрепить альбом?"),
+      { timeout: 5000 },
+    );
+    const confirmation = sentMessages(calls).findLast((call) =>
+      sendMessageText(call)?.includes("Прикрепить альбом?"),
+    );
+    if (
+      confirmation === undefined ||
+      !("reply_markup" in confirmation.payload) ||
+      !("text" in confirmation.payload)
+    )
+      throw new Error("album confirmation missing");
+    const keyboard = confirmation.payload.reply_markup;
+    const yes = JSON.stringify(keyboard).match(
+      /v1:mm:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/,
+    )?.[0];
+    if (yes === undefined) throw new Error("album button missing");
+    await bot.handleUpdate(
+      photoReplyUpdate({
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+        group: "late",
+        photoId: "two",
+        messageId: 13,
+      }),
+    );
+    expect(JSON.stringify(calls)).toContain("Пришли альбом заново целиком");
+    await bot.handleUpdate(
+      callbackMessageUpdate(yes, {
+        text: visible(String(confirmation.payload.text)),
+        reply_markup: keyboard,
+      }),
+    );
+    expect(JSON.stringify(calls)).toContain("Этот альбом устарел");
+    expect(
+      execute.mock.calls.some(
+        ([request]) => request.intent === "attach-material",
+      ),
+    ).toBe(false);
+  });
+
+  it("asks to resend an album when its question was opened before restart", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? {
+            kind: "meetup-card",
+            meetup: publishedMeetup(),
+            viewer: { manages: true, administrator: true },
+          }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const first = createHarness(resolvedIdentity("admin"), { execute });
+    await first.bot.init();
+    await first.bot.handleUpdate(
+      callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    const question = first.calls.findLast(
+      (call) => call.method === "sendMessage",
+    );
+    const markup = question?.payload as { reply_markup?: unknown } | undefined;
+    const restarted = createHarness(resolvedIdentity("admin"), { execute });
+    await restarted.bot.init();
+    await restarted.bot.handleUpdate(
+      photoReplyUpdate({
+        fromId: 42,
+        replyMessageId: lastQuestionId(first.calls),
+        replyFromId: 1,
+        group: "restart",
+        replyMarkup: markup?.reply_markup,
+      }),
+    );
+    expect(JSON.stringify(restarted.calls)).toContain(
+      "Этот вопрос устарел после перезапуска",
+    );
+  });
+
+  it("reads the saved result when an album write reply is lost", async () => {
+    let meetup: MeetupSnapshot = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+      if (request.intent === "view-meetup")
+        return {
+          kind: "meetup-card",
+          meetup,
+          viewer: { manages: true, administrator: true },
+        };
+      if (request.intent === "attach-material") {
+        meetup = {
+          ...meetup,
+          version: meetup.version + 1,
+          materials: [...meetup.materials, request.material],
+        };
+        return { kind: "dependency-rejected", reason: "unavailable" };
+      }
+      return { kind: "rejected", reason: "unexpected" };
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    const questionId = lastQuestionId(calls);
+    await bot.handleUpdate(
+      photoReplyUpdate({
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+        group: "lost",
+        photoId: "one",
+      }),
+    );
+    await vi.waitFor(
+      () => expect(JSON.stringify(calls)).toContain("Прикрепить альбом?"),
+      { timeout: 5000 },
+    );
+    const confirmation = sentMessages(calls).findLast((call) =>
+      sendMessageText(call)?.includes("Прикрепить альбом?"),
+    );
+    if (
+      confirmation === undefined ||
+      !("reply_markup" in confirmation.payload) ||
+      !("text" in confirmation.payload)
+    )
+      throw new Error("album confirmation missing");
+    const keyboard = confirmation.payload.reply_markup;
+    const yes = JSON.stringify(keyboard).match(
+      /v1:mm:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/,
+    )?.[0];
+    if (yes === undefined) throw new Error("album button missing");
+    await bot.handleUpdate(
+      callbackMessageUpdate(yes, {
+        text: visible(String(confirmation.payload.text)),
+        reply_markup: keyboard,
+      }),
+    );
+    expect(JSON.stringify(calls)).toContain("Прикреплено 1 из 1");
+  });
+
+  it("leaves an album untouched on no and skips already attached photos after a partial failure", async () => {
+    let meetup: MeetupSnapshot = publishedMeetup();
+    let failSecond = true;
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) => {
+      if (request.intent === "view-meetup")
+        return {
+          kind: "meetup-card",
+          meetup,
+          viewer: { manages: true, administrator: true },
+        };
+      if (request.intent === "attach-material") {
+        if (
+          request.material.source.kind === "file" &&
+          request.material.source.fileId === "two" &&
+          failSecond
+        ) {
+          failSecond = false;
+          return { kind: "dependency-rejected", reason: "unavailable" };
+        }
+        meetup = {
+          ...meetup,
+          version: meetup.version + 1,
+          materials: [...meetup.materials, request.material],
+        };
+        return { kind: "material-attached", meetup };
+      }
+      return { kind: "rejected", reason: "unexpected" };
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    async function sendAlbum(group: string) {
+      await bot.handleUpdate(
+        callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      const questionId = lastQuestionId(calls);
+      const before = sentMessages(calls).length;
+      for (const [index, photoId] of ["one", "two"].entries()) {
+        await bot.handleUpdate(
+          photoReplyUpdate({
+            fromId: 42,
+            replyMessageId: questionId,
+            replyFromId: 1,
+            group,
+            photoId,
+            messageId: 12 + index,
+          }),
+        );
+      }
+      await vi.waitFor(
+        () =>
+          expect(
+            sentMessages(calls)
+              .slice(before)
+              .some((call) =>
+                sendMessageText(call)?.includes("Прикрепить альбом?"),
+              ),
+          ).toBe(true),
+        { timeout: 5000 },
+      );
+      const confirmation = sentMessages(calls)
+        .slice(before)
+        .findLast((call) =>
+          sendMessageText(call)?.includes("Прикрепить альбом?"),
+        );
+      if (
+        confirmation === undefined ||
+        !("reply_markup" in confirmation.payload) ||
+        !("text" in confirmation.payload)
+      )
+        throw new Error("album confirmation missing");
+      const keyboard = confirmation.payload.reply_markup;
+      const yes = JSON.stringify(keyboard).match(
+        /v1:mm:ca:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:\d+/,
+      )?.[0];
+      const no = JSON.stringify(keyboard).match(/v1:mm:no:[A-Za-z0-9_-]+/)?.[0];
+      if (yes === undefined || no === undefined)
+        throw new Error("album buttons missing");
+      return {
+        yes,
+        no,
+        message: {
+          text: visible(String(confirmation.payload.text)),
+          reply_markup: keyboard,
+        },
+      };
+    }
+    const cancelled = await sendAlbum("cancelled");
+    await bot.handleUpdate(
+      callbackMessageUpdate(cancelled.no, cancelled.message),
+    );
+    expect(meetup.materials).toHaveLength(0);
+    const first = await sendAlbum("first");
+    await bot.handleUpdate(callbackMessageUpdate(first.yes, first.message));
+    expect(meetup.materials).toHaveLength(1);
+    expect(JSON.stringify(calls)).toContain("Прикреплено 1 из 2");
+    const retry = await sendAlbum("retry");
+    await bot.handleUpdate(callbackMessageUpdate(retry.yes, retry.message));
+    expect(meetup.materials.map((material) => material.title)).toEqual([
+      "Фото 1",
+      "Фото 2",
+    ]);
+  }, 15000);
 
   // Источник принимается только ответом на вопрос. Отказ — своё сообщение
   // исхода с «Ввести заново», а новый вопрос задаёт эта кнопка: фотография
