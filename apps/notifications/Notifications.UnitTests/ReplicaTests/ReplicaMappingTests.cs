@@ -667,6 +667,31 @@ public class ReplicaMappingTests
         fact.PerformedBy.ShouldBe(Guid.Parse(performer));
     }
 
+    /// <summary>
+    /// Весть оставшимся адресуется составу из снимка события (PER-930): реплика
+    /// его не хранит, поэтому состав обязан доехать до разворота повода.
+    /// </summary>
+    [Fact]
+    public void Meetup_OrganizerDismissed_CarriesRemainingRosterFromSnapshot()
+    {
+        var person = EventFactory.NewId();
+        var author = EventFactory.NewId();
+        var remaining = EventFactory.NewId();
+        var message = EventFactory.OrganizerChange(
+            MeetupId,
+            version: 3,
+            person,
+            appointed: false,
+            performedBy: EventFactory.NewId(),
+            author: author,
+            organizers: [remaining]);
+
+        var fact = Fact<MeetupFact>(ReplicaMapping.Meetup(EventFactory.Bytes(message)));
+
+        fact.Organizers.ShouldBe([Guid.Parse(author), Guid.Parse(remaining)]);
+        fact.Organizers.ShouldNotContain(Guid.Parse(person));
+    }
+
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -690,6 +715,20 @@ public class ReplicaMappingTests
     {
         var message = EventFactory.OrganizerChange(MeetupId, version: 3, EventFactory.NewId(), appointed: true, performedBy: null);
         message.MeetupOrganizerAppointed.IdentityId = EventFactory.NewId();
+
+        ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
+    }
+
+    /// <summary>
+    /// Состав обязан состоять из идентификаторов: по его записям считается число в
+    /// вести оставшимся, и неразбираемая запись сделала бы это число ложным
+    /// (PER-930).
+    /// </summary>
+    [Fact]
+    public void Meetup_OrganizerRosterEntryNotUuid_IsPoison()
+    {
+        var message = EventFactory.OrganizerChange(MeetupId, version: 3, EventFactory.NewId(), appointed: false, performedBy: null);
+        message.State.Organizers.Add("not-a-uuid");
 
         ReplicaMapping.Meetup(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
     }

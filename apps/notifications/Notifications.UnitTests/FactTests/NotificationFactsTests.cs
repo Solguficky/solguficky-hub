@@ -480,6 +480,43 @@ public class NotificationFactsTests
         notification.OrganizerDismissed.Meetup.ShouldBe(fact.Card);
     }
 
+    /// <summary>
+    /// Весть оставшимся (PER-930, ADR-076, дополнение 2026-11-22): карточка
+    /// сходки и число записей состава из снимка события. Имени ушедшего в факте
+    /// нет по построению контракта — в сообщении для него нет поля.
+    /// </summary>
+    [Fact]
+    public void OrganizerRosterChanged_AddressesRecipientWithCardAndRosterCount()
+    {
+        var person = EventFactory.NewId();
+        var remaining = EventFactory.NewId();
+        var fact = Decode(EventFactory.OrganizerChange(
+            EventFactory.NewId(),
+            version: 4,
+            person,
+            appointed: false,
+            performedBy: EventFactory.NewId(),
+            organizers: [remaining]));
+
+        var notification = NotificationFacts.OrganizerRosterChanged(NotificationId, RecipientId, fact, Now, NotAfter);
+
+        notification.RecipientId.ShouldBe(RecipientId.ToString());
+        notification.Cause.MeetupEventId.ShouldBe(fact.EventId.ToString());
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.OrganizerRosterChanged);
+        notification.OrganizerRosterChanged.Meetup.ShouldBe(fact.Card);
+        notification.OrganizerRosterChanged.OrganizerCount.ShouldBe(2u);
+    }
+
+    [Fact]
+    public void OrganizerRosterChanged_AppointmentOccasion_Throws()
+    {
+        var fact = Decode(EventFactory.OrganizerChange(
+            EventFactory.NewId(), version: 4, EventFactory.NewId(), appointed: true, performedBy: null));
+
+        Should.Throw<ArgumentException>(() =>
+            NotificationFacts.OrganizerRosterChanged(NotificationId, RecipientId, fact, Now, NotAfter));
+    }
+
     [Fact]
     public void OrganizerAppointed_OtherOccasion_Throws()
     {

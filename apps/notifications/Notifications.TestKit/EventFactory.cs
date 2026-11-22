@@ -136,6 +136,10 @@ public static class EventFactory
     /// <see cref="Meetup" />. Снимок черновика назначения не описывает: его
     /// предмет — состав, а не публикация.
     /// </param>
+    /// <param name="organizers">
+    /// Люди, которые уже в составе помимо автора, по порядку вступления: им
+    /// адресуется весть оставшимся (PER-930, ADR-076, дополнение 2026-11-22).
+    /// </param>
     public static MeetupEvent OrganizerChange(
         string meetupId,
         long version,
@@ -143,12 +147,18 @@ public static class EventFactory
         bool appointed,
         string? performedBy,
         string? eventId = null,
-        string? author = null)
+        string? author = null,
+        IReadOnlyList<string>? organizers = null)
     {
         var message = Meetup(meetupId, version, eventId);
         var rosterOwner = author ?? "0199a000-0000-7000-8000-000000000001";
         message.State.Author = rosterOwner;
         message.State.Organizers.Add(rosterOwner);
+
+        if (organizers is not null)
+        {
+            message.State.Organizers.Add(organizers);
+        }
 
         if (appointed)
         {

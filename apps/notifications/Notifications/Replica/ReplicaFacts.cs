@@ -42,6 +42,12 @@ public abstract record ReplicaEvent(Guid EventId, Guid AggregateId, long Version
 /// Человек, чей состав изменился, у поводов <see cref="MeetupOccasion.OrganizerAppointed" />
 /// и <see cref="MeetupOccasion.OrganizerDismissed" />; у остальных поводов <c>null</c>.
 /// </param>
+/// <param name="Organizers">
+/// Состав организаторов из снимка события, по порядку вступления, — те, кто
+/// остался, если повод назвал ушедшего. Реплика состава не хранит, а весть
+/// оставшимся (PER-930, ADR-076, дополнение 2026-11-22) адресуется именно ему, и
+/// её число считается по этим записям.
+/// </param>
 public sealed record MeetupFact(
     Guid EventId,
     Guid MeetupId,
@@ -49,6 +55,7 @@ public sealed record MeetupFact(
     DateTimeOffset OccurredAt,
     MeetupReplicaState State,
     Notifications.V1.MeetupCard Card,
+    IReadOnlyList<Guid> Organizers,
     MeetupOccasion Occasion = MeetupOccasion.Other,
     string? RequestId = null,
     AttachedMaterial? Material = null,

@@ -13,6 +13,25 @@ public sealed record FactCount(int Created, int Suppressed)
 public sealed record ProducedFacts(string Type, FactCount Facts)
 {
     /// <summary>
+    /// Другие типы того же повода: у одного события бывает больше одного
+    /// адресного факта разного вида — так, снятие организатора даёт и весть
+    /// снятому, и весть оставшимся (PER-930). Своих других типов добавочный не
+    /// несёт: разворот плоский.
+    /// </summary>
+    public IReadOnlyList<ProducedFacts> Others { get; init; } = [];
+
+    /// <summary>Все типы разворота: основной первым, за ним другие.</summary>
+    public IEnumerable<ProducedFacts> All()
+    {
+        yield return this;
+
+        foreach (var other in Others)
+        {
+            yield return other;
+        }
+    }
+
+    /// <summary>
     /// Неотправленные факты, которые снял повод: пустой список — правило снятия
     /// сработало, но снимать было нечего. <c>null</c> у остальных
     /// поводов — правило снятия не запускалось, и в логе поля нет.

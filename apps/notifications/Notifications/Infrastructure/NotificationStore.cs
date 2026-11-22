@@ -188,12 +188,16 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             WHERE identity_id = @IdentityId AND NOT blocked AND @Preset = ANY(presets));
         """;
 
-    // Известный реплике человек не заблокирован и состоит в круге хаба; незнакомый
-    // допускается (см. AddOrganizerNotice).
-    private const string CanReachHubSql = """
-        SELECT NOT EXISTS (
+    // Люди из названных, до которых дойдёт весть о составе: известный реплике
+    // человек не заблокирован и состоит в круге хаба; незнакомый допускается
+    // (см. AddOrganizerNotice).
+    private const string HubReachableSql = """
+        SELECT roster.identity_id
+        FROM unnest(@IdentityIds) AS roster(identity_id)
+        WHERE NOT EXISTS (
             SELECT 1 FROM identity_replica
-            WHERE identity_id = @IdentityId AND (blocked OR circle IS DISTINCT FROM 'member'));
+            WHERE identity_id = roster.identity_id AND (blocked OR circle IS DISTINCT FROM 'member'))
+        ORDER BY roster.identity_id;
         """;
 
     private const string InsertSql = """
@@ -506,7 +510,16 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     id => NotificationFacts.OrganizerDismissed(id, fact, now, notAfter),
                     now,
                     notAfter,
-                    cancellationToken)),
+                    cancellationToken))
+            {
+                // Тот же повод даёт вторую весть — оставшимся (PER-930).
+                Others =
+                [
+                    new ProducedFacts(
+                        NotificationFacts.OrganizerRosterChangedType,
+                        await AddRosterNotice(work, fact, now, notAfter, cancellationToken)),
+                ],
+            },
 
             // Остальные поводы различаются не типом, а разницей: пустая — не
             // повод (ADR-031), непустая — изменение сведений, состояния или
@@ -635,8 +648,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         var person = fact.OrganizerId
             ?? throw new ArgumentException("the occasion names no person", nameof(fact));
 
-        if (fact.PerformedBy == person
-            || !await work.Scalar(CanReachHubSql, new { IdentityId = person }, cancellationToken))
+        if (fact.PerformedBy == person || !await CanReachHub(work, person, cancellationToken))
         {
             return FactCount.None;
         }
@@ -646,6 +658,67 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             FactCause.Of(fact, type),
             [new AudienceRow { IdentityId = person, Enabled = true, DeliverySurface = NotificationSubjects.Hub }],
             (id, _) => build(id),
+            now,
+            notAfter,
+            cancellationToken);
+    }
+
+    private static async Task<bool> CanReachHub(
+        UnitOfWork work,
+        Guid person,
+        CancellationToken cancellationToken)
+    {
+        var reachable = await work.Query<Guid>(
+            HubReachableSql,
+            new { IdentityIds = new[] { person } },
+            cancellationToken);
+
+        return reachable.Count > 0;
+    }
+
+    // Весть оставшимся организаторам (PER-930, ADR-076, дополнение 2026-11-22):
+    // когда человек вышел из состава сам или его снял администратор, каждый
+    // оставшийся узнаёт, что состав изменился. Адресаты — state.organizers
+    // снимка события, кроме ушедшего и кроме совершившего действие; отсев тот же,
+    // что у вести затронутому. Пустой состав получателей фактов не даёт, а число
+    // в факте — записи состава по снимку, а не число получателей.
+    private static async Task<FactCount> AddRosterNotice(
+        UnitOfWork work,
+        MeetupFact fact,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var left = fact.OrganizerId
+            ?? throw new ArgumentException("the occasion names no person", nameof(fact));
+
+        var remaining = fact.Organizers
+            .Where(person => person != left && person != fact.PerformedBy)
+            .Distinct()
+            .ToArray();
+
+        if (remaining.Length == 0)
+        {
+            return FactCount.None;
+        }
+
+        var reachable = await work.Query<Guid>(
+            HubReachableSql,
+            new { IdentityIds = remaining },
+            cancellationToken);
+
+        return await Insert(
+            work,
+            FactCause.Of(fact, NotificationFacts.OrganizerRosterChangedType),
+            reachable
+                .Select(person => new AudienceRow
+                {
+                    IdentityId = person,
+                    Enabled = true,
+                    DeliverySurface = NotificationSubjects.Hub,
+                })
+                .ToArray(),
+            (id, recipient) => NotificationFacts.OrganizerRosterChanged(id, recipient, fact, now, notAfter),
             now,
             notAfter,
             cancellationToken);
