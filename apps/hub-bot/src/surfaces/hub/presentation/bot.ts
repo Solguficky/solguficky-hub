@@ -485,11 +485,13 @@ import {
   confirmKeyboard,
   escapeHtml,
   exitToMeetups,
+  finishData,
   heading,
   outcomeText,
   type Parent,
   pageSize,
   plural,
+  publicationData,
   readableMoment,
   refusalText,
   retryLabel,
@@ -4788,7 +4790,7 @@ async function handleCallback(
       const meetup = current.meetup;
       const token = uuidToToken(meetup.id);
       // Кнопок управления на чужой сходке нет, но `callback_data` можно
-      // прислать и без них: отказ приходит до экрана правки, а не после
+      // прислать и без них: отказ приходит до экрана «Управление», а не после
       // ввода, на команде Meetups (ADR-076, п. 4; PER-748).
       if (current.viewer?.manages !== true) {
         await showRefusal(ctx, organizerOnlyText, exitToCard(token));
@@ -4949,14 +4951,24 @@ async function handleCallback(
         meetup.visibility === "visible"
       ) {
         // Устаревшая кнопка: сходку уже опубликовали — вручную или по
-        // расписанию. Подтверждать нечего.
-        await renderMeetupCard(
-          ctx,
-          current,
-          true,
-          runtime.presentation ?? "rich",
-          `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, meetup.id)}`,
-        );
+        // расписанию. Подтверждать нечего; исход ведёт туда, откуда нажали.
+        const published = `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, meetup.id)}`;
+        if (action.origin === "publication") {
+          await showScreen(ctx, {
+            id: "outcome",
+            text: outcomeText(published, meetupTitleLabel(meetup.title)),
+            keyboard: exitToMeetupManage(token),
+            format: "HTML",
+          });
+        } else {
+          await renderMeetupCard(
+            ctx,
+            current,
+            true,
+            runtime.presentation ?? "rich",
+            published,
+          );
+        }
       } else if (
         action.kind === "manage-publish" &&
         meetup.title.trim() === ""
@@ -4985,8 +4997,8 @@ async function handleCallback(
             back:
               action.kind === "manage-unpublish" ||
               action.kind === "manage-unschedule"
-                ? `v1:manage:publication:${token}`
-                : `v1:manage:finish:${token}`,
+                ? publicationData(token)
+                : finishData(token),
             ...(current.cancelConsequence === undefined
               ? {}
               : { consequence: current.cancelConsequence }),
@@ -5423,6 +5435,10 @@ async function handleCallback(
         ...(action.silent === true ? { silent: true } : {}),
         ...rpcCall(ctx, useCase),
       });
+      // Публикацию можно начать с черновика и из «Публикации»; от источника
+      // зависит, куда ведёт исход (PER-910).
+      const origin =
+        action.kind === "manage-confirm-publish" ? "publication" : "draft";
       if (result.kind === "conflict" && action.version !== undefined) {
         // Подтверждение устарело, пока человек решал: заново оно не задаётся,
         // приходит исход, и публикацию человек повторяет по свежим данным.
@@ -5432,7 +5448,10 @@ async function handleCallback(
             conflictText,
             meetupTitleLabel(result.meetup.title),
           ),
-          keyboard: exitToCard(uuidToToken(result.meetup.id)),
+          keyboard:
+            origin === "publication"
+              ? exitToMeetupManage(uuidToToken(result.meetup.id))
+              : exitToCard(uuidToToken(result.meetup.id)),
           format: "HTML",
         });
       } else if (result.kind === "published" && result.repeated === true) {
@@ -5440,20 +5459,30 @@ async function handleCallback(
         // состоянию вместо второго «Сходка создана». При повторе правка стирает
         // сообщение первой публикации, поэтому ссылка для чата стоит на
         // карточке; при устаревшем предпросмотре она просто повторяется.
-        await renderMeetupCard(
-          ctx,
-          cardFrom(result),
-          true,
-          runtime.presentation ?? "rich",
-          `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`,
-        );
+        const repeated = `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, result.meetup.id)}`;
+        if (origin === "publication") {
+          await showScreen(ctx, {
+            id: "outcome",
+            text: outcomeText(repeated, meetupTitleLabel(result.meetup.title)),
+            keyboard: exitToMeetupManage(uuidToToken(result.meetup.id)),
+            format: "HTML",
+          });
+        } else {
+          await renderMeetupCard(
+            ctx,
+            cardFrom(result),
+            true,
+            runtime.presentation ?? "rich",
+            repeated,
+          );
+        }
       } else {
         await renderFormResult(
           ctx,
           result,
           questions,
           runtime.presentation ?? "rich",
-          action.kind === "manage-confirm-publish" ? "publication" : "draft",
+          origin,
         );
       }
       outcome = screenBoundary(result, {
@@ -6495,7 +6524,7 @@ function broadcastExit(
   return withNav(
     keyboard,
     audience.kind === "meetup"
-      ? toCard(uuidToToken(audience.meetupId))
+      ? toMeetupManage(uuidToToken(audience.meetupId))
       : toManage,
   );
 }
@@ -14947,7 +14976,7 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "broadcast":
       return step.token === undefined
         ? { kind: "manage-menu" }
-        : { kind: "view-meetup", token: step.token };
+        : { kind: "manage-open", token: step.token };
     case "username":
       return { kind: "community-usernames", page: 0 };
     case "administrator":
@@ -15266,12 +15295,12 @@ function answerParent(step: QuestionStep): Parent {
     case "publish-moment":
       return step.origin === "draft"
         ? { name: "Сходка", data: `v1:manage:draft:${step.token}` }
-        : { name: "Публикация", data: `v1:manage:publication:${step.token}` };
+        : { name: "Публикация", data: publicationData(step.token) };
     case "material-source":
     case "material-title":
       return toMaterials(step.token);
     case "broadcast":
-      return step.token === undefined ? toManage : toCard(step.token);
+      return step.token === undefined ? toManage : toMeetupManage(step.token);
     case "username":
       return { name: "Ники", data: "v1:cm:u" };
     case "administrator":

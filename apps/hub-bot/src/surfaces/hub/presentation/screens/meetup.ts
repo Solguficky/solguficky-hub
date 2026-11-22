@@ -482,7 +482,7 @@ export type CardView = {
   subscribed?: boolean | undefined;
   /**
    * Смотрящий управляет сходкой — организатор из состава или администратор
-   * (ADR-076, п. 4): видны правка, статус и рассылка подписчикам.
+   * (ADR-076, п. 4): виден один вход «🛠 Управление».
    */
   manageable: boolean;
   /**
@@ -943,7 +943,7 @@ export function publishConfirmScreen(confirm: {
       cancelData:
         confirm.origin === "draft"
           ? `v1:manage:draft:${token}`
-          : `v1:manage:publication:${token}`,
+          : publicationData(token),
     }),
     format: "HTML",
   };

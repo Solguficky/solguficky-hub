@@ -684,7 +684,7 @@ describe("cardScreen", () => {
     );
   });
 
-  it("keeps a cancelled meetup readable but not editable", () => {
+  it("keeps a cancelled meetup readable with the single management entry", () => {
     const screen = cardScreen({
       ...view,
       meetup: meetup({ lifecycle: "cancelled" }),
@@ -789,6 +789,21 @@ describe("meetupManageScreen", () => {
     ]);
   });
 
+  it("names a hidden meetup and its scheduled publication", () => {
+    const screen = meetupManageScreen(
+      meetup({
+        visibility: "hidden",
+        publishAt: { year: 2026, month: 8, day: 10, hours: 9, minutes: 30 },
+      }),
+      today,
+    );
+
+    expect(screen.text).toContain("Запланирована · скрыта");
+    expect(screen.text).toContain(
+      "Публикация назначена на 10 августа, пн, 09:30",
+    );
+  });
+
   it("keeps only the mailing and the roster of a cancelled meetup", () => {
     const screen = meetupManageScreen(
       meetup({ lifecycle: "cancelled" }),
@@ -812,7 +827,7 @@ describe("meetupManageScreen", () => {
 });
 
 describe("publicationScreen", () => {
-  it("keeps every state action of a planned hidden meetup with a moment", () => {
+  it("keeps the publication actions of a planned hidden meetup with a moment", () => {
     const screen = publicationScreen(
       meetup({
         visibility: "hidden",

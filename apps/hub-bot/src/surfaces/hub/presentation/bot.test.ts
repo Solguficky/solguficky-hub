@@ -4272,6 +4272,121 @@ describe("presentation adapter", () => {
     }
   });
 
+  // Экран «Управление» и его подэкраны отрисовываются харнессом: линтер
+  // видит только отправленные экраны, и без прохода по ним их правила не
+  // проверяются (PER-910).
+  it("opens management and its two sub-screens", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:open:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "<b>Управление</b>",
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"callback_data":"v1:manage:publication:AZLzpLXGfY6fChssPU5fYA"',
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"callback_data":"v1:manage:finish:AZLzpLXGfY6fChssPU5fYA"',
+    );
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publication:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Сходка видна в списке.",
+    );
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:finish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Отменить сходку");
+  });
+
+  // У отменённой сходки «Управление» открывается: там остаются рассылка и
+  // состав (PER-910). У состоявшейся «Завершить или отменить» отказывает:
+  // подтверждение там не изменило бы состояние.
+  it("opens management of a cancelled meetup and refuses finish on a held one", async () => {
+    const cancelled = { ...publishedMeetup(), lifecycle: "cancelled" as const };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup: cancelled,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:open:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Написать подписчикам",
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Организаторы");
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("уже отменена");
+
+    const held = { ...publishedMeetup(), lifecycle: "held" as const };
+    execute.mockResolvedValue({ kind: "meetup-card", meetup: held });
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:finish:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "Сходка уже отмечена состоявшейся.",
+    );
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "change-meetup-state" }),
+    );
+  });
+
+  // Исход скрытия и снятия отложенной публикации — свой экран с возвратом в
+  // «Управление» (PER-910, вариант A дизайн-кода «Возвраты»).
+  it.each([
+    {
+      action: "unpublish",
+      data: "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:1",
+      shown: "Сходка скрыта",
+      meetup: { visibility: "hidden" as const },
+    },
+    {
+      action: "unschedule",
+      data: "v1:manage:confirm-unschedule:AZLzpLXGfY6fChssPU5fYA:1",
+      shown: "Отложенная публикация отменена",
+      meetup: { visibility: "hidden" as const },
+    },
+  ] as const)("returns the $action outcome to management", async (test) => {
+    const meetup = { ...publishedMeetup(), ...test.meetup };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-state-changed",
+      action: test.action,
+      meetup,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(test.data));
+
+    const shown = calls.findLast(
+      (call) =>
+        call.method === "editMessageText" || call.method === "sendMessage",
+    );
+    expect(JSON.stringify(shown?.payload)).toContain(test.shown);
+    expect(JSON.stringify(shown?.payload)).toContain(
+      '"text":"‹ Управление","callback_data":"v1:manage:open:AZLzpLXGfY6fChssPU5fYA"',
+    );
+  });
+
   it("executes cancellation only from the confirmation callback", async () => {
     const meetup = publishedMeetup();
     const cancelled = { ...meetup, lifecycle: "cancelled" as const };
@@ -4431,7 +4546,7 @@ describe("presentation adapter", () => {
     );
 
     // Публикация выходит наружу и идёт через выбор; «Отмена» вернёт в
-    // «Статус», кнопки несут версию показанного снимка.
+    // «Публикацию», кнопки несут версию показанного снимка.
     expect(execute).not.toHaveBeenCalledWith(
       expect.objectContaining({ intent: "publish-meetup" }),
     );
@@ -4469,6 +4584,47 @@ describe("presentation adapter", () => {
     });
     expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
   });
+
+  // Исход публикации из «Публикации» ведёт в «Управление» (PER-910) и тогда,
+  // когда подтверждение устарело или публикация уже прошла (PER-472).
+  it.each([
+    {
+      name: "conflict",
+      result: { kind: "conflict", meetup: publishedMeetup() },
+      shown: "Сходка уже изменилась",
+    },
+    {
+      name: "repeated publication",
+      result: {
+        kind: "published",
+        meetup: publishedMeetup(),
+        repeated: true,
+      },
+      shown: "Сходка уже опубликована",
+    },
+  ] as const)(
+    "returns a $name publication outcome to management",
+    async ({ result, shown }) => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(result);
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"),
+      );
+
+      const shownCall = calls.findLast(
+        (call) =>
+          call.method === "editMessageText" || call.method === "sendMessage",
+      );
+      expect(JSON.stringify(shownCall?.payload)).toContain(shown);
+      expect(JSON.stringify(shownCall?.payload)).toContain(
+        '"text":"‹ Управление","callback_data":"v1:manage:open:AZLzpLXGfY6fChssPU5fYA"',
+      );
+    },
+  );
 
   /// Конфликт версий — не молчаливая перезапись и не общий сбой: человек видит
   /// актуальные данные рядом со своим несохранённым вводом, а повторить правку
@@ -4837,13 +4993,13 @@ describe("presentation adapter", () => {
       text: "<b>Сходка опубликована</b>\n\n<b>Настолки</b>\n\nТеперь она видна в списке. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
       parse_mode: "HTML",
     });
-    // Исход — свой экран: ряды карточки на нём не стоят, возврат — «‹ Сходка».
+    // Исход публикации — свой экран: рядов карточки на нём нет, возврат —
+    // «‹ Управление».
     expect(JSON.stringify(edited?.payload)).toContain(
       '"text":"‹ Сходка","callback_data":"v1:view:AZLzpLXGfY6fChssPU5fYA"',
     );
-    expect(JSON.stringify(edited?.payload)).not.toContain(
-      "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
-    );
+    expect(JSON.stringify(edited?.payload)).not.toContain("v1:manage:open:");
+    expect(JSON.stringify(edited?.payload)).not.toContain("v1:mm:list:");
     // Ряды карточки — после «‹ Сходка».
     await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
@@ -6679,7 +6835,7 @@ describe("confirmations", () => {
     // Текст в кнопку не помещается: «Ввести заново» задаёт вопрос снова.
     expect(keyboardOf(calls.at(-1))).toEqual([
       [{ text: "Ввести заново", callback_data: `v1:bc:m:${token}` }],
-      [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
+      [{ text: "‹ Управление", callback_data: `v1:manage:open:${token}` }],
     ]);
 
     await bot.handleUpdate(callbackUpdate("v1:bc:no"));
@@ -6966,6 +7122,33 @@ describe("questions", () => {
       calls.find((call) => call.method === "deleteMessage")?.payload,
     ).toMatchObject({ message_id: 9 });
     expect(calls.at(-1)?.method).toMatch(/^send(Rich)?Message$/);
+  });
+
+  // Вход рассылки — ряд «Управления» (PER-910), и «Отмена» под вопросом
+  // возвращает туда же, а не на карточку.
+  it("returns a cancelled broadcast question to management", async () => {
+    const execute = viewing();
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate(`v1:q:bm:${token}`, {
+        text: "Вопрос",
+        reply_markup: cancel(`v1:q:bm:${token}`),
+      }),
+    );
+
+    const shown = calls.findLast(
+      (call) =>
+        call.method === "sendMessage" || call.method === "sendRichMessage",
+    );
+    // «Отмена» возвращает на экран, с которого задан вопрос, — в «Управление».
+    expect(JSON.stringify(shown?.payload)).toContain("<b>Управление</b>");
+    expect(JSON.stringify(shown?.payload)).toContain(
+      `"callback_data":"v1:bc:m:${token}"`,
+    );
   });
 
   it("returns a cancelled publication question to the draft it was asked from", async () => {
@@ -10860,7 +11043,7 @@ describe("meetup people and the organizer", () => {
 
     const payload = JSON.stringify(calls.at(-1)?.payload);
     expect(payload).toContain("Это действие доступно организатору сходки.");
-    expect(payload).not.toContain("Что меняем?");
+    expect(payload).not.toContain("Запланирована · видна в списке");
     expect(execute).toHaveBeenCalledTimes(1);
     expect(records).toContainEqual(
       expect.objectContaining({
