@@ -148,6 +148,14 @@ export type RenderableContent =
   // PER-749). Получает сам человек; кто назначил или снял, контракт не несёт.
   | { kind: "organizer-appointed"; meetup: NotifiedMeetup }
   | { kind: "organizer-dismissed"; meetup: NotifiedMeetup }
+  // Оставшимся организаторам — о выходе или снятии коллеги (ADR-076,
+  // дополнение 2026-11-22; PER-931). Имени ушедшего контракт не несёт, а число
+  // записей состава считает издатель по снимку события: бот его не пересчитывает.
+  | {
+      kind: "organizer-roster-changed";
+      meetup: NotifiedMeetup;
+      organizerCount: number;
+    }
   // Аукционные факты об участнике сообщества доставляет бот хаба (ADR-064):
   // перебитие, ответ автоставки, покупку и сводку — те же, что у бота аукциона
   // (PER-598).
@@ -266,6 +274,14 @@ function toContent(message: Notification): NotificationContent | undefined {
       return meetup === undefined
         ? undefined
         : { kind: "organizer-dismissed", meetup };
+    }
+    // Число записей состава контракт обещает не меньше единицы: пустой состав
+    // факта не рождает, и ноль — дефект издателя, как у прочих инвариантов.
+    case "organizerRosterChanged": {
+      const meetup = toMeetup(type.value.meetup);
+      const organizerCount = type.value.organizerCount;
+      if (meetup === undefined || organizerCount < 1) return undefined;
+      return { kind: "organizer-roster-changed", meetup, organizerCount };
     }
     case "meetupUnpublished": {
       const meetup = toMeetup(type.value.meetup);

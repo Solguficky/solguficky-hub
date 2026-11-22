@@ -71,6 +71,26 @@ function buttons(content: OutgoingNotification): unknown[] {
   return (renderNotification(content).keyboard?.inline_keyboard ?? []).flat();
 }
 
+// Отправка вести мимо адаптера экранов: линтер дизайн-кода видит вызов только
+// по метке каталога, которую отправитель вешает сам.
+async function lintViolations(
+  message: OutgoingNotification,
+): Promise<unknown[]> {
+  const sent: unknown[] = [];
+  const sender = createNotificationSender({
+    sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+      sent.push({ chat_id: chat, text, ...extra });
+      return {};
+    }),
+    setMyCommands: vi.fn(),
+    deleteMyCommands: vi.fn(),
+  } as never);
+  await sender.send({ telegramUserId: 42n, message });
+  // Пустая отправка дала бы зелёный линтер, ничего не проверив.
+  expect(sent.length).toBeGreaterThan(0);
+  return sent.flatMap((call) => inspectCall("hub", "sendMessage", call));
+}
+
 // Весть о лоте собирает общий рендер двух ботов, отправитель хаба рисует её
 // своими следами (PER-598).
 async function lotNotice(notice: LotNotice) {
@@ -197,21 +217,11 @@ describe("renderNotification", () => {
   // Линтер дизайн-кода: весть идёт мимо адаптера экранов, и без метки
   // каталога линтер её не увидел бы.
   it("passes the screen linter", async () => {
-    const sent: unknown[] = [];
-    const sender = createNotificationSender({
-      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
-        sent.push({ chat_id: chat, text, ...extra });
-        return {};
-      }),
-      setMyCommands: vi.fn(),
-      deleteMyCommands: vi.fn(),
-    } as never);
-    await sender.send({
-      telegramUserId: 42n,
-      message: { kind: "lot-notice", view: windowView() },
-    });
     expect(
-      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+      await lintViolations({
+        kind: "lot-notice",
+        view: windowView(),
+      }),
     ).toEqual([]);
   });
 
@@ -294,26 +304,13 @@ describe("renderNotification", () => {
   });
 
   it("passes the screen linter with organizer text in plain text", async () => {
-    const sent: unknown[] = [];
-    const sender = createNotificationSender({
-      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
-        sent.push({ chat_id: chat, text, ...extra });
-        return {};
-      }),
-      setMyCommands: vi.fn(),
-      deleteMyCommands: vi.fn(),
-    } as never);
-    await sender.send({
-      telegramUserId: 42n,
-      message: {
+    expect(
+      await lintViolations({
         kind: "lot-set-collected",
         setName: "<Сервиз & чашки>",
         lotCount: 3,
         lotId,
-      },
-    });
-    expect(
-      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+      }),
     ).toEqual([]);
   });
 
@@ -980,6 +977,45 @@ describe("organizer roster", () => {
       "Тебя сняли с организаторов сходки: Настолки у Лёши",
     );
     expect(message.keyboard).toBeUndefined();
+  });
+
+  // PER-931: оставшимся организаторам — одно сообщение без имени ушедшего,
+  // с числом из факта и двумя следами: состав и карточка.
+  it("tells the remaining organizers with the count and two traces", () => {
+    const changed: OutgoingNotification = {
+      kind: "organizer-roster-changed",
+      meetup,
+      organizerCount: 2,
+    };
+    const message = renderNotification(changed);
+    expect(message.text).toBe(
+      [
+        "Состав организаторов сходки изменился: Настолки у Лёши",
+        "Один человек больше не ведёт сходку. Организаторов в составе: 2.",
+      ].join("\n"),
+    );
+    expect(message.text).not.toContain("@");
+    const token = uuidToToken(meetupId);
+    expect(buttons(changed)).toEqual([
+      expect.objectContaining({
+        text: "Организаторы",
+        callback_data: `v1:t:mo:l:${token}`,
+      }),
+      expect.objectContaining({
+        text: "Открыть сходку",
+        callback_data: `v1:t:view:${token}`,
+      }),
+    ]);
+  });
+
+  it("passes the screen linter with the roster notice", async () => {
+    expect(
+      await lintViolations({
+        kind: "organizer-roster-changed",
+        meetup,
+        organizerCount: 3,
+      }),
+    ).toEqual([]);
   });
 });
 

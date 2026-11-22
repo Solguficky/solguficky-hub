@@ -58,6 +58,7 @@ import {
 import { applicationCardBody, cursorOf } from "./screens/application.js";
 import {
   escapeHtml,
+  organizersData,
   readableDay,
   readableMoment,
   toManage,
@@ -371,13 +372,10 @@ export function renderNotification(
   }
   const meetup = content.meetup;
   const day = today ?? sameYearAs(meetup.when);
-  const open = () =>
-    new InlineKeyboard().text(
-      "Открыть сходку",
-      // Кнопка следа: карточка придёт новым сообщением, а уведомление — и
-      // слова организатора в нём — останется в истории.
-      traceCallback(`v1:view:${uuidToToken(meetup.id)}`),
-    );
+  // След карточки один у всех вестей со сходкой: кнопка «Открыть сходку»
+  // приходит новым сообщением, а уведомление остаётся в истории.
+  const openData = () => traceCallback(`v1:view:${uuidToToken(meetup.id)}`);
+  const open = () => new InlineKeyboard().text("Открыть сходку", openData());
   switch (content.kind) {
     case "meetup-published":
       return {
@@ -489,6 +487,26 @@ export function renderNotification(
           whenLine(meetup.when, day),
         ].join("\n"),
         keyboard: undefined,
+      };
+    // Оставшимся организаторам (ADR-076, дополнение 2026-11-22; PER-931): имени
+    // ушедшего весть не несёт, текст один для выхода и для снятия, а число —
+    // записи состава по снимку события. Обе кнопки — следы: экран состава и
+    // карточка приходят новыми сообщениями, весть остаётся в истории.
+    // Вторую кнопку словарь дизайн-кода пишет «Открыть сходку» (решение
+    // оркестратора R-13): «К сходке» из него выведена.
+    case "organizer-roster-changed":
+      return {
+        text: [
+          headline("Состав организаторов сходки изменился", meetup),
+          `Один человек больше не ведёт сходку. Организаторов в составе: ${content.organizerCount}.`,
+        ].join("\n"),
+        keyboard: new InlineKeyboard()
+          .text(
+            "Организаторы",
+            traceCallback(organizersData(uuidToToken(meetup.id))),
+          )
+          .row()
+          .text("Открыть сходку", openData()),
       };
     default: {
       const _exhaustive: never = content;

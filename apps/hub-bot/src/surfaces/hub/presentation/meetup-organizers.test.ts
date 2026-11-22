@@ -599,6 +599,36 @@ describe("leaving from the appointment notice", () => {
   });
 });
 
+// Обе кнопки вести оставшимся организаторам — следы (PER-931): экран состава
+// и карточка приходят новыми сообщениями, а весть остаётся в истории.
+describe("traces from the roster notice", () => {
+  it("opens the organizers screen as a new message", async () => {
+    const harness = await started(lesha);
+
+    await harness.bot.handleUpdate(press(`v1:t:mo:l:${token}`));
+
+    const sent = harness.calls.filter((call) => call.method === "sendMessage");
+    expect(plain(sent.at(-1)?.payload as Sent)).toContain("Организаторы");
+    expect(labels(sent.at(-1)?.payload as Sent)).toContain("‹ Управление");
+    expect(harness.commands).toEqual([]);
+  });
+
+  it("opens the meetup card as a new message", async () => {
+    const harness = await started(lesha);
+
+    await harness.bot.handleUpdate(press(`v1:t:view:${token}`));
+
+    // Карточка сходки — rich-сообщение: текст и кнопки лежат в его теле, а
+    // отдельный вызов значит новое сообщение, а не правку старого.
+    const sent = harness.calls.filter(
+      (call) => call.method === "sendRichMessage",
+    );
+    expect(JSON.stringify(sent.at(-1)?.payload)).toContain("Настолки");
+    expect(JSON.stringify(sent.at(-1)?.payload)).toContain("🛠 Управление");
+    expect(harness.commands).toEqual([]);
+  });
+});
+
 // Находки ревью PER-749: повтор и гонки команд состава отвечают исходом, а не
 // отказом, и сбой Identity оставляет путь повторить.
 describe("meetup organizers on repeats and races", () => {

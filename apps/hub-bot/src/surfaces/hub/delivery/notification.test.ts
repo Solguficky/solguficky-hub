@@ -27,6 +27,7 @@ import {
   type Notification,
   NotificationSchema,
   OrganizerMessageSchema,
+  OrganizerRosterChangedSchema,
   PresetGrantedSchema,
   ReleaseSummarySchema,
   StepWindowStartedSchema,
@@ -906,6 +907,58 @@ describe("decodeNotification", () => {
       }),
     );
     expect(decoded.kind).toBe("malformed");
+  });
+
+  // PER-931: оставшимся организаторам приходит своя ветка с числом записей
+  // состава по снимку события.
+  it("decodes the roster change with the organizer count", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        message.type = {
+          case: "organizerRosterChanged",
+          value: create(OrganizerRosterChangedSchema, {
+            meetup: message.type.value.meetup,
+            organizerCount: 2,
+          }),
+        };
+      }),
+    );
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "organizer-roster-changed",
+          meetup: { id: meetupId, title: "Настолки у Лёши" },
+          organizerCount: 2,
+        },
+      },
+    });
+  });
+
+  it("rejects a roster change without the meetup or with an empty roster", () => {
+    const withoutMeetup = decodeNotification(
+      published((message) => {
+        message.type = {
+          case: "organizerRosterChanged",
+          value: create(OrganizerRosterChangedSchema, { organizerCount: 2 }),
+        };
+      }),
+    );
+    expect(withoutMeetup.kind).toBe("malformed");
+    const emptyRoster = decodeNotification(
+      published((message) => {
+        if (message.type.case !== "meetupPublished") return;
+        message.type = {
+          case: "organizerRosterChanged",
+          value: create(OrganizerRosterChangedSchema, {
+            meetup: message.type.value.meetup,
+            organizerCount: 0,
+          }),
+        };
+      }),
+    );
+    expect(emptyRoster.kind).toBe("malformed");
   });
 
   it("parses the deadline", () => {
