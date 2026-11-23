@@ -154,18 +154,10 @@ export type AnnouncementPosts = {
   unknown(key: string): UnknownAnnouncement | undefined;
   setResendNonce(key: string, nonce: string): void;
   forget(key: string): void;
-  /**
-   * Подпись поста по id материала (PER-926). Держится в памяти процесса рядом с
-   * номером поста: Bot API не отдаёт текст чужого нам сообщения, а подпись
-   * организатора при правке должна остаться прежней.
-   */
-  rememberSignature(materialId: string, signature: string): void;
-  signatureOf(materialId: string): string | undefined;
 };
 
 export function createAnnouncementPosts(limit = 1_000): AnnouncementPosts {
   const records = new Map<string, AnnouncementRecord>();
-  const signatures = new Map<string, string>();
   const put = (key: string, record: AnnouncementRecord): void => {
     records.delete(key);
     records.set(key, record);
@@ -204,18 +196,6 @@ export function createAnnouncementPosts(limit = 1_000): AnnouncementPosts {
     },
     forget(key) {
       records.delete(key);
-    },
-    rememberSignature(materialId, signature) {
-      signatures.delete(materialId);
-      signatures.set(materialId, signature);
-      while (signatures.size > limit) {
-        const oldest = signatures.keys().next();
-        if (oldest.done === true) break;
-        signatures.delete(oldest.value);
-      }
-    },
-    signatureOf(materialId) {
-      return signatures.get(materialId);
     },
   };
 }

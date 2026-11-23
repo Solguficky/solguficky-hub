@@ -10,12 +10,14 @@ import type { AccessRight } from "../../../auction-ui/index.js";
 import { noopTracing } from "../../../core/tracing.js";
 import type { ExecuteRequest, ExecuteResult } from "../application/types.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
+import type { AnnouncementPostRegistry } from "./announcement-posts-kv.js";
 import type { CommunityChat } from "./community-chat.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 
-// Правка текста поста (PER-926, вариант А): харнесс без Telegram. Проверяют
-// кнопку у каждой ссылки, пересмотр права в момент изменения, правку поста с
-// сохранённой подписью и кнопкой, а также понятный отказ на чужом сообщении.
+// Правка текста поста (PER-926, решение владельца 2026-11-23): происхождение
+// поста берётся только из постоянного реестра. Харнесс без Telegram проверяет
+// подпись и кнопку, право в момент правки, две сходки, рестарт, старые ссылки,
+// отказы KV и Bot API.
 
 const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 const communityChatId = -1001234567890;
@@ -23,7 +25,12 @@ const postId = 28;
 const postLink = `https://t.me/c/1234567890/${postId}`;
 const materialId = "0199c0de-0000-7000-8000-000000000001";
 const body = "Новый текст анонса";
-const signature = "Организатор";
+const recordedSignature = "Анна";
+const editorName = "Борис";
+const recordedKeyboard = {
+  text: "Открыть сходку ↗",
+  url: "https://t.me/test_bot?start=m_original",
+};
 
 const memberRights: readonly AccessRight[] = [
   "access-hub",
@@ -53,12 +60,43 @@ function meetupOf(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
   };
 }
 
+type RegistryMode = "ok" | "unavailable" | "missing";
+
+function createRegistry(
+  options: { meetupId?: string; signature?: string; mode?: RegistryMode } = {},
+): AnnouncementPostRegistry {
+  const mode = options.mode ?? "ok";
+  const record = {
+    chatId: communityChatId,
+    messageId: postId,
+    meetupId: options.meetupId ?? meetupOf().id,
+    signature: options.signature ?? recordedSignature,
+    keyboard: recordedKeyboard,
+  };
+  return {
+    async remember() {
+      return { kind: "stored" };
+    },
+    async read(chatId, messageId) {
+      if (mode === "unavailable") {
+        return { kind: "unavailable", cause: "kv down" };
+      }
+      if (mode === "missing") return { kind: "missing" };
+      if (chatId !== communityChatId || messageId !== postId) {
+        return { kind: "missing" };
+      }
+      return { kind: "found", record };
+    },
+    async close() {},
+  };
+}
+
 type SetupOptions = {
   rights?: readonly AccessRight[];
   withChat?: boolean;
-  chatId?: number;
   initial?: MeetupSnapshot;
   respond?: (method: string, payload: unknown) => unknown;
+  registry?: AnnouncementPostRegistry;
 };
 
 function setup(options: SetupOptions = {}) {
@@ -71,7 +109,7 @@ function setup(options: SetupOptions = {}) {
     }),
   );
   const chat: CommunityChat = {
-    chatId: options.chatId ?? communityChatId,
+    chatId: communityChatId,
     registerCommands: async () => {},
     gate: async (_ctx, next) => next(),
   };
@@ -91,6 +129,7 @@ function setup(options: SetupOptions = {}) {
     undefined,
     {
       ...(options.withChat === false ? {} : { communityChat: chat }),
+      announcementPostsRegistry: options.registry ?? createRegistry(),
       ...(options.respond === undefined ? {} : { respond: options.respond }),
     },
   );
@@ -111,7 +150,7 @@ function callbackUpdate(
     callback_query: {
       id: "callback-1",
       chat_instance: "chat-1",
-      from: { id: 42, is_bot: false, first_name: signature },
+      from: { id: 42, is_bot: false, first_name: editorName },
       data,
       message: {
         message_id: 9,
@@ -130,7 +169,7 @@ function replyUpdate(text: string, replyMessageId: number): Update {
       message_id: 10,
       date: 0,
       chat: { id: 42, type: "private", first_name: "tester" },
-      from: { id: 42, is_bot: false, first_name: signature },
+      from: { id: 42, is_bot: false, first_name: editorName },
       text,
       reply_to_message: {
         message_id: replyMessageId,
@@ -164,21 +203,19 @@ function lastQuestionId(calls: readonly RecordedCall[]): number {
   return 100 + index + 1;
 }
 
-function previewMessage(): Record<string, unknown> {
+function previewMessage(text = body): Record<string, unknown> {
   return {
     text: "Подтверждение",
     reply_to_message: {
       message_id: 5,
       date: 100,
       from: { id: botInfo.id, is_bot: true, first_name: "stub" },
-      text: body,
+      text,
     },
   };
 }
 
 function editCalls(calls: readonly RecordedCall[]): RecordedCall[] {
-  // Нажатие на кнопку снимает клавиатуру тем же editMessageText, но в личке;
-  // правка поста идёт в чат сообщества.
   return calls.filter(
     (call) =>
       call.method === "editMessageText" &&
@@ -195,8 +232,17 @@ async function openConfirmation(h: ReturnType<typeof setup>): Promise<string> {
   return findData(h.calls, "v1:mm:ee:");
 }
 
+function telegramError(description: string): GrammyError {
+  return new GrammyError(
+    `Bad Request: ${description}`,
+    { ok: false, error_code: 400, description },
+    "editMessageText",
+    {},
+  );
+}
+
 describe("meetup announcement text edit (PER-926)", () => {
-  it("edits the post text with signature and button preserved and writes no material", async () => {
+  it("uses the recorded signature and keyboard, not the editor's name or current meetup", async () => {
     const h = setup();
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
@@ -206,26 +252,25 @@ describe("meetup announcement text edit (PER-926)", () => {
     expect(edits[0]?.payload).toMatchObject({
       chat_id: communityChatId,
       message_id: postId,
-      text: `<b>${signature}:</b>\n\n${body}`,
+      text: `<b>${recordedSignature}:</b>\n\n${body}`,
       parse_mode: "HTML",
     });
     const editPayload = edits[0]?.payload;
     expect(editPayload).toBeDefined();
     const markup = (
       editPayload as {
-        reply_markup?: { inline_keyboard: { text: string; url?: string }[][] };
+        reply_markup?: {
+          inline_keyboard: { text: string; url?: string }[][];
+        };
       }
     ).reply_markup;
-    expect(markup?.inline_keyboard.flat()[0]?.text).toBe("Открыть сходку ↗");
+    expect(markup?.inline_keyboard.flat()[0]).toEqual(recordedKeyboard);
     expect(
       h.execute.mock.calls.every(
         ([request]) =>
           request.intent !== "attach-material" &&
           request.intent !== "remove-material",
       ),
-    ).toBe(true);
-    expect(
-      h.records.some((record) => record.message === "material text edited"),
     ).toBe(true);
   });
 
@@ -237,12 +282,9 @@ describe("meetup announcement text edit (PER-926)", () => {
       meetup: meetupOf({ organizers: [] }),
     }));
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
-
     expect(editCalls(h.calls)).toHaveLength(0);
     expect(
-      h.records.some(
-        (record) => record.message === "material text edit rejected",
-      ),
+      h.records.some((r) => r.message === "material text edit rejected"),
     ).toBe(true);
   });
 
@@ -253,9 +295,7 @@ describe("meetup announcement text edit (PER-926)", () => {
     );
     expect(editCalls(h.calls)).toHaveLength(0);
     expect(
-      h.records.some(
-        (record) => record.message === "material text edit rejected",
-      ),
+      h.records.some((r) => r.message === "material text edit rejected"),
     ).toBe(true);
   });
 
@@ -268,62 +308,56 @@ describe("meetup announcement text edit (PER-926)", () => {
 
   it("explains a Telegram refusal on a foreign post and keeps the material", async () => {
     const h = setup({
-      respond: (method) => {
-        if (method === "editMessageText") {
-          throw new GrammyError(
-            "Bad Request: message can't be edited",
-            {
-              ok: false,
-              error_code: 400,
-              description: "message can't be edited",
-            },
-            "editMessageText",
-            {},
-          );
-        }
-        return undefined;
-      },
+      respond: (method) =>
+        method === "editMessageText"
+          ? telegramError("message can't be edited")
+          : undefined,
     });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
-
     expect(
       h.records.some(
-        (record) => record.message === "material text edit denied by telegram",
+        (r) => r.message === "material text edit denied by telegram",
       ),
     ).toBe(true);
-    const refusals = h.calls.filter(
-      (call) =>
-        call.method === "sendMessage" &&
-        JSON.stringify(call.payload).includes("не принадлежит боту"),
-    );
-    expect(refusals.length).toBeGreaterThan(0);
     expect(
-      h.execute.mock.calls.every(
-        ([request]) => request.intent !== "attach-material",
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("не принадлежит боту"),
       ),
     ).toBe(true);
+  });
+
+  it("gives a neutral refusal when the post was not found", async () => {
+    const h = setup({
+      respond: (method) =>
+        method === "editMessageText"
+          ? telegramError("message to edit not found")
+          : undefined,
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(
+      h.records.some((r) => r.message === "material text edit post not found"),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("Не удалось найти сообщение"),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("не принадлежит боту"),
+      ),
+    ).toBe(false);
   });
 
   it("stale preview cannot edit the post", async () => {
     const h = setup();
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(
-      callbackUpdate(confirm, {
-        text: "Подтверждение",
-        reply_to_message: {
-          message_id: 5,
-          date: 100,
-          from: { id: botInfo.id, is_bot: true, first_name: "stub" },
-          text: "Другой текст",
-        },
-      }),
-    );
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage("other")));
     expect(editCalls(h.calls)).toHaveLength(0);
     expect(
-      h.records.some(
-        (record) => record.message === "material text edit preview stale",
-      ),
+      h.records.some((r) => r.message === "material text edit preview stale"),
     ).toBe(true);
   });
 
@@ -344,85 +378,138 @@ describe("meetup announcement text edit (PER-926)", () => {
     );
     expect(editCalls(h.calls)).toHaveLength(0);
     expect(
-      h.records.some(
-        (record) => record.message === "material text edit foreign link",
-      ),
+      h.records.some((r) => r.message === "material text edit foreign link"),
     ).toBe(true);
   });
 
   it("treats 'message is not modified' as success, not a retry loop", async () => {
     const h = setup({
-      respond: (method) => {
-        if (method === "editMessageText") {
-          throw new GrammyError(
-            "Bad Request: message is not modified",
-            {
-              ok: false,
-              error_code: 400,
-              description: "Bad Request: message is not modified",
-            },
-            "editMessageText",
-            {},
-          );
-        }
-        return undefined;
-      },
+      respond: (method) =>
+        method === "editMessageText"
+          ? telegramError("message is not modified")
+          : undefined,
     });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
     expect(
-      h.records.some(
-        (record) => record.message === "material text edit unchanged",
-      ),
-    ).toBe(true);
-    expect(
-      h.calls.some((call) =>
-        JSON.stringify(call.payload).includes("изменений не требуется"),
-      ),
+      h.records.some((r) => r.message === "material text edit unchanged"),
     ).toBe(true);
   });
 
   it("refuses a non-text post without offering an endless retry", async () => {
     const h = setup({
-      respond: (method) => {
-        if (method === "editMessageText") {
-          throw new GrammyError(
-            "Bad Request: there is no text in the message to edit",
-            {
-              ok: false,
-              error_code: 400,
-              description:
-                "Bad Request: there is no text in the message to edit",
-            },
-            "editMessageText",
-            {},
-          );
-        }
-        return undefined;
-      },
+      respond: (method) =>
+        method === "editMessageText"
+          ? telegramError("there is no text in the message to edit")
+          : undefined,
     });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
     expect(
+      h.records.some((r) => r.message === "material text edit non-text post"),
+    ).toBe(true);
+  });
+
+  it("refuses an old material with no registry record", async () => {
+    const h = setup({ registry: createRegistry({ mode: "missing" }) });
+    await h.bot.handleUpdate(
+      callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
+    );
+    expect(editCalls(h.calls)).toHaveLength(0);
+    expect(
       h.records.some(
-        (record) => record.message === "material text edit non-text post",
+        (r) => r.message === "material text edit unknown provenance",
       ),
     ).toBe(true);
     expect(
       h.calls.some((call) =>
-        JSON.stringify(call.payload).includes("не текстовое"),
+        JSON.stringify(call.payload).includes("не значится анонсом"),
       ),
     ).toBe(true);
   });
 
-  it("does not promise a preserved signature when it is no longer in memory", async () => {
-    const h = setup();
-    const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+  it("refuses when the registry is unavailable", async () => {
+    const h = setup({ registry: createRegistry({ mode: "unavailable" }) });
+    await h.bot.handleUpdate(
+      callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
+    );
+    expect(editCalls(h.calls)).toHaveLength(0);
     expect(
-      h.calls.some((call) =>
-        JSON.stringify(call.payload).includes("не помнит после перезапуска"),
+      h.records.some(
+        (r) => r.message === "material text edit registry unavailable",
       ),
     ).toBe(true);
+  });
+
+  it("refuses a post belonging to another meetup with another organizer", async () => {
+    const h = setup({
+      registry: createRegistry({
+        meetupId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf",
+      }),
+    });
+    await h.bot.handleUpdate(
+      callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
+    );
+    expect(editCalls(h.calls)).toHaveLength(0);
+    expect(
+      h.records.some((r) => r.message === "material text edit meetup mismatch"),
+    ).toBe(true);
+  });
+
+  it("recovers after a process restart sharing only the registry and chat history", async () => {
+    const registry = createRegistry();
+    const first = setup({ registry });
+    const confirm = await openConfirmation(first);
+    const calls = [...first.calls];
+    const second = createHarness(
+      {
+        resolve: async () => ({
+          kind: "resolved" as const,
+          identityId: resolvedId,
+          rights: memberRights,
+          blocked: false,
+        }),
+      },
+      { execute: first.execute },
+      calls,
+      noopTracing(),
+      undefined,
+      undefined,
+      {
+        communityChat: {
+          chatId: communityChatId,
+          registerCommands: async () => {},
+          gate: async (_ctx, next) => next(),
+        },
+        announcementPostsRegistry: registry,
+      },
+    );
+    await second.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(
+      editCalls(calls).filter(
+        (call) =>
+          (call.payload as { chat_id?: number }).chat_id === communityChatId,
+      ).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("measures the length against the recorded signature, not the editor", async () => {
+    const longSignature = "А".repeat(5000);
+    const h = setup({ registry: createRegistry({ signature: longSignature }) });
+    await h.bot.handleUpdate(
+      callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
+    );
+    const questionId = lastQuestionId(h.calls);
+    await h.bot.handleUpdate(replyUpdate("ok", questionId));
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("Ввести заново"),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("v1:mm:ee:"),
+      ),
+    ).toBe(false);
   });
 });

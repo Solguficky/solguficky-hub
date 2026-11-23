@@ -158,6 +158,19 @@ public class JetStreamTopologyTests
         screens.MaxAge.ShouldBe(TimeSpan.FromDays(2));
     }
 
+    /// <summary>
+    /// Постоянный реестр постов анонсов (PER-926): происхождение поста обязано
+    /// пережить и рестарт процесса, и произвольный срок между публикацией и
+    /// правкой, поэтому у bucket'а нет срока жизни.
+    /// </summary>
+    [Fact]
+    public void KeyValueBuckets_AnnouncementPosts_HaveNoTtl()
+    {
+        var posts = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "hub-bot-announcement-posts");
+
+        posts.MaxAge.ShouldBe(TimeSpan.Zero);
+    }
+
     [Fact]
     public void ToConfig_Bucket_KeepsLatestStateOnDisk()
     {

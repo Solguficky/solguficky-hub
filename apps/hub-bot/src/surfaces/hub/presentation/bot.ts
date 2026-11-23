@@ -195,6 +195,10 @@ import {
   parsePreviewText,
   parseStepText,
 } from "./announcement-input.js";
+import type {
+  AnnouncementPostRecord,
+  AnnouncementPostRegistry,
+} from "./announcement-posts-kv.js";
 import {
   type AuctionParents,
   createAuctionParents,
@@ -731,6 +735,9 @@ export type BotRuntime = {
   // Чат сообщества (ADR-078, п. 2): допуск групп и невидимые команды. Нет —
   // группы, как прежде, не обрабатываются, и бот ни из одной не выходит.
   communityChat?: CommunityChat;
+  // Постоянный реестр постов анонсов (PER-926): по (чат, сообщение) хранит
+  // исходную сходку, подпись и клавиатуру. Нет — правка недоступна.
+  announcementPostsRegistry?: AnnouncementPostRegistry;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -1353,6 +1360,9 @@ type UpdateContext = ShellContext & {
   communityTimeZone?: string;
   // Чат сообщества задан: карточка опубликованной сходки несёт «Анонс в чат».
   announceEnabled?: boolean;
+  // Id чата сообщества: экран материалов показывает правку только для ссылок
+  // на посты этого чата (PER-926, ревью координатора).
+  communityChatId?: number | undefined;
   // Telegram отверг карточку с постерами, и она ушла без них: причина едет в
   // запись границы, иначе деградация оператору не видна.
   postersRejected?: string;
@@ -1531,6 +1541,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     ctx.announceEnabled =
       runtime.communityChat !== undefined &&
       isCommunitySupergroup(runtime.communityChat.chatId);
+    ctx.communityChatId = runtime.communityChat?.chatId;
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
     if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
@@ -2291,10 +2302,27 @@ async function handleMessage(
         outcome = denied;
         return;
       }
+      const target = await resolveEditTextTarget(
+        ctx,
+        runtime,
+        identity.person,
+        useCase,
+        {
+          token: uuidToToken(pending.meetupId),
+          origin: pending.origin,
+          materialToken: uuidToToken(pending.materialId),
+        },
+      );
+      if (target.kind === "denied") {
+        outcome = target.outcome;
+        return;
+      }
       const checked = announcementBodyCheck(ctx.message?.text ?? "");
+      // Предел считается по исходной подписи из реестра, а не по имени того,
+      // кто сейчас правит текст (PER-926, ревью координатора).
       const fits =
         checked.kind === "ok" &&
-        announcementFits(ctx.from?.first_name ?? "Организатор", checked.body);
+        announcementFits(target.record.signature, checked.body);
       if (checked.kind !== "ok" || !fits) {
         const reason = checked.kind === "ok" ? "too-long" : checked.kind;
         await refuseAnswer(
@@ -2321,7 +2349,7 @@ async function handleMessage(
       const preview = await ctx.reply(checked.body);
       const token = uuidToToken(pending.meetupId);
       await ctx.reply(
-        `${heading("Изменить текст анонса?")}\n\n${escapeHtml("Выше — новый текст поста. Бот заменит его в чате сообщества и оставит кнопку; подпись сохранится, если бот её помнит.")}`,
+        `${heading("Изменить текст анонса?")}\n\n${escapeHtml("Выше — новый текст поста. Бот заменит его в чате сообщества, сохранив исходные подпись и кнопку.")}`,
         {
           reply_parameters: { message_id: preview.message_id },
           parse_mode: "HTML",
@@ -6135,7 +6163,7 @@ async function handleCallback(
         screenText(
           "Изменить текст",
           `Пришли новый текст поста анонса сходки «${escapeHtml(meetupTitleLabel(target.meetup.title))}».`,
-          "Бот заменит текст в чате сообщества и оставит кнопку. Подпись организатора сохранится, если бот её помнит; после перезапуска вместо неё встанет подпись правившего. Сам материал останется прежним.",
+          "Бот заменит текст в чате сообщества, сохранив исходные подпись и кнопку. Сам материал останется прежним.",
           "Я покажу предпросмотр и спрошу подтверждение.",
         ),
         undefined,
@@ -6184,13 +6212,9 @@ async function handleCallback(
         outcome = target.outcome;
         return;
       }
-      // Подпись из памяти процесса: Bot API не возвращает текст поста, а менять
-      // подпись организатора при правке нельзя (PER-926).
-      const rememberedSignature = announcementPosts.signatureOf(
-        target.materialId,
-      );
-      const signature =
-        rememberedSignature ?? ctx.from?.first_name ?? "Организатор";
+      // Подпись и клавиатура — из постоянного реестра: Bot API не возвращает
+      // текст поста, а менять их при правке нельзя (PER-926).
+      const signature = target.record.signature;
       try {
         await ctx.api.editMessageText(
           target.ref.chatId,
@@ -6200,8 +6224,8 @@ async function handleCallback(
             ...screenMark("meetup-announcement-post"),
             parse_mode: "HTML",
             reply_markup: new InlineKeyboard().url(
-              "Открыть сходку ↗",
-              meetupStartLink(ctx.me.username, target.meetupId),
+              target.record.keyboard.text,
+              target.record.keyboard.url,
             ),
           },
         );
@@ -6247,7 +6271,32 @@ async function handleCallback(
           };
           return;
         }
-        if (cause instanceof GrammyError && notEditable(cause.description)) {
+        if (
+          cause instanceof GrammyError &&
+          cause.description.includes("message to edit not found")
+        ) {
+          // «Не найдено» не доказывает чужое авторство: пост мог быть удалён.
+          await showRefusal(
+            ctx,
+            "Не удалось найти сообщение в чате: возможно, оно удалено или стало недоступно. Материал остался без изменений.",
+            exitToMaterials(action.token, action.origin),
+          );
+          outcome = {
+            level: "warn",
+            message: "material text edit post not found",
+            result: "error",
+            use_case: useCase,
+            meetup_id: target.meetupId,
+            identity_id: person.identityId,
+            error_category: "dependency_unavailable",
+            error: "telegram_message_not_found",
+          };
+          return;
+        }
+        if (
+          cause instanceof GrammyError &&
+          cause.description.includes("message can't be edited")
+        ) {
           await showRefusal(
             ctx,
             "Это сообщение в чате не принадлежит боту, поэтому Telegram не дал изменить его текст. Материал остался без изменений.",
@@ -6315,9 +6364,7 @@ async function handleCallback(
       await showScreen(ctx, {
         id: "outcome",
         text: outcomeText(
-          rememberedSignature === undefined
-            ? "Текст поста в чате сообщества изменён. Кнопка осталась; исходную подпись бот не помнит после перезапуска, поэтому в посте стоит подпись правившего."
-            : "Текст поста в чате сообщества изменён. Подпись и кнопка остались.",
+          "Текст поста в чате сообщества изменён. Подпись и кнопка остались.",
         ),
         keyboard: exitToMaterials(action.token, action.origin),
         format: "HTML",
@@ -7436,6 +7483,7 @@ async function renderMaterialManagement(
       canManage,
       requestedPage,
       materialsEntryOrigin(meetup, origin),
+      ctx.communityChatId,
     ),
     ...(fileTrace === undefined ? {} : { fileTrace }),
   });
@@ -8404,13 +8452,37 @@ async function publishMeetupAnnouncement(
       result.kind === "material-attached" ||
       result.meetup.materials.some((material) => material.id === materialId);
     if (success) {
-      // Подпись поста сохраняется для правки (PER-926): текст сообщения Bot API
-      // не возвращает, а менять подпись организатора при правке нельзя.
-      posts.rememberSignature(materialId, organizer);
+      // Происхождение поста пишется в постоянный реестр (PER-926, решение
+      // владельца): только по этой записи позже будет доступна правка.
+      const keyboard = {
+        text: "Открыть сходку ↗",
+        url: meetupStartLink(ctx.me.username, meetupId),
+      };
+      const written =
+        runtime.announcementPostsRegistry === undefined
+          ? ({ kind: "unavailable", cause: "no_registry" } as const)
+          : await runtime.announcementPostsRegistry.remember({
+              chatId: chat.chatId,
+              messageId,
+              meetupId,
+              signature: organizer,
+              keyboard,
+            });
+      if (written.kind === "unavailable") {
+        runtime.logger.warn("announcement post provenance not saved", {
+          error_category: "dependency_unavailable",
+          error:
+            written.cause instanceof Error
+              ? written.cause.message
+              : String(written.cause),
+        });
+      }
       await showScreen(ctx, {
         id: "outcome",
         text: outcomeText(
-          "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки.",
+          written.kind === "unavailable"
+            ? "Анонс опубликован в чате сообщества и добавлен в «Материалы», но данные для правки не сохранились. Изменить текст позже не получится."
+            : "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки.",
         ),
         keyboard: exitToCard(action.token),
         format: "HTML",
@@ -8445,9 +8517,9 @@ async function publishMeetupAnnouncement(
   };
 }
 
-// Правка текста поста (PER-926, вариант А). Кнопка стоит у каждого материала-
-// ссылки, а не только у анонса: бот не отличает анонс от `/attach` (ADR-087,
-// п. 4), и отказ Telegram на чужой пост объясняется человеку. Meetups не пишется.
+// Правка текста поста (PER-926, решение владельца 2026-11-23). Происхождение
+// поста берётся только из постоянного реестра, заполненного при публикации:
+// бот не выводит его из /attach или ручной привязки ссылки. Meetups не пишется.
 
 type EditTextTarget =
   | {
@@ -8457,6 +8529,7 @@ type EditTextTarget =
       chat: CommunityChat;
       ref: { chatId: number; messageId: number };
       meetup: MeetupSnapshot;
+      record: AnnouncementPostRecord;
     }
   | { kind: "denied"; outcome: BoundaryOutcome };
 
@@ -8576,6 +8649,72 @@ async function resolveEditTextTarget(
       },
     };
   }
+  // Происхождение поста — только из реестра. Без записи, при несовпадении
+  // исходной сходки или недоступности KV пост не трогается (решение владельца).
+  const entry = await runtime.announcementPostsRegistry?.read(
+    chat.chatId,
+    ref.messageId,
+  );
+  if (entry === undefined || entry.kind === "unavailable") {
+    await showRefusal(
+      ctx,
+      "Данные о происхождении поста сейчас недоступны. Пост не изменён — попробуй позже.",
+      exitToMaterials(action.token, action.origin),
+    );
+    return {
+      kind: "denied",
+      outcome: {
+        level: "warn",
+        message: "material text edit registry unavailable",
+        result: "error",
+        use_case: useCase,
+        meetup_id: meetupId,
+        identity_id: person.identityId,
+        error_category: "dependency_unavailable",
+        error: "announcement_registry_unavailable",
+      },
+    };
+  }
+  if (entry.kind === "missing") {
+    await showRefusal(
+      ctx,
+      "Этот пост не значится анонсом сходки: изменить его текст через бота нельзя. Материал остался без изменений.",
+      exitToMaterials(action.token, action.origin),
+    );
+    return {
+      kind: "denied",
+      outcome: {
+        level: "warn",
+        message: "material text edit unknown provenance",
+        result: "error",
+        use_case: useCase,
+        meetup_id: meetupId,
+        identity_id: person.identityId,
+        error_category: "invariant",
+        error: "announcement_provenance_missing",
+      },
+    };
+  }
+  if (entry.record.meetupId !== meetupId) {
+    await showRefusal(
+      ctx,
+      "Этот пост опубликован для другой сходки. Материал остался без изменений.",
+      exitToMaterials(action.token, action.origin),
+    );
+    return {
+      kind: "denied",
+      outcome: {
+        level: "warn",
+        message: "material text edit meetup mismatch",
+        result: "error",
+        use_case: useCase,
+        meetup_id: meetupId,
+        identity_id: person.identityId,
+        error_category: "authorization",
+        error: "announcement_meetup_mismatch",
+      },
+    };
+  }
   return {
     kind: "ready",
     meetupId,
@@ -8583,6 +8722,7 @@ async function resolveEditTextTarget(
     chat,
     ref,
     meetup: current.meetup,
+    record: entry.record,
   };
 }
 

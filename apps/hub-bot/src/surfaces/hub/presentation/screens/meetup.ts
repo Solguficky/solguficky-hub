@@ -23,6 +23,7 @@ import type {
   MeetupSummary,
 } from "../../meetups/port.js";
 import { plainDescription, richDescription } from "../description-markup.js";
+import { communityPostRef } from "../meetup-announcement.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { announceMeetupData } from "../parse-callback.js";
 import { auctionCancelConsequence, auctionStateLine } from "./auction-stage.js";
@@ -1042,6 +1043,7 @@ export function materialsScreen(
   canManage: boolean,
   requestedPage: number,
   origin: MaterialsOrigin,
+  communityChatId?: number,
 ): ShownScreen {
   const token = uuidToToken(meetup.id);
   const page = paginate(meetup.materials, requestedPage);
@@ -1060,7 +1062,14 @@ export function materialsScreen(
       // Правка текста поста (PER-926, вариант А): кнопка стоит у каждой
       // ссылки на сообщение чата, потому что бот не отличает анонс от
       // `/attach`. Отказ Telegram на чужой пост бот объяснит человеку.
-      if (canManage) {
+      // Тот же критерий, что в callback: чат сообщества задан и ссылка ведёт
+      // на сообщение именно этого чата. Кнопки не должно быть там, где правка
+      // заранее недоступна (ревью координатора PER-926).
+      if (
+        canManage &&
+        communityChatId !== undefined &&
+        communityPostRef(material.source.url, communityChatId) !== undefined
+      ) {
         keyboard.text(
           editMaterialTextLabel,
           materialsEditTextData(origin, token, materialToken),

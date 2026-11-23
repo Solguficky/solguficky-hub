@@ -11,10 +11,7 @@ import { noopTracing } from "../../../core/tracing.js";
 import type { ExecuteRequest, ExecuteResult } from "../application/types.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
 import type { CommunityChat } from "./community-chat.js";
-import {
-  announcementMaterialId,
-  createAnnouncementPosts,
-} from "./meetup-announcement.js";
+import { announcementMaterialId } from "./meetup-announcement.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
   announceMeetupData,
@@ -700,20 +697,6 @@ describe("анонс сходки в чате сообщества", () => {
     expect(communityPosts(h.calls)).toBe(2);
     await h.bot.handleUpdate(callbackUpdate(confirmResend?.data ?? ""));
     expect(communityPosts(h.calls)).toBe(2);
-  });
-
-  it("подпись поста хранится по id материала для правки (PER-926)", () => {
-    const posts = createAnnouncementPosts(2);
-    const first = announcementMaterialId("meetup-1", "key-1");
-    const second = announcementMaterialId("meetup-2", "key-2");
-    const third = announcementMaterialId("meetup-3", "key-3");
-    posts.rememberSignature(first, "Анна");
-    posts.rememberSignature(second, "Борис");
-    expect(posts.signatureOf(first)).toBe("Анна");
-    // Переполнение вытесняет самую старую запись, как и номер поста.
-    posts.rememberSignature(third, "Виктор");
-    expect(posts.signatureOf(first)).toBeUndefined();
-    expect(posts.signatureOf(third)).toBe("Виктор");
   });
 
   it("отмена при неизвестном исходе не утверждает, что публикации не было", async () => {

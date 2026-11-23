@@ -117,6 +117,11 @@ internal static class JetStreamTopology
     /// доставки: запись на аукцион живёт двое суток с последней правки состава,
     /// и боту без bucket'а экран «Ставки зала» говорит «Состав зала не
     /// прочитался», а процесс не падает.
+    ///
+    /// Постоянный реестр постов анонсов бота хаба (PER-926, решение владельца
+    /// 2026-11-23): ключ — (чат, сообщение), значение — исходная сходка, подпись
+    /// и клавиатура. Срока жизни нет: правка может прийти через много суток
+    /// после публикации, а происхождение обязано пережить рестарт процесса.
     /// </remarks>
     public static readonly IReadOnlyList<KeyValueSpec> KeyValueBuckets =
     [
@@ -126,6 +131,7 @@ internal static class JetStreamTopology
         new("hub-bot-live-screens", TimeSpan.FromDays(2)),
         new("auction-bot-live-screens", TimeSpan.FromDays(2)),
         new("hub-bot-floor-room", TimeSpan.FromDays(2)),
+        new("hub-bot-announcement-posts", TimeSpan.Zero),
     ];
 
     public static IEnumerable<ConsumerSpec> Durables =>
