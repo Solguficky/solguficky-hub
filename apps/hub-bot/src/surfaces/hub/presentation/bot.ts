@@ -2326,7 +2326,7 @@ async function handleMessage(
           parse_mode: "HTML",
           ...screenMark("meetup-text-edit-confirm"),
           reply_markup: confirmKeyboard({
-            yes: "Изменить текст",
+            yes: "Да, изменить текст",
             yesData: materialsConfirmEditTextData(
               pending.origin,
               token,
@@ -6247,7 +6247,11 @@ async function handleCallback(
           keyboard: withNav(
             new InlineKeyboard().text(
               retryAnswerLabel,
-              materialsEditTextData(action.origin, action.token, action.materialToken),
+              materialsEditTextData(
+                action.origin,
+                action.token,
+                action.materialToken,
+              ),
             ),
             toMaterials(action.token, action.origin),
           ),
@@ -8454,12 +8458,7 @@ async function resolveEditTextTarget(
     ...rpcCall(ctx, useCase),
   });
   if (current.kind !== "meetup-card") {
-    await renderMeetupCard(
-      ctx,
-      current,
-      true,
-      runtime.presentation ?? "rich",
-    );
+    await renderMeetupCard(ctx, current, true, runtime.presentation ?? "rich");
     return {
       kind: "denied",
       outcome: screenBoundary(current, {
@@ -8472,7 +8471,11 @@ async function resolveEditTextTarget(
     };
   }
   if ((current.viewer?.manages ?? false) !== true) {
-    await showRefusal(ctx, organizerOnlyText, exitToMaterials(action.token, action.origin));
+    await showRefusal(
+      ctx,
+      organizerOnlyText,
+      exitToMaterials(action.token, action.origin),
+    );
     return {
       kind: "denied",
       outcome: {
@@ -8528,7 +8531,14 @@ async function resolveEditTextTarget(
       },
     };
   }
-  return { kind: "ready", meetupId, materialId, chat, ref, meetup: current.meetup };
+  return {
+    kind: "ready",
+    meetupId,
+    materialId,
+    chat,
+    ref,
+    meetup: current.meetup,
+  };
 }
 
 // Отказ Notifications отвечает кадром из принятого набора: E-01 по праву, E-05

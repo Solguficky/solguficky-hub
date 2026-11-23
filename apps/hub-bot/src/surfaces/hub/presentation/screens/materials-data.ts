@@ -139,4 +139,3 @@ export function materialsConfirmEditTextData(
 ): string {
   return materialsData(origin, "ee", token, materialToken, print);
 }
-

@@ -930,10 +930,6 @@ describe("materialsScreen", () => {
     );
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "🗑"]);
-    expect(rows(screen)[1]).toEqual([
-      "Материал 2 ↗",
-      "✏️ Изменить текст",
-      "🗑",
-    ]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "✏️ Изменить текст", "🗑"]);
   });
 });

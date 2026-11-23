@@ -77,8 +77,9 @@ export function communityPostRef(
   url: string,
   chatId: number,
 ): { chatId: number; messageId: number } | undefined {
-  const matched =
-    /^https:\/\/t\.me\/c\/([1-9]\d*)\/([1-9]\d*)(?:\?\S*)?$/.exec(url.trim());
+  const matched = /^https:\/\/t\.me\/c\/([1-9]\d*)\/([1-9]\d*)(?:\?\S*)?$/.exec(
+    url.trim(),
+  );
   if (matched?.[1] !== communityChatPart(chatId)) return undefined;
   const messageId = Number(matched[2]);
   return Number.isSafeInteger(messageId) ? { chatId, messageId } : undefined;
