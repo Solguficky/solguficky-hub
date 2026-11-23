@@ -2383,13 +2383,13 @@ async function handleMessage(
             (material) => material.id === materialId,
           ));
       if (!attached) {
+        // Запись остаётся неопределённой: "Да, повторить" не сможет записать
+        // материал по этому ключу, поэтому предлагаем проверку чата и ссылку.
         await showScreen(
           ctx,
-          announcementRetry({
+          announcementUnknownScreen({
             token: uuidToToken(pending.meetupId),
-            version: current.meetup.version,
             key: pending.key,
-            print: "00000",
           }),
         );
         outcome = {
@@ -7900,11 +7900,20 @@ async function publishMeetupAnnouncement(
   if (current.kind !== "meetup-card") {
     // Пост уже опубликован: временный отказ чтения не должен выбрасывать кадр
     // повтора с ключом анонса и оставлять пост без материала.
-    if (knownPost !== undefined || options.body !== undefined) {
+    if (knownPost !== undefined) {
       await showScreen(
         ctx,
         announcementRetry(action, { version: action.version }),
       );
+    } else if (options.body !== undefined) {
+      // Явная повторная отправка ещё не состоялась: считать пост опубликованным
+      // нельзя. Возвращаем исход неопределённости после проверки чата.
+      posts.markUnknown(
+        action.key,
+        options.body,
+        options.version ?? action.version,
+      );
+      await showScreen(ctx, announcementUnknownScreen(action));
     } else {
       await renderMeetupCard(
         ctx,

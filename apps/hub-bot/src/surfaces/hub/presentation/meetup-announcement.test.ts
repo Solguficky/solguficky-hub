@@ -61,12 +61,15 @@ type SetupOptions = {
 function setup(options: SetupOptions = {}) {
   const rights = options.rights ?? memberRights;
   let meetup = options.initial ?? meetupOf();
+  let viewFails = false;
   const attached: string[] = [];
   const attachRequests: ExecuteRequest[] = [];
   const execute = vi.fn(
     async (request: ExecuteRequest): Promise<ExecuteResult> => {
       if (request.intent === "view-meetup") {
-        return { kind: "meetup-card", meetup };
+        return viewFails
+          ? { kind: "dependency-rejected", reason: "unavailable" }
+          : { kind: "meetup-card", meetup };
       }
       if (request.intent === "attach-material") {
         attachRequests.push(request);
@@ -117,6 +120,9 @@ function setup(options: SetupOptions = {}) {
     meetup: () => meetup,
     setVersion: (version: number) => {
       meetup = { ...meetup, version };
+    },
+    setViewFails: (fails: boolean) => {
+      viewFails = fails;
     },
     token: uuidToToken(meetup.id),
   };
@@ -544,6 +550,50 @@ describe("анонс сходки в чате сообщества", () => {
         ),
       ),
     ).toBe(false);
+  });
+
+  it("сбой привязки по ссылке возвращает кадр проверки чата, а не ложный повтор привязки", async () => {
+    const h = setup({ ...networkLoss(), failAttach: true });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const linkButton = findLastData(h.calls, "v1:ma:lk:");
+    await h.bot.handleUpdate(callbackUpdate(linkButton?.data ?? ""));
+    await h.bot.handleUpdate(
+      replyUpdate("https://t.me/c/1234567890/42", lastQuestionId(h.calls)),
+    );
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "Проверь чат сообщества",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "Повтори нажатие — материал запишется",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("отказ чтения сходки при явной повторной отправке сохраняет неопределённость", async () => {
+    const h = setup(networkLoss());
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const resendButton = findLastData(h.calls, "v1:ma:rs:");
+    await h.bot.handleUpdate(callbackUpdate(resendButton?.data ?? ""));
+    const confirmResend = findLastData(h.calls, "v1:ma:rr:");
+    h.setViewFails(true);
+    await h.bot.handleUpdate(callbackUpdate(confirmResend?.data ?? ""));
+    expect(communityPosts(h.calls)).toBe(1);
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "Проверь чат сообщества",
+        ),
+      ),
+    ).toBe(true);
   });
 
   function networkLoss(options: SetupOptions = {}): SetupOptions {
