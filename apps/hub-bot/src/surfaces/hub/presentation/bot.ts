@@ -8183,7 +8183,7 @@ function announcementResendScreen(action: {
 async function rememberAnnouncementPost(
   runtime: BotRuntime,
   record: AnnouncementPostRecord,
-): Promise<boolean> {
+): Promise<"stored" | "exists" | "unavailable"> {
   const written =
     runtime.announcementPostsRegistry === undefined
       ? ({ kind: "unavailable", cause: "no_registry" } as const)
@@ -8196,9 +8196,8 @@ async function rememberAnnouncementPost(
           ? written.cause.message
           : String(written.cause),
     });
-    return false;
   }
-  return true;
+  return written.kind;
 }
 
 /**
@@ -8362,7 +8361,9 @@ async function publishMeetupAnnouncement(
     };
   }
   let messageId = knownPost;
-  let provenanceSaved = false;
+  // Статус происхождения — из фактов реестра, а не из факта отправки: повтор
+  // после сбоя привязки не шлёт пост повторно и не переподписывает его.
+  let provenance: "saved" | "missing" | "unavailable" = "missing";
   let expectedVersion = options.version ?? action.version;
   if (current.meetup.version !== expectedVersion) {
     if (messageId === undefined) {
@@ -8455,7 +8456,7 @@ async function publishMeetupAnnouncement(
     // Происхождение пишется сразу после отправки поста, а не после записи
     // материала: повтор подтверждения другим организатором не должен
     // переподписать уже вышедший анонс (PER-926, ревью координатора).
-    provenanceSaved = await rememberAnnouncementPost(runtime, {
+    const written = await rememberAnnouncementPost(runtime, {
       chatId: chat.chatId,
       messageId,
       meetupId,
@@ -8465,6 +8466,25 @@ async function publishMeetupAnnouncement(
         url: meetupStartLink(ctx.me.username, meetupId),
       },
     });
+    provenance = written === "unavailable" ? "unavailable" : "saved";
+  } else {
+    // Пост уже отправлен в одной из прошлых попыток: повтор не шлёт его и не
+    // перезаписывает происхождение. Статус берём чтением реестра.
+    const entry = await runtime.announcementPostsRegistry?.read(
+      chat.chatId,
+      messageId,
+    );
+    provenance =
+      entry === undefined || entry.kind === "unavailable"
+        ? "unavailable"
+        : entry.kind === "found"
+          ? "saved"
+          : "missing";
+    if (provenance === "unavailable") {
+      runtime.logger.warn("announcement post provenance not readable", {
+        error_category: "dependency_unavailable",
+      });
+    }
   }
   const result = await runtime.dispatcher.execute({
     identity: person,
@@ -8491,9 +8511,11 @@ async function publishMeetupAnnouncement(
       await showScreen(ctx, {
         id: "outcome",
         text: outcomeText(
-          provenanceSaved
+          provenance === "saved"
             ? "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки."
-            : "Анонс опубликован в чате сообщества и добавлен в «Материалы», но данные для правки не сохранились. Изменить текст позже не получится.",
+            : provenance === "unavailable"
+              ? "Анонс опубликован в чате сообщества и добавлен в «Материалы», но проверить данные для правки сейчас не вышло. Попробуй позже."
+              : "Анонс опубликован в чате сообщества и добавлен в «Материалы», но данные для правки не сохранились. Изменить текст позже не получится.",
         ),
         keyboard: exitToCard(action.token),
         format: "HTML",

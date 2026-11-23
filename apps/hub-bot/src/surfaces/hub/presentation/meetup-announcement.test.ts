@@ -58,6 +58,8 @@ type SetupOptions = {
   failAttach?: boolean | "once";
   respond?: (method: string, payload: unknown) => unknown;
   registryUnavailable?: boolean;
+  registryReadMissing?: boolean;
+  registryReadUnavailable?: boolean;
 };
 
 function setup(options: SetupOptions = {}) {
@@ -123,6 +125,10 @@ function setup(options: SetupOptions = {}) {
           return { kind: "stored" };
         },
         async read(chatId, messageId) {
+          if (options.registryReadUnavailable === true) {
+            return { kind: "unavailable", cause: "kv down" };
+          }
+          if (options.registryReadMissing === true) return { kind: "missing" };
           const record = provenance.find(
             (each) => each.chatId === chatId && each.messageId === messageId,
           );
@@ -797,9 +803,87 @@ describe("анонс сходки в чате сообщества", () => {
     expect(h.provenance).toHaveLength(0);
     expect(
       h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("проверить данные для правки"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports the true success outcome on a retry that does not resend the post", async () => {
+    const h = setup({ failAttach: "once" });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(h.provenance).toHaveLength(1);
+    const sent = h.calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        (call.payload as { chat_id?: number }).chat_id === communityChatId,
+    );
+    expect(sent).toHaveLength(1);
+
+    const retry = findLastData(h.calls, "v1:ma:cf:");
+    await h.bot.handleUpdate(
+      callbackUpdateAs(retry?.data ?? "", "Борис", {
+        message_id: retry?.messageId ?? 9,
+      }),
+    );
+    expect(h.attached).toHaveLength(1);
+    const sentAfter = h.calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        (call.payload as { chat_id?: number }).chat_id === communityChatId,
+    );
+    expect(sentAfter).toHaveLength(1);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes(
+          "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("не сохранились"),
+      ),
+    ).toBe(false);
+  });
+
+  it("reports a genuinely missing record without claiming a temporary failure", async () => {
+    const h = setup({ failAttach: "once", registryReadMissing: true });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const retry = findLastData(h.calls, "v1:ma:cf:");
+    await h.bot.handleUpdate(
+      callbackUpdateAs(retry?.data ?? "", "Борис", {
+        message_id: retry?.messageId ?? 9,
+      }),
+    );
+    expect(
+      h.calls.some((call) =>
         JSON.stringify(call.payload).includes(
           "данные для правки не сохранились",
         ),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("Попробуй позже"),
+      ),
+    ).toBe(false);
+  });
+
+  it("does not declare provenance lost when the registry read fails temporarily", async () => {
+    const h = setup({ failAttach: "once", registryReadUnavailable: true });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const retry = findLastData(h.calls, "v1:ma:cf:");
+    await h.bot.handleUpdate(
+      callbackUpdateAs(retry?.data ?? "", "Борис", {
+        message_id: retry?.messageId ?? 9,
+      }),
+    );
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("Попробуй позже"),
       ),
     ).toBe(true);
   });
