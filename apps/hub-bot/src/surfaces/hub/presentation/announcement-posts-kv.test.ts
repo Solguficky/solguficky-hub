@@ -12,19 +12,27 @@ import {
 // перезаписывается повтором, а недоступность шины не превращается в происхождение.
 
 function fakeKv(options: { failPut?: boolean } = {}) {
-  const values = new Map<string, string>();
+  const values = new Map<string, { value: string; revision: number }>();
+  let revision = 0;
   const kv = {
     async get(key: string) {
-      const raw = values.get(key);
-      return raw === undefined ? null : { operation: "PUT", string: () => raw };
+      const entry = values.get(key);
+      return entry === undefined
+        ? null
+        : {
+            operation: "PUT",
+            revision: entry.revision,
+            string: () => entry.value,
+          };
     },
     async put(key: string, value: string, opts?: { previousSeq?: number }) {
       if (options.failPut === true) throw new Error("kv unavailable");
-      if (opts?.previousSeq === 0 && values.has(key)) {
+      if (opts?.previousSeq !== undefined && opts.previousSeq !== revision) {
         throw new Error("wrong sequence");
       }
-      values.set(key, value);
-      return 1;
+      revision += 1;
+      values.set(key, { value, revision });
+      return revision;
     },
     async delete(key: string) {
       values.delete(key);
@@ -84,6 +92,7 @@ describe("announcement post registry", () => {
     expect(await store.read(record.chatId, record.messageId)).toEqual({
       kind: "found",
       record,
+      seq: 1,
     });
   });
 
@@ -95,6 +104,44 @@ describe("announcement post registry", () => {
     expect(await store.read(record.chatId, record.messageId)).toEqual({
       kind: "missing",
     });
+  });
+
+  it("holds an edit lock across the external call and releases it once", async () => {
+    const store = registry(fakeKv());
+    expect(await store.remember(record)).toEqual({ kind: "stored" });
+    const first = await store.read(record.chatId, record.messageId);
+    if (first.kind !== "found") throw new Error("no record");
+
+    const begun = await store.beginEdit(
+      first.record,
+      first.seq,
+      "op-1",
+      Date.now() + 60_000,
+    );
+    expect(begun.ok).toBe(true);
+    if (!begun.ok) return;
+    // Повторное подтверждение на той же ревизии не получает блок.
+    expect(
+      await store.beginEdit(
+        first.record,
+        first.seq,
+        "op-2",
+        Date.now() + 60_000,
+      ),
+    ).toEqual({ ok: false });
+    const locked = await store.read(record.chatId, record.messageId);
+    expect(locked.kind === "found" && locked.record.editing?.token).toBe(
+      "op-1",
+    );
+
+    await store.finishEdit(first.record, begun.seq, "op-1", "print");
+    const released = await store.read(record.chatId, record.messageId);
+    expect(
+      released.kind === "found" && released.record.editing,
+    ).toBeUndefined();
+    expect(released.kind === "found" && released.record.lastPrint).toBe(
+      "print",
+    );
   });
 
   it("reports a failed write as unavailable without creating provenance", async () => {

@@ -66,6 +66,7 @@ type FakeRegistry = AnnouncementPostRegistry & {
   reads: number;
   writes: number;
   seq: number;
+  readonly editing: { token: string; until: number } | undefined;
   bump(): void;
 };
 
@@ -81,11 +82,15 @@ function createRegistry(
     keyboard: recordedKeyboard,
   };
   let seq = 1;
+  let editing: { token: string; until: number } | undefined;
   return {
     reads: 0,
     writes: 0,
     get seq() {
       return seq;
+    },
+    get editing() {
+      return editing;
     },
     bump() {
       seq += 1;
@@ -103,12 +108,22 @@ function createRegistry(
       if (chatId !== communityChatId || messageId !== postId) {
         return { kind: "missing" };
       }
-      return { kind: "found", record, seq };
+      return { kind: "found", record: { ...record, editing }, seq };
     },
-    async commitEdit(_record, expectedSeq) {
-      if (expectedSeq !== seq) return false;
+    async beginEdit(_record, expectedSeq, token, until) {
+      if (expectedSeq !== seq || editing !== undefined) return { ok: false };
+      editing = { token, until };
       seq += 1;
-      return true;
+      return { ok: true, seq };
+    },
+    async finishEdit(_record, expectedSeq, token, print) {
+      if (expectedSeq !== seq || editing?.token !== token) return;
+      editing = undefined;
+      void print;
+    },
+    async cancelEdit(_record, expectedSeq, token) {
+      if (expectedSeq !== seq || editing?.token !== token) return;
+      editing = undefined;
     },
     async close() {},
   };
@@ -576,7 +591,7 @@ describe("meetup announcement text edit (PER-926)", () => {
 
   it("No shows an outcome with retry for the same material", async () => {
     const h = setup();
-    const confirm = await openConfirmation(h);
+    await openConfirmation(h);
     const decline = `v1:mm:nc:${h.token}:${h.materialToken}`;
     await h.bot.handleUpdate(callbackUpdate(decline));
     expect(editCalls(h.calls)).toHaveLength(0);
@@ -681,6 +696,43 @@ describe("meetup announcement text edit (PER-926)", () => {
     );
     expect(registry.reads - readsBefore).toBeGreaterThanOrEqual(1);
     expect(registry.writes).toBe(writesBefore);
+    expect(editCalls(h.calls)).toHaveLength(1);
+  });
+
+  it("blocks a preview opened after the first CAS while Telegram is delayed", async () => {
+    const registry = createRegistry();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = setup({
+      registry,
+      respond: (method, payload) => {
+        if (
+          method === "editMessageText" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          return gate;
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    const pending = h.bot.handleUpdate(confirm());
+    await vi.waitFor(() => expect(registry.editing).toBeDefined());
+
+    // Второй предпросмотр открылся после первого CAS, но до ответа Telegram.
+    await h.bot.handleUpdate(
+      callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
+    );
+    expect(
+      h.records.some((r) => r.message === "material text edit already running"),
+    ).toBe(true);
+    expect(editCalls(h.calls)).toHaveLength(1);
+
+    release();
+    await pending;
+    await vi.waitFor(() => expect(registry.editing).toBeUndefined());
     expect(editCalls(h.calls)).toHaveLength(1);
   });
 });

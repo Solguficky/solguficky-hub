@@ -61,6 +61,7 @@ type SetupOptions = {
   registryReadMissing?: boolean;
   registryReadUnavailable?: boolean;
   registryForceExists?: boolean;
+  identityRef?: { id: string };
 };
 
 function setup(options: SetupOptions = {}) {
@@ -104,7 +105,7 @@ function setup(options: SetupOptions = {}) {
     {
       resolve: async () => ({
         kind: "resolved" as const,
-        identityId: resolvedId,
+        identityId: options.identityRef?.id ?? resolvedId,
         rights,
         blocked: false,
       }),
@@ -141,9 +142,13 @@ function setup(options: SetupOptions = {}) {
             ? { kind: "missing" }
             : { kind: "found", record, seq: 1 };
         },
-        async commitEdit() {
-          return true;
+        async beginEdit(_record, expectedSeq, token, until) {
+          void token;
+          void until;
+          return { ok: true, seq: expectedSeq + 1 };
         },
+        async finishEdit() {},
+        async cancelEdit() {},
         async close() {},
       },
       ...(options.respond === undefined ? {} : { respond: options.respond }),
@@ -190,11 +195,13 @@ function callbackUpdateAs(
   data: string,
   firstName: string,
   message: Record<string, unknown> = {},
+  fromId = 42,
 ): Update {
   const update = callbackUpdate(data, message) as {
-    callback_query: { from: { first_name: string } };
+    callback_query: { from: { first_name: string; id: number } };
   };
   update.callback_query.from.first_name = firstName;
+  update.callback_query.from.id = fromId;
   return update as Update;
 }
 
@@ -793,18 +800,28 @@ describe("анонс сходки в чате сообщества", () => {
   });
 
   it("keeps the original signature when another organizer retries the attach", async () => {
-    const h = setup({ failAttach: "once" });
+    const identityRef = { id: resolvedId };
+    const otherId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";
+    const h = setup({
+      failAttach: "once",
+      identityRef,
+      initial: meetupOf({ organizers: [resolvedId, otherId] }),
+    });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
     const original = h.provenance[0];
     expect(original).toBeDefined();
-
     const retry = findLastData(h.calls, "v1:ma:cf:");
     expect(retry).toBeDefined();
+    // Другой организатор: свой Identity и свой Telegram id.
+    identityRef.id = otherId;
     await h.bot.handleUpdate(
-      callbackUpdateAs(retry?.data ?? "", "Борис", {
-        message_id: retry?.messageId ?? 9,
-      }),
+      callbackUpdateAs(
+        retry?.data ?? "",
+        "Борис",
+        { message_id: retry?.messageId ?? 9 },
+        99,
+      ),
     );
     expect(h.attached).toHaveLength(1);
     expect(h.provenance).toHaveLength(1);

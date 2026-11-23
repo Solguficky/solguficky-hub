@@ -6314,17 +6314,20 @@ async function handleCallback(
         };
         return;
       }
-      // CAS в реестре: если параллельное подтверждение уже сдвинуло ревизию,
-      // второе editMessageText не выполнится.
-      const committed =
-        (await runtime.announcementPostsRegistry?.commitEdit(
-          target.record,
-          target.seq,
-        )) ?? false;
-      if (!committed) {
+      // Блок живёт от CAS до завершения вызова Telegram: второй предпросмотр,
+      // открытый после первого CAS, не сможет записать свой текст поверх
+      // ещё выполняющегося первого (ревью координатора PER-926).
+      const editToken = announcementKey();
+      const begun = await runtime.announcementPostsRegistry?.beginEdit(
+        target.record,
+        target.seq,
+        editToken,
+        Date.now() + 60_000,
+      );
+      if (begun === undefined || !begun.ok) {
         await showRefusal(
           ctx,
-          "Этот пост уже правили параллельно. Открой «Материалы» и повтори с новым текстом.",
+          "Этот пост уже правили или меняют параллельно. Открой «Материалы» и повтори с новым текстом.",
           exitToMaterials(action.token, action.origin),
         );
         outcome = {
@@ -6335,10 +6338,24 @@ async function handleCallback(
           meetup_id: target.meetupId,
           identity_id: person.identityId,
           error_category: "invariant",
-          error: "announcement_post_changed",
+          error: "announcement_post_busy",
         };
         return;
       }
+      const releaseEdit = async (applied: boolean): Promise<void> => {
+        const registry = runtime.announcementPostsRegistry;
+        if (registry === undefined) return;
+        if (applied) {
+          await registry.finishEdit(
+            target.record,
+            begun.seq,
+            editToken,
+            action.print,
+          );
+        } else {
+          await registry.cancelEdit(target.record, begun.seq, editToken);
+        }
+      };
       // Подпись и клавиатура — из постоянного реестра: Bot API не возвращает
       // текст поста, а менять их при правке нельзя (PER-926).
       const signature = target.record.signature;
@@ -6357,6 +6374,7 @@ async function handleCallback(
           },
         );
       } catch (cause) {
+        await releaseEdit(false);
         // Повтор того же текста (двойное нажатие, повторная доставка update,
         // оборванная отправка кадра исхода) — уже желаемое состояние, а не сбой.
         if (isNotModified(cause)) {
@@ -6488,6 +6506,7 @@ async function handleCallback(
         };
         return;
       }
+      await releaseEdit(true);
       await showScreen(ctx, {
         id: "outcome",
         text: outcomeText(
@@ -8865,6 +8884,26 @@ async function resolveEditTextTarget(
         identity_id: person.identityId,
         error_category: "invariant",
         error: "announcement_provenance_missing",
+      },
+    };
+  }
+  if (
+    entry.record.editing !== undefined &&
+    entry.record.editing.until > Date.now()
+  ) {
+    await showRefusal(
+      ctx,
+      "Этот пост сейчас правится. Дождись окончания правки и открой «Материалы» заново.",
+      exitToMaterials(action.token, action.origin),
+    );
+    return {
+      kind: "denied",
+      outcome: {
+        level: "info",
+        message: "material text edit already running",
+        result: "ok",
+        use_case: useCase,
+        meetup_id: meetupId,
       },
     };
   }

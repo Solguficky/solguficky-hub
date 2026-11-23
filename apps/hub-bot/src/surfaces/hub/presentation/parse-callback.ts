@@ -30,7 +30,7 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 import { decodeLaunchDraft, encodeLaunchDraft } from "./launch-draft.js";
-import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
+import { uuidToToken } from "./meetup-deep-link.js";
 import {
   type MaterialsOrigin,
   materialsOriginOf,
@@ -2269,11 +2269,6 @@ export function auctionFaqData(auction: string, viaEvents = false): string {
 }
 
 /**
- * Данные кнопки «Отмена» для вопроса с этим шагом, заданного человеку
- * `askedBy`. Id идёт последней частью: самый длинный шаг — `ln` с токеном
- * аукциона и ключом создания лота — занимает с ним 60 байт из 64.
- */
-/**
  * Вопрос правки текста (PER-926, ревью CodeRabbit): два токена по 22 знака и
  * 16-значный Telegram id вместе с префиксом не укладываются в 64 байта.
  * Упаковываем UUID сходки и материала (по 16 байт), код входа и id в один
@@ -2313,6 +2308,10 @@ function unpackMaterialTextQuestion(
   };
 }
 
+/**
+ * Кнопка «Отмена» вопроса. Для шагов, кроме правки текста, id спрашиваемого
+ * идёт последней частью; самый длинный из них (`ln`) занимает 60 из 64 байт.
+ */
 export function questionData(step: QuestionStep, askedBy: number): string {
   if (step.kind === "material-text") {
     return packMaterialTextQuestion(step, askedBy);

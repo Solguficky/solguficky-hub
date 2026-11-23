@@ -34,6 +34,12 @@ const RecordSchema = z.object({
     text: z.string().min(1),
     url: z.string().min(1),
   }),
+  // Блок на время внешнего эффекта: пока он стоит, новый предпросмотр и
+  // подтверждение правки не открываются, а после рестарта блок истекает.
+  editing: z
+    .object({ token: z.string().min(1), until: z.number().int() })
+    .optional(),
+  lastPrint: z.string().optional(),
 });
 
 export type AnnouncementPostRecord = z.infer<typeof RecordSchema>;
@@ -53,14 +59,28 @@ export type AnnouncementPostRegistry = {
   remember(record: AnnouncementPostRecord): Promise<AnnouncementPostWrite>;
   read(chatId: number, messageId: number): Promise<AnnouncementPostEntry>;
   /**
-   * CAS-фиксация правки: запись принимается только если реестр ещё на той
-   * ревизии, которую видел предпросмотр. Старое подтверждение после чужой
-   * правки не откатывает текст поста (ревью CodeRabbit).
+   * Блок поста на время вызова Telegram: CAS меняет ревизию и ставит `editing`
+   * до внешнего эффекта. Новый предпросмотр не откроется, пока блок жив.
    */
-  commitEdit(
+  beginEdit(
     record: AnnouncementPostRecord,
     expectedSeq: number,
-  ): Promise<boolean>;
+    token: string,
+    until: number,
+  ): Promise<{ ok: true; seq: number } | { ok: false }>;
+  /** Снимает блок после успешной правки; `lastPrint` хранит применённый текст. */
+  finishEdit(
+    record: AnnouncementPostRecord,
+    seq: number,
+    token: string,
+    lastPrint: string,
+  ): Promise<void>;
+  /** Снимает блок после отказа или неопределённого исхода вызова. */
+  cancelEdit(
+    record: AnnouncementPostRecord,
+    seq: number,
+    token: string,
+  ): Promise<void>;
   close(): Promise<void>;
 };
 
@@ -180,19 +200,47 @@ export function createAnnouncementPostRegistry(options: {
         return { kind: "unavailable", cause };
       }
     },
-    async commitEdit(record, expectedSeq) {
+    async beginEdit(record, expectedSeq, token, until) {
       const kv = await bound();
-      if (kv === undefined) return false;
+      if (kv === undefined) return { ok: false };
+      const key = keyOf(record.chatId, record.messageId);
+      const value = JSON.stringify({ ...record, editing: { token, until } });
+      try {
+        const seq = await kv.put(key, value, { previousSeq: expectedSeq });
+        return { ok: true, seq };
+      } catch (cause) {
+        reportRegistryFailure(logger, "save", cause);
+        return { ok: false };
+      }
+    },
+    async finishEdit(record, seq, token, lastPrint) {
+      const kv = await bound();
+      if (kv === undefined) return;
       try {
         await kv.put(
           keyOf(record.chatId, record.messageId),
-          JSON.stringify(record),
-          { previousSeq: expectedSeq },
+          JSON.stringify({
+            ...record,
+            editing: undefined,
+            lastPrint,
+          }),
+          { previousSeq: seq },
         );
-        return true;
       } catch (cause) {
         reportRegistryFailure(logger, "save", cause);
-        return false;
+      }
+    },
+    async cancelEdit(record, seq, token) {
+      const kv = await bound();
+      if (kv === undefined) return;
+      try {
+        await kv.put(
+          keyOf(record.chatId, record.messageId),
+          JSON.stringify({ ...record, editing: undefined }),
+          { previousSeq: seq },
+        );
+      } catch (cause) {
+        reportRegistryFailure(logger, "save", cause);
       }
     },
     async close() {
