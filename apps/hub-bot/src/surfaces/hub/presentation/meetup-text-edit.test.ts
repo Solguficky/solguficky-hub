@@ -62,9 +62,16 @@ function meetupOf(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
 
 type RegistryMode = "ok" | "unavailable" | "missing";
 
+type FakeRegistry = AnnouncementPostRegistry & {
+  reads: number;
+  writes: number;
+  seq: number;
+  bump(): void;
+};
+
 function createRegistry(
   options: { meetupId?: string; signature?: string; mode?: RegistryMode } = {},
-): AnnouncementPostRegistry {
+): FakeRegistry {
   const mode = options.mode ?? "ok";
   const record = {
     chatId: communityChatId,
@@ -73,11 +80,22 @@ function createRegistry(
     signature: options.signature ?? recordedSignature,
     keyboard: recordedKeyboard,
   };
+  let seq = 1;
   return {
+    reads: 0,
+    writes: 0,
+    get seq() {
+      return seq;
+    },
+    bump() {
+      seq += 1;
+    },
     async remember() {
+      this.writes += 1;
       return { kind: "stored" };
     },
     async read(chatId, messageId) {
+      this.reads += 1;
       if (mode === "unavailable") {
         return { kind: "unavailable", cause: "kv down" };
       }
@@ -85,7 +103,12 @@ function createRegistry(
       if (chatId !== communityChatId || messageId !== postId) {
         return { kind: "missing" };
       }
-      return { kind: "found", record };
+      return { kind: "found", record, seq };
+    },
+    async commitEdit(_record, expectedSeq) {
+      if (expectedSeq !== seq) return false;
+      seq += 1;
+      return true;
     },
     async close() {},
   };
@@ -144,13 +167,14 @@ function setup(options: SetupOptions = {}) {
 function callbackUpdate(
   data: string,
   message: Record<string, unknown> = {},
+  fromId = 42,
 ): Update {
   return {
     update_id: 2,
     callback_query: {
       id: "callback-1",
       chat_instance: "chat-1",
-      from: { id: 42, is_bot: false, first_name: editorName },
+      from: { id: fromId, is_bot: false, first_name: editorName },
       data,
       message: {
         message_id: 9,
@@ -223,13 +247,21 @@ function editCalls(calls: readonly RecordedCall[]): RecordedCall[] {
   );
 }
 
-async function openConfirmation(h: ReturnType<typeof setup>): Promise<string> {
+async function openConfirmation(
+  h: ReturnType<typeof setup>,
+): Promise<(text?: string) => Update> {
   await h.bot.handleUpdate(
     callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
   );
   const questionId = lastQuestionId(h.calls);
   await h.bot.handleUpdate(replyUpdate(body, questionId));
-  return findData(h.calls, "v1:mm:ee:");
+  const data = findData(h.calls, "v1:mm:ee:");
+  const index = h.calls.findLastIndex((call) =>
+    JSON.stringify(call.payload).includes("v1:mm:ee:"),
+  );
+  const messageId = 101 + index;
+  return (text = body) =>
+    callbackUpdate(data, { ...previewMessage(text), message_id: messageId });
 }
 
 function telegramError(description: string): GrammyError {
@@ -245,8 +277,7 @@ describe("meetup announcement text edit (PER-926)", () => {
   it("uses the recorded signature and keyboard, not the editor's name or current meetup", async () => {
     const h = setup();
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
-
+    await h.bot.handleUpdate(confirm());
     const edits = editCalls(h.calls);
     expect(edits).toHaveLength(1);
     expect(edits[0]?.payload).toMatchObject({
@@ -281,7 +312,7 @@ describe("meetup announcement text edit (PER-926)", () => {
       kind: "meetup-card",
       meetup: meetupOf({ organizers: [] }),
     }));
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await h.bot.handleUpdate(confirm());
     expect(editCalls(h.calls)).toHaveLength(0);
     expect(
       h.records.some((r) => r.message === "material text edit rejected"),
@@ -302,7 +333,7 @@ describe("meetup announcement text edit (PER-926)", () => {
   it("allows editing for a cancelled meetup", async () => {
     const h = setup({ initial: meetupOf({ lifecycle: "cancelled" }) });
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await h.bot.handleUpdate(confirm());
     expect(editCalls(h.calls)).toHaveLength(1);
   });
 
@@ -314,7 +345,7 @@ describe("meetup announcement text edit (PER-926)", () => {
           : undefined,
     });
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await h.bot.handleUpdate(confirm());
     expect(
       h.records.some(
         (r) => r.message === "material text edit denied by telegram",
@@ -335,7 +366,7 @@ describe("meetup announcement text edit (PER-926)", () => {
           : undefined,
     });
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await h.bot.handleUpdate(confirm());
     expect(
       h.records.some((r) => r.message === "material text edit post not found"),
     ).toBe(true);
@@ -354,7 +385,7 @@ describe("meetup announcement text edit (PER-926)", () => {
   it("stale preview cannot edit the post", async () => {
     const h = setup();
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage("other")));
+    await h.bot.handleUpdate(confirm("other"));
     expect(editCalls(h.calls)).toHaveLength(0);
     expect(
       h.records.some((r) => r.message === "material text edit preview stale"),
@@ -390,7 +421,7 @@ describe("meetup announcement text edit (PER-926)", () => {
           : undefined,
     });
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await h.bot.handleUpdate(confirm());
     expect(
       h.records.some((r) => r.message === "material text edit unchanged"),
     ).toBe(true);
@@ -404,7 +435,7 @@ describe("meetup announcement text edit (PER-926)", () => {
           : undefined,
     });
     const confirm = await openConfirmation(h);
-    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await h.bot.handleUpdate(confirm());
     expect(
       h.records.some((r) => r.message === "material text edit non-text post"),
     ).toBe(true);
@@ -456,7 +487,7 @@ describe("meetup announcement text edit (PER-926)", () => {
     ).toBe(true);
   });
 
-  it("recovers after a process restart sharing only the registry and chat history", async () => {
+  it("refuses a confirmation frame from a previous process", async () => {
     const registry = createRegistry();
     const first = setup({ registry });
     const confirm = await openConfirmation(first);
@@ -484,13 +515,13 @@ describe("meetup announcement text edit (PER-926)", () => {
         announcementPostsRegistry: registry,
       },
     );
-    await second.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await second.bot.handleUpdate(confirm());
+    expect(editCalls(calls)).toHaveLength(0);
     expect(
-      editCalls(calls).filter(
-        (call) =>
-          (call.payload as { chat_id?: number }).chat_id === communityChatId,
-      ).length,
-    ).toBeGreaterThan(0);
+      second.records.some(
+        (r) => r.message === "material text edit preview conflict",
+      ),
+    ).toBe(true);
   });
 
   it("measures the length against the recorded signature, not the editor", async () => {
@@ -511,5 +542,145 @@ describe("meetup announcement text edit (PER-926)", () => {
         JSON.stringify(call.payload).includes("v1:mm:ee:"),
       ),
     ).toBe(false);
+  });
+
+  it("refuses a replayed confirmation after the post was already edited", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(confirm());
+    expect(editCalls(h.calls)).toHaveLength(1);
+    await h.bot.handleUpdate(confirm());
+    expect(editCalls(h.calls)).toHaveLength(1);
+    expect(
+      h.records.some(
+        (r) => r.message === "material text edit preview conflict",
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses a confirmation when the meetup version changed after preview", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    h.execute.mockImplementation(async () => ({
+      kind: "meetup-card",
+      meetup: meetupOf({ version: 2 }),
+    }));
+    await h.bot.handleUpdate(confirm());
+    expect(editCalls(h.calls)).toHaveLength(0);
+    expect(
+      h.records.some(
+        (r) => r.message === "material text edit preview conflict",
+      ),
+    ).toBe(true);
+  });
+
+  it("No shows an outcome with retry for the same material", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    const decline = `v1:mm:nc:${h.token}:${h.materialToken}`;
+    await h.bot.handleUpdate(callbackUpdate(decline));
+    expect(editCalls(h.calls)).toHaveLength(0);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("Текст поста не изменён"),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes(
+          `v1:mm:et:${h.token}:${h.materialToken}`,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      h.records.some((r) => r.message === "material text edit declined"),
+    ).toBe(true);
+  });
+
+  it("shows the meetup title safely in the confirmation frame", async () => {
+    const h = setup({
+      initial: meetupOf({ title: '<b>Злость</b> & "кавычки"' }),
+    });
+    await openConfirmation(h);
+    const frame = h.calls.findLast(
+      (call) =>
+        call.method === "sendMessage" &&
+        JSON.stringify(call.payload).includes("v1:mm:ee:"),
+    );
+    const framePayload = frame?.payload;
+    expect(framePayload).toBeDefined();
+    const text = String((framePayload as { text?: string }).text ?? "");
+    expect(text).toContain("&lt;b&gt;Злость&lt;/b&gt;");
+    expect(text).not.toContain("<b>Злость</b>");
+  });
+
+  it("retries from a different organizer with its own identity and id", async () => {
+    const otherId = 99;
+    const otherIdentity = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";
+    const registry = createRegistry();
+    let identity = resolvedId;
+    let current = meetupOf();
+    const execute = vi.fn(
+      async (_request: ExecuteRequest): Promise<ExecuteResult> => ({
+        kind: "meetup-card",
+        meetup: current,
+      }),
+    );
+    const h = createHarness(
+      {
+        resolve: async () => ({
+          kind: "resolved" as const,
+          identityId: identity,
+          rights: memberRights,
+          blocked: false,
+        }),
+      },
+      { execute },
+      [],
+      noopTracing(),
+      undefined,
+      undefined,
+      {
+        communityChat: {
+          chatId: communityChatId,
+          registerCommands: async () => {},
+          gate: async (_ctx, next) => next(),
+        },
+        announcementPostsRegistry: registry,
+      },
+    );
+    // Публикация первой личности создаёт запись с её подписью.
+    await h.bot.handleUpdate(
+      callbackUpdate(
+        `v1:mm:et:${uuidToToken(current.id)}:${uuidToToken(materialId)}`,
+      ),
+    );
+    const questionId = lastQuestionId(h.calls);
+    await h.bot.handleUpdate(replyUpdate(body, questionId));
+    const data = findData(h.calls, "v1:mm:ee:");
+    const index = h.calls.findLastIndex((call) =>
+      JSON.stringify(call.payload).includes("v1:mm:ee:"),
+    );
+    const messageId = 101 + index;
+    await h.bot.handleUpdate(
+      callbackUpdate(data, { ...previewMessage(), message_id: messageId }),
+    );
+
+    // Второй организатор со своим Identity и Telegram id повторяет то же
+    // подтверждение: происхождение читается один раз и не перезаписывается.
+    identity = otherIdentity;
+    current = meetupOf({ organizers: [otherIdentity] });
+    const readsBefore = registry.reads;
+    const writesBefore = registry.writes;
+    await h.bot.handleUpdate(
+      callbackUpdate(
+        data,
+        { ...previewMessage(), message_id: messageId },
+        otherId,
+      ),
+    );
+    expect(registry.reads - readsBefore).toBeGreaterThanOrEqual(1);
+    expect(registry.writes).toBe(writesBefore);
+    expect(editCalls(h.calls)).toHaveLength(1);
   });
 });

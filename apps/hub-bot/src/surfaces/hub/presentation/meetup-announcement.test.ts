@@ -139,7 +139,10 @@ function setup(options: SetupOptions = {}) {
           );
           return record === undefined
             ? { kind: "missing" }
-            : { kind: "found", record };
+            : { kind: "found", record, seq: 1 };
+        },
+        async commitEdit() {
+          return true;
         },
         async close() {},
       },
@@ -816,7 +819,9 @@ describe("анонс сходки в чате сообщества", () => {
     expect(h.provenance).toHaveLength(0);
     expect(
       h.calls.some((call) =>
-        JSON.stringify(call.payload).includes("проверить данные для правки"),
+        JSON.stringify(call.payload).includes(
+          "правка может остаться недоступной",
+        ),
       ),
     ).toBe(true);
   });

@@ -2427,13 +2427,14 @@ describe("announcement text edit callbacks", () => {
         },
       ],
       [
-        materialsConfirmEditTextData("card", token, materialToken, print),
+        materialsConfirmEditTextData("card", token, materialToken, print, 7),
         {
           kind: "confirm-edit-material-text",
           token,
           origin: "card",
           materialToken,
           print,
+          version: 7,
         },
       ],
     ];
@@ -2443,7 +2444,7 @@ describe("announcement text edit callbacks", () => {
     }
   });
 
-  it("parses the question step with its origin within the budget", () => {
+  it("parses the question step for the whole Telegram id range", () => {
     for (const origin of ["card", "draft"] as const) {
       const step: QuestionStep = {
         kind: "material-text",
@@ -2451,31 +2452,42 @@ describe("announcement text edit callbacks", () => {
         materialToken,
         origin,
       };
-      const askedBy = 1234567890;
-      const asked = questionData(step, askedBy);
-      expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
-      expect(parseCallback(asked)).toEqual({
+      for (const askedBy of [0, 1234567890, 10000000000, 4503599627370495]) {
+        const asked = questionData(step, askedBy);
+        expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+        expect(parseCallback(asked)).toEqual({
+          kind: "question",
+          step,
+          askedBy,
+        });
+      }
+      // Кнопки прежней версии продолжают работать.
+      const legacy = `v1:q:${origin === "draft" ? "mg" : "mf"}:${token}:${materialToken}:1234567890`;
+      expect(parseCallback(legacy)).toEqual({
         kind: "question",
         step,
-        askedBy,
+        askedBy: 1234567890,
       });
     }
   });
 
-  it("rejects a broken print and arity", () => {
+  it("rejects a broken packed confirmation and arity", () => {
     const good = materialsConfirmEditTextData(
       "card",
       token,
       materialToken,
       print,
+      7,
     );
+    const packed = good.split(":").at(-1) ?? "";
     for (const broken of [
-      good.replace(`:${print}`, ":BADPRINT"),
+      good.slice(0, -1),
       `${good}:extra`,
-      good.replace(materialToken, "short"),
+      `v1:mm:ee:${Buffer.alloc(40).toString("base64url")}`,
       materialsEditTextData("card", token, "short"),
     ]) {
       expect(parseCallback(broken)).toEqual({ kind: "malformed" });
     }
+    expect(packed.length).toBeGreaterThan(0);
   });
 });

@@ -30,6 +30,7 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 import { decodeLaunchDraft, encodeLaunchDraft } from "./launch-draft.js";
+import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
 import {
   type MaterialsOrigin,
   materialsOriginOf,
@@ -801,6 +802,14 @@ type PlainAction =
       origin: MaterialsOrigin;
       materialToken: string;
       print: string;
+      /** Есть только у упакованной формы после ревью; старая кнопка — без неё. */
+      version?: number;
+    }
+  | {
+      kind: "cancel-edit-material-text";
+      token: string;
+      origin: MaterialsOrigin;
+      materialToken: string;
     }
   | { kind: "view-meetup"; token: string }
   // Расширения (PER-605): меню «Расширения» сходки и «Расширения» в
@@ -2264,7 +2273,50 @@ export function auctionFaqData(auction: string, viaEvents = false): string {
  * `askedBy`. Id идёт последней частью: самый длинный шаг — `ln` с токеном
  * аукциона и ключом создания лота — занимает с ним 60 байт из 64.
  */
+/**
+ * Вопрос правки текста (PER-926, ревью CodeRabbit): два токена по 22 знака и
+ * 16-значный Telegram id вместе с префиксом не укладываются в 64 байта.
+ * Упаковываем UUID сходки и материала (по 16 байт), код входа и id в один
+ * base64url-блок: 41 байт → 55 знаков, итого 63 байта с префиксом. Старая
+ * форма `v1:q:mf:<токен>:<материал>:<id>` продолжает разбираться.
+ */
+function packMaterialTextQuestion(
+  step: Extract<QuestionStep, { kind: "material-text" }>,
+  askedBy: number,
+): string {
+  const bytes = Buffer.alloc(41);
+  Buffer.from(step.token, "base64url").copy(bytes, 0, 0, 16);
+  Buffer.from(step.materialToken, "base64url").copy(bytes, 16, 0, 16);
+  bytes[32] = step.origin === "draft" ? 1 : 0;
+  bytes.writeBigUInt64BE(BigInt(askedBy), 33);
+  return `v1:q:${step.origin === "draft" ? "mg" : "mf"}:${bytes.toString("base64url")}`;
+}
+
+function unpackMaterialTextQuestion(
+  parts: readonly string[],
+): { step: QuestionStep; askedBy: number } | undefined {
+  if (parts[1] !== "q" || parts.length !== 4) return undefined;
+  if (parts[2] !== "mf" && parts[2] !== "mg") return undefined;
+  const bytes = Buffer.from(parts[3] ?? "", "base64url");
+  if (bytes.length !== 41) return undefined;
+  const token = uuidToToken(bytes.subarray(0, 16).toString("hex"));
+  const materialToken = uuidToToken(bytes.subarray(16, 32).toString("hex"));
+  if (TokenSchema.safeParse(token).success !== true) return undefined;
+  if (TokenSchema.safeParse(materialToken).success !== true) return undefined;
+  const origin = bytes[32] === 1 ? "draft" : "card";
+  if (parts[2] === "mg" && origin !== "draft") return undefined;
+  const askedBy = Number(bytes.readBigUInt64BE(33));
+  if (!Number.isSafeInteger(askedBy)) return undefined;
+  return {
+    step: { kind: "material-text", token, materialToken, origin },
+    askedBy,
+  };
+}
+
 export function questionData(step: QuestionStep, askedBy: number): string {
+  if (step.kind === "material-text") {
+    return packMaterialTextQuestion(step, askedBy);
+  }
   return `${stepData(step)}:${askedBy}`;
 }
 
@@ -2533,6 +2585,28 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   const materialsOrigin = materialsOriginOf(parts[1] ?? "");
   if (materialsOrigin !== undefined) {
+    // Упакованное подтверждение правки: токены внутри блока, до проверки
+    // обычного 22-значного токена.
+    if (parts.length === 4 && parts[2] === "ee") {
+      const bytes = Buffer.from(parts[3] ?? "", "base64url");
+      if (bytes.length !== 41) return { kind: "malformed" };
+      const token = uuidToToken(bytes.subarray(0, 16).toString("hex"));
+      const materialToken = uuidToToken(bytes.subarray(16, 32).toString("hex"));
+      const print = (bytes.readUInt32BE(32) >>> 0)
+        .toString(36)
+        .padStart(5, "0");
+      const version = bytes.readUInt32BE(36);
+      const origin = bytes[40] === 1 ? "draft" : "card";
+      if (origin !== materialsOrigin) return { kind: "malformed" };
+      return {
+        kind: "confirm-edit-material-text",
+        token,
+        origin,
+        materialToken,
+        print,
+        version,
+      };
+    }
     const meetupToken = TokenSchema.safeParse(parts[3]);
     if (!meetupToken.success) return { kind: "malformed" };
     if ((parts.length === 4 || parts.length === 5) && parts[2] === "list") {
@@ -2606,8 +2680,7 @@ export function parseCallback(raw: unknown): CallbackAction {
         version: version.data,
       };
     }
-    // Правка текста поста (PER-926): отпечаток нового текста едет шестым
-    // сегментом, сам текст лежит в сообщении предпросмотра.
+    // Прежняя шестисегментная форма подтверждения правки разбирается дальше.
     if (parts.length === 6 && parts[2] === "ee") {
       const print = WindowPrintSchema.safeParse(parts[5]);
       return print.success
@@ -2653,6 +2726,13 @@ export function parseCallback(raw: unknown): CallbackAction {
       case "et":
         return {
           kind: "edit-material-text",
+          token: meetupToken.data,
+          origin: materialsOrigin,
+          materialToken: materialToken.data,
+        };
+      case "nc":
+        return {
+          kind: "cancel-edit-material-text",
           token: meetupToken.data,
           origin: materialsOrigin,
           materialToken: materialToken.data,
@@ -3725,6 +3805,8 @@ const TelegramIdSchema = z
 function parseAskedQuestion(
   parts: readonly string[],
 ): { step: QuestionStep; askedBy: number } | undefined {
+  const packed = unpackMaterialTextQuestion(parts);
+  if (packed !== undefined) return packed;
   const askedBy = TelegramIdSchema.safeParse(parts.at(-1));
   if (!askedBy.success) return undefined;
   const step = parseQuestionStep(parts.slice(0, -1));

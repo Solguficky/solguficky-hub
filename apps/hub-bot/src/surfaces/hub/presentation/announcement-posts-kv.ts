@@ -1,9 +1,20 @@
 import { type KV, Kvm } from "@nats-io/kv";
 import { connect, type NatsConnection } from "@nats-io/transport-node";
 import { z } from "zod";
-import { reportLiveStoreFailure } from "../../../core/auction/live-failures.js";
 import { natsConnectOptions } from "../../../core/delivery/index.js";
 import type { Logger } from "../../../core/logging.js";
+
+function reportRegistryFailure(
+  logger: Logger,
+  operation: "connect" | "save" | "read",
+  cause: unknown,
+): void {
+  logger.warn("announcement post registry failed", {
+    error_category: "dependency_unavailable",
+    operation,
+    error: cause instanceof Error ? cause.message : String(cause),
+  });
+}
 
 // Постоянный реестр постов анонсов (PER-926, решение владельца 2026-11-23):
 // запись по (чат, сообщение) хранит исходную сходку, подпись и клавиатуру.
@@ -28,7 +39,7 @@ const RecordSchema = z.object({
 export type AnnouncementPostRecord = z.infer<typeof RecordSchema>;
 
 export type AnnouncementPostEntry =
-  | { kind: "found"; record: AnnouncementPostRecord }
+  | { kind: "found"; record: AnnouncementPostRecord; seq: number }
   | { kind: "missing" }
   | { kind: "unavailable"; cause: unknown };
 
@@ -41,6 +52,15 @@ export type AnnouncementPostRegistry = {
   /** Только создание: существующая запись не перезаписывается. */
   remember(record: AnnouncementPostRecord): Promise<AnnouncementPostWrite>;
   read(chatId: number, messageId: number): Promise<AnnouncementPostEntry>;
+  /**
+   * CAS-фиксация правки: запись принимается только если реестр ещё на той
+   * ревизии, которую видел предпросмотр. Старое подтверждение после чужой
+   * правки не откатывает текст поста (ревью CodeRabbit).
+   */
+  commitEdit(
+    record: AnnouncementPostRecord,
+    expectedSeq: number,
+  ): Promise<boolean>;
   close(): Promise<void>;
 };
 
@@ -104,7 +124,7 @@ export function createAnnouncementPostRegistry(options: {
       return (await connection).kv;
     } catch (cause) {
       connection = null;
-      reportLiveStoreFailure(logger, "connect", cause);
+      reportRegistryFailure(logger, "connect", cause);
       return undefined;
     }
   };
@@ -136,7 +156,7 @@ export function createAnnouncementPostRegistry(options: {
         } catch {
           // Недоступность второй проверки не меняет вердикт первой.
         }
-        reportLiveStoreFailure(logger, "save", cause);
+        reportRegistryFailure(logger, "save", cause);
         return { kind: "unavailable", cause };
       }
     },
@@ -154,10 +174,25 @@ export function createAnnouncementPostRegistry(options: {
         const record = parse(entry.string(), key);
         return record === undefined
           ? { kind: "missing" }
-          : { kind: "found", record };
+          : { kind: "found", record, seq: entry.revision };
       } catch (cause) {
-        reportLiveStoreFailure(logger, "list", cause);
+        reportRegistryFailure(logger, "read", cause);
         return { kind: "unavailable", cause };
+      }
+    },
+    async commitEdit(record, expectedSeq) {
+      const kv = await bound();
+      if (kv === undefined) return false;
+      try {
+        await kv.put(
+          keyOf(record.chatId, record.messageId),
+          JSON.stringify(record),
+          { previousSeq: expectedSeq },
+        );
+        return true;
+      } catch (cause) {
+        reportRegistryFailure(logger, "save", cause);
+        return false;
       }
     },
     async close() {
