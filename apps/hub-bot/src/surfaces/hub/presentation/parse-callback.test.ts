@@ -91,6 +91,10 @@ import {
   questionData,
   traceCallback,
 } from "./parse-callback.js";
+import {
+  materialsConfirmEditTextData,
+  materialsEditTextData,
+} from "./screens/materials-data.js";
 import { releasePostData } from "./screens/release-notes.js";
 
 describe("callback parser", () => {
@@ -2391,6 +2395,85 @@ describe("meetup announcement callbacks", () => {
       `v1:ma:rs:${token}:short`,
       `v1:ma:rr:${token}:short`,
       `v1:ma:lk:${token}:${key}:extra`,
+    ]) {
+      expect(parseCallback(broken)).toEqual({ kind: "malformed" });
+    }
+  });
+});
+
+describe("announcement text edit callbacks", () => {
+  const token = "AZLzpLXGfY6fChssPU5fYA";
+  const materialToken = "BZLzpLXGfY6fChssPU5fYA";
+  const print = "a1b2c";
+
+  it("parses its own buttons within the 64-byte budget", () => {
+    const actions: readonly [string, CallbackAction][] = [
+      [
+        materialsEditTextData("card", token, materialToken),
+        {
+          kind: "edit-material-text",
+          token,
+          origin: "card",
+          materialToken,
+        },
+      ],
+      [
+        materialsEditTextData("draft", token, materialToken),
+        {
+          kind: "edit-material-text",
+          token,
+          origin: "draft",
+          materialToken,
+        },
+      ],
+      [
+        materialsConfirmEditTextData("card", token, materialToken, print),
+        {
+          kind: "confirm-edit-material-text",
+          token,
+          origin: "card",
+          materialToken,
+          print,
+        },
+      ],
+    ];
+    for (const [data, action] of actions) {
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+  });
+
+  it("parses the question step with its origin within the budget", () => {
+    for (const origin of ["card", "draft"] as const) {
+      const step: QuestionStep = {
+        kind: "material-text",
+        token,
+        materialToken,
+        origin,
+      };
+      const askedBy = 1234567890;
+      const asked = questionData(step, askedBy);
+      expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+      expect(parseCallback(asked)).toEqual({
+        kind: "question",
+        step,
+        askedBy,
+      });
+    }
+  });
+
+  it("rejects a broken print and arity", () => {
+    const good = materialsConfirmEditTextData(
+      "card",
+      token,
+      materialToken,
+      print,
+    );
+    for (const broken of [
+      good.replace(`:${print}`, ":BADPRINT"),
+      `${good}:extra`,
+      good.replace(materialToken, "short"),
+      materialsEditTextData("card", token, "short"),
     ]) {
       expect(parseCallback(broken)).toEqual({ kind: "malformed" });
     }

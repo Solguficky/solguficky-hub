@@ -674,6 +674,7 @@ import {
 } from "./screens/schedule-presets.js";
 import {
   clearCallbackKeyboard,
+  isNotModified,
   ScreenDeliveryError,
   type ScreenPhoto,
   type ShownScreen,
@@ -2320,7 +2321,7 @@ async function handleMessage(
       const preview = await ctx.reply(checked.body);
       const token = uuidToToken(pending.meetupId);
       await ctx.reply(
-        `${heading("Изменить текст анонса?")}\n\n${escapeHtml("Выше — новый текст поста. Бот заменит его в чате сообщества, сохранив подпись и кнопку.")}`,
+        `${heading("Изменить текст анонса?")}\n\n${escapeHtml("Выше — новый текст поста. Бот заменит его в чате сообщества и оставит кнопку; подпись сохранится, если бот её помнит.")}`,
         {
           reply_parameters: { message_id: preview.message_id },
           parse_mode: "HTML",
@@ -6134,7 +6135,7 @@ async function handleCallback(
         screenText(
           "Изменить текст",
           `Пришли новый текст поста анонса сходки «${escapeHtml(meetupTitleLabel(target.meetup.title))}».`,
-          "Бот заменит текст в чате сообщества, сохранив подпись и кнопку. Сам материал останется прежним.",
+          "Бот заменит текст в чате сообщества и оставит кнопку. Подпись организатора сохранится, если бот её помнит; после перезапуска вместо неё встанет подпись правившего. Сам материал останется прежним.",
           "Я покажу предпросмотр и спрошу подтверждение.",
         ),
         undefined,
@@ -6185,10 +6186,11 @@ async function handleCallback(
       }
       // Подпись из памяти процесса: Bot API не возвращает текст поста, а менять
       // подпись организатора при правке нельзя (PER-926).
+      const rememberedSignature = announcementPosts.signatureOf(
+        target.materialId,
+      );
       const signature =
-        announcementPosts.signatureOf(target.materialId) ??
-        ctx.from?.first_name ??
-        "Организатор";
+        rememberedSignature ?? ctx.from?.first_name ?? "Организатор";
       try {
         await ctx.api.editMessageText(
           target.ref.chatId,
@@ -6204,6 +6206,47 @@ async function handleCallback(
           },
         );
       } catch (cause) {
+        // Повтор того же текста (двойное нажатие, повторная доставка update,
+        // оборванная отправка кадра исхода) — уже желаемое состояние, а не сбой.
+        if (isNotModified(cause)) {
+          await showScreen(ctx, {
+            id: "outcome",
+            text: outcomeText(
+              "Текст поста уже такой: изменений не требуется. Кнопка осталась.",
+            ),
+            keyboard: exitToMaterials(action.token, action.origin),
+            format: "HTML",
+          });
+          outcome = {
+            level: "info",
+            message: "material text edit unchanged",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: target.meetupId,
+            identity_id: person.identityId,
+          };
+          return;
+        }
+        if (
+          cause instanceof GrammyError &&
+          cause.description.includes("there is no text in the message to edit")
+        ) {
+          await showRefusal(
+            ctx,
+            "Сообщение в чате не текстовое, поэтому заменить в нём текст нельзя. Материал остался без изменений.",
+            exitToMaterials(action.token, action.origin),
+          );
+          outcome = {
+            level: "warn",
+            message: "material text edit non-text post",
+            result: "error",
+            use_case: useCase,
+            meetup_id: target.meetupId,
+            error_category: "invariant",
+            error: "telegram_no_text_to_edit",
+          };
+          return;
+        }
         if (cause instanceof GrammyError && notEditable(cause.description)) {
           await showRefusal(
             ctx,
@@ -6272,7 +6315,9 @@ async function handleCallback(
       await showScreen(ctx, {
         id: "outcome",
         text: outcomeText(
-          "Текст поста в чате сообщества изменён. Подпись и кнопка остались.",
+          rememberedSignature === undefined
+            ? "Текст поста в чате сообщества изменён. Кнопка осталась; исходную подпись бот не помнит после перезапуска, поэтому в посте стоит подпись правившего."
+            : "Текст поста в чате сообщества изменён. Подпись и кнопка остались.",
         ),
         keyboard: exitToMaterials(action.token, action.origin),
         format: "HTML",
@@ -16462,6 +16507,7 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "material-text",
         token: uuidToToken(pending.meetupId),
         materialToken: uuidToToken(pending.materialId),
+        origin: pending.origin,
       };
     case "broadcast-body":
       return pending.audience.kind === "meetup"
@@ -16734,7 +16780,7 @@ function pendingOf(
         kind: "edit-material-text-body",
         meetupId: tokenToUuid(step.token),
         materialId: tokenToUuid(step.materialToken),
-        origin: "card",
+        origin: step.origin,
         telegramUserId,
         expiresAt,
       };
@@ -16987,7 +17033,7 @@ function cancelTarget(step: QuestionStep): ScreenAction {
       return {
         kind: "manage-materials",
         token: step.token,
-        origin: "card",
+        origin: step.origin,
       };
     case "meetup-announcement":
       return { kind: "view-meetup", token: step.token };
@@ -17225,7 +17271,7 @@ function reopenData(step: QuestionStep): string {
     case "material-title":
       return materialsAddData(step.origin, step.token);
     case "material-text":
-      return materialsEditTextData("card", step.token, step.materialToken);
+      return materialsEditTextData(step.origin, step.token, step.materialToken);
     case "meetup-announcement":
       return announceMeetupData(step.token);
     case "meetup-announcement-link":
@@ -17326,7 +17372,7 @@ function answerParent(step: QuestionStep): Parent {
     case "material-title":
       return toMaterials(step.token, step.origin);
     case "material-text":
-      return toMaterials(step.token, "card");
+      return toMaterials(step.token, step.origin);
     case "meetup-announcement":
     case "meetup-announcement-link":
       return toCard(step.token);

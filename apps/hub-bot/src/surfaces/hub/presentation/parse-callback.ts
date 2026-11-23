@@ -1014,7 +1014,12 @@ export type QuestionStep =
   | { kind: "material-title"; token: string; origin: MaterialsOrigin }
   // Правка текста поста (PER-926): текст живёт в сообщении предпросмотра, а
   // кнопка вопроса несёт сходку и материал, чтобы «Отмена» вернула к материалам.
-  | { kind: "material-text"; token: string; materialToken: string }
+  | {
+      kind: "material-text";
+      token: string;
+      materialToken: string;
+      origin: MaterialsOrigin;
+    }
   // Анонс сходки в чат сообщества (PER-925): текст вопроса живёт в сообщении,
   // токен сходки едет в кнопке, чтобы «Отмена» вернула к той же карточке.
   | { kind: "meetup-announcement"; token: string }
@@ -2344,7 +2349,9 @@ function stepData(step: QuestionStep): string {
     case "material-title":
       return `v1:q:mt:${step.token}${step.origin === "draft" ? ":d" : ""}`;
     case "material-text":
-      return `v1:q:mf:${step.token}:${step.materialToken}`;
+      // `mf` — вход с карточки, `mg` — с черновика: код вопроса несёт вход,
+      // чтобы «Отмена» вернула туда же, не раздувая 64 байта данных.
+      return `v1:q:${step.origin === "draft" ? "mg" : "mf"}:${step.token}:${step.materialToken}`;
     case "meetup-announcement":
       return `v1:q:ma:${step.token}`;
     case "meetup-announcement-link":
@@ -3735,13 +3742,14 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (parts.length === 4 && parts[2] === "ma") {
     return { kind: "meetup-announcement", token: token.data };
   }
-  if (parts.length === 5 && parts[2] === "mf") {
+  if (parts.length === 5 && (parts[2] === "mf" || parts[2] === "mg")) {
     const materialToken = TokenSchema.safeParse(parts[4]);
     return materialToken.success
       ? {
           kind: "material-text",
           token: token.data,
           materialToken: materialToken.data,
+          origin: parts[2] === "mg" ? "draft" : "card",
         }
       : undefined;
   }

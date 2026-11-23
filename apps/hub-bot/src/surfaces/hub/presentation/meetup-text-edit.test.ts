@@ -195,8 +195,8 @@ async function openConfirmation(h: ReturnType<typeof setup>): Promise<string> {
   return findData(h.calls, "v1:mm:ee:");
 }
 
-describe("правка текста поста чата сообщества (PER-926)", () => {
-  it("меняет текст поста, сохраняя подпись и кнопку, материал не пишется", async () => {
+describe("meetup announcement text edit (PER-926)", () => {
+  it("edits the post text with signature and button preserved and writes no material", async () => {
     const h = setup();
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
@@ -229,7 +229,7 @@ describe("правка текста поста чата сообщества (PE
     ).toBe(true);
   });
 
-  it("пересчитывает право на подтверждении: потерявший право organizer не меняет текст", async () => {
+  it("rechecks rights on confirmation so a former organizer cannot edit", async () => {
     const h = setup();
     const confirm = await openConfirmation(h);
     h.execute.mockImplementation(async () => ({
@@ -246,7 +246,7 @@ describe("правка текста поста чата сообщества (PE
     ).toBe(true);
   });
 
-  it("подделанная кнопка без права не задаёт вопрос и не права пост", async () => {
+  it("forged button without rights neither asks a question nor edits the post", async () => {
     const h = setup({ rights: ["access-hub"] });
     await h.bot.handleUpdate(
       callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
@@ -259,14 +259,14 @@ describe("правка текста поста чата сообщества (PE
     ).toBe(true);
   });
 
-  it("правка открыта у отменённой сходки", async () => {
+  it("allows editing for a cancelled meetup", async () => {
     const h = setup({ initial: meetupOf({ lifecycle: "cancelled" }) });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
     expect(editCalls(h.calls)).toHaveLength(1);
   });
 
-  it("отказ Telegram на чужой пост объясняется человеку, материал не меняется", async () => {
+  it("explains a Telegram refusal on a foreign post and keeps the material", async () => {
     const h = setup({
       respond: (method) => {
         if (method === "editMessageText") {
@@ -305,7 +305,7 @@ describe("правка текста поста чата сообщества (PE
     ).toBe(true);
   });
 
-  it("устаревший предпросмотр не даёт правки", async () => {
+  it("stale preview cannot edit the post", async () => {
     const h = setup();
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(
@@ -327,7 +327,7 @@ describe("правка текста поста чата сообщества (PE
     ).toBe(true);
   });
 
-  it("ссылка на чужой чат не даёт правки", async () => {
+  it("a link to a foreign chat cannot edit the post", async () => {
     const h = setup({
       initial: meetupOf({
         materials: [
@@ -346,6 +346,82 @@ describe("правка текста поста чата сообщества (PE
     expect(
       h.records.some(
         (record) => record.message === "material text edit foreign link",
+      ),
+    ).toBe(true);
+  });
+
+  it("treats 'message is not modified' as success, not a retry loop", async () => {
+    const h = setup({
+      respond: (method) => {
+        if (method === "editMessageText") {
+          throw new GrammyError(
+            "Bad Request: message is not modified",
+            {
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: message is not modified",
+            },
+            "editMessageText",
+            {},
+          );
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(
+      h.records.some(
+        (record) => record.message === "material text edit unchanged",
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("изменений не требуется"),
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses a non-text post without offering an endless retry", async () => {
+    const h = setup({
+      respond: (method) => {
+        if (method === "editMessageText") {
+          throw new GrammyError(
+            "Bad Request: there is no text in the message to edit",
+            {
+              ok: false,
+              error_code: 400,
+              description:
+                "Bad Request: there is no text in the message to edit",
+            },
+            "editMessageText",
+            {},
+          );
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(
+      h.records.some(
+        (record) => record.message === "material text edit non-text post",
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("не текстовое"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not promise a preserved signature when it is no longer in memory", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("не помнит после перезапуска"),
       ),
     ).toBe(true);
   });
