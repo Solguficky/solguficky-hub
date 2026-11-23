@@ -8179,6 +8179,28 @@ function announcementResendScreen(action: {
   };
 }
 
+/** Запись происхождения поста сразу после отправки, до привязки материала. */
+async function rememberAnnouncementPost(
+  runtime: BotRuntime,
+  record: AnnouncementPostRecord,
+): Promise<boolean> {
+  const written =
+    runtime.announcementPostsRegistry === undefined
+      ? ({ kind: "unavailable", cause: "no_registry" } as const)
+      : await runtime.announcementPostsRegistry.remember(record);
+  if (written.kind === "unavailable") {
+    runtime.logger.warn("announcement post provenance not saved", {
+      error_category: "dependency_unavailable",
+      error:
+        written.cause instanceof Error
+          ? written.cause.message
+          : String(written.cause),
+    });
+    return false;
+  }
+  return true;
+}
+
 /**
  * Публикация анонса: пост в чат сообщества, затем материал `message-link`.
  * Шаги не транзакционны, поэтому номер поста запоминается до записи материала,
@@ -8340,6 +8362,7 @@ async function publishMeetupAnnouncement(
     };
   }
   let messageId = knownPost;
+  let provenanceSaved = false;
   let expectedVersion = options.version ?? action.version;
   if (current.meetup.version !== expectedVersion) {
     if (messageId === undefined) {
@@ -8429,6 +8452,19 @@ async function publishMeetupAnnouncement(
       };
     }
     posts.remember(action.key, messageId);
+    // Происхождение пишется сразу после отправки поста, а не после записи
+    // материала: повтор подтверждения другим организатором не должен
+    // переподписать уже вышедший анонс (PER-926, ревью координатора).
+    provenanceSaved = await rememberAnnouncementPost(runtime, {
+      chatId: chat.chatId,
+      messageId,
+      meetupId,
+      signature: organizer,
+      keyboard: {
+        text: "Открыть сходку ↗",
+        url: meetupStartLink(ctx.me.username, meetupId),
+      },
+    });
   }
   const result = await runtime.dispatcher.execute({
     identity: person,
@@ -8452,37 +8488,12 @@ async function publishMeetupAnnouncement(
       result.kind === "material-attached" ||
       result.meetup.materials.some((material) => material.id === materialId);
     if (success) {
-      // Происхождение поста пишется в постоянный реестр (PER-926, решение
-      // владельца): только по этой записи позже будет доступна правка.
-      const keyboard = {
-        text: "Открыть сходку ↗",
-        url: meetupStartLink(ctx.me.username, meetupId),
-      };
-      const written =
-        runtime.announcementPostsRegistry === undefined
-          ? ({ kind: "unavailable", cause: "no_registry" } as const)
-          : await runtime.announcementPostsRegistry.remember({
-              chatId: chat.chatId,
-              messageId,
-              meetupId,
-              signature: organizer,
-              keyboard,
-            });
-      if (written.kind === "unavailable") {
-        runtime.logger.warn("announcement post provenance not saved", {
-          error_category: "dependency_unavailable",
-          error:
-            written.cause instanceof Error
-              ? written.cause.message
-              : String(written.cause),
-        });
-      }
       await showScreen(ctx, {
         id: "outcome",
         text: outcomeText(
-          written.kind === "unavailable"
-            ? "Анонс опубликован в чате сообщества и добавлен в «Материалы», но данные для правки не сохранились. Изменить текст позже не получится."
-            : "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки.",
+          provenanceSaved
+            ? "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки."
+            : "Анонс опубликован в чате сообщества и добавлен в «Материалы», но данные для правки не сохранились. Изменить текст позже не получится.",
         ),
         keyboard: exitToCard(action.token),
         format: "HTML",

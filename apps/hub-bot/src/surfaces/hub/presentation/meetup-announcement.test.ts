@@ -10,6 +10,7 @@ import type { AccessRight } from "../../../auction-ui/index.js";
 import { noopTracing } from "../../../core/tracing.js";
 import type { ExecuteRequest, ExecuteResult } from "../application/types.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
+import type { AnnouncementPostRecord } from "./announcement-posts-kv.js";
 import type { CommunityChat } from "./community-chat.js";
 import { announcementMaterialId } from "./meetup-announcement.js";
 import { uuidToToken } from "./meetup-deep-link.js";
@@ -56,10 +57,12 @@ type SetupOptions = {
   initial?: MeetupSnapshot;
   failAttach?: boolean | "once";
   respond?: (method: string, payload: unknown) => unknown;
+  registryUnavailable?: boolean;
 };
 
 function setup(options: SetupOptions = {}) {
   const rights = options.rights ?? memberRights;
+  const provenance: AnnouncementPostRecord[] = [];
   let meetup = options.initial ?? meetupOf();
   let viewFails = false;
   const attached: string[] = [];
@@ -110,6 +113,25 @@ function setup(options: SetupOptions = {}) {
     undefined,
     {
       ...(options.withChat === false ? {} : { communityChat: chat }),
+      announcementPostsRegistry: {
+        async remember(record) {
+          if (options.registryUnavailable === true) {
+            return { kind: "unavailable", cause: "kv down" };
+          }
+          if (provenance.length > 0) return { kind: "exists" };
+          provenance.push(record);
+          return { kind: "stored" };
+        },
+        async read(chatId, messageId) {
+          const record = provenance.find(
+            (each) => each.chatId === chatId && each.messageId === messageId,
+          );
+          return record === undefined
+            ? { kind: "missing" }
+            : { kind: "found", record };
+        },
+        async close() {},
+      },
       ...(options.respond === undefined ? {} : { respond: options.respond }),
     },
   );
@@ -117,6 +139,7 @@ function setup(options: SetupOptions = {}) {
     ...harness,
     attached,
     attachRequests,
+    provenance,
     meetup: () => meetup,
     setVersion: (version: number) => {
       meetup = { ...meetup, version };
@@ -147,6 +170,18 @@ function callbackUpdate(
       },
     },
   } as Update;
+}
+
+function callbackUpdateAs(
+  data: string,
+  firstName: string,
+  message: Record<string, unknown> = {},
+): Update {
+  const update = callbackUpdate(data, message) as {
+    callback_query: { from: { first_name: string } };
+  };
+  update.callback_query.from.first_name = firstName;
+  return update as Update;
 }
 
 function replyUpdate(text: string, replyMessageId: number): Update {
@@ -719,5 +754,53 @@ describe("анонс сходки в чате сообщества", () => {
         ),
       ),
     ).toBe(false);
+  });
+
+  it("records provenance at send time, before the material is attached", async () => {
+    const h = setup({ failAttach: "once" });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    // После первой отправки пост уже в чате, хотя материал не записался.
+    expect(h.provenance).toHaveLength(1);
+    expect(h.provenance[0]).toMatchObject({
+      chatId: communityChatId,
+      signature: "tester",
+    });
+    expect(h.provenance[0]?.messageId).toBeGreaterThan(0);
+    expect(h.provenance[0]?.keyboard.url).toContain("?start=m_");
+  });
+
+  it("keeps the original signature when another organizer retries the attach", async () => {
+    const h = setup({ failAttach: "once" });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const original = h.provenance[0];
+    expect(original).toBeDefined();
+
+    const retry = findLastData(h.calls, "v1:ma:cf:");
+    expect(retry).toBeDefined();
+    await h.bot.handleUpdate(
+      callbackUpdateAs(retry?.data ?? "", "Борис", {
+        message_id: retry?.messageId ?? 9,
+      }),
+    );
+    expect(h.attached).toHaveLength(1);
+    expect(h.provenance).toHaveLength(1);
+    expect(h.provenance[0]?.signature).toBe(original?.signature);
+    expect(h.provenance[0]?.keyboard).toEqual(original?.keyboard);
+  });
+
+  it("says honestly when provenance could not be saved", async () => {
+    const h = setup({ registryUnavailable: true });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(h.provenance).toHaveLength(0);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes(
+          "данные для правки не сохранились",
+        ),
+      ),
+    ).toBe(true);
   });
 });

@@ -1,7 +1,9 @@
 import type { KV } from "@nats-io/kv";
+import { validateKey } from "@nats-io/kv/internal";
 import { describe, expect, it } from "vitest";
 import { createCapturingLogger } from "../../../../testkit/harness.js";
 import {
+  announcementPostKey,
   announcementPostsBucket,
   createAnnouncementPostRegistry,
 } from "./announcement-posts-kv.js";
@@ -61,6 +63,14 @@ describe("announcement post registry", () => {
     );
   });
 
+  it("writes keys accepted by the real KV client", () => {
+    // Ключ с двоеточием отклоняется validateKey ещё до обращения к серверу.
+    expect(() =>
+      validateKey(announcementPostKey(record.chatId, record.messageId)),
+    ).not.toThrow();
+    expect(() => validateKey(`${record.chatId}:${record.messageId}`)).toThrow();
+  });
+
   it("stores provenance once and never overwrites it on retry", async () => {
     const store = registry(fakeKv());
     expect(await store.remember(record)).toEqual({ kind: "stored" });
@@ -81,7 +91,7 @@ describe("announcement post registry", () => {
     const kv = fakeKv();
     const store = registry(kv);
     expect(await store.read(-1, 2)).toEqual({ kind: "missing" });
-    await kv.put(`${record.chatId}:${record.messageId}`, "not json");
+    await kv.put(`${record.chatId}.${record.messageId}`, "not json");
     expect(await store.read(record.chatId, record.messageId)).toEqual({
       kind: "missing",
     });

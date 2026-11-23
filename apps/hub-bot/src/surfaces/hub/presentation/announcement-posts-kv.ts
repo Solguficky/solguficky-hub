@@ -44,8 +44,13 @@ export type AnnouncementPostRegistry = {
   close(): Promise<void>;
 };
 
-const keyOf = (chatId: number, messageId: number): string =>
-  `${chatId}:${messageId}`;
+// Ключ NATS KV допускает только [-/=.\w] (проверка validateKey в библиотеке):
+// двоеточие здесь нельзя, поэтому чат и сообщение разделяются точкой.
+export const announcementPostKey = (
+  chatId: number,
+  messageId: number,
+): string => `${chatId}.${messageId}`;
+const keyOf = announcementPostKey;
 
 function parse(raw: string, key: string): AnnouncementPostRecord | undefined {
   let json: unknown;
