@@ -890,8 +890,20 @@ describe("materialsScreen", () => {
     const screen = materialsScreen(meetup({ materials }), true, 0, "card");
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "↑", "↓", "🗑"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "↑", "↓", "🗑"]);
-    expect(rows(screen)[7]).toEqual(["Материал 8 ↗", "↑", "↓", "🗑"]);
+    expect(rows(screen)[1]).toEqual([
+      "Материал 2 ↗",
+      "✏️ Изменить текст",
+      "↑",
+      "↓",
+      "🗑",
+    ]);
+    expect(rows(screen)[7]).toEqual([
+      "Материал 8 ↗",
+      "✏️ Изменить текст",
+      "↑",
+      "↓",
+      "🗑",
+    ]);
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],
@@ -899,7 +911,7 @@ describe("materialsScreen", () => {
     ]);
     expect(
       rows(materialsScreen(meetup({ materials }), true, 1, "card"))[0],
-    ).toEqual(["Материал 9 ↗", "↑", "↓", "🗑"]);
+    ).toEqual(["Материал 9 ↗", "✏️ Изменить текст", "↑", "↓", "🗑"]);
   });
 
   it("shows a participant the materials without management", () => {
@@ -918,6 +930,10 @@ describe("materialsScreen", () => {
     );
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "🗑"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "🗑"]);
+    expect(rows(screen)[1]).toEqual([
+      "Материал 2 ↗",
+      "✏️ Изменить текст",
+      "🗑",
+    ]);
   });
 });

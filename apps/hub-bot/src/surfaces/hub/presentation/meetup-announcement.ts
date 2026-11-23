@@ -68,6 +68,22 @@ export function parseCommunityPostLink(
   return undefined;
 }
 
+/**
+ * Разбор ссылки материала для правки поста (PER-926): `chat_id` и номер
+ * сообщения едут в ссылке `message-link`, а чат обязан быть тем самым чатом
+ * сообщества. Ссылка на другое сообщение или канал правке не подлежит.
+ */
+export function communityPostRef(
+  url: string,
+  chatId: number,
+): { chatId: number; messageId: number } | undefined {
+  const matched =
+    /^https:\/\/t\.me\/c\/([1-9]\d*)\/([1-9]\d*)(?:\?\S*)?$/.exec(url.trim());
+  if (matched?.[1] !== communityChatPart(chatId)) return undefined;
+  const messageId = Number(matched[2]);
+  return Number.isSafeInteger(messageId) ? { chatId, messageId } : undefined;
+}
+
 /** Пост от бота: подпись организатора и свободный текст, разметка HTML. */
 export function announcementPostText(organizer: string, body: string): string {
   return `<b>${escapeHtml(organizer)}:</b>\n\n${escapeHtml(body)}`;
@@ -137,10 +153,18 @@ export type AnnouncementPosts = {
   unknown(key: string): UnknownAnnouncement | undefined;
   setResendNonce(key: string, nonce: string): void;
   forget(key: string): void;
+  /**
+   * Подпись поста по id материала (PER-926). Держится в памяти процесса рядом с
+   * номером поста: Bot API не отдаёт текст чужого нам сообщения, а подпись
+   * организатора при правке должна остаться прежней.
+   */
+  rememberSignature(materialId: string, signature: string): void;
+  signatureOf(materialId: string): string | undefined;
 };
 
 export function createAnnouncementPosts(limit = 1_000): AnnouncementPosts {
   const records = new Map<string, AnnouncementRecord>();
+  const signatures = new Map<string, string>();
   const put = (key: string, record: AnnouncementRecord): void => {
     records.delete(key);
     records.set(key, record);
@@ -179,6 +203,18 @@ export function createAnnouncementPosts(limit = 1_000): AnnouncementPosts {
     },
     forget(key) {
       records.delete(key);
+    },
+    rememberSignature(materialId, signature) {
+      signatures.delete(materialId);
+      signatures.set(materialId, signature);
+      while (signatures.size > limit) {
+        const oldest = signatures.keys().next();
+        if (oldest.done === true) break;
+        signatures.delete(oldest.value);
+      }
+    },
+    signatureOf(materialId) {
+      return signatures.get(materialId);
     },
   };
 }

@@ -787,6 +787,21 @@ type PlainAction =
       origin: MaterialsOrigin;
       materialToken: string;
     }
+  // Правка текста поста чата сообщества (PER-926, вариант А): кнопка у каждого
+  // материала-ссылки, подтверждение несёт отпечаток нового текста из предпросмотра.
+  | {
+      kind: "edit-material-text";
+      token: string;
+      origin: MaterialsOrigin;
+      materialToken: string;
+    }
+  | {
+      kind: "confirm-edit-material-text";
+      token: string;
+      origin: MaterialsOrigin;
+      materialToken: string;
+      print: string;
+    }
   | { kind: "view-meetup"; token: string }
   // Расширения (PER-605): меню «Расширения» сходки и «Расширения» в
   // «Настройках».
@@ -997,6 +1012,9 @@ export type QuestionStep =
   // принимается только по карте вопросов в памяти процесса; кнопка возвращает
   // к материалам.
   | { kind: "material-title"; token: string; origin: MaterialsOrigin }
+  // Правка текста поста (PER-926): текст живёт в сообщении предпросмотра, а
+  // кнопка вопроса несёт сходку и материал, чтобы «Отмена» вернула к материалам.
+  | { kind: "material-text"; token: string; materialToken: string }
   // Анонс сходки в чат сообщества (PER-925): текст вопроса живёт в сообщении,
   // токен сходки едет в кнопке, чтобы «Отмена» вернула к той же карточке.
   | { kind: "meetup-announcement"; token: string }
@@ -2325,6 +2343,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ms:${step.token}:${step.version}${step.origin === "draft" ? ":d" : ""}`;
     case "material-title":
       return `v1:q:mt:${step.token}${step.origin === "draft" ? ":d" : ""}`;
+    case "material-text":
+      return `v1:q:mf:${step.token}:${step.materialToken}`;
     case "meetup-announcement":
       return `v1:q:ma:${step.token}`;
     case "meetup-announcement-link":
@@ -2579,6 +2599,20 @@ export function parseCallback(raw: unknown): CallbackAction {
         version: version.data,
       };
     }
+    // Правка текста поста (PER-926): отпечаток нового текста едет шестым
+    // сегментом, сам текст лежит в сообщении предпросмотра.
+    if (parts.length === 6 && parts[2] === "ee") {
+      const print = WindowPrintSchema.safeParse(parts[5]);
+      return print.success
+        ? {
+            kind: "confirm-edit-material-text",
+            token: meetupToken.data,
+            origin: materialsOrigin,
+            materialToken: materialToken.data,
+            print: print.data,
+          }
+        : { kind: "malformed" };
+    }
     if (parts.length !== 5) return { kind: "malformed" };
     switch (parts[2]) {
       case "confirm-add":
@@ -2605,6 +2639,13 @@ export function parseCallback(raw: unknown): CallbackAction {
       case "file":
         return {
           kind: "open-material-file",
+          token: meetupToken.data,
+          origin: materialsOrigin,
+          materialToken: materialToken.data,
+        };
+      case "et":
+        return {
+          kind: "edit-material-text",
           token: meetupToken.data,
           origin: materialsOrigin,
           materialToken: materialToken.data,
@@ -3693,6 +3734,16 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (!token.success) return undefined;
   if (parts.length === 4 && parts[2] === "ma") {
     return { kind: "meetup-announcement", token: token.data };
+  }
+  if (parts.length === 5 && parts[2] === "mf") {
+    const materialToken = TokenSchema.safeParse(parts[4]);
+    return materialToken.success
+      ? {
+          kind: "material-text",
+          token: token.data,
+          materialToken: materialToken.data,
+        }
+      : undefined;
   }
   if (parts.length === 5 && parts[2] === "me") {
     const key = AnnouncementKeySchema.safeParse(parts[4]);

@@ -3,6 +3,7 @@ import {
   admitLabel,
   confirmNoLabel,
   confirmYesPrefix,
+  editMaterialTextLabel,
   lotGroupSigns,
   pictogram,
   pictogramWords,
@@ -112,7 +113,13 @@ function isMaterialManageRow(row: readonly Button[]): boolean {
   if (arrows.length !== new Set(arrows.map((button) => button.text)).size) {
     return false;
   }
-  return row.length - 1 - arrows.length === 1;
+  // Правка текста поста (PER-926) — ещё одно действие над той же строкой
+  // материала, рядом со ссылкой и «🗑». Только одна такая кнопка в ряду.
+  const edits = row.filter(
+    (button) => button.text === editMaterialTextLabel,
+  ).length;
+  if (edits > 1) return false;
+  return row.length - 1 - arrows.length - edits === 1;
 }
 
 // Слова, которые дизайн-код заменил: возврат называет родителя, подтверждение —

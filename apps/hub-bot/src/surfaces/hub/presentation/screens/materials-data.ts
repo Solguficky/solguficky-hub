@@ -115,3 +115,28 @@ export function materialsConfirmRemoveData(
 ): string {
   return materialsData(origin, "cr", token, materialToken, String(version));
 }
+
+/**
+ * Правка текста поста чата сообщества (PER-926, вариант А): кнопка стоит у
+ * каждого материала-ссылки, а не только у анонса — бот не отличает анонс от
+ * `/attach`, и отказ Telegram на чужой пост объясняется человеку. Отпечаток
+ * нового текста едет в кнопке подтверждения: сам текст живёт в сообщении
+ * предпросмотра, на которое кадр подтверждения отвечает.
+ */
+export function materialsEditTextData(
+  origin: MaterialsOrigin,
+  token: string,
+  materialToken: string,
+): string {
+  return materialsData(origin, "et", token, materialToken);
+}
+
+export function materialsConfirmEditTextData(
+  origin: MaterialsOrigin,
+  token: string,
+  materialToken: string,
+  print: string,
+): string {
+  return materialsData(origin, "ee", token, materialToken, print);
+}
+

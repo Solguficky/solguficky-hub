@@ -3,6 +3,7 @@ import type { AuctionSummaryView } from "../../../../auction-ui/index.js";
 import {
   adminLabel,
   createMeetupLabel,
+  editMaterialTextLabel,
   emptyDescription,
   extensionsLabel,
   marked,
@@ -62,6 +63,7 @@ import {
   type MaterialsOrigin,
   materialsAddData,
   materialsEdgeData,
+  materialsEditTextData,
   materialsFileData,
   materialsListData,
   materialsMoveData,
@@ -1055,6 +1057,15 @@ export function materialsScreen(
       /^[1-9]\d{0,8}$/.test(String(meetup.version));
     if (material.source.kind === "message-link") {
       keyboard.url(buttonText(`${title} ↗`), material.source.url);
+      // Правка текста поста (PER-926, вариант А): кнопка стоит у каждой
+      // ссылки на сообщение чата, потому что бот не отличает анонс от
+      // `/attach`. Отказ Telegram на чужой пост бот объяснит человеку.
+      if (canManage) {
+        keyboard.text(
+          editMaterialTextLabel,
+          materialsEditTextData(origin, token, materialToken),
+        );
+      }
     } else {
       keyboard.text(
         buttonText(title),
