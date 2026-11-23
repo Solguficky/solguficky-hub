@@ -60,6 +60,7 @@ type SetupOptions = {
   registryUnavailable?: boolean;
   registryReadMissing?: boolean;
   registryReadUnavailable?: boolean;
+  registryForceExists?: boolean;
 };
 
 function setup(options: SetupOptions = {}) {
@@ -119,6 +120,10 @@ function setup(options: SetupOptions = {}) {
         async remember(record) {
           if (options.registryUnavailable === true) {
             return { kind: "unavailable", cause: "kv down" };
+          }
+          if (options.registryForceExists === true) {
+            provenance.push(record);
+            return { kind: "exists" };
           }
           if (provenance.length > 0) return { kind: "exists" };
           provenance.push(record);
@@ -343,6 +348,14 @@ describe("анонс сходки в чате сообщества", () => {
     expect(request.material.id).toBe(
       announcementMaterialId(h.meetup().id, confirm.split(":")[5] ?? ""),
     );
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes(
+          "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки",
+        ),
+      ),
+    ).toBe(true);
+    expect(h.provenance).toHaveLength(1);
   });
 
   it("двойное нажатие, повтор после таймаута и повторная доставка update не дают второго поста и материала", async () => {
@@ -867,6 +880,24 @@ describe("анонс сходки в чате сообщества", () => {
     expect(
       h.calls.some((call) =>
         JSON.stringify(call.payload).includes("Попробуй позже"),
+      ),
+    ).toBe(false);
+  });
+
+  it("treats an already-existing provenance record as a successful publication", async () => {
+    const h = setup({ registryForceExists: true });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes(
+          "Анонс опубликован в чате сообщества и добавлен в «Материалы» сходки",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("не сохранились"),
       ),
     ).toBe(false);
   });

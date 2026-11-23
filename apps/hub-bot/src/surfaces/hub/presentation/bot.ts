@@ -8483,6 +8483,12 @@ async function publishMeetupAnnouncement(
     if (provenance === "unavailable") {
       runtime.logger.warn("announcement post provenance not readable", {
         error_category: "dependency_unavailable",
+        error:
+          entry?.kind === "unavailable"
+            ? entry.cause instanceof Error
+              ? entry.cause.message
+              : String(entry.cause)
+            : "no_registry",
       });
     }
   }
