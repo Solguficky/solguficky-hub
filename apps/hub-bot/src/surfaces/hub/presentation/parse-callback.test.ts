@@ -3,6 +3,9 @@ import { maxLotRubles } from "../application/lot-form.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
   announceMeetupData,
+  announcementLinkData,
+  announcementResendConfirmData,
+  announcementResendData,
   auctionFaqData,
   type CallbackAction,
   cancelAnnouncementData,
@@ -2327,6 +2330,18 @@ describe("meetup announcement callbacks", () => {
         print,
       },
     ],
+    [
+      announcementLinkData(token, key),
+      { kind: "ask-meetup-announcement-link", token, key },
+    ],
+    [
+      announcementResendData(token, key),
+      { kind: "resend-meetup-announcement", token, key },
+    ],
+    [
+      announcementResendConfirmData(token, key, key),
+      { kind: "resend-confirmed-meetup-announcement", token, key, nonce: key },
+    ],
   ];
 
   it("parses its own buttons within the 64-byte budget", () => {
@@ -2347,6 +2362,21 @@ describe("meetup announcement callbacks", () => {
     });
   });
 
+  it("parses the link question step within the budget", () => {
+    const step: QuestionStep = {
+      kind: "meetup-announcement-link",
+      token,
+      key,
+    };
+    const asked = questionData(step, 9007199254740991);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({
+      kind: "question",
+      step,
+      askedBy: 9007199254740991,
+    });
+  });
+
   it("rejects a broken key, version, print and arity", () => {
     for (const broken of [
       "v1:ma:an:short",
@@ -2357,6 +2387,10 @@ describe("meetup announcement callbacks", () => {
       `v1:ma:cf:${token}:1:short:${print}`,
       `v1:ma:cf:${token}:1:${key}:SHORT`,
       `v1:ma:cf:${token}:1:${key}`,
+      `v1:ma:lk:${token}:short`,
+      `v1:ma:rs:${token}:short`,
+      `v1:ma:rr:${token}:short`,
+      `v1:ma:lk:${token}:${key}:extra`,
     ]) {
       expect(parseCallback(broken)).toEqual({ kind: "malformed" });
     }

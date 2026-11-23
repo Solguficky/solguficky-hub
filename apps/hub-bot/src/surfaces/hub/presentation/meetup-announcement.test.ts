@@ -13,7 +13,12 @@ import type { MeetupSnapshot } from "../meetups/port.js";
 import type { CommunityChat } from "./community-chat.js";
 import { announcementMaterialId } from "./meetup-announcement.js";
 import { uuidToToken } from "./meetup-deep-link.js";
-import { announceMeetupData } from "./parse-callback.js";
+import {
+  announceMeetupData,
+  announcementLinkData,
+  announcementResendConfirmData,
+  announcementResendData,
+} from "./parse-callback.js";
 
 // Анонс сходки (PER-925): сценарии на харнесс без Telegram. Проверяют вход по
 // кругу прав и состоянию сходки, пост с подписью и кнопкой, материал
@@ -172,6 +177,26 @@ function findData(calls: readonly RecordedCall[], prefix: string): string {
     }
   }
   throw new Error(`button ${prefix} not found`);
+}
+
+function findLastData(
+  calls: readonly RecordedCall[],
+  prefix: string,
+): { data: string; messageId: number } | undefined {
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index] as RecordedCall;
+    const payload = call.payload as {
+      reply_markup?: { inline_keyboard?: { callback_data?: string }[][] };
+    };
+    const rows = payload.reply_markup?.inline_keyboard;
+    for (const button of rows?.flat() ?? []) {
+      if (button.callback_data?.startsWith(prefix) === true) {
+        // Харнесс отвечает на sendMessage номером 100 + номер вызова.
+        return { data: button.callback_data, messageId: 101 + index };
+      }
+    }
+  }
+  return undefined;
 }
 
 function findCancelWithKey(calls: readonly RecordedCall[]): string {
@@ -334,15 +359,18 @@ describe("анонс сходки в чате сообщества", () => {
     ).toBe(true);
   });
 
-  it("сбой записи материала сводится повтором без второго поста", async () => {
+  it("сбой записи материала сводится нажатием на кнопку кадра повтора без второго поста", async () => {
     const h = setup({ failAttach: "once" });
     const confirm = await openConfirmation(h);
-    const update = callbackUpdate(confirm, previewMessage());
-    await h.bot.handleUpdate(update);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
     expect(h.attached).toHaveLength(0);
     expect(h.attachRequests).toHaveLength(1);
-    // Повтор после сбоя: тот же ключ, тот же пост, материал записывается.
-    await h.bot.handleUpdate({ ...update, update_id: 100 });
+    // Берём кнопку именно из выданного кадра повтора, а не исходный update.
+    const retry = findLastData(h.calls, "v1:ma:cf:");
+    expect(retry).toBeDefined();
+    await h.bot.handleUpdate(
+      callbackUpdate(retry?.data ?? "", { message_id: retry?.messageId ?? 9 }),
+    );
     const posts = h.calls.filter(
       (call) =>
         call.method === "sendMessage" &&
@@ -351,6 +379,43 @@ describe("анонс сходки в чате сообщества", () => {
     expect(posts).toHaveLength(1);
     expect(h.attached).toHaveLength(1);
     expect(h.attachRequests).toHaveLength(2);
+  });
+
+  it("повтор с новым сообщением без предпросмотра находит номер поста по ключу", async () => {
+    const h = setup({
+      failAttach: "once",
+      respond: (method) => {
+        if (method === "editMessageText") {
+          throw new GrammyError(
+            "Bad Request: message can't be edited",
+            {
+              ok: false,
+              error_code: 400,
+              description: "message can't be edited",
+            },
+            "editMessageText",
+            {},
+          );
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const retry = findLastData(h.calls, "v1:ma:cf:");
+    expect(retry).toBeDefined();
+    // В сообщении кнопки нет reply_to_message: исходный предпросмотр недоступен.
+    await h.bot.handleUpdate(
+      callbackUpdate(retry?.data ?? "", { message_id: retry?.messageId ?? 9 }),
+    );
+    expect(h.attached).toHaveLength(1);
+    expect(
+      h.calls.filter(
+        (call) =>
+          call.method === "sendMessage" &&
+          (call.payload as { chat_id?: number }).chat_id === communityChatId,
+      ),
+    ).toHaveLength(1);
   });
 
   it("название сходки экранируется в вопросе с разметкой HTML", async () => {
@@ -469,6 +534,131 @@ describe("анонс сходки в чате сообщества", () => {
       h.calls.some((call) =>
         String((call.payload as { text?: string }).text ?? "").includes(
           "Пост уже опубликован",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "никуда не ушёл",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  function networkLoss(options: SetupOptions = {}): SetupOptions {
+    return {
+      ...options,
+      respond: (method, payload) => {
+        if (
+          method === "sendMessage" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          throw new Error("network lost after send");
+        }
+        return options.respond?.(method, payload);
+      },
+    };
+  }
+
+  function communityPosts(calls: readonly RecordedCall[]): number {
+    return calls.filter(
+      (call) =>
+        call.method === "sendMessage" &&
+        (call.payload as { chat_id?: number }).chat_id === communityChatId,
+    ).length;
+  }
+
+  it("неизвестный исход отправки не публикует второй пост по той же кнопке", async () => {
+    const h = setup(networkLoss());
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    expect(communityPosts(h.calls)).toBe(1);
+    expect(h.attachRequests).toHaveLength(0);
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "Проверь чат сообщества",
+        ),
+      ),
+    ).toBe(true);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    await h.bot.handleUpdate({
+      ...callbackUpdate(confirm, previewMessage()),
+      update_id: 200,
+    });
+    expect(communityPosts(h.calls)).toBe(1);
+  });
+
+  it("пост прикрепляется по ссылке с проверкой источника без новой публикации", async () => {
+    const h = setup(networkLoss());
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const key = confirm.split(":")[5] ?? "";
+    const linkButton = findLastData(h.calls, "v1:ma:lk:");
+    expect(linkButton?.data).toBe(announcementLinkData(h.token, key));
+    await h.bot.handleUpdate(callbackUpdate(linkButton?.data ?? ""));
+    const questionId = lastQuestionId(h.calls);
+    await h.bot.handleUpdate(
+      replyUpdate("https://t.me/c/1234567890/42", questionId),
+    );
+    expect(h.attachRequests).toHaveLength(1);
+    expect(
+      h.attachRequests[0]?.intent === "attach-material" &&
+        h.attachRequests[0].material.source,
+    ).toEqual({
+      kind: "message-link",
+      url: "https://t.me/c/1234567890/42",
+    });
+    expect(communityPosts(h.calls)).toBe(1);
+    expect(h.attached).toHaveLength(1);
+  });
+
+  it("ссылка из другого чата не прикрепляется", async () => {
+    const h = setup(networkLoss());
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const linkButton = findLastData(h.calls, "v1:ma:lk:");
+    await h.bot.handleUpdate(callbackUpdate(linkButton?.data ?? ""));
+    await h.bot.handleUpdate(
+      replyUpdate("https://t.me/c/999/42", lastQuestionId(h.calls)),
+    );
+    expect(h.attachRequests).toHaveLength(0);
+  });
+
+  it("новая отправка идёт только после явного подтверждения и не повторяется двойным нажатием", async () => {
+    const h = setup(networkLoss());
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const key = confirm.split(":")[5] ?? "";
+    const resendButton = findLastData(h.calls, "v1:ma:rs:");
+    expect(resendButton?.data).toBe(announcementResendData(h.token, key));
+    await h.bot.handleUpdate(callbackUpdate(resendButton?.data ?? ""));
+    expect(communityPosts(h.calls)).toBe(1);
+    const confirmResend = findLastData(h.calls, "v1:ma:rr:");
+    expect(confirmResend?.data).toBe(
+      announcementResendConfirmData(
+        h.token,
+        key,
+        confirmResend?.data.split(":")[5] ?? "",
+      ),
+    );
+    await h.bot.handleUpdate(callbackUpdate(confirmResend?.data ?? ""));
+    expect(communityPosts(h.calls)).toBe(2);
+    await h.bot.handleUpdate(callbackUpdate(confirmResend?.data ?? ""));
+    expect(communityPosts(h.calls)).toBe(2);
+  });
+
+  it("отмена при неизвестном исходе не утверждает, что публикации не было", async () => {
+    const h = setup(networkLoss());
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(callbackUpdate(confirm, previewMessage()));
+    const cancel = findCancelWithKey(h.calls);
+    await h.bot.handleUpdate(callbackUpdate(cancel));
+    expect(
+      h.calls.some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "пост мог быть опубликован",
         ),
       ),
     ).toBe(true);

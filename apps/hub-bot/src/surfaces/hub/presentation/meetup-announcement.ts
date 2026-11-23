@@ -29,21 +29,43 @@ export function announcementMaterialId(meetupId: string, key: string): string {
   return uuidV7Of(`hub-bot:meetup-announcement:${meetupId}:${key}`, 0);
 }
 
+/** Номер чата в ссылке `t.me/c/…`: у супергруппы Bot API даёт `-100…`. */
+export function communityChatPart(chatId: number): string {
+  const supergroupFloor = -1000000000000;
+  return chatId < supergroupFloor
+    ? String(-chatId - 1000000000000)
+    : String(Math.abs(chatId));
+}
+
 /**
  * Ссылка на пост собирается из id чата и номера сообщения (ADR-087, п. 4;
- * RFC-003, «Шёпот в группе»). Id супергруппы Bot API равен `-1000000000000-N`,
- * поэтому номер берётся вычитанием, а не снятием префикса строки.
+ * RFC-003, «Шёпот в группе»).
  */
 export function communityMessageLink(
   chatId: number,
   messageId: number,
 ): string {
-  const supergroupFloor = -1000000000000;
-  const part =
-    chatId < supergroupFloor
-      ? String(-chatId - 1000000000000)
-      : String(Math.abs(chatId));
-  return `https://t.me/c/${part}/${messageId}`;
+  return `https://t.me/c/${communityChatPart(chatId)}/${messageId}`;
+}
+
+/**
+ * Обратный разбор ссылки, которую человек присылает после неопределённого
+ * результата отправки. Источник и чат обязаны совпадать с настроенным чатом
+ * сообщества: ссылка из другого чата не даёт права прикреплять её как анонс.
+ */
+export function parseCommunityPostLink(
+  text: string,
+  chatId: number,
+): number | undefined {
+  const part = communityChatPart(chatId);
+  for (const word of text.trim().split(/\s+/)) {
+    const matched =
+      /^https:\/\/t\.me\/c\/([1-9]\d*)\/([1-9]\d*)(?:\?\S*)?$/.exec(word);
+    if (matched?.[1] !== part) continue;
+    const messageId = Number(matched[2]);
+    if (Number.isSafeInteger(messageId)) return messageId;
+  }
+  return undefined;
 }
 
 /** Пост от бота: подпись организатора и свободный текст, разметка HTML. */
@@ -52,12 +74,12 @@ export function announcementPostText(organizer: string, body: string): string {
 }
 
 /**
- * Telegram считает предел по тексту после разбора разметки, а проверка ввода
- * видит только тело. Поэтому длину надо мерить по тому, что действительно
- * уйдёт: подпись и экранирование символов тоже занимают место.
+ * Telegram считает предел по тексту после разбора entities, а не по длине
+ * HTML-строки: `<b>` и `&amp;` в счёт не идут, идёт видимый текст. Поэтому
+ * проверяем `${organizer}:\n\n${body}`, а экранирование остаётся в посте.
  */
 export function announcementFits(organizer: string, body: string): boolean {
-  return announcementPostText(organizer, body).length <= telegramTextLimit;
+  return `${organizer}:\n\n${body}`.length <= telegramTextLimit;
 }
 
 /** Пост старше предела Telegram: это Permanent-отказ, повтор его не исправит. */
@@ -92,32 +114,71 @@ export function communityRightsError(cause: unknown): boolean {
 }
 
 /**
- * Память поста между шагами: после успешной отправки и до записи материала
- * бот помнит номер сообщения по ключу подтверждения. Повтор после сбоя
- * `AttachMaterial` прикрепит материал к тому же посту. Память процесса, без
- * нового хранилища (ADR-030): после рестарта повтор confirmation-кнопки
- * проверит уже прикреплённый материал в Meetups и не станет публиковать
- * второй пост, если материал успел записаться.
+ * Память операции между шагами: номер отправленного поста или признак того,
+ * что исход отправки неизвестен. Номер позволяет повторить только привязку
+ * материала; неизвестный исход запрещает автоматическую повторную публикацию и
+ * требует от человека проверки чата. Память процесса, без нового хранилища
+ * (ADR-030): запись живёт до рестарта или вытеснения по лимиту.
  */
+type AnnouncementRecord =
+  | { kind: "posted"; messageId: number }
+  | { kind: "unknown"; body: string; version: number; nonce?: string };
+
+export type UnknownAnnouncement = {
+  body: string;
+  version: number;
+  nonce?: string;
+};
+
 export type AnnouncementPosts = {
   remember(key: string, messageId: number): void;
   posted(key: string): number | undefined;
+  markUnknown(key: string, body: string, version: number): void;
+  unknown(key: string): UnknownAnnouncement | undefined;
+  setResendNonce(key: string, nonce: string): void;
+  forget(key: string): void;
 };
 
 export function createAnnouncementPosts(limit = 1_000): AnnouncementPosts {
-  const messages = new Map<string, number>();
+  const records = new Map<string, AnnouncementRecord>();
+  const put = (key: string, record: AnnouncementRecord): void => {
+    records.delete(key);
+    records.set(key, record);
+    while (records.size > limit) {
+      const oldest = records.keys().next();
+      if (oldest.done === true) break;
+      records.delete(oldest.value);
+    }
+  };
   return {
     remember(key, messageId) {
-      messages.delete(key);
-      messages.set(key, messageId);
-      while (messages.size > limit) {
-        const oldest = messages.keys().next();
-        if (oldest.done === true) break;
-        messages.delete(oldest.value);
-      }
+      put(key, { kind: "posted", messageId });
     },
     posted(key) {
-      return messages.get(key);
+      const record = records.get(key);
+      return record?.kind === "posted" ? record.messageId : undefined;
+    },
+    markUnknown(key, body, version) {
+      put(key, { kind: "unknown", body, version });
+    },
+    unknown(key) {
+      const record = records.get(key);
+      return record?.kind === "unknown"
+        ? {
+            body: record.body,
+            version: record.version,
+            ...(record.nonce === undefined ? {} : { nonce: record.nonce }),
+          }
+        : undefined;
+    },
+    setResendNonce(key, nonce) {
+      const record = records.get(key);
+      if (record?.kind === "unknown") {
+        records.set(key, { ...record, nonce });
+      }
+    },
+    forget(key) {
+      records.delete(key);
     },
   };
 }

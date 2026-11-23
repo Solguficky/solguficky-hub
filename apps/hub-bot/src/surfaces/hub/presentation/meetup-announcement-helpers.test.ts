@@ -11,6 +11,7 @@ import {
   communityRightsError,
   createAnnouncementPosts,
   isCommunitySupergroup,
+  parseCommunityPostLink,
   postTooLongError,
 } from "./meetup-announcement.js";
 
@@ -50,7 +51,8 @@ describe("анонс сходки в чат сообщества", () => {
   it("предел считается по собранному посту, а не по телу", () => {
     expect(announcementFits("Иван", "анонс")).toBe(true);
     expect(announcementFits("Иван", "x".repeat(4096))).toBe(false);
-    expect(announcementFits("Иван", "&".repeat(2040))).toBe(false);
+    // Telegram считает длину после разбора entities: `&amp;` в счёт не идёт.
+    expect(announcementFits("Иван", "&".repeat(2040))).toBe(true);
   });
 
   it("отпечаток текста короток и следует за текстом", () => {
@@ -77,6 +79,37 @@ describe("анонс сходки в чат сообщества", () => {
     expect(communityRightsError(new Error("network"))).toBe(false);
     expect(postTooLongError(tooLong())).toBe(true);
     expect(postTooLongError(refusal)).toBe(false);
+  });
+
+  it("ссылка на пост принимается только из чата сообщества", () => {
+    const chatId = -1001234567890;
+    expect(parseCommunityPostLink("https://t.me/c/1234567890/42", chatId)).toBe(
+      42,
+    );
+    expect(
+      parseCommunityPostLink(
+        "вот https://t.me/c/1234567890/77?comment=1",
+        chatId,
+      ),
+    ).toBe(77);
+    expect(
+      parseCommunityPostLink("https://t.me/c/999/42", chatId),
+    ).toBeUndefined();
+    expect(parseCommunityPostLink("42", chatId)).toBeUndefined();
+  });
+
+  it("память различает опубликованный пост и неизвестный исход", () => {
+    const posts = createAnnouncementPosts();
+    expect(posts.unknown("a")).toBeUndefined();
+    posts.markUnknown("a", "текст", 3);
+    expect(posts.unknown("a")).toEqual({ body: "текст", version: 3 });
+    expect(posts.posted("a")).toBeUndefined();
+    posts.remember("a", 55);
+    expect(posts.posted("a")).toBe(55);
+    expect(posts.unknown("a")).toBeUndefined();
+    posts.markUnknown("b", "другой", 1);
+    posts.forget("b");
+    expect(posts.unknown("b")).toBeUndefined();
   });
 
   it("память поста хранит номер по ключу и имеет предел", () => {

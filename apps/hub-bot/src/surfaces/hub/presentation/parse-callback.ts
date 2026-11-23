@@ -815,6 +815,16 @@ type PlainAction =
       print: string;
     }
   | { kind: "cancel-meetup-announcement"; token: string; key?: string }
+  // Неопределённый исход отправки: привязка по присланной ссылке или явное
+  // подтверждение новой отправки после проверки чата.
+  | { kind: "ask-meetup-announcement-link"; token: string; key: string }
+  | { kind: "resend-meetup-announcement"; token: string; key: string }
+  | {
+      kind: "resend-confirmed-meetup-announcement";
+      token: string;
+      key: string;
+      nonce: string;
+    }
   | { kind: "notify-global" }
   // Настройки уведомлений аукциона (PER-552, PER-539, PER-645): экран, режим
   // частоты, выключатели анонса финала и «перебили» в живом финале —
@@ -990,6 +1000,9 @@ export type QuestionStep =
   // Анонс сходки в чат сообщества (PER-925): текст вопроса живёт в сообщении,
   // токен сходки едет в кнопке, чтобы «Отмена» вернула к той же карточке.
   | { kind: "meetup-announcement"; token: string }
+  // После неопределённого результата отправки человек присылает ссылку на
+  // уже опубликованный пост; ключ операции отличает её от других анонсов.
+  | { kind: "meetup-announcement-link"; token: string; key: string }
   | { kind: "broadcast"; token?: string }
   | { kind: "username" }
   // Ник назначаемого администратора (PER-521).
@@ -2314,6 +2327,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:mt:${step.token}${step.origin === "draft" ? ":d" : ""}`;
     case "meetup-announcement":
       return `v1:q:ma:${step.token}`;
+    case "meetup-announcement-link":
+      return `v1:q:me:${step.token}:${step.key}`;
     case "broadcast":
       return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
     case "username":
@@ -3679,6 +3694,16 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (parts.length === 4 && parts[2] === "ma") {
     return { kind: "meetup-announcement", token: token.data };
   }
+  if (parts.length === 5 && parts[2] === "me") {
+    const key = AnnouncementKeySchema.safeParse(parts[4]);
+    return key.success
+      ? {
+          kind: "meetup-announcement-link",
+          token: token.data,
+          key: key.data,
+        }
+      : undefined;
+  }
   // Момент публикации с днём: вопрос «Ввести время» отложенной публикации
   // (PER-907) — день едет вслед за токеном.
   if (parts.length === 5 && (parts[2] === "pm" || parts[2] === "pd")) {
@@ -4252,6 +4277,22 @@ export function confirmAnnouncementData(
   return `v1:ma:cf:${token}:${version}:${key}:${print}`;
 }
 
+export function announcementLinkData(token: string, key: string): string {
+  return `v1:ma:lk:${token}:${key}`;
+}
+
+export function announcementResendData(token: string, key: string): string {
+  return `v1:ma:rs:${token}:${key}`;
+}
+
+export function announcementResendConfirmData(
+  token: string,
+  key: string,
+  nonce: string,
+): string {
+  return `v1:ma:rr:${token}:${key}:${nonce}`;
+}
+
 const AnnouncementKeySchema = z.string().regex(/^[A-Za-z0-9_-]{12}$/);
 const AnnouncementVersionSchema = z
   .string()
@@ -4271,6 +4312,28 @@ function parseMeetupAnnouncement(parts: readonly string[]): CallbackAction {
     const key = AnnouncementKeySchema.safeParse(parts[4]);
     return key.success
       ? { kind: "cancel-meetup-announcement", token: token.data, key: key.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 5 && (parts[2] === "lk" || parts[2] === "rs")) {
+    const key = AnnouncementKeySchema.safeParse(parts[4]);
+    const kind =
+      parts[2] === "lk"
+        ? "ask-meetup-announcement-link"
+        : "resend-meetup-announcement";
+    return key.success
+      ? { kind, token: token.data, key: key.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 6 && parts[2] === "rr") {
+    const key = AnnouncementKeySchema.safeParse(parts[4]);
+    const nonce = AnnouncementKeySchema.safeParse(parts[5]);
+    return key.success && nonce.success
+      ? {
+          kind: "resend-confirmed-meetup-announcement",
+          token: token.data,
+          key: key.data,
+          nonce: nonce.data,
+        }
       : { kind: "malformed" };
   }
   if (parts.length !== 7 || parts[2] !== "cf") return { kind: "malformed" };

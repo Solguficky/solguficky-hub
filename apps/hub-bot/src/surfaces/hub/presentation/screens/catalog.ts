@@ -1194,6 +1194,13 @@ export const screenCatalog = {
     nav: "confirm",
     irreversible: true,
   },
+  // Неопределённый исход отправки: человек проверяет чат и выбирает, прикрепить
+  // найденный пост по ссылке или отправить заново после явного подтверждения.
+  "meetup-announcement-unknown": {
+    class: "screen",
+    nav: "choice",
+    title: "Проверь чат",
+  },
 } as const;
 
 export type ScreenId = keyof typeof screenCatalog;
