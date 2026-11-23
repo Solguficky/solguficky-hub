@@ -1186,6 +1186,21 @@ export const screenCatalog = {
   // подписью и одной кнопкой «‹ Аукцион».
   "auction-promo": { class: "trace", nav: "tree", parent: "auction-root" },
   "access-opened": { class: "trace", nav: "free" },
+  // Анонс сходки (PER-925): видимый пост в чате сообщества — след с одной
+  // кнопкой-ссылкой в бот, а кадры ввода и подтверждения — в личке.
+  "meetup-announcement-post": { class: "trace", nav: "links" },
+  "meetup-announcement-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
+  // Неопределённый исход отправки: человек проверяет чат и выбирает, прикрепить
+  // найденный пост по ссылке или отправить заново после явного подтверждения.
+  "meetup-announcement-unknown": {
+    class: "screen",
+    nav: "choice",
+    title: "Проверь чат",
+  },
 } as const;
 
 export type ScreenId = keyof typeof screenCatalog;
