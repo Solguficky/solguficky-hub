@@ -740,9 +740,7 @@ export type BotRuntime = {
   // Постоянный реестр постов анонсов (PER-926): по (чат, сообщение) хранит
   // исходную сходку, подпись и клавиатуру. Нет — правка недоступна.
   announcementPostsRegistry?: AnnouncementPostRegistry;
-  // Кадры подтверждения и повтора правки живут в памяти процесса; новый бот
-  // (рестарт) начинает с пустой картой, если не попросить разделить её.
-  announcementFramesShared?: boolean;
+
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -1039,6 +1037,20 @@ type PendingMeetupTextEdit = {
 // dropOpenQuestions снимает обычные вопросы по нажатию, а эти кадры должны
 // жить до явного действия человека.
 const announcementEditFrames = new Map<string, PendingInput>();
+const editFrameLimit = 1_000;
+
+function rememberEditFrame(key: string, frame: PendingInput): void {
+  for (const [oldKey, old] of announcementEditFrames) {
+    if (old.expiresAt <= Date.now()) announcementEditFrames.delete(oldKey);
+  }
+  announcementEditFrames.delete(key);
+  announcementEditFrames.set(key, frame);
+  while (announcementEditFrames.size > editFrameLimit) {
+    const oldest = announcementEditFrames.keys().next();
+    if (oldest.done === true) break;
+    announcementEditFrames.delete(oldest.value);
+  }
+}
 
 type PendingEditTextRetry = {
   kind: "edit-material-text-retry";
@@ -1502,9 +1514,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     );
   }
   const questions = new Map<string, PendingInput>();
-  if (runtime.announcementFramesShared !== true) {
-    announcementEditFrames.clear();
-  }
+  // Новый процесс начинает с пустой картой кадров: старые кнопки после
+  // рестарта честно дают отказ по устаревшему предпросмотру.
+  announcementEditFrames.clear();
   const announcementPosts = createAnnouncementPosts();
   const materialAlbums = createMaterialAlbums();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
@@ -2430,7 +2442,7 @@ async function handleMessage(
           }),
         },
       );
-      announcementEditFrames.set(
+      rememberEditFrame(
         questionKey(ctx.chat?.id ?? 0, confirmation.message_id),
         {
           kind: "edit-material-text-confirm",
@@ -6459,7 +6471,7 @@ async function handleCallback(
           return;
         }
         // Второй таймаут: исход по-прежнему неизвестен, повтор остаётся доступным.
-        await showEditRetry(ctx, announcementEditFrames, pending);
+        await showEditRetry(ctx, pending);
         outcome = {
           level: "warn",
           message: "material text edit retry outcome unknown",
@@ -6570,7 +6582,7 @@ async function handleCallback(
         } catch (cause) {
           // Сеть, 429 и 5xx — неопределённость: Telegram мог применить правку.
           if (!(cause instanceof GrammyError && cause.error_code === 400)) {
-            await showEditRetry(ctx, announcementEditFrames, {
+            await showEditRetry(ctx, {
               kind: "edit-material-text-retry",
               meetupId: target.meetupId,
               materialId: target.materialId,
@@ -8593,7 +8605,6 @@ function announcementResendScreen(action: {
 /** Кадр неопределённого исхода: повтор того же текста по действию человека. */
 async function showEditRetry(
   ctx: UpdateContext,
-  frames: Map<string, PendingInput>,
   pending: PendingEditTextRetry,
 ): Promise<void> {
   const frame = await ctx.reply(
@@ -8615,7 +8626,7 @@ async function showEditRetry(
       },
     },
   );
-  frames.set(questionKey(ctx.chat?.id ?? 0, frame.message_id), pending);
+  rememberEditFrame(questionKey(ctx.chat?.id ?? 0, frame.message_id), pending);
 }
 
 // Общая критическая секция правки анонсов в пределах процесса: чтение ревизии,
