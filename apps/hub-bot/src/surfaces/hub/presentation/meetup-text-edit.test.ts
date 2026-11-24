@@ -357,7 +357,9 @@ describe("meetup announcement text edit (PER-926)", () => {
   });
 
   it("explains a Telegram refusal on a foreign post and keeps the material", async () => {
+    const registry = createRegistry();
     const h = setup({
+      registry,
       respond: (method) =>
         method === "editMessageText"
           ? telegramError("message can't be edited")
@@ -365,6 +367,8 @@ describe("meetup announcement text edit (PER-926)", () => {
     });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(confirm());
+    // Подтверждённый отказ снимает блок: пост остаётся доступным для повтора.
+    expect(registry.editing).toBeUndefined();
     expect(
       h.records.some(
         (r) => r.message === "material text edit denied by telegram",

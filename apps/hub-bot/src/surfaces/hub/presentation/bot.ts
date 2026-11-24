@@ -6374,21 +6374,10 @@ async function handleCallback(
           },
         );
       } catch (cause) {
-        // Потеря ответа/сетевой сбой — не подтверждённый отказ: Telegram мог
-        // применить правку, поэтому блок поста остаётся и после рестарта.
-        if (
-          !(
-            cause instanceof GrammyError &&
-            cause.error_code === 400 &&
-            (isNotModified(cause) ||
-              postTooLongError(cause) ||
-              cause.description.includes("message can't be edited") ||
-              cause.description.includes(
-                "there is no text in the message to edit",
-              ) ||
-              cause.description.includes("message to edit not found"))
-          )
-        ) {
+        // Любой ответ 400 — подтверждённый отказ Telegram: правка не
+        // применялась, блок можно снимать. Сеть, 429 и 5xx — неопределённость:
+        // Telegram мог применить правку, поэтому блок остаётся и после рестарта.
+        if (!(cause instanceof GrammyError && cause.error_code === 400)) {
           await showScreen(ctx, {
             id: "outcome",
             text: outcomeText(

@@ -35,7 +35,8 @@ const RecordSchema = z.object({
     url: z.string().min(1),
   }),
   // Блок на время внешнего эффекта: пока он стоит, новый предпросмотр и
-  // подтверждение правки не открываются, а после рестарта блок истекает.
+  // подтверждение правки не открываются. Блок не снимается ни временем, ни
+  // рестартом: только подтверждённым ответом Telegram или снятием записи.
   editing: z
     .object({ token: z.string().min(1), until: z.number().int() })
     .optional(),
@@ -75,7 +76,7 @@ export type AnnouncementPostRegistry = {
     token: string,
     lastPrint: string,
   ): Promise<void>;
-  /** Снимает блок после отказа или неопределённого исхода вызова. */
+  /** Снимает блок после подтверждённого отказа Telegram. */
   cancelEdit(
     record: AnnouncementPostRecord,
     seq: number,
