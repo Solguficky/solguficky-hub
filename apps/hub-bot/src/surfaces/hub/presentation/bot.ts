@@ -1074,6 +1074,9 @@ type PendingEditTextConfirmation = {
   meetupId: string;
   materialId: string;
   origin: MaterialsOrigin;
+  /** Целевой пост из серверного кадра: ключ очереди правки. */
+  chatId: number;
+  messageId: number;
   version: number;
   seq: number;
   print: string;
@@ -2449,6 +2452,8 @@ async function handleMessage(
           meetupId: pending.meetupId,
           materialId: pending.materialId,
           origin: pending.origin,
+          chatId: target.ref.chatId,
+          messageId: target.ref.messageId,
           version: target.meetup.version,
           seq: target.seq,
           print,
@@ -6297,11 +6302,16 @@ async function handleCallback(
     }
     if (action.kind === "retry-edit-material-text") {
       const uc: ProductUseCase = "announce_meetup";
-      await inAnnouncementEditQueue(async () => {
-        const retryKey = questionKey(
-          ctx.chat?.id ?? 0,
-          ctx.callbackQuery?.message?.message_id ?? 0,
-        );
+      const retryKey = questionKey(
+        ctx.chat?.id ?? 0,
+        ctx.callbackQuery?.message?.message_id ?? 0,
+      );
+      const preflight = announcementEditFrames.get(retryKey);
+      const queueKey =
+        preflight?.kind === "edit-material-text-retry"
+          ? `${preflight.chatId}.${preflight.messageId}`
+          : "unknown-post";
+      await inAnnouncementEditQueue(queueKey, async () => {
         const storedRetry = announcementEditFrames.get(retryKey);
         const pending =
           storedRetry !== undefined && storedRetry.expiresAt > Date.now()
@@ -6489,7 +6499,16 @@ async function handleCallback(
     }
     if (action.kind === "confirm-edit-material-text") {
       const uc: ProductUseCase = "announce_meetup";
-      await inAnnouncementEditQueue(async () => {
+      const preflightKey = questionKey(
+        ctx.chat?.id ?? 0,
+        ctx.callbackQuery?.message?.message_id ?? 0,
+      );
+      const preflight = announcementEditFrames.get(preflightKey);
+      const queueKey =
+        preflight?.kind === "edit-material-text-confirm"
+          ? `${preflight.chatId}.${preflight.messageId}`
+          : "unknown-post";
+      await inAnnouncementEditQueue(queueKey, async () => {
         const preview = parsePreviewText(
           ctx.callbackQuery?.message,
           ctx.me.id,
@@ -8629,16 +8648,25 @@ async function showEditRetry(
   rememberEditFrame(questionKey(ctx.chat?.id ?? 0, frame.message_id), pending);
 }
 
-// Общая критическая секция правки анонсов в пределах процесса: чтение ревизии,
-// вызов Telegram и CAS-фиксация идут в одной очереди. Иначе два обработчика
-// читают одну ревизию, а второй пишет устаревший текст уже после первого
-// (ревью координатора PER-926). Постоянной блокировки нет: очередь живёт только
-// пока выполняется запрос.
-let announcementEditQueue: Promise<unknown> = Promise.resolve();
+// Критическая секция правки конкретного поста в пределах процесса: чтение
+// ревизии, вызов Telegram и CAS-фиксация идут в одной очереди на (чат, сообщение).
+// Иначе два обработчика читают одну ревизию, а второй пишет устаревший текст
+// уже после первого (ревью координатора PER-926). Разные посты не ждут друг
+// друга; постоянной блокировки нет — очередь живёт только пока идёт запрос.
+const announcementEditQueues = new Map<string, Promise<unknown>>();
 
-function inAnnouncementEditQueue<T>(run: () => Promise<T>): Promise<T> {
-  const current = announcementEditQueue.catch(() => undefined).then(run);
-  announcementEditQueue = current;
+function inAnnouncementEditQueue<T>(
+  key: string,
+  run: () => Promise<T>,
+): Promise<T> {
+  const previous = announcementEditQueues.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(run);
+  announcementEditQueues.set(key, current);
+  void current.finally(() => {
+    if (announcementEditQueues.get(key) === current) {
+      announcementEditQueues.delete(key);
+    }
+  });
   return current;
 }
 

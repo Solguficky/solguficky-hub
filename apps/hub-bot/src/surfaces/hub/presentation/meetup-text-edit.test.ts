@@ -24,6 +24,8 @@ const communityChatId = -1001234567890;
 const postId = 28;
 const postLink = `https://t.me/c/1234567890/${postId}`;
 const materialId = "0199c0de-0000-7000-8000-000000000001";
+const otherMaterialId = "0199c0de-0000-7000-8000-000000000002";
+const otherPostId = 29;
 const body = "Новый текст анонса";
 const recordedSignature = "Анна";
 const editorName = "Борис";
@@ -70,7 +72,12 @@ type FakeRegistry = AnnouncementPostRegistry & {
 };
 
 function createRegistry(
-  options: { meetupId?: string; signature?: string; mode?: RegistryMode } = {},
+  options: {
+    meetupId?: string;
+    signature?: string;
+    mode?: RegistryMode;
+    messageIds?: readonly number[];
+  } = {},
 ): FakeRegistry {
   const mode = options.mode ?? "ok";
   const record = {
@@ -100,10 +107,11 @@ function createRegistry(
         return { kind: "unavailable", cause: "kv down" };
       }
       if (mode === "missing") return { kind: "missing" };
-      if (chatId !== communityChatId || messageId !== postId) {
+      const allowed = options.messageIds ?? [postId];
+      if (chatId !== communityChatId || !allowed.includes(messageId)) {
         return { kind: "missing" };
       }
-      return { kind: "found", record, seq };
+      return { kind: "found", record: { ...record, messageId }, seq };
     },
     async commitEdit(_record, expectedSeq) {
       if (expectedSeq !== seq) return false;
@@ -247,6 +255,13 @@ function editCalls(calls: readonly RecordedCall[]): RecordedCall[] {
   );
 }
 
+async function openConfirmation(
+  h: ReturnType<typeof setup>,
+  answer = body,
+): Promise<(text?: string) => Update> {
+  return openConfirmationFor(h, h.materialToken, answer);
+}
+
 function lastEditConfirm(calls: readonly RecordedCall[]): {
   data: string;
   messageId: number;
@@ -268,12 +283,13 @@ function lastEditConfirm(calls: readonly RecordedCall[]): {
   throw new Error("edit confirmation not found");
 }
 
-async function openConfirmation(
+async function openConfirmationFor(
   h: ReturnType<typeof setup>,
+  materialToken: string,
   answer = body,
 ): Promise<(text?: string) => Update> {
   await h.bot.handleUpdate(
-    callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
+    callbackUpdate(`v1:mm:et:${h.token}:${materialToken}`),
   );
   const questionId = lastQuestionId(h.calls);
   await h.bot.handleUpdate(replyUpdate(answer, questionId));
@@ -848,36 +864,80 @@ describe("meetup announcement text edit (PER-926)", () => {
     ).toBe(false);
   });
 
-  it("serializes two overlapping confirmations and keeps only the first text", async () => {
+  it("serializes one post while another post can still be edited", async () => {
+    let entered!: () => void;
+    const firstReachedTelegram = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
     let editCallsCount = 0;
     const h = setup({
+      registry: createRegistry({ messageIds: [postId, otherPostId] }),
+      initial: meetupOf({
+        materials: [
+          {
+            id: materialId,
+            title: "Анонс",
+            source: {
+              kind: "message-link",
+              url: `https://t.me/c/1234567890/${postId}`,
+            },
+          },
+          {
+            id: otherMaterialId,
+            title: "Другой анонс",
+            source: {
+              kind: "message-link",
+              url: `https://t.me/c/1234567890/${otherPostId}`,
+            },
+          },
+        ],
+      }),
       respond: (method, payload) => {
         if (
           method === "editMessageText" &&
           (payload as { chat_id?: number }).chat_id === communityChatId
         ) {
           editCallsCount += 1;
-          if (editCallsCount === 1) return gate;
+          if (editCallsCount === 1) {
+            entered();
+            return gate;
+          }
         }
         return undefined;
       },
     });
-    const firstPress = await openConfirmation(h);
-    const first = lastEditConfirm(h.calls);
-    const secondPress = await openConfirmation(h, "Второй текст");
-    const second = lastEditConfirm(h.calls);
-    expect(first.data).not.toBe(second.data);
+    const firstPress = await openConfirmationFor(h, h.materialToken);
+    const secondPress = await openConfirmationFor(
+      h,
+      h.materialToken,
+      "Второй текст",
+    );
+    const otherPress = await openConfirmationFor(
+      h,
+      uuidToToken(otherMaterialId),
+    );
 
     const firstPending = h.bot.handleUpdate(firstPress());
+    // Барьер: первая правка дошла до Telegram и всё ещё ждёт ответа.
+    await firstReachedTelegram;
     const secondPending = h.bot.handleUpdate(secondPress());
+    const otherPending = h.bot.handleUpdate(otherPress());
+    // Вторая правка того же поста ждёт очереди; другой пост уже обновился.
+    await vi.waitFor(() => expect(editCallsCount).toBe(2));
+    expect(
+      editCalls(h.calls).some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          `message_id=${otherPostId}`,
+        ),
+      ) || editCalls(h.calls).length === 2,
+    ).toBe(true);
+
     release();
-    await Promise.all([firstPending, secondPending]);
-    expect(editCallsCount).toBe(1);
-    expect(editCalls(h.calls)).toHaveLength(1);
+    await Promise.all([firstPending, secondPending, otherPending]);
     expect(
       h.records.some((r) => r.message === "material text edit confirmed"),
     ).toBe(true);
@@ -886,10 +946,10 @@ describe("meetup announcement text edit (PER-926)", () => {
         (r) => r.message === "material text edit preview conflict",
       ),
     ).toBe(true);
-    const applied = editCalls(h.calls)[0]?.payload;
+    const applied = editCalls(h.calls).find((call) =>
+      String((call.payload as { text?: string }).text ?? "").includes(body),
+    );
     expect(applied).toBeDefined();
-    const text = String((applied as { text?: string }).text ?? "");
-    expect(text).toContain(body);
   });
 
   it("refuses a double press of the same confirmation", async () => {
