@@ -745,20 +745,30 @@ describe("meetup announcement text edit (PER-926)", () => {
   });
 
   it("treats not modified on retry as a confirmed success", async () => {
+    let calls = 0;
     const h = setup({
       respond: (method, payload) => {
         if (
           method === "editMessageText" &&
           (payload as { chat_id?: number }).chat_id === communityChatId
         ) {
-          throw telegramError("message is not modified");
+          calls += 1;
+          // Первый вызов теряется и создаёт кадр повтора; второй получает
+          // Telegram подтверждает, что нужный текст уже применён.
+          throw calls === 1
+            ? new Error("timeout")
+            : telegramError("message is not modified");
         }
         return undefined;
       },
     });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(confirm());
+    expect(
+      h.records.some((r) => r.message === "material text edit outcome unknown"),
+    ).toBe(true);
     await pressRetry(h);
+    expect(calls).toBe(2);
     expect(
       h.records.some((r) => r.message === "material text edit confirmed"),
     ).toBe(true);

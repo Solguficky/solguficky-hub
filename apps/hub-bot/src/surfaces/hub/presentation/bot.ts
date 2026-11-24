@@ -6284,7 +6284,7 @@ async function handleCallback(
         await showRefusal(
           ctx,
           "Этот повтор больше недоступен. Открой «Материалы» и начни правку заново.",
-          exitToMaterials("", "card"),
+          exitToMeetups(),
         );
         outcome = {
           level: "info",
@@ -6366,7 +6366,7 @@ async function handleCallback(
         if (!committed) {
           await showRefusal(
             ctx,
-            "Пост уже изменили позже этого повтора. Открой «Материалы» заново.",
+            "Не удалось подтвердить результат в реестре. Пост мог измениться позже этого повтора — открой «Материалы» заново.",
             exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
           );
           outcome = {
@@ -6592,7 +6592,7 @@ async function handleCallback(
           if (!committed) {
             await showRefusal(
               ctx,
-              "Пост уже изменили позже этого предпросмотра. Открой «Материалы» заново.",
+              "Не удалось подтвердить результат в реестре. Пост мог измениться позже предпросмотра — открой «Материалы» заново.",
               exitToMaterials(action.token, action.origin),
             );
             outcome = {
@@ -6739,7 +6739,7 @@ async function handleCallback(
       if (!committed) {
         await showRefusal(
           ctx,
-          "Пост уже изменили позже этого предпросмотра. Открой «Материалы» заново.",
+          "Не удалось подтвердить результат в реестре. Пост мог измениться позже предпросмотра — открой «Материалы» заново.",
           exitToMaterials(action.token, action.origin),
         );
         outcome = {
@@ -8614,56 +8614,6 @@ async function serializedAnnouncementEdit(
     if (inFlightAnnouncementEdits.get(key) === current) {
       inFlightAnnouncementEdits.delete(key);
     }
-  }
-}
-
-type AnnouncementTextEditResult =
-  | { kind: "ok" }
-  | { kind: "notModified" }
-  | { kind: "notFound" }
-  | { kind: "refused"; description: string }
-  | { kind: "unknown"; cause: unknown };
-
-async function applyAnnouncementText(
-  ctx: UpdateContext,
-  target: {
-    ref: { chatId: number; messageId: number };
-    record: AnnouncementPostRecord;
-  },
-  text: {
-    signature: string;
-    body: string;
-    keyboard: { text: string; url: string };
-  },
-): Promise<AnnouncementTextEditResult> {
-  const key = `${target.ref.chatId}.${target.ref.messageId}`;
-  try {
-    await serializedAnnouncementEdit(key, () =>
-      ctx.api.editMessageText(
-        target.ref.chatId,
-        target.ref.messageId,
-        announcementPostText(text.signature, text.body),
-        {
-          ...screenMark("meetup-announcement-post"),
-          parse_mode: "HTML",
-          reply_markup: new InlineKeyboard().url(
-            text.keyboard.text,
-            text.keyboard.url,
-          ),
-        },
-      ),
-    );
-    return { kind: "ok" };
-  } catch (cause) {
-    if (isNotModified(cause)) return { kind: "notModified" };
-    if (!(cause instanceof GrammyError)) {
-      return { kind: "unknown", cause };
-    }
-    if (cause.error_code !== 400) return { kind: "unknown", cause };
-    if (cause.description.includes("message to edit not found")) {
-      return { kind: "notFound" };
-    }
-    return { kind: "refused", description: cause.description };
   }
 }
 
