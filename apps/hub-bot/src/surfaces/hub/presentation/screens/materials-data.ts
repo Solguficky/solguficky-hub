@@ -152,6 +152,9 @@ export function materialsConfirmEditTextData(
   return `${materialsData(origin, "ee")}:${bytes.toString("base64url")}`;
 }
 
+/** Явный повтор неопределённой правки; запись операции ищется по кадру. */
+export const materialsRetryEditTextData = "v1:mm:rt";
+
 /** «Нет» на предпросмотре правки: исход с «Ввести заново». */
 export function materialsDeclineEditTextData(
   origin: MaterialsOrigin,

@@ -66,9 +66,7 @@ type FakeRegistry = AnnouncementPostRegistry & {
   reads: number;
   writes: number;
   seq: number;
-  readonly editing: { token: string; until: number } | undefined;
   bump(): void;
-  expireLock(): void;
 };
 
 function createRegistry(
@@ -83,21 +81,14 @@ function createRegistry(
     keyboard: recordedKeyboard,
   };
   let seq = 1;
-  let editing: { token: string; until: number } | undefined;
   return {
     reads: 0,
     writes: 0,
     get seq() {
       return seq;
     },
-    get editing() {
-      return editing;
-    },
     bump() {
       seq += 1;
-    },
-    expireLock() {
-      if (editing !== undefined) editing = { ...editing, until: 0 };
     },
     async remember() {
       this.writes += 1;
@@ -112,22 +103,12 @@ function createRegistry(
       if (chatId !== communityChatId || messageId !== postId) {
         return { kind: "missing" };
       }
-      return { kind: "found", record: { ...record, editing }, seq };
+      return { kind: "found", record, seq };
     },
-    async beginEdit(_record, expectedSeq, token, until) {
-      if (expectedSeq !== seq || editing !== undefined) return { ok: false };
-      editing = { token, until };
+    async commitEdit(_record, expectedSeq) {
+      if (expectedSeq !== seq) return false;
       seq += 1;
-      return { ok: true, seq };
-    },
-    async finishEdit(_record, expectedSeq, token, print) {
-      if (expectedSeq !== seq || editing?.token !== token) return;
-      editing = undefined;
-      void print;
-    },
-    async cancelEdit(_record, expectedSeq, token) {
-      if (expectedSeq !== seq || editing?.token !== token) return;
-      editing = undefined;
+      return true;
     },
     async close() {},
   };
@@ -367,8 +348,8 @@ describe("meetup announcement text edit (PER-926)", () => {
     });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(confirm());
-    // Подтверждённый отказ снимает блок: пост остаётся доступным для повтора.
-    expect(registry.editing).toBeUndefined();
+    // Подтверждённый отказ не сдвигает ревизию: материал остаётся доступным.
+    expect(registry.seq).toBe(1);
     expect(
       h.records.some(
         (r) => r.message === "material text edit denied by telegram",
@@ -446,7 +427,7 @@ describe("meetup announcement text edit (PER-926)", () => {
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(confirm());
     expect(
-      h.records.some((r) => r.message === "material text edit unchanged"),
+      h.records.some((r) => r.message === "material text edit confirmed"),
     ).toBe(true);
   });
 
@@ -708,79 +689,146 @@ describe("meetup announcement text edit (PER-926)", () => {
     expect(editCalls(h.calls)).toHaveLength(1);
   });
 
-  it("blocks a preview opened after the first CAS while Telegram is delayed", async () => {
-    const registry = createRegistry();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const h = setup({
-      registry,
-      respond: (method, payload) => {
-        if (
-          method === "editMessageText" &&
-          (payload as { chat_id?: number }).chat_id === communityChatId
-        ) {
-          return gate;
-        }
-        return undefined;
-      },
-    });
-    const confirm = await openConfirmation(h);
-    const pending = h.bot.handleUpdate(confirm());
-    await vi.waitFor(() => expect(registry.editing).toBeDefined());
-
-    // Даже после истечения срока блокировка не снимается: неизвестный исход
-    // не должен открывать вторую запись поверх первой.
-    registry.expireLock();
-    // Второй предпросмотр открылся после первого CAS, но до ответа Telegram.
-    await h.bot.handleUpdate(
-      callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
+  function retryFrameId(calls: readonly RecordedCall[]): number {
+    const index = calls.findLastIndex((call) =>
+      JSON.stringify(call.payload).includes("v1:mm:rt"),
     );
-    expect(
-      h.records.some((r) => r.message === "material text edit already running"),
-    ).toBe(true);
-    expect(editCalls(h.calls)).toHaveLength(1);
+    return 101 + index;
+  }
 
-    release();
-    await pending;
-    await vi.waitFor(() => expect(registry.editing).toBeUndefined());
-    expect(editCalls(h.calls)).toHaveLength(1);
-  });
+  function pressRetry(h: ReturnType<typeof setup>, fromId = 42): Promise<void> {
+    const id = retryFrameId(h.calls);
+    return h.bot.handleUpdate(
+      callbackUpdate(
+        "v1:mm:rt",
+        { ...previewMessage(), message_id: id },
+        fromId,
+      ),
+    );
+  }
 
-  it("keeps the lock when the Telegram response is lost", async () => {
+  it("applies the same text on an explicit retry after a timeout", async () => {
     const registry = createRegistry();
+    let failed = false;
     const h = setup({
       registry,
       respond: (method, payload) => {
         if (
           method === "editMessageText" &&
-          (payload as { chat_id?: number }).chat_id === communityChatId
+          (payload as { chat_id?: number }).chat_id === communityChatId &&
+          !failed
         ) {
-          throw new Error("network lost");
+          failed = true;
+          throw new Error("timeout");
         }
         return undefined;
       },
     });
     const confirm = await openConfirmation(h);
     await h.bot.handleUpdate(confirm());
-    // Вызов записан трансформером, но ответ потерян: успеха нет.
-    expect(editCalls(h.calls)).toHaveLength(1);
     expect(
       h.records.some((r) => r.message === "material text edit outcome unknown"),
     ).toBe(true);
-    expect(registry.editing).toBeDefined();
     expect(
       h.calls.some((call) =>
         JSON.stringify(call.payload).includes(
-          "Правка этого поста временно заблокирована",
+          "Результат правки не подтверждён",
         ),
       ),
     ).toBe(true);
+
+    await pressRetry(h);
     expect(
-      h.calls.some((call) =>
-        JSON.stringify(call.payload).includes("Попробуй позже"),
+      h.records.some((r) => r.message === "material text edit confirmed"),
+    ).toBe(true);
+    expect(registry.seq).toBe(2);
+  });
+
+  it("treats not modified on retry as a confirmed success", async () => {
+    const h = setup({
+      respond: (method, payload) => {
+        if (
+          method === "editMessageText" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          throw telegramError("message is not modified");
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(confirm());
+    await pressRetry(h);
+    expect(
+      h.records.some((r) => r.message === "material text edit confirmed"),
+    ).toBe(true);
+  });
+
+  it("keeps the retry available after a second timeout", async () => {
+    const h = setup({
+      respond: (method, payload) => {
+        if (
+          method === "editMessageText" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          throw new Error("timeout again");
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(confirm());
+    await pressRetry(h);
+    expect(
+      h.records.some(
+        (r) => r.message === "material text edit retry outcome unknown",
       ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) => JSON.stringify(call.payload).includes("v1:mm:rt")),
+    ).toBe(true);
+  });
+
+  it("rejects a retry after a newer confirmed revision", async () => {
+    const registry = createRegistry();
+    const h = setup({
+      registry,
+      respond: (method, payload) => {
+        if (
+          method === "editMessageText" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          throw new Error("timeout");
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(confirm());
+    registry.bump();
+    await pressRetry(h);
+    expect(
+      h.records.some(
+        (r) => r.message === "material text edit retry superseded",
+      ),
+    ).toBe(true);
+    expect(
+      h.records.some((r) => r.message === "material text edit confirmed"),
     ).toBe(false);
+  });
+
+  it("refuses a double press of the same confirmation", async () => {
+    const h = setup();
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(confirm());
+    await h.bot.handleUpdate(confirm());
+    expect(
+      h.records.filter((r) => r.message === "material text edit confirmed"),
+    ).toHaveLength(1);
+    expect(
+      h.records.some(
+        (r) => r.message === "material text edit preview conflict",
+      ),
+    ).toBe(true);
   });
 });

@@ -811,6 +811,7 @@ type PlainAction =
       origin: MaterialsOrigin;
       materialToken: string;
     }
+  | { kind: "retry-edit-material-text" }
   | { kind: "view-meetup"; token: string }
   // Расширения (PER-605): меню «Расширения» сходки и «Расширения» в
   // «Настройках».
@@ -2584,6 +2585,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   const materialsOrigin = materialsOriginOf(parts[1] ?? "");
   if (materialsOrigin !== undefined) {
+    if (parts.length === 3 && parts[2] === "rt") {
+      return { kind: "retry-edit-material-text" };
+    }
     // Упакованное подтверждение правки: токены внутри блока, до проверки
     // обычного 22-значного токена.
     if (parts.length === 4 && parts[2] === "ee") {

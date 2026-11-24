@@ -593,6 +593,7 @@ import {
   materialsDeclineEditTextData,
   materialsEditTextData,
   materialsListData,
+  materialsRetryEditTextData,
 } from "./screens/materials-data.js";
 import {
   archiveScreen,
@@ -1029,6 +1030,25 @@ type PendingMeetupTextEdit = {
 // Состояние показанного предпросмотра правки. Живёт в карте вопросов под
 // номером кадра подтверждения: после рестарта его нет, и старая кнопка не
 // меняет текст поста (ревью CodeRabbit).
+// Неопределённый исход вызова: сохраняем подтверждённые текст, кнопки и
+// идентичность операции, чтобы человек явно повторил её той же кнопкой.
+type PendingEditTextRetry = {
+  kind: "edit-material-text-retry";
+  meetupId: string;
+  materialId: string;
+  origin: MaterialsOrigin;
+  chatId: number;
+  messageId: number;
+  signature: string;
+  body: string;
+  keyboard: { text: string; url: string };
+  print: string;
+  version: number;
+  seq: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
+
 type PendingEditTextConfirmation = {
   kind: "edit-material-text-confirm";
   meetupId: string;
@@ -1267,6 +1287,7 @@ type HubPendingInput =
   | PendingAnnouncementLink
   | PendingMeetupTextEdit
   | PendingEditTextConfirmation
+  | PendingEditTextRetry
   | PendingBroadcastBody
   | PendingLot
   | PendingConsoleWeek
@@ -6248,6 +6269,198 @@ async function handleCallback(
       };
       return;
     }
+    if (action.kind === "retry-edit-material-text") {
+      const pending = questions.get(
+        questionKey(
+          ctx.chat?.id ?? 0,
+          ctx.callbackQuery?.message?.message_id ?? 0,
+        ),
+      );
+      if (
+        pending === undefined ||
+        pending.kind !== "edit-material-text-retry" ||
+        pending.telegramUserId !== (ctx.from?.id ?? 0)
+      ) {
+        await showRefusal(
+          ctx,
+          "Этот повтор больше недоступен. Открой «Материалы» и начни правку заново.",
+          exitToMaterials("", "card"),
+        );
+        outcome = {
+          level: "info",
+          message: "material text edit retry stale frame",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const target = await resolveEditTextTarget(
+        ctx,
+        runtime,
+        person,
+        useCase,
+        {
+          token: uuidToToken(pending.meetupId),
+          origin: pending.origin,
+          materialToken: uuidToToken(pending.materialId),
+        },
+      );
+      if (target.kind === "denied") {
+        outcome = target.outcome;
+        return;
+      }
+      // Если после таймаута подтвердили более новую редакцию, старый повтор
+      // не должен вернуть пост к прежнему тексту.
+      if (
+        target.seq !== pending.seq ||
+        target.meetup.version !== pending.version
+      ) {
+        await showRefusal(
+          ctx,
+          "Пост или сходка изменились позже этого повтора. Открой «Материалы» заново.",
+          exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
+        );
+        outcome = {
+          level: "info",
+          message: "material text edit retry superseded",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+        };
+        return;
+      }
+      let editError: unknown;
+      try {
+        await serializedAnnouncementEdit(
+          `${pending.chatId}.${pending.messageId}`,
+          () =>
+            ctx.api.editMessageText(
+              pending.chatId,
+              pending.messageId,
+              announcementPostText(pending.signature, pending.body),
+              {
+                ...screenMark("meetup-announcement-post"),
+                parse_mode: "HTML",
+                reply_markup: new InlineKeyboard().url(
+                  pending.keyboard.text,
+                  pending.keyboard.url,
+                ),
+              },
+            ),
+        );
+      } catch (cause) {
+        editError = cause;
+      }
+      if (editError === undefined || isNotModified(editError)) {
+        const committed =
+          (await runtime.announcementPostsRegistry?.commitEdit(
+            target.record,
+            target.seq,
+          )) ?? false;
+        questions.delete(
+          questionKey(
+            ctx.chat?.id ?? 0,
+            ctx.callbackQuery?.message?.message_id ?? 0,
+          ),
+        );
+        if (!committed) {
+          await showRefusal(
+            ctx,
+            "Пост уже изменили позже этого повтора. Открой «Материалы» заново.",
+            exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
+          );
+          outcome = {
+            level: "info",
+            message: "material text edit retry superseded",
+            result: "ok",
+            use_case: useCase,
+            meetup_id: pending.meetupId,
+          };
+          return;
+        }
+        await showScreen(ctx, {
+          id: "outcome",
+          text: outcomeText("Анонс обновлён."),
+          keyboard: exitToMaterials(
+            uuidToToken(pending.meetupId),
+            pending.origin,
+          ),
+          format: "HTML",
+        });
+        outcome = {
+          level: "info",
+          message: "material text edit confirmed",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+          identity_id: person.identityId,
+        };
+        return;
+      }
+      if (
+        editError instanceof GrammyError &&
+        editError.description.includes("message to edit not found")
+      ) {
+        questions.delete(
+          questionKey(
+            ctx.chat?.id ?? 0,
+            ctx.callbackQuery?.message?.message_id ?? 0,
+          ),
+        );
+        await showRefusal(
+          ctx,
+          "Не удалось найти сообщение в чате: возможно, оно удалено. Материал остался без изменений.",
+          exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
+        );
+        outcome = {
+          level: "warn",
+          message: "material text edit post not found",
+          result: "error",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+          error_category: "dependency_unavailable",
+          error: "telegram_message_not_found",
+        };
+        return;
+      }
+      if (editError instanceof GrammyError && editError.error_code === 400) {
+        questions.delete(
+          questionKey(
+            ctx.chat?.id ?? 0,
+            ctx.callbackQuery?.message?.message_id ?? 0,
+          ),
+        );
+        await showRefusal(
+          ctx,
+          "Telegram отклонил повтор правки. Материал остался без изменений.",
+          exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
+        );
+        outcome = {
+          level: "warn",
+          message: "material text edit retry refused",
+          result: "error",
+          use_case: useCase,
+          meetup_id: pending.meetupId,
+          error_category: "invariant",
+          error: editError.description,
+        };
+        return;
+      }
+      // Второй таймаут: исход по-прежнему неизвестен, повтор остаётся доступным.
+      await showEditRetry(ctx, questions, pending);
+      outcome = {
+        level: "warn",
+        message: "material text edit retry outcome unknown",
+        result: "error",
+        use_case: useCase,
+        meetup_id: pending.meetupId,
+        identity_id: person.identityId,
+        error_category: "dependency_unavailable",
+        error:
+          editError instanceof Error ? editError.message : String(editError),
+      };
+      return;
+    }
     if (action.kind === "confirm-edit-material-text") {
       const preview = parsePreviewText(
         ctx.callbackQuery?.message,
@@ -6314,77 +6527,46 @@ async function handleCallback(
         };
         return;
       }
-      // Блок живёт от CAS до завершения вызова Telegram: второй предпросмотр,
-      // открытый после первого CAS, не сможет записать свой текст поверх
-      // ещё выполняющегося первого (ревью координатора PER-926).
-      const editToken = announcementKey();
-      const begun = await runtime.announcementPostsRegistry?.beginEdit(
-        target.record,
-        target.seq,
-        editToken,
-        Date.now() + 60_000,
-      );
-      if (begun === undefined || !begun.ok) {
-        await showRefusal(
-          ctx,
-          "Этот пост уже правили или меняют параллельно. Открой «Материалы» и повтори с новым текстом.",
-          exitToMaterials(action.token, action.origin),
-        );
-        outcome = {
-          level: "warn",
-          message: "material text edit provenance race",
-          result: "error",
-          use_case: useCase,
-          meetup_id: target.meetupId,
-          identity_id: person.identityId,
-          error_category: "invariant",
-          error: "announcement_post_busy",
-        };
-        return;
-      }
-      const releaseEdit = async (applied: boolean): Promise<void> => {
-        const registry = runtime.announcementPostsRegistry;
-        if (registry === undefined) return;
-        if (applied) {
-          await registry.finishEdit(
-            target.record,
-            begun.seq,
-            editToken,
-            action.print,
-          );
-        } else {
-          await registry.cancelEdit(target.record, begun.seq, editToken);
-        }
-      };
       // Подпись и клавиатура — из постоянного реестра: Bot API не возвращает
-      // текст поста, а менять их при правке нельзя (PER-926).
+      // текст поста, а менять их при правке нельзя (PER-926). Пересекающиеся
+      // отправки одного поста сериализуются в пределах процесса.
       const signature = target.record.signature;
       try {
-        await ctx.api.editMessageText(
-          target.ref.chatId,
-          target.ref.messageId,
-          announcementPostText(signature, preview.text),
-          {
-            ...screenMark("meetup-announcement-post"),
-            parse_mode: "HTML",
-            reply_markup: new InlineKeyboard().url(
-              target.record.keyboard.text,
-              target.record.keyboard.url,
+        await serializedAnnouncementEdit(
+          `${target.ref.chatId}.${target.ref.messageId}`,
+          () =>
+            ctx.api.editMessageText(
+              target.ref.chatId,
+              target.ref.messageId,
+              announcementPostText(signature, preview.text),
+              {
+                ...screenMark("meetup-announcement-post"),
+                parse_mode: "HTML",
+                reply_markup: new InlineKeyboard().url(
+                  target.record.keyboard.text,
+                  target.record.keyboard.url,
+                ),
+              },
             ),
-          },
         );
       } catch (cause) {
-        // Любой ответ 400 — подтверждённый отказ Telegram: правка не
-        // применялась, блок можно снимать. Сеть, 429 и 5xx — неопределённость:
-        // Telegram мог применить правку, поэтому блок остаётся и после рестарта.
+        // Сеть, 429 и 5xx — неопределённость: Telegram мог применить правку.
         if (!(cause instanceof GrammyError && cause.error_code === 400)) {
-          await showScreen(ctx, {
-            id: "outcome",
-            text: outcomeText(
-              "Не удалось узнать, применился ли текст: ответ Telegram потерян. Правка этого поста временно заблокирована.",
-            ),
-            keyboard: exitToMaterials(action.token, action.origin),
-            format: "HTML",
+          await showEditRetry(ctx, questions, {
+            kind: "edit-material-text-retry",
+            meetupId: target.meetupId,
+            materialId: target.materialId,
+            origin: action.origin,
+            chatId: target.ref.chatId,
+            messageId: target.ref.messageId,
+            signature: target.record.signature,
+            body: preview.text,
+            keyboard: target.record.keyboard,
+            print: action.print,
+            version: target.meetup.version,
+            seq: target.seq,
+            telegramUserId: ctx.from?.id ?? 0,
+            expiresAt: Date.now() + questionTtlMs,
           });
           outcome = {
             level: "warn",
@@ -6398,21 +6580,40 @@ async function handleCallback(
           };
           return;
         }
-        await releaseEdit(false);
         // Повтор того же текста (двойное нажатие, повторная доставка update,
         // оборванная отправка кадра исхода) — уже желаемое состояние, а не сбой.
         if (isNotModified(cause)) {
+          // Telegram уже держит этот текст — это подтверждённый успех повтора.
+          const committed =
+            (await runtime.announcementPostsRegistry?.commitEdit(
+              target.record,
+              target.seq,
+            )) ?? false;
+          if (!committed) {
+            await showRefusal(
+              ctx,
+              "Пост уже изменили позже этого предпросмотра. Открой «Материалы» заново.",
+              exitToMaterials(action.token, action.origin),
+            );
+            outcome = {
+              level: "info",
+              message: "material text edit preview conflict",
+              result: "ok",
+              use_case: useCase,
+              meetup_id: target.meetupId,
+              identity_id: person.identityId,
+            };
+            return;
+          }
           await showScreen(ctx, {
             id: "outcome",
-            text: outcomeText(
-              "Текст поста уже такой: изменений не требуется. Кнопка осталась.",
-            ),
+            text: outcomeText("Анонс обновлён."),
             keyboard: exitToMaterials(action.token, action.origin),
             format: "HTML",
           });
           outcome = {
             level: "info",
-            message: "material text edit unchanged",
+            message: "material text edit confirmed",
             result: "ok",
             use_case: useCase,
             meetup_id: target.meetupId,
@@ -6530,18 +6731,36 @@ async function handleCallback(
         };
         return;
       }
-      await releaseEdit(true);
+      const committed =
+        (await runtime.announcementPostsRegistry?.commitEdit(
+          target.record,
+          target.seq,
+        )) ?? false;
+      if (!committed) {
+        await showRefusal(
+          ctx,
+          "Пост уже изменили позже этого предпросмотра. Открой «Материалы» заново.",
+          exitToMaterials(action.token, action.origin),
+        );
+        outcome = {
+          level: "info",
+          message: "material text edit preview conflict",
+          result: "ok",
+          use_case: useCase,
+          meetup_id: target.meetupId,
+          identity_id: person.identityId,
+        };
+        return;
+      }
       await showScreen(ctx, {
         id: "outcome",
-        text: outcomeText(
-          "Текст поста в чате сообщества изменён. Подпись и кнопка остались.",
-        ),
+        text: outcomeText("Анонс обновлён."),
         keyboard: exitToMaterials(action.token, action.origin),
         format: "HTML",
       });
       outcome = {
         level: "info",
-        message: "material text edited",
+        message: "material text edit confirmed",
         result: "ok",
         use_case: useCase,
         meetup_id: target.meetupId,
@@ -8349,6 +8568,105 @@ function announcementResendScreen(action: {
   };
 }
 
+/** Кадр неопределённого исхода: повтор того же текста по действию человека. */
+async function showEditRetry(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  pending: PendingEditTextRetry,
+): Promise<void> {
+  const frame = await ctx.reply(
+    outcomeText(
+      "Результат правки не подтверждён. Нажми «Повторить», чтобы применить тот же текст ещё раз.",
+    ),
+    {
+      parse_mode: "HTML",
+      ...screenMark("outcome"),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Повторить",
+              callback_data: materialsRetryEditTextData,
+            },
+          ],
+        ],
+      },
+    },
+  );
+  questions.set(questionKey(ctx.chat?.id ?? 0, frame.message_id), pending);
+}
+
+// Пересекающиеся отправки одного поста сериализуются в пределах процесса:
+// вторая правка ждёт завершения первой, но блок не живёт дольше запроса и не
+// мешает новому предпросмотру (решение владельца по PER-926).
+const inFlightAnnouncementEdits = new Map<string, Promise<unknown>>();
+
+async function serializedAnnouncementEdit(
+  key: string,
+  run: () => Promise<unknown>,
+): Promise<unknown> {
+  const previous = inFlightAnnouncementEdits.get(key) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(run);
+  inFlightAnnouncementEdits.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (inFlightAnnouncementEdits.get(key) === current) {
+      inFlightAnnouncementEdits.delete(key);
+    }
+  }
+}
+
+type AnnouncementTextEditResult =
+  | { kind: "ok" }
+  | { kind: "notModified" }
+  | { kind: "notFound" }
+  | { kind: "refused"; description: string }
+  | { kind: "unknown"; cause: unknown };
+
+async function applyAnnouncementText(
+  ctx: UpdateContext,
+  target: {
+    ref: { chatId: number; messageId: number };
+    record: AnnouncementPostRecord;
+  },
+  text: {
+    signature: string;
+    body: string;
+    keyboard: { text: string; url: string };
+  },
+): Promise<AnnouncementTextEditResult> {
+  const key = `${target.ref.chatId}.${target.ref.messageId}`;
+  try {
+    await serializedAnnouncementEdit(key, () =>
+      ctx.api.editMessageText(
+        target.ref.chatId,
+        target.ref.messageId,
+        announcementPostText(text.signature, text.body),
+        {
+          ...screenMark("meetup-announcement-post"),
+          parse_mode: "HTML",
+          reply_markup: new InlineKeyboard().url(
+            text.keyboard.text,
+            text.keyboard.url,
+          ),
+        },
+      ),
+    );
+    return { kind: "ok" };
+  } catch (cause) {
+    if (isNotModified(cause)) return { kind: "notModified" };
+    if (!(cause instanceof GrammyError)) {
+      return { kind: "unknown", cause };
+    }
+    if (cause.error_code !== 400) return { kind: "unknown", cause };
+    if (cause.description.includes("message to edit not found")) {
+      return { kind: "notFound" };
+    }
+    return { kind: "refused", description: cause.description };
+  }
+}
+
 /** Запись происхождения поста сразу после отправки, до привязки материала. */
 async function rememberAnnouncementPost(
   runtime: BotRuntime,
@@ -8908,23 +9226,6 @@ async function resolveEditTextTarget(
         identity_id: person.identityId,
         error_category: "invariant",
         error: "announcement_provenance_missing",
-      },
-    };
-  }
-  if (entry.record.editing !== undefined) {
-    await showRefusal(
-      ctx,
-      "Этот пост сейчас правится. Дождись окончания правки и открой «Материалы» заново.",
-      exitToMaterials(action.token, action.origin),
-    );
-    return {
-      kind: "denied",
-      outcome: {
-        level: "info",
-        message: "material text edit already running",
-        result: "ok",
-        use_case: useCase,
-        meetup_id: meetupId,
       },
     };
   }
@@ -16878,6 +17179,7 @@ function stepOf(pending: PendingBody): QuestionStep {
       };
     case "edit-material-text-body":
     case "edit-material-text-confirm":
+    case "edit-material-text-retry":
       return {
         kind: "material-text",
         token: uuidToToken(pending.meetupId),
@@ -18268,6 +18570,7 @@ function callbackUseCase(
     | "edit-material-text"
     | "confirm-edit-material-text"
     | "cancel-edit-material-text"
+    | "retry-edit-material-text"
     | "begin-meetup-broadcast"
     | "begin-community-broadcast"
     | "confirm-meetup-broadcast"
@@ -18327,6 +18630,7 @@ function callbackUseCase(
     case "edit-material-text":
     case "confirm-edit-material-text":
     case "cancel-edit-material-text":
+    case "retry-edit-material-text":
     case "announce-meetup":
     case "confirm-meetup-announcement":
     case "cancel-meetup-announcement":

@@ -142,13 +142,9 @@ function setup(options: SetupOptions = {}) {
             ? { kind: "missing" }
             : { kind: "found", record, seq: 1 };
         },
-        async beginEdit(_record, expectedSeq, token, until) {
-          void token;
-          void until;
-          return { ok: true, seq: expectedSeq + 1 };
+        async commitEdit() {
+          return true;
         },
-        async finishEdit() {},
-        async cancelEdit() {},
         async close() {},
       },
       ...(options.respond === undefined ? {} : { respond: options.respond }),

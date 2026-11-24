@@ -106,42 +106,20 @@ describe("announcement post registry", () => {
     });
   });
 
-  it("holds an edit lock across the external call and releases it once", async () => {
+  it("advances the revision only on a confirmed edit and rejects a stale CAS", async () => {
     const store = registry(fakeKv());
     expect(await store.remember(record)).toEqual({ kind: "stored" });
     const first = await store.read(record.chatId, record.messageId);
     if (first.kind !== "found") throw new Error("no record");
 
-    const begun = await store.beginEdit(
-      first.record,
-      first.seq,
-      "op-1",
-      Date.now() + 60_000,
-    );
-    expect(begun.ok).toBe(true);
-    if (!begun.ok) return;
-    // Повторное подтверждение на той же ревизии не получает блок.
-    expect(
-      await store.beginEdit(
-        first.record,
-        first.seq,
-        "op-2",
-        Date.now() + 60_000,
-      ),
-    ).toEqual({ ok: false });
-    const locked = await store.read(record.chatId, record.messageId);
-    expect(locked.kind === "found" && locked.record.editing?.token).toBe(
-      "op-1",
-    );
-
-    await store.finishEdit(first.record, begun.seq, "op-1", "print");
-    const released = await store.read(record.chatId, record.messageId);
-    expect(
-      released.kind === "found" && released.record.editing,
-    ).toBeUndefined();
-    expect(released.kind === "found" && released.record.lastPrint).toBe(
-      "print",
-    );
+    expect(await store.commitEdit(first.record, first.seq)).toBe(true);
+    const second = await store.read(record.chatId, record.messageId);
+    expect(second.kind === "found" && second.seq).toBe(first.seq + 1);
+    // Повтор на старой ревизии не меняет запись: более новая редакция не
+    // откатывается запоздавшим подтверждением.
+    expect(await store.commitEdit(first.record, first.seq)).toBe(false);
+    const third = await store.read(record.chatId, record.messageId);
+    expect(third.kind === "found" && third.seq).toBe(first.seq + 1);
   });
 
   it("reports a failed write as unavailable without creating provenance", async () => {
