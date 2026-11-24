@@ -740,6 +740,9 @@ export type BotRuntime = {
   // Постоянный реестр постов анонсов (PER-926): по (чат, сообщение) хранит
   // исходную сходку, подпись и клавиатуру. Нет — правка недоступна.
   announcementPostsRegistry?: AnnouncementPostRegistry;
+  // Кадры подтверждения и повтора правки живут в памяти процесса; новый бот
+  // (рестарт) начинает с пустой картой, если не попросить разделить её.
+  announcementFramesShared?: boolean;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -1032,6 +1035,11 @@ type PendingMeetupTextEdit = {
 // меняет текст поста (ревью CodeRabbit).
 // Неопределённый исход вызова: сохраняем подтверждённые текст, кнопки и
 // идентичность операции, чтобы человек явно повторил её той же кнопкой.
+// Кадры подтверждения и повтора правки лежат отдельно от общих вопросов:
+// dropOpenQuestions снимает обычные вопросы по нажатию, а эти кадры должны
+// жить до явного действия человека.
+const announcementEditFrames = new Map<string, PendingInput>();
+
 type PendingEditTextRetry = {
   kind: "edit-material-text-retry";
   meetupId: string;
@@ -1494,6 +1502,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     );
   }
   const questions = new Map<string, PendingInput>();
+  if (runtime.announcementFramesShared !== true) {
+    announcementEditFrames.clear();
+  }
   const announcementPosts = createAnnouncementPosts();
   const materialAlbums = createMaterialAlbums();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
@@ -2419,17 +2430,20 @@ async function handleMessage(
           }),
         },
       );
-      questions.set(questionKey(ctx.chat?.id, confirmation.message_id), {
-        kind: "edit-material-text-confirm",
-        meetupId: pending.meetupId,
-        materialId: pending.materialId,
-        origin: pending.origin,
-        version: target.meetup.version,
-        seq: target.seq,
-        print,
-        telegramUserId: ctx.from?.id ?? 0,
-        expiresAt: Date.now() + questionTtlMs,
-      });
+      announcementEditFrames.set(
+        questionKey(ctx.chat?.id ?? 0, confirmation.message_id),
+        {
+          kind: "edit-material-text-confirm",
+          meetupId: pending.meetupId,
+          materialId: pending.materialId,
+          origin: pending.origin,
+          version: target.meetup.version,
+          seq: target.seq,
+          print,
+          telegramUserId: ctx.from?.id ?? 0,
+          expiresAt: Date.now() + questionTtlMs,
+        },
+      );
       await answered();
       outcome = {
         level: "info",
@@ -6270,309 +6284,466 @@ async function handleCallback(
       return;
     }
     if (action.kind === "retry-edit-material-text") {
-      const pending = questions.get(
-        questionKey(
+      const uc: ProductUseCase = "announce_meetup";
+      await inAnnouncementEditQueue(async () => {
+        const retryKey = questionKey(
           ctx.chat?.id ?? 0,
           ctx.callbackQuery?.message?.message_id ?? 0,
-        ),
-      );
-      if (
-        pending === undefined ||
-        pending.kind !== "edit-material-text-retry" ||
-        pending.telegramUserId !== (ctx.from?.id ?? 0)
-      ) {
-        await showRefusal(
-          ctx,
-          "Этот повтор больше недоступен. Открой «Материалы» и начни правку заново.",
-          exitToMeetups(),
         );
-        outcome = {
-          level: "info",
-          message: "material text edit retry stale frame",
-          result: "ok",
-          use_case: useCase,
-        };
-        return;
-      }
-      const target = await resolveEditTextTarget(
-        ctx,
-        runtime,
-        person,
-        useCase,
-        {
+        const storedRetry = announcementEditFrames.get(retryKey);
+        const pending =
+          storedRetry !== undefined && storedRetry.expiresAt > Date.now()
+            ? storedRetry
+            : undefined;
+        if (storedRetry !== undefined && pending === undefined) {
+          announcementEditFrames.delete(retryKey);
+        }
+        if (
+          pending === undefined ||
+          pending.kind !== "edit-material-text-retry" ||
+          pending.telegramUserId !== (ctx.from?.id ?? 0)
+        ) {
+          await showRefusal(
+            ctx,
+            "Этот повтор больше недоступен. Открой «Материалы» и начни правку заново.",
+            exitToMeetups(),
+          );
+          outcome = {
+            level: "info",
+            message: "material text edit retry stale frame",
+            result: "ok",
+            use_case: uc,
+          };
+          return;
+        }
+        const target = await resolveEditTextTarget(ctx, runtime, person, uc, {
           token: uuidToToken(pending.meetupId),
           origin: pending.origin,
           materialToken: uuidToToken(pending.materialId),
-        },
-      );
-      if (target.kind === "denied") {
-        outcome = target.outcome;
-        return;
-      }
-      // Если после таймаута подтвердили более новую редакцию, старый повтор
-      // не должен вернуть пост к прежнему тексту.
-      if (
-        target.seq !== pending.seq ||
-        target.meetup.version !== pending.version
-      ) {
-        await showRefusal(
-          ctx,
-          "Пост или сходка изменились позже этого повтора. Открой «Материалы» заново.",
-          exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
-        );
-        outcome = {
-          level: "info",
-          message: "material text edit retry superseded",
-          result: "ok",
-          use_case: useCase,
-          meetup_id: pending.meetupId,
-        };
-        return;
-      }
-      let editError: unknown;
-      try {
-        await serializedAnnouncementEdit(
-          `${pending.chatId}.${pending.messageId}`,
-          () =>
-            ctx.api.editMessageText(
-              pending.chatId,
-              pending.messageId,
-              announcementPostText(pending.signature, pending.body),
-              {
-                ...screenMark("meetup-announcement-post"),
-                parse_mode: "HTML",
-                reply_markup: new InlineKeyboard().url(
-                  pending.keyboard.text,
-                  pending.keyboard.url,
-                ),
-              },
-            ),
-        );
-      } catch (cause) {
-        editError = cause;
-      }
-      if (editError === undefined || isNotModified(editError)) {
-        const committed =
-          (await runtime.announcementPostsRegistry?.commitEdit(
-            target.record,
-            target.seq,
-          )) ?? false;
-        questions.delete(
-          questionKey(
-            ctx.chat?.id ?? 0,
-            ctx.callbackQuery?.message?.message_id ?? 0,
-          ),
-        );
-        if (!committed) {
+        });
+        if (target.kind === "denied") {
+          outcome = target.outcome;
+          return;
+        }
+        // Если после таймаута подтвердили более новую редакцию, старый повтор
+        // не должен вернуть пост к прежнему тексту.
+        if (
+          target.seq !== pending.seq ||
+          target.meetup.version !== pending.version
+        ) {
           await showRefusal(
             ctx,
-            "Не удалось подтвердить результат в реестре. Пост мог измениться позже этого повтора — открой «Материалы» заново.",
+            "Пост или сходка изменились позже этого повтора. Открой «Материалы» заново.",
             exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
           );
           outcome = {
             level: "info",
             message: "material text edit retry superseded",
             result: "ok",
-            use_case: useCase,
+            use_case: uc,
             meetup_id: pending.meetupId,
           };
           return;
         }
-        await showScreen(ctx, {
-          id: "outcome",
-          text: outcomeText("Анонс обновлён."),
-          keyboard: exitToMaterials(
-            uuidToToken(pending.meetupId),
-            pending.origin,
-          ),
-          format: "HTML",
-        });
+        let editError: unknown;
+        try {
+          await ctx.api.editMessageText(
+            pending.chatId,
+            pending.messageId,
+            announcementPostText(pending.signature, pending.body),
+            {
+              ...screenMark("meetup-announcement-post"),
+              parse_mode: "HTML",
+              reply_markup: new InlineKeyboard().url(
+                pending.keyboard.text,
+                pending.keyboard.url,
+              ),
+            },
+          );
+        } catch (cause) {
+          editError = cause;
+        }
+        if (editError === undefined || isNotModified(editError)) {
+          const committed =
+            (await runtime.announcementPostsRegistry?.commitEdit(
+              target.record,
+              target.seq,
+            )) ?? false;
+          announcementEditFrames.delete(
+            questionKey(
+              ctx.chat?.id ?? 0,
+              ctx.callbackQuery?.message?.message_id ?? 0,
+            ),
+          );
+          if (!committed) {
+            await showRefusal(
+              ctx,
+              "Не удалось подтвердить результат в реестре. Пост мог измениться позже этого повтора — открой «Материалы» заново.",
+              exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
+            );
+            outcome = {
+              level: "info",
+              message: "material text edit retry superseded",
+              result: "ok",
+              use_case: uc,
+              meetup_id: pending.meetupId,
+            };
+            return;
+          }
+          await showScreen(ctx, {
+            id: "outcome",
+            text: outcomeText("Анонс обновлён."),
+            keyboard: exitToMaterials(
+              uuidToToken(pending.meetupId),
+              pending.origin,
+            ),
+            format: "HTML",
+          });
+          outcome = {
+            level: "info",
+            message: "material text edit confirmed",
+            result: "ok",
+            use_case: uc,
+            meetup_id: pending.meetupId,
+            identity_id: person.identityId,
+          };
+          return;
+        }
+        if (
+          editError instanceof GrammyError &&
+          editError.description.includes("message to edit not found")
+        ) {
+          announcementEditFrames.delete(
+            questionKey(
+              ctx.chat?.id ?? 0,
+              ctx.callbackQuery?.message?.message_id ?? 0,
+            ),
+          );
+          await showRefusal(
+            ctx,
+            "Не удалось найти сообщение в чате: возможно, оно удалено. Материал остался без изменений.",
+            exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
+          );
+          outcome = {
+            level: "warn",
+            message: "material text edit post not found",
+            result: "error",
+            use_case: uc,
+            meetup_id: pending.meetupId,
+            error_category: "dependency_unavailable",
+            error: "telegram_message_not_found",
+          };
+          return;
+        }
+        if (editError instanceof GrammyError && editError.error_code === 400) {
+          announcementEditFrames.delete(
+            questionKey(
+              ctx.chat?.id ?? 0,
+              ctx.callbackQuery?.message?.message_id ?? 0,
+            ),
+          );
+          await showRefusal(
+            ctx,
+            "Telegram отклонил повтор правки. Материал остался без изменений.",
+            exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
+          );
+          outcome = {
+            level: "warn",
+            message: "material text edit retry refused",
+            result: "error",
+            use_case: uc,
+            meetup_id: pending.meetupId,
+            error_category: "invariant",
+            error: editError.description,
+          };
+          return;
+        }
+        // Второй таймаут: исход по-прежнему неизвестен, повтор остаётся доступным.
+        await showEditRetry(ctx, announcementEditFrames, pending);
         outcome = {
-          level: "info",
-          message: "material text edit confirmed",
-          result: "ok",
-          use_case: useCase,
+          level: "warn",
+          message: "material text edit retry outcome unknown",
+          result: "error",
+          use_case: uc,
           meetup_id: pending.meetupId,
           identity_id: person.identityId,
-        };
-        return;
-      }
-      if (
-        editError instanceof GrammyError &&
-        editError.description.includes("message to edit not found")
-      ) {
-        questions.delete(
-          questionKey(
-            ctx.chat?.id ?? 0,
-            ctx.callbackQuery?.message?.message_id ?? 0,
-          ),
-        );
-        await showRefusal(
-          ctx,
-          "Не удалось найти сообщение в чате: возможно, оно удалено. Материал остался без изменений.",
-          exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
-        );
-        outcome = {
-          level: "warn",
-          message: "material text edit post not found",
-          result: "error",
-          use_case: useCase,
-          meetup_id: pending.meetupId,
           error_category: "dependency_unavailable",
-          error: "telegram_message_not_found",
+          error:
+            editError instanceof Error ? editError.message : String(editError),
         };
         return;
-      }
-      if (editError instanceof GrammyError && editError.error_code === 400) {
-        questions.delete(
-          questionKey(
-            ctx.chat?.id ?? 0,
-            ctx.callbackQuery?.message?.message_id ?? 0,
-          ),
-        );
-        await showRefusal(
-          ctx,
-          "Telegram отклонил повтор правки. Материал остался без изменений.",
-          exitToMaterials(uuidToToken(pending.meetupId), pending.origin),
-        );
-        outcome = {
-          level: "warn",
-          message: "material text edit retry refused",
-          result: "error",
-          use_case: useCase,
-          meetup_id: pending.meetupId,
-          error_category: "invariant",
-          error: editError.description,
-        };
-        return;
-      }
-      // Второй таймаут: исход по-прежнему неизвестен, повтор остаётся доступным.
-      await showEditRetry(ctx, questions, pending);
-      outcome = {
-        level: "warn",
-        message: "material text edit retry outcome unknown",
-        result: "error",
-        use_case: useCase,
-        meetup_id: pending.meetupId,
-        identity_id: person.identityId,
-        error_category: "dependency_unavailable",
-        error:
-          editError instanceof Error ? editError.message : String(editError),
-      };
+      });
       return;
     }
     if (action.kind === "confirm-edit-material-text") {
-      const preview = parsePreviewText(
-        ctx.callbackQuery?.message,
-        ctx.me.id,
-        action.print,
-      );
-      if (preview === undefined) {
-        await showRefusal(
-          ctx,
-          "Этот предпросмотр устарел. Открой «Материалы» и нажми «Изменить текст» заново.",
-          exitToMaterials(action.token, action.origin),
+      const uc: ProductUseCase = "announce_meetup";
+      await inAnnouncementEditQueue(async () => {
+        const preview = parsePreviewText(
+          ctx.callbackQuery?.message,
+          ctx.me.id,
+          action.print,
         );
-        outcome = {
-          level: "info",
-          message: "material text edit preview stale",
-          result: "ok",
-          use_case: useCase,
-          meetup_id: tokenToUuid(action.token),
-        };
-        return;
-      }
-      const target = await resolveEditTextTarget(
-        ctx,
-        runtime,
-        person,
-        useCase,
-        action,
-      );
-      if (target.kind === "denied") {
-        outcome = target.outcome;
-        return;
-      }
-      // Предпросмотр привязан к версии сходки и ревизии записи реестра: старое
-      // подтверждение после чужой правки, повтор update и кадр после рестарта
-      // текст поста не меняют (ревью CodeRabbit, PER-926).
-      const confirmed = questions.get(
-        questionKey(
+        if (preview === undefined) {
+          await showRefusal(
+            ctx,
+            "Этот предпросмотр устарел. Открой «Материалы» и нажми «Изменить текст» заново.",
+            exitToMaterials(action.token, action.origin),
+          );
+          outcome = {
+            level: "info",
+            message: "material text edit preview stale",
+            result: "ok",
+            use_case: uc,
+            meetup_id: tokenToUuid(action.token),
+          };
+          return;
+        }
+        const target = await resolveEditTextTarget(
+          ctx,
+          runtime,
+          person,
+          uc,
+          action,
+        );
+        if (target.kind === "denied") {
+          outcome = target.outcome;
+          return;
+        }
+        // Предпросмотр привязан к версии сходки и ревизии записи реестра: старое
+        // подтверждение после чужой правки, повтор update и кадр после рестарта
+        // текст поста не меняют (ревью CodeRabbit, PER-926).
+        const confirmKey = questionKey(
           ctx.chat?.id ?? 0,
           ctx.callbackQuery?.message?.message_id ?? 0,
-        ),
-      );
-      if (
-        confirmed === undefined ||
-        confirmed.kind !== "edit-material-text-confirm" ||
-        confirmed.print !== action.print ||
-        confirmed.meetupId !== target.meetupId ||
-        confirmed.materialId !== target.materialId ||
-        confirmed.seq !== target.seq ||
-        confirmed.version !== target.meetup.version ||
-        (action.version !== undefined && action.version !== confirmed.version)
-      ) {
-        await showRefusal(
-          ctx,
-          "Пост или сходка изменились с того момента, как ты смотрел предпросмотр. Открой «Материалы» и повтори правку.",
-          exitToMaterials(action.token, action.origin),
         );
-        outcome = {
-          level: "info",
-          message: "material text edit preview conflict",
-          result: "ok",
-          use_case: useCase,
-          meetup_id: target.meetupId,
-          identity_id: person.identityId,
-        };
-        return;
-      }
-      // Подпись и клавиатура — из постоянного реестра: Bot API не возвращает
-      // текст поста, а менять их при правке нельзя (PER-926). Пересекающиеся
-      // отправки одного поста сериализуются в пределах процесса.
-      const signature = target.record.signature;
-      try {
-        await serializedAnnouncementEdit(
-          `${target.ref.chatId}.${target.ref.messageId}`,
-          () =>
-            ctx.api.editMessageText(
-              target.ref.chatId,
-              target.ref.messageId,
-              announcementPostText(signature, preview.text),
-              {
-                ...screenMark("meetup-announcement-post"),
-                parse_mode: "HTML",
-                reply_markup: new InlineKeyboard().url(
-                  target.record.keyboard.text,
-                  target.record.keyboard.url,
-                ),
-              },
+        const stored = announcementEditFrames.get(confirmKey);
+        const confirmed =
+          stored !== undefined && stored.expiresAt > Date.now()
+            ? stored
+            : undefined;
+        if (stored !== undefined && confirmed === undefined) {
+          announcementEditFrames.delete(confirmKey);
+        }
+        if (
+          confirmed === undefined ||
+          confirmed.kind !== "edit-material-text-confirm" ||
+          confirmed.print !== action.print ||
+          confirmed.meetupId !== target.meetupId ||
+          confirmed.materialId !== target.materialId ||
+          confirmed.seq !== target.seq ||
+          confirmed.version !== target.meetup.version ||
+          (action.version !== undefined && action.version !== confirmed.version)
+        ) {
+          await showRefusal(
+            ctx,
+            "Пост или сходка изменились с того момента, как ты смотрел предпросмотр. Открой «Материалы» и повтори правку.",
+            exitToMaterials(action.token, action.origin),
+          );
+          outcome = {
+            level: "info",
+            message: "material text edit preview conflict",
+            result: "ok",
+            use_case: uc,
+            meetup_id: target.meetupId,
+            identity_id: person.identityId,
+          };
+          return;
+        }
+        // Подпись и клавиатура — из постоянного реестра: Bot API не возвращает
+        // текст поста, а менять их при правке нельзя (PER-926). Чтение ревизии,
+        // вызов и CAS уже идут в общей критической секции.
+        const signature = target.record.signature;
+        try {
+          await ctx.api.editMessageText(
+            target.ref.chatId,
+            target.ref.messageId,
+            announcementPostText(signature, preview.text),
+            {
+              ...screenMark("meetup-announcement-post"),
+              parse_mode: "HTML",
+              reply_markup: new InlineKeyboard().url(
+                target.record.keyboard.text,
+                target.record.keyboard.url,
+              ),
+            },
+          );
+        } catch (cause) {
+          // Сеть, 429 и 5xx — неопределённость: Telegram мог применить правку.
+          if (!(cause instanceof GrammyError && cause.error_code === 400)) {
+            await showEditRetry(ctx, announcementEditFrames, {
+              kind: "edit-material-text-retry",
+              meetupId: target.meetupId,
+              materialId: target.materialId,
+              origin: action.origin,
+              chatId: target.ref.chatId,
+              messageId: target.ref.messageId,
+              signature: target.record.signature,
+              body: preview.text,
+              keyboard: target.record.keyboard,
+              print: action.print,
+              version: target.meetup.version,
+              seq: target.seq,
+              telegramUserId: ctx.from?.id ?? 0,
+              expiresAt: Date.now() + questionTtlMs,
+            });
+            outcome = {
+              level: "warn",
+              message: "material text edit outcome unknown",
+              result: "error",
+              use_case: uc,
+              meetup_id: target.meetupId,
+              identity_id: person.identityId,
+              error_category: "dependency_unavailable",
+              error: cause instanceof Error ? cause.message : String(cause),
+            };
+            return;
+          }
+          // Повтор того же текста (двойное нажатие, повторная доставка update,
+          // оборванная отправка кадра исхода) — уже желаемое состояние, а не сбой.
+          if (isNotModified(cause)) {
+            // Telegram уже держит этот текст — это подтверждённый успех повтора.
+            const committed =
+              (await runtime.announcementPostsRegistry?.commitEdit(
+                target.record,
+                target.seq,
+              )) ?? false;
+            if (!committed) {
+              await showRefusal(
+                ctx,
+                "Не удалось подтвердить результат в реестре. Пост мог измениться позже предпросмотра — открой «Материалы» заново.",
+                exitToMaterials(action.token, action.origin),
+              );
+              outcome = {
+                level: "info",
+                message: "material text edit preview conflict",
+                result: "ok",
+                use_case: uc,
+                meetup_id: target.meetupId,
+                identity_id: person.identityId,
+              };
+              return;
+            }
+            await showScreen(ctx, {
+              id: "outcome",
+              text: outcomeText("Анонс обновлён."),
+              keyboard: exitToMaterials(action.token, action.origin),
+              format: "HTML",
+            });
+            outcome = {
+              level: "info",
+              message: "material text edit confirmed",
+              result: "ok",
+              use_case: uc,
+              meetup_id: target.meetupId,
+              identity_id: person.identityId,
+            };
+            return;
+          }
+          if (
+            cause instanceof GrammyError &&
+            cause.description.includes(
+              "there is no text in the message to edit",
+            )
+          ) {
+            await showRefusal(
+              ctx,
+              "Сообщение в чате не текстовое, поэтому заменить в нём текст нельзя. Материал остался без изменений.",
+              exitToMaterials(action.token, action.origin),
+            );
+            outcome = {
+              level: "warn",
+              message: "material text edit non-text post",
+              result: "error",
+              use_case: uc,
+              meetup_id: target.meetupId,
+              error_category: "invariant",
+              error: "telegram_no_text_to_edit",
+            };
+            return;
+          }
+          if (
+            cause instanceof GrammyError &&
+            cause.description.includes("message to edit not found")
+          ) {
+            // «Не найдено» не доказывает чужое авторство: пост мог быть удалён.
+            await showRefusal(
+              ctx,
+              "Не удалось найти сообщение в чате: возможно, оно удалено или стало недоступно. Материал остался без изменений.",
+              exitToMaterials(action.token, action.origin),
+            );
+            outcome = {
+              level: "warn",
+              message: "material text edit post not found",
+              result: "error",
+              use_case: uc,
+              meetup_id: target.meetupId,
+              identity_id: person.identityId,
+              error_category: "dependency_unavailable",
+              error: "telegram_message_not_found",
+            };
+            return;
+          }
+          if (
+            cause instanceof GrammyError &&
+            cause.description.includes("message can't be edited")
+          ) {
+            await showRefusal(
+              ctx,
+              "Это сообщение в чате не принадлежит боту, поэтому Telegram не дал изменить его текст. Материал остался без изменений.",
+              exitToMaterials(action.token, action.origin),
+            );
+            outcome = {
+              level: "warn",
+              message: "material text edit denied by telegram",
+              result: "error",
+              use_case: uc,
+              meetup_id: target.meetupId,
+              identity_id: person.identityId,
+              error_category: "authorization",
+              error: "telegram_cannot_edit",
+            };
+            return;
+          }
+          if (postTooLongError(cause)) {
+            await showRefusal(
+              ctx,
+              "Текст с подписью не помещается в сообщение Telegram. Сократи его и нажми «Изменить текст» заново.",
+              exitToMaterials(action.token, action.origin),
+            );
+            outcome = {
+              level: "warn",
+              message: "material text edit post too long",
+              result: "error",
+              use_case: uc,
+              meetup_id: target.meetupId,
+              error_category: "invariant",
+              error: "telegram_post_too_long",
+            };
+            return;
+          }
+          await showScreen(ctx, {
+            id: "outcome",
+            text: outcomeText(
+              "Не получилось изменить текст поста. Попробуй ещё раз.",
             ),
-        );
-      } catch (cause) {
-        // Сеть, 429 и 5xx — неопределённость: Telegram мог применить правку.
-        if (!(cause instanceof GrammyError && cause.error_code === 400)) {
-          await showEditRetry(ctx, questions, {
-            kind: "edit-material-text-retry",
-            meetupId: target.meetupId,
-            materialId: target.materialId,
-            origin: action.origin,
-            chatId: target.ref.chatId,
-            messageId: target.ref.messageId,
-            signature: target.record.signature,
-            body: preview.text,
-            keyboard: target.record.keyboard,
-            print: action.print,
-            version: target.meetup.version,
-            seq: target.seq,
-            telegramUserId: ctx.from?.id ?? 0,
-            expiresAt: Date.now() + questionTtlMs,
+            keyboard: withNav(
+              new InlineKeyboard().text(
+                retryAnswerLabel,
+                materialsEditTextData(
+                  action.origin,
+                  action.token,
+                  action.materialToken,
+                ),
+              ),
+              toMaterials(action.token, action.origin),
+            ),
+            format: "HTML",
           });
           outcome = {
             level: "warn",
-            message: "material text edit outcome unknown",
+            message: "material text edit failed",
             result: "error",
-            use_case: useCase,
+            use_case: uc,
             meetup_id: target.meetupId,
             identity_id: person.identityId,
             error_category: "dependency_unavailable",
@@ -6580,192 +6751,43 @@ async function handleCallback(
           };
           return;
         }
-        // Повтор того же текста (двойное нажатие, повторная доставка update,
-        // оборванная отправка кадра исхода) — уже желаемое состояние, а не сбой.
-        if (isNotModified(cause)) {
-          // Telegram уже держит этот текст — это подтверждённый успех повтора.
-          const committed =
-            (await runtime.announcementPostsRegistry?.commitEdit(
-              target.record,
-              target.seq,
-            )) ?? false;
-          if (!committed) {
-            await showRefusal(
-              ctx,
-              "Не удалось подтвердить результат в реестре. Пост мог измениться позже предпросмотра — открой «Материалы» заново.",
-              exitToMaterials(action.token, action.origin),
-            );
-            outcome = {
-              level: "info",
-              message: "material text edit preview conflict",
-              result: "ok",
-              use_case: useCase,
-              meetup_id: target.meetupId,
-              identity_id: person.identityId,
-            };
-            return;
-          }
-          await showScreen(ctx, {
-            id: "outcome",
-            text: outcomeText("Анонс обновлён."),
-            keyboard: exitToMaterials(action.token, action.origin),
-            format: "HTML",
-          });
+        const committed =
+          (await runtime.announcementPostsRegistry?.commitEdit(
+            target.record,
+            target.seq,
+          )) ?? false;
+        if (!committed) {
+          await showRefusal(
+            ctx,
+            "Не удалось подтвердить результат в реестре. Пост мог измениться позже предпросмотра — открой «Материалы» заново.",
+            exitToMaterials(action.token, action.origin),
+          );
           outcome = {
             level: "info",
-            message: "material text edit confirmed",
+            message: "material text edit preview conflict",
             result: "ok",
-            use_case: useCase,
+            use_case: uc,
             meetup_id: target.meetupId,
             identity_id: person.identityId,
-          };
-          return;
-        }
-        if (
-          cause instanceof GrammyError &&
-          cause.description.includes("there is no text in the message to edit")
-        ) {
-          await showRefusal(
-            ctx,
-            "Сообщение в чате не текстовое, поэтому заменить в нём текст нельзя. Материал остался без изменений.",
-            exitToMaterials(action.token, action.origin),
-          );
-          outcome = {
-            level: "warn",
-            message: "material text edit non-text post",
-            result: "error",
-            use_case: useCase,
-            meetup_id: target.meetupId,
-            error_category: "invariant",
-            error: "telegram_no_text_to_edit",
-          };
-          return;
-        }
-        if (
-          cause instanceof GrammyError &&
-          cause.description.includes("message to edit not found")
-        ) {
-          // «Не найдено» не доказывает чужое авторство: пост мог быть удалён.
-          await showRefusal(
-            ctx,
-            "Не удалось найти сообщение в чате: возможно, оно удалено или стало недоступно. Материал остался без изменений.",
-            exitToMaterials(action.token, action.origin),
-          );
-          outcome = {
-            level: "warn",
-            message: "material text edit post not found",
-            result: "error",
-            use_case: useCase,
-            meetup_id: target.meetupId,
-            identity_id: person.identityId,
-            error_category: "dependency_unavailable",
-            error: "telegram_message_not_found",
-          };
-          return;
-        }
-        if (
-          cause instanceof GrammyError &&
-          cause.description.includes("message can't be edited")
-        ) {
-          await showRefusal(
-            ctx,
-            "Это сообщение в чате не принадлежит боту, поэтому Telegram не дал изменить его текст. Материал остался без изменений.",
-            exitToMaterials(action.token, action.origin),
-          );
-          outcome = {
-            level: "warn",
-            message: "material text edit denied by telegram",
-            result: "error",
-            use_case: useCase,
-            meetup_id: target.meetupId,
-            identity_id: person.identityId,
-            error_category: "authorization",
-            error: "telegram_cannot_edit",
-          };
-          return;
-        }
-        if (postTooLongError(cause)) {
-          await showRefusal(
-            ctx,
-            "Текст с подписью не помещается в сообщение Telegram. Сократи его и нажми «Изменить текст» заново.",
-            exitToMaterials(action.token, action.origin),
-          );
-          outcome = {
-            level: "warn",
-            message: "material text edit post too long",
-            result: "error",
-            use_case: useCase,
-            meetup_id: target.meetupId,
-            error_category: "invariant",
-            error: "telegram_post_too_long",
           };
           return;
         }
         await showScreen(ctx, {
           id: "outcome",
-          text: outcomeText(
-            "Не получилось изменить текст поста. Попробуй ещё раз.",
-          ),
-          keyboard: withNav(
-            new InlineKeyboard().text(
-              retryAnswerLabel,
-              materialsEditTextData(
-                action.origin,
-                action.token,
-                action.materialToken,
-              ),
-            ),
-            toMaterials(action.token, action.origin),
-          ),
+          text: outcomeText("Анонс обновлён."),
+          keyboard: exitToMaterials(action.token, action.origin),
           format: "HTML",
         });
         outcome = {
-          level: "warn",
-          message: "material text edit failed",
-          result: "error",
-          use_case: useCase,
-          meetup_id: target.meetupId,
-          identity_id: person.identityId,
-          error_category: "dependency_unavailable",
-          error: cause instanceof Error ? cause.message : String(cause),
-        };
-        return;
-      }
-      const committed =
-        (await runtime.announcementPostsRegistry?.commitEdit(
-          target.record,
-          target.seq,
-        )) ?? false;
-      if (!committed) {
-        await showRefusal(
-          ctx,
-          "Не удалось подтвердить результат в реестре. Пост мог измениться позже предпросмотра — открой «Материалы» заново.",
-          exitToMaterials(action.token, action.origin),
-        );
-        outcome = {
           level: "info",
-          message: "material text edit preview conflict",
+          message: "material text edit confirmed",
           result: "ok",
-          use_case: useCase,
+          use_case: uc,
           meetup_id: target.meetupId,
           identity_id: person.identityId,
         };
         return;
-      }
-      await showScreen(ctx, {
-        id: "outcome",
-        text: outcomeText("Анонс обновлён."),
-        keyboard: exitToMaterials(action.token, action.origin),
-        format: "HTML",
       });
-      outcome = {
-        level: "info",
-        message: "material text edit confirmed",
-        result: "ok",
-        use_case: useCase,
-        meetup_id: target.meetupId,
-        identity_id: person.identityId,
-      };
       return;
     }
     if (action.kind === "announce-meetup") {
@@ -8571,7 +8593,7 @@ function announcementResendScreen(action: {
 /** Кадр неопределённого исхода: повтор того же текста по действию человека. */
 async function showEditRetry(
   ctx: UpdateContext,
-  questions: Map<string, PendingInput>,
+  frames: Map<string, PendingInput>,
   pending: PendingEditTextRetry,
 ): Promise<void> {
   const frame = await ctx.reply(
@@ -8593,28 +8615,20 @@ async function showEditRetry(
       },
     },
   );
-  questions.set(questionKey(ctx.chat?.id ?? 0, frame.message_id), pending);
+  frames.set(questionKey(ctx.chat?.id ?? 0, frame.message_id), pending);
 }
 
-// Пересекающиеся отправки одного поста сериализуются в пределах процесса:
-// вторая правка ждёт завершения первой, но блок не живёт дольше запроса и не
-// мешает новому предпросмотру (решение владельца по PER-926).
-const inFlightAnnouncementEdits = new Map<string, Promise<unknown>>();
+// Общая критическая секция правки анонсов в пределах процесса: чтение ревизии,
+// вызов Telegram и CAS-фиксация идут в одной очереди. Иначе два обработчика
+// читают одну ревизию, а второй пишет устаревший текст уже после первого
+// (ревью координатора PER-926). Постоянной блокировки нет: очередь живёт только
+// пока выполняется запрос.
+let announcementEditQueue: Promise<unknown> = Promise.resolve();
 
-async function serializedAnnouncementEdit(
-  key: string,
-  run: () => Promise<unknown>,
-): Promise<unknown> {
-  const previous = inFlightAnnouncementEdits.get(key) ?? Promise.resolve();
-  const current = previous.catch(() => undefined).then(run);
-  inFlightAnnouncementEdits.set(key, current);
-  try {
-    return await current;
-  } finally {
-    if (inFlightAnnouncementEdits.get(key) === current) {
-      inFlightAnnouncementEdits.delete(key);
-    }
-  }
+function inAnnouncementEditQueue<T>(run: () => Promise<T>): Promise<T> {
+  const current = announcementEditQueue.catch(() => undefined).then(run);
+  announcementEditQueue = current;
+  return current;
 }
 
 /** Запись происхождения поста сразу после отправки, до привязки материала. */

@@ -227,6 +227,7 @@ export type HarnessOptions = Partial<
     | "mediaChat"
     | "communityChat"
     | "announcementPostsRegistry"
+    | "announcementFramesShared"
   >
 > & {
   respond?: Respond;

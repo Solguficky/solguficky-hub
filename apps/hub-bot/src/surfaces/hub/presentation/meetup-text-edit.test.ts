@@ -247,21 +247,42 @@ function editCalls(calls: readonly RecordedCall[]): RecordedCall[] {
   );
 }
 
+function lastEditConfirm(calls: readonly RecordedCall[]): {
+  data: string;
+  messageId: number;
+} {
+  for (let index = calls.length - 1; index >= 0; index -= 1) {
+    const call = calls[index];
+    if (call === undefined) continue;
+    const rows = (
+      call.payload as {
+        reply_markup?: { inline_keyboard?: { callback_data?: string }[][] };
+      }
+    ).reply_markup?.inline_keyboard;
+    for (const button of rows?.flat() ?? []) {
+      if (button.callback_data?.startsWith("v1:mm:ee:") === true) {
+        return { data: button.callback_data, messageId: 101 + index };
+      }
+    }
+  }
+  throw new Error("edit confirmation not found");
+}
+
 async function openConfirmation(
   h: ReturnType<typeof setup>,
+  answer = body,
 ): Promise<(text?: string) => Update> {
   await h.bot.handleUpdate(
     callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
   );
   const questionId = lastQuestionId(h.calls);
-  await h.bot.handleUpdate(replyUpdate(body, questionId));
-  const data = findData(h.calls, "v1:mm:ee:");
-  const index = h.calls.findLastIndex((call) =>
-    JSON.stringify(call.payload).includes("v1:mm:ee:"),
-  );
-  const messageId = 101 + index;
-  return (text = body) =>
-    callbackUpdate(data, { ...previewMessage(text), message_id: messageId });
+  await h.bot.handleUpdate(replyUpdate(answer, questionId));
+  const frame = lastEditConfirm(h.calls);
+  return (text = answer) =>
+    callbackUpdate(frame.data, {
+      ...previewMessage(text),
+      message_id: frame.messageId,
+    });
 }
 
 function telegramError(description: string): GrammyError {
@@ -825,6 +846,50 @@ describe("meetup announcement text edit (PER-926)", () => {
     expect(
       h.records.some((r) => r.message === "material text edit confirmed"),
     ).toBe(false);
+  });
+
+  it("serializes two overlapping confirmations and keeps only the first text", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let editCallsCount = 0;
+    const h = setup({
+      respond: (method, payload) => {
+        if (
+          method === "editMessageText" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          editCallsCount += 1;
+          if (editCallsCount === 1) return gate;
+        }
+        return undefined;
+      },
+    });
+    const firstPress = await openConfirmation(h);
+    const first = lastEditConfirm(h.calls);
+    const secondPress = await openConfirmation(h, "Второй текст");
+    const second = lastEditConfirm(h.calls);
+    expect(first.data).not.toBe(second.data);
+
+    const firstPending = h.bot.handleUpdate(firstPress());
+    const secondPending = h.bot.handleUpdate(secondPress());
+    release();
+    await Promise.all([firstPending, secondPending]);
+    expect(editCallsCount).toBe(1);
+    expect(editCalls(h.calls)).toHaveLength(1);
+    expect(
+      h.records.some((r) => r.message === "material text edit confirmed"),
+    ).toBe(true);
+    expect(
+      h.records.some(
+        (r) => r.message === "material text edit preview conflict",
+      ),
+    ).toBe(true);
+    const applied = editCalls(h.calls)[0]?.payload;
+    expect(applied).toBeDefined();
+    const text = String((applied as { text?: string }).text ?? "");
+    expect(text).toContain(body);
   });
 
   it("refuses a double press of the same confirmation", async () => {
