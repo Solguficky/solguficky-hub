@@ -68,6 +68,7 @@ type FakeRegistry = AnnouncementPostRegistry & {
   seq: number;
   readonly editing: { token: string; until: number } | undefined;
   bump(): void;
+  expireLock(): void;
 };
 
 function createRegistry(
@@ -94,6 +95,9 @@ function createRegistry(
     },
     bump() {
       seq += 1;
+    },
+    expireLock() {
+      if (editing !== undefined) editing = { ...editing, until: 0 };
     },
     async remember() {
       this.writes += 1;
@@ -664,7 +668,7 @@ describe("meetup announcement text edit (PER-926)", () => {
         announcementPostsRegistry: registry,
       },
     );
-    // Публикация первой личности создаёт запись с её подписью.
+    // Первая личность применяет правку; запись происхождения уже в реестре.
     await h.bot.handleUpdate(
       callbackUpdate(
         `v1:mm:et:${uuidToToken(current.id)}:${uuidToToken(materialId)}`,
@@ -694,8 +698,9 @@ describe("meetup announcement text edit (PER-926)", () => {
         otherId,
       ),
     );
-    expect(registry.reads - readsBefore).toBeGreaterThanOrEqual(1);
-    expect(registry.writes).toBe(writesBefore);
+    // Ровно одно чтение происхождения и ни одного повторного remember.
+    expect(registry.reads - readsBefore).toBe(1);
+    expect(registry.writes - writesBefore).toBe(0);
     expect(editCalls(h.calls)).toHaveLength(1);
   });
 
@@ -721,6 +726,9 @@ describe("meetup announcement text edit (PER-926)", () => {
     const pending = h.bot.handleUpdate(confirm());
     await vi.waitFor(() => expect(registry.editing).toBeDefined());
 
+    // Даже после истечения срока блокировка не снимается: неизвестный исход
+    // не должен открывать вторую запись поверх первой.
+    registry.expireLock();
     // Второй предпросмотр открылся после первого CAS, но до ответа Telegram.
     await h.bot.handleUpdate(
       callbackUpdate(`v1:mm:et:${h.token}:${h.materialToken}`),
@@ -734,5 +742,41 @@ describe("meetup announcement text edit (PER-926)", () => {
     await pending;
     await vi.waitFor(() => expect(registry.editing).toBeUndefined());
     expect(editCalls(h.calls)).toHaveLength(1);
+  });
+
+  it("keeps the lock when the Telegram response is lost", async () => {
+    const registry = createRegistry();
+    const h = setup({
+      registry,
+      respond: (method, payload) => {
+        if (
+          method === "editMessageText" &&
+          (payload as { chat_id?: number }).chat_id === communityChatId
+        ) {
+          throw new Error("network lost");
+        }
+        return undefined;
+      },
+    });
+    const confirm = await openConfirmation(h);
+    await h.bot.handleUpdate(confirm());
+    // Вызов записан трансформером, но ответ потерян: успеха нет.
+    expect(editCalls(h.calls)).toHaveLength(1);
+    expect(
+      h.records.some((r) => r.message === "material text edit outcome unknown"),
+    ).toBe(true);
+    expect(registry.editing).toBeDefined();
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes(
+          "Правка этого поста временно заблокирована",
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      h.calls.some((call) =>
+        JSON.stringify(call.payload).includes("Попробуй позже"),
+      ),
+    ).toBe(false);
   });
 });

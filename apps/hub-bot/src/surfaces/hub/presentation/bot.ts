@@ -6374,6 +6374,41 @@ async function handleCallback(
           },
         );
       } catch (cause) {
+        // Потеря ответа/сетевой сбой — не подтверждённый отказ: Telegram мог
+        // применить правку, поэтому блок поста остаётся и после рестарта.
+        if (
+          !(
+            cause instanceof GrammyError &&
+            cause.error_code === 400 &&
+            (isNotModified(cause) ||
+              postTooLongError(cause) ||
+              cause.description.includes("message can't be edited") ||
+              cause.description.includes(
+                "there is no text in the message to edit",
+              ) ||
+              cause.description.includes("message to edit not found"))
+          )
+        ) {
+          await showScreen(ctx, {
+            id: "outcome",
+            text: outcomeText(
+              "Не удалось узнать, применился ли текст: ответ Telegram потерян. Правка этого поста временно заблокирована.",
+            ),
+            keyboard: exitToMaterials(action.token, action.origin),
+            format: "HTML",
+          });
+          outcome = {
+            level: "warn",
+            message: "material text edit outcome unknown",
+            result: "error",
+            use_case: useCase,
+            meetup_id: target.meetupId,
+            identity_id: person.identityId,
+            error_category: "dependency_unavailable",
+            error: cause instanceof Error ? cause.message : String(cause),
+          };
+          return;
+        }
         await releaseEdit(false);
         // Повтор того же текста (двойное нажатие, повторная доставка update,
         // оборванная отправка кадра исхода) — уже желаемое состояние, а не сбой.
@@ -8887,10 +8922,7 @@ async function resolveEditTextTarget(
       },
     };
   }
-  if (
-    entry.record.editing !== undefined &&
-    entry.record.editing.until > Date.now()
-  ) {
+  if (entry.record.editing !== undefined) {
     await showRefusal(
       ctx,
       "Этот пост сейчас правится. Дождись окончания правки и открой «Материалы» заново.",
