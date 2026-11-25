@@ -87,15 +87,16 @@ function createRegistry(
     signature: options.signature ?? recordedSignature,
     keyboard: recordedKeyboard,
   };
-  let seq = 1;
+  const seqs = new Map<number, number>();
+  const seqOf = (messageId: number) => seqs.get(messageId) ?? 1;
   return {
     reads: 0,
     writes: 0,
     get seq() {
-      return seq;
+      return seqOf(postId);
     },
     bump() {
-      seq += 1;
+      seqs.set(postId, seqOf(postId) + 1);
     },
     async remember() {
       this.writes += 1;
@@ -111,11 +112,15 @@ function createRegistry(
       if (chatId !== communityChatId || !allowed.includes(messageId)) {
         return { kind: "missing" };
       }
-      return { kind: "found", record: { ...record, messageId }, seq };
+      return {
+        kind: "found",
+        record: { ...record, messageId },
+        seq: seqOf(messageId),
+      };
     },
-    async commitEdit(_record, expectedSeq) {
-      if (expectedSeq !== seq) return false;
-      seq += 1;
+    async commitEdit(committed, expectedSeq) {
+      if (expectedSeq !== seqOf(committed.messageId)) return false;
+      seqs.set(committed.messageId, expectedSeq + 1);
       return true;
     },
     async close() {},
@@ -919,6 +924,7 @@ describe("meetup announcement text edit (PER-926)", () => {
     const otherPress = await openConfirmationFor(
       h,
       uuidToToken(otherMaterialId),
+      "Текст другого поста",
     );
 
     const firstPending = h.bot.handleUpdate(firstPress());
@@ -928,16 +934,24 @@ describe("meetup announcement text edit (PER-926)", () => {
     const otherPending = h.bot.handleUpdate(otherPress());
     // Вторая правка того же поста ждёт очереди; другой пост уже обновился.
     await vi.waitFor(() => expect(editCallsCount).toBe(2));
+    // Пока первый пост ждёт, обновился именно другой пост.
     expect(
-      editCalls(h.calls).some((call) =>
-        String((call.payload as { text?: string }).text ?? "").includes(
-          `message_id=${otherPostId}`,
-        ),
-      ) || editCalls(h.calls).length === 2,
+      editCalls(h.calls).some(
+        (call) =>
+          (call.payload as { message_id?: number }).message_id === otherPostId,
+      ),
     ).toBe(true);
 
     release();
     await Promise.all([firstPending, secondPending, otherPending]);
+    expect(editCallsCount).toBe(2);
+    expect(
+      editCalls(h.calls).some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(
+          "Второй текст",
+        ),
+      ),
+    ).toBe(false);
     expect(
       h.records.some((r) => r.message === "material text edit confirmed"),
     ).toBe(true);
@@ -946,10 +960,11 @@ describe("meetup announcement text edit (PER-926)", () => {
         (r) => r.message === "material text edit preview conflict",
       ),
     ).toBe(true);
-    const applied = editCalls(h.calls).find((call) =>
-      String((call.payload as { text?: string }).text ?? "").includes(body),
-    );
-    expect(applied).toBeDefined();
+    expect(
+      editCalls(h.calls).some((call) =>
+        String((call.payload as { text?: string }).text ?? "").includes(body),
+      ),
+    ).toBe(true);
   });
 
   it("refuses a double press of the same confirmation", async () => {

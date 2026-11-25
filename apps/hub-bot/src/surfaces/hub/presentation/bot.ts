@@ -8662,11 +8662,13 @@ function inAnnouncementEditQueue<T>(
   const previous = announcementEditQueues.get(key) ?? Promise.resolve();
   const current = previous.catch(() => undefined).then(run);
   announcementEditQueues.set(key, current);
-  void current.finally(() => {
-    if (announcementEditQueues.get(key) === current) {
-      announcementEditQueues.delete(key);
-    }
-  });
+  void current
+    .finally(() => {
+      if (announcementEditQueues.get(key) === current) {
+        announcementEditQueues.delete(key);
+      }
+    })
+    .catch(() => undefined);
   return current;
 }
 
