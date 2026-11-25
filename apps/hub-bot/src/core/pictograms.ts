@@ -37,6 +37,8 @@ export const pictogram = {
    * нет.
    */
   admin: "🛠",
+  /** Правка текста поста чата сообщества (PER-926) у материала-ссылки. */
+  editText: "✏️",
   /** «Обновить» — на каждом экране, где эта кнопка есть (PER-669). */
   refresh: "🔄",
   /**
@@ -90,6 +92,9 @@ export const pictogram = {
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
 
+/** Кнопка правки текста поста у материала-ссылки (PER-926). */
+export const editMaterialTextLabel = `${pictogram.editText} Изменить текст`;
+
 /**
  * Начала слов, перед которыми знак разрешён: подпись или строка бота
  * начинается с «<знак> <слово>». Другого места у знака нет.
@@ -124,6 +129,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
     // Публикация анонса в чате сообщества (PER-925): вход только для ведущего.
     "Анонс в чат",
   ],
+  [pictogram.editText]: ["Изменить текст"],
   [pictogram.refresh]: ["Обновить"],
   // Знак листания стоит один, без слова: подпись «◀️ пред» вне словаря.
   [pictogram.previous]: [],

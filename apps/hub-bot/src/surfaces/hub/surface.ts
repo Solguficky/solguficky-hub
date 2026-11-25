@@ -52,6 +52,7 @@ import { createIdentityClient } from "./identity/client.js";
 import { createLiveScreensNats } from "./live-screens-nats.js";
 import { createMeetupsClient } from "./meetups/client.js";
 import { createNotificationsClient } from "./notifications/client.js";
+import { createAnnouncementPostRegistry } from "./presentation/announcement-posts-kv.js";
 import { createBot } from "./presentation/bot.js";
 import { botCommands, communityChatCommands } from "./presentation/commands.js";
 import { createCommunityChat } from "./presentation/community-chat.js";
@@ -215,6 +216,13 @@ export const hubSurface: SurfaceDefinition = ({
           service: serviceNames.hub,
           logger,
         });
+  // Постоянный реестр постов анонсов (PER-926): правка доступна только для
+  // постов, чьё происхождение записано при публикации.
+  const announcementPostsRegistry = createAnnouncementPostRegistry({
+    url: config.natsUrl,
+    service: serviceNames.hub,
+    logger,
+  });
   const limiter = createEditLimiter({
     onError: (_key, cause) =>
       reportLiveEditFailure(
@@ -247,6 +255,7 @@ export const hubSurface: SurfaceDefinition = ({
     build,
     mediaChat,
     ...(communityChat === undefined ? {} : { communityChat }),
+    announcementPostsRegistry,
     ...(hub.auctionBotUsername === undefined
       ? {}
       : { auctionBotUsername: hub.auctionBotUsername }),
@@ -519,6 +528,7 @@ export const hubSurface: SurfaceDefinition = ({
         limiter.close();
         watches?.close();
         void liveScreens?.close();
+        void announcementPostsRegistry.close();
         identity.close();
         meetups.close();
         achievements?.close();

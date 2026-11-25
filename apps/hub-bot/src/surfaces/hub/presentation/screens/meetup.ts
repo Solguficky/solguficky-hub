@@ -3,6 +3,7 @@ import type { AuctionSummaryView } from "../../../../auction-ui/index.js";
 import {
   adminLabel,
   createMeetupLabel,
+  editMaterialTextLabel,
   emptyDescription,
   extensionsLabel,
   marked,
@@ -22,6 +23,7 @@ import type {
   MeetupSummary,
 } from "../../meetups/port.js";
 import { plainDescription, richDescription } from "../description-markup.js";
+import { communityPostRef } from "../meetup-announcement.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { announceMeetupData } from "../parse-callback.js";
 import { auctionCancelConsequence, auctionStateLine } from "./auction-stage.js";
@@ -62,6 +64,7 @@ import {
   type MaterialsOrigin,
   materialsAddData,
   materialsEdgeData,
+  materialsEditTextData,
   materialsFileData,
   materialsListData,
   materialsMoveData,
@@ -1040,6 +1043,7 @@ export function materialsScreen(
   canManage: boolean,
   requestedPage: number,
   origin: MaterialsOrigin,
+  communityChatId?: number,
 ): ShownScreen {
   const token = uuidToToken(meetup.id);
   const page = paginate(meetup.materials, requestedPage);
@@ -1055,6 +1059,20 @@ export function materialsScreen(
       /^[1-9]\d{0,8}$/.test(String(meetup.version));
     if (material.source.kind === "message-link") {
       keyboard.url(buttonText(`${title} ↗`), material.source.url);
+      // Правка текста поста (PER-926): кнопка стоит только у ссылки на
+      // сообщение настроенного чата сообщества. Тот же критерий, что в
+      // callback: без чата или со ссылкой в другой чат кнопки нет, а ручная
+      // привязка происхождением анонса не становится.
+      if (
+        canManage &&
+        communityChatId !== undefined &&
+        communityPostRef(material.source.url, communityChatId) !== undefined
+      ) {
+        keyboard.text(
+          editMaterialTextLabel,
+          materialsEditTextData(origin, token, materialToken),
+        );
+      }
     } else {
       keyboard.text(
         buttonText(title),

@@ -115,3 +115,51 @@ export function materialsConfirmRemoveData(
 ): string {
   return materialsData(origin, "cr", token, materialToken, String(version));
 }
+
+/**
+ * Правка текста поста чата сообщества (PER-926, вариант А): кнопка стоит у
+ * каждого материала-ссылки, а не только у анонса — бот не отличает анонс от
+ * `/attach`, и отказ Telegram на чужой пост объясняется человеку. Отпечаток
+ * нового текста едет в кнопке подтверждения: сам текст живёт в сообщении
+ * предпросмотра, на которое кадр подтверждения отвечает.
+ */
+export function materialsEditTextData(
+  origin: MaterialsOrigin,
+  token: string,
+  materialToken: string,
+): string {
+  return materialsData(origin, "et", token, materialToken);
+}
+
+/**
+ * Подтверждение правки несёт версию снимка, на котором показан предпросмотр.
+ * Упаковка: UUID сходки и материала, отпечаток текста, версия схода и вход —
+ * 41 байт → 55 знаков, с префиксом ровно 64 байта (ревью CodeRabbit).
+ */
+export function materialsConfirmEditTextData(
+  origin: MaterialsOrigin,
+  token: string,
+  materialToken: string,
+  print: string,
+  version: number,
+): string {
+  const bytes = Buffer.alloc(41);
+  Buffer.from(token, "base64url").copy(bytes, 0, 0, 16);
+  Buffer.from(materialToken, "base64url").copy(bytes, 16, 0, 16);
+  bytes.writeUInt32BE(Number.parseInt(print, 36) >>> 0, 32);
+  bytes.writeUInt32BE(version >>> 0, 36);
+  bytes[40] = origin === "draft" ? 1 : 0;
+  return `${materialsData(origin, "ee")}:${bytes.toString("base64url")}`;
+}
+
+/** Явный повтор неопределённой правки; запись операции ищется по кадру. */
+export const materialsRetryEditTextData = "v1:mm:rt";
+
+/** «Нет» на предпросмотре правки: исход с «Ввести заново». */
+export function materialsDeclineEditTextData(
+  origin: MaterialsOrigin,
+  token: string,
+  materialToken: string,
+): string {
+  return materialsData(origin, "nc", token, materialToken);
+}

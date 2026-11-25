@@ -886,20 +886,42 @@ describe("materialsScreen", () => {
         : { kind: "message-link" as const, url: `https://t.me/c/1/${index}` },
   }));
 
+  const communityId = -1000000000001;
+
   it("opens a file by a button and marks a link, with removal for the organizer", () => {
-    const screen = materialsScreen(meetup({ materials }), true, 0, "card");
+    const screen = materialsScreen(
+      meetup({ materials }),
+      true,
+      0,
+      "card",
+      communityId,
+    );
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "↑", "↓", "🗑"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "↑", "↓", "🗑"]);
-    expect(rows(screen)[7]).toEqual(["Материал 8 ↗", "↑", "↓", "🗑"]);
+    expect(rows(screen)[1]).toEqual([
+      "Материал 2 ↗",
+      "✏️ Изменить текст",
+      "↑",
+      "↓",
+      "🗑",
+    ]);
+    expect(rows(screen)[7]).toEqual([
+      "Материал 8 ↗",
+      "✏️ Изменить текст",
+      "↑",
+      "↓",
+      "🗑",
+    ]);
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],
       ["‹ Сходка"],
     ]);
     expect(
-      rows(materialsScreen(meetup({ materials }), true, 1, "card"))[0],
-    ).toEqual(["Материал 9 ↗", "↑", "↓", "🗑"]);
+      rows(
+        materialsScreen(meetup({ materials }), true, 1, "card", communityId),
+      )[0],
+    ).toEqual(["Материал 9 ↗", "✏️ Изменить текст", "↑", "↓", "🗑"]);
   });
 
   it("shows a participant the materials without management", () => {
@@ -915,9 +937,37 @@ describe("materialsScreen", () => {
       true,
       0,
       "card",
+      communityId,
     );
 
     expect(rows(screen)[0]).toEqual(["Материал 1", "🗑"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "🗑"]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "✏️ Изменить текст", "🗑"]);
+  });
+
+  it("hides the edit button when the community chat is not configured", () => {
+    const screen = materialsScreen(meetup({ materials }), true, 0, "card");
+    expect(rows(screen).flat()).not.toContain("✏️ Изменить текст");
+  });
+
+  it("hides the edit button for a link to another chat", () => {
+    const foreign = [
+      {
+        id: materialIdForTest(),
+        title: "Чужой",
+        source: { kind: "message-link" as const, url: "https://t.me/c/999/1" },
+      },
+    ];
+    const screen = materialsScreen(
+      meetup({ materials: foreign }),
+      true,
+      0,
+      "card",
+      communityId,
+    );
+    expect(rows(screen).flat()).not.toContain("✏️ Изменить текст");
   });
 });
+
+function materialIdForTest(): string {
+  return "0199c0de-0000-7000-8000-0000000000ff";
+}

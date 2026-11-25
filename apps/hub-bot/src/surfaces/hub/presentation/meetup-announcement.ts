@@ -68,6 +68,23 @@ export function parseCommunityPostLink(
   return undefined;
 }
 
+/**
+ * Разбор ссылки материала для правки поста (PER-926): `chat_id` и номер
+ * сообщения едут в ссылке `message-link`, а чат обязан быть тем самым чатом
+ * сообщества. Ссылка на другое сообщение или канал правке не подлежит.
+ */
+export function communityPostRef(
+  url: string,
+  chatId: number,
+): { chatId: number; messageId: number } | undefined {
+  const matched = /^https:\/\/t\.me\/c\/([1-9]\d*)\/([1-9]\d*)(?:\?\S*)?$/.exec(
+    url.trim(),
+  );
+  if (matched?.[1] !== communityChatPart(chatId)) return undefined;
+  const messageId = Number(matched[2]);
+  return Number.isSafeInteger(messageId) ? { chatId, messageId } : undefined;
+}
+
 /** Пост от бота: подпись организатора и свободный текст, разметка HTML. */
 export function announcementPostText(organizer: string, body: string): string {
   return `<b>${escapeHtml(organizer)}:</b>\n\n${escapeHtml(body)}`;
