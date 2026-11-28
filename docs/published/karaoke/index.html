@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<base href="/karaoke/">
+<title>PowerPoint Karaoke · Секретные доклады</title>
+<style>
+  :root { --bg:#0e0e12; --card:#1b1b22; --ink:#f4f4f6; --mut:#9a9aa8; --acc:#ff4fa3; --acc2:#ffd400; --ok:#3fd0ff; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink); font-family: "Inter","Segoe UI",Arial,sans-serif; }
+  button { font: inherit; cursor:pointer; }
+  #menu { max-width:1200px; margin:0 auto; padding:40px 32px 60px; }
+  .top { display:flex; align-items:flex-end; justify-content:space-between; gap:24px; flex-wrap:wrap; }
+  .kicker { color:var(--acc2); letter-spacing:.25em; font-size:13px; font-weight:700; }
+  h1 { font-size:52px; line-height:1.02; margin:10px 0 6px; }
+  h1 span { color:var(--acc); }
+  .sub { color:var(--mut); font-size:17px; margin:0; }
+  .controls { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+  .btn { background:var(--card); color:var(--ink); border:1px solid #2c2c36; border-radius:12px; padding:12px 18px; font-weight:600; }
+  .btn:hover { border-color:#4a4a58; }
+  .btn.primary { background:var(--acc); border-color:var(--acc); color:#fff; }
+  .btn.on { background:var(--ink); color:var(--bg); border-color:var(--ink); }
+  .timer { margin:28px 0 22px; display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
+  .timer .lbl { color:var(--mut); font-size:14px; margin-right:6px; }
+  .grid { display:grid; grid-template-columns:repeat(7, 1fr); gap:14px; }
+  .tile { position:relative; aspect-ratio: 3/4; border-radius:18px; border:1px solid #2c2c36; background:var(--card); display:flex; flex-direction:column; justify-content:space-between; padding:18px; text-align:left; color:var(--ink); transition: transform .12s, border-color .12s; }
+  .tile:hover { transform: translateY(-3px); border-color:var(--acc); }
+  .tile .n { font-size:56px; font-weight:800; line-height:1; }
+  .tile .t { color:var(--mut); font-size:14px; letter-spacing:.12em; font-weight:700; }
+  .tile .seal { width:42px; height:42px; border-radius:50%; border:2px dashed #3a3a46; display:flex; align-items:center; justify-content:center; color:#555; font-size:18px; }
+  .tile.done { opacity:.38; }
+  .tile.done .seal { border-style:solid; border-color:var(--ok); color:var(--ok); }
+  .tile.pick { border-color:var(--acc2); box-shadow:0 0 0 3px var(--acc2) inset; }
+  .host { margin-top:34px; border-top:1px solid #2c2c36; padding-top:22px; }
+  .host details { background:var(--card); border-radius:14px; padding:14px 18px; margin-bottom:10px; }
+  .host summary { cursor:pointer; font-weight:700; }
+  .host ol { margin:12px 0 4px; padding-left:22px; line-height:1.7; }
+  .host .hint { color:var(--mut); font-size:14px; }
+  /* player */
+  #player { position:fixed; inset:0; background:#000; display:none; }
+  #player img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; }
+  #bar { position:absolute; left:0; bottom:0; height:6px; width:0; background:var(--acc); opacity:.85; }
+  #hud { position:absolute; right:14px; bottom:14px; display:flex; gap:8px; opacity:0; transition:opacity .2s; }
+  #player:hover #hud { opacity:1; }
+  #hud .btn { padding:8px 12px; font-size:14px; background:rgba(20,20,26,.85); }
+  #pause { position:absolute; left:50%; top:20px; transform:translateX(-50%); background:rgba(0,0,0,.7); padding:6px 14px; border-radius:20px; font-size:14px; display:none; }
+  #endcard { position:absolute; inset:0; display:none; align-items:center; justify-content:center; flex-direction:column; background:#0e0e12; text-align:center; gap:16px; }
+  #endcard h2 { font-size:56px; margin:0; }
+  #endcard p { color:var(--mut); font-size:22px; margin:0; max-width:900px; }
+  #drum { position:fixed; inset:0; background:rgba(0,0,0,.85); display:none; align-items:center; justify-content:center; flex-direction:column; gap:18px; }
+  #drum .big { font-size:220px; font-weight:900; color:var(--acc2); line-height:1; }
+  #drum .cap { color:var(--mut); font-size:22px; }
+  @media (max-width: 900px) { .grid { grid-template-columns:repeat(2,1fr);} h1{font-size:38px;} }
+</style>
+</head>
+<body>
+<div id="menu">
+  <div class="top">
+    <div>
+      <div class="kicker">POWERPOINT KARAOKE · ANIME EDITION</div>
+      <h1>Секретные <span>доклады</span></h1>
+      <p class="sub">Выберите номер. Тему узнаете вместе со всеми.</p>
+    </div>
+    <div class="controls">
+      <button class="btn primary" id="rand">🎲 Случайный доклад</button>
+      <button class="btn" id="reset">Сбросить отметки</button>
+    </div>
+  </div>
+
+  <div class="timer" id="modes">
+    <span class="lbl">Переключение слайдов:</span>
+    <button class="btn" data-m="0">По команде ведущего</button>
+    <button class="btn" data-m="20">20 с</button>
+    <button class="btn" data-m="30">30 с</button>
+    <button class="btn" data-m="35">35 с</button>
+    <button class="btn" data-m="-1">«Подстава» (15–45 с, случайно)</button>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="host">
+    <details>
+      <summary>Управление во время доклада</summary>
+      <ol>
+        <li><b>→ / Пробел / клик</b> — следующий слайд. <b>←</b> — предыдущий.</li>
+        <li><b>P</b> — пауза таймера (например, на время вопроса из зала).</li>
+        <li><b>F</b> — полноэкранный режим. <b>Esc</b> — выйти в меню.</li>
+        <li>Полоска внизу экрана показывает, сколько осталось до автосмены слайда. Слайдам с таблицами таймер сам добавляет 10 секунд.</li>
+      </ol>
+      <p class="hint">Меню работает без интернета. Если что-то не так с браузером, откройте папку «Доклады (PPTX)» — там те же презентации для PowerPoint.</p>
+    </details>
+    <details id="secret">
+      <summary>🔒 Только для ведущего: темы докладов</summary>
+      <p class="hint">Не открывайте при участниках, особенно если экран уже на телевизоре.</p>
+      <ol id="topics"></ol>
+    </details>
+  </div>
+</div>
+
+<div id="player">
+  <img id="slide" alt="">
+  <div id="bar"></div>
+  <div id="pause">⏸ Пауза</div>
+  <div id="hud">
+    <button class="btn" id="hPrev">←</button>
+    <button class="btn" id="hPause">⏸</button>
+    <button class="btn" id="hNext">→</button>
+    <button class="btn" id="hFull">⛶</button>
+    <button class="btn" id="hExit">Меню</button>
+  </div>
+  <div id="endcard">
+    <h2>Доклад окончен</h2>
+    <p>Аплодисменты! Теперь зал задаёт докладчику 1–2 серьёзных вопроса по теме.</p>
+    <button class="btn primary" id="back">Вернуться в меню</button>
+  </div>
+</div>
+
+<div id="drum"><div class="big" id="drumN">00</div><div class="cap">Выпал доклад…</div></div>
+
+<script>
+const N = 14, SLIDES = 10;
+// плотные слайды (таблицы, чаты, схемы): +10 секунд к таймеру
+const DENSE = { 1: [4, 5, 7], 2: [4, 5, 8], 3: [3, 5, 8], 4: [4, 5, 7, 8], 5: [3, 4, 8], 6: [2, 3, 5, 8], 7: [4], 8: [4, 5, 8], 9: [5, 8], 10: [4, 5, 8], 11: [3, 5, 8], 12: [3, 5, 6, 8], 13: [3, 5, 6, 8, 10], 14: [3, 6, 8] };
+const TOPICS = [
+  "Isekai Express — инвестиционный питч компании Truck-kun (стартап)",
+  "HR-отчёт организации «Акацуки»: удержание талантов, которые постоянно погибают (корпоративный отчёт)",
+  "Микроэкономика гаремного жанра (университетская лекция)",
+  "Госпрограмма «Переселение-2030»: приток попаданцев в фэнтези-королевство (государственная программа)",
+  "Монолог злодея как стратегический актив (стратегический консалтинг)",
+  "«Бегущая с тостом»: история утреннего столкновения на перекрёстке (исторический семинар)",
+  "«Я ждал 20 лет. Сила так и не пробудилась» (выступление в стиле TED)",
+  "Lean-оптимизация превращения девочек-волшебниц (отчёт НИИ)",
+  "ГОСТ на главного героя с трагическим прошлым (стандарт и сертификация)",
+  "Годовой отчёт управляющей компании города за тремя стенами (ЖКХ)",
+  "Сила дружбы как возобновляемый источник энергии (доклад министерства)",
+  "Почему в аниме так громко едят рамен (научная конференция по акустике)",
+  "Охрана труда при выкрикивании названия атаки (инструктаж)",
+  "Оптимальный размер глаз (маркетинговое исследование)"
+];
+const pad = n => String(n).padStart(2, "0");
+let done = new Set();
+try { done = new Set(JSON.parse(localStorage.getItem("ppk_done") || "[]")); } catch (e) {}
+const persist = () => { try { localStorage.setItem("ppk_done", JSON.stringify([...done])); } catch (e) {} };
+let mode = 0;
+try { mode = Number(localStorage.getItem("ppk_mode") || 0); } catch (e) {}
+
+const grid = document.getElementById("grid");
+function drawGrid(pick) {
+  grid.innerHTML = "";
+  for (let i = 1; i <= N; i++) {
+    const b = document.createElement("button");
+    b.className = "tile" + (done.has(i) ? " done" : "") + (pick === i ? " pick" : "");
+    b.innerHTML = `<div class="t">ДОКЛАД</div><div class="n">${pad(i)}</div><div class="seal">${done.has(i) ? "✓" : "?"}</div>`;
+    b.onclick = () => start(i);
+    grid.appendChild(b);
+  }
+}
+const topicsEl = document.getElementById("topics");
+TOPICS.forEach((t, i) => { const li = document.createElement("li"); li.textContent = `Доклад ${pad(i + 1)} — ${t}`; topicsEl.appendChild(li); });
+
+const modes = document.querySelectorAll("#modes [data-m]");
+function setMode(m) { mode = m; modes.forEach(b => b.classList.toggle("on", Number(b.dataset.m) === m)); try { localStorage.setItem("ppk_mode", m); } catch (e) {} }
+modes.forEach(b => b.onclick = () => setMode(Number(b.dataset.m)));
+setMode(mode);
+
+document.getElementById("reset").onclick = () => { if (confirm("Снять все отметки о сыгранных докладах?")) { done.clear(); persist(); drawGrid(); } };
+document.getElementById("rand").onclick = () => {
+  const pool = [...Array(N).keys()].map(i => i + 1).filter(i => !done.has(i));
+  if (!pool.length) { alert("Все доклады уже сыграны!"); return; }
+  const target = pool[Math.floor(Math.random() * pool.length)];
+  const drum = document.getElementById("drum"), dn = document.getElementById("drumN");
+  drum.style.display = "flex"; let k = 0; const steps = 18;
+  const tick = () => {
+    dn.textContent = pad(k < steps ? pool[Math.floor(Math.random() * pool.length)] : target);
+    if (k++ < steps) setTimeout(tick, 60 + k * 9);
+    else setTimeout(() => { drum.style.display = "none"; drawGrid(target); }, 1100);
+  };
+  tick();
+};
+
+// preload
+function preload(d) { for (let s = 1; s <= SLIDES; s++) { const im = new Image(); im.src = `slides/${pad(d)}/${s}.jpg`; } }
+
+const player = document.getElementById("player"), img = document.getElementById("slide"), bar = document.getElementById("bar"), endcard = document.getElementById("endcard"), pauseEl = document.getElementById("pause");
+let deck = 0, idx = 1, timer = null, dur = 0, left = 0, last = 0, paused = false;
+function pickDur() { if (!mode) return 0; const base = mode === -1 ? (15 + Math.random() * 30) * 1000 : mode * 1000; return base + ((DENSE[deck] || []).includes(idx) ? 10000 : 0); }
+function show() {
+  endcard.style.display = idx > SLIDES ? "flex" : "none";
+  if (idx <= SLIDES) img.src = `slides/${pad(deck)}/${idx}.jpg`;
+  dur = idx <= SLIDES ? pickDur() : 0; left = dur; last = performance.now();
+  bar.style.width = "0";
+}
+function loop(now) {
+  if (player.style.display !== "block") return;
+  if (!paused && dur > 0) {
+    left -= now - last;
+    bar.style.width = (100 * (1 - Math.max(left, 0) / dur)) + "%";
+    if (left <= 0) { next(); }
+  }
+  last = now; requestAnimationFrame(loop);
+}
+function next() { if (idx <= SLIDES) { idx++; show(); } }
+function prev() { if (idx > 1) { idx--; show(); } }
+function start(d) {
+  deck = d; idx = 1; paused = false; pauseEl.style.display = "none";
+  preload(d); player.style.display = "block"; show();
+  last = performance.now(); requestAnimationFrame(loop);
+  const el = document.documentElement; if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+}
+function exit() {
+  if (idx > SLIDES || confirm("Выйти в меню? Доклад будет отмечен как сыгранный.")) {
+    done.add(deck); persist(); player.style.display = "none";
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    drawGrid();
+  }
+}
+function togglePause() { paused = !paused; pauseEl.style.display = paused ? "block" : "none"; last = performance.now(); }
+img.onclick = next;
+document.getElementById("hNext").onclick = next;
+document.getElementById("hPrev").onclick = prev;
+document.getElementById("hPause").onclick = togglePause;
+document.getElementById("hExit").onclick = exit;
+document.getElementById("back").onclick = exit;
+document.getElementById("hFull").onclick = () => { if (!document.fullscreenElement) document.documentElement.requestFullscreen().catch(() => {}); else document.exitFullscreen(); };
+document.addEventListener("keydown", e => {
+  if (player.style.display !== "block") return;
+  if (["ArrowRight", " ", "PageDown", "Enter"].includes(e.key)) { e.preventDefault(); next(); }
+  else if (["ArrowLeft", "PageUp", "Backspace"].includes(e.key)) { e.preventDefault(); prev(); }
+  else if (e.key === "p" || e.key === "P" || e.key === "з" || e.key === "З") togglePause();
+  else if (e.key === "f" || e.key === "F" || e.key === "а" || e.key === "А") document.getElementById("hFull").click();
+  else if (e.key === "Escape" && !document.fullscreenElement) exit();
+});
+drawGrid();
+</script>
+</body>
+</html>
