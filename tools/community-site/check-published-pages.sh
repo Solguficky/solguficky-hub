@@ -13,7 +13,11 @@
 # page name allowed, and the path minus index.html is the address.
 #
 # Second, nothing but a page may sit here: a draft, a note or a backup file
-# placed in this folder is published to the open web on the next push.
+# placed in this folder is published to the open web on the next push. Two
+# narrow exceptions are part of a page rather than loose files: images inside
+# the folder of a page below the root (slides of /karaoke live in
+# karaoke/slides/), and `_headers` at the root, which Netlify reads as response
+# headers instead of serving it.
 #
 # The gate reads Git, not the working tree: an untracked scratch file is the
 # author's business, a committed one is the defect this check exists for. The
@@ -50,15 +54,40 @@ if [ -z "$tracked" ]; then
     exit 1
 fi
 
-# 1. Only the section README and index.html pages live here.
-unexpected=$(printf '%s\n' "$tracked" \
+# 1. Only the section README, Netlify's `_headers`, index.html pages and images
+#    inside a page folder live here.
+candidates=$(printf '%s\n' "$tracked" \
     | grep -v -x -F "$SITE/README.md" \
+    | grep -v -x -F "$SITE/_headers" \
     | grep -v '/index\.html$' || true)
 
+# An image belongs to a page when one of its ancestor folders below the root is
+# a page, i.e. holds a tracked index.html. A stray image at the root or in a
+# folder without a page is still a loose file.
+unexpected=$(printf '%s\n' "$candidates" | while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    case $file in
+        *.jpg | *.jpeg | *.png | *.webp)
+            dir=${file%/*}
+            owned=0
+            while [ "$dir" != "$SITE" ] && [ "${dir#"$SITE"/}" != "$dir" ]; do
+                if printf '%s\n' "$tracked" | grep -q -x -F "$dir/index.html"; then
+                    owned=1
+                    break
+                fi
+                dir=${dir%/*}
+            done
+            [ "$owned" -eq 1 ] && continue
+            ;;
+    esac
+    printf '%s\n' "$file"
+done)
+
 if [ -n "$unexpected" ]; then
-    echo "Files in $SITE that are neither the section README nor a page:" >&2
+    echo "Files in $SITE that are neither the section README, _headers, a page nor an image of a page:" >&2
     printf '%s\n' "$unexpected" | sed 's/^/  - /' >&2
     echo "A page is always <folder>/index.html; the path minus index.html is its address." >&2
+    echo "Images (jpg, jpeg, png, webp) go inside the folder of the page that shows them." >&2
     echo "Anything else here goes public on the next push to develop." >&2
     failed=1
 fi

@@ -12,6 +12,9 @@
 | `/auction-2026` | [auction-2026/index.html](auction-2026/index.html) — «Аукцион 2026», страница обсуждения формата и фич | [RFC-007](../rfcs/RFC-007-auction-scope-and-format-options.md) |
 | `/hub-mvp` | [hub-mvp/index.html](hub-mvp/index.html) — «Solguficky Hub: что бот умеет сейчас», знакомство с ботом сходок для администратора и сообщества: концепция, пути участника и администратора, ограничения | [продукт и границы MVP](../product/overview.md), [дизайн-код экранов](../design/bot/design-code.md), [живые прогоны](../development/local-development.md) |
 | `/archive/auction-module` | [archive/auction-module/index.html](archive/auction-module/index.html) — презентация прошлой реализации, состояние на 28.10.2025 | [исходник в Marp](../archive/services/auction-module-slides.md) |
+| `/karaoke/` | [karaoke/index.html](karaoke/index.html) — PowerPoint-караоке для вечеринки: меню из 14 докладов, слайды в `karaoke/slides/`, таймер | — |
+
+Страницы караоке нет в корневом индексе намеренно: в ней лежат темы докладов для ведущего, и ссылку на неё раздают сами, а не находят. Поиск её не индексирует — `noindex` в странице и в `_headers`.
 
 Колонка «Связанный документ» — обратная сторона связи: сама страница на репозиторий не ссылается, потому что на сайте относительного пути в репозиторий не существует.
 
@@ -48,6 +51,13 @@ npx --yes serve docs/published
 HTML без публичного адреса сюда не переезжает и остаётся рядом с текстом, который его открывает: [architecture/decision-matrix.html](../architecture/decision-matrix.html), [design/bot/storyboard.html](../design/bot/storyboard.html), [archive/snapshots/project-canvas-2026-07-18.html](../archive/snapshots/project-canvas-2026-07-18.html).
 
 `published/archive/` — сегмент адреса сайта, а не раздел [archive/](../archive/). Историческую пометку несут адрес и строка таблицы выше.
+
+## Что ещё может лежать рядом со страницами
+
+Кроме `index.html` и этого README в каталоге допустимы два вида файлов, и гейт пропускает только их:
+
+- **Картинки страницы** — `jpg`, `jpeg`, `png`, `webp` внутри каталога страницы ниже корня, как слайды `karaoke/slides/`. Картинка в корне или в каталоге без `index.html` — лишний файл, и гейт отказывает.
+- **`_headers` в корне** — заголовки ответов Netlify: кэш и `X-Robots-Tag` по путям. Netlify читает его сам и не отдаёт как страницу.
 
 ## Как добавить страницу
 
